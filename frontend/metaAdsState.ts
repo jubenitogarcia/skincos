@@ -2,6 +2,7 @@ import type {
   MetaAdAccount,
   MetaAdsApiError,
   MetaAdsConnectionMode,
+  MetaAdsHeaderBadgeTone,
   MetaAdsHealthState,
   MetaAdsStatusResponse,
   MetaAdsTab,
@@ -63,6 +64,56 @@ export function getDefaultMetaAdsTab(mode: MetaAdsConnectionMode): MetaAdsTab {
     return 'connect'
   }
   return 'overview'
+}
+
+export function describeMetaAdAccountStatus(account: MetaAdAccount): {
+  label: string
+  detail: string
+  tone: MetaAdsHeaderBadgeTone
+} {
+  const statusCode = String(account.account_status || '').trim()
+  const disableReason = Number(account.disable_reason || 0)
+
+  if (statusCode === '1' && disableReason === 0) {
+    return {
+      label: 'Ativa',
+      detail: 'Conta liberada para operar normalmente.',
+      tone: 'success',
+    }
+  }
+  if (statusCode === '2') {
+    return {
+      label: 'Desativada',
+      detail: 'A conta esta desativada na Meta.',
+      tone: 'danger',
+    }
+  }
+  if (statusCode === '7' || statusCode === '100') {
+    return {
+      label: 'Em analise',
+      detail: 'A Meta sinaliza revisao ou risco na conta.',
+      tone: 'warning',
+    }
+  }
+  if (statusCode === '8' || statusCode === '101' || disableReason > 0) {
+    return {
+      label: 'Limitada',
+      detail: disableReason > 0 ? `Ha uma restricao registrada pela Meta (disable_reason ${disableReason}).` : 'A conta esta com operacao limitada.',
+      tone: 'warning',
+    }
+  }
+  if (statusCode === '9') {
+    return {
+      label: 'Encerrada',
+      detail: 'A conta foi encerrada ou esta em fechamento.',
+      tone: 'neutral',
+    }
+  }
+  return {
+    label: statusCode ? `Status ${statusCode}` : 'Sem status',
+    detail: statusCode ? `Codigo retornado pela Meta: ${statusCode}.` : 'A Meta nao retornou status legivel para esta conta.',
+    tone: 'neutral',
+  }
 }
 
 export function buildMetaAdsHealthState({
@@ -135,11 +186,11 @@ export function buildMetaAdsHealthState({
       mode,
       title: 'Conta Meta pronta para operar',
       description: selectedAccount
-        ? `Conta selecionada: ${selectedAccount.name || selectedAccount.id}. Use Visão geral, Inventário e Tracking para operar.`
+        ? `Conta selecionada: ${selectedAccount.name || selectedAccount.id}. Use Visão geral e Inventário para operar.`
         : 'A integração está conectada e pronta para uso.',
       tone: 'success',
-      ctaLabel: 'Ver visão geral',
-      ctaTab: 'overview',
+      ctaLabel: 'Gerenciar conexão',
+      ctaTab: 'connect',
     }
   }
 
@@ -149,17 +200,13 @@ export function buildMetaAdsHealthState({
       title: 'Conexão ativa, mas falta escolher a conta',
       description: 'O login Meta já está válido. Selecione a conta de anúncios que deve alimentar o CRM.',
       tone: 'warning',
-      ctaLabel: 'Selecionar conta',
-      ctaTab: 'connect',
     }
   }
 
   return {
     mode,
     title: 'Conecte a conta Meta para liberar o módulo',
-    description: 'Comece pela aba Conexão, autorize o Facebook e depois selecione a conta de anúncios.',
+    description: 'Autorize o Facebook, depois escolha a conta de anúncios que deve alimentar o CRM.',
     tone: 'neutral',
-    ctaLabel: 'Conectar agora',
-    ctaTab: 'connect',
   }
 }

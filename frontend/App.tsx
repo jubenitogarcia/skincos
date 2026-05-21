@@ -20,7 +20,9 @@ import { dispatchEscalaHeaderAction, subscribeEscalaHeaderState } from '@/escala
 import type { EscalaHeaderState, EscalaHighlightMode } from '@/escalaTypes'
 import { dispatchInsumosHeaderAction, subscribeInsumosHeaderState } from '@/insumosBridge'
 import type { InsumosHeaderState, InsumosOverviewPeriod } from '@/insumosTypes'
-import { CalendarX2, CheckCircle2, Download, Pencil, Shield, Sparkles } from 'lucide-react'
+import { dispatchMetaAdsHeaderAction, subscribeMetaAdsHeaderState } from '@/metaAdsHeaderBridge'
+import type { MetaAdsHeaderState } from '@/metaAdsTypes'
+import { CalendarX2, CheckCircle2, Circle, CircleDot, Clock3, Download, Pencil, RefreshCw, Settings2, Shield, Sparkles } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -361,9 +363,10 @@ export default function AppFunctionalNeatlab() {
 	        if (UNLOCKED_MODULE_KEYS.has(active)) return
 	        setActive(DEFAULT_MODULE_KEY)
 	    }, [DEFAULT_MODULE_KEY, UNLOCKED_MODULE_KEYS, active])
-	    const [search, setSearch] = useState('')
+        const [search, setSearch] = useState('')
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
         const [escalaHeaderState, setEscalaHeaderState] = useState<EscalaHeaderState | null>(null)
+        const [metaAdsHeaderState, setMetaAdsHeaderState] = useState<MetaAdsHeaderState | null>(null)
 				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<InsumosHeaderState['status']>(null)
 				    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<InsumosHeaderState['stock']>(null)
                     const defaultEstoqueThresholds = React.useMemo(() => ({ warning: 50000, critical: 20000 }), [])
@@ -526,6 +529,12 @@ export default function AppFunctionalNeatlab() {
                     })
                 }, [])
 
+                React.useEffect(() => {
+                    return subscribeMetaAdsHeaderState((detail) => {
+                        setMetaAdsHeaderState(detail)
+                    })
+                }, [])
+
 	    // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
 	    React.useEffect(() => {
 	        try {
@@ -561,6 +570,12 @@ export default function AppFunctionalNeatlab() {
 				            setInsumosHeaderEstoque(null)
 				        }
 				    }, [active, isAuthenticated])
+
+                React.useEffect(() => {
+                    if (active !== 'meta-ads') {
+                        setMetaAdsHeaderState(null)
+                    }
+                }, [active])
 
 		    const lastInsumosOverviewRef = React.useRef<string | null>(null)
 		    React.useEffect(() => {
@@ -991,7 +1006,7 @@ export default function AppFunctionalNeatlab() {
 					                                        </h1>
 			                                    </div>
 				                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
-				                                    <div className={`${active === 'escala-profissionais' ? 'flex min-w-0' : 'hidden lg:flex'} items-center gap-2`}>
+				                                    <div className={`${active === 'escala-profissionais' || active === 'meta-ads' ? 'flex min-w-0' : 'hidden lg:flex'} items-center gap-2`}>
 				                                        {active === 'insumos' ? (
 					                                            <>
 					                                                <Select
@@ -1218,6 +1233,45 @@ export default function AppFunctionalNeatlab() {
 					                                                </Select>
 				                                            </div>
 				                                        ) : null}
+                                                        {active === 'meta-ads' ? (
+                                                            <div className="flex items-center gap-2 max-w-[56vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                                                <Select
+                                                                    value={metaAdsHeaderState?.selectedAccountId || ''}
+                                                                    onValueChange={(value) => {
+                                                                        dispatchMetaAdsHeaderAction({ type: 'set-account', value })
+                                                                    }}
+                                                                    disabled={metaAdsHeaderState?.refreshing || !(metaAdsHeaderState?.accounts || []).length}
+                                                                >
+                                                                    <SelectTrigger className="h-8 w-64 bg-white/[0.06] border-white/20 text-white">
+                                                                        <SelectValue placeholder="Conta de anúncios" />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        {(metaAdsHeaderState?.accounts || []).map((account) => {
+                                                                            const statusTone =
+                                                                                account.statusTone === 'success'
+                                                                                    ? 'bg-emerald-500/12 text-emerald-100 focus:bg-emerald-500/20 focus:text-emerald-50'
+                                                                                    : account.statusTone === 'warning'
+                                                                                        ? 'bg-amber-500/12 text-amber-100 focus:bg-amber-500/20 focus:text-amber-50'
+                                                                                        : account.statusTone === 'danger'
+                                                                                            ? 'bg-rose-500/12 text-rose-100 focus:bg-rose-500/20 focus:text-rose-50'
+                                                                                            : 'bg-slate-950 text-slate-100 focus:bg-slate-800/90'
+                                                                            return (
+                                                                                <SelectItem key={account.id} value={account.id} className={statusTone}>
+                                                                                    <div className="flex w-full items-center justify-between gap-3 pr-4">
+                                                                                        <span className="truncate">{account.name || account.id}</span>
+                                                                                        {account.statusTone === 'success' ? (
+                                                                                            <CircleDot className="size-3.5 text-emerald-300" aria-hidden="true" />
+                                                                                        ) : (
+                                                                                            <Circle className={`size-3.5 ${account.statusTone === 'warning' ? 'text-amber-300' : account.statusTone === 'danger' ? 'text-rose-300' : 'text-slate-400'}`} aria-hidden="true" />
+                                                                                        )}
+                                                                                    </div>
+                                                                                </SelectItem>
+                                                                            )
+                                                                        })}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                            </div>
+                                                        ) : null}
 		                                    </div>
 	                                </div>
 
@@ -1305,6 +1359,94 @@ export default function AppFunctionalNeatlab() {
 	                                                    Exportar resumo
 	                                                </TooltipContent>
 	                                            </Tooltip>
+                                        </div>
+                                    ) : null}
+                                    {active === 'meta-ads' ? (
+                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                            <div className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] p-1">
+                                                {[7, 30, 60].map((period) => (
+                                                    <button
+                                                        key={period}
+                                                        type="button"
+                                                        className={`h-6 rounded-full px-2.5 text-xs transition ${
+                                                            !metaAdsHeaderState?.customRangeActive && metaAdsHeaderState?.reportWindowDays === period
+                                                                ? 'bg-white/16 text-white'
+                                                                : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                                        }`}
+                                                        onClick={() => dispatchMetaAdsHeaderAction({ type: 'set-report-window', value: period as 7 | 30 | 60 })}
+                                                    >
+                                                        {period}d
+                                                    </button>
+                                                ))}
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <button
+                                                            type="button"
+                                                            className={`inline-flex h-6 w-6 items-center justify-center rounded-full transition ${
+                                                                metaAdsHeaderState?.customRangeActive
+                                                                    ? 'bg-white/16 text-white'
+                                                                    : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                                            }`}
+                                                            onClick={() => dispatchMetaAdsHeaderAction({ type: 'open-custom-period' })}
+                                                            aria-label="Periodo personalizado"
+                                                        >
+                                                            <CalendarX2 className="size-3.5" aria-hidden="true" />
+                                                        </button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        {metaAdsHeaderState?.customRangeActive && metaAdsHeaderState?.customRangeLabel
+                                                            ? `Período personalizado: ${metaAdsHeaderState.customRangeLabel}`
+                                                            : 'Escolher período personalizado'}
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </div>
+                                            {metaAdsHeaderState?.sessionUpdatedAt ? (
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <span
+                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-blue-50"
+                                                        >
+                                                            <Clock3 className="size-3.5" aria-hidden="true" />
+                                                        </span>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        Ultima atualizacao de sessao: {new Date(metaAdsHeaderState.sessionUpdatedAt).toLocaleString('pt-BR')}
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            ) : null}
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                        onClick={() => dispatchMetaAdsHeaderAction({ type: 'manage-connections' })}
+                                                        aria-label="Gerenciar conexao"
+                                                    >
+                                                        <Settings2 className="size-3.5" aria-hidden="true" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    Gerenciar conexao
+                                                </TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                        onClick={() => dispatchMetaAdsHeaderAction({ type: 'refresh' })}
+                                                        disabled={metaAdsHeaderState?.refreshing}
+                                                        aria-label="Atualizar"
+                                                    >
+                                                        <RefreshCw className={`size-3.5 ${metaAdsHeaderState?.refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    Atualizar
+                                                </TooltipContent>
+                                            </Tooltip>
                                         </div>
                                     ) : null}
                                     {active === 'atendimento' ? (

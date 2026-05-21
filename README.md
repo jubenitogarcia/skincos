@@ -12,6 +12,7 @@ Plataforma interna (local) para automações e operações da clínica.
 ## Como rodar (local)
 - Stack principal (recomendado): `./backend/scripts/dev.sh watch`
 - CRM (frontend + API): `./frontend/restart_crm.sh --watch-full`
+- CRM local production-like: `npm run crm:local`
 - Website público: `npm run website:dev` (porta padrão do Next: `http://localhost:3000`)
 - macOS (sem terminal): dê duplo clique em `start-platform.command`
  - Meta Ads (API + worker): `./backend/scripts/meta-ads.sh start`
@@ -63,6 +64,34 @@ Plataforma interna (local) para automações e operações da clínica.
   - `SOCIAL_ADMIN_TOKEN=...`
   - `INTEGRATIONS_ENCRYPTION_SECRET=...`
   - `REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET=true`
+
+### Testar CRM local
+- Launcher recomendado: `npm run crm:local`
+- Atalho direto para o módulo Meta Ads: `npm run crm:local:meta-ads`
+- Atalho macOS: `./start-crm-local.command`
+- Perfil default: `realistic`
+  - sobe o CRM via `Pages Functions` local (`frontend/scripts/dev_pages.sh`)
+  - ativa bypass local de auth apenas em `localhost`
+  - preserva os módulos que já suportam leitura real com segurança, como `Escala`
+- Para testar a sessão real sem bypass: `CRM_PROFILE=session npm run crm:local`
+- Para testar `Insumos` sem tocar a produção:
+  - `CRM_WITH_INSUMOS=1 npm run crm:local`
+  - opcionalmente, use snapshot local:
+    - exportar snapshot remoto: `node backend/scripts/insumos-d1-export.cjs backend/var/local/insumos-snapshot.latest.json`
+    - subir o CRM com seed local: `CRM_WITH_INSUMOS=1 CRM_INSUMOS_SNAPSHOT=backend/var/local/insumos-snapshot.latest.json npm run crm:local`
+- Para testar `Meta Ads` antes de publicar:
+  - fluxo local simplificado e production-like: `npm run crm:local:meta-ads`
+    - abre o CRM já no módulo `Meta Ads`
+    - no perfil `realistic`, usa por padrão o cenário local `connected-ready`
+    - esse cenário simula conexão, seleção de conta, visão geral e inventário apenas em `localhost`
+    - por padrão, o launcher gera `build` do frontend antes de subir, para o shell local refletir a versão mais próxima do online
+    - também suprime preloads globais irrelevantes para esse foco local, como o status do Instagram
+  - para validar o fluxo inicial de setup: `CRM_META_ADS_SCENARIO=disconnected npm run crm:local:meta-ads`
+  - para testar estado de sessão expirada: `CRM_META_ADS_SCENARIO=unauthorized npm run crm:local:meta-ads`
+  - para forçar a integração real publicada no Pages local, sem mock do módulo: `CRM_META_ADS_SCENARIO=live npm run crm:local:meta-ads`
+  - para pular o build prévio quando você só quiser iterar rápido em UI local: `npm run crm:local:meta-ads -- --skip-build`
+  - para rodar uma smoke automatizada do módulo após subir o CRM:
+    - `npm run crm:local:meta-ads -- --smoke`
 
 ## Docs
 - Mapa do backend: `backend/docs/INDEX.md`

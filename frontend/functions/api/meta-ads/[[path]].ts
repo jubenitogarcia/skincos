@@ -10,22 +10,57 @@ import {
   type MetaAdsConnection,
 } from '../../_lib/metaAdsStore'
 import {
+  debugMetaAccessToken,
   getMetaAdsSummary,
   getMetaAdsTrend,
   getMetaProfile,
+  type MetaAd as GraphMetaAd,
   listMetaAdAccounts,
   listMetaAds,
   listMetaAdSets,
   listMetaCampaigns,
+  type MetaAdSet as GraphMetaAdSet,
+  type MetaCampaign as GraphMetaCampaign,
 } from '../../_lib/metaAdsGraph'
+import {
+  aggregateMetaAdsWorkflowSummary,
+  buildMetaAdsWorkflowReport,
+  normalizeMetaAdsWorkflowAccountId,
+  type MetaAdsWorkflowWindow,
+} from '../../../metaAdsWorkflowReport'
+import type {
+  MetaAd,
+  MetaAdSet,
+  MetaAdsReportFallbackReason,
+  MetaCampaignRow,
+  MetaCreativeInventoryItem,
+} from '../../../metaAdsTypes'
 
 type OAuthState = { userId: string; nonce: string; iat: number }
+type OAuthPopupMessage = {
+  type: 'meta-ads:connected'
+  ok: boolean
+  error?: {
+    code: string
+    message: string
+    hint?: string | null
+  }
+}
 type MetaAdsApiErrorInit = {
   message?: string
   hint?: string
   retryable?: boolean
   extra?: Record<string, unknown>
 }
+type MetaTokenValidation = {
+  grantedScopes: string[]
+  expiresAt?: string
+  dataAccessExpiresAt?: string
+  lastValidatedAt: string
+}
+
+const OAUTH_STATE_MAX_AGE_MS = 15 * 60 * 1000
+const CONNECTION_REVALIDATE_INTERVAL_MS = 60 * 60 * 1000
 
 const json = (status: number, body: any) =>
   new Response(JSON.stringify(body), {
@@ -71,6 +106,23 @@ const apiError = (
     ...(extra || {}),
   })
 
+class MetaAdsRouteError extends Error {
+  status: number
+  code: string
+  hint?: string
+  retryable: boolean
+  extra?: Record<string, unknown>
+
+  constructor(status: number, code: string, { message, hint, retryable = status >= 500, extra }: MetaAdsApiErrorInit = {}) {
+    super(message || code)
+    this.status = status
+    this.code = code
+    this.hint = hint
+    this.retryable = retryable
+    this.extra = extra
+  }
+}
+
 function runtimeConfig(context: any) {
   const env = context?.env || {}
   return {
@@ -78,10 +130,234 @@ function runtimeConfig(context: any) {
     appSecret: String(env.META_APP_SECRET || '').trim(),
     stateSecret: String(env.META_OAUTH_STATE_SECRET || env.META_APP_SECRET || '').trim(),
     graphVersion: String(env.META_GRAPH_VERSION || 'v20.0').trim() || 'v20.0',
+    configId: String(env.META_ADS_CONFIG_ID || '').trim(),
+    reportWorkerBaseUrl: String(env.META_ADS_REPORT_WORKER_BASE_URL || '').trim(),
+    reportWorkerApiToken: String(env.META_ADS_REPORT_WORKER_API_TOKEN || '').trim(),
+    reportWorkerAuthHeader: String(env.META_ADS_REPORT_WORKER_AUTH_HEADER || 'Authorization').trim() || 'Authorization',
+    reportWorkerAuthScheme: String(env.META_ADS_REPORT_WORKER_AUTH_SCHEME || 'Bearer').trim() || 'Bearer',
     scopes:
       String(env.META_ADS_OAUTH_SCOPES || '').trim() ||
       ['ads_read', 'ads_management', 'business_management'].join(','),
   }
+}
+
+function requiredScopes(cfg: ReturnType<typeof runtimeConfig>) {
+  return String(cfg.scopes || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function normalizeScopes(values: unknown[]) {
+  return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)))
+}
+
+function epochSecondsToIso(value: unknown) {
+  const raw = Number(value || 0)
+  if (!Number.isFinite(raw) || raw <= 0) return undefined
+  return new Date(raw * 1000).toISOString()
+}
+
+function extractDebugScopes(data: any) {
+  const direct = Array.isArray(data?.scopes) ? data.scopes : []
+  const granular = Array.isArray(data?.granular_scopes)
+    ? data.granular_scopes.map((item: any) => item?.scope)
+    : []
+  return normalizeScopes([...direct, ...granular])
+}
+
+function shouldRevalidateConnection(connection: MetaAdsConnection | null) {
+  if (!connection?.accessToken) return false
+  if (!connection.lastValidatedAt) return true
+  const timestamp = Date.parse(connection.lastValidatedAt)
+  if (!Number.isFinite(timestamp)) return true
+  return Date.now() - timestamp >= CONNECTION_REVALIDATE_INTERVAL_MS
+}
+
+function normalizeUnhandledMetaError(error: any) {
+  const message = String(error?.message || '').toLowerCase()
+  if (!message) return null
+  if (message.includes('invalid oauth access token') || message.includes('session has been invalidated')) {
+    return new MetaAdsRouteError(401, 'META_TOKEN_INVALID', {
+      message: 'A sessão da Meta expirou ou foi revogada.',
+      hint: 'Conecte novamente a conta Meta pelo Facebook ou valide um novo token manual.',
+      retryable: false,
+    })
+  }
+  if (message.includes('permissions error') || message.includes('missing permissions')) {
+    return new MetaAdsRouteError(403, 'META_PERMISSIONS_ERROR', {
+      message: 'A Meta negou parte das permissões necessárias para esta operação.',
+      hint: 'Refaça o login e confirme as permissões do Gerenciador de Anúncios.',
+      retryable: false,
+    })
+  }
+  return null
+}
+
+function normalizeWorkerBaseUrl(value: string) {
+  return String(value || '').trim().replace(/\/+$/, '')
+}
+
+function resolveWorkflowSummaryWindow(range: { since: string; until: string }): MetaAdsWorkflowWindow {
+  const since = Date.parse(`${String(range.since || '').trim()}T00:00:00Z`)
+  const until = Date.parse(`${String(range.until || '').trim()}T00:00:00Z`)
+  if (!Number.isFinite(since) || !Number.isFinite(until) || until < since) return 'last_7d'
+  const diffDays = Math.max(1, Math.floor((until - since) / 86400000) + 1)
+  if (diffDays <= 1) return 'last_24h'
+  if (diffDays <= 7) return 'last_7d'
+  return 'last_30d'
+}
+
+async function fetchWorkflowSummary(
+  adAccountId: string,
+  range: { since: string; until: string },
+  cfg: ReturnType<typeof runtimeConfig>,
+) {
+  const baseUrl = normalizeWorkerBaseUrl(cfg.reportWorkerBaseUrl)
+  const token = String(cfg.reportWorkerApiToken || '').trim()
+  if (!baseUrl || !token) return null
+
+  const window = resolveWorkflowSummaryWindow(range)
+  const reportDate = String(range.until || '').trim()
+  const url = new URL(`${baseUrl}/report/meta-ads-performance-report`)
+  url.searchParams.set('account_id', normalizeMetaAdsWorkflowAccountId(adAccountId))
+  url.searchParams.set('report_date', reportDate)
+  url.searchParams.set('windows', window)
+  url.searchParams.set('include', 'summary')
+  url.searchParams.set('limit', '500')
+
+  const headerName = cfg.reportWorkerAuthHeader || 'Authorization'
+  const authValue = cfg.reportWorkerAuthScheme
+    ? `${cfg.reportWorkerAuthScheme} ${token}`
+    : token
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      accept: 'application/json',
+      [headerName]: authValue,
+    },
+  })
+
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || !payload?.ok || !Array.isArray(payload?.summary_rows)) {
+    throw new Error(
+      payload?.message ||
+        payload?.error ||
+        `workflow report request failed with status ${response.status}`,
+    )
+  }
+
+  return aggregateMetaAdsWorkflowSummary(payload.summary_rows, window)
+}
+
+async function fetchWorkflowReport(
+  adAccountId: string,
+  range: { since: string; until: string },
+  cfg: ReturnType<typeof runtimeConfig>,
+) {
+  const baseUrl = normalizeWorkerBaseUrl(cfg.reportWorkerBaseUrl)
+  const token = String(cfg.reportWorkerApiToken || '').trim()
+  if (!baseUrl || !token) return null
+
+  const window = resolveWorkflowSummaryWindow(range)
+  const reportDate = String(range.until || '').trim()
+  const url = new URL(`${baseUrl}/report/meta-ads-performance-report`)
+  url.searchParams.set('account_id', normalizeMetaAdsWorkflowAccountId(adAccountId))
+  url.searchParams.set('report_date', reportDate)
+  url.searchParams.set('windows', window)
+  url.searchParams.set('include', 'summary')
+  url.searchParams.set('limit', '500')
+
+  const headerName = cfg.reportWorkerAuthHeader || 'Authorization'
+  const authValue = cfg.reportWorkerAuthScheme
+    ? `${cfg.reportWorkerAuthScheme} ${token}`
+    : token
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      accept: 'application/json',
+      [headerName]: authValue,
+    },
+  })
+
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || !payload?.ok || !Array.isArray(payload?.summary_rows)) {
+    throw new Error(
+      payload?.message ||
+        payload?.error ||
+        `workflow report request failed with status ${response.status}`,
+    )
+  }
+
+  return buildMetaAdsWorkflowReport(payload.summary_rows, window, {
+    reportDate: String(payload?.metadata?.report_date || reportDate).trim(),
+    runsCount: Number(payload?.metadata?.runs_count || 0),
+    source: String(payload?.metadata?.source || 'd1').trim() || 'd1',
+  })
+}
+
+async function validateMetaAccessToken(
+  accessToken: string,
+  cfg: ReturnType<typeof runtimeConfig>,
+): Promise<MetaTokenValidation> {
+  if (!cfg.appId || !cfg.appSecret) {
+    return {
+      grantedScopes: requiredScopes(cfg),
+      lastValidatedAt: new Date().toISOString(),
+    }
+  }
+
+  const debug = await debugMetaAccessToken(accessToken, cfg.appId, cfg.appSecret, cfg.graphVersion)
+  const debugData = debug?.data || {}
+  if (!debugData?.is_valid) {
+    throw new MetaAdsRouteError(401, 'META_TOKEN_INVALID', {
+      message: 'A Meta rejeitou o access token desta conexão.',
+      hint: 'Refaça a autenticação com Facebook ou gere um token manual válido.',
+      retryable: false,
+    })
+  }
+
+  const tokenAppId = String(debugData?.app_id || '').trim()
+  if (tokenAppId && cfg.appId && tokenAppId !== cfg.appId) {
+    throw new MetaAdsRouteError(400, 'META_TOKEN_APP_MISMATCH', {
+      message: 'O token retornado pertence a outro app Meta.',
+      hint: 'Confirme que o app do Meta Developer usado no CRM é o mesmo da autenticação.',
+      retryable: false,
+    })
+  }
+
+  const grantedScopes = extractDebugScopes(debugData)
+  const missingScopes = requiredScopes(cfg).filter((scope) => !grantedScopes.includes(scope))
+  if (missingScopes.length) {
+    throw new MetaAdsRouteError(400, 'META_SCOPES_INCOMPLETE', {
+      message: 'A autenticação não concedeu todos os acessos exigidos pelo Meta Ads.',
+      hint: `Escopos ausentes: ${missingScopes.join(', ')}.`,
+      retryable: false,
+      extra: { missingScopes, grantedScopes },
+    })
+  }
+
+  return {
+    grantedScopes,
+    expiresAt: epochSecondsToIso(debugData?.expires_at),
+    dataAccessExpiresAt: epochSecondsToIso(debugData?.data_access_expires_at),
+    lastValidatedAt: new Date().toISOString(),
+  }
+}
+
+function buildOauthPopupResponse(payload: OAuthPopupMessage, body: string) {
+  const safePayload = JSON.stringify(payload).replace(/</g, '\\u003c')
+  return html(`
+      <script>
+        try {
+          if (window.opener) {
+            window.opener.postMessage(${safePayload}, window.location.origin);
+          }
+        } catch {}
+        try { window.close(); } catch {}
+      </script>
+      <p>${esc(body)}</p>
+    `)
 }
 
 function connectionSummary(connection: MetaAdsConnection | null) {
@@ -122,6 +398,14 @@ function resolveMissingConfig(context: any) {
   return missing
 }
 
+function resolveOauthStartMissingConfig(context: any) {
+  const cfg = runtimeConfig(context)
+  const missing: string[] = []
+  if (!cfg.appId) missing.push('META_APP_ID')
+  if (!cfg.stateSecret) missing.push('META_OAUTH_STATE_SECRET')
+  return missing
+}
+
 function parseRange(url: URL) {
   const until = String(url.searchParams.get('until') || '').trim() || new Date().toISOString().slice(0, 10)
   const since = String(url.searchParams.get('since') || '').trim() || (() => {
@@ -132,14 +416,14 @@ function parseRange(url: URL) {
   return { since, until }
 }
 
-function buildInventory(campaigns: any[], adsets: any[], ads: any[]) {
-  const adsetsByCampaign = new Map<string, any[]>()
-  const adsByAdset = new Map<string, any[]>()
-  const creativesById = new Map<string, any>()
+function buildInventory(campaigns: GraphMetaCampaign[], adsets: GraphMetaAdSet[], ads: GraphMetaAd[]) {
+  const adsetsByCampaign = new Map<string, MetaAdSet[]>()
+  const adsByAdset = new Map<string, MetaAd[]>()
+  const creativesById = new Map<string, MetaCreativeInventoryItem>()
 
   for (const adset of adsets) {
     const list = adsetsByCampaign.get(adset.campaign_id || '') || []
-    list.push({ ...adset, ads: [] as any[] })
+    list.push({ ...adset, ads: [] })
     adsetsByCampaign.set(adset.campaign_id || '', list)
   }
 
@@ -152,8 +436,10 @@ function buildInventory(campaigns: any[], adsets: any[], ads: any[]) {
         effectiveObjectStoryId: ad.creative.effective_object_story_id || null,
         adId: ad.id,
         adName: ad.name,
-        adsetId: ad.adset_id || null,
+        adSetId: ad.adset_id || null,
+        adSetName: ad.adset_name || null,
         campaignId: ad.campaign_id || null,
+        campaignName: ad.campaign_name || null,
       })
     }
     const list = adsByAdset.get(ad.adset_id || '') || []
@@ -161,7 +447,7 @@ function buildInventory(campaigns: any[], adsets: any[], ads: any[]) {
     adsByAdset.set(ad.adset_id || '', list)
   }
 
-  const campaignsWithChildren = campaigns.map((campaign) => {
+  const campaignsWithChildren: MetaCampaignRow[] = campaigns.map((campaign) => {
     const campaignAdsets = (adsetsByCampaign.get(campaign.id) || []).map((adset) => ({
       ...adset,
       ads: adsByAdset.get(adset.id) || [],
@@ -184,6 +470,39 @@ function buildInventory(campaigns: any[], adsets: any[], ads: any[]) {
   }
 }
 
+function classifyWorkflowFallback(
+  error: unknown,
+  cfg: ReturnType<typeof runtimeConfig>,
+): MetaAdsReportFallbackReason {
+  if (!normalizeWorkerBaseUrl(cfg.reportWorkerBaseUrl) || !String(cfg.reportWorkerApiToken || '').trim()) {
+    return 'worker_unconfigured'
+  }
+  const message = String((error as Error | null)?.message || '').toLowerCase()
+  if (
+    message.includes('401') ||
+    message.includes('403') ||
+    message.includes('unauthorized') ||
+    message.includes('forbidden')
+  ) {
+    return 'worker_unauthorized'
+  }
+  if (
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('timeout') ||
+    message.includes('503') ||
+    message.includes('502') ||
+    message.includes('500')
+  ) {
+    return 'worker_unavailable'
+  }
+  return 'worker_invalid_response'
+}
+
+function buildFallbackWarnings(reason: MetaAdsReportFallbackReason) {
+  return ['graph_fallback', reason]
+}
+
 async function readConnection(context: any, userId: string) {
   const bucket = getShareBucket(context)
   if (!bucket) throw new Error('SHARE_BUCKET_NOT_CONFIGURED')
@@ -199,27 +518,54 @@ async function writeConnection(context: any, userId: string, value: MetaAdsConne
 }
 
 async function fetchLiveAccounts(context: any, userId: string) {
+  const cfg = runtimeConfig(context)
   const connection = await readConnection(context, userId)
   if (!connection?.accessToken) return { connection: null, accounts: [] as any[] }
-  const accounts = await listMetaAdAccounts(connection.accessToken, runtimeConfig(context).graphVersion)
+  const accounts = await listMetaAdAccounts(connection.accessToken, cfg.graphVersion, cfg.appSecret)
   return { connection, accounts }
 }
 
 async function handleStatus(context: any) {
   const userOrRes = await requireSocialAdmin(context)
   if (userOrRes instanceof Response) return userOrRes
+  const cfg = runtimeConfig(context)
+  const missingConfig = resolveMissingConfig(context)
 
   let connection: MetaAdsConnection | null = null
   try {
     connection = await readConnection(context, userOrRes.id)
+    if (connection && shouldRevalidateConnection(connection)) {
+      try {
+        const tokenValidation = await validateMetaAccessToken(connection.accessToken, cfg)
+        connection = {
+          ...connection,
+          scopes: tokenValidation.grantedScopes,
+          grantedScopes: tokenValidation.grantedScopes,
+          expiresAt: tokenValidation.expiresAt || connection.expiresAt,
+          dataAccessExpiresAt: tokenValidation.dataAccessExpiresAt || connection.dataAccessExpiresAt,
+          lastValidatedAt: tokenValidation.lastValidatedAt,
+        }
+        await writeConnection(context, userOrRes.id, connection)
+      } catch (error: any) {
+        if (error instanceof MetaAdsRouteError && error.code === 'META_TOKEN_INVALID') {
+          const bucket = getShareBucket(context)
+          if (bucket) await deleteMetaAdsConnection(bucket, userOrRes.id)
+          connection = null
+        } else {
+          throw error
+        }
+      }
+    }
   } catch {
     connection = null
   }
 
   return json(200, {
     ok: true,
-    oauthConfigured: resolveMissingConfig(context).length === 0,
-    missingConfig: resolveMissingConfig(context),
+    oauthConfigured: missingConfig.length === 0,
+    missingConfig,
+    oauthMode: cfg.configId ? 'business-config' : 'scopes',
+    businessLoginConfigId: cfg.configId || null,
     connection: connectionSummary(connection),
   })
 }
@@ -228,7 +574,7 @@ async function handleOauthStart(context: any) {
   const userOrRes = await requireSocialAdmin(context)
   if (userOrRes instanceof Response) return userOrRes
   const cfg = runtimeConfig(context)
-  const missing = resolveMissingConfig(context)
+  const missing = resolveOauthStartMissingConfig(context)
   if (missing.length) {
     return apiError(503, 'META_ADS_OAUTH_NOT_CONFIGURED', {
       message: 'A integração Meta Ads ainda não está configurada neste runtime.',
@@ -245,9 +591,15 @@ async function handleOauthStart(context: any) {
     client_id: cfg.appId,
     redirect_uri: redirectUri,
     state,
-    scope: cfg.scopes,
     response_type: 'code',
+    display: 'popup',
   })
+  if (cfg.configId) {
+    qs.set('config_id', cfg.configId)
+    qs.set('override_default_response_type', 'true')
+  } else {
+    qs.set('scope', cfg.scopes)
+  }
   return Response.redirect(`https://www.facebook.com/${cfg.graphVersion}/dialog/oauth?${qs.toString()}`, 302)
 }
 
@@ -263,18 +615,84 @@ async function handleOauthCallback(context: any) {
   if (userOrRes instanceof Response) return userOrRes
   const cfg = runtimeConfig(context)
   const missing = resolveMissingConfig(context)
-  if (missing.length) return html(`<p>Meta Ads OAuth não configurado: ${esc(missing.join(', '))}</p>`)
+  if (missing.length) {
+    return buildOauthPopupResponse(
+      {
+        type: 'meta-ads:connected',
+        ok: false,
+        error: {
+          code: 'META_ADS_OAUTH_NOT_CONFIGURED',
+          message: 'A integração Meta Ads ainda não está pronta neste runtime.',
+          hint: `Faltam bindings/segredos obrigatórios: ${missing.join(', ')}`,
+        },
+      },
+      `Meta Ads OAuth não configurado: ${esc(missing.join(', '))}`,
+    )
+  }
 
   const url = new URL(context.request.url)
   const code = url.searchParams.get('code')
   const state = url.searchParams.get('state')
   const err = url.searchParams.get('error') || url.searchParams.get('error_reason')
   const errDesc = url.searchParams.get('error_description')
-  if (err) return html(`<p>Erro OAuth: ${esc(err)}<br/>${esc(errDesc)}</p>`)
-  if (!code || !state) return html('<p>Callback inválido (code/state ausentes).</p>')
+  if (err) {
+    return buildOauthPopupResponse(
+      {
+        type: 'meta-ads:connected',
+        ok: false,
+        error: {
+          code: String(err || 'OAUTH_DENIED'),
+          message: 'A Meta não concluiu a autorização da conta.',
+          hint: String(errDesc || 'Conclua a autorização no Facebook e tente novamente.'),
+        },
+      },
+      `Erro OAuth: ${esc(err)}${errDesc ? `<br/>${esc(errDesc)}` : ''}`,
+    )
+  }
+  if (!code || !state) {
+    return buildOauthPopupResponse(
+      {
+        type: 'meta-ads:connected',
+        ok: false,
+        error: {
+          code: 'OAUTH_CALLBACK_INVALID',
+          message: 'A Meta retornou uma resposta incompleta para o CRM.',
+          hint: 'Refaça a autenticação e confirme o login no Facebook.',
+        },
+      },
+      'Callback inválido (code/state ausentes).',
+    )
+  }
 
   const verified = await verifyState<OAuthState>(state, cfg.stateSecret)
-  if (!verified || verified.userId !== userOrRes.id) return html('<p>State inválido. Tente novamente.</p>')
+  if (!verified || verified.userId !== userOrRes.id) {
+    return buildOauthPopupResponse(
+      {
+        type: 'meta-ads:connected',
+        ok: false,
+        error: {
+          code: 'OAUTH_STATE_INVALID',
+          message: 'A resposta de autenticação da Meta não corresponde à sessão atual.',
+          hint: 'Feche a janela e reinicie o login pelo CRM.',
+        },
+      },
+      'State inválido. Tente novamente.',
+    )
+  }
+  if (Date.now() - Number(verified.iat || 0) > OAUTH_STATE_MAX_AGE_MS) {
+    return buildOauthPopupResponse(
+      {
+        type: 'meta-ads:connected',
+        ok: false,
+        error: {
+          code: 'OAUTH_STATE_EXPIRED',
+          message: 'A tentativa de login expirou antes de concluir a autorização.',
+          hint: 'Reinicie a conexão do Meta Ads pelo CRM.',
+        },
+      },
+      'A tentativa de login expirou. Reinicie a conexão pelo CRM.',
+    )
+  }
 
   const origin = new URL(context.request.url).origin
   const redirectUri = `${origin}/api/meta-ads/oauth/callback`
@@ -303,31 +721,47 @@ async function handleOauthCallback(context: any) {
     )
 
     const accessToken = String(longData?.access_token || '').trim() || shortToken
-    const profile = await getMetaProfile(accessToken, cfg.graphVersion)
-    const scopes = String(cfg.scopes || '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
+    const [profile, tokenValidation] = await Promise.all([
+      getMetaProfile(accessToken, cfg.graphVersion, cfg.appSecret),
+      validateMetaAccessToken(accessToken, cfg),
+    ])
 
     await writeConnection(context, userOrRes.id, {
       accessToken,
       tokenType: 'oauth',
       metaUserId: String(profile?.id || '').trim() || undefined,
       metaUserName: String(profile?.name || '').trim() || undefined,
-      scopes,
-      expiresAt: longData?.expires_in ? new Date(Date.now() + Number(longData.expires_in || 0) * 1000).toISOString() : undefined,
+      scopes: tokenValidation.grantedScopes,
+      grantedScopes: tokenValidation.grantedScopes,
+      expiresAt:
+        tokenValidation.expiresAt ||
+        (longData?.expires_in ? new Date(Date.now() + Number(longData.expires_in || 0) * 1000).toISOString() : undefined),
+      dataAccessExpiresAt: tokenValidation.dataAccessExpiresAt,
+      lastValidatedAt: tokenValidation.lastValidatedAt,
       updatedAt: new Date().toISOString(),
     })
 
-    return html(`
-      <script>
-        try { if (window.opener) window.opener.postMessage({ type: 'meta-ads:connected', ok: true }, window.location.origin); } catch {}
-        window.close();
-      </script>
-      <p>Conta Meta Ads conectada. Você pode fechar esta janela.</p>
-    `)
+    return buildOauthPopupResponse(
+      {
+        type: 'meta-ads:connected',
+        ok: true,
+      },
+      'Conta Meta Ads conectada. Você pode fechar esta janela.',
+    )
   } catch (error: any) {
-    return html(`<p>Falha ao conectar: ${esc(error?.message || 'Erro')}</p>`)
+    const routeError = error instanceof MetaAdsRouteError ? error : null
+    return buildOauthPopupResponse(
+      {
+        type: 'meta-ads:connected',
+        ok: false,
+        error: {
+          code: routeError?.code || 'META_OAUTH_CONNECT_FAILED',
+          message: routeError?.message || 'Falha ao conectar a conta Meta.',
+          hint: routeError?.hint || error?.message || 'Tente novamente e revise o app Meta configurado no CRM.',
+        },
+      },
+      `Falha ao conectar: ${esc(routeError?.message || error?.message || 'Erro')}`,
+    )
   }
 }
 
@@ -348,13 +782,22 @@ async function handleManualConnect(context: any) {
   }
 
   try {
-    const profile = await getMetaProfile(accessToken, runtimeConfig(context).graphVersion)
-    const accounts = await listMetaAdAccounts(accessToken, runtimeConfig(context).graphVersion)
+    const cfg = runtimeConfig(context)
+    const [profile, tokenValidation, accounts] = await Promise.all([
+      getMetaProfile(accessToken, cfg.graphVersion, cfg.appSecret),
+      validateMetaAccessToken(accessToken, cfg),
+      listMetaAdAccounts(accessToken, cfg.graphVersion, cfg.appSecret),
+    ])
     await writeConnection(context, userOrRes.id, {
       accessToken,
       tokenType: 'manual',
       metaUserId: String(profile?.id || '').trim() || undefined,
       metaUserName: String(profile?.name || '').trim() || undefined,
+      scopes: tokenValidation.grantedScopes,
+      grantedScopes: tokenValidation.grantedScopes,
+      expiresAt: tokenValidation.expiresAt,
+      dataAccessExpiresAt: tokenValidation.dataAccessExpiresAt,
+      lastValidatedAt: tokenValidation.lastValidatedAt,
       updatedAt: new Date().toISOString(),
       selectedAdAccountId: accounts[0]?.id || undefined,
     })
@@ -433,7 +876,8 @@ async function handleSelectAccount(context: any) {
       retryable: false,
     })
   }
-  const accounts = await listMetaAdAccounts(connection.accessToken, runtimeConfig(context).graphVersion)
+  const cfg = runtimeConfig(context)
+  const accounts = await listMetaAdAccounts(connection.accessToken, cfg.graphVersion, cfg.appSecret)
   const selected = accounts.find((account) => account.id === adAccountId)
   if (!selected) {
     return apiError(404, 'ACCOUNT_NOT_FOUND', {
@@ -487,14 +931,25 @@ async function handleSummary(context: any) {
   const selected = await withSelectedAccount(context, userOrRes.id)
   if ('error' in selected) return selected.error
 
+  const cfg = runtimeConfig(context)
   const range = parseRange(new URL(context.request.url))
+  try {
+    const workflowSummary = await fetchWorkflowSummary(selected.adAccountId, range, cfg)
+    if (workflowSummary) {
+      return json(200, workflowSummary)
+    }
+  } catch {
+    // Fallback seguro para Graph quando o worker consolidado não está disponível.
+  }
+
   const [summary, campaigns] = await Promise.all([
-    getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, runtimeConfig(context).graphVersion),
-    listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, runtimeConfig(context).graphVersion),
+    getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, cfg.graphVersion, cfg.appSecret),
+    listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
   ])
 
   return json(200, {
     ...summary,
+    source: 'graph',
     activeCampaigns: campaigns.filter((campaign) => String(campaign.status || '').toUpperCase() === 'ACTIVE').length,
   })
 }
@@ -505,14 +960,121 @@ async function handleTrend(context: any) {
   const selected = await withSelectedAccount(context, userOrRes.id)
   if ('error' in selected) return selected.error
 
+  const cfg = runtimeConfig(context)
   const range = parseRange(new URL(context.request.url))
   const trend = await getMetaAdsTrend(
     selected.connection.accessToken,
     selected.adAccountId,
     range,
-    runtimeConfig(context).graphVersion,
+    cfg.graphVersion,
+    cfg.appSecret,
   )
   return json(200, trend)
+}
+
+async function handleReport(context: any) {
+  const userOrRes = await requireSocialAdmin(context)
+  if (userOrRes instanceof Response) return userOrRes
+  const selected = await withSelectedAccount(context, userOrRes.id)
+  if ('error' in selected) return selected.error
+
+  const cfg = runtimeConfig(context)
+  const range = parseRange(new URL(context.request.url))
+  const reportWindow = resolveWorkflowSummaryWindow(range)
+
+  try {
+    const report = await fetchWorkflowReport(selected.adAccountId, range, cfg)
+    if (report) {
+      return json(200, report)
+    }
+  } catch (error) {
+    const fallbackReason = classifyWorkflowFallback(error, cfg)
+    const [summary, campaigns] = await Promise.all([
+      getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, cfg.graphVersion, cfg.appSecret),
+      listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
+    ])
+
+    return json(200, {
+      ok: true,
+      source: 'graph-fallback',
+      fallbackReason,
+      window: reportWindow,
+      summary: {
+        ...summary,
+        source: 'graph',
+        activeCampaigns: campaigns.filter((campaign) => String(campaign.status || '').toUpperCase() === 'ACTIVE').length,
+      },
+      metadata: {
+        reportDate: String(range.until || '').trim(),
+        runsCount: 0,
+        source: 'graph',
+      },
+      campaigns: campaigns.map((campaign) => ({
+        campaignId: campaign.id,
+        campaignName: campaign.name || campaign.id,
+        status: String(campaign.effective_status || campaign.status || '').trim().toUpperCase() || 'UNKNOWN',
+        spend: 0,
+        reach: 0,
+        impressions: 0,
+        clicks: 0,
+        linkClicks: 0,
+        conversations: 0,
+        ctr: 0,
+        linkCtr: 0,
+        cpc: 0,
+        linkCpc: 0,
+        cpm: 0,
+        cpp: 0,
+        frequency: 0,
+      })),
+      adSets: [],
+      ads: [],
+      warnings: buildFallbackWarnings(fallbackReason),
+    })
+  }
+
+  const [summary, campaigns] = await Promise.all([
+    getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, cfg.graphVersion, cfg.appSecret),
+    listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
+  ])
+
+  return json(200, {
+    ok: true,
+    source: 'graph-fallback',
+    fallbackReason: 'worker_unconfigured',
+    window: reportWindow,
+    summary: {
+      ...summary,
+      source: 'graph',
+      activeCampaigns: campaigns.filter((campaign) => String(campaign.status || '').toUpperCase() === 'ACTIVE').length,
+    },
+    metadata: {
+      reportDate: String(range.until || '').trim(),
+      runsCount: 0,
+      source: 'graph',
+    },
+    campaigns: campaigns.map((campaign) => ({
+      campaignId: campaign.id,
+      campaignName: campaign.name || campaign.id,
+      status: String(campaign.effective_status || campaign.status || '').trim().toUpperCase() || 'UNKNOWN',
+      spend: 0,
+      reach: 0,
+      impressions: 0,
+      clicks: 0,
+      linkClicks: 0,
+      conversations: 0,
+      ctr: 0,
+      linkCtr: 0,
+      cpc: 0,
+      linkCpc: 0,
+      cpm: 0,
+      cpp: 0,
+      frequency: 0,
+    })),
+    adSets: [],
+    ads: [],
+    warnings: buildFallbackWarnings('worker_unconfigured'),
+  })
 }
 
 async function handleInventory(context: any) {
@@ -521,10 +1083,11 @@ async function handleInventory(context: any) {
   const selected = await withSelectedAccount(context, userOrRes.id)
   if ('error' in selected) return selected.error
 
+  const cfg = runtimeConfig(context)
   const [campaigns, adSets, ads] = await Promise.all([
-    listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, runtimeConfig(context).graphVersion),
-    listMetaAdSets(selected.connection.accessToken, selected.adAccountId, runtimeConfig(context).graphVersion),
-    listMetaAds(selected.connection.accessToken, selected.adAccountId, runtimeConfig(context).graphVersion),
+    listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
+    listMetaAdSets(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
+    listMetaAds(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
   ])
 
   return json(200, {
@@ -551,6 +1114,7 @@ export async function onRequest(context: any): Promise<Response> {
     if (method === 'POST' && (rest === '/ad-accounts/select' || rest === '/ad-accounts/select/')) return handleSelectAccount(context)
     if (method === 'GET' && (rest === '/summary' || rest === '/summary/')) return handleSummary(context)
     if (method === 'GET' && (rest === '/trend' || rest === '/trend/')) return handleTrend(context)
+    if (method === 'GET' && (rest === '/report' || rest === '/report/')) return handleReport(context)
     if (method === 'GET' && (rest === '/inventory' || rest === '/inventory/')) return handleInventory(context)
 
     return apiError(404, 'NOT_FOUND', {
@@ -559,6 +1123,23 @@ export async function onRequest(context: any): Promise<Response> {
       retryable: false,
     })
   } catch (error: any) {
+    const mapped = normalizeUnhandledMetaError(error)
+    if (mapped) {
+      return apiError(mapped.status, mapped.code, {
+        message: mapped.message,
+        hint: mapped.hint,
+        retryable: mapped.retryable,
+        extra: mapped.extra,
+      })
+    }
+    if (error instanceof MetaAdsRouteError) {
+      return apiError(error.status, error.code, {
+        message: error.message,
+        hint: error.hint,
+        retryable: error.retryable,
+        extra: error.extra,
+      })
+    }
     return apiError(500, 'META_ADS_INTERNAL_ERROR', {
       message: 'A API Meta Ads encontrou um erro inesperado.',
       hint: error?.message || 'Erro interno.',

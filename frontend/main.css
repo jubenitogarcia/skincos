@@ -541,6 +541,17 @@ body {
   box-shadow: 0 16px 42px rgba(2, 6, 23, 0.35);
 }
 
+.meta-ads-surface .glass-card {
+  background: rgba(10, 15, 29, 0.78);
+  border-color: rgba(51, 65, 85, 0.82);
+  box-shadow: 0 20px 80px rgba(2, 6, 23, 0.4);
+}
+
+.meta-ads-surface .glass-morphism {
+  background: rgba(15, 23, 42, 0.5);
+  border-color: rgba(71, 85, 105, 0.45);
+}
+
 .escala-surface .glass-morphism {
   background: rgba(15, 23, 42, 0.4);
   border-color: rgba(148, 163, 184, 0.25);

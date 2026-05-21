@@ -7,7 +7,10 @@ export type MetaAdsConnection = {
   metaUserId?: string
   metaUserName?: string
   scopes?: string[]
+  grantedScopes?: string[]
   expiresAt?: string
+  dataAccessExpiresAt?: string
+  lastValidatedAt?: string
   selectedAdAccountId?: string
   updatedAt: string
 }
