@@ -284,7 +284,7 @@ test.describe('meta ads', () => {
     await expect(page.getByRole('combobox')).toContainText('Conta Principal')
     await expect(page.getByLabel('Atualizar')).toBeVisible({ timeout: 30000 })
     await expect(page.getByText('Tendência de gasto')).toBeVisible()
-    await expect(page.getByText('Conversas iniciadas').first()).toBeVisible()
+    await expect(page.getByText('Conversa').first()).toBeVisible()
     await expect(page.getByText('CTR').first()).toBeVisible()
     await expect(page.getByText('Consolidado do workflow disponível')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Campanha Primavera' })).toBeVisible()

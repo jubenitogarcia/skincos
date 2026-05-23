@@ -144,6 +144,8 @@ export type MetaAdsReportCampaign = {
   impressions: number
   clicks: number
   linkClicks?: number
+  engagement?: number
+  instagramProfileVisits?: number
   conversations: number
   ctr: number
   linkCtr?: number
@@ -164,6 +166,8 @@ export type MetaAdsReportAdSet = {
   impressions: number
   clicks: number
   linkClicks?: number
+  engagement?: number
+  instagramProfileVisits?: number
   conversations: number
   ctr: number
   linkCtr?: number
@@ -186,6 +190,8 @@ export type MetaAdsReportAd = {
   impressions: number
   clicks: number
   linkClicks?: number
+  engagement?: number
+  instagramProfileVisits?: number
   conversations: number
   ctr: number
   linkCtr?: number
