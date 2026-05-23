@@ -22,7 +22,7 @@ import { dispatchInsumosHeaderAction, subscribeInsumosHeaderState } from '@/insu
 import type { InsumosHeaderState, InsumosOverviewPeriod } from '@/insumosTypes'
 import { dispatchMetaAdsHeaderAction, subscribeMetaAdsHeaderState } from '@/metaAdsHeaderBridge'
 import type { MetaAdsHeaderState } from '@/metaAdsTypes'
-import { CalendarX2, CheckCircle2, Circle, CircleDot, Clock3, Download, Pencil, RefreshCw, Settings2, Shield, Sparkles } from 'lucide-react'
+import { CalendarX2, CheckCircle2, Circle, CircleDot, Download, Pencil, RefreshCw, Settings2, Shield, Sparkles } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -1400,20 +1400,6 @@ export default function AppFunctionalNeatlab() {
                                                     </TooltipContent>
                                                 </Tooltip>
                                             </div>
-                                            {metaAdsHeaderState?.sessionUpdatedAt ? (
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <span
-                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-blue-50"
-                                                        >
-                                                            <Clock3 className="size-3.5" aria-hidden="true" />
-                                                        </span>
-                                                    </TooltipTrigger>
-                                                    <TooltipContent>
-                                                        Ultima atualizacao de sessao: {new Date(metaAdsHeaderState.sessionUpdatedAt).toLocaleString('pt-BR')}
-                                                    </TooltipContent>
-                                                </Tooltip>
-                                            ) : null}
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
                                                     <Button
@@ -1444,7 +1430,14 @@ export default function AppFunctionalNeatlab() {
                                                     </Button>
                                                 </TooltipTrigger>
                                                 <TooltipContent>
-                                                    Atualizar
+                                                    <div className="space-y-0.5">
+                                                        <div>Atualizar painel</div>
+                                                        <div className="text-[11px] text-slate-300">
+                                                            {metaAdsHeaderState?.sessionUpdatedAt
+                                                                ? `Última atualização: ${new Date(metaAdsHeaderState.sessionUpdatedAt).toLocaleString('pt-BR')}`
+                                                                : 'Sem atualização registrada nesta sessão.'}
+                                                        </div>
+                                                    </div>
                                                 </TooltipContent>
                                             </Tooltip>
                                         </div>
