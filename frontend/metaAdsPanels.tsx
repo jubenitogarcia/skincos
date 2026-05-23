@@ -1,13 +1,15 @@
-import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts'
+import { CartesianGrid, LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { EntityDetailModal, type EntityDetailSection } from '@/EntityDetailModal'
+import { Popover, PopoverContent, PopoverTrigger } from '@/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { Switch } from '@/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
 import { Textarea } from '@/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/tooltip'
@@ -29,18 +31,26 @@ import { describeMetaAdAccountStatus } from '@/metaAdsState'
 import {
   ArrowClockwise,
   CaretDown,
+  CaretUp,
   CaretRight,
+  CurrencyDollar,
   CheckCircle,
+  Eye,
   FacebookLogo,
   FadersHorizontal,
   ChatCircleDots,
+  Heart,
+  InstagramLogo,
   Link,
   Lock,
+  EyeSlash,
   PauseCircle,
   PresentationChart,
   ShieldCheck,
   Spinner,
   Target,
+  TrendUp,
+  Users,
   WarningCircle,
 } from '@phosphor-icons/react'
 
@@ -74,6 +84,71 @@ type MetaAdsInventorySortKey =
   | 'frequency'
   | 'cul'
 type MetaAdsInventorySortDir = 'asc' | 'desc'
+type MetaAdsOverviewMetricKey =
+  | 'spend'
+  | 'conversations'
+  | 'cpcv'
+  | 'clicks'
+  | 'reach'
+  | 'impressions'
+  | 'engagement'
+  | 'redirect'
+  | 'ctr'
+  | 'cpc'
+  | 'cpm'
+  | 'cpp'
+  | 'frequency'
+type MetaAdsOverviewMetricSize = 'compact' | 'wide'
+type MetaAdsOverviewMetricLayout = {
+  key: MetaAdsOverviewMetricKey
+  visible: boolean
+  size: MetaAdsOverviewMetricSize
+}
+
+const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v1'
+const DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT: MetaAdsOverviewMetricLayout[] = [
+  { key: 'spend', visible: true, size: 'compact' },
+  { key: 'conversations', visible: true, size: 'compact' },
+  { key: 'cpcv', visible: true, size: 'compact' },
+  { key: 'clicks', visible: true, size: 'compact' },
+  { key: 'reach', visible: true, size: 'compact' },
+  { key: 'impressions', visible: true, size: 'compact' },
+  { key: 'engagement', visible: true, size: 'compact' },
+  { key: 'redirect', visible: true, size: 'compact' },
+  { key: 'ctr', visible: true, size: 'compact' },
+  { key: 'cpc', visible: true, size: 'compact' },
+  { key: 'cpm', visible: true, size: 'compact' },
+  { key: 'cpp', visible: true, size: 'compact' },
+  { key: 'frequency', visible: true, size: 'compact' },
+]
+
+function parseMetaAdsOverviewMetricLayout(raw: string | null | undefined): MetaAdsOverviewMetricLayout[] {
+  try {
+    const parsed = raw ? JSON.parse(raw) : null
+    const items = Array.isArray(parsed) ? parsed : []
+    const seen = new Set<MetaAdsOverviewMetricKey>()
+    const normalized = items
+      .map((item) => {
+        const key = String(item?.key || '').trim() as MetaAdsOverviewMetricKey
+        if (!DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT.some((entry) => entry.key === key)) return null
+        if (seen.has(key)) return null
+        seen.add(key)
+        return {
+          key,
+          visible: item?.visible !== false,
+          size: item?.size === 'wide' ? 'wide' : 'compact',
+        } satisfies MetaAdsOverviewMetricLayout
+      })
+      .filter(Boolean) as MetaAdsOverviewMetricLayout[]
+
+    for (const fallback of DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT) {
+      if (!seen.has(fallback.key)) normalized.push(fallback)
+    }
+    return normalized.length ? normalized : DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT
+  } catch {
+    return DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT
+  }
+}
 
 function formatCurrency(value: number, currency = 'USD') {
   try {
@@ -94,6 +169,59 @@ function formatNumber(value: number) {
 function formatPercent(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
   return `${Number(value).toFixed(2)}%`
+}
+
+function compareMetaAdsText(left: string, right: string) {
+  return left.localeCompare(right, 'pt-BR', { sensitivity: 'base' })
+}
+
+function compareMetaAdsMaybeNumber(left?: number | null, right?: number | null) {
+  const leftMissing = left === undefined || left === null || Number.isNaN(Number(left))
+  const rightMissing = right === undefined || right === null || Number.isNaN(Number(right))
+  if (leftMissing && rightMissing) return 0
+  if (leftMissing) return 1
+  if (rightMissing) return -1
+  return Number(left) - Number(right)
+}
+
+function metaAdsStatusSortRank(status?: string) {
+  const normalized = String(status || '').toUpperCase()
+  if (normalized === 'ACTIVE') return 0
+  if (normalized === 'PAUSED') return 1
+  if (normalized === 'ARCHIVED') return 2
+  return 3
+}
+
+function parseTrendDay(value: string) {
+  const parsed = new Date(`${value}T12:00:00`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function formatTrendAxisLabel(value: string, totalDays: number) {
+  const parsed = parseTrendDay(value)
+  if (!parsed) return value
+  if (totalDays > 35) return format(parsed, 'dd MMM', { locale: ptBR })
+  return format(parsed, 'dd/MM', { locale: ptBR })
+}
+
+function formatTrendTooltipLabel(value: string) {
+  const parsed = parseTrendDay(value)
+  if (!parsed) return value
+  return format(parsed, "dd 'de' MMMM 'de' yyyy", { locale: ptBR })
+}
+
+function buildTrendTicks(points: MetaAdsTrendPoint[]) {
+  const data = Array.isArray(points) ? points : []
+  if (data.length <= 7) return data.map((point) => point.day)
+  const maxTicks = data.length > 45 ? 5 : data.length > 21 ? 6 : 8
+  const step = Math.max(1, Math.ceil((data.length - 1) / (maxTicks - 1)))
+  const ticks: string[] = []
+  for (let index = 0; index < data.length; index += step) {
+    ticks.push(data[index].day)
+  }
+  const last = data[data.length - 1]?.day
+  if (last && ticks[ticks.length - 1] !== last) ticks.push(last)
+  return [...new Set(ticks)]
 }
 
 function MetaAdsHoverTooltip({
@@ -142,13 +270,14 @@ function MetaAdsEntityLevelBadge({
   toneClass: string
 }) {
   return (
-    <Badge
-      className={`h-9 w-9 justify-center rounded-full px-0 ${toneClass}`}
-      title={label}
-      aria-label={label}
-    >
-      <MetaAdsEntityGlyph kind={kind} className="h-4 w-4" />
-    </Badge>
+    <MetaAdsHoverTooltip content={label}>
+      <Badge
+        className={`h-9 w-9 justify-center rounded-full px-0 ${toneClass}`}
+        aria-label={label}
+      >
+        <MetaAdsEntityGlyph kind={kind} className="h-4 w-4" />
+      </Badge>
+    </MetaAdsHoverTooltip>
   )
 }
 
@@ -217,12 +346,12 @@ function MetaAdsStatusBadge({ status }: { status?: string }) {
   const Icon = normalized === 'ACTIVE' ? CheckCircle : normalized === 'PAUSED' ? PauseCircle : WarningCircle
   return (
     <MetaAdsHoverTooltip content={statusTooltip(status)}>
-      <Badge
-        className={`h-10 min-w-10 justify-center rounded-full px-0 ${statusTone(status)}`}
+      <span
+        className={`inline-flex h-10 w-10 items-center justify-center rounded-full ${normalized === 'ACTIVE' ? 'text-emerald-300' : normalized === 'PAUSED' ? 'text-amber-200' : 'text-slate-300'}`}
         aria-label={statusTooltip(status)}
       >
-        <Icon className="h-4 w-4" weight="fill" aria-hidden="true" />
-      </Badge>
+        <Icon className="h-5 w-5" weight="fill" aria-hidden="true" />
+      </span>
     </MetaAdsHoverTooltip>
   )
 }
@@ -298,26 +427,126 @@ function describeObjective(objective?: string | null) {
 
 function MetaAdsObjectiveBadge({ objective }: { objective?: string | null }) {
   const { title, description, icon: Icon, toneClass } = describeObjective(objective)
+  const iconToneClass = toneClass.includes('sky')
+    ? 'text-sky-300'
+    : toneClass.includes('emerald')
+      ? 'text-emerald-300'
+      : toneClass.includes('violet')
+        ? 'text-violet-300'
+        : toneClass.includes('amber')
+          ? 'text-amber-300'
+          : 'text-slate-300'
   return (
     <MetaAdsTableTooltip label={title} description={description}>
-      <Badge
-        className={`h-10 min-w-10 justify-center rounded-full px-0 ${toneClass}`}
+      <span
+        className={`inline-flex h-10 w-10 items-center justify-center rounded-full ${iconToneClass}`}
         aria-label={`${title}: ${description}`}
       >
-        <Icon className="h-4 w-4" weight="fill" aria-hidden="true" />
-      </Badge>
+        <Icon className="h-5 w-5" weight="fill" aria-hidden="true" />
+      </span>
     </MetaAdsTableTooltip>
   )
 }
 
-function formatDualMetric(primary?: number | null, secondary?: number | null, kind: 'number' | 'percent' | 'currency' = 'number') {
-  const formatValue = (value?: number | null) => {
-    if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
-    if (kind === 'percent') return formatPercent(value)
-    if (kind === 'currency') return formatCurrency(value)
-    return formatNumber(value)
-  }
-  return `${formatValue(primary)} / ${formatValue(secondary)}`
+function formatMetricValue(value?: number | null, kind: 'number' | 'percent' | 'currency' | 'decimal' = 'number', currency = 'USD') {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  if (kind === 'percent') return formatPercent(value)
+  if (kind === 'currency') return formatCurrency(value, currency)
+  if (kind === 'decimal') return Number(value).toFixed(2)
+  return formatNumber(value)
+}
+
+function MetaAdsDualMetricCell({
+  primary,
+  secondary,
+  kind,
+}: {
+  primary?: number | null
+  secondary?: number | null
+  kind: 'number' | 'percent' | 'currency'
+}) {
+  const primaryValue =
+    primary === null || primary === undefined || Number.isNaN(Number(primary))
+      ? '—'
+      : kind === 'percent'
+        ? formatPercent(primary)
+        : kind === 'currency'
+          ? formatCurrency(primary)
+          : formatNumber(primary)
+  const secondaryValue =
+    secondary === null || secondary === undefined || Number.isNaN(Number(secondary))
+      ? '—'
+      : kind === 'percent'
+        ? formatPercent(secondary)
+        : kind === 'currency'
+          ? formatCurrency(secondary)
+          : formatNumber(secondary)
+
+  return (
+    <div className="flex flex-col items-center justify-center leading-tight">
+      <span className="text-[13px] font-medium text-slate-100 sm:text-sm">{primaryValue}</span>
+      <span className="mt-0.5 text-[10px] text-slate-400 sm:text-[11px]">{secondaryValue}</span>
+    </div>
+  )
+}
+
+function MetaAdsMetricTile({
+  label,
+  tooltipLabel,
+  description,
+  subtitle,
+  value,
+  icon: Icon,
+  toneClass,
+  size,
+}: {
+  label: string
+  tooltipLabel?: string
+  description?: string
+  subtitle?: string
+  value: ReactNode
+  icon: typeof CurrencyDollar
+  toneClass: string
+  size?: MetaAdsOverviewMetricSize
+}) {
+  const labelNode = <div className="text-[9px] font-medium uppercase tracking-[0.14em] text-slate-400 sm:text-[10px]">{label}</div>
+  const iconNode = (
+    <div className={`inline-flex h-6 w-6 items-center justify-center rounded-full border sm:h-7 sm:w-7 ${toneClass}`}>
+      <Icon className="h-3 w-3" weight="fill" />
+    </div>
+  )
+  const content = (
+    <div className="flex flex-col items-center gap-1.5">
+      {iconNode}
+      <div className="space-y-0.5">
+        {labelNode}
+        {subtitle ? <div className="text-[9px] leading-tight text-slate-500">{subtitle}</div> : null}
+      </div>
+    </div>
+  )
+  const body = (
+    <CardContent
+      tabIndex={tooltipLabel || description ? 0 : undefined}
+      className="flex min-h-[62px] flex-col items-center justify-center gap-1 p-2 text-center outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 sm:min-h-[68px]"
+    >
+      {content}
+      <div className="space-y-0.5">
+        <div className="text-[1.15rem] font-semibold leading-none text-white sm:text-[1.35rem] lg:text-[1.45rem]">{value}</div>
+      </div>
+    </CardContent>
+  )
+
+  return (
+    <Card className={`${panelClass} ${size === 'wide' ? 'col-span-2' : ''}`}>
+      {tooltipLabel || description ? (
+        <MetaAdsTableTooltip label={tooltipLabel || label} description={description}>
+          {body}
+        </MetaAdsTableTooltip>
+      ) : (
+        body
+      )}
+    </Card>
+  )
 }
 
 function describeAdAccountStatus(account: MetaAdAccount) {
@@ -433,10 +662,12 @@ export function MetaAdsStatusHero({
                   {selectedAccount.currency || '—'} · {selectedAccount.timezone_name || 'sem timezone'}
                 </Badge>
                 {selectedAccountStatus ? (
-                  <Badge className={selectedAccountStatus.tone} title={selectedAccountStatus.detail}>
-                    <ShieldCheck className="mr-1 h-4 w-4" />
-                    {selectedAccountStatus.label}
-                  </Badge>
+                  <MetaAdsHoverTooltip content={selectedAccountStatus.detail}>
+                    <Badge className={selectedAccountStatus.tone}>
+                      <ShieldCheck className="mr-1 h-4 w-4" />
+                      {selectedAccountStatus.label}
+                    </Badge>
+                  </MetaAdsHoverTooltip>
                 ) : null}
               </>
             ) : (
@@ -894,9 +1125,11 @@ export function MetaAdsAccountsPanel({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge className={accountStatus.tone} title={accountStatus.detail}>
-                        {accountStatus.label}
-                      </Badge>
+                      <MetaAdsHoverTooltip content={accountStatus.detail}>
+                        <Badge className={accountStatus.tone}>
+                          {accountStatus.label}
+                        </Badge>
+                      </MetaAdsHoverTooltip>
                     </TableCell>
                     <TableCell className="text-slate-300">{account.currency || '—'}</TableCell>
                     <TableCell className="text-slate-300">{account.timezone_name || '—'}</TableCell>
@@ -935,73 +1168,410 @@ export function MetaAdsOverviewPanel({
   overviewError: MetaAdsApiError | null
   onRetry?: () => void
 }) {
+  const [metricLayout, setMetricLayout] = useState<MetaAdsOverviewMetricLayout[]>(() => {
+    try {
+      if (typeof window === 'undefined') return DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT
+      return parseMetaAdsOverviewMetricLayout(window.localStorage.getItem(META_ADS_OVERVIEW_METRIC_LAYOUT_KEY))
+    } catch {
+      return DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT
+    }
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(META_ADS_OVERVIEW_METRIC_LAYOUT_KEY, JSON.stringify(metricLayout))
+    } catch {
+      // ignore
+    }
+  }, [metricLayout])
+
   const reportSummary = report?.summary || null
   const primarySummary = reportSummary || summary
+  const trendTicks = useMemo(() => buildTrendTicks(trend), [trend])
+  const trendAxisFormatter = useMemo(
+    () => (value: string) => formatTrendAxisLabel(value, trend.length),
+    [trend.length],
+  )
+  const reportTotals = useMemo(() => {
+    const campaigns = report?.campaigns || []
+    return campaigns.reduce(
+      (acc, campaign) => {
+        if (campaign.reach !== null && campaign.reach !== undefined) {
+          acc.hasReach = true
+          acc.reach += Number(campaign.reach || 0)
+        }
+        if (campaign.linkClicks !== null && campaign.linkClicks !== undefined) {
+          acc.hasLinkClicks = true
+          acc.linkClicks += Number(campaign.linkClicks || 0)
+        }
+        if (campaign.engagement !== null && campaign.engagement !== undefined) {
+          acc.hasEngagement = true
+          acc.engagement += Number(campaign.engagement || 0)
+        }
+        if (campaign.instagramProfileVisits !== null && campaign.instagramProfileVisits !== undefined) {
+          acc.hasInstagramProfileVisits = true
+          acc.instagramProfileVisits += Number(campaign.instagramProfileVisits || 0)
+        }
+        return acc
+      },
+      {
+        reach: 0,
+        linkClicks: 0,
+        engagement: 0,
+        instagramProfileVisits: 0,
+        hasReach: false,
+        hasLinkClicks: false,
+        hasEngagement: false,
+        hasInstagramProfileVisits: false,
+      },
+    )
+  }, [report?.campaigns])
   const ctr =
     Number(primarySummary?.impressions || 0) > 0
       ? (Number(primarySummary?.clicks || 0) / Number(primarySummary?.impressions || 0)) * 100
+      : 0
+  const linkCtr =
+    Number(primarySummary?.impressions || 0) > 0
+      ? (Number(reportTotals.linkClicks || 0) / Number(primarySummary?.impressions || 0)) * 100
       : 0
   const cpc =
     Number(primarySummary?.clicks || 0) > 0
       ? Number(primarySummary?.spend || 0) / Number(primarySummary?.clicks || 0)
       : 0
+  const linkCpc =
+    Number(reportTotals.linkClicks || 0) > 0
+      ? Number(primarySummary?.spend || 0) / Number(reportTotals.linkClicks || 0)
+      : 0
+  const cpp =
+    Number(reportTotals.reach || 0) > 0
+      ? Number(primarySummary?.spend || 0) / Number(reportTotals.reach || 0)
+      : 0
+  const frequency =
+    Number(reportTotals.reach || 0) > 0
+      ? Number(primarySummary?.impressions || 0) / Number(reportTotals.reach || 0)
+      : 0
   const cpm =
     Number(primarySummary?.impressions || 0) > 0
       ? (Number(primarySummary?.spend || 0) / Number(primarySummary?.impressions || 0)) * 1000
       : 0
+  const metricTiles = useMemo(
+    () => [
+      {
+        key: 'spend' as const,
+        label: 'Investimento',
+        tooltipLabel: 'Investimento',
+        description: 'Valor total investido pela conta no período selecionado.',
+        value: formatMetricValue(primarySummary?.spend ?? 0, 'currency', selectedAccount.currency || 'USD'),
+        icon: CurrencyDollar,
+        toneClass: 'border-emerald-500/25 bg-emerald-500/12 text-emerald-100',
+      },
+      {
+        key: 'conversations' as const,
+        label: 'Conversa',
+        tooltipLabel: 'Conversas iniciadas',
+        description: 'Quantidade de conversas atribuídas à conta no período selecionado.',
+        value: formatMetricValue(reportSummary?.conversations ?? primarySummary?.conversations ?? 0),
+        icon: ChatCircleDots,
+        toneClass: 'border-sky-500/25 bg-sky-500/12 text-sky-100',
+      },
+      {
+        key: 'cpcv' as const,
+        label: 'CPCv',
+        tooltipLabel: 'Custo por conversa',
+        description: 'Investimento dividido pela quantidade de conversas iniciadas.',
+        subtitle: 'Custo por conversa',
+        value: formatMetricValue(reportSummary?.avgCostConversation ?? primarySummary?.avgCostConversation ?? 0, 'currency', selectedAccount.currency || 'USD'),
+        icon: ArrowClockwise,
+        toneClass: 'border-cyan-500/25 bg-cyan-500/12 text-cyan-100',
+      },
+      {
+        key: 'clicks' as const,
+        label: 'Clique / link',
+        tooltipLabel: 'Cliques / Cliques em link',
+        description: 'Cliques totais e cliques em link registrados para a conta no período.',
+        value: (
+          <MetaAdsDualMetricCell
+            primary={primarySummary?.clicks ?? 0}
+            secondary={reportTotals.hasLinkClicks ? reportTotals.linkClicks : null}
+            kind="number"
+          />
+        ),
+        icon: PresentationChart,
+        toneClass: 'border-indigo-500/25 bg-indigo-500/12 text-indigo-100',
+      },
+      {
+        key: 'reach' as const,
+        label: 'Alcance',
+        tooltipLabel: 'Alcance',
+        description: 'Quantidade de pessoas alcançadas no período selecionado.',
+        value: reportTotals.hasReach ? formatMetricValue(reportTotals.reach) : '—',
+        icon: Users,
+        toneClass: 'border-blue-500/25 bg-blue-500/12 text-blue-100',
+      },
+      {
+        key: 'impressions' as const,
+        label: 'Impressão',
+        tooltipLabel: 'Impressões',
+        description: 'Total de impressões registradas para a conta no período.',
+        value: formatMetricValue(primarySummary?.impressions ?? 0),
+        icon: Eye,
+        toneClass: 'border-violet-500/25 bg-violet-500/12 text-violet-100',
+      },
+      {
+        key: 'engagement' as const,
+        label: 'Engajamento',
+        tooltipLabel: 'Engajamento',
+        description: 'Interações totais registradas para a conta, quando a fonte entrega essa métrica.',
+        value: reportTotals.hasEngagement ? formatMetricValue(reportTotals.engagement) : '—',
+        icon: Heart,
+        toneClass: 'border-pink-500/25 bg-pink-500/12 text-pink-100',
+      },
+      {
+        key: 'redirect' as const,
+        label: 'Redirecionamento',
+        tooltipLabel: 'Redirecionamento',
+        description: 'Redirecionamentos ou visitas de perfil do Instagram, quando disponíveis.',
+        value: reportTotals.hasInstagramProfileVisits ? formatMetricValue(reportTotals.instagramProfileVisits) : '—',
+        icon: InstagramLogo,
+        toneClass: 'border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-100',
+      },
+      {
+        key: 'ctr' as const,
+        label: 'CTR / CTRL',
+        tooltipLabel: 'CTR / CTR link',
+        description: 'Taxa de clique geral e taxa de clique em link.',
+        subtitle: 'Taxa de clique',
+        value: (
+          <MetaAdsDualMetricCell
+            primary={ctr}
+            secondary={reportTotals.hasLinkClicks ? linkCtr : null}
+            kind="percent"
+          />
+        ),
+        icon: Target,
+        toneClass: 'border-amber-500/25 bg-amber-500/12 text-amber-100',
+      },
+      {
+        key: 'cpc' as const,
+        label: 'CPC / CPCL',
+        tooltipLabel: 'CPC / CPC link',
+        description: 'Custo por clique geral e custo por clique em link.',
+        subtitle: 'Custo por clique',
+        value: (
+          <MetaAdsDualMetricCell
+            primary={cpc}
+            secondary={reportTotals.hasLinkClicks ? linkCpc : null}
+            kind="currency"
+          />
+        ),
+        icon: CurrencyDollar,
+        toneClass: 'border-orange-500/25 bg-orange-500/12 text-orange-100',
+      },
+      {
+        key: 'cpm' as const,
+        label: 'CPM',
+        tooltipLabel: 'Custo por mil impressões',
+        description: 'Investimento necessário para gerar mil impressões.',
+        subtitle: 'Custo por mil',
+        value: formatMetricValue(cpm, 'currency', selectedAccount.currency || 'USD'),
+        icon: TrendUp,
+        toneClass: 'border-rose-500/25 bg-rose-500/12 text-rose-100',
+      },
+      {
+        key: 'cpp' as const,
+        label: 'CPP',
+        tooltipLabel: 'Custo por pessoa',
+        description: 'Investimento dividido pela quantidade de pessoas alcançadas.',
+        subtitle: 'Custo por pessoa',
+        value: reportTotals.hasReach ? formatMetricValue(cpp, 'currency', selectedAccount.currency || 'USD') : '—',
+        icon: Users,
+        toneClass: 'border-teal-500/25 bg-teal-500/12 text-teal-100',
+      },
+      {
+        key: 'frequency' as const,
+        label: 'Frequência',
+        tooltipLabel: 'Frequência',
+        description: 'Média de exibições por pessoa alcançada.',
+        value: reportTotals.hasReach ? formatMetricValue(frequency, 'decimal') : '—',
+        icon: ArrowClockwise,
+        toneClass: 'border-lime-500/25 bg-lime-500/12 text-lime-100',
+      },
+    ],
+    [
+      cpc,
+      cpm,
+      cpp,
+      ctr,
+      frequency,
+      linkCpc,
+      linkCtr,
+      primarySummary?.avgCostConversation,
+      primarySummary?.clicks,
+      primarySummary?.conversations,
+      primarySummary?.impressions,
+      primarySummary?.spend,
+      reportSummary?.avgCostConversation,
+      reportSummary?.conversations,
+      reportTotals.engagement,
+      reportTotals.hasEngagement,
+      reportTotals.hasInstagramProfileVisits,
+      reportTotals.hasLinkClicks,
+      reportTotals.hasReach,
+      reportTotals.instagramProfileVisits,
+      reportTotals.linkClicks,
+      reportTotals.reach,
+      selectedAccount.currency,
+    ],
+  )
+
+  const visibleMetricTiles = useMemo(() => {
+    const byKey = new Map(metricTiles.map((tile) => [tile.key, tile]))
+    return metricLayout
+      .map((config) => {
+        const tile = byKey.get(config.key)
+        if (!tile || !config.visible) return null
+        return { ...tile, size: config.size }
+      })
+      .filter(Boolean) as Array<(typeof metricTiles)[number] & { size: MetaAdsOverviewMetricSize }>
+  }, [metricLayout, metricTiles])
+
+  const moveMetricTile = (key: MetaAdsOverviewMetricKey, direction: -1 | 1) => {
+    setMetricLayout((prev) => {
+      const currentIndex = prev.findIndex((item) => item.key === key)
+      if (currentIndex < 0) return prev
+      const targetIndex = currentIndex + direction
+      if (targetIndex < 0 || targetIndex >= prev.length) return prev
+      const next = [...prev]
+      const [entry] = next.splice(currentIndex, 1)
+      next.splice(targetIndex, 0, entry)
+      return next
+    })
+  }
+
+  const updateMetricTile = (key: MetaAdsOverviewMetricKey, patch: Partial<MetaAdsOverviewMetricLayout>) => {
+    setMetricLayout((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)))
+  }
 
   return (
     <>
       <MetaAdsPersistentError error={overviewError} onRetry={onRetry} />
-      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-        <Card className={panelClass}>
-          <CardHeader className="space-y-1 pb-4">
-            <CardDescription className="text-slate-400">Spend</CardDescription>
-            <CardTitle>{formatCurrency(primarySummary?.spend ?? 0, selectedAccount.currency || 'USD')}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className={panelClass}>
-          <CardHeader className="space-y-1 pb-4">
-            <CardDescription className="text-slate-400">Impressões</CardDescription>
-            <CardTitle>{formatNumber(primarySummary?.impressions ?? 0)}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className={panelClass}>
-          <CardHeader className="space-y-1 pb-4">
-            <CardDescription className="text-slate-400">Clicks</CardDescription>
-            <CardTitle>{formatNumber(primarySummary?.clicks ?? 0)}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className={panelClass}>
-          <CardHeader className="space-y-1 pb-4">
-            <CardDescription className="text-slate-400">Conversas iniciadas</CardDescription>
-            <CardTitle>{formatNumber(reportSummary?.conversations ?? 0)}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className={panelClass}>
-          <CardHeader className="space-y-1 pb-4">
-            <CardDescription className="text-slate-400">Custo por conversa</CardDescription>
-            <CardTitle>{formatCurrency(reportSummary?.avgCostConversation ?? 0, selectedAccount.currency || 'USD')}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className={panelClass}>
-          <CardHeader className="space-y-1 pb-4">
-            <CardDescription className="text-slate-400">CTR</CardDescription>
-            <CardTitle>{formatPercent(ctr)}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className={panelClass}>
-          <CardHeader className="space-y-1 pb-4">
-            <CardDescription className="text-slate-400">CPC médio</CardDescription>
-            <CardTitle>{formatCurrency(cpc, selectedAccount.currency || 'USD')}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className={panelClass}>
-          <CardHeader className="space-y-1 pb-4">
-            <CardDescription className="text-slate-400">CPM</CardDescription>
-            <CardTitle>{formatCurrency(cpm, selectedAccount.currency || 'USD')}</CardTitle>
-          </CardHeader>
-        </Card>
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Resumo da conta</div>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80">
+              <FadersHorizontal className="h-4 w-4" />
+              Personalizar métricas
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="max-h-[min(38rem,calc(100vh-7rem))] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto border-slate-800/80 bg-slate-950 text-slate-100">
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <div className="text-sm font-semibold text-white">Personalizar métricas</div>
+              </div>
+              <div className="space-y-2">
+                {metricLayout.map((config, index) => {
+                  const tile = metricTiles.find((entry) => entry.key === config.key)
+                  if (!tile) return null
+                  return (
+                    <div key={config.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-slate-800/80 bg-slate-900/60 p-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-white">{tile.tooltipLabel || tile.label}</div>
+                        <div className="truncate text-xs text-slate-400">{tile.description || tile.label}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={config.visible}
+                          onCheckedChange={(checked) => updateMetricTile(config.key, { visible: checked })}
+                          aria-label={`${config.visible ? 'Ocultar' : 'Exibir'} ${tile.label}`}
+                        />
+                        <Select
+                          value={config.size}
+                          onValueChange={(value) => updateMetricTile(config.key, { size: value === 'wide' ? 'wide' : 'compact' })}
+                        >
+                          <SelectTrigger className="h-8 w-[7.5rem] border-slate-700 bg-slate-950/70 text-xs text-slate-100">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="compact">Compacto</SelectItem>
+                            <SelectItem value="wide">Largo</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
+                          onClick={() => moveMetricTile(config.key, -1)}
+                          disabled={index === 0}
+                          aria-label={`Mover ${tile.label} para cima`}
+                        >
+                          <CaretUp className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
+                          onClick={() => moveMetricTile(config.key, 1)}
+                          disabled={index === metricLayout.length - 1}
+                          aria-label={`Mover ${tile.label} para baixo`}
+                        >
+                          <CaretDown className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="flex items-center justify-between pt-1">
+                <div className="text-xs text-slate-400">Cards ocultos saem do topo, mas continuam disponíveis aqui.</div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
+                  onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
+                >
+                  <EyeSlash className="h-4 w-4" />
+                  Resetar
+                </Button>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+        {visibleMetricTiles.length > 0 ? (
+          visibleMetricTiles.map((tile) => (
+            <MetaAdsMetricTile
+              key={tile.label}
+              label={tile.label}
+              tooltipLabel={tile.tooltipLabel}
+              description={tile.description}
+              subtitle={tile.subtitle}
+              value={tile.value}
+              icon={tile.icon}
+              toneClass={tile.toneClass}
+              size={tile.size}
+            />
+          ))
+        ) : (
+          <Card className={`${panelClass} sm:col-span-3 md:col-span-4 lg:col-span-6 xl:col-span-8`}>
+            <CardContent className="flex min-h-[72px] items-center justify-between gap-3 p-4 text-sm text-slate-300">
+              <span>Nenhuma métrica visível no resumo.</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80"
+                onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
+              >
+                Restaurar métricas
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Card className={panelClass}>
@@ -1012,13 +1582,47 @@ export function MetaAdsOverviewPanel({
           </CardTitle>
           <CardDescription className="text-slate-300">Histórico de investimento da conta selecionada.</CardDescription>
         </CardHeader>
-        <CardContent className="h-72">
+        <CardContent className="h-72 pt-2">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={trend}>
-              <XAxis dataKey="day" />
-              <YAxis />
-              <RechartsTooltip />
-              <Line type="monotone" dataKey="spend" stroke="#38bdf8" strokeWidth={2} />
+              <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+              <XAxis
+                dataKey="day"
+                ticks={trendTicks}
+                minTickGap={24}
+                tickFormatter={trendAxisFormatter}
+                tick={{ fill: 'rgba(219,234,254,0.78)', fontSize: 11 }}
+                tickLine={false}
+                axisLine={{ stroke: 'rgba(148,163,184,0.18)' }}
+                interval="preserveStartEnd"
+                tickMargin={10}
+              />
+              <YAxis
+                tick={{ fill: 'rgba(219,234,254,0.78)', fontSize: 11 }}
+                tickLine={false}
+                axisLine={{ stroke: 'rgba(148,163,184,0.18)' }}
+                width={38}
+              />
+              <RechartsTooltip
+                labelFormatter={formatTrendTooltipLabel}
+                formatter={(value: number) => formatCurrency(value, selectedAccount.currency || 'USD')}
+                contentStyle={{
+                  backgroundColor: 'rgba(2, 6, 23, 0.92)',
+                  border: '1px solid rgba(148, 163, 184, 0.2)',
+                  borderRadius: '16px',
+                  color: 'white',
+                }}
+                itemStyle={{ color: '#e2e8f0' }}
+                labelStyle={{ color: '#f8fafc' }}
+              />
+              <Line
+                type="monotone"
+                dataKey="spend"
+                stroke="#38bdf8"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4, fill: '#7dd3fc', stroke: '#082f49', strokeWidth: 2 }}
+              />
             </LineChart>
           </ResponsiveContainer>
         </CardContent>
@@ -1206,22 +1810,6 @@ export function MetaAdsInventoryPanel({
     return map
   }, [filteredCreatives])
 
-  const compareText = (left: string, right: string) => left.localeCompare(right, 'pt-BR', { sensitivity: 'base' })
-  const compareMaybeNumber = (left?: number | null, right?: number | null) => {
-    const leftMissing = left === undefined || left === null || Number.isNaN(Number(left))
-    const rightMissing = right === undefined || right === null || Number.isNaN(Number(right))
-    if (leftMissing && rightMissing) return 0
-    if (leftMissing) return 1
-    if (rightMissing) return -1
-    return Number(left) - Number(right)
-  }
-  const statusSortRank = (status?: string) => {
-    const normalized = String(status || '').toUpperCase()
-    if (normalized === 'ACTIVE') return 0
-    if (normalized === 'PAUSED') return 1
-    if (normalized === 'ARCHIVED') return 2
-    return 3
-  }
   const defaultSortDir = (_key: MetaAdsInventorySortKey): MetaAdsInventorySortDir => 'asc'
   const handleSortChange = (key: MetaAdsInventorySortKey) => {
     if (sortKey === key) {
@@ -1233,7 +1821,7 @@ export function MetaAdsInventoryPanel({
   }
   const sortMultiplier = sortDir === 'asc' ? 1 : -1
 
-  const compareCampaigns = (left: MetaCampaignRow, right: MetaCampaignRow) => {
+  const compareCampaigns = useCallback((left: MetaCampaignRow, right: MetaCampaignRow) => {
     const leftMetrics = campaignMetricsMap.get(left.id)
     const rightMetrics = campaignMetricsMap.get(right.id)
     const leftAdSets = filteredAdSetsByCampaign.get(left.id) || []
@@ -1243,55 +1831,55 @@ export function MetaAdsInventoryPanel({
     let compare = 0
     switch (sortKey) {
       case 'item':
-        compare = compareText(left.name || left.id, right.name || right.id)
+        compare = compareMetaAdsText(left.name || left.id, right.name || right.id)
         break
       case 'rank':
-        compare = compareMaybeNumber(campaignRankMap.get(left.id), campaignRankMap.get(right.id))
+        compare = compareMetaAdsMaybeNumber(campaignRankMap.get(left.id), campaignRankMap.get(right.id))
         break
       case 'status':
-        compare = compareMaybeNumber(statusSortRank(left.effective_status || left.status), statusSortRank(right.effective_status || right.status))
+        compare = compareMetaAdsMaybeNumber(metaAdsStatusSortRank(left.effective_status || left.status), metaAdsStatusSortRank(right.effective_status || right.status))
         break
       case 'objective':
-        compare = compareText(left.objective || '', right.objective || '')
+        compare = compareMetaAdsText(left.objective || '', right.objective || '')
         break
       case 'items':
-        compare = compareMaybeNumber(leftActive, rightActive) || compareMaybeNumber(leftAdSets.length, rightAdSets.length)
+        compare = compareMetaAdsMaybeNumber(leftActive, rightActive) || compareMetaAdsMaybeNumber(leftAdSets.length, rightAdSets.length)
         break
       case 'spend':
-        compare = compareMaybeNumber(leftMetrics?.spend, rightMetrics?.spend)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.spend, rightMetrics?.spend)
         break
       case 'conversations':
-        compare = compareMaybeNumber(leftMetrics?.conversations, rightMetrics?.conversations)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.conversations, rightMetrics?.conversations)
         break
       case 'cpcv':
-        compare = compareMaybeNumber(
+        compare = compareMetaAdsMaybeNumber(
           leftMetrics && leftMetrics.conversations > 0 ? leftMetrics.spend / leftMetrics.conversations : null,
           rightMetrics && rightMetrics.conversations > 0 ? rightMetrics.spend / rightMetrics.conversations : null,
         )
         break
       case 'clicks':
-        compare = compareMaybeNumber(leftMetrics?.clicks, rightMetrics?.clicks)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.clicks, rightMetrics?.clicks)
         break
       case 'reach':
-        compare = compareMaybeNumber(leftMetrics?.reach, rightMetrics?.reach)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.reach, rightMetrics?.reach)
         break
       case 'impressions':
-        compare = compareMaybeNumber(leftMetrics?.impressions, rightMetrics?.impressions)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.impressions, rightMetrics?.impressions)
         break
       case 'ctr':
-        compare = compareMaybeNumber(leftMetrics?.ctr, rightMetrics?.ctr)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.ctr, rightMetrics?.ctr)
         break
       case 'cpc':
-        compare = compareMaybeNumber(leftMetrics?.cpc, rightMetrics?.cpc)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.cpc, rightMetrics?.cpc)
         break
       case 'cpm':
-        compare = compareMaybeNumber(leftMetrics?.cpm, rightMetrics?.cpm)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.cpm, rightMetrics?.cpm)
         break
       case 'cpp':
-        compare = compareMaybeNumber(leftMetrics?.cpp, rightMetrics?.cpp)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.cpp, rightMetrics?.cpp)
         break
       case 'frequency':
-        compare = compareMaybeNumber(leftMetrics?.frequency, rightMetrics?.frequency)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.frequency, rightMetrics?.frequency)
         break
       default:
         compare = 0
@@ -1299,9 +1887,9 @@ export function MetaAdsInventoryPanel({
     }
     if (compare !== 0) return compare * sortMultiplier
     return ((campaignOrderMap.get(left.id) ?? 0) - (campaignOrderMap.get(right.id) ?? 0))
-  }
+  }, [campaignMetricsMap, campaignOrderMap, campaignRankMap, filteredAdSetsByCampaign, sortKey, sortMultiplier])
 
-  const compareAdSets = (left: MetaAdSet, right: MetaAdSet) => {
+  const compareAdSets = useCallback((left: MetaAdSet, right: MetaAdSet) => {
     const leftMetrics = adSetMetricsMap.get(left.id)
     const rightMetrics = adSetMetricsMap.get(right.id)
     const leftAds = filteredAdsByAdSet.get(left.id) || []
@@ -1311,55 +1899,55 @@ export function MetaAdsInventoryPanel({
     let compare = 0
     switch (sortKey) {
       case 'item':
-        compare = compareText(left.name || left.id, right.name || right.id)
+        compare = compareMetaAdsText(left.name || left.id, right.name || right.id)
         break
       case 'rank':
-        compare = compareMaybeNumber(adSetRankMap.get(left.id), adSetRankMap.get(right.id))
+        compare = compareMetaAdsMaybeNumber(adSetRankMap.get(left.id), adSetRankMap.get(right.id))
         break
       case 'status':
-        compare = compareMaybeNumber(statusSortRank(left.effective_status || left.status), statusSortRank(right.effective_status || right.status))
+        compare = compareMetaAdsMaybeNumber(metaAdsStatusSortRank(left.effective_status || left.status), metaAdsStatusSortRank(right.effective_status || right.status))
         break
       case 'objective':
-        compare = compareText(left.optimization_goal || '', right.optimization_goal || '')
+        compare = compareMetaAdsText(left.optimization_goal || '', right.optimization_goal || '')
         break
       case 'items':
-        compare = compareMaybeNumber(leftActive, rightActive) || compareMaybeNumber(leftAds.length, rightAds.length)
+        compare = compareMetaAdsMaybeNumber(leftActive, rightActive) || compareMetaAdsMaybeNumber(leftAds.length, rightAds.length)
         break
       case 'spend':
-        compare = compareMaybeNumber(leftMetrics?.spend, rightMetrics?.spend)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.spend, rightMetrics?.spend)
         break
       case 'conversations':
-        compare = compareMaybeNumber(leftMetrics?.conversations, rightMetrics?.conversations)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.conversations, rightMetrics?.conversations)
         break
       case 'cpcv':
-        compare = compareMaybeNumber(
+        compare = compareMetaAdsMaybeNumber(
           leftMetrics && leftMetrics.conversations > 0 ? leftMetrics.spend / leftMetrics.conversations : null,
           rightMetrics && rightMetrics.conversations > 0 ? rightMetrics.spend / rightMetrics.conversations : null,
         )
         break
       case 'clicks':
-        compare = compareMaybeNumber(leftMetrics?.clicks, rightMetrics?.clicks)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.clicks, rightMetrics?.clicks)
         break
       case 'reach':
-        compare = compareMaybeNumber(leftMetrics?.reach, rightMetrics?.reach)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.reach, rightMetrics?.reach)
         break
       case 'impressions':
-        compare = compareMaybeNumber(leftMetrics?.impressions, rightMetrics?.impressions)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.impressions, rightMetrics?.impressions)
         break
       case 'ctr':
-        compare = compareMaybeNumber(leftMetrics?.ctr, rightMetrics?.ctr)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.ctr, rightMetrics?.ctr)
         break
       case 'cpc':
-        compare = compareMaybeNumber(leftMetrics?.cpc, rightMetrics?.cpc)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.cpc, rightMetrics?.cpc)
         break
       case 'cpm':
-        compare = compareMaybeNumber(leftMetrics?.cpm, rightMetrics?.cpm)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.cpm, rightMetrics?.cpm)
         break
       case 'cpp':
-        compare = compareMaybeNumber(leftMetrics?.cpp, rightMetrics?.cpp)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.cpp, rightMetrics?.cpp)
         break
       case 'frequency':
-        compare = compareMaybeNumber(leftMetrics?.frequency, rightMetrics?.frequency)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.frequency, rightMetrics?.frequency)
         break
       default:
         compare = 0
@@ -1367,9 +1955,9 @@ export function MetaAdsInventoryPanel({
     }
     if (compare !== 0) return compare * sortMultiplier
     return ((adSetOrderMap.get(left.id) ?? 0) - (adSetOrderMap.get(right.id) ?? 0))
-  }
+  }, [adSetMetricsMap, adSetOrderMap, adSetRankMap, filteredAdsByAdSet, sortKey, sortMultiplier])
 
-  const compareAds = (left: MetaAd, right: MetaAd) => {
+  const compareAds = useCallback((left: MetaAd, right: MetaAd) => {
     const leftMetrics = adMetricsMap.get(left.id)
     const rightMetrics = adMetricsMap.get(right.id)
     const leftCreatives = filteredCreativesByAd.get(left.id) || []
@@ -1381,52 +1969,52 @@ export function MetaAdsInventoryPanel({
     let compare = 0
     switch (sortKey) {
       case 'item':
-        compare = compareText(left.name || left.id, right.name || right.id)
+        compare = compareMetaAdsText(left.name || left.id, right.name || right.id)
         break
       case 'rank':
-        compare = compareMaybeNumber(adRankMap.get(left.id), adRankMap.get(right.id))
+        compare = compareMetaAdsMaybeNumber(adRankMap.get(left.id), adRankMap.get(right.id))
         break
       case 'status':
-        compare = compareMaybeNumber(statusSortRank(left.effective_status || left.status), statusSortRank(right.effective_status || right.status))
+        compare = compareMetaAdsMaybeNumber(metaAdsStatusSortRank(left.effective_status || left.status), metaAdsStatusSortRank(right.effective_status || right.status))
         break
       case 'items':
-        compare = compareMaybeNumber(leftActive, rightActive) || compareMaybeNumber(leftInactive, rightInactive)
+        compare = compareMetaAdsMaybeNumber(leftActive, rightActive) || compareMetaAdsMaybeNumber(leftInactive, rightInactive)
         break
       case 'spend':
-        compare = compareMaybeNumber(leftMetrics?.spend, rightMetrics?.spend)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.spend, rightMetrics?.spend)
         break
       case 'conversations':
-        compare = compareMaybeNumber(leftMetrics?.conversations, rightMetrics?.conversations)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.conversations, rightMetrics?.conversations)
         break
       case 'cpcv':
-        compare = compareMaybeNumber(
+        compare = compareMetaAdsMaybeNumber(
           leftMetrics && leftMetrics.conversations > 0 ? leftMetrics.spend / leftMetrics.conversations : null,
           rightMetrics && rightMetrics.conversations > 0 ? rightMetrics.spend / rightMetrics.conversations : null,
         )
         break
       case 'clicks':
-        compare = compareMaybeNumber(leftMetrics?.clicks, rightMetrics?.clicks)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.clicks, rightMetrics?.clicks)
         break
       case 'reach':
-        compare = compareMaybeNumber(leftMetrics?.reach, rightMetrics?.reach)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.reach, rightMetrics?.reach)
         break
       case 'impressions':
-        compare = compareMaybeNumber(leftMetrics?.impressions, rightMetrics?.impressions)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.impressions, rightMetrics?.impressions)
         break
       case 'ctr':
-        compare = compareMaybeNumber(leftMetrics?.ctr, rightMetrics?.ctr)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.ctr, rightMetrics?.ctr)
         break
       case 'cpc':
-        compare = compareMaybeNumber(leftMetrics?.cpc, rightMetrics?.cpc)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.cpc, rightMetrics?.cpc)
         break
       case 'cpm':
-        compare = compareMaybeNumber(leftMetrics?.cpm, rightMetrics?.cpm)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.cpm, rightMetrics?.cpm)
         break
       case 'cpp':
-        compare = compareMaybeNumber(leftMetrics?.cpp, rightMetrics?.cpp)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.cpp, rightMetrics?.cpp)
         break
       case 'frequency':
-        compare = compareMaybeNumber(leftMetrics?.frequency, rightMetrics?.frequency)
+        compare = compareMetaAdsMaybeNumber(leftMetrics?.frequency, rightMetrics?.frequency)
         break
       default:
         compare = 0
@@ -1434,7 +2022,7 @@ export function MetaAdsInventoryPanel({
     }
     if (compare !== 0) return compare * sortMultiplier
     return ((adOrderMap.get(left.id) ?? 0) - (adOrderMap.get(right.id) ?? 0))
-  }
+  }, [adMetricsMap, adOrderMap, adRankMap, filteredCreativesByAd, sortKey, sortMultiplier])
 
   const rowClass = () => 'border-slate-800/80 transition hover:bg-slate-900/45'
 
@@ -1486,21 +2074,13 @@ export function MetaAdsInventoryPanel({
 
     return rows
   }, [
-    adOrderMap,
-    adRankMap,
-    adSetOrderMap,
-    adSetRankMap,
-    campaignOrderMap,
-    campaignRankMap,
     collapsedAdSetIds,
     collapsedCampaignIds,
     compareAdSets,
     compareAds,
     compareCampaigns,
-    filteredAds,
     filteredAdsByAdSet,
     filteredAdsWithoutAdSetByCampaign,
-    filteredAdSets,
     filteredAdSetsByCampaign,
     filteredCampaigns,
   ])
@@ -1514,8 +2094,31 @@ export function MetaAdsInventoryPanel({
     </MetaAdsTableTooltip>
   )
 
+  const columnHelp: Partial<Record<MetaAdsInventorySortKey | 'statusLabel' | 'objectiveLabel', { label: string; description?: string }>> = {
+    item: { label: 'Item', description: 'Nome da campanha, conjunto ou anúncio.' },
+    rank: { label: 'Rank', description: 'Posição relativa pelo consolidado do período.' },
+    statusLabel: { label: 'Status', description: 'Situação operacional atual do item na Meta.' },
+    objectiveLabel: { label: 'Objetivo', description: 'Objetivo principal de entrega e otimização.' },
+    items: { label: 'Itens', description: 'Quantidade de itens filhos ativos e inativos.' },
+    spend: { label: 'Investimento', description: 'Valor total investido no período selecionado.' },
+    conversations: { label: 'Conversa', description: 'Conversas iniciadas atribuídas ao item.' },
+    cpcv: { label: 'CPCv', description: 'Custo por conversa iniciada.' },
+    clicks: { label: 'Clique', description: 'Cliques totais registrados no período.' },
+    reach: { label: 'Alcance', description: 'Pessoas alcançadas no período.' },
+    impressions: { label: 'Impressão', description: 'Total de impressões registradas.' },
+    engagement: { label: 'Engajamento', description: 'Interações totais no item, quando a fonte entrega essa métrica.' },
+    igRedirect: { label: 'Redirecionamento', description: 'Redirecionamentos ou visitas de perfil do Instagram, quando disponíveis.' },
+    ctr: { label: 'CTR / CTRL', description: 'Taxa de clique geral e taxa de clique em link.' },
+    cpc: { label: 'CPC / CPCL', description: 'Custo por clique geral e custo por clique em link.' },
+    cpm: { label: 'CPM', description: 'Custo por mil impressões.' },
+    cpp: { label: 'CPP', description: 'Custo por pessoa alcançada.' },
+    frequency: { label: 'Frequência', description: 'Média de exibição por pessoa alcançada.' },
+    cul: { label: 'CU / CUL', description: 'Cliques únicos e cliques únicos em link, quando disponíveis.' },
+  }
+
   const renderSortHead = (key: MetaAdsInventorySortKey, label: string) => {
     const isActive = sortKey === key
+    const help = columnHelp[key]
     return (
       <button
         type="button"
@@ -1524,9 +2127,14 @@ export function MetaAdsInventoryPanel({
         } hover:underline`}
         onClick={() => handleSortChange(key)}
         aria-label={`Ordenar ${label}`}
-        title={`Ordenar ${label}`}
       >
-        <span>{label}</span>
+        {help ? (
+          <MetaAdsTableTooltip label={help.label} description={help.description}>
+            <span>{label}</span>
+          </MetaAdsTableTooltip>
+        ) : (
+          <span>{label}</span>
+        )}
         <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
           {isActive && sortDir === 'asc' ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -1576,7 +2184,7 @@ export function MetaAdsInventoryPanel({
                 <TableHead className="text-center">{renderSortHead('reach', 'Alcance')}</TableHead>
                 <TableHead className="text-center">{renderSortHead('impressions', 'Impressão')}</TableHead>
                 <TableHead className="text-center">{renderSortHead('engagement', 'Engaj.')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('igRedirect', 'Redir. IG')}</TableHead>
+                <TableHead className="text-center">{renderSortHead('igRedirect', 'Redirecionamento')}</TableHead>
                 <TableHead className="text-center">{renderSortHead('ctr', 'CTR/CTRL')}</TableHead>
                 <TableHead className="text-center">{renderSortHead('cpc', 'CPC/CPCL')}</TableHead>
                 <TableHead className="text-center">{renderSortHead('cpm', 'CPM')}</TableHead>
@@ -1652,8 +2260,24 @@ export function MetaAdsInventoryPanel({
                       <TableCell className="text-center">{campaignMetrics ? formatNumber(campaignMetrics.impressions) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{renderUnavailableMetricCell()}</TableCell>
-                      <TableCell className="text-center">{campaignMetrics ? formatDualMetric(campaignMetrics.ctr, campaignMetrics.linkCtr, 'percent') : renderUnavailableMetricCell()}</TableCell>
-                      <TableCell className="text-center">{campaignMetrics ? formatDualMetric(campaignMetrics.cpc, campaignMetrics.linkCpc, 'currency') : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">
+                        {campaignMetrics ? (
+                          <MetaAdsDualMetricCell
+                            primary={campaignMetrics.ctr}
+                            secondary={campaignMetrics.linkCtr}
+                            kind="percent"
+                          />
+                        ) : renderUnavailableMetricCell()}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {campaignMetrics ? (
+                          <MetaAdsDualMetricCell
+                            primary={campaignMetrics.cpc}
+                            secondary={campaignMetrics.linkCpc}
+                            kind="currency"
+                          />
+                        ) : renderUnavailableMetricCell()}
+                      </TableCell>
                       <TableCell className="text-center">{campaignMetrics ? formatCurrency(campaignMetrics.cpm) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{campaignMetrics?.cpp ? formatCurrency(campaignMetrics.cpp) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{campaignMetrics?.frequency ? formatNumber(campaignMetrics.frequency) : renderUnavailableMetricCell()}</TableCell>
@@ -1727,8 +2351,24 @@ export function MetaAdsInventoryPanel({
                       <TableCell className="text-center">{adSetMetrics ? formatNumber(adSetMetrics.impressions) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{renderUnavailableMetricCell()}</TableCell>
-                      <TableCell className="text-center">{adSetMetrics ? formatDualMetric(adSetMetrics.ctr, adSetMetrics.linkCtr, 'percent') : renderUnavailableMetricCell()}</TableCell>
-                      <TableCell className="text-center">{adSetMetrics ? formatDualMetric(adSetMetrics.cpc, adSetMetrics.linkCpc, 'currency') : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">
+                        {adSetMetrics ? (
+                          <MetaAdsDualMetricCell
+                            primary={adSetMetrics.ctr}
+                            secondary={adSetMetrics.linkCtr}
+                            kind="percent"
+                          />
+                        ) : renderUnavailableMetricCell()}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {adSetMetrics ? (
+                          <MetaAdsDualMetricCell
+                            primary={adSetMetrics.cpc}
+                            secondary={adSetMetrics.linkCpc}
+                            kind="currency"
+                          />
+                        ) : renderUnavailableMetricCell()}
+                      </TableCell>
                       <TableCell className="text-center">{adSetMetrics ? formatCurrency(adSetMetrics.cpm) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{adSetMetrics?.cpp ? formatCurrency(adSetMetrics.cpp) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{adSetMetrics?.frequency ? formatNumber(adSetMetrics.frequency) : renderUnavailableMetricCell()}</TableCell>
@@ -1788,8 +2428,24 @@ export function MetaAdsInventoryPanel({
                     <TableCell className="text-center">{adMetrics ? formatNumber(adMetrics.impressions) : renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{renderUnavailableMetricCell()}</TableCell>
-                    <TableCell className="text-center">{adMetrics ? formatDualMetric(adMetrics.ctr, adMetrics.linkCtr, 'percent') : renderUnavailableMetricCell()}</TableCell>
-                    <TableCell className="text-center">{adMetrics ? formatDualMetric(adMetrics.cpc, adMetrics.linkCpc, 'currency') : renderUnavailableMetricCell()}</TableCell>
+                    <TableCell className="text-center">
+                      {adMetrics ? (
+                        <MetaAdsDualMetricCell
+                          primary={adMetrics.ctr}
+                          secondary={adMetrics.linkCtr}
+                          kind="percent"
+                        />
+                      ) : renderUnavailableMetricCell()}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {adMetrics ? (
+                        <MetaAdsDualMetricCell
+                          primary={adMetrics.cpc}
+                          secondary={adMetrics.linkCpc}
+                          kind="currency"
+                        />
+                      ) : renderUnavailableMetricCell()}
+                    </TableCell>
                     <TableCell className="text-center">{adMetrics ? formatCurrency(adMetrics.cpm) : renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{adMetrics?.cpp ? formatCurrency(adMetrics.cpp) : renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{adMetrics?.frequency ? formatNumber(adMetrics.frequency) : renderUnavailableMetricCell()}</TableCell>
@@ -1813,7 +2469,7 @@ export function MetaAdsInventoryPanel({
             </div>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <CardContent className="grid gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {filteredCreatives.length === 0 ? (
             <div className="text-sm text-slate-300">Nenhum criativo encontrado.</div>
           ) : (
@@ -1822,13 +2478,13 @@ export function MetaAdsInventoryPanel({
                 key={creative.id}
                 type="button"
                 onClick={() => setDetail({ kind: 'creative', title: creative.name || creative.id, payload: creative })}
-                className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 text-left transition hover:bg-slate-900/75"
+                className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-3 text-left transition hover:bg-slate-900/75"
               >
                 {creative.thumbnailUrl ? (
                   <img
                     src={creative.thumbnailUrl}
                     alt={creative.name || creative.id}
-                    className="mb-3 h-40 w-full rounded-xl object-cover"
+                    className="mb-3 h-28 w-full rounded-xl object-cover"
                   />
                 ) : null}
                 <div className="space-y-1">
