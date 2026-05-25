@@ -21,6 +21,7 @@ type MetaAdsLocalState = {
   scenario: Exclude<MetaAdsLocalScenario, 'live' | 'unauthorized'>
   tokenType: 'oauth' | 'manual' | null
   selectedAdAccountId: string | null
+  hiddenAdAccountIds: string[]
   updatedAt: string | null
 }
 
@@ -44,7 +45,8 @@ function resolveWindowDays(params?: { since?: string; until?: string }): MetaAds
   return 60
 }
 
-function resolveWindowLabel(days: MetaAdsReportWindowDays) {
+function resolveWindowLabel(days: number) {
+  if (days <= 1) return 'last_24h'
   if (days === 7) return 'last_7d'
   return 'last_30d'
 }
@@ -129,6 +131,7 @@ function buildDefaultState(
     scenario,
     tokenType: scenario === 'disconnected' ? null : 'oauth',
     selectedAdAccountId: scenario === 'connected-ready' ? DEFAULT_ACCOUNT_ID : null,
+    hiddenAdAccountIds: [],
     updatedAt: scenario === 'disconnected' ? null : new Date().toISOString(),
   }
 }
@@ -180,6 +183,9 @@ function readState(syncFromUrl = true): MetaAdsLocalState | null {
       scenario,
       tokenType: parsed?.tokenType === 'manual' ? 'manual' : parsed?.tokenType === 'oauth' ? 'oauth' : null,
       selectedAdAccountId: typeof parsed?.selectedAdAccountId === 'string' ? parsed.selectedAdAccountId : null,
+      hiddenAdAccountIds: Array.isArray(parsed?.hiddenAdAccountIds)
+        ? Array.from(new Set(parsed.hiddenAdAccountIds.map((item: unknown) => String(item || '').trim()).filter(Boolean)))
+        : [],
       updatedAt: typeof parsed?.updatedAt === 'string' ? parsed.updatedAt : null,
     }
   } catch {
@@ -229,10 +235,11 @@ function buildStatus(state: MetaAdsLocalState): MetaAdsStatusResponse {
 }
 
 function buildAccounts(state: MetaAdsLocalState) {
+  const hidden = new Set(state.hiddenAdAccountIds)
   return ACCOUNT_FIXTURES.map((account) => ({
     ...account,
     isSelected: account.id === state.selectedAdAccountId,
-  }))
+  })).filter((account) => !hidden.has(account.id))
 }
 
 function requireConnectedState(): MetaAdsLocalState {
@@ -294,20 +301,24 @@ export function isMetaAdsLocalMockConnected() {
 
 export async function simulateMetaAdsOAuthConnect() {
   if (!canUseLocalStorage()) return
+  const current = readState(false)
   writeState({
     scenario: 'connected-no-account',
     tokenType: 'oauth',
     selectedAdAccountId: null,
+    hiddenAdAccountIds: current?.hiddenAdAccountIds || [],
     updatedAt: new Date().toISOString(),
   })
 }
 
 export async function connectMetaAdsManualLocal() {
   if (!canUseLocalStorage()) return
+  const current = readState(false)
   writeState({
     scenario: 'connected-no-account',
     tokenType: 'manual',
     selectedAdAccountId: null,
+    hiddenAdAccountIds: current?.hiddenAdAccountIds || [],
     updatedAt: new Date().toISOString(),
   })
 }
@@ -333,8 +344,41 @@ export async function selectMetaAdsLocalAccount(adAccountId: string) {
     scenario: 'connected-ready',
     tokenType: current.tokenType || 'oauth',
     selectedAdAccountId: adAccountId,
+    hiddenAdAccountIds: current.hiddenAdAccountIds.filter((id) => id !== adAccountId),
     updatedAt: new Date().toISOString(),
   })
+}
+
+export async function removeMetaAdsLocalAccount(adAccountId: string) {
+  const current = requireConnectedState()
+  const account = ACCOUNT_FIXTURES.find((item) => item.id === adAccountId)
+  if (!account) {
+    throw buildError({
+      code: 'META_ADS_ACCOUNT_NOT_FOUND',
+      status: 404,
+      message: 'A conta solicitada não existe no cenário local.',
+      hint: 'Escolha uma das contas simuladas exibidas na tela.',
+      retryable: false,
+    })
+  }
+  const hiddenAdAccountIds = Array.from(new Set([...current.hiddenAdAccountIds, adAccountId]))
+  const visible = ACCOUNT_FIXTURES.filter((item) => !hiddenAdAccountIds.includes(item.id))
+  const nextSelectedAdAccountId = current.selectedAdAccountId === adAccountId
+    ? visible[0]?.id || null
+    : current.selectedAdAccountId
+  writeState({
+    ...current,
+    scenario: nextSelectedAdAccountId ? 'connected-ready' : 'connected-no-account',
+    selectedAdAccountId: nextSelectedAdAccountId,
+    hiddenAdAccountIds,
+    updatedAt: new Date().toISOString(),
+  })
+  return {
+    ok: true,
+    removedAdAccountId: adAccountId,
+    selectedAdAccountId: nextSelectedAdAccountId,
+    remainingAccountCount: visible.length,
+  }
 }
 
 export async function getMetaAdsLocalStatus() {
@@ -365,7 +409,7 @@ export async function listMetaAdsLocalAccounts() {
 export async function getMetaAdsLocalSummary(params?: { since?: string; until?: string }): Promise<MetaAdsSummaryResponse> {
   const state = requireSelectedAccount()
   const days = resolveRequestedDays(params)
-  const window = resolveWindowLabel(resolveWindowDays(params))
+  const window = resolveWindowLabel(days)
   if (state.selectedAdAccountId === 'act_456') {
     const spend = roundMetric(interpolateMetric(days, { d7: 214.32, d30: 864.12, d60: 1240.9 }))
     const impressions = Math.round(interpolateMetric(days, { d7: 1880, d30: 7120, d60: 10240 }))
@@ -382,8 +426,8 @@ export async function getMetaAdsLocalSummary(params?: { since?: string; until?: 
     }
   }
   const spend = roundMetric(interpolateMetric(days, { d7: 512.48, d30: 1234.56, d60: 1610.98 }))
-  const impressions = Math.round(interpolateMetric(days, { d7: 3840, d30: 9999, d60: 61715 }))
-  const clicks = Math.round(interpolateMetric(days, { d7: 102, d30: 321, d60: 884 }))
+  const impressions = Math.round(interpolateMetric(days, { d7: 3840, d30: 9999, d60: 11740 }))
+  const clicks = Math.round(interpolateMetric(days, { d7: 102, d30: 321, d60: 424 }))
   const conversations = Math.round(interpolateMetric(days, { d7: 10, d30: 23, d60: 29 }))
   return {
     spend,
@@ -569,11 +613,14 @@ export async function getMetaAdsLocalReport(params?: { since?: string; until?: s
   const state = requireSelectedAccount()
   const days = resolveRequestedDays(params)
   const reportDate = '2026-05-14'
-  const windowLabel = resolveWindowLabel(resolveWindowDays(params))
+  const windowLabel = resolveWindowLabel(days)
   const spendKey = `ad_${windowLabel}_scalar_spend`
+  const reachKey = `ad_${windowLabel}_scalar_reach`
   const impressionsKey = `ad_${windowLabel}_scalar_impressions`
   const clicksKey = `ad_${windowLabel}_scalar_clicks`
   const linkClicksKey = `ad_${windowLabel}_inline_link_clicks`
+  const engagementKey = `ad_${windowLabel}_inline_post_engagement`
+  const instagramProfileVisitsKey = `ad_${windowLabel}_instagram_profile_visits`
   const conversationsKey = `ad_${windowLabel}_conversation_started`
   const rows =
     state.selectedAdAccountId === 'act_456'
@@ -587,9 +634,12 @@ export async function getMetaAdsLocalReport(params?: { since?: string; until?: s
             ad_id: 'ad_ret_1',
             ad_name: 'Anúncio Remarketing 1',
             [spendKey]: roundMetric(interpolateMetric(days, { d7: 214.32, d30: 864.12, d60: 1240.9 })),
+            [reachKey]: Math.round(interpolateMetric(days, { d7: 1420, d30: 5210, d60: 7420 })),
             [impressionsKey]: Math.round(interpolateMetric(days, { d7: 1880, d30: 7120, d60: 10240 })),
             [clicksKey]: Math.round(interpolateMetric(days, { d7: 57, d30: 214, d60: 332 })),
             [linkClicksKey]: Math.round(interpolateMetric(days, { d7: 39, d30: 138, d60: 214 })),
+            [engagementKey]: Math.round(interpolateMetric(days, { d7: 82, d30: 284, d60: 412 })),
+            [instagramProfileVisitsKey]: Math.round(interpolateMetric(days, { d7: 11, d30: 39, d60: 54 })),
             [conversationsKey]: Math.round(interpolateMetric(days, { d7: 5, d30: 19, d60: 28 })),
           },
         ]
@@ -603,9 +653,12 @@ export async function getMetaAdsLocalReport(params?: { since?: string; until?: s
             ad_id: 'ad_1',
             ad_name: 'Anúncio Primavera 1',
             [spendKey]: roundMetric(interpolateMetric(days, { d7: 342.2, d30: 834.56, d60: 1044.9 })),
+            [reachKey]: Math.round(interpolateMetric(days, { d7: 1610, d30: 4620, d60: 5980 })),
             [impressionsKey]: Math.round(interpolateMetric(days, { d7: 2210, d30: 6120, d60: 8120 })),
             [clicksKey]: Math.round(interpolateMetric(days, { d7: 79, d30: 201, d60: 281 })),
             [linkClicksKey]: Math.round(interpolateMetric(days, { d7: 52, d30: 147, d60: 194 })),
+            [engagementKey]: Math.round(interpolateMetric(days, { d7: 126, d30: 352, d60: 418 })),
+            [instagramProfileVisitsKey]: Math.round(interpolateMetric(days, { d7: 18, d30: 64, d60: 72 })),
             [conversationsKey]: Math.round(interpolateMetric(days, { d7: 6, d30: 14, d60: 18 })),
           },
           {
@@ -617,9 +670,12 @@ export async function getMetaAdsLocalReport(params?: { since?: string; until?: s
             ad_id: 'ad_2',
             ad_name: 'Anúncio WhatsApp 1',
             [spendKey]: roundMetric(interpolateMetric(days, { d7: 170.28, d30: 400, d60: 566.08 })),
+            [reachKey]: Math.round(interpolateMetric(days, { d7: 1190, d30: 2890, d60: 2760 })),
             [impressionsKey]: Math.round(interpolateMetric(days, { d7: 1630, d30: 3879, d60: 3620 })),
             [clicksKey]: Math.round(interpolateMetric(days, { d7: 45, d30: 120, d60: 143 })),
             [linkClicksKey]: Math.round(interpolateMetric(days, { d7: 31, d30: 84, d60: 97 })),
+            [engagementKey]: Math.round(interpolateMetric(days, { d7: 71, d30: 188, d60: 205 })),
+            [instagramProfileVisitsKey]: Math.round(interpolateMetric(days, { d7: 9, d30: 27, d60: 31 })),
             [conversationsKey]: Math.round(interpolateMetric(days, { d7: 4, d30: 9, d60: 11 })),
           },
         ]

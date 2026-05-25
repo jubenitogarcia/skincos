@@ -3,7 +3,7 @@ import { CalendarX2, Pencil, Shield, Sparkles } from 'lucide-react'
 import { Button } from '@/button'
 import { Checkbox } from '@/checkbox'
 import { Popover, PopoverContent, PopoverTrigger } from '@/popover'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/tooltip'
+import { Tooltip, TooltipContent, TooltipLabel, TooltipTrigger } from '@/tooltip'
 import { cn } from '@/utils'
 import { slugifySegment } from '@/escalaShared'
 import type { DayPlanSource, PrefillSuggestion } from '@/escalaTypes'
@@ -20,19 +20,21 @@ export function NoAttendanceChip({
   const text = String(label || 'Sem atendimento').trim() || 'Sem atendimento'
 
   return (
-    <div
-      className={cn(
-        'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
-        blocked
-          ? 'border-rose-200/35 bg-rose-500/14 text-rose-50'
-          : 'border-white/10 bg-white/5 text-slate-200/80',
-      )}
-      data-testid={`escala-no-attendance-icon-${date}`}
-      aria-label={text}
-      title={text}
-    >
-      <CalendarX2 className="h-3.5 w-3.5" />
-    </div>
+    <TooltipLabel label={text}>
+      <div
+        className={cn(
+          'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
+          blocked
+            ? 'border-rose-200/35 bg-rose-500/14 text-rose-50'
+            : 'border-white/10 bg-white/5 text-slate-200/80',
+        )}
+        data-testid={`escala-no-attendance-icon-${date}`}
+        aria-label={text}
+        tabIndex={0}
+      >
+        <CalendarX2 className="h-3.5 w-3.5" />
+      </div>
+    </TooltipLabel>
   )
 }
 

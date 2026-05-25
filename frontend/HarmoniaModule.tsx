@@ -7,6 +7,7 @@ import { Input } from '@/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { LoadingPercentText } from '@/LoadingPattern'
+import { TooltipButton, TooltipLabel } from '@/tooltip'
 
 const WhatsAppUnifiedHub = React.lazy(() => import('@/WhatsAppUnifiedHub').then((m) => ({ default: m.WhatsAppUnifiedHub })))
 const OmnichannelCenter = React.lazy(() => import('@/OmnichannelCenter').then((m) => ({ default: m.OmnichannelCenter })))
@@ -694,15 +695,16 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                     'Recarregar'
                   )}
                 </Button>
-                <Button
-                  variant="secondary"
-                  className="h-8"
-                  onClick={() => loadInbox('more')}
-                  disabled={inboxLoading || !inboxCursor?.cursorTs || !inboxCursor?.cursorId}
-                  title={!inboxCursor ? 'Carregue primeiro' : !inboxCursor.cursorTs ? 'Sem mais páginas' : 'Carregar mais'}
-                >
-                  Mais
-                </Button>
+                <TooltipButton label={!inboxCursor ? 'Carregue primeiro' : !inboxCursor.cursorTs ? 'Sem mais páginas' : 'Carregar mais'}>
+                  <Button
+                    variant="secondary"
+                    className="h-8"
+                    onClick={() => loadInbox('more')}
+                    disabled={inboxLoading || !inboxCursor?.cursorTs || !inboxCursor?.cursorId}
+                  >
+                    Mais
+                  </Button>
+                </TooltipButton>
               </div>
             </div>
 
@@ -721,30 +723,31 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                 {filteredInboxItems.map((it) => {
                   const isActive = conversation?.id && String(conversation.id) === String(it.id)
                   return (
-                  <button
-                    key={it.id}
-                    type="button"
-                    onClick={() => openConversationById(it.id)}
-                    className={`w-full text-left rounded-xl border ${isActive ? 'border-emerald-400/50 bg-emerald-500/10' : 'border-white/10 bg-black/20'} hover:bg-white/[0.06] transition-colors px-3 py-2`}
-                    title="Abrir conversa"
-                  >
-                    <div className="flex items-center justify-between gap-3 text-xs">
-                      <div className="text-white/90 font-semibold truncate">
-                        {it.contact_display_name || it.contact_phone_raw || 'Contato'}
-                        {it.contact_opted_out_at ? <span className="ml-2 text-amber-200/80">(opt-out)</span> : null}
+                  <TooltipLabel label="Abrir conversa">
+                    <button
+                      key={it.id}
+                      type="button"
+                      onClick={() => openConversationById(it.id)}
+                      className={`w-full text-left rounded-xl border ${isActive ? 'border-emerald-400/50 bg-emerald-500/10' : 'border-white/10 bg-black/20'} hover:bg-white/[0.06] transition-colors px-3 py-2`}
+                    >
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <div className="text-white/90 font-semibold truncate">
+                          {it.contact_display_name || it.contact_phone_raw || 'Contato'}
+                          {it.contact_opted_out_at ? <span className="ml-2 text-amber-200/80">(opt-out)</span> : null}
+                        </div>
+                        <div className="text-white/70">{fmtDateTime(it.last_activity_at || it.last_message_at || null)}</div>
                       </div>
-                      <div className="text-white/70">{fmtDateTime(it.last_activity_at || it.last_message_at || null)}</div>
-                    </div>
-                    <div className="mt-1 text-xs text-blue-100/70 truncate">
-                      {(it.last_message_text || '').trim()
-                        ? `${String(it.last_message_direction || '').toUpperCase() === 'OUTBOUND' ? 'OUT' : 'IN'}: ${it.last_message_text}`
-                        : '—'}
-                    </div>
-                    <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-blue-200/60">
-                      <div>stage: <span className="text-white/70">{it.stage || '—'}</span></div>
-                      <div className="truncate">id: <span className="text-white/60">{it.id}</span></div>
-                    </div>
-                  </button>
+                      <div className="mt-1 text-xs text-blue-100/70 truncate">
+                        {(it.last_message_text || '').trim()
+                          ? `${String(it.last_message_direction || '').toUpperCase() === 'OUTBOUND' ? 'OUT' : 'IN'}: ${it.last_message_text}`
+                          : '—'}
+                      </div>
+                      <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-blue-200/60">
+                        <div>stage: <span className="text-white/70">{it.stage || '—'}</span></div>
+                        <div className="truncate">id: <span className="text-white/60">{it.id}</span></div>
+                      </div>
+                    </button>
+                  </TooltipLabel>
                   )
                 })}
               </div>
@@ -1002,21 +1005,22 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                   <code className="flex-1 text-xs text-white/90 bg-black/30 border border-white/10 rounded-lg px-2 py-1 overflow-hidden text-ellipsis">
                     {conversation.id || '—'}
                   </code>
-                  <Button
-                    variant="outline"
-                    className="h-9"
-                    onClick={() => {
-                      const id = String(conversation.id || '')
-                      if (!id) return
-                      try {
-                        void navigator.clipboard.writeText(id)
-                      } catch { /* ignore */ }
-                    }}
-                    disabled={!conversation.id}
-                    title="Copiar ID"
-                  >
-                    Copiar
-                  </Button>
+                  <TooltipButton label="Copiar ID">
+                    <Button
+                      variant="outline"
+                      className="h-9"
+                      onClick={() => {
+                        const id = String(conversation.id || '')
+                        if (!id) return
+                        try {
+                          void navigator.clipboard.writeText(id)
+                        } catch { /* ignore */ }
+                      }}
+                      disabled={!conversation.id}
+                    >
+                      Copiar
+                    </Button>
+                  </TooltipButton>
                 </div>
               </div>
             </CardContent>
@@ -1283,15 +1287,16 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                                 'Recarregar'
                               )}
                             </Button>
-                            <Button
-                              variant="secondary"
-                              className="h-8"
-                              onClick={() => loadInbox('more')}
-                              disabled={inboxLoading || !inboxCursor?.cursorTs || !inboxCursor?.cursorId}
-                              title={!inboxCursor ? 'Carregue primeiro' : !inboxCursor.cursorTs ? 'Sem mais páginas' : 'Carregar mais'}
-                            >
-                              Mais
-                            </Button>
+                            <TooltipButton label={!inboxCursor ? 'Carregue primeiro' : !inboxCursor.cursorTs ? 'Sem mais páginas' : 'Carregar mais'}>
+                              <Button
+                                variant="secondary"
+                                className="h-8"
+                                onClick={() => loadInbox('more')}
+                                disabled={inboxLoading || !inboxCursor?.cursorTs || !inboxCursor?.cursorId}
+                              >
+                                Mais
+                              </Button>
+                            </TooltipButton>
                           </div>
                         </div>
 
@@ -1302,30 +1307,31 @@ export function HarmoniaModule({ mode = 'full', showHeader = true, showChannels 
                         {inboxItems.length ? (
                           <div className="max-h-[240px] overflow-auto space-y-2 pr-1">
                             {inboxItems.map((it) => (
-                              <button
-                                key={it.id}
-                                type="button"
-                                onClick={() => openConversationById(it.id)}
-                                className="w-full text-left rounded-xl border border-white/10 bg-black/20 hover:bg-white/[0.06] transition-colors px-3 py-2"
-                                title="Abrir conversa"
-                              >
-                                <div className="flex items-center justify-between gap-3 text-xs">
-                                  <div className="text-white/90 font-semibold truncate">
-                                    {it.contact_display_name || it.contact_phone_raw || 'Contato'}
-                                    {it.contact_opted_out_at ? <span className="ml-2 text-amber-200/80">(opt-out)</span> : null}
+                              <TooltipLabel label="Abrir conversa">
+                                <button
+                                  key={it.id}
+                                  type="button"
+                                  onClick={() => openConversationById(it.id)}
+                                  className="w-full text-left rounded-xl border border-white/10 bg-black/20 hover:bg-white/[0.06] transition-colors px-3 py-2"
+                                >
+                                  <div className="flex items-center justify-between gap-3 text-xs">
+                                    <div className="text-white/90 font-semibold truncate">
+                                      {it.contact_display_name || it.contact_phone_raw || 'Contato'}
+                                      {it.contact_opted_out_at ? <span className="ml-2 text-amber-200/80">(opt-out)</span> : null}
+                                    </div>
+                                    <div className="text-white/70">{fmtDateTime(it.last_activity_at || it.last_message_at || null)}</div>
                                   </div>
-                                  <div className="text-white/70">{fmtDateTime(it.last_activity_at || it.last_message_at || null)}</div>
-                                </div>
-                                <div className="mt-1 text-xs text-blue-100/70 truncate">
-                                  {(it.last_message_text || '').trim()
-                                    ? `${String(it.last_message_direction || '').toUpperCase() === 'OUTBOUND' ? 'OUT' : 'IN'}: ${it.last_message_text}`
-                                    : '—'}
-                                </div>
-                                <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-blue-200/60">
-                                  <div>stage: <span className="text-white/70">{it.stage || '—'}</span></div>
-                                  <div className="truncate">id: <span className="text-white/60">{it.id}</span></div>
-                                </div>
-                              </button>
+                                  <div className="mt-1 text-xs text-blue-100/70 truncate">
+                                    {(it.last_message_text || '').trim()
+                                      ? `${String(it.last_message_direction || '').toUpperCase() === 'OUTBOUND' ? 'OUT' : 'IN'}: ${it.last_message_text}`
+                                      : '—'}
+                                  </div>
+                                  <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-blue-200/60">
+                                    <div>stage: <span className="text-white/70">{it.stage || '—'}</span></div>
+                                    <div className="truncate">id: <span className="text-white/60">{it.id}</span></div>
+                                  </div>
+                                </button>
+                              </TooltipLabel>
                             ))}
                           </div>
                         ) : (

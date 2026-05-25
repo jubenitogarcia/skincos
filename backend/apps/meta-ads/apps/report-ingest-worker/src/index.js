@@ -632,6 +632,7 @@ async function handleReportRequest(request, env, url) {
   }
 
   const latestRuns = await fetchLatestAdRuns(env.META_ADS_DB, accountId, reportDate, limit);
+  const effectiveReportDate = safeString(latestRuns[0]?.report_date) || reportDate;
   if (!latestRuns.length) {
     return jsonResponse(200, {
       ok: true,
@@ -640,6 +641,7 @@ async function handleReportRequest(request, env, url) {
         source: 'd1',
         account_id: accountId,
         report_date: reportDate,
+        requested_report_date: reportDate,
         windows,
         include,
         runs_count: 0,
@@ -653,8 +655,8 @@ async function handleReportRequest(request, env, url) {
   const adIds = dedupeStrings(latestRuns.map((row) => row.ad_id));
   const groupKeys = dedupeStrings(latestRuns.map((row) => row.metrics_group_key));
   const adEntityRows = await fetchAdEntities(env.META_ADS_DB, accountId, adIds);
-  const metricRows = await fetchMetricSnapshots(env.META_ADS_DB, reportDate, groupKeys, windows);
-  const auditRows = await fetchIngestionAudit(env.META_ADS_DB, reportDate, groupKeys, windows);
+  const metricRows = await fetchMetricSnapshots(env.META_ADS_DB, effectiveReportDate, groupKeys, windows);
+  const auditRows = await fetchIngestionAudit(env.META_ADS_DB, effectiveReportDate, groupKeys, windows);
 
   const adEntityById = new Map(adEntityRows.map((row) => [safeString(row.entity_id), row]));
   const latestByGroup = new Map(latestRuns.map((row) => [safeString(row.metrics_group_key), row]));
@@ -671,7 +673,8 @@ async function handleReportRequest(request, env, url) {
   log(env, 'info', 'report_lookup_completed', {
     requestId,
     accountId,
-    reportDate,
+    reportDate: effectiveReportDate,
+    requestedReportDate: reportDate,
     include,
     windows,
     runsCount: latestRuns.length,
@@ -685,7 +688,8 @@ async function handleReportRequest(request, env, url) {
     metadata: {
       source: 'd1',
       account_id: accountId,
-      report_date: reportDate,
+      report_date: effectiveReportDate,
+      requested_report_date: reportDate,
       windows,
       include,
       runs_count: latestRuns.length,
@@ -698,8 +702,19 @@ async function handleReportRequest(request, env, url) {
 
 async function fetchLatestAdRuns(db, accountId, reportDate, limit) {
   const rows = await db.prepare(`
-    WITH ranked AS (
+    WITH effective_report AS (
+      SELECT MAX(ia.report_date) AS report_date
+      FROM ingestion_audit ia
+      JOIN entities e
+        ON e.entity_kind = 'ad'
+       AND e.entity_id = ia.entity_id
+      WHERE ia.report_date <= ?
+        AND ia.entity_level = 'ad'
+        AND e.account_id = ?
+    ),
+    ranked AS (
       SELECT
+        ia.report_date,
         ia.entity_id AS ad_id,
         ia.metrics_group_key,
         ia.requested_at,
@@ -714,11 +729,12 @@ async function fetchLatestAdRuns(db, accountId, reportDate, limit) {
       JOIN entities e
         ON e.entity_kind = 'ad'
        AND e.entity_id = ia.entity_id
-      WHERE ia.report_date = ?
+      WHERE ia.report_date = (SELECT report_date FROM effective_report)
         AND ia.entity_level = 'ad'
         AND e.account_id = ?
     )
     SELECT
+      report_date,
       ad_id,
       metrics_group_key,
       requested_at,
@@ -729,9 +745,10 @@ async function fetchLatestAdRuns(db, accountId, reportDate, limit) {
     WHERE rn = 1
     ORDER BY requested_at DESC
     LIMIT ?
-  `).bind(reportDate, accountId, limit).all();
+  `).bind(reportDate, accountId, accountId, limit).all();
 
   return asArray(rows?.results).map((row) => ({
+    report_date: safeString(row.report_date),
     ad_id: safeString(row.ad_id),
     metrics_group_key: safeString(row.metrics_group_key),
     requested_at: safeString(row.requested_at),

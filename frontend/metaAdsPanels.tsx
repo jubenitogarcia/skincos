@@ -5,14 +5,13 @@ import { CartesianGrid, LineChart, Line, XAxis, YAxis, Tooltip as RechartsToolti
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/dialog'
 import { EntityDetailModal, type EntityDetailSection } from '@/EntityDetailModal'
-import { Popover, PopoverContent, PopoverTrigger } from '@/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Switch } from '@/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
 import { Textarea } from '@/textarea'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/tooltip'
+import { TooltipLabel } from '@/tooltip'
 import type {
   MetaAdAccount,
   MetaAd,
@@ -232,10 +231,9 @@ function MetaAdsHoverTooltip({
   children: ReactElement
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent>{content}</TooltipContent>
-    </Tooltip>
+    <TooltipLabel label={content}>
+      {children}
+    </TooltipLabel>
   )
 }
 
@@ -537,7 +535,7 @@ function MetaAdsMetricTile({
   )
 
   return (
-    <Card className={`${panelClass} ${size === 'wide' ? 'col-span-2' : ''}`}>
+    <Card className={`${panelClass} gap-0 overflow-hidden py-0 ${size === 'wide' ? 'col-span-2' : ''}`}>
       {tooltipLabel || description ? (
         <MetaAdsTableTooltip label={tooltipLabel || label} description={description}>
           {body}
@@ -1176,6 +1174,7 @@ export function MetaAdsOverviewPanel({
       return DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT
     }
   })
+  const [metricSettingsOpen, setMetricSettingsOpen] = useState(false)
 
   useEffect(() => {
     try {
@@ -1452,94 +1451,101 @@ export function MetaAdsOverviewPanel({
     setMetricLayout((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)))
   }
 
-  return (
-    <>
-      <MetaAdsPersistentError error={overviewError} onRetry={onRetry} />
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Resumo da conta</div>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80">
-              <FadersHorizontal className="h-4 w-4" />
-              Personalizar métricas
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="max-h-[min(38rem,calc(100vh-7rem))] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto border-slate-800/80 bg-slate-950 text-slate-100">
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <div className="text-sm font-semibold text-white">Personalizar métricas</div>
+  const metricSettingsContent = (
+    <div className="space-y-3">
+      <div className="grid gap-2">
+        {metricLayout.map((config, index) => {
+          const tile = metricTiles.find((entry) => entry.key === config.key)
+          if (!tile) return null
+          return (
+            <div key={config.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-slate-800/80 bg-slate-900/60 p-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-white">{tile.tooltipLabel || tile.label}</div>
+                <div className="truncate text-xs text-slate-400">{tile.description || tile.label}</div>
               </div>
-              <div className="space-y-2">
-                {metricLayout.map((config, index) => {
-                  const tile = metricTiles.find((entry) => entry.key === config.key)
-                  if (!tile) return null
-                  return (
-                    <div key={config.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-slate-800/80 bg-slate-900/60 p-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-white">{tile.tooltipLabel || tile.label}</div>
-                        <div className="truncate text-xs text-slate-400">{tile.description || tile.label}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={config.visible}
-                          onCheckedChange={(checked) => updateMetricTile(config.key, { visible: checked })}
-                          aria-label={`${config.visible ? 'Ocultar' : 'Exibir'} ${tile.label}`}
-                        />
-                        <Select
-                          value={config.size}
-                          onValueChange={(value) => updateMetricTile(config.key, { size: value === 'wide' ? 'wide' : 'compact' })}
-                        >
-                          <SelectTrigger className="h-8 w-[7.5rem] border-slate-700 bg-slate-950/70 text-xs text-slate-100">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="compact">Compacto</SelectItem>
-                            <SelectItem value="wide">Largo</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
-                          onClick={() => moveMetricTile(config.key, -1)}
-                          disabled={index === 0}
-                          aria-label={`Mover ${tile.label} para cima`}
-                        >
-                          <CaretUp className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
-                          onClick={() => moveMetricTile(config.key, 1)}
-                          disabled={index === metricLayout.length - 1}
-                          aria-label={`Mover ${tile.label} para baixo`}
-                        >
-                          <CaretDown className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-              <div className="flex items-center justify-between pt-1">
-                <div className="text-xs text-slate-400">Cards ocultos saem do topo, mas continuam disponíveis aqui.</div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={config.visible}
+                  onCheckedChange={(checked) => updateMetricTile(config.key, { visible: checked })}
+                  aria-label={`${config.visible ? 'Ocultar' : 'Exibir'} ${tile.label}`}
+                />
+                <Select
+                  value={config.size}
+                  onValueChange={(value) => updateMetricTile(config.key, { size: value === 'wide' ? 'wide' : 'compact' })}
+                >
+                  <SelectTrigger className="h-8 w-[7.5rem] border-slate-700 bg-slate-950/70 text-xs text-slate-100">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="compact">Compacto</SelectItem>
+                    <SelectItem value="wide">Largo</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
-                  onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
+                  onClick={() => moveMetricTile(config.key, -1)}
+                  disabled={index === 0}
+                  aria-label={`Mover ${tile.label} para cima`}
                 >
-                  <EyeSlash className="h-4 w-4" />
-                  Resetar
+                  <CaretUp className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
+                  onClick={() => moveMetricTile(config.key, 1)}
+                  disabled={index === metricLayout.length - 1}
+                  aria-label={`Mover ${tile.label} para baixo`}
+                >
+                  <CaretDown className="h-4 w-4" />
                 </Button>
               </div>
             </div>
-          </PopoverContent>
-        </Popover>
+          )
+        })}
+      </div>
+      <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs text-slate-400">Cards ocultos saem do topo, mas continuam disponíveis aqui.</div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
+          onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
+        >
+          <EyeSlash className="h-4 w-4" />
+          Resetar
+        </Button>
+      </div>
+    </div>
+  )
+
+  return (
+    <>
+      <MetaAdsPersistentError error={overviewError} onRetry={onRetry} />
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Resumo da conta</div>
+        <Dialog open={metricSettingsOpen} onOpenChange={setMetricSettingsOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80">
+              <FadersHorizontal className="h-4 w-4" />
+              Personalizar métricas
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="border-slate-800/80 bg-slate-950 text-slate-100 sm:max-w-2xl" resizable={false}>
+            <DialogHeader>
+              <DialogTitle>Personalizar métricas</DialogTitle>
+              <DialogDescription>
+                Escolha quais métricas aparecem no topo, ajuste o tamanho dos cards e reorganize a ordem.
+              </DialogDescription>
+            </DialogHeader>
+            {metricSettingsContent}
+          </DialogContent>
+        </Dialog>
       </div>
       <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
         {visibleMetricTiles.length > 0 ? (

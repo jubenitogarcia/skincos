@@ -270,7 +270,9 @@ export type MetaAdsHeaderState = {
 
 export type MetaAdsHeaderAction =
   | { type: 'set-account'; value: string }
+  | { type: 'remove-account'; value: string }
   | { type: 'set-report-window'; value: MetaAdsReportWindowDays }
+  | { type: 'connect' }
   | { type: 'open-custom-period' }
   | { type: 'refresh' }
   | { type: 'manage-connections' }

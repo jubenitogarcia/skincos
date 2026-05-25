@@ -4,6 +4,7 @@ import { performAction } from './actionsRegistry'
 import { QRModal } from './QRModal'
 import WhatsAppDashboard from './WhatsAppDashboard'
 import { LoadingPercentText } from '@/LoadingPattern'
+import { TooltipTruncate } from '@/tooltip'
 
 interface GatewayStatus {
     ready?: boolean
@@ -761,7 +762,7 @@ export const WhatsAppPanel: React.FC = () => {
                                     <div className="grid md:grid-cols-3 gap-3">
                                         {attachments.map(a => (
                                             <div key={a.id} className="border rounded p-2 bg-gray-50 flex flex-col gap-1">
-                                                <div className="text-xs font-medium truncate" title={a.name}>{a.name}</div>
+                                                <TooltipTruncate text={a.name} className="text-xs font-medium" />
                                                 <div className="text-[10px] text-gray-500">{a.waType} • {(a.size / 1024).toFixed(1)} KB</div>
                                                 {a.waType === 'image' && <img src={a.dataUrl} className="h-20 w-full object-cover rounded" />}
                                                 <button className="mt-auto text-[10px] text-red-600 hover:underline" onClick={() => setAttachments(att => att.filter(x => x.id !== a.id))}>remover</button>

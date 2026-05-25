@@ -13,7 +13,7 @@ import { Tabs, TabsContent } from '@/tabs'
 import { Input } from '@/input'
 import { BrDatePickerInput } from '@/br-date-picker'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/tooltip'
+import { Tooltip, TooltipButton, TooltipContent, TooltipLabel, TooltipTrigger } from '@/tooltip'
 import { useKV } from '@/spark-mock'
 import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
 import { dispatchEscalaHeaderAction, subscribeEscalaHeaderState } from '@/escalaHeaderBridge'
@@ -22,7 +22,7 @@ import { dispatchInsumosHeaderAction, subscribeInsumosHeaderState } from '@/insu
 import type { InsumosHeaderState, InsumosOverviewPeriod } from '@/insumosTypes'
 import { dispatchMetaAdsHeaderAction, subscribeMetaAdsHeaderState } from '@/metaAdsHeaderBridge'
 import type { MetaAdsHeaderState } from '@/metaAdsTypes'
-import { CalendarX2, CheckCircle2, Circle, CircleDot, Download, Pencil, RefreshCw, Settings2, Shield, Sparkles } from 'lucide-react'
+import { CalendarX2, CheckCircle2, Circle, CircleDot, Download, Pencil, Plus, RefreshCw, Shield, Sparkles, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -866,14 +866,15 @@ export default function AppFunctionalNeatlab() {
                                     />
                                     <p className="text-[10px] text-blue-100/70 tracking-[0.25em] uppercase truncate mt-1">CRM</p>
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setSidebarPinned((v) => !v)}
-                                    title={sidebarPinned ? 'Desafixar menu' : 'Fixar menu'}
-                                    className={`rounded-lg border border-white/10 bg-white/[0.06] hover:bg-white/[0.12] text-blue-100/80 hover:text-white transition-colors ${sidebarExpanded ? 'px-2 py-2 text-sm' : 'hidden'}`}
-                                >
-                                    {sidebarPinned ? '📌' : '📍'}
-                                </button>
+                                <TooltipButton label={sidebarPinned ? 'Desafixar menu' : 'Fixar menu'}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSidebarPinned((v) => !v)}
+                                        className={`rounded-lg border border-white/10 bg-white/[0.06] hover:bg-white/[0.12] text-blue-100/80 hover:text-white transition-colors ${sidebarExpanded ? 'px-2 py-2 text-sm' : 'hidden'}`}
+                                    >
+                                        {sidebarPinned ? '📌' : '📍'}
+                                    </button>
+                                </TooltipButton>
                             </div>
 
                             {/* User Info */}
@@ -882,22 +883,24 @@ export default function AppFunctionalNeatlab() {
                                     <div className="w-8 h-8 rounded-lg bg-gradient-blue flex items-center justify-center text-sm font-semibold text-white">
                                         {(user?.name || 'U').charAt(0).toUpperCase()}
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setProfileOpen(true)}
-                                        className={`flex-1 min-w-0 text-left ${sidebarExpanded ? '' : 'hidden'}`}
-                                        title="Abrir perfil"
-                                    >
-                                        <p className="font-semibold text-white text-sm leading-tight truncate">{user?.name || 'Usuário'}</p>
-                                        <p className="text-xs text-blue-300/70 truncate">{user?.email}</p>
-                                    </button>
-                                    <button
-                                        onClick={signOut}
-                                        className={`${sidebarExpanded ? 'text-xs' : 'text-sm'} text-blue-300/70 hover:text-red-400 transition-all duration-300 hover:scale-105`}
-                                        title="Sair"
-                                    >
-                                        ⏻
-                                    </button>
+                                    <TooltipButton label="Abrir perfil">
+                                        <button
+                                            type="button"
+                                            onClick={() => setProfileOpen(true)}
+                                            className={`flex-1 min-w-0 text-left ${sidebarExpanded ? '' : 'hidden'}`}
+                                        >
+                                            <p className="font-semibold text-white text-sm leading-tight truncate">{user?.name || 'Usuário'}</p>
+                                            <p className="text-xs text-blue-300/70 truncate">{user?.email}</p>
+                                        </button>
+                                    </TooltipButton>
+                                    <TooltipButton label="Sair">
+                                        <button
+                                            onClick={signOut}
+                                            className={`${sidebarExpanded ? 'text-xs' : 'text-sm'} text-blue-300/70 hover:text-red-400 transition-all duration-300 hover:scale-105`}
+                                        >
+                                            ⏻
+                                        </button>
+                                    </TooltipButton>
                                 </div>
                             </div>
                         </div>
@@ -919,14 +922,15 @@ export default function AppFunctionalNeatlab() {
 	                                        </svg>
 	                                    </span>
 	                                    {search ? (
-	                                        <button
-	                                            onClick={() => setSearch('')}
-	                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-300/60 hover:text-white transition-colors"
-	                                            title="Limpar busca"
-	                                            aria-label="Limpar busca"
-	                                        >
-	                                            ✕
-	                                        </button>
+	                                        <TooltipButton label="Limpar busca">
+	                                            <button
+	                                                onClick={() => setSearch('')}
+	                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-300/60 hover:text-white transition-colors"
+	                                                aria-label="Limpar busca"
+	                                            >
+	                                                ✕
+	                                            </button>
+	                                        </TooltipButton>
 	                                    ) : null}
 	                                </div>
 	                            ) : null}
@@ -935,57 +939,58 @@ export default function AppFunctionalNeatlab() {
 	                                    const isLocked = !UNLOCKED_MODULE_KEYS.has(m.key)
 	                                    const isActive = active === m.key
 	                                    return (
-                                        <button
-                                            key={m.key}
-                                            onClick={() => {
-                                                if (isLocked) return
-                                                setActive(m.key)
-                                            }}
-                                            disabled={isLocked}
-                                            aria-disabled={isLocked}
-                                            aria-label={m.label}
-                                            title={isLocked ? `${m.label} (Em breve)` : m.label}
-                                            className={`w-full group relative overflow-hidden rounded-xl transition-all duration-300 animate-slide-up ${isLocked ? 'opacity-50 cursor-not-allowed' : ''
-                                                }`}
-                                            style={{ animationDelay: `${index * 50}ms` }}
-                                        >
-                                            <div className={`flex items-center gap-3 ${sidebarExpanded ? 'px-4' : 'px-0 justify-center'} py-3 relative z-10 transition-all duration-300 ${isActive
-                                                    ? 'text-white transform scale-[1.02]'
-                                                    : isLocked
-                                                        ? 'text-blue-100/60'
-                                                        : 'text-blue-100/80 hover:text-white hover:transform hover:scale-[1.01]'
-                                                }`}>
-                                                <span className="text-lg leading-none flex-shrink-0 transition-transform duration-300 group-hover:scale-110">{m.icon}</span>
-                                                {sidebarExpanded ? (
-                                                    <span className="truncate font-medium text-sm">{m.label}</span>
-                                                ) : null}
-                                                {sidebarExpanded ? (
-                                                    isLocked ? (
-                                                        <span className="ml-auto text-sm text-blue-100/80" aria-hidden>
-                                                            🔒
-                                                        </span>
-                                                    ) : isActive ? (
-                                                        <div className="ml-auto w-2 h-2 rounded-full bg-white animate-pulse"></div>
-                                                    ) : null
-                                                ) : (
-                                                    isLocked ? (
-                                                        <span className="absolute top-1 right-1 text-[10px] text-blue-100/80" aria-hidden>
-                                                            🔒
-                                                        </span>
-                                                    ) : isActive ? (
-                                                        <span className="absolute bottom-1 right-1 inline-block h-2 w-2 rounded-full bg-white animate-pulse" aria-hidden />
-                                                    ) : null
-                                                )}
-                                            </div>
+                                        <TooltipLabel label={m.label} description={isLocked ? 'Módulo em breve.' : undefined}>
+                                            <button
+                                                key={m.key}
+                                                onClick={() => {
+                                                    if (isLocked) return
+                                                    setActive(m.key)
+                                                }}
+                                                disabled={isLocked}
+                                                aria-disabled={isLocked}
+                                                aria-label={m.label}
+                                                className={`w-full group relative overflow-hidden rounded-xl transition-all duration-300 animate-slide-up ${isLocked ? 'opacity-50 cursor-not-allowed' : ''
+                                                    }`}
+                                                style={{ animationDelay: `${index * 50}ms` }}
+                                            >
+                                                <div className={`flex items-center gap-3 ${sidebarExpanded ? 'px-4' : 'px-0 justify-center'} py-3 relative z-10 transition-all duration-300 ${isActive
+                                                        ? 'text-white transform scale-[1.02]'
+                                                        : isLocked
+                                                            ? 'text-blue-100/60'
+                                                            : 'text-blue-100/80 hover:text-white hover:transform hover:scale-[1.01]'
+                                                    }`}>
+                                                    <span className="text-lg leading-none flex-shrink-0 transition-transform duration-300 group-hover:scale-110">{m.icon}</span>
+                                                    {sidebarExpanded ? (
+                                                        <span className="truncate font-medium text-sm">{m.label}</span>
+                                                    ) : null}
+                                                    {sidebarExpanded ? (
+                                                        isLocked ? (
+                                                            <span className="ml-auto text-sm text-blue-100/80" aria-hidden>
+                                                                🔒
+                                                            </span>
+                                                        ) : isActive ? (
+                                                            <div className="ml-auto w-2 h-2 rounded-full bg-white animate-pulse"></div>
+                                                        ) : null
+                                                    ) : (
+                                                        isLocked ? (
+                                                            <span className="absolute top-1 right-1 text-[10px] text-blue-100/80" aria-hidden>
+                                                                🔒
+                                                            </span>
+                                                        ) : isActive ? (
+                                                            <span className="absolute bottom-1 right-1 inline-block h-2 w-2 rounded-full bg-white animate-pulse" aria-hidden />
+                                                        ) : null
+                                                    )}
+                                                </div>
 
-                                            {/* Active state background */}
-                                            {isActive ? (
-                                                <div className="absolute inset-0 bg-gradient-blue rounded-xl shadow-premium animate-scale-in"></div>
-                                            ) : (
-                                                <div className={`absolute inset-0 bg-white/[0.05] rounded-xl transition-all duration-300 ${isLocked ? 'opacity-0' : 'hover:bg-white/[0.12] opacity-0 group-hover:opacity-100'
-                                                    }`}></div>
-                                            )}
-                                        </button>
+                                                {/* Active state background */}
+                                                {isActive ? (
+                                                    <div className="absolute inset-0 bg-gradient-blue rounded-xl shadow-premium animate-scale-in"></div>
+                                                ) : (
+                                                    <div className={`absolute inset-0 bg-white/[0.05] rounded-xl transition-all duration-300 ${isLocked ? 'opacity-0' : 'hover:bg-white/[0.12] opacity-0 group-hover:opacity-100'
+                                                        }`}></div>
+                                                )}
+                                            </button>
+                                        </TooltipLabel>
                                     )
                                 })()
                             ))}
@@ -1072,42 +1077,45 @@ export default function AppFunctionalNeatlab() {
 					                                                        </>
 					                                                    ) : null}
 
-						                                                    <Button
-						                                                    size="icon"
-						                                                        variant="ghost"
-						                                                        className="h-9 w-9 rounded-md bg-emerald-500/25 text-emerald-100 hover:bg-emerald-500/35"
-					                                                        onClick={() => {
-				                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
-	                                                        }}
-			                                                        title="Entrada"
-			                                                        aria-label="Entrada"
-			                                                    >
-				                                                        <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
-			                                                    </Button>
-						                                                    <Button
-						                                                    size="icon"
-						                                                        variant="ghost"
-						                                                        className="h-9 w-9 rounded-md bg-rose-500/30 text-rose-100 hover:bg-rose-500/40"
-					                                                        onClick={() => {
-				                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
-	                                                        }}
-			                                                        title="Saída"
-			                                                        aria-label="Saída"
-			                                                    >
-				                                                        <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
-			                                                    </Button>
-				                                                    <Button
-				                                                    size="icon"
-				                                                        variant="ghost"
-				                                                        className="h-9 w-9 rounded-md bg-sky-500/30 text-sky-100 hover:bg-sky-500/40"
-				                                                        onClick={() => {
-				                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
-	                                                        }}
-			                                                        title="Transferência"
-			                                                        aria-label="Transferência"
-				                                                    >
-					                                                        <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
-					                                                    </Button>
+						                                                    <TooltipButton label="Entrada">
+						                                                        <Button
+						                                                            size="icon"
+						                                                            variant="ghost"
+						                                                            className="h-9 w-9 rounded-md bg-emerald-500/25 text-emerald-100 hover:bg-emerald-500/35"
+					                                                            onClick={() => {
+				                                                                dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
+	                                                            }}
+			                                                            aria-label="Entrada"
+			                                                        >
+				                                                            <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-5 w-5" />
+			                                                        </Button>
+						                                                    </TooltipButton>
+						                                                    <TooltipButton label="Saída">
+						                                                        <Button
+						                                                            size="icon"
+						                                                            variant="ghost"
+						                                                            className="h-9 w-9 rounded-md bg-rose-500/30 text-rose-100 hover:bg-rose-500/40"
+					                                                            onClick={() => {
+				                                                                dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
+	                                                            }}
+			                                                            aria-label="Saída"
+			                                                        >
+				                                                            <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-5 w-5" />
+			                                                        </Button>
+						                                                    </TooltipButton>
+				                                                    <TooltipButton label="Transferência">
+				                                                        <Button
+				                                                            size="icon"
+				                                                            variant="ghost"
+				                                                            className="h-9 w-9 rounded-md bg-sky-500/30 text-sky-100 hover:bg-sky-500/40"
+				                                                            onClick={() => {
+				                                                                dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
+	                                                            }}
+			                                                            aria-label="Transferência"
+				                                                        >
+					                                                            <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-5 w-5" />
+					                                                        </Button>
+				                                                    </TooltipButton>
 					
 			                                                </div>
 						                                            </>
@@ -1238,14 +1246,24 @@ export default function AppFunctionalNeatlab() {
                                                                 <Select
                                                                     value={metaAdsHeaderState?.selectedAccountId || ''}
                                                                     onValueChange={(value) => {
+                                                                        if (value === '__meta_ads_add_connection__') {
+                                                                            dispatchMetaAdsHeaderAction({ type: 'connect' })
+                                                                            return
+                                                                        }
                                                                         dispatchMetaAdsHeaderAction({ type: 'set-account', value })
                                                                     }}
-                                                                    disabled={metaAdsHeaderState?.refreshing || !(metaAdsHeaderState?.accounts || []).length}
+                                                                    disabled={metaAdsHeaderState?.refreshing}
                                                                 >
                                                                     <SelectTrigger className="h-8 w-64 bg-white/[0.06] border-white/20 text-white">
                                                                         <SelectValue placeholder="Conta de anúncios" />
                                                                     </SelectTrigger>
                                                                     <SelectContent>
+                                                                        <SelectItem value="__meta_ads_add_connection__" className="bg-slate-950 text-sky-100 focus:bg-sky-500/15 focus:text-sky-50">
+                                                                            <div className="flex w-full items-center gap-2 pr-4">
+                                                                                <Plus className="size-3.5 text-sky-300" aria-hidden="true" />
+                                                                                <span>Adicionar conexão</span>
+                                                                            </div>
+                                                                        </SelectItem>
                                                                         {(metaAdsHeaderState?.accounts || []).map((account) => {
                                                                             const statusTone =
                                                                                 account.statusTone === 'success'
@@ -1257,13 +1275,32 @@ export default function AppFunctionalNeatlab() {
                                                                                             : 'bg-slate-950 text-slate-100 focus:bg-slate-800/90'
                                                                             return (
                                                                                 <SelectItem key={account.id} value={account.id} className={statusTone}>
-                                                                                    <div className="flex w-full items-center justify-between gap-3 pr-4">
+                                                                                    <div className="flex w-full items-center justify-between gap-3 pr-1">
                                                                                         <span className="truncate">{account.name || account.id}</span>
-                                                                                        {account.statusTone === 'success' ? (
-                                                                                            <CircleDot className="size-3.5 text-emerald-300" aria-hidden="true" />
-                                                                                        ) : (
-                                                                                            <Circle className={`size-3.5 ${account.statusTone === 'warning' ? 'text-amber-300' : account.statusTone === 'danger' ? 'text-rose-300' : 'text-slate-400'}`} aria-hidden="true" />
-                                                                                        )}
+                                                                                        <span className="inline-flex items-center gap-2">
+                                                                                            {account.statusTone === 'success' ? (
+                                                                                                <CircleDot className="size-3.5 text-emerald-300" aria-hidden="true" />
+                                                                                            ) : (
+                                                                                                <Circle className={`size-3.5 ${account.statusTone === 'warning' ? 'text-amber-300' : account.statusTone === 'danger' ? 'text-rose-300' : 'text-slate-400'}`} aria-hidden="true" />
+                                                                                            )}
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                className="inline-flex size-5 items-center justify-center rounded-full border border-white/15 text-blue-100/70 transition hover:border-rose-300/50 hover:bg-rose-500/15 hover:text-rose-100"
+                                                                                                aria-label={`Remover ${account.name || account.id} da lista`}
+                                                                                                tabIndex={-1}
+                                                                                                onPointerDown={(event) => {
+                                                                                                    event.preventDefault()
+                                                                                                    event.stopPropagation()
+                                                                                                    dispatchMetaAdsHeaderAction({ type: 'remove-account', value: account.id })
+                                                                                                }}
+                                                                                                onClick={(event) => {
+                                                                                                    event.preventDefault()
+                                                                                                    event.stopPropagation()
+                                                                                                }}
+                                                                                            >
+                                                                                                <X className="size-3" aria-hidden="true" />
+                                                                                            </button>
+                                                                                        </span>
                                                                                     </div>
                                                                                 </SelectItem>
                                                                             )
@@ -1406,22 +1443,6 @@ export default function AppFunctionalNeatlab() {
                                                         size="icon"
                                                         variant="ghost"
                                                         className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
-                                                        onClick={() => dispatchMetaAdsHeaderAction({ type: 'manage-connections' })}
-                                                        aria-label="Gerenciar conexao"
-                                                    >
-                                                        <Settings2 className="size-3.5" aria-hidden="true" />
-                                                    </Button>
-                                                </TooltipTrigger>
-                                                <TooltipContent>
-                                                    Gerenciar conexao
-                                                </TooltipContent>
-                                            </Tooltip>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <Button
-                                                        size="icon"
-                                                        variant="ghost"
-                                                        className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
                                                         onClick={() => dispatchMetaAdsHeaderAction({ type: 'refresh' })}
                                                         disabled={metaAdsHeaderState?.refreshing}
                                                         aria-label="Atualizar"
@@ -1430,14 +1451,9 @@ export default function AppFunctionalNeatlab() {
                                                     </Button>
                                                 </TooltipTrigger>
                                                 <TooltipContent>
-                                                    <div className="space-y-0.5">
-                                                        <div>Atualizar painel</div>
-                                                        <div className="text-[11px] text-slate-300">
-                                                            {metaAdsHeaderState?.sessionUpdatedAt
-                                                                ? `Última atualização: ${new Date(metaAdsHeaderState.sessionUpdatedAt).toLocaleString('pt-BR')}`
-                                                                : 'Sem atualização registrada nesta sessão.'}
-                                                        </div>
-                                                    </div>
+                                                    {metaAdsHeaderState?.sessionUpdatedAt
+                                                        ? `Atualizar. Ultima atualizacao: ${new Date(metaAdsHeaderState.sessionUpdatedAt).toLocaleString('pt-BR')}`
+                                                        : 'Atualizar'}
                                                 </TooltipContent>
                                             </Tooltip>
                                         </div>
@@ -1507,15 +1523,16 @@ export default function AppFunctionalNeatlab() {
                                     ) : null}
 		                                    {active === 'insumos' ? (
 		                                        <div className="flex items-start gap-2 min-w-[220px] justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-blue-200/70">
-		                                            <button
-		                                                type="button"
-		                                                className="inline-flex"
-		                                                onClick={() => setEstoqueThresholdsOpen(true)}
-		                                                title="Editar faixas de estoque"
-		                                                aria-label="Editar faixas de estoque"
-		                                            >
-		                                                <Badge className={`uppercase tracking-wide border ${estoqueBadgeClass}`}>Estoque</Badge>
-		                                            </button>
+		                                            <TooltipButton label="Editar faixas de estoque">
+		                                                <button
+		                                                    type="button"
+		                                                    className="inline-flex"
+		                                                    onClick={() => setEstoqueThresholdsOpen(true)}
+		                                                    aria-label="Editar faixas de estoque"
+		                                                >
+		                                                    <Badge className={`uppercase tracking-wide border ${estoqueBadgeClass}`}>Estoque</Badge>
+		                                                </button>
+		                                            </TooltipButton>
 		                                            <span className="ml-auto text-right flex-1">
 		                                                <span className="block font-mono text-blue-50">
 		                                                {insumosHeaderEstoque?.loading ? (
@@ -1546,51 +1563,54 @@ export default function AppFunctionalNeatlab() {
 		                                    ) : null}
 		                                    {active === 'insumos' ? (
 		                                        <div className="flex items-center gap-1">
-		                                            <Button
-		                                                size="icon"
-		                                                variant="ghost"
-		                                                className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
-		                                                onClick={() => {
-		                                                    dispatchInsumosHeaderAction({ type: 'layout', value: 'expandAll' })
-	                                                }}
-		                                                title="Expandir tudo"
-		                                                aria-label="Expandir tudo"
-		                                            >
+		                                            <TooltipButton label="Expandir tudo">
+		                                                <Button
+		                                                    size="icon"
+		                                                    variant="ghost"
+		                                                    className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
+		                                                    onClick={() => {
+		                                                        dispatchInsumosHeaderAction({ type: 'layout', value: 'expandAll' })
+	                                                    }}
+		                                                    aria-label="Expandir tudo"
+		                                                >
 		                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
 		                                                    <path d="M7 9l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
 		                                                    <path d="M7 14l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
 		                                                </svg>
-		                                            </Button>
-		                                            <Button
-		                                                size="icon"
-		                                                variant="ghost"
-		                                                className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
-		                                                onClick={() => {
-		                                                    dispatchInsumosHeaderAction({ type: 'layout', value: 'collapseAll' })
-	                                                }}
-		                                                title="Contrair tudo"
-		                                                aria-label="Contrair tudo"
-		                                            >
+		                                                </Button>
+		                                            </TooltipButton>
+		                                            <TooltipButton label="Contrair tudo">
+		                                                <Button
+		                                                    size="icon"
+		                                                    variant="ghost"
+		                                                    className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
+		                                                    onClick={() => {
+		                                                        dispatchInsumosHeaderAction({ type: 'layout', value: 'collapseAll' })
+	                                                    }}
+		                                                    aria-label="Contrair tudo"
+		                                                >
 		                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
 		                                                    <path d="M7 15l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
 		                                                    <path d="M7 10l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
 		                                                </svg>
-		                                            </Button>
-		                                            <Button
-		                                                size="icon"
-		                                                variant="ghost"
-		                                                className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
-		                                                onClick={() => {
-		                                                    dispatchInsumosHeaderAction({ type: 'layout', value: 'reset' })
-	                                                }}
-		                                                title="Resetar layout"
-		                                                aria-label="Resetar layout"
-		                                            >
+		                                                </Button>
+		                                            </TooltipButton>
+		                                            <TooltipButton label="Resetar layout">
+		                                                <Button
+		                                                    size="icon"
+		                                                    variant="ghost"
+		                                                    className="h-9 w-9 rounded-md bg-transparent text-white hover:bg-white/[0.10]"
+		                                                    onClick={() => {
+		                                                        dispatchInsumosHeaderAction({ type: 'layout', value: 'reset' })
+	                                                    }}
+		                                                    aria-label="Resetar layout"
+		                                                >
 		                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
 		                                                    <path d="M21 12a9 9 0 1 1-3.1-6.7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
 		                                                    <path d="M21 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
 		                                                </svg>
-		                                            </Button>
+		                                                </Button>
+		                                            </TooltipButton>
 		                                        </div>
 		                                    ) : null}
                                     {UNLOCKED_MODULE_KEYS.has('notifications') && hasModuleAccess('notifications') ? (
@@ -1603,18 +1623,19 @@ export default function AppFunctionalNeatlab() {
 	                                    ) : null}
 
                                     {UNLOCKED_MODULE_KEYS.has('status') && hasModuleAccess('status') ? (
-                                        <Button
-                                            variant="outline"
-                                            className="bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
-	                                            onClick={() => {
-	                                                setSearch('')
-	                                                setActive('status')
-	                                            }}
-	                                            title="Status do sistema"
-	                                            aria-label="Status do sistema"
-	                                        >
-	                                            <span className="text-lg">⚙️</span>
-	                                        </Button>
+                                        <TooltipButton label="Status do sistema">
+                                            <Button
+                                                variant="outline"
+                                                className="bg-white/[0.08] border-white/20 text-white hover:bg-white/[0.12] h-11 w-11 p-0"
+	                                                onClick={() => {
+	                                                    setSearch('')
+	                                                    setActive('status')
+	                                                }}
+	                                                aria-label="Status do sistema"
+	                                            >
+	                                                <span className="text-lg">⚙️</span>
+	                                            </Button>
+                                        </TooltipButton>
 	                                    ) : null}
 	                                </div>
                             </div>
@@ -1686,42 +1707,45 @@ export default function AppFunctionalNeatlab() {
 		                                            </Select>
 		                                        </div>
 		                                        <div className="flex items-center gap-1">
-	                                                <Button
-	                                                    size="icon"
-	                                                    variant="ghost"
-                                                    className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-                                                    onClick={() => {
-                                                        dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
-                                                    }}
-                                                    title="Entrada"
-                                                    aria-label="Entrada"
-                                                >
+	                                                <TooltipButton label="Entrada">
+	                                                    <Button
+	                                                        size="icon"
+	                                                        variant="ghost"
+                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
+                                                        onClick={() => {
+                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'ENTRADA' })
+                                                        }}
+                                                        aria-label="Entrada"
+                                                    >
                                                     <img src="/icons/shortcut-entrada.svg" alt="" aria-hidden className="h-11 w-11" />
-                                                </Button>
-                                                <Button
-                                                    size="icon"
-                                                    variant="ghost"
-                                                    className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-                                                    onClick={() => {
-                                                        dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
-                                                    }}
-                                                    title="Saída"
-                                                    aria-label="Saída"
-                                                >
+                                                    </Button>
+                                                </TooltipButton>
+                                                <TooltipButton label="Saída">
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
+                                                        onClick={() => {
+                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'BAIXA' })
+                                                        }}
+                                                        aria-label="Saída"
+                                                    >
                                                     <img src="/icons/shortcut-saida.svg" alt="" aria-hidden className="h-11 w-11" />
-                                                </Button>
-                                                <Button
-                                                    size="icon"
-                                                    variant="ghost"
-                                                    className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
-                                                    onClick={() => {
-                                                        dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
-                                                    }}
-                                                    title="Transferência"
-                                                    aria-label="Transferência"
-                                                >
+                                                    </Button>
+                                                </TooltipButton>
+                                                <TooltipButton label="Transferência">
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="bg-transparent text-white hover:bg-white/[0.10] p-0 size-11 rounded-full"
+                                                        onClick={() => {
+                                                            dispatchInsumosHeaderAction({ type: 'quick-op', value: 'TRANSFERENCIA' })
+                                                        }}
+                                                        aria-label="Transferência"
+                                                    >
 	                                                <img src="/icons/shortcut-transferencia.svg" alt="" aria-hidden className="h-11 w-11" />
-                                                </Button>
+                                                    </Button>
+                                                </TooltipButton>
 		
 	                                        </div>
 	                                    </div>

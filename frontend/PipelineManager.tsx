@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/tabs"
 import { Label } from "@/label"
 import { Switch } from "@/switch"
+import { TooltipLabel } from "@/tooltip"
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import {
   Plus,
@@ -379,11 +380,14 @@ export function PipelineManager() {
                         .sort((a, b) => a.order - b.order)
                         .map((stage, index) => (
                           <div key={stage.id} className="flex items-center space-x-1 flex-shrink-0">
-                            <div
-                              className="w-3 h-3 rounded-full border-2 border-white shadow-sm"
-                              style={{ backgroundColor: stage.color }}
-                              title={stage.name}
-                            />
+                            <TooltipLabel label={stage.name}>
+                              <div
+                                className="w-3 h-3 rounded-full border-2 border-white shadow-sm"
+                                style={{ backgroundColor: stage.color }}
+                                aria-label={stage.name}
+                                tabIndex={0}
+                              />
+                            </TooltipLabel>
                             {index < pipeline.stages.length - 1 && (
                               <ArrowRight className="h-3 w-3 text-muted-foreground" />
                             )}

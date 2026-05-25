@@ -1,5 +1,6 @@
 import React from 'react'
 import { Button } from '@/button'
+import { TooltipButton } from '@/tooltip'
 
 export function InsumosBarcodeScannerInline({
   onDetected,
@@ -251,14 +252,15 @@ export function InsumosBarcodeScannerInline({
             Inverter câmera
           </Button>
           {!running ? (
-            <Button
-              variant="outline"
-              onClick={() => void start('gesture')}
-              disabled={starting}
-              title={needsGesture ? 'Clique para solicitar permissão de câmera' : 'Tentar novamente'}
-            >
-              {starting ? 'Iniciando…' : needsGesture ? 'Ativar câmera' : 'Tentar novamente'}
-            </Button>
+            <TooltipButton label={needsGesture ? 'Clique para solicitar permissão de câmera' : 'Tentar novamente'}>
+              <Button
+                variant="outline"
+                onClick={() => void start('gesture')}
+                disabled={starting}
+              >
+                {starting ? 'Iniciando…' : needsGesture ? 'Ativar câmera' : 'Tentar novamente'}
+              </Button>
+            </TooltipButton>
           ) : null}
           <Button variant="secondary" onClick={() => { stop(); onClose() }}>Fechar</Button>
         </div>

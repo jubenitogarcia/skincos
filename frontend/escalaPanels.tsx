@@ -20,6 +20,7 @@ import {
 import { Input } from '@/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/popover'
 import { Progress } from '@/progress'
+import { TooltipButton } from '@/tooltip'
 import {
   Select,
   SelectContent,
@@ -161,57 +162,61 @@ export function EscalaTeamPanel({
               <div className="mt-1 text-sm font-semibold text-white">Equipe</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <Button
-                type="button"
-                size="icon"
-                variant={teamFormMode === 'add' ? 'premium' : 'outline'}
-                onClick={onBeginAddTeamMember}
-                disabled={!!teamLoadError}
-                aria-label="Adicionar injetor"
-                title="Adicionar"
-                data-testid="escala-team-add"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
+              <TooltipButton label="Adicionar">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={teamFormMode === 'add' ? 'premium' : 'outline'}
+                  onClick={onBeginAddTeamMember}
+                  disabled={!!teamLoadError}
+                  aria-label="Adicionar injetor"
+                  data-testid="escala-team-add"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </TooltipButton>
               {teamPanelExpanded ? (
                 <>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="premium"
-                    onClick={() => void onSaveTeamMember()}
-                    disabled={!selectedTeamMemberDraft || !selectedTeamMemberDirty || savingTeamMember || !String(selectedTeamMemberDraft.name || '').trim()}
-                    aria-label="Salvar cadastro do injetor"
-                    title="Salvar"
-                    data-testid="escala-team-save"
-                  >
-                    <Save className="h-4 w-4" />
-                  </Button>
+                  <TooltipButton label="Salvar">
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="premium"
+                      onClick={() => void onSaveTeamMember()}
+                      disabled={!selectedTeamMemberDraft || !selectedTeamMemberDirty || savingTeamMember || !String(selectedTeamMemberDraft.name || '').trim()}
+                      aria-label="Salvar cadastro do injetor"
+                      data-testid="escala-team-save"
+                    >
+                      <Save className="h-4 w-4" />
+                    </Button>
+                  </TooltipButton>
+                  <TooltipButton label="Fechar">
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="outline"
+                      onClick={onCloseTeamPanel}
+                      aria-label="Fechar cadastro da equipe"
+                      data-testid="escala-team-close"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </TooltipButton>
+                </>
+              ) : (
+                <TooltipButton label="Editar">
                   <Button
                     type="button"
                     size="icon"
                     variant="outline"
-                    onClick={onCloseTeamPanel}
-                    aria-label="Fechar cadastro da equipe"
-                    title="Fechar"
-                    data-testid="escala-team-close"
+                    onClick={() => onBeginEditTeamMember(selectedTeamMember)}
+                    disabled={!selectedTeamMember || !!teamLoadError}
+                    aria-label="Editar injetor"
+                    data-testid="escala-team-edit"
                   >
-                    <X className="h-4 w-4" />
+                    <Pencil className="h-4 w-4" />
                   </Button>
-                </>
-              ) : (
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="outline"
-                  onClick={() => onBeginEditTeamMember(selectedTeamMember)}
-                  disabled={!selectedTeamMember || !!teamLoadError}
-                  aria-label="Editar injetor"
-                  title="Editar"
-                  data-testid="escala-team-edit"
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
+                </TooltipButton>
               )}
             </div>
           </div>

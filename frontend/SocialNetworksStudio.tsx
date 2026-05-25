@@ -8,6 +8,7 @@ import { Label } from '@/label'
 import { Badge } from '@/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Checkbox } from '@/checkbox'
+import { TooltipTruncate } from '@/tooltip'
 import { toast } from 'sonner'
 import { InstagramStudioPro } from '@/InstagramStudioPro'
 import { ThreadsStudio } from '@/ThreadsStudio'
@@ -929,9 +930,7 @@ export function SocialNetworksStudio() {
                       <div key={`${a.unitKey}:${a.platform}`} className="grid grid-cols-12 gap-2 px-3 py-2 text-xs text-white border-b border-white/5">
                         <div className="col-span-2 font-mono">{a.unitKey}</div>
                         <div className="col-span-2">{a.platform}</div>
-                        <div className="col-span-5 font-mono truncate" title={a.accountId}>
-                          {a.accountId}
-                        </div>
+                        <TooltipTruncate text={a.accountId} className="col-span-5 font-mono" />
                         <div className="col-span-2 font-mono">{a.apiVersion || '—'}</div>
                         <div className="col-span-1 flex justify-end gap-1">
                           <Button

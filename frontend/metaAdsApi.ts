@@ -9,6 +9,7 @@ import {
   getMetaAdsLocalTrend,
   isMetaAdsLocalMockEnabled,
   listMetaAdsLocalAccounts,
+  removeMetaAdsLocalAccount,
   selectMetaAdsLocalAccount,
   simulateMetaAdsOAuthConnect,
 } from '@/metaAdsLocalMock'
@@ -80,6 +81,10 @@ export const metaAdsApi = {
     isMetaAdsLocalMockEnabled()
       ? selectMetaAdsLocalAccount(payload.adAccountId)
       : request('/ad-accounts/select', { method: 'POST', body: JSON.stringify(payload) }),
+  removeAdAccount: (payload: { adAccountId: string }) =>
+    isMetaAdsLocalMockEnabled()
+      ? removeMetaAdsLocalAccount(payload.adAccountId)
+      : request('/ad-accounts/remove', { method: 'POST', body: JSON.stringify(payload) }),
   summary: (params?: { since?: string; until?: string }) => {
     const search = new URLSearchParams(params as any).toString()
     return isMetaAdsLocalMockEnabled()

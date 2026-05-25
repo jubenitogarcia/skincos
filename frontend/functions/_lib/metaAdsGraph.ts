@@ -63,6 +63,32 @@ export type MetaSummary = {
   activeCampaigns: number
 }
 
+export type MetaInsightsLevel = 'campaign' | 'adset' | 'ad'
+
+export type MetaInsight = {
+  campaign_id?: string
+  campaign_name?: string
+  adset_id?: string
+  adset_name?: string
+  ad_id?: string
+  ad_name?: string
+  spend: number
+  reach?: number
+  impressions: number
+  clicks: number
+  linkClicks?: number
+  engagement?: number
+  instagramProfileVisits?: number
+  conversations: number
+  ctr: number
+  linkCtr?: number
+  cpc: number
+  linkCpc?: number
+  cpm: number
+  cpp?: number
+  frequency?: number
+}
+
 function parseGraphBaseUrl(version?: string) {
   return `https://graph.facebook.com/${esc(version) || DEFAULT_GRAPH_VERSION}`
 }
@@ -78,6 +104,32 @@ function parseRoas(value: unknown) {
     return asNumber((first as any)?.value)
   }
   return asNumber(value)
+}
+
+function parseActionValue(actions: unknown, candidates: string[]) {
+  if (!Array.isArray(actions)) return 0
+  const wanted = new Set(candidates.map((item) => item.toLowerCase()))
+  return actions.reduce((sum, action) => {
+    const type = esc((action as any)?.action_type).toLowerCase()
+    if (!type || !wanted.has(type)) return sum
+    return sum + asNumber((action as any)?.value)
+  }, 0)
+}
+
+function parseOptionalNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') return undefined
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : undefined
+}
+
+function percent(numerator: number, denominator: number) {
+  if (!denominator) return 0
+  return Math.round((numerator / denominator) * 10000) / 100
+}
+
+function moneyRatio(numerator: number, denominator: number) {
+  if (!denominator) return 0
+  return Math.round((numerator / denominator) * 100) / 100
 }
 
 function normalizeAccountId(adAccountId: string) {
@@ -328,6 +380,86 @@ export async function getMetaAdsTrend(
     day: esc(row?.date_start),
     spend: asNumber(row?.spend),
   }))
+}
+
+export async function listMetaAdsInsights(
+  accessToken: string,
+  adAccountId: string,
+  level: MetaInsightsLevel,
+  range: { since: string; until: string },
+  version?: string,
+  appSecret?: string,
+): Promise<MetaInsight[]> {
+  const identityFields = ['campaign_id', 'campaign_name', 'adset_id', 'adset_name', 'ad_id', 'ad_name']
+  const metricFields = ['spend', 'reach', 'impressions', 'clicks', 'inline_link_clicks', 'ctr', 'cpc', 'cpm', 'cpp', 'frequency']
+  const collectInsights = (fields: string[]) => collectPaged<any>(
+    `/${normalizeAccountId(adAccountId)}/insights`,
+    {
+      fields: fields.join(','),
+      level,
+      time_range: JSON.stringify({ since: range.since, until: range.until }),
+      limit: 500,
+    },
+    accessToken,
+    version,
+    appSecret,
+  )
+  let rows: any[]
+  try {
+    rows = await collectInsights([...identityFields, ...metricFields, 'actions'])
+  } catch {
+    // Some accounts/apps reject richer action fields. Keep operational metrics available.
+    rows = await collectInsights([...identityFields, ...metricFields])
+  }
+
+  return rows.map((row) => {
+    const spend = asNumber(row?.spend)
+    const impressions = asNumber(row?.impressions)
+    const clicks = asNumber(row?.clicks)
+    const linkClicks = parseOptionalNumber(row?.inline_link_clicks)
+    const conversations = parseActionValue(row?.actions, [
+      'onsite_conversion.messaging_conversation_started_7d',
+      'onsite_conversion.messaging_conversation_started',
+      'onsite_conversion.total_messaging_connection',
+      'onsite_conversion.messaging_first_reply',
+    ])
+    const engagement = parseActionValue(row?.actions, [
+      'post_engagement',
+      'page_engagement',
+      'post_reaction',
+      'comment',
+      'like',
+    ])
+    const instagramProfileVisits = parseActionValue(row?.actions, [
+      'instagram_profile_visit',
+      'ig_profile_visit',
+      'onsite_conversion.instagram_profile_visit',
+    ])
+
+    return {
+      campaign_id: esc(row?.campaign_id),
+      campaign_name: esc(row?.campaign_name),
+      adset_id: esc(row?.adset_id),
+      adset_name: esc(row?.adset_name),
+      ad_id: esc(row?.ad_id),
+      ad_name: esc(row?.ad_name),
+      spend,
+      reach: parseOptionalNumber(row?.reach),
+      impressions,
+      clicks,
+      linkClicks,
+      engagement: engagement || undefined,
+      instagramProfileVisits: instagramProfileVisits || undefined,
+      conversations,
+      ctr: parseOptionalNumber(row?.ctr) ?? percent(clicks, impressions),
+      linkCtr: linkClicks === undefined ? undefined : percent(linkClicks, impressions),
+      cpc: parseOptionalNumber(row?.cpc) ?? moneyRatio(spend, clicks),
+      linkCpc: linkClicks === undefined ? undefined : moneyRatio(spend, linkClicks),
+      cpm: parseOptionalNumber(row?.cpm) ?? moneyRatio(spend * 1000, impressions),
+      cpp: parseOptionalNumber(row?.cpp),
+      frequency: parseOptionalNumber(row?.frequency),
+    }
+  })
 }
 
 export async function debugMetaAccessToken(

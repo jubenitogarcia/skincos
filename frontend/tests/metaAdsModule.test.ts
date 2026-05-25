@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildMetaAdsHealthState,
@@ -11,6 +11,7 @@ import {
   buildMetaAdsWorkflowReport,
   normalizeMetaAdsWorkflowAccountId,
 } from '../metaAdsWorkflowReport'
+import { listMetaAdsInsights } from '../functions/_lib/metaAdsGraph'
 import type { MetaAdsStatusResponse } from '../metaAdsTypes'
 
 const baseStatus = (overrides: Partial<MetaAdsStatusResponse> = {}): MetaAdsStatusResponse => ({
@@ -30,6 +31,10 @@ const baseStatus = (overrides: Partial<MetaAdsStatusResponse> = {}): MetaAdsStat
     expiresAt: null,
   },
   ...overrides,
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('Meta Ads state helpers', () => {
@@ -296,5 +301,137 @@ describe('Meta Ads state helpers', () => {
       spend: 150,
       clicks: 50,
     })
+  })
+
+  it('parses Graph insights with action metrics for campaign fallback reports', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              campaign_id: 'cmp_1',
+              campaign_name: 'Campanha Primavera',
+              spend: '100',
+              reach: '50',
+              impressions: '1000',
+              clicks: '20',
+              inline_link_clicks: '12',
+              ctr: '2',
+              cpc: '5',
+              cpm: '100',
+              cpp: '2',
+              frequency: '2',
+              actions: [
+                { action_type: 'onsite_conversion.messaging_conversation_started_7d', value: '4' },
+                { action_type: 'post_engagement', value: '9' },
+                { action_type: 'instagram_profile_visit', value: '3' },
+              ],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    )
+
+    const rows = await listMetaAdsInsights(
+      'token',
+      'act_123',
+      'campaign',
+      { since: '2026-05-01', until: '2026-05-07' },
+      'v20.0',
+    )
+
+    expect(rows[0]).toMatchObject({
+      campaign_id: 'cmp_1',
+      campaign_name: 'Campanha Primavera',
+      spend: 100,
+      reach: 50,
+      impressions: 1000,
+      clicks: 20,
+      linkClicks: 12,
+      conversations: 4,
+      engagement: 9,
+      instagramProfileVisits: 3,
+      ctr: 2,
+      linkCtr: 1.2,
+      cpc: 5,
+      linkCpc: 8.33,
+      cpm: 100,
+      cpp: 2,
+      frequency: 2,
+    })
+  })
+
+  it('falls back to basic Graph insight fields when action metrics are rejected', async () => {
+    const originalFetch = globalThis.fetch
+    const requests: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input)
+      requests.push(url)
+      if (requests.length === 1) {
+        return new Response(JSON.stringify({ error: { message: 'Unsupported get request for field actions' } }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              campaign_id: 'cmp_1',
+              campaign_name: 'Campanha 1',
+              spend: '123.45',
+              reach: '1000',
+              impressions: '2000',
+              clicks: '40',
+              inline_link_clicks: '25',
+              ctr: '2',
+              cpc: '3.08',
+              cpm: '61.72',
+              cpp: '0.12',
+              frequency: '2',
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      )
+    }) as typeof fetch
+
+    try {
+      const rows = await listMetaAdsInsights(
+        'token',
+        'act_123',
+        'campaign',
+        { since: '2026-05-01', until: '2026-05-30' },
+        'v20.0',
+      )
+
+      expect(requests).toHaveLength(2)
+      expect(requests[0]).toContain('actions')
+      expect(requests[1]).not.toContain('actions')
+      expect(rows[0]).toMatchObject({
+        campaign_id: 'cmp_1',
+        campaign_name: 'Campanha 1',
+        spend: 123.45,
+        reach: 1000,
+        impressions: 2000,
+        clicks: 40,
+        linkClicks: 25,
+        ctr: 2,
+        cpc: 3.08,
+        cpm: 61.72,
+        cpp: 0.12,
+        frequency: 2,
+      })
+      expect(rows[0].conversations).toBe(0)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

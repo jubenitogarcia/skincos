@@ -133,6 +133,8 @@ export function buildMetaAdsWorkflowReport(
     const impressions = readMetric(row, window, ['scalar_impressions', 'impressions'])
     const clicks = readMetric(row, window, ['scalar_clicks', 'clicks'])
     const linkClicks = readOptionalMetric(row, window, ['inline_link_clicks'])
+    const engagement = readOptionalMetric(row, window, ['inline_post_engagement'])
+    const instagramProfileVisits = readOptionalMetric(row, window, ['instagram_profile_visits'])
     const conversations = readMetric(row, window, ['conversation_started', 'whatsapp_conversations_started'])
     const cpp = readOptionalMetric(row, window, ['scalar_cpp', 'cpp'])
     const frequency = readOptionalMetric(row, window, ['scalar_frequency', 'frequency'])
@@ -147,6 +149,8 @@ export function buildMetaAdsWorkflowReport(
       impressions: 0,
       clicks: 0,
       linkClicks: 0,
+      engagement: 0,
+      instagramProfileVisits: 0,
       conversations: 0,
       ctr: 0,
       linkCtr: 0,
@@ -162,6 +166,8 @@ export function buildMetaAdsWorkflowReport(
     current.impressions += impressions
     current.clicks += clicks
     current.linkClicks = Number(current.linkClicks || 0) + (linkClicks || 0)
+    current.engagement = Number(current.engagement || 0) + (engagement || 0)
+    current.instagramProfileVisits = Number(current.instagramProfileVisits || 0) + (instagramProfileVisits || 0)
     current.conversations += conversations
     current.cpp = Number(current.cpp || 0) + (cpp || 0)
     current.frequency = Number(current.frequency || 0) + (frequency || 0)
@@ -182,6 +188,8 @@ export function buildMetaAdsWorkflowReport(
         impressions: 0,
         clicks: 0,
         linkClicks: 0,
+        engagement: 0,
+        instagramProfileVisits: 0,
         conversations: 0,
         ctr: 0,
         linkCtr: 0,
@@ -196,6 +204,8 @@ export function buildMetaAdsWorkflowReport(
       currentAdSet.impressions += impressions
       currentAdSet.clicks += clicks
       currentAdSet.linkClicks = Number(currentAdSet.linkClicks || 0) + (linkClicks || 0)
+      currentAdSet.engagement = Number(currentAdSet.engagement || 0) + (engagement || 0)
+      currentAdSet.instagramProfileVisits = Number(currentAdSet.instagramProfileVisits || 0) + (instagramProfileVisits || 0)
       currentAdSet.conversations += conversations
       currentAdSet.cpp = Number(currentAdSet.cpp || 0) + (cpp || 0)
       currentAdSet.frequency = Number(currentAdSet.frequency || 0) + (frequency || 0)
@@ -216,6 +226,8 @@ export function buildMetaAdsWorkflowReport(
         impressions: 0,
         clicks: 0,
         linkClicks: 0,
+        engagement: 0,
+        instagramProfileVisits: 0,
         conversations: 0,
         ctr: 0,
         linkCtr: 0,
@@ -230,6 +242,8 @@ export function buildMetaAdsWorkflowReport(
       currentAd.impressions += impressions
       currentAd.clicks += clicks
       currentAd.linkClicks = Number(currentAd.linkClicks || 0) + (linkClicks || 0)
+      currentAd.engagement = Number(currentAd.engagement || 0) + (engagement || 0)
+      currentAd.instagramProfileVisits = Number(currentAd.instagramProfileVisits || 0) + (instagramProfileVisits || 0)
       currentAd.conversations += conversations
       currentAd.cpp = Number(currentAd.cpp || 0) + (cpp || 0)
       currentAd.frequency = Number(currentAd.frequency || 0) + (frequency || 0)

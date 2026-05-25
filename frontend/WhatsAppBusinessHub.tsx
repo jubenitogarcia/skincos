@@ -15,6 +15,7 @@ import { ScrollArea } from "@/scroll-area"
 import { Avatar, AvatarFallback, AvatarImage } from "@/avatar"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/dialog"
 import { RadioGroup, RadioGroupItem } from "@/radio-group"
+import { TooltipButton, TooltipLabel } from '@/tooltip'
 import { toast } from 'sonner'
 import { LoadingPercentText } from '@/LoadingPattern'
 import {
@@ -2736,47 +2737,53 @@ export function WhatsAppBusinessHub() {
           </p>
         </div>
         <div className="flex space-x-2 items-center">
-          <Badge 
-            variant="outline" 
-            title={aiSuppressed && aiResumeAt ? `IA pausada até ${new Date(aiResumeAt).toLocaleString('pt-BR')}` : 'Modo global da IA'}
-            className={`glass-morphism border-white/20 font-medium transition-all duration-300 ${
-              aiSuppressed 
-                ? 'border-red-500/30 text-red-300 bg-red-500/10' 
-                : aiMode === 'auto'
-                  ? 'border-green-500/30 text-green-300 bg-green-500/10'
-                  : aiMode === 'assist'
-                    ? 'border-yellow-500/30 text-yellow-300 bg-yellow-500/10'
-                    : 'border-gray-500/30 text-gray-300 bg-gray-500/10'
-            }`}
+          <TooltipLabel
+            label="Modo global da IA"
+            description={aiSuppressed && aiResumeAt ? `IA pausada até ${new Date(aiResumeAt).toLocaleString('pt-BR')}` : 'Define como a IA opera em todo o módulo.'}
           >
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${
-                aiSuppressed ? 'bg-red-400' : aiMode === 'auto' ? 'bg-green-400 animate-pulse' : aiMode === 'assist' ? 'bg-yellow-400' : 'bg-gray-400'
-              }`}></div>
-              IA {aiSuppressed ? 'Pausada' : aiMode === 'auto' ? 'Ativa' : aiMode === 'assist' ? 'Assistida' : 'Desligada'}
-            </div>
-          </Badge>
-          <Button 
-            variant="outline" 
-            onClick={() => setIsConnectionsOpen(true)} 
-            title="Gerenciar conexões de contas WhatsApp"
-            className="glass-morphism border-white/20 text-blue-300 hover:text-white hover:bg-white/[0.05] transition-all duration-300 hover:scale-105"
-          >
-            Gerenciar Conexões
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`${aiMode === 'auto' ? 'bg-green-100 hover:bg-green-200' : aiMode === 'assist' ? 'bg-amber-100 hover:bg-amber-200' : 'bg-muted'} rounded-full`}
-            onClick={() => {
-              const modes: typeof aiMode[] = ['auto', 'assist', 'off']
-              const idx = modes.indexOf(aiMode)
-              setAiMode(modes[(idx + 1) % modes.length])
-            }}
-            title="Alternar IA (global)"
-          >
-            <Robot className={`h-4 w-4 ${aiMode === 'off' ? 'text-muted-foreground' : 'text-foreground'}`} />
-          </Button>
+            <Badge 
+              variant="outline" 
+              className={`glass-morphism border-white/20 font-medium transition-all duration-300 ${
+                aiSuppressed 
+                  ? 'border-red-500/30 text-red-300 bg-red-500/10' 
+                  : aiMode === 'auto'
+                    ? 'border-green-500/30 text-green-300 bg-green-500/10'
+                    : aiMode === 'assist'
+                      ? 'border-yellow-500/30 text-yellow-300 bg-yellow-500/10'
+                      : 'border-gray-500/30 text-gray-300 bg-gray-500/10'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${
+                  aiSuppressed ? 'bg-red-400' : aiMode === 'auto' ? 'bg-green-400 animate-pulse' : aiMode === 'assist' ? 'bg-yellow-400' : 'bg-gray-400'
+                }`}></div>
+                IA {aiSuppressed ? 'Pausada' : aiMode === 'auto' ? 'Ativa' : aiMode === 'assist' ? 'Assistida' : 'Desligada'}
+              </div>
+            </Badge>
+          </TooltipLabel>
+          <TooltipButton label="Gerenciar conexões de contas WhatsApp">
+            <Button 
+              variant="outline" 
+              onClick={() => setIsConnectionsOpen(true)} 
+              className="glass-morphism border-white/20 text-blue-300 hover:text-white hover:bg-white/[0.05] transition-all duration-300 hover:scale-105"
+            >
+              Gerenciar Conexões
+            </Button>
+          </TooltipButton>
+          <TooltipButton label="Alternar IA (global)">
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`${aiMode === 'auto' ? 'bg-green-100 hover:bg-green-200' : aiMode === 'assist' ? 'bg-amber-100 hover:bg-amber-200' : 'bg-muted'} rounded-full`}
+              onClick={() => {
+                const modes: typeof aiMode[] = ['auto', 'assist', 'off']
+                const idx = modes.indexOf(aiMode)
+                setAiMode(modes[(idx + 1) % modes.length])
+              }}
+            >
+              <Robot className={`h-4 w-4 ${aiMode === 'off' ? 'text-muted-foreground' : 'text-foreground'}`} />
+            </Button>
+          </TooltipButton>
           {!whatsapp.connected && (
             <div className="flex items-center space-x-2">
               <Button variant="outline" onClick={startInitialization} disabled={initializing}>
@@ -2821,16 +2828,20 @@ export function WhatsAppBusinessHub() {
               }}>Desconectar</Button>
             </div>
           )}
-          <Button variant="outline" onClick={handleExport} title="Exportar contatos e mensagens">
-            <Download className="h-4 w-4 mr-2" />
-            Exportar
-          </Button>
+          <TooltipButton label="Exportar contatos e mensagens">
+            <Button variant="outline" onClick={handleExport}>
+              <Download className="h-4 w-4 mr-2" />
+              Exportar
+            </Button>
+          </TooltipButton>
           <Dialog open={isNewConvOpen} onOpenChange={setIsNewConvOpen}>
             <DialogTrigger asChild>
-              <Button title="Criar nova conversa">
-                <Plus className="h-4 w-4 mr-2" />
-                Nova Conversa
-              </Button>
+              <TooltipButton label="Criar nova conversa">
+                <Button>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Nova Conversa
+                </Button>
+              </TooltipButton>
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
@@ -2912,31 +2923,47 @@ export function WhatsAppBusinessHub() {
                   <CardTitle className="flex items-center justify-between">
                     <div className="flex items-center gap-2 flex-wrap">
                       {globalUnreadCount > 0 && (
-                        <Badge variant="secondary" title="Mensagens não lidas no total">Não lidas: {globalUnreadCount}</Badge>
+                        <TooltipLabel label="Mensagens não lidas no total">
+                          <Badge variant="secondary">Não lidas: {globalUnreadCount}</Badge>
+                        </TooltipLabel>
                       )}
-                      <Badge variant="outline" title="Total de conversas">Total: {contacts.length}</Badge>
+                      <TooltipLabel label="Total de conversas">
+                        <Badge variant="outline">Total: {contacts.length}</Badge>
+                      </TooltipLabel>
                       {/* Badges de filtros ativos */}
                       {!!contactsSearch.trim() && (
-                        <Badge variant="secondary" title="Filtro de texto">Filtro: “{contactsSearch.trim()}”</Badge>
+                        <TooltipLabel label="Filtro de texto">
+                          <Badge variant="secondary">Filtro: “{contactsSearch.trim()}”</Badge>
+                        </TooltipLabel>
                       )}
                       {globalSearchParams.tag && (
-                        <Badge variant="secondary" title="Etiqueta aplicada">Tag: {globalSearchParams.tag}</Badge>
+                        <TooltipLabel label="Etiqueta aplicada">
+                          <Badge variant="secondary">Tag: {globalSearchParams.tag}</Badge>
+                        </TooltipLabel>
                       )}
                       {globalSearchParams.has && (
-                        <Badge variant="secondary" title="Possui tipo">has: {globalSearchParams.has}</Badge>
+                        <TooltipLabel label="Possui tipo">
+                          <Badge variant="secondary">has: {globalSearchParams.has}</Badge>
+                        </TooltipLabel>
                       )}
                       {globalSearchParams.type && (
-                        <Badge variant="secondary" title="Tipo de mensagem">type: {globalSearchParams.type}</Badge>
+                        <TooltipLabel label="Tipo de mensagem">
+                          <Badge variant="secondary">type: {globalSearchParams.type}</Badge>
+                        </TooltipLabel>
                       )}
                       {globalSearchParams.phone && (
-                        <Badge variant="secondary" title="Telefone filtrado">phone: {globalSearchParams.phone}</Badge>
+                        <TooltipLabel label="Telefone filtrado">
+                          <Badge variant="secondary">phone: {globalSearchParams.phone}</Badge>
+                        </TooltipLabel>
                       )}
                       {(globalSearchParams.after || globalSearchParams.before) && (
-                        <Badge variant="secondary" title="Janela de data">
-                          {globalSearchParams.after ? `≥ ${globalSearchParams.after}` : ''}
-                          {globalSearchParams.after && globalSearchParams.before ? ' • ' : ''}
-                          {globalSearchParams.before ? `≤ ${globalSearchParams.before}` : ''}
-                        </Badge>
+                        <TooltipLabel label="Janela de data">
+                          <Badge variant="secondary">
+                            {globalSearchParams.after ? `≥ ${globalSearchParams.after}` : ''}
+                            {globalSearchParams.after && globalSearchParams.before ? ' • ' : ''}
+                            {globalSearchParams.before ? `≤ ${globalSearchParams.before}` : ''}
+                          </Badge>
+                        </TooltipLabel>
                       )}
                     </div>
                     {/* espaço à direita mantido vazio deliberadamente */}
@@ -2950,16 +2977,22 @@ export function WhatsAppBusinessHub() {
                         if (filterIdleTimerRef.current) { window.clearTimeout(filterIdleTimerRef.current); filterIdleTimerRef.current = null }
                         filterIdleTimerRef.current = window.setTimeout(() => { filteringActivityRef.current = false }, 600)
                       }} />
-                      <Button variant="outline" size="sm" title="Sincronizar agora" onClick={() => forceSync()} disabled={isSyncing}>
-                        {isSyncing ? (
-                          <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full border-2 border-muted-foreground border-t-transparent animate-spin" /> Sync</span>
-                        ) : 'Sync'}
-                      </Button>
-                      <Button variant="outline" size="sm" title="Abrir filtros" onClick={() => {
-                        setFilterForm({ ...globalSearchParams, q: contactsSearch })
-                        setIsFilterDialogOpen(true)
-                      }}>Filtrar</Button>
-                      <Button variant="outline" size="sm" title={`Ordenar (${globalSort === 'recente' ? 'mais recentes' : 'mais antigos'})`} onClick={() => setIsOrderDialogOpen(true)}>Ordenar</Button>
+                      <TooltipButton label="Sincronizar agora">
+                        <Button variant="outline" size="sm" onClick={() => forceSync()} disabled={isSyncing}>
+                          {isSyncing ? (
+                            <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full border-2 border-muted-foreground border-t-transparent animate-spin" /> Sync</span>
+                          ) : 'Sync'}
+                        </Button>
+                      </TooltipButton>
+                      <TooltipButton label="Abrir filtros">
+                        <Button variant="outline" size="sm" onClick={() => {
+                          setFilterForm({ ...globalSearchParams, q: contactsSearch })
+                          setIsFilterDialogOpen(true)
+                        }}>Filtrar</Button>
+                      </TooltipButton>
+                      <TooltipButton label={`Ordenar (${globalSort === 'recente' ? 'mais recentes' : 'mais antigos'})`}>
+                        <Button variant="outline" size="sm" onClick={() => setIsOrderDialogOpen(true)}>Ordenar</Button>
+                      </TooltipButton>
                     </div>
                   </div>
                 </CardHeader>
@@ -3325,12 +3358,14 @@ export function WhatsAppBusinessHub() {
                           {/* Compact hosts dropdown in connected view */}
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="outline" size="sm" title="Hosts locais">
-                                <span className="inline-flex items-center gap-2">
-                                  <span className={`inline-block w-2 h-2 rounded-full ${waInstances.some(i => i.alive) ? (waInstances.some(i => i.ready) ? 'bg-green-500' : 'bg-yellow-500') : 'bg-gray-400'}`}></span>
-                                  Hosts
-                                </span>
-                              </Button>
+                              <TooltipButton label="Hosts locais">
+                                <Button variant="outline" size="sm">
+                                  <span className="inline-flex items-center gap-2">
+                                    <span className={`inline-block w-2 h-2 rounded-full ${waInstances.some(i => i.alive) ? (waInstances.some(i => i.ready) ? 'bg-green-500' : 'bg-yellow-500') : 'bg-gray-400'}`}></span>
+                                    Hosts
+                                  </span>
+                                </Button>
+                              </TooltipButton>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="min-w-[260px]">
                               <div className="px-2 py-1.5 text-[11px] text-muted-foreground">Contas 1–9 (localhost)</div>
@@ -3353,27 +3388,35 @@ export function WhatsAppBusinessHub() {
                                     )}
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0">
-                                    <Button size="icon" variant="ghost" className="h-7 w-7" title="Renomear" onClick={() => renameInstance(inst.instance, inst.name)}>
-                                      <Pencil className="h-3.5 w-3.5" />
-                                    </Button>
-                                    {inst.alive && (
-                                      <Button size="icon" variant="ghost" className="h-7 w-7" title="Desconectar" onClick={() => stopInstance(inst.instance)}>
-                                        <X className="h-3.5 w-3.5" />
+                                    <TooltipButton label="Renomear">
+                                      <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => renameInstance(inst.instance, inst.name)}>
+                                        <Pencil className="h-3.5 w-3.5" />
                                       </Button>
+                                    </TooltipButton>
+                                    {inst.alive && (
+                                      <TooltipButton label="Desconectar">
+                                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => stopInstance(inst.instance)}>
+                                          <X className="h-3.5 w-3.5" />
+                                        </Button>
+                                      </TooltipButton>
                                     )}
                                   </div>
                                 </div>
                               ))}
                             </DropdownMenuContent>
                           </DropdownMenu>
-                          <Button variant="outline" size="sm" onClick={() => setIsCallDialogOpen(true)} title="Ligar">
-                            <Phone className="h-4 w-4" />
-                          </Button>
+                          <TooltipButton label="Ligar">
+                            <Button variant="outline" size="sm" onClick={() => setIsCallDialogOpen(true)}>
+                              <Phone className="h-4 w-4" />
+                            </Button>
+                          </TooltipButton>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="outline" size="sm" title="Ações de IA">
-                                <Robot className="h-4 w-4" />
-                              </Button>
+                              <TooltipButton label="Ações de IA">
+                                <Button variant="outline" size="sm">
+                                  <Robot className="h-4 w-4" />
+                                </Button>
+                              </TooltipButton>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="min-w-[220px]">
                               <DropdownMenuItem onClick={() => setAiMode('auto')}>{aiMode === 'auto' ? '✓ ' : ''}IA Automática</DropdownMenuItem>
@@ -3409,9 +3452,11 @@ export function WhatsAppBusinessHub() {
                           </DropdownMenu>
                           <DropdownMenu open={isMainMenuOpen} onOpenChange={setIsMainMenuOpen}>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="outline" size="sm" title="Menu">
-                                <List className="h-4 w-4" />
-                              </Button>
+                              <TooltipButton label="Menu">
+                                <Button variant="outline" size="sm">
+                                  <List className="h-4 w-4" />
+                                </Button>
+                              </TooltipButton>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="min-w-[240px]">
                               <DropdownMenuItem onClick={() => setIsNotesOpen(true)}>Adicionar notas</DropdownMenuItem>
@@ -3660,29 +3705,30 @@ export function WhatsAppBusinessHub() {
                           </div>
                         </ScrollArea>
                         {!isNearBottom && (
-                          <button
-                            type="button"
-                            aria-label="Ir para o fim"
-                            title="Ir para o fim"
-                            onClick={scrollToBottom}
-                            className="absolute bottom-3 right-2 p-2 rounded-full border bg-background/90 shadow hover:bg-background"
-                          >
-                            <ArrowDown className="h-5 w-5" />
-                          </button>
+                          <TooltipButton label="Ir para o fim">
+                            <button
+                              type="button"
+                              aria-label="Ir para o fim"
+                              onClick={scrollToBottom}
+                              className="absolute bottom-3 right-2 p-2 rounded-full border bg-background/90 shadow hover:bg-background"
+                            >
+                              <ArrowDown className="h-5 w-5" />
+                            </button>
+                          </TooltipButton>
                         )}
                       </div>
                       {/* AI Assist suggestions (chips) */}
                       {(effectiveAiMode === 'assist' || effectiveAiMode === 'auto') && !aiSuppressed && (aiSuggestionsByChat[selectedContact] || []).length > 0 && (
                         <div className="mb-2 flex flex-wrap gap-2">
                           {(aiSuggestionsByChat[selectedContact] || []).slice(0, 4).map((s, idx) => (
-                            <button
-                              key={idx}
-                              className="text-xs px-2 py-1 rounded-full border bg-muted hover:bg-muted/70"
-                              onClick={() => setMessageInput(prev => (prev && prev.trim().length ? (prev.trimEnd() + ' ' + s) : s))}
-                              title="Inserir sugestão"
-                            >
-                              {s}
-                            </button>
+                            <TooltipLabel key={idx} label="Inserir sugestão">
+                              <button
+                                className="text-xs px-2 py-1 rounded-full border bg-muted hover:bg-muted/70"
+                                onClick={() => setMessageInput(prev => (prev && prev.trim().length ? (prev.trimEnd() + ' ' + s) : s))}
+                              >
+                                {s}
+                              </button>
+                            </TooltipLabel>
                           ))}
                         </div>
                       )}
@@ -3729,9 +3775,11 @@ export function WhatsAppBusinessHub() {
 
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="outline" size="sm" title="Anexar mídia">
-                              <ImageIcon className="h-4 w-4" />
-                            </Button>
+                            <TooltipButton label="Anexar mídia">
+                              <Button variant="outline" size="sm">
+                                <ImageIcon className="h-4 w-4" />
+                              </Button>
+                            </TooltipButton>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start">
                             <DropdownMenuItem onClick={() => {
@@ -3753,14 +3801,18 @@ export function WhatsAppBusinessHub() {
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                        <Button variant="outline" size="sm" onClick={() => docInputRef.current?.click()} title="Anexar documento">
-                          <FileText className="h-4 w-4" />
-                        </Button>
+                        <TooltipButton label="Anexar documento">
+                          <Button variant="outline" size="sm" onClick={() => docInputRef.current?.click()}>
+                            <FileText className="h-4 w-4" />
+                          </Button>
+                        </TooltipButton>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant={isRecording ? 'default' : 'outline'} size="sm" title={isRecording ? 'Parar/Áudio' : 'Áudio'}>
-                              <Microphone className="h-4 w-4" />
-                            </Button>
+                            <TooltipButton label={isRecording ? 'Parar ou enviar áudio' : 'Áudio'}>
+                              <Button variant={isRecording ? 'default' : 'outline'} size="sm">
+                                <Microphone className="h-4 w-4" />
+                              </Button>
+                            </TooltipButton>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start">
                             {!isRecording && (
@@ -3775,15 +3827,21 @@ export function WhatsAppBusinessHub() {
                             <span className="text-[11px] tabular-nums">{String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}</span>
                           </div>
                         )}
-                        <Button variant="outline" size="sm" onClick={() => setIsShareContactOpen(true)} title="Enviar contato">
-                          <Users className="h-4 w-4" />
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => setIsPollOpen(true)} title="Criar enquete">
-                          <List className="h-4 w-4" />
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={handleShareLocation} title="Compartilhar localização">
-                          <MapPin className="h-4 w-4" />
-                        </Button>
+                        <TooltipButton label="Enviar contato">
+                          <Button variant="outline" size="sm" onClick={() => setIsShareContactOpen(true)}>
+                            <Users className="h-4 w-4" />
+                          </Button>
+                        </TooltipButton>
+                        <TooltipButton label="Criar enquete">
+                          <Button variant="outline" size="sm" onClick={() => setIsPollOpen(true)}>
+                            <List className="h-4 w-4" />
+                          </Button>
+                        </TooltipButton>
+                        <TooltipButton label="Compartilhar localização">
+                          <Button variant="outline" size="sm" onClick={handleShareLocation}>
+                            <MapPin className="h-4 w-4" />
+                          </Button>
+                        </TooltipButton>
                         <Input
                           placeholder="Digite sua mensagem..."
                           value={messageInput}
