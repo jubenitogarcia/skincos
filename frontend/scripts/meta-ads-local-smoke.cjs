@@ -42,10 +42,8 @@ async function main() {
   await expectVisible(page.getByRole('heading', { name: 'Meta Ads' }), 'Meta Ads heading')
 
   if (SCENARIO === 'connected-ready') {
-    await expectVisible(page.getByText('Conta Meta pronta para operar'), 'connected ready banner')
-    await expectVisible(page.getByText('Conta ativa: Conta Principal'), 'selected account')
-    await expectVisible(page.getByRole('tab', { name: 'Visão geral' }), 'overview tab')
-    await page.getByRole('tab', { name: 'Inventário' }).click()
+    await expectVisible(page.getByRole('combobox'), 'selected account combobox')
+    await expectVisible(page.getByLabel('Atualizar'), 'header refresh action')
     await expectVisible(page.getByText('Campanha Primavera'), 'inventory campaign')
   } else if (SCENARIO === 'unauthorized') {
     await expectVisible(page.getByText('Faça login no CRM para continuar'), 'unauthorized message')

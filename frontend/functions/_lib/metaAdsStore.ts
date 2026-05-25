@@ -12,6 +12,7 @@ export type MetaAdsConnection = {
   dataAccessExpiresAt?: string
   lastValidatedAt?: string
   selectedAdAccountId?: string
+  hiddenAdAccountIds?: string[]
   updatedAt: string
 }
 

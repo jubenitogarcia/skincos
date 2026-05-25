@@ -10,6 +10,7 @@ import { InsumosBarcodeScannerInline } from '@/InsumosBarcodeScannerInline'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Textarea } from '@/textarea'
+import { TooltipButton, TooltipLabel } from '@/tooltip'
 import {
   alertaTagLabel,
   alertaTagVariant,
@@ -254,9 +255,11 @@ export function InsumosInventoryDialog({
               placeholder="Buscar por código, produto, categoria…"
               className="ml-auto h-8 min-w-[160px] flex-1 md:min-w-0"
             />
-            <Button variant="outline" className="h-8 px-3" onClick={onExport} disabled={!isAuthed} title="Exportar CSV">
-              Exportar
-            </Button>
+            <TooltipButton label="Exportar CSV">
+              <Button variant="outline" className="h-8 px-3" onClick={onExport} disabled={!isAuthed}>
+                Exportar
+              </Button>
+            </TooltipButton>
             <Button variant="outline" className="h-8 px-3" onClick={onToggleCreate} disabled={!isAuthed}>
               {createOpen ? 'Fechar' : 'Adicionar'}
             </Button>
@@ -387,15 +390,16 @@ export function InsumosInventoryDialog({
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <div className="text-xs text-blue-200/70">Lote</div>
-                    <Button
-                      variant={createNovoLote ? 'secondary' : 'outline'}
-                      size="sm"
-                      type="button"
-                      onClick={onToggleCreateNovoLote}
-                      title="Ative quando estiver cadastrando um lote adicional para um código já existente."
-                    >
-                      {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
-                    </Button>
+                    <TooltipButton label="Novo lote" description="Ative quando estiver cadastrando um lote adicional para um código já existente.">
+                      <Button
+                        variant={createNovoLote ? 'secondary' : 'outline'}
+                        size="sm"
+                        type="button"
+                        onClick={onToggleCreateNovoLote}
+                      >
+                        {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
+                      </Button>
+                    </TooltipButton>
                   </div>
                   <Input
                     value={createLote}
@@ -994,15 +998,16 @@ export function InsumosQuickOperationDialog({
               <div className="flex items-center justify-between gap-2">
                 <div className="text-xs text-blue-200/70">Lote/registro</div>
                 {showFefoToggle ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    onClick={onToggleAutoFefo}
-                    title="FEFO (First-Expire, First-Out): prioriza o lote com validade mais próxima"
-                  >
-                    FEFO {autoFefo ? 'auto' : 'manual'}
-                  </Button>
+                  <TooltipButton label="FEFO" description="First-Expire, First-Out: prioriza o lote com validade mais próxima.">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      onClick={onToggleAutoFefo}
+                    >
+                      FEFO {autoFefo ? 'auto' : 'manual'}
+                    </Button>
+                  </TooltipButton>
                 ) : null}
               </div>
               <Select value={selectedRegistro} onValueChange={onRegistroChange}>
@@ -1968,9 +1973,11 @@ export function InsumosCreateInlinePanel({
         <div>
           <div className="mb-1 flex items-center justify-between gap-2">
             <div className="text-xs text-blue-200/70">Lote</div>
-            <Button variant={createNovoLote ? 'secondary' : 'outline'} size="sm" type="button" onClick={onToggleCreateNovoLote} title="Ative quando estiver cadastrando um lote adicional para um código já existente.">
-              {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
-            </Button>
+            <TooltipButton label="Novo lote" description="Ative quando estiver cadastrando um lote adicional para um código já existente.">
+              <Button variant={createNovoLote ? 'secondary' : 'outline'} size="sm" type="button" onClick={onToggleCreateNovoLote}>
+                {createNovoLote ? 'Novo lote: on' : 'Novo lote: off'}
+              </Button>
+            </TooltipButton>
           </div>
           <Input value={createLote} onChange={(e) => onCreateLoteChange(e.target.value)} placeholder={createNovoLote ? 'obrigatório (ex: L2026-01)' : 'opcional'} />
         </div>
@@ -2097,16 +2104,16 @@ export function InsumosInventoryWorkspaceTable({
             return (
               <tr key={`${item.registro || ''}-${item.codigoBarras || ''}`} className={isSelected ? 'bg-white/5 hover:bg-white/10' : 'hover:bg-white/5'}>
                 <td className="min-w-0 p-3 align-top">
-                  <button
-                    type="button"
-                    className="group w-full cursor-pointer rounded-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
-                    onClick={() => {
-                      if (!codigoBarras) return
-                      onSelectBarcode(codigoBarras)
-                    }}
-                    title={codigoBarras ? 'Ver movimentações deste insumo' : undefined}
-                    aria-pressed={isSelected}
-                  >
+                  <TooltipLabel label={codigoBarras ? 'Ver movimentações deste insumo' : 'Sem código de barras'}>
+                    <button
+                      type="button"
+                      className="group w-full cursor-pointer rounded-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
+                      onClick={() => {
+                        if (!codigoBarras) return
+                        onSelectBarcode(codigoBarras)
+                      }}
+                      aria-pressed={isSelected}
+                    >
                     <div className="flex min-w-0 items-center justify-between gap-2">
                       <div className="line-clamp-2 break-words text-blue-50 group-hover:underline">{item.produto || '-'}</div>
                       {isSelected ? <div className="text-xs text-blue-200/60">Filtrando</div> : null}
@@ -2126,7 +2133,8 @@ export function InsumosInventoryWorkspaceTable({
                         {isExpirado ? <Badge variant="destructive">Expirado</Badge> : null}
                       </div>
                     ) : null}
-                  </button>
+                    </button>
+                  </TooltipLabel>
                 </td>
                 <td className="p-3 align-top text-blue-100/80">
                   <div className="flex min-w-0 items-center gap-2">
@@ -2602,36 +2610,38 @@ export function InsumosCategoryPoliciesPanel({
       <CardHeader className="relative pr-24">
         <CardTitle className="text-base text-white">Políticas por categoria</CardTitle>
         <div className="absolute right-2 top-2 flex items-center gap-1">
-          <div
-            {...dragHandleProps}
-            className="flex h-9 w-9 cursor-grab items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] active:cursor-grabbing"
-            title="Arraste para mover"
-            aria-label="Mover"
-            role="button"
-            tabIndex={0}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-            </svg>
-          </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-            onClick={onToggleOpen}
-            title={panelOpen ? 'Contrair' : 'Expandir'}
-            aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-          >
-            {panelOpen ? (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+          <TooltipLabel label="Arraste para mover">
+            <div
+              {...dragHandleProps}
+              className="flex h-9 w-9 cursor-grab items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] active:cursor-grabbing"
+              aria-label="Mover"
+              role="button"
+              tabIndex={0}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
               </svg>
-            ) : (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            )}
-          </Button>
+            </div>
+          </TooltipLabel>
+          <TooltipButton label={panelOpen ? 'Contrair' : 'Expandir'}>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+              onClick={onToggleOpen}
+              aria-label={panelOpen ? 'Contrair' : 'Expandir'}
+            >
+              {panelOpen ? (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </Button>
+          </TooltipButton>
         </div>
       </CardHeader>
       {panelOpen ? (
@@ -2874,26 +2884,29 @@ export function InsumosAlertsPanel({
       <CardHeader className="flex flex-col gap-2">
         <div className="flex min-w-0 w-full flex-col gap-2 md:flex-row md:items-center md:gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <button
-              type="button"
-              {...dragHandleProps}
-              className="mt-0.5 flex h-9 w-9 cursor-grab items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] active:cursor-grabbing"
-              title="Arraste para mover"
-              aria-label="Mover"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-              </svg>
-            </button>
+            <TooltipLabel label="Arraste para mover">
+              <button
+                type="button"
+                {...dragHandleProps}
+                className="mt-0.5 flex h-9 w-9 cursor-grab items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] active:cursor-grabbing"
+                aria-label="Mover"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              </button>
+            </TooltipLabel>
             <CardTitle className="text-base text-white">Avisos</CardTitle>
             <div className="hidden items-center gap-3 text-xs text-blue-200/70 sm:flex">
               <span className="inline-flex items-center gap-1">
-                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500/40 text-red-50" title="Crítico" aria-label="Crítico">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M12 7v7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-                    <circle cx="12" cy="17" r="1.5" fill="currentColor" />
-                  </svg>
-                </span>
+                <TooltipLabel label="Crítico" description="Itens com urgência operacional imediata.">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500/40 text-red-50" aria-label="Crítico" tabIndex={0}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M12 7v7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                      <circle cx="12" cy="17" r="1.5" fill="currentColor" />
+                    </svg>
+                  </span>
+                </TooltipLabel>
                 <span className="font-mono text-blue-50">
                   {showOverviewLoadingProgress ? (
                     <span className="inline-flex items-center gap-2">
@@ -2906,13 +2919,15 @@ export function InsumosAlertsPanel({
                 </span>
               </span>
               <span className="inline-flex items-center gap-1">
-                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/35 text-amber-100" title="Atenção" aria-label="Atenção">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M12 3l9 16H3l9-16z" fill="currentColor" fillOpacity="0.45" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-                    <path d="M12 9v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    <circle cx="12" cy="16.5" r="1.2" fill="currentColor" />
-                  </svg>
-                </span>
+                <TooltipLabel label="Atenção" description="Itens que exigem acompanhamento próximo.">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/35 text-amber-100" aria-label="Atenção" tabIndex={0}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M12 3l9 16H3l9-16z" fill="currentColor" fillOpacity="0.45" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+                      <path d="M12 9v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      <circle cx="12" cy="16.5" r="1.2" fill="currentColor" />
+                    </svg>
+                  </span>
+                </TooltipLabel>
                 <span className="font-mono text-blue-50">
                   {showOverviewLoadingProgress ? (
                     <span className="inline-flex items-center gap-2">
@@ -2965,32 +2980,35 @@ export function InsumosAlertsPanel({
             </Select>
             <Input value={alertasBusca} onChange={(event) => onAlertasBuscaChange(event.target.value)} placeholder="Buscar" className="ml-auto h-8 min-w-[120px] flex-1 md:min-w-0" />
             <div className="flex shrink-0 items-center gap-2">
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                onClick={onOpenPurchaseDialog}
-                disabled={purchaseDisabled}
-                title="Lista de compra"
-                aria-label="Lista de compra"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                  <circle cx="9" cy="20" r="1.6" fill="currentColor" />
-                  <circle cx="17" cy="20" r="1.6" fill="currentColor" />
-                </svg>
-              </Button>
-              <Button size="icon" variant="ghost" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onToggleOpen} title={panelOpen ? 'Contrair' : 'Expandir'} aria-label={panelOpen ? 'Contrair' : 'Expandir'}>
-                {panelOpen ? (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              <TooltipButton label="Lista de compra">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={onOpenPurchaseDialog}
+                  disabled={purchaseDisabled}
+                  aria-label="Lista de compra"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx="9" cy="20" r="1.6" fill="currentColor" />
+                    <circle cx="17" cy="20" r="1.6" fill="currentColor" />
                   </svg>
-                ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                )}
-              </Button>
+                </Button>
+              </TooltipButton>
+              <TooltipButton label={panelOpen ? 'Contrair' : 'Expandir'}>
+                <Button size="icon" variant="ghost" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onToggleOpen} aria-label={panelOpen ? 'Contrair' : 'Expandir'}>
+                  {panelOpen ? (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </Button>
+              </TooltipButton>
             </div>
           </div>
         </div>
@@ -3010,7 +3028,6 @@ export function InsumosAlertsPanel({
                           className={`inline-flex w-full items-center gap-2 rounded-sm px-0.5 ${column.align.includes('right') ? 'justify-end' : 'justify-start'} cursor-pointer select-none ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40`}
                           onClick={() => onSortChange(column.key)}
                           aria-label={`Ordenar ${column.label}`}
-                          title={`Ordenar ${column.label}`}
                         >
                           <span>{column.label}</span>
                           <span className={`inline-flex items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
@@ -3057,7 +3074,6 @@ export function InsumosAlertsPanel({
                       onClick={() => {
                         if (code) onSelectBarcode(code)
                       }}
-                      title={row.codigoBarras ? 'Clique para usar este código de barras' : undefined}
                     >
                       <td className="p-3 align-top text-blue-50">
                         <div className="flex flex-wrap items-center gap-2 break-words text-blue-50">
@@ -3068,17 +3084,18 @@ export function InsumosAlertsPanel({
                         <div className="hidden break-all font-mono text-xs text-blue-200/60 md:block">{row.codigoBarras || '-'}</div>
                         {row.marca ? (
                           <div className="mt-1">
-                            <Badge
-                              style={buildTagStyle(getMarcaBgColor(row.marca))}
-                              className="cursor-pointer border hover:opacity-80"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                onToggleMarcaFilter(String(row.marca || ''))
-                              }}
-                              title="Filtrar por marca"
-                            >
-                              {row.marca}
-                            </Badge>
+                            <TooltipLabel label="Filtrar por marca">
+                              <Badge
+                                style={buildTagStyle(getMarcaBgColor(row.marca))}
+                                className="cursor-pointer border hover:opacity-80"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  onToggleMarcaFilter(String(row.marca || ''))
+                                }}
+                              >
+                                {row.marca}
+                              </Badge>
+                            </TooltipLabel>
                           </div>
                         ) : null}
                         {row.dataValidade ? (
@@ -3089,105 +3106,109 @@ export function InsumosAlertsPanel({
                         ) : null}
                       </td>
                       <td className="hidden p-3 text-blue-100/80 sm:table-cell">
-                        <Badge
-                          style={buildTagStyle(getCategoriaBgColor(row.categoria || 'Outros'))}
-                          className="cursor-pointer border hover:opacity-80"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            onToggleCategoriaFilter(String(row.categoria || 'Outros'))
-                          }}
-                          title="Filtrar por categoria"
-                        >
-                          {row.categoria || 'Outros'}
-                        </Badge>
+                        <TooltipLabel label="Filtrar por categoria">
+                          <Badge
+                            style={buildTagStyle(getCategoriaBgColor(row.categoria || 'Outros'))}
+                            className="cursor-pointer border hover:opacity-80"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onToggleCategoriaFilter(String(row.categoria || 'Outros'))
+                            }}
+                          >
+                            {row.categoria || 'Outros'}
+                          </Badge>
+                        </TooltipLabel>
                       </td>
                       <td className="p-3">
                         <div className="flex flex-wrap gap-1">
                           {displayTags.map((tag) => (
-                            <Badge
-                              key={tag}
-                              variant={alertaTagVariant(tag)}
-                              className="cursor-pointer hover:opacity-80"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                onToggleStatusFilter(tag)
-                              }}
-                              title="Filtrar por status"
-                            >
-                              {alertaTagLabel(tag)}
-                            </Badge>
+                            <TooltipLabel key={tag} label="Filtrar por status">
+                              <Badge
+                                variant={alertaTagVariant(tag)}
+                                className="cursor-pointer hover:opacity-80"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  onToggleStatusFilter(tag)
+                                }}
+                              >
+                                {alertaTagLabel(tag)}
+                              </Badge>
+                            </TooltipLabel>
                           ))}
                         </div>
                       </td>
                       <td className="p-3">
                         <div className="flex flex-wrap gap-2">
                           {recommendation?.kind === 'TRANSFERENCIA' ? (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8 bg-sky-500/30 text-sky-100 hover:bg-sky-500/45"
-                              disabled={!canQuick}
-                              title="Transferir"
-                              aria-label="Transferir"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                onOpenQuickOperation('TRANSFERENCIA', {
-                                  codigoBarras: code,
-                                  quantidade: recommendation.qty ?? 1,
-                                  fromUnidade: recommendation.fromUnidade ?? null,
-                                  toUnidade: recommendation.toUnidade ?? null,
-                                  obs: 'Transferência sugerida',
-                                })
-                              }}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                <path d="M7 7h10m0 0-3-3m3 3-3 3M17 17H7m0 0 3-3m-3 3 3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </Button>
+                            <TooltipButton label="Transferir">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 bg-sky-500/30 text-sky-100 hover:bg-sky-500/45"
+                                disabled={!canQuick}
+                                aria-label="Transferir"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  onOpenQuickOperation('TRANSFERENCIA', {
+                                    codigoBarras: code,
+                                    quantidade: recommendation.qty ?? 1,
+                                    fromUnidade: recommendation.fromUnidade ?? null,
+                                    toUnidade: recommendation.toUnidade ?? null,
+                                    obs: 'Transferência sugerida',
+                                  })
+                                }}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                  <path d="M7 7h10m0 0-3-3m3 3-3 3M17 17H7m0 0 3-3m-3 3 3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </Button>
+                            </TooltipButton>
                           ) : null}
                           {recommendation?.kind === 'ENTRADA' ? (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8 bg-emerald-500/30 text-emerald-100 hover:bg-emerald-500/45"
-                              disabled={!canQuick}
-                              title="Entrada"
-                              aria-label="Entrada"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                onOpenQuickOperation('ENTRADA', {
-                                  codigoBarras: code,
-                                  quantidade: recommendation.qty ?? 1,
-                                  obs: 'Reposição sugerida',
-                                })
-                              }}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                <path d="M12 5v10m0 0-4-4m4 4 4-4M5 19h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </Button>
+                            <TooltipButton label="Entrada">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 bg-emerald-500/30 text-emerald-100 hover:bg-emerald-500/45"
+                                disabled={!canQuick}
+                                aria-label="Entrada"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  onOpenQuickOperation('ENTRADA', {
+                                    codigoBarras: code,
+                                    quantidade: recommendation.qty ?? 1,
+                                    obs: 'Reposição sugerida',
+                                  })
+                                }}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                  <path d="M12 5v10m0 0-4-4m4 4 4-4M5 19h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </Button>
+                            </TooltipButton>
                           ) : null}
                           {hasExpiringAction ? (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8 bg-rose-500/35 text-rose-100 hover:bg-rose-500/50"
-                              disabled={!canQuick}
-                              title={row.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}
-                              aria-label={row.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                onOpenQuickOperation('BAIXA', {
-                                  codigoBarras: code,
-                                  quantidade: 1,
-                                  obs: row.tags.includes('EXPIRADO') ? 'Descarte (expirado)' : 'Saída (vencendo)',
-                                })
-                              }}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                <path d="M12 19V9m0 0-4 4m4-4 4 4M5 5h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </Button>
+                            <TooltipButton label={row.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 bg-rose-500/35 text-rose-100 hover:bg-rose-500/50"
+                                disabled={!canQuick}
+                                aria-label={row.tags.includes('EXPIRADO') ? 'Descarte' : 'Saída'}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  onOpenQuickOperation('BAIXA', {
+                                    codigoBarras: code,
+                                    quantidade: 1,
+                                    obs: row.tags.includes('EXPIRADO') ? 'Descarte (expirado)' : 'Saída (vencendo)',
+                                  })
+                                }}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                  <path d="M12 19V9m0 0-4 4m4-4 4 4M5 5h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </Button>
+                            </TooltipButton>
                           ) : null}
                           {hasQualityAction ? (
                             <Button
@@ -3333,17 +3354,18 @@ export function InsumosChartsPanel({
       <CardHeader className="flex flex-col gap-2">
         <div className="flex min-w-0 w-full flex-col gap-2 md:flex-row md:items-center md:gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <button
-              type="button"
-              {...dragHandleProps}
-              className="mt-0.5 flex h-9 w-9 cursor-grab items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] active:cursor-grabbing"
-              title="Arraste para mover"
-              aria-label="Mover"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-              </svg>
-            </button>
+            <TooltipLabel label="Arraste para mover">
+              <button
+                type="button"
+                {...dragHandleProps}
+                className="mt-0.5 flex h-9 w-9 cursor-grab items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] active:cursor-grabbing"
+                aria-label="Mover"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              </button>
+            </TooltipLabel>
             <CardTitle className="text-base text-white">Gráficos</CardTitle>
           </div>
           <div className="ml-auto flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2 overflow-x-auto">
@@ -3405,28 +3427,34 @@ export function InsumosChartsPanel({
             </Select>
             <Input value={chartsSearch} onChange={(event) => onChartsSearchChange(event.target.value)} placeholder="Buscar" className="ml-auto h-8 min-w-[120px] flex-1 md:min-w-0" />
             <div className="flex shrink-0 items-center gap-2">
-              <Button variant="ghost" size="icon" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onAddChart} disabled={!canAddChart} title="Adicionar gráfico" aria-label="Adicionar gráfico">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-                </svg>
-              </Button>
-              <Button variant="ghost" size="icon" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onResetCharts} disabled={!canResetCharts} title="Resetar gráficos" aria-label="Resetar gráficos">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M20 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </Button>
-              <Button size="icon" variant="ghost" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onToggleOpen} title={panelOpen ? 'Contrair' : 'Expandir'} aria-label={panelOpen ? 'Contrair' : 'Expandir'}>
-                {panelOpen ? (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              <TooltipButton label="Adicionar gráfico">
+                <Button variant="ghost" size="icon" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onAddChart} disabled={!canAddChart} aria-label="Adicionar gráfico">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
                   </svg>
-                ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                </Button>
+              </TooltipButton>
+              <TooltipButton label="Resetar gráficos">
+                <Button variant="ghost" size="icon" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onResetCharts} disabled={!canResetCharts} aria-label="Resetar gráficos">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M20 4v6h-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                )}
-              </Button>
+                </Button>
+              </TooltipButton>
+              <TooltipButton label={panelOpen ? 'Contrair' : 'Expandir'}>
+                <Button size="icon" variant="ghost" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onToggleOpen} aria-label={panelOpen ? 'Contrair' : 'Expandir'}>
+                  {panelOpen ? (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </Button>
+              </TooltipButton>
             </div>
           </div>
         </div>
@@ -3460,9 +3488,11 @@ export function InsumosChartsPanel({
                         </SelectContent>
                       </Select>
                       {card.canRemove ? (
-                        <Button variant="outline" className="h-8 w-8 p-0" title="Remover gráfico" aria-label="Remover gráfico" onClick={() => onRemoveChart(card.key)}>
-                          ×
-                        </Button>
+                        <TooltipButton label="Remover gráfico">
+                          <Button variant="outline" className="h-8 w-8 p-0" aria-label="Remover gráfico" onClick={() => onRemoveChart(card.key)}>
+                            ×
+                          </Button>
+                        </TooltipButton>
                       ) : null}
                     </div>
 
@@ -3654,17 +3684,18 @@ export function InsumosMovementsPanel({
       <CardHeader className="flex flex-col gap-2">
         <div className="flex min-w-0 w-full flex-col gap-2 md:flex-row md:items-center md:gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <button
-              type="button"
-              {...dragHandleProps}
-              className="mt-0.5 flex h-9 w-9 cursor-grab items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] active:cursor-grabbing"
-              title="Arraste para mover"
-              aria-label="Mover"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-              </svg>
-            </button>
+            <TooltipLabel label="Arraste para mover">
+              <button
+                type="button"
+                {...dragHandleProps}
+                className="mt-0.5 flex h-9 w-9 cursor-grab items-center justify-center rounded-md bg-transparent text-white hover:bg-white/[0.10] active:cursor-grabbing"
+                aria-label="Mover"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              </button>
+            </TooltipLabel>
             <CardTitle className="text-lg text-white">Movimentações</CardTitle>
           </div>
           <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2 overflow-x-auto">
@@ -3712,52 +3743,55 @@ export function InsumosMovementsPanel({
               className="ml-auto h-8 min-w-[120px] flex-1 md:min-w-0"
             />
             <div className="flex shrink-0 items-center gap-2">
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                onClick={onOpenInventoryList}
-                title="Abrir lista de insumos"
-                aria-label="Abrir lista de insumos"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M8 6h12M8 12h12M8 18h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-                  <circle cx="5" cy="6" r="1.5" fill="currentColor" />
-                  <circle cx="5" cy="12" r="1.5" fill="currentColor" />
-                  <circle cx="5" cy="18" r="1.5" fill="currentColor" />
-                </svg>
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                onClick={onExportCsv}
-                disabled={!isAuthed}
-                title="Exportar CSV"
-                aria-label="Exportar CSV"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M12 16V4m0 12-4-4m4 4 4-4M4 20h16" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                onClick={onToggleOpen}
-                title={panelOpen ? 'Contrair' : 'Expandir'}
-                aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-              >
-                {panelOpen ? (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              <TooltipButton label="Abrir lista de insumos">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={onOpenInventoryList}
+                  aria-label="Abrir lista de insumos"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M8 6h12M8 12h12M8 18h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                    <circle cx="5" cy="6" r="1.5" fill="currentColor" />
+                    <circle cx="5" cy="12" r="1.5" fill="currentColor" />
+                    <circle cx="5" cy="18" r="1.5" fill="currentColor" />
                   </svg>
-                ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                </Button>
+              </TooltipButton>
+              <TooltipButton label="Exportar CSV">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={onExportCsv}
+                  disabled={!isAuthed}
+                  aria-label="Exportar CSV"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path d="M12 16V4m0 12-4-4m4 4 4-4M4 20h16" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                )}
-              </Button>
+                </Button>
+              </TooltipButton>
+              <TooltipButton label={panelOpen ? 'Contrair' : 'Expandir'}>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
+                  onClick={onToggleOpen}
+                  aria-label={panelOpen ? 'Contrair' : 'Expandir'}
+                >
+                  {panelOpen ? (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </Button>
+              </TooltipButton>
             </div>
           </div>
         </div>
@@ -3777,15 +3811,16 @@ export function InsumosMovementsPanel({
                       >
                         <div className="flex items-center justify-center gap-2">
                           {column.key ? (
-                            <button
-                              type="button"
-                              className={`cursor-pointer select-none rounded-sm px-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline`}
-                              onClick={() => onSortChange(column.key!)}
-                              aria-label={`Ordenar ${column.label}`}
-                              title={`Ordenar ${column.label}`}
-                            >
-                              {column.label}
-                            </button>
+                            <TooltipLabel label={`Ordenar ${column.label}`}>
+                              <button
+                                type="button"
+                                className={`cursor-pointer select-none rounded-sm px-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline`}
+                                onClick={() => onSortChange(column.key!)}
+                                aria-label={`Ordenar ${column.label}`}
+                              >
+                                {column.label}
+                              </button>
+                            </TooltipLabel>
                           ) : (
                             <span>{column.label}</span>
                           )}
@@ -3817,15 +3852,16 @@ export function InsumosMovementsPanel({
                         <div className="text-xs text-blue-200/60">{row.timeLabel}</div>
                       </td>
                       <td className="p-3 text-center align-top">
-                        <button
-                          type="button"
-                          className="w-full cursor-pointer break-words rounded-sm text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
-                          onClick={() => onProductClick(row.productName)}
-                          title="Filtrar por produto"
-                          aria-pressed={row.productPressed}
-                        >
-                          <span className="line-clamp-2">{row.productName}</span>
-                        </button>
+                        <TooltipLabel label="Filtrar por produto">
+                          <button
+                            type="button"
+                            className="w-full cursor-pointer break-words rounded-sm text-center text-blue-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
+                            onClick={() => onProductClick(row.productName)}
+                            aria-pressed={row.productPressed}
+                          >
+                            <span className="line-clamp-2">{row.productName}</span>
+                          </button>
+                        </TooltipLabel>
                         {row.brandName && row.brandName !== '-' ? (
                           <div className="mt-1 flex flex-wrap justify-center gap-1 lg:hidden">
                             <Badge style={buildTagStyle(getMarcaBgColor(row.brandName))} className="border">
@@ -3836,34 +3872,36 @@ export function InsumosMovementsPanel({
                       </td>
                       <td className="hidden whitespace-nowrap p-3 text-center align-top md:table-cell">
                         {row.categoryName && row.categoryName !== '-' ? (
-                          <button
-                            type="button"
-                            className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
-                            onClick={() => onCategoryClick(row.categoryName)}
-                            title="Filtrar por categoria"
-                            aria-pressed={row.categoryPressed}
-                          >
-                            <Badge style={buildTagStyle(getCategoriaBgColor(row.categoryName))} className="border">
-                              {row.categoryName}
-                            </Badge>
-                          </button>
+                          <TooltipLabel label="Filtrar por categoria">
+                            <button
+                              type="button"
+                              className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
+                              onClick={() => onCategoryClick(row.categoryName)}
+                              aria-pressed={row.categoryPressed}
+                            >
+                              <Badge style={buildTagStyle(getCategoriaBgColor(row.categoryName))} className="border">
+                                {row.categoryName}
+                              </Badge>
+                            </button>
+                          </TooltipLabel>
                         ) : (
                           <span className="text-blue-100/70">-</span>
                         )}
                       </td>
                       <td className="hidden whitespace-nowrap p-3 text-center align-top lg:table-cell">
                         {row.brandName && row.brandName !== '-' ? (
-                          <button
-                            type="button"
-                            className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
-                            onClick={() => onBrandClick(row.brandName)}
-                            title="Filtrar por marca"
-                            aria-pressed={row.brandPressed}
-                          >
-                            <Badge style={buildTagStyle(getMarcaBgColor(row.brandName))} className="border">
-                              {row.brandName}
-                            </Badge>
-                          </button>
+                          <TooltipLabel label="Filtrar por marca">
+                            <button
+                              type="button"
+                              className="inline-flex w-full items-center justify-center rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40"
+                              onClick={() => onBrandClick(row.brandName)}
+                              aria-pressed={row.brandPressed}
+                            >
+                              <Badge style={buildTagStyle(getMarcaBgColor(row.brandName))} className="border">
+                                {row.brandName}
+                              </Badge>
+                            </button>
+                          </TooltipLabel>
                         ) : (
                           <span className="text-blue-100/70">-</span>
                         )}

@@ -42,11 +42,11 @@ export function normalizeMetaAdsHeaderAction(detail: unknown): MetaAdsHeaderActi
   const payload = detail as { type?: unknown; value?: unknown; action?: unknown }
   const rawType = String(payload.type || payload.action || '').trim()
   if (!rawType) return null
-  if (rawType === 'refresh' || rawType === 'manage-connections' || rawType === 'disconnect' || rawType === 'open-custom-period') {
+  if (rawType === 'refresh' || rawType === 'manage-connections' || rawType === 'disconnect' || rawType === 'open-custom-period' || rawType === 'connect') {
     return { type: rawType }
   }
-  if (rawType === 'set-account') {
-    return { type: 'set-account', value: String(payload.value || '') }
+  if (rawType === 'set-account' || rawType === 'remove-account') {
+    return { type: rawType, value: String(payload.value || '') }
   }
   if (rawType === 'set-report-window') {
     const value = Number(payload.value)

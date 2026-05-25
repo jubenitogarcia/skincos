@@ -8,6 +8,7 @@ import { ScrollArea } from "@/scroll-area"
 import { Progress } from "@/progress"
 import { Avatar, AvatarFallback, AvatarImage } from "@/avatar"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/select"
+import { TooltipLabel } from "@/tooltip"
 import { toast } from 'sonner'
 import {
   InstagramLogo,
@@ -799,21 +800,30 @@ export function MetaSentimentMonitor() {
                   return (
                     <div key={index} className="flex flex-col items-center space-y-2">
                       <div className="flex flex-col items-center space-y-1">
-                        <div
-                          className="bg-green-500 rounded-t w-8"
-                          style={{ height: `${positiveHeight * 2}px` }}
-                          title={`Positivas: ${trend.positive}`}
-                        ></div>
-                        <div
-                          className="bg-gray-400 w-8"
-                          style={{ height: `${neutralHeight * 2}px` }}
-                          title={`Neutras: ${trend.neutral}`}
-                        ></div>
-                        <div
-                          className="bg-red-500 rounded-b w-8"
-                          style={{ height: `${negativeHeight * 2}px` }}
-                          title={`Negativas: ${trend.negative}`}
-                        ></div>
+                        <TooltipLabel label="Positivas" description={String(trend.positive)}>
+                          <div
+                            className="bg-green-500 rounded-t w-8"
+                            style={{ height: `${positiveHeight * 2}px` }}
+                            aria-label={`Positivas: ${trend.positive}`}
+                            tabIndex={0}
+                          ></div>
+                        </TooltipLabel>
+                        <TooltipLabel label="Neutras" description={String(trend.neutral)}>
+                          <div
+                            className="bg-gray-400 w-8"
+                            style={{ height: `${neutralHeight * 2}px` }}
+                            aria-label={`Neutras: ${trend.neutral}`}
+                            tabIndex={0}
+                          ></div>
+                        </TooltipLabel>
+                        <TooltipLabel label="Negativas" description={String(trend.negative)}>
+                          <div
+                            className="bg-red-500 rounded-b w-8"
+                            style={{ height: `${negativeHeight * 2}px` }}
+                            aria-label={`Negativas: ${trend.negative}`}
+                            tabIndex={0}
+                          ></div>
+                        </TooltipLabel>
                       </div>
                       <span className="text-xs text-muted-foreground">
                         {new Date(trend.date as any).toLocaleDateString('pt-BR', { weekday: 'short' })}

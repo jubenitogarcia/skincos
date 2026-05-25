@@ -39,6 +39,13 @@ const buildRange = (days: MetaAdsReportWindowDays) => {
   return { since, until }
 }
 
+function assertAtLeastOneSettled<T>(results: PromiseSettledResult<T>[], message: string) {
+  if (results.length > 0 && results.every((result) => result.status === 'rejected')) {
+    const firstError = results.find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined
+    throw firstError?.reason || new Error(message)
+  }
+}
+
 function formatCustomRangeLabel(range: MetaAdsCustomDateRange | null) {
   if (!range) return ''
   return `${range.since} -> ${range.until}`
@@ -463,6 +470,20 @@ export function MetaCampaignControlCenter() {
     }
   }
 
+  const handleRemoveAccount = async (adAccountId: string) => {
+    setRefreshing(true)
+    try {
+      await metaAdsApi.removeAdAccount({ adAccountId })
+      await refreshConnectedState()
+      toast.success('Conta removida da lista do Meta Ads')
+    } catch (error: any) {
+      setAccountsError(error)
+      toast.error(error?.message || 'Falha ao remover conta da lista')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   const handleReportWindowChange = async (nextWindowDays: MetaAdsReportWindowDays) => {
     if (nextWindowDays === reportWindowDays && !customRange) return
     setReportWindowDays(nextWindowDays)
@@ -471,10 +492,11 @@ export function MetaCampaignControlCenter() {
     if (!status?.connection.connected || !selectedAccount) return
     setRefreshing(true)
     try {
-      await Promise.allSettled([
+      const results = await Promise.allSettled([
         loadOverview({ windowDays: nextWindowDays, custom: null }),
         loadReport({ windowDays: nextWindowDays, custom: null }),
       ])
+      assertAtLeastOneSettled(results, 'Falha ao atualizar o período do Meta Ads')
       toast.success(`Janela ajustada para ${nextWindowDays} dias`)
     } catch (error: any) {
       setStatusError(error)
@@ -506,10 +528,11 @@ export function MetaCampaignControlCenter() {
     if (!status?.connection.connected || !selectedAccount) return
     setRefreshing(true)
     try {
-      await Promise.allSettled([
+      const results = await Promise.allSettled([
         loadOverview({ custom: nextCustomRange }),
         loadReport({ custom: nextCustomRange }),
       ])
+      assertAtLeastOneSettled(results, 'Falha ao aplicar o período personalizado')
       toast.success('Período personalizado aplicado ao Meta Ads')
     } catch (error: any) {
       setStatusError(error)
@@ -527,10 +550,11 @@ export function MetaCampaignControlCenter() {
     if (!status?.connection.connected || !selectedAccount) return
     setRefreshing(true)
     try {
-      await Promise.allSettled([
+      const results = await Promise.allSettled([
         loadOverview({ windowDays: reportWindowDays, custom: null }),
         loadReport({ windowDays: reportWindowDays, custom: null }),
       ])
+      assertAtLeastOneSettled(results, 'Falha ao restaurar o período padrão')
       toast.success(`Janela padrão de ${reportWindowDays} dias restaurada`)
     } catch (error: any) {
       setStatusError(error)
@@ -550,12 +574,20 @@ export function MetaCampaignControlCenter() {
         setManageConnectionsOpen(true)
         return
       }
+      if (action.type === 'connect') {
+        handleOpenOAuth()
+        return
+      }
       if (action.type === 'disconnect') {
         if (status?.connection.connected) handleDisconnect()
         return
       }
       if (action.type === 'set-account' && action.value) {
         handleSelectAccount(action.value)
+        return
+      }
+      if (action.type === 'remove-account' && action.value) {
+        handleRemoveAccount(action.value)
         return
       }
       if (action.type === 'set-report-window') {
@@ -566,7 +598,7 @@ export function MetaCampaignControlCenter() {
         handleOpenCustomRange()
       }
     })
-  }, [handleDisconnect, handleRefresh, handleReportWindowChange, handleSelectAccount, status?.connection.connected])
+  }, [handleDisconnect, handleRefresh, handleOpenOAuth, handleRemoveAccount, handleReportWindowChange, handleSelectAccount, status?.connection.connected])
 
   const missingConfig = status?.missingConfig || []
   const connectActionsDisabled =

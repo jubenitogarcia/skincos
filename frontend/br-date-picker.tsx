@@ -2,6 +2,7 @@ import React from 'react'
 import { Calendar } from '@/calendar'
 import { Input } from '@/input'
 import { Popover, PopoverAnchor, PopoverContent } from '@/popover'
+import { TooltipButton } from '@/tooltip'
 
 function digitsToBrDateInput(raw: string) {
   const digits = String(raw || '').replace(/\D/g, '').slice(0, 8)
@@ -78,23 +79,24 @@ export function BrDatePickerInput({
             aria-label={ariaLabel}
             className={className}
           />
-          <button
-            type="button"
-            className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-md border border-white/10 bg-black/20 hover:bg-white/10 text-blue-100/80 cursor-pointer flex items-center justify-center"
-            onClick={() => setOpen((v) => !v)}
-            aria-label="Selecionar data"
-            title="Selecionar data"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path
-                d="M8 2v3M16 2v3M4 8h16M6 4h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
+          <TooltipButton label="Selecionar data">
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-md border border-white/10 bg-black/20 hover:bg-white/10 text-blue-100/80 cursor-pointer flex items-center justify-center"
+              onClick={() => setOpen((v) => !v)}
+              aria-label="Selecionar data"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M8 2v3M16 2v3M4 8h16M6 4h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </TooltipButton>
         </div>
       </PopoverAnchor>
       <PopoverContent align="start" className="w-auto p-2">
@@ -112,4 +114,3 @@ export function BrDatePickerInput({
     </Popover>
   )
 }
-

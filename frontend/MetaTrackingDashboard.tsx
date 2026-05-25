@@ -5,27 +5,27 @@ import { LinkBreak, WarningCircle } from '@phosphor-icons/react'
 function describeFallbackReason(report: MetaAdsReportResponse | null) {
   const reason = report?.fallbackReason
   if (reason === 'worker_unconfigured') {
-    return 'As métricas consolidadas ainda não estão disponíveis nesta leitura. O painel está usando dados parciais da Meta para não ficar vazio.'
+    return 'O consolidado do workflow ainda não está configurado neste runtime do CRM. O módulo caiu para o Graph para não ficar vazio.'
   }
   if (reason === 'worker_unauthorized') {
-    return 'O CRM não conseguiu acessar a fonte consolidada de métricas. O painel está usando dados parciais da Meta enquanto a credencial é normalizada.'
+    return 'O CRM não conseguiu autenticar a leitura do worker consolidado. O módulo caiu para o Graph enquanto a credencial do worker não é corrigida.'
   }
   if (reason === 'worker_unavailable') {
-    return 'A fonte consolidada de métricas não respondeu nesta leitura. O painel está usando dados parciais da Meta até o serviço voltar.'
+    return 'O worker consolidado ficou indisponível nesta leitura. O CRM caiu para o Graph até o consolidado voltar a responder.'
   }
   if (reason === 'worker_invalid_response') {
-    return 'A fonte consolidada retornou dados incompletos para esta tela. O painel está usando dados parciais da Meta para preservar a operação.'
+    return 'O worker consolidado respondeu em formato inválido para esta tela. O CRM caiu para o Graph para preservar a operação.'
   }
-  return 'As métricas consolidadas não responderam neste momento. O painel está usando dados parciais da Meta para não ficar vazio.'
+  return 'O consolidado do workflow não respondeu neste momento. O CRM caiu para o Graph da Meta para não deixar o módulo vazio.'
 }
 
 function describeWarning(warning: string) {
   if (warning === 'empty_report') return 'Sem consolidado diário para a janela consultada'
-  if (warning === 'graph_fallback') return 'Dados parciais da Meta'
-  if (warning === 'worker_unconfigured') return 'Fonte consolidada indisponível'
-  if (warning === 'worker_unauthorized') return 'Credencial pendente'
-  if (warning === 'worker_unavailable') return 'Fonte consolidada temporariamente indisponível'
-  if (warning === 'worker_invalid_response') return 'Fonte consolidada incompleta'
+  if (warning === 'graph_fallback') return 'Leitura degradada via Graph'
+  if (warning === 'worker_unconfigured') return 'Worker não configurado'
+  if (warning === 'worker_unauthorized') return 'Worker sem autorização'
+  if (warning === 'worker_unavailable') return 'Worker indisponível'
+  if (warning === 'worker_invalid_response') return 'Worker retornou payload inválido'
   return warning
 }
 
@@ -58,7 +58,7 @@ export function MetaTrackingDashboard({
         <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-amber-100">
           <div className="flex items-center gap-2 font-medium">
             <WarningCircle className="h-5 w-5" />
-            Métricas parciais
+            Avisos de leitura
           </div>
           {data?.source === 'graph-fallback' ? (
             <p className="mt-2 text-sm text-amber-100/90">{describeFallbackReason(data)}</p>

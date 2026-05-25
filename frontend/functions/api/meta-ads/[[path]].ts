@@ -15,10 +15,12 @@ import {
   getMetaAdsTrend,
   getMetaProfile,
   type MetaAd as GraphMetaAd,
+  type MetaInsight as GraphMetaInsight,
   listMetaAdAccounts,
   listMetaAds,
   listMetaAdSets,
   listMetaCampaigns,
+  listMetaAdsInsights,
   type MetaAdSet as GraphMetaAdSet,
   type MetaCampaign as GraphMetaCampaign,
 } from '../../_lib/metaAdsGraph'
@@ -31,6 +33,9 @@ import {
 import type {
   MetaAd,
   MetaAdSet,
+  MetaAdsReportAd,
+  MetaAdsReportAdSet,
+  MetaAdsReportCampaign,
   MetaAdsReportFallbackReason,
   MetaCampaignRow,
   MetaCreativeInventoryItem,
@@ -385,6 +390,17 @@ function connectionSummary(connection: MetaAdsConnection | null) {
   }
 }
 
+function normalizeHiddenAdAccountIds(value: unknown) {
+  return Array.from(new Set((Array.isArray(value) ? value : [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)))
+}
+
+function visibleAdAccounts<T extends { id?: string }>(accounts: T[], connection: MetaAdsConnection | null) {
+  const hidden = new Set(normalizeHiddenAdAccountIds(connection?.hiddenAdAccountIds))
+  return accounts.filter((account) => account.id && !hidden.has(account.id))
+}
+
 function resolveMissingConfig(context: any) {
   const cfg = runtimeConfig(context)
   const missing: string[] = []
@@ -501,6 +517,192 @@ function classifyWorkflowFallback(
 
 function buildFallbackWarnings(reason: MetaAdsReportFallbackReason) {
   return ['graph_fallback', reason]
+}
+
+function graphInsightById(rows: GraphMetaInsight[], idField: 'campaign_id' | 'adset_id' | 'ad_id') {
+  const map = new Map<string, GraphMetaInsight>()
+  for (const row of rows || []) {
+    const id = String(row[idField] || '').trim()
+    if (id) map.set(id, row)
+  }
+  return map
+}
+
+function zeroGraphInsight(): GraphMetaInsight {
+  return {
+    spend: 0,
+    impressions: 0,
+    clicks: 0,
+    conversations: 0,
+    ctr: 0,
+    cpc: 0,
+    cpm: 0,
+  }
+}
+
+function campaignReportFromGraph(campaign: GraphMetaCampaign, insight?: GraphMetaInsight): MetaAdsReportCampaign {
+  const metrics = insight || zeroGraphInsight()
+  return {
+    campaignId: campaign.id,
+    campaignName: campaign.name || campaign.id,
+    status: String(campaign.effective_status || campaign.status || '').trim().toUpperCase() || 'UNKNOWN',
+    spend: Number(metrics.spend || 0),
+    reach: metrics.reach,
+    impressions: Number(metrics.impressions || 0),
+    clicks: Number(metrics.clicks || 0),
+    linkClicks: metrics.linkClicks,
+    engagement: metrics.engagement,
+    instagramProfileVisits: metrics.instagramProfileVisits,
+    conversations: Number(metrics.conversations || 0),
+    ctr: Number(metrics.ctr || 0),
+    linkCtr: metrics.linkCtr,
+    cpc: Number(metrics.cpc || 0),
+    linkCpc: metrics.linkCpc,
+    cpm: Number(metrics.cpm || 0),
+    cpp: metrics.cpp,
+    frequency: metrics.frequency,
+  }
+}
+
+function adSetReportFromGraph(
+  adSet: GraphMetaAdSet,
+  campaignById: Map<string, GraphMetaCampaign>,
+  insight?: GraphMetaInsight,
+): MetaAdsReportAdSet {
+  const metrics = insight || zeroGraphInsight()
+  const campaign = campaignById.get(adSet.campaign_id || '')
+  return {
+    adSetId: adSet.id,
+    adSetName: adSet.name || adSet.id,
+    campaignId: adSet.campaign_id || '',
+    campaignName: campaign?.name || metrics.campaign_name || adSet.campaign_id || '',
+    spend: Number(metrics.spend || 0),
+    reach: metrics.reach,
+    impressions: Number(metrics.impressions || 0),
+    clicks: Number(metrics.clicks || 0),
+    linkClicks: metrics.linkClicks,
+    engagement: metrics.engagement,
+    instagramProfileVisits: metrics.instagramProfileVisits,
+    conversations: Number(metrics.conversations || 0),
+    ctr: Number(metrics.ctr || 0),
+    linkCtr: metrics.linkCtr,
+    cpc: Number(metrics.cpc || 0),
+    linkCpc: metrics.linkCpc,
+    cpm: Number(metrics.cpm || 0),
+    cpp: metrics.cpp,
+    frequency: metrics.frequency,
+  }
+}
+
+function adReportFromGraph(
+  ad: GraphMetaAd,
+  campaignById: Map<string, GraphMetaCampaign>,
+  adSetById: Map<string, GraphMetaAdSet>,
+  insight?: GraphMetaInsight,
+): MetaAdsReportAd {
+  const metrics = insight || zeroGraphInsight()
+  const campaign = campaignById.get(ad.campaign_id || '')
+  const adSet = adSetById.get(ad.adset_id || '')
+  return {
+    adId: ad.id,
+    adName: ad.name || ad.id,
+    adSetId: ad.adset_id || '',
+    adSetName: ad.adset_name || adSet?.name || metrics.adset_name || '',
+    campaignId: ad.campaign_id || '',
+    campaignName: ad.campaign_name || campaign?.name || metrics.campaign_name || '',
+    spend: Number(metrics.spend || 0),
+    reach: metrics.reach,
+    impressions: Number(metrics.impressions || 0),
+    clicks: Number(metrics.clicks || 0),
+    linkClicks: metrics.linkClicks,
+    engagement: metrics.engagement,
+    instagramProfileVisits: metrics.instagramProfileVisits,
+    conversations: Number(metrics.conversations || 0),
+    ctr: Number(metrics.ctr || 0),
+    linkCtr: metrics.linkCtr,
+    cpc: Number(metrics.cpc || 0),
+    linkCpc: metrics.linkCpc,
+    cpm: Number(metrics.cpm || 0),
+    cpp: metrics.cpp,
+    frequency: metrics.frequency,
+  }
+}
+
+async function fetchGraphInsightsSafely(
+  selected: { connection: MetaAdsConnection; adAccountId: string },
+  range: { since: string; until: string },
+  cfg: ReturnType<typeof runtimeConfig>,
+  level: 'campaign' | 'adset' | 'ad',
+) {
+  try {
+    return {
+      rows: await listMetaAdsInsights(
+        selected.connection.accessToken,
+        selected.adAccountId,
+        level,
+        range,
+        cfg.graphVersion,
+        cfg.appSecret,
+      ),
+      warning: null as string | null,
+    }
+  } catch (error) {
+    return {
+      rows: [] as GraphMetaInsight[],
+      warning: `graph_insights_${level}_unavailable`,
+      error: String((error as Error | null)?.message || error || ''),
+    }
+  }
+}
+
+async function buildGraphFallbackReport(
+  selected: { connection: MetaAdsConnection; adAccountId: string },
+  range: { since: string; until: string },
+  cfg: ReturnType<typeof runtimeConfig>,
+  reportWindow: MetaAdsWorkflowWindow,
+  fallbackReason: MetaAdsReportFallbackReason,
+) {
+  const [summary, campaigns, adSets, ads, campaignInsights, adSetInsights, adInsights] = await Promise.all([
+    getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, cfg.graphVersion, cfg.appSecret),
+    listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
+    listMetaAdSets(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
+    listMetaAds(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
+    fetchGraphInsightsSafely(selected, range, cfg, 'campaign'),
+    fetchGraphInsightsSafely(selected, range, cfg, 'adset'),
+    fetchGraphInsightsSafely(selected, range, cfg, 'ad'),
+  ])
+  const campaignById = new Map(campaigns.map((campaign) => [campaign.id, campaign]))
+  const adSetById = new Map(adSets.map((adSet) => [adSet.id, adSet]))
+  const campaignInsightById = graphInsightById(campaignInsights.rows, 'campaign_id')
+  const adSetInsightById = graphInsightById(adSetInsights.rows, 'adset_id')
+  const adInsightById = graphInsightById(adInsights.rows, 'ad_id')
+  const warnings = [
+    ...buildFallbackWarnings(fallbackReason),
+    campaignInsights.warning,
+    adSetInsights.warning,
+    adInsights.warning,
+  ].filter(Boolean)
+
+  return {
+    ok: true,
+    source: 'graph-fallback',
+    fallbackReason,
+    window: reportWindow,
+    summary: {
+      ...summary,
+      source: 'graph',
+      activeCampaigns: campaigns.filter((campaign) => String(campaign.effective_status || campaign.status || '').toUpperCase() === 'ACTIVE').length,
+    },
+    metadata: {
+      reportDate: String(range.until || '').trim(),
+      runsCount: 0,
+      source: 'graph',
+    },
+    campaigns: campaigns.map((campaign) => campaignReportFromGraph(campaign, campaignInsightById.get(campaign.id))),
+    adSets: adSets.map((adSet) => adSetReportFromGraph(adSet, campaignById, adSetInsightById.get(adSet.id))),
+    ads: ads.map((ad) => adReportFromGraph(ad, campaignById, adSetById, adInsightById.get(ad.id))),
+    warnings,
+  }
 }
 
 async function readConnection(context: any, userId: string) {
@@ -725,6 +927,7 @@ async function handleOauthCallback(context: any) {
       getMetaProfile(accessToken, cfg.graphVersion, cfg.appSecret),
       validateMetaAccessToken(accessToken, cfg),
     ])
+    const previousConnection = await readConnection(context, userOrRes.id).catch(() => null)
 
     await writeConnection(context, userOrRes.id, {
       accessToken,
@@ -738,6 +941,7 @@ async function handleOauthCallback(context: any) {
         (longData?.expires_in ? new Date(Date.now() + Number(longData.expires_in || 0) * 1000).toISOString() : undefined),
       dataAccessExpiresAt: tokenValidation.dataAccessExpiresAt,
       lastValidatedAt: tokenValidation.lastValidatedAt,
+      hiddenAdAccountIds: normalizeHiddenAdAccountIds(previousConnection?.hiddenAdAccountIds),
       updatedAt: new Date().toISOString(),
     })
 
@@ -788,6 +992,9 @@ async function handleManualConnect(context: any) {
       validateMetaAccessToken(accessToken, cfg),
       listMetaAdAccounts(accessToken, cfg.graphVersion, cfg.appSecret),
     ])
+    const previousConnection = await readConnection(context, userOrRes.id).catch(() => null)
+    const hiddenAdAccountIds = normalizeHiddenAdAccountIds(previousConnection?.hiddenAdAccountIds)
+    const visibleAccounts = accounts.filter((account) => !hiddenAdAccountIds.includes(account.id))
     await writeConnection(context, userOrRes.id, {
       accessToken,
       tokenType: 'manual',
@@ -798,13 +1005,14 @@ async function handleManualConnect(context: any) {
       expiresAt: tokenValidation.expiresAt,
       dataAccessExpiresAt: tokenValidation.dataAccessExpiresAt,
       lastValidatedAt: tokenValidation.lastValidatedAt,
+      hiddenAdAccountIds,
       updatedAt: new Date().toISOString(),
-      selectedAdAccountId: accounts[0]?.id || undefined,
+      selectedAdAccountId: visibleAccounts[0]?.id || undefined,
     })
     return json(200, {
       ok: true,
       connected: true,
-      accountCount: accounts.length,
+      accountCount: visibleAccounts.length,
       connection: connectionSummary(await readConnection(context, userOrRes.id)),
     })
   } catch (error: any) {
@@ -840,14 +1048,18 @@ async function handleListAccounts(context: any) {
 
   const { connection, accounts } = await fetchLiveAccounts(context, userOrRes.id)
   if (!connection?.accessToken) return json(200, { ok: true, connected: false, accounts: [] })
+  const visibleAccounts = visibleAdAccounts(accounts, connection)
+  const selectedAdAccountId = visibleAccounts.some((account) => account.id === connection.selectedAdAccountId)
+    ? connection.selectedAdAccountId
+    : null
 
   return json(200, {
     ok: true,
     connected: true,
-    selectedAdAccountId: connection.selectedAdAccountId || null,
-    accounts: accounts.map((account) => ({
+    selectedAdAccountId,
+    accounts: visibleAccounts.map((account) => ({
       ...account,
-      isSelected: connection.selectedAdAccountId === account.id,
+      isSelected: selectedAdAccountId === account.id,
     })),
   })
 }
@@ -878,7 +1090,7 @@ async function handleSelectAccount(context: any) {
   }
   const cfg = runtimeConfig(context)
   const accounts = await listMetaAdAccounts(connection.accessToken, cfg.graphVersion, cfg.appSecret)
-  const selected = accounts.find((account) => account.id === adAccountId)
+  const selected = visibleAdAccounts(accounts, connection).find((account) => account.id === adAccountId)
   if (!selected) {
     return apiError(404, 'ACCOUNT_NOT_FOUND', {
       message: 'A conta de anúncios informada não foi encontrada para este usuário/token.',
@@ -893,6 +1105,63 @@ async function handleSelectAccount(context: any) {
     updatedAt: new Date().toISOString(),
   })
   return json(200, { ok: true, selectedAdAccountId: adAccountId })
+}
+
+async function handleRemoveAccount(context: any) {
+  const userOrRes = await requireSocialAdmin(context)
+  if (userOrRes instanceof Response) return userOrRes
+  const csrfRes = requireCsrfForMutations(context)
+  if (csrfRes) return csrfRes
+
+  const body = await context.request.json().catch(() => null)
+  const adAccountId = String(body?.adAccountId || '').trim()
+  if (!adAccountId) {
+    return apiError(400, 'INVALID_INPUT', {
+      message: 'Informe a conta de anúncios que deve ser removida da lista.',
+      hint: 'Escolha uma conta válida na lista antes de remover.',
+      retryable: false,
+    })
+  }
+
+  const connection = await readConnection(context, userOrRes.id)
+  if (!connection?.accessToken) {
+    return apiError(404, 'NOT_CONNECTED', {
+      message: 'Nenhuma conexão Meta ativa foi encontrada para este usuário.',
+      hint: 'Conecte a conta Meta primeiro e depois remova contas da lista.',
+      retryable: false,
+    })
+  }
+
+  const cfg = runtimeConfig(context)
+  const accounts = await listMetaAdAccounts(connection.accessToken, cfg.graphVersion, cfg.appSecret)
+  const accountExists = accounts.some((account) => account.id === adAccountId)
+  if (!accountExists) {
+    return apiError(404, 'ACCOUNT_NOT_FOUND', {
+      message: 'A conta de anúncios informada não foi encontrada para este usuário/token.',
+      hint: 'Atualize a lista de contas antes de tentar remover novamente.',
+      retryable: true,
+    })
+  }
+
+  const hiddenAdAccountIds = Array.from(new Set([...normalizeHiddenAdAccountIds(connection.hiddenAdAccountIds), adAccountId]))
+  const visibleAccounts = accounts.filter((account) => !hiddenAdAccountIds.includes(account.id))
+  const selectedAdAccountId = connection.selectedAdAccountId === adAccountId
+    ? visibleAccounts[0]?.id || undefined
+    : connection.selectedAdAccountId
+
+  await writeConnection(context, userOrRes.id, {
+    ...connection,
+    selectedAdAccountId,
+    hiddenAdAccountIds,
+    updatedAt: new Date().toISOString(),
+  })
+
+  return json(200, {
+    ok: true,
+    removedAdAccountId: adAccountId,
+    selectedAdAccountId: selectedAdAccountId || null,
+    remainingAccountCount: visibleAccounts.length,
+  })
 }
 
 async function withSelectedAccount(
@@ -913,7 +1182,7 @@ async function withSelectedAccount(
     }
   }
   const adAccountId = String(connection.selectedAdAccountId || '').trim()
-  if (!adAccountId) {
+  if (!adAccountId || normalizeHiddenAdAccountIds(connection.hiddenAdAccountIds).includes(adAccountId)) {
     return {
       error: apiError(400, 'AD_ACCOUNT_NOT_SELECTED', {
         message: 'Nenhuma conta de anúncios foi selecionada.',
@@ -989,92 +1258,10 @@ async function handleReport(context: any) {
     }
   } catch (error) {
     const fallbackReason = classifyWorkflowFallback(error, cfg)
-    const [summary, campaigns] = await Promise.all([
-      getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, cfg.graphVersion, cfg.appSecret),
-      listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
-    ])
-
-    return json(200, {
-      ok: true,
-      source: 'graph-fallback',
-      fallbackReason,
-      window: reportWindow,
-      summary: {
-        ...summary,
-        source: 'graph',
-        activeCampaigns: campaigns.filter((campaign) => String(campaign.status || '').toUpperCase() === 'ACTIVE').length,
-      },
-      metadata: {
-        reportDate: String(range.until || '').trim(),
-        runsCount: 0,
-        source: 'graph',
-      },
-      campaigns: campaigns.map((campaign) => ({
-        campaignId: campaign.id,
-        campaignName: campaign.name || campaign.id,
-        status: String(campaign.effective_status || campaign.status || '').trim().toUpperCase() || 'UNKNOWN',
-        spend: 0,
-        reach: 0,
-        impressions: 0,
-        clicks: 0,
-        linkClicks: 0,
-        conversations: 0,
-        ctr: 0,
-        linkCtr: 0,
-        cpc: 0,
-        linkCpc: 0,
-        cpm: 0,
-        cpp: 0,
-        frequency: 0,
-      })),
-      adSets: [],
-      ads: [],
-      warnings: buildFallbackWarnings(fallbackReason),
-    })
+    return json(200, await buildGraphFallbackReport(selected, range, cfg, reportWindow, fallbackReason))
   }
 
-  const [summary, campaigns] = await Promise.all([
-    getMetaAdsSummary(selected.connection.accessToken, selected.adAccountId, range, cfg.graphVersion, cfg.appSecret),
-    listMetaCampaigns(selected.connection.accessToken, selected.adAccountId, cfg.graphVersion, cfg.appSecret),
-  ])
-
-  return json(200, {
-    ok: true,
-    source: 'graph-fallback',
-    fallbackReason: 'worker_unconfigured',
-    window: reportWindow,
-    summary: {
-      ...summary,
-      source: 'graph',
-      activeCampaigns: campaigns.filter((campaign) => String(campaign.status || '').toUpperCase() === 'ACTIVE').length,
-    },
-    metadata: {
-      reportDate: String(range.until || '').trim(),
-      runsCount: 0,
-      source: 'graph',
-    },
-    campaigns: campaigns.map((campaign) => ({
-      campaignId: campaign.id,
-      campaignName: campaign.name || campaign.id,
-      status: String(campaign.effective_status || campaign.status || '').trim().toUpperCase() || 'UNKNOWN',
-      spend: 0,
-      reach: 0,
-      impressions: 0,
-      clicks: 0,
-      linkClicks: 0,
-      conversations: 0,
-      ctr: 0,
-      linkCtr: 0,
-      cpc: 0,
-      linkCpc: 0,
-      cpm: 0,
-      cpp: 0,
-      frequency: 0,
-    })),
-    adSets: [],
-    ads: [],
-    warnings: buildFallbackWarnings('worker_unconfigured'),
-  })
+  return json(200, await buildGraphFallbackReport(selected, range, cfg, reportWindow, 'worker_unconfigured'))
 }
 
 async function handleInventory(context: any) {
@@ -1112,6 +1299,7 @@ export async function onRequest(context: any): Promise<Response> {
     if (method === 'POST' && (rest === '/disconnect' || rest === '/disconnect/')) return handleDisconnect(context)
     if (method === 'GET' && (rest === '/ad-accounts' || rest === '/ad-accounts/')) return handleListAccounts(context)
     if (method === 'POST' && (rest === '/ad-accounts/select' || rest === '/ad-accounts/select/')) return handleSelectAccount(context)
+    if (method === 'POST' && (rest === '/ad-accounts/remove' || rest === '/ad-accounts/remove/')) return handleRemoveAccount(context)
     if (method === 'GET' && (rest === '/summary' || rest === '/summary/')) return handleSummary(context)
     if (method === 'GET' && (rest === '/trend' || rest === '/trend/')) return handleTrend(context)
     if (method === 'GET' && (rest === '/report' || rest === '/report/')) return handleReport(context)

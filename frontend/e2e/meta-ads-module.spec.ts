@@ -367,7 +367,6 @@ test.describe('meta ads', () => {
       window.open = () => null
     })
 
-    await page.getByLabel('Gerenciar conexao').first().click({ force: true })
     await page.getByRole('button', { name: 'Conectar com Facebook' }).click()
     await expect(page.getByRole('dialog')).toContainText('Permita a janela do Facebook')
     await expect(page.locator('body')).not.toContainText('A autenticação será aberta nesta mesma aba.')
