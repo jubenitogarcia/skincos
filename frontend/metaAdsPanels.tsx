@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactElement, type ReactNode } from 'react'
+import { DragDropContext, Draggable, Droppable, type DraggableProvidedDragHandleProps, type DropResult } from '@hello-pangea/dnd'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { CartesianGrid, LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { EntityDetailModal, type EntityDetailSection } from '@/EntityDetailModal'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
-import { Switch } from '@/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
 import { Textarea } from '@/textarea'
 import { TooltipLabel } from '@/tooltip'
@@ -30,7 +30,6 @@ import { describeMetaAdAccountStatus } from '@/metaAdsState'
 import {
   ArrowClockwise,
   CaretDown,
-  CaretUp,
   CaretRight,
   CurrencyDollar,
   CheckCircle,
@@ -458,10 +457,12 @@ function MetaAdsDualMetricCell({
   primary,
   secondary,
   kind,
+  currency = 'USD',
 }: {
   primary?: number | null
   secondary?: number | null
   kind: 'number' | 'percent' | 'currency'
+  currency?: string
 }) {
   const primaryValue =
     primary === null || primary === undefined || Number.isNaN(Number(primary))
@@ -469,7 +470,7 @@ function MetaAdsDualMetricCell({
       : kind === 'percent'
         ? formatPercent(primary)
         : kind === 'currency'
-          ? formatCurrency(primary)
+          ? formatCurrency(primary, currency)
           : formatNumber(primary)
   const secondaryValue =
     secondary === null || secondary === undefined || Number.isNaN(Number(secondary))
@@ -477,7 +478,7 @@ function MetaAdsDualMetricCell({
       : kind === 'percent'
         ? formatPercent(secondary)
         : kind === 'currency'
-          ? formatCurrency(secondary)
+          ? formatCurrency(secondary, currency)
           : formatNumber(secondary)
 
   return (
@@ -486,6 +487,73 @@ function MetaAdsDualMetricCell({
       <span className="mt-0.5 text-[10px] text-slate-400 sm:text-[11px]">{secondaryValue}</span>
     </div>
   )
+}
+
+function MetaAdsRankBadge({ rank }: { rank?: number | null }) {
+  const normalizedRank = rank && Number.isFinite(Number(rank)) ? Number(rank) : null
+  const podium =
+    normalizedRank === 1
+      ? {
+          label: 'Ouro',
+          className: 'border-amber-400/35 bg-amber-400/12 text-amber-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]',
+          dotClassName: 'bg-amber-300',
+        }
+      : normalizedRank === 2
+        ? {
+            label: 'Prata',
+            className: 'border-slate-300/35 bg-slate-300/10 text-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]',
+            dotClassName: 'bg-slate-300',
+          }
+        : normalizedRank === 3
+          ? {
+              label: 'Bronze',
+              className: 'border-orange-400/35 bg-orange-400/10 text-orange-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]',
+              dotClassName: 'bg-orange-300',
+            }
+          : null
+
+  if (podium && normalizedRank) {
+    return (
+      <MetaAdsHoverTooltip content={`${podium.label} · ${normalizedRank}º lugar no ranking do período`}>
+        <span
+          className={`inline-flex h-6 min-w-9 items-center justify-center gap-1.5 rounded-full border px-2 text-[11px] font-semibold ${podium.className}`}
+          aria-label={`${podium.label}: ${normalizedRank}º lugar no ranking do período`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${podium.dotClassName}`} aria-hidden="true" />
+          {normalizedRank}º
+        </span>
+      </MetaAdsHoverTooltip>
+    )
+  }
+
+  return (
+    <MetaAdsHoverTooltip content={normalizedRank ? `${normalizedRank}º lugar no ranking do período` : 'Sem ranking no período'}>
+      <Badge className="h-6 min-w-9 justify-center rounded-full border border-slate-700/80 bg-slate-900/60 px-2 text-[11px] font-semibold text-slate-300">
+        {normalizedRank ? `${normalizedRank}º` : '—'}
+      </Badge>
+    </MetaAdsHoverTooltip>
+  )
+}
+
+function hasMetaDynamicProductToken(value?: string | null) {
+  return /\{\{\s*product\.name\s*\}\}/i.test(String(value || ''))
+}
+
+function getMetaAdsCreativeDisplayName(creative: MetaCreativeInventoryItem) {
+  const rawName = String(creative.name || '').trim()
+  if (!rawName) return creative.id || 'Criativo'
+  if (!hasMetaDynamicProductToken(rawName)) return rawName
+  const date = rawName.match(/\d{4}-\d{2}-\d{2}/)?.[0]
+  if (date) {
+    const parsedDate = new Date(`${date}T00:00:00`)
+    const formattedDate = Number.isNaN(parsedDate.getTime()) ? date : format(parsedDate, 'dd/MM/yyyy', { locale: ptBR })
+    return `Criativo dinâmico · ${formattedDate}`
+  }
+  const sanitizedName = rawName
+    .replace(/\{\{\s*product\.name\s*\}\}/gi, 'Produto dinâmico')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return sanitizedName.length <= 72 ? sanitizedName : 'Criativo dinâmico'
 }
 
 function MetaAdsMetricTile({
@@ -497,6 +565,9 @@ function MetaAdsMetricTile({
   icon: Icon,
   toneClass,
   size,
+  dragHandleProps,
+  onHide,
+  onResize,
 }: {
   label: string
   tooltipLabel?: string
@@ -506,10 +577,15 @@ function MetaAdsMetricTile({
   icon: typeof CurrencyDollar
   toneClass: string
   size?: MetaAdsOverviewMetricSize
+  dragHandleProps?: DraggableProvidedDragHandleProps | null
+  onHide?: () => void
+  onResize?: () => void
 }) {
+  const resizeStartRef = useRef<{ x: number; y: number; resized: boolean } | null>(null)
+  const isWide = size === 'wide'
   const labelNode = <div className="text-[9px] font-medium uppercase tracking-[0.14em] text-slate-400 sm:text-[10px]">{label}</div>
   const iconNode = (
-    <div className={`inline-flex h-6 w-6 items-center justify-center rounded-full border sm:h-7 sm:w-7 ${toneClass}`}>
+    <div className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${toneClass}`}>
       <Icon className="h-3 w-3" weight="fill" />
     </div>
   )
@@ -525,17 +601,62 @@ function MetaAdsMetricTile({
   const body = (
     <CardContent
       tabIndex={tooltipLabel || description ? 0 : undefined}
-      className="flex min-h-[62px] flex-col items-center justify-center gap-1 p-2 text-center outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 sm:min-h-[68px]"
+      className={`flex flex-col items-center justify-center gap-1 p-2 text-center outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 ${isWide ? 'min-h-[94px]' : 'min-h-[84px]'}`}
     >
       {content}
       <div className="space-y-0.5">
-        <div className="text-[1.15rem] font-semibold leading-none text-white sm:text-[1.35rem] lg:text-[1.45rem]">{value}</div>
+        <div className="text-[1.05rem] font-semibold leading-tight text-white sm:text-[1.2rem] lg:text-[1.3rem]">{value}</div>
+        {isWide && description ? <div className="mx-auto max-w-52 text-[10px] leading-snug text-slate-400">{description}</div> : null}
       </div>
     </CardContent>
   )
+  const handleResizePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!onResize) return
+    event.preventDefault()
+    event.stopPropagation()
+    resizeStartRef.current = { x: event.clientX, y: event.clientY, resized: false }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+  const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!onResize || !resizeStartRef.current || resizeStartRef.current.resized) return
+    const deltaX = event.clientX - resizeStartRef.current.x
+    const deltaY = event.clientY - resizeStartRef.current.y
+    if (Math.abs(deltaX) < 28 && Math.abs(deltaY) < 18) return
+    resizeStartRef.current.resized = true
+    onResize()
+  }
+  const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!onResize || !resizeStartRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (!resizeStartRef.current.resized) onResize()
+    resizeStartRef.current = null
+  }
 
   return (
-    <Card className={`${panelClass} gap-0 overflow-hidden py-0 ${size === 'wide' ? 'col-span-2' : ''}`}>
+    <Card className={`group relative gap-0 overflow-hidden py-0 transition ${panelClass} ${isWide ? 'col-span-2' : ''}`}>
+      <button
+        type="button"
+        className="absolute left-2 top-2 z-10 inline-flex h-6 w-6 cursor-grab items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/45 text-slate-500 opacity-45 shadow-sm transition hover:scale-105 hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 active:cursor-grabbing group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+        aria-label={`Mover card ${tooltipLabel || label}`}
+        {...dragHandleProps}
+      >
+        <FadersHorizontal className="h-3.5 w-3.5" />
+      </button>
+      {onHide ? (
+        <button
+          type="button"
+          className="absolute right-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/55 text-slate-400 opacity-0 shadow-sm transition hover:border-rose-400/40 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+          aria-label={`Ocultar card ${tooltipLabel || label}`}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onHide()
+          }}
+        >
+          <EyeSlash className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
       {tooltipLabel || description ? (
         <MetaAdsTableTooltip label={tooltipLabel || label} description={description}>
           {body}
@@ -543,6 +664,21 @@ function MetaAdsMetricTile({
       ) : (
         body
       )}
+      {onResize ? (
+        <button
+          type="button"
+          className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-slate-500/10 text-transparent opacity-55 transition hover:border-sky-300/60 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+          aria-label={`${isWide ? 'Reduzir' : 'Ampliar'} card ${tooltipLabel || label}`}
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerUp}
+          onPointerCancel={() => {
+            resizeStartRef.current = null
+          }}
+        >
+          redimensionar
+        </button>
+      ) : null}
     </Card>
   )
 }
@@ -774,7 +910,7 @@ function MetaAdsEntityDetailDialog({
 }) {
   if (!detail) return null
 
-  const previewUrl = detail.kind === 'creative' ? detail.payload.thumbnailUrl : undefined
+  const previewUrl = detail.kind === 'creative' ? detail.payload.imageUrl || detail.payload.thumbnailUrl : undefined
   const hasValue = (value: unknown) => value !== undefined && value !== null && value !== ''
   const filterSections = (sections: EntityDetailSection[]) =>
     sections
@@ -875,11 +1011,14 @@ function MetaAdsEntityDetailDialog({
     ])
   } else {
     const payload = detail.payload
+    const displayName = getMetaAdsCreativeDisplayName(payload)
+    const dynamicName = hasMetaDynamicProductToken(payload.name)
     sections = filterSections([
       {
         title: 'Identificação',
         fields: [
-          { label: 'Nome', value: payload.name },
+          { label: 'Nome', value: displayName },
+          { label: 'Nome original na Meta', value: dynamicName ? payload.name : null },
           { label: 'ID', value: payload.id },
           { label: 'Story ID efetivo', value: payload.effectiveObjectStoryId },
         ],
@@ -899,7 +1038,7 @@ function MetaAdsEntityDetailDialog({
     <EntityDetailModal
       open={open}
       onOpenChange={onOpenChange}
-      title={detail.title}
+      title={detail.kind === 'creative' ? getMetaAdsCreativeDisplayName(detail.payload) : detail.title}
       description={
         detail.kind === 'campaign'
           ? 'Configuração consolidada da campanha selecionada.'
@@ -1174,8 +1313,6 @@ export function MetaAdsOverviewPanel({
       return DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT
     }
   })
-  const [metricSettingsOpen, setMetricSettingsOpen] = useState(false)
-
   useEffect(() => {
     try {
       window.localStorage.setItem(META_ADS_OVERVIEW_METRIC_LAYOUT_KEY, JSON.stringify(metricLayout))
@@ -1285,7 +1422,7 @@ export function MetaAdsOverviewPanel({
       },
       {
         key: 'clicks' as const,
-        label: 'Clique / link',
+        label: 'Clique / Link',
         tooltipLabel: 'Cliques / Cliques em link',
         description: 'Cliques totais e cliques em link registrados para a conta no período.',
         value: (
@@ -1337,7 +1474,7 @@ export function MetaAdsOverviewPanel({
       {
         key: 'ctr' as const,
         label: 'CTR / CTRL',
-        tooltipLabel: 'CTR / CTR link',
+        tooltipLabel: 'CTR / CTRL',
         description: 'Taxa de clique geral e taxa de clique em link.',
         subtitle: 'Taxa de clique',
         value: (
@@ -1353,7 +1490,7 @@ export function MetaAdsOverviewPanel({
       {
         key: 'cpc' as const,
         label: 'CPC / CPCL',
-        tooltipLabel: 'CPC / CPC link',
+        tooltipLabel: 'CPC / CPCL',
         description: 'Custo por clique geral e custo por clique em link.',
         subtitle: 'Custo por clique',
         value: (
@@ -1361,6 +1498,7 @@ export function MetaAdsOverviewPanel({
             primary={cpc}
             secondary={reportTotals.hasLinkClicks ? linkCpc : null}
             kind="currency"
+            currency={selectedAccount.currency || 'USD'}
           />
         ),
         icon: CurrencyDollar,
@@ -1434,151 +1572,128 @@ export function MetaAdsOverviewPanel({
       .filter(Boolean) as Array<(typeof metricTiles)[number] & { size: MetaAdsOverviewMetricSize }>
   }, [metricLayout, metricTiles])
 
-  const moveMetricTile = (key: MetaAdsOverviewMetricKey, direction: -1 | 1) => {
-    setMetricLayout((prev) => {
-      const currentIndex = prev.findIndex((item) => item.key === key)
-      if (currentIndex < 0) return prev
-      const targetIndex = currentIndex + direction
-      if (targetIndex < 0 || targetIndex >= prev.length) return prev
-      const next = [...prev]
-      const [entry] = next.splice(currentIndex, 1)
-      next.splice(targetIndex, 0, entry)
-      return next
-    })
-  }
+  const hiddenMetricTiles = useMemo(() => {
+    const byKey = new Map(metricTiles.map((tile) => [tile.key, tile]))
+    return metricLayout
+      .filter((config) => !config.visible)
+      .map((config) => byKey.get(config.key))
+      .filter(Boolean) as typeof metricTiles
+  }, [metricLayout, metricTiles])
 
   const updateMetricTile = (key: MetaAdsOverviewMetricKey, patch: Partial<MetaAdsOverviewMetricLayout>) => {
     setMetricLayout((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)))
   }
 
-  const metricSettingsContent = (
-    <div className="space-y-3">
-      <div className="grid gap-2">
-        {metricLayout.map((config, index) => {
-          const tile = metricTiles.find((entry) => entry.key === config.key)
-          if (!tile) return null
-          return (
-            <div key={config.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-slate-800/80 bg-slate-900/60 p-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-white">{tile.tooltipLabel || tile.label}</div>
-                <div className="truncate text-xs text-slate-400">{tile.description || tile.label}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={config.visible}
-                  onCheckedChange={(checked) => updateMetricTile(config.key, { visible: checked })}
-                  aria-label={`${config.visible ? 'Ocultar' : 'Exibir'} ${tile.label}`}
-                />
-                <Select
-                  value={config.size}
-                  onValueChange={(value) => updateMetricTile(config.key, { size: value === 'wide' ? 'wide' : 'compact' })}
-                >
-                  <SelectTrigger className="h-8 w-[7.5rem] border-slate-700 bg-slate-950/70 text-xs text-slate-100">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="compact">Compacto</SelectItem>
-                    <SelectItem value="wide">Largo</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
-                  onClick={() => moveMetricTile(config.key, -1)}
-                  disabled={index === 0}
-                  aria-label={`Mover ${tile.label} para cima`}
-                >
-                  <CaretUp className="h-4 w-4" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
-                  onClick={() => moveMetricTile(config.key, 1)}
-                  disabled={index === metricLayout.length - 1}
-                  aria-label={`Mover ${tile.label} para baixo`}
-                >
-                  <CaretDown className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-xs text-slate-400">Cards ocultos saem do topo, mas continuam disponíveis aqui.</div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 px-2 text-slate-300 hover:bg-slate-800/80 hover:text-white"
-          onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
-        >
-          <EyeSlash className="h-4 w-4" />
-          Resetar
-        </Button>
-      </div>
-    </div>
-  )
+  const handleMetricDragEnd = (result: DropResult) => {
+    if (!result.destination || result.destination.droppableId !== 'meta-ads-overview-metrics') return
+    if (result.source.index === result.destination.index) return
+    const visibleKeys = metricLayout.filter((item) => item.visible).map((item) => item.key)
+    const movedKey = visibleKeys[result.source.index]
+    if (!movedKey) return
+
+    setMetricLayout((prev) => {
+      const next = [...prev]
+      const sourceIndex = next.findIndex((item) => item.key === movedKey)
+      if (sourceIndex < 0) return prev
+      const [entry] = next.splice(sourceIndex, 1)
+      const visibleAfterRemoval = next.filter((item) => item.visible)
+      const beforeKey = visibleAfterRemoval[result.destination?.index ?? 0]?.key
+      const destinationIndex = beforeKey ? next.findIndex((item) => item.key === beforeKey) : next.length
+      next.splice(destinationIndex < 0 ? next.length : destinationIndex, 0, entry)
+      return next
+    })
+  }
 
   return (
     <>
       <MetaAdsPersistentError error={overviewError} onRetry={onRetry} />
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Resumo da conta</div>
-        <Dialog open={metricSettingsOpen} onOpenChange={setMetricSettingsOpen}>
-          <DialogTrigger asChild>
-            <Button variant="outline" size="sm" className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80">
-              <FadersHorizontal className="h-4 w-4" />
-              Personalizar métricas
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="border-slate-800/80 bg-slate-950 text-slate-100 sm:max-w-2xl" resizable={false}>
-            <DialogHeader>
-              <DialogTitle>Personalizar métricas</DialogTitle>
-              <DialogDescription>
-                Escolha quais métricas aparecem no topo, ajuste o tamanho dos cards e reorganize a ordem.
-              </DialogDescription>
-            </DialogHeader>
-            {metricSettingsContent}
-          </DialogContent>
-        </Dialog>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
-        {visibleMetricTiles.length > 0 ? (
-          visibleMetricTiles.map((tile) => (
-            <MetaAdsMetricTile
-              key={tile.label}
-              label={tile.label}
-              tooltipLabel={tile.tooltipLabel}
-              description={tile.description}
-              subtitle={tile.subtitle}
-              value={tile.value}
-              icon={tile.icon}
-              toneClass={tile.toneClass}
-              size={tile.size}
-            />
-          ))
-        ) : (
-          <Card className={`${panelClass} sm:col-span-3 md:col-span-4 lg:col-span-6 xl:col-span-8`}>
-            <CardContent className="flex min-h-[72px] items-center justify-between gap-3 p-4 text-sm text-slate-300">
-              <span>Nenhuma métrica visível no resumo.</span>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Resumo da conta</div>
+          <div className="text-xs text-slate-500">Arraste pela alça. Use o canto inferior direito para alternar detalhes. Oculte apenas o que não usa.</div>
+        </div>
+        {hiddenMetricTiles.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Ocultas</span>
+            {hiddenMetricTiles.map((tile) => (
               <Button
+                key={tile.key}
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80"
-                onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
+                className="h-7 rounded-full border border-slate-800 bg-slate-900/55 px-2 text-[11px] text-slate-300 hover:border-sky-400/35 hover:bg-slate-800/80 hover:text-white"
+                onClick={() => updateMetricTile(tile.key, { visible: true })}
               >
-                Restaurar métricas
+                + {tile.label}
               </Button>
-            </CardContent>
-          </Card>
-        )}
+            ))}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px] text-slate-400 hover:bg-slate-800/80 hover:text-white"
+              onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
+            >
+              Restaurar padrão
+            </Button>
+          </div>
+        ) : null}
       </div>
+      <DragDropContext onDragEnd={handleMetricDragEnd}>
+        <Droppable droppableId="meta-ads-overview-metrics" direction="horizontal">
+          {(dropProvided) => (
+            <div
+              ref={dropProvided.innerRef}
+              {...dropProvided.droppableProps}
+              className="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-2"
+            >
+              {visibleMetricTiles.length > 0 ? (
+                visibleMetricTiles.map((tile, index) => (
+                  <Draggable key={tile.key} draggableId={`meta-ads-metric-${tile.key}`} index={index}>
+                    {(dragProvided, snapshot) => (
+                      <div
+                        ref={dragProvided.innerRef}
+                        {...dragProvided.draggableProps}
+                        className={`${tile.size === 'wide' ? 'col-span-2' : ''} ${snapshot.isDragging ? 'z-30' : ''}`}
+                      >
+                        <MetaAdsMetricTile
+                          label={tile.label}
+                          tooltipLabel={tile.tooltipLabel}
+                          description={tile.description}
+                          subtitle={tile.subtitle}
+                          value={tile.value}
+                          icon={tile.icon}
+                          toneClass={tile.toneClass}
+                          size={tile.size}
+                          dragHandleProps={dragProvided.dragHandleProps}
+                          onHide={() => updateMetricTile(tile.key, { visible: false })}
+                          onResize={() => updateMetricTile(tile.key, { size: tile.size === 'wide' ? 'compact' : 'wide' })}
+                        />
+                      </div>
+                    )}
+                  </Draggable>
+                ))
+              ) : (
+                <Card className={`${panelClass} sm:col-span-3 md:col-span-4 lg:col-span-6 xl:col-span-8`}>
+                  <CardContent className="flex min-h-[72px] items-center justify-between gap-3 p-4 text-sm text-slate-300">
+                    <span>Nenhuma métrica visível no resumo.</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80"
+                      onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
+                    >
+                      Restaurar métricas
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+              {dropProvided.placeholder}
+            </div>
+          )}
+        </Droppable>
+      </DragDropContext>
 
       <Card className={panelClass}>
         <CardHeader>
@@ -1611,7 +1726,7 @@ export function MetaAdsOverviewPanel({
               />
               <RechartsTooltip
                 labelFormatter={formatTrendTooltipLabel}
-                formatter={(value: number) => formatCurrency(value, selectedAccount.currency || 'USD')}
+                formatter={(value: number) => [formatCurrency(value, selectedAccount.currency || 'USD'), 'Investimento']}
                 contentStyle={{
                   backgroundColor: 'rgba(2, 6, 23, 0.92)',
                   border: '1px solid rgba(148, 163, 184, 0.2)',
@@ -1638,11 +1753,13 @@ export function MetaAdsOverviewPanel({
 }
 
 export function MetaAdsInventoryPanel({
+  selectedAccount,
   inventory,
   report,
   inventoryError,
   onRetry,
 }: {
+  selectedAccount: MetaAdAccount
   inventory: MetaAdsInventory
   report: MetaAdsReportResponse | null
   inventoryError: MetaAdsApiError | null
@@ -1653,6 +1770,7 @@ export function MetaAdsInventoryPanel({
   const [collapsedAdSetIds, setCollapsedAdSetIds] = useState<string[]>([])
   const [sortKey, setSortKey] = useState<MetaAdsInventorySortKey>('rank')
   const [sortDir, setSortDir] = useState<MetaAdsInventorySortDir>('asc')
+  const currency = selectedAccount.currency || 'USD'
 
   const campaignOrderMap = useMemo(
     () => new Map(inventory.campaigns.map((campaign, index) => [campaign.id, index])),
@@ -2032,7 +2150,10 @@ export function MetaAdsInventoryPanel({
 
   const rowClass = () => 'border-slate-800/80 transition hover:bg-slate-900/45'
 
-  const itemButtonClass = 'text-left transition text-white hover:text-sky-200'
+  const itemButtonClass = 'min-w-0 truncate text-left transition hover:text-sky-200'
+  const campaignItemClass = `${itemButtonClass} text-[15px] font-semibold text-white`
+  const adSetItemClass = `${itemButtonClass} text-sm font-medium text-slate-100`
+  const adItemClass = `${itemButtonClass} text-sm font-normal text-slate-200`
   const describeCount = (filteredCount: number, totalCount: number, singular: string, plural: string) =>
     filteredCount === totalCount ? `${totalCount} ${totalCount === 1 ? singular : plural}` : `${filteredCount} de ${totalCount}`
   const toggleCampaign = (campaignId: string) => {
@@ -2215,7 +2336,7 @@ export function MetaAdsInventoryPanel({
                     <TableRow key={row.key} className={rowClass()}>
                       <TableCell>
                         <div className="space-y-1">
-                          <div className="flex items-center gap-2">
+                          <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
                             <button
                               type="button"
                               onClick={() => toggleCampaign(campaign.id)}
@@ -2229,15 +2350,15 @@ export function MetaAdsInventoryPanel({
                               label="Campanha"
                               toneClass="border-sky-500/20 bg-sky-500/10 text-sky-100"
                             />
-                            <button type="button" className={itemButtonClass} onClick={() => setDetail({ kind: 'campaign', title: campaign.name || campaign.id, payload: campaign })}>
+                            <button type="button" className={campaignItemClass} onClick={() => setDetail({ kind: 'campaign', title: campaign.name || campaign.id, payload: campaign })}>
                               {campaign.name || campaign.id}
                             </button>
                           </div>
-                          <div className="pl-9 font-mono text-xs text-blue-100/60">{campaign.id}</div>
+                          <div className="pl-[4.375rem] font-mono text-xs text-blue-100/60">{campaign.id}</div>
                         </div>
                       </TableCell>
                       <TableCell className="text-center">
-                        <Badge className="border border-slate-700 bg-slate-900/70 text-slate-100">#{campaignRankMap.get(campaign.id) || '—'}</Badge>
+                        <MetaAdsRankBadge rank={campaignRankMap.get(campaign.id)} />
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex justify-center">
@@ -2258,9 +2379,9 @@ export function MetaAdsInventoryPanel({
                           />
                         </div>
                       </TableCell>
-                      <TableCell className="text-center">{campaignMetrics ? formatCurrency(campaignMetrics.spend) : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">{campaignMetrics ? formatCurrency(campaignMetrics.spend, currency) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{campaignMetrics ? formatNumber(campaignMetrics.conversations) : renderUnavailableMetricCell()}</TableCell>
-                      <TableCell className="text-center">{campaignCostPerConversation !== null ? formatCurrency(campaignCostPerConversation) : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">{campaignCostPerConversation !== null ? formatCurrency(campaignCostPerConversation, currency) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{campaignMetrics ? formatNumber(campaignMetrics.clicks) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{campaignMetrics?.reach ? formatNumber(campaignMetrics.reach) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{campaignMetrics ? formatNumber(campaignMetrics.impressions) : renderUnavailableMetricCell()}</TableCell>
@@ -2281,11 +2402,12 @@ export function MetaAdsInventoryPanel({
                             primary={campaignMetrics.cpc}
                             secondary={campaignMetrics.linkCpc}
                             kind="currency"
+                            currency={currency}
                           />
                         ) : renderUnavailableMetricCell()}
                       </TableCell>
-                      <TableCell className="text-center">{campaignMetrics ? formatCurrency(campaignMetrics.cpm) : renderUnavailableMetricCell()}</TableCell>
-                      <TableCell className="text-center">{campaignMetrics?.cpp ? formatCurrency(campaignMetrics.cpp) : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">{campaignMetrics ? formatCurrency(campaignMetrics.cpm, currency) : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">{campaignMetrics?.cpp ? formatCurrency(campaignMetrics.cpp, currency) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{campaignMetrics?.frequency ? formatNumber(campaignMetrics.frequency) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{renderUnavailableMetricCell()}</TableCell>
                     </TableRow>
@@ -2306,7 +2428,7 @@ export function MetaAdsInventoryPanel({
                     <TableRow key={row.key} className={rowClass()}>
                       <TableCell>
                         <div className="space-y-1">
-                          <div className="flex items-center gap-2 pl-6">
+                          <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
                             <button
                               type="button"
                               onClick={() => toggleAdSet(adSet.id)}
@@ -2320,15 +2442,15 @@ export function MetaAdsInventoryPanel({
                               label="Conjunto"
                               toneClass="border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-100"
                             />
-                            <button type="button" className={itemButtonClass} onClick={() => setDetail({ kind: 'adset', title: adSet.name || adSet.id, payload: adSet })}>
+                            <button type="button" className={adSetItemClass} onClick={() => setDetail({ kind: 'adset', title: adSet.name || adSet.id, payload: adSet })}>
                               {adSet.name || adSet.id}
                             </button>
                           </div>
-                          <div className="pl-[3.75rem] font-mono text-xs text-blue-100/60">{adSet.id}</div>
+                          <div className="pl-[4.375rem] font-mono text-xs text-blue-100/60">{adSet.id}</div>
                         </div>
                       </TableCell>
                       <TableCell className="text-center">
-                        <Badge className="border border-slate-700 bg-slate-900/70 text-slate-100">#{adSetRankMap.get(adSet.id) || '—'}</Badge>
+                        <MetaAdsRankBadge rank={adSetRankMap.get(adSet.id)} />
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex justify-center">
@@ -2349,9 +2471,9 @@ export function MetaAdsInventoryPanel({
                           />
                         </div>
                       </TableCell>
-                      <TableCell className="text-center">{adSetMetrics ? formatCurrency(adSetMetrics.spend) : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">{adSetMetrics ? formatCurrency(adSetMetrics.spend, currency) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{adSetMetrics ? formatNumber(adSetMetrics.conversations) : renderUnavailableMetricCell()}</TableCell>
-                      <TableCell className="text-center">{adSetCostPerConversation !== null ? formatCurrency(adSetCostPerConversation) : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">{adSetCostPerConversation !== null ? formatCurrency(adSetCostPerConversation, currency) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{adSetMetrics ? formatNumber(adSetMetrics.clicks) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{adSetMetrics?.reach ? formatNumber(adSetMetrics.reach) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{adSetMetrics ? formatNumber(adSetMetrics.impressions) : renderUnavailableMetricCell()}</TableCell>
@@ -2372,11 +2494,12 @@ export function MetaAdsInventoryPanel({
                             primary={adSetMetrics.cpc}
                             secondary={adSetMetrics.linkCpc}
                             kind="currency"
+                            currency={currency}
                           />
                         ) : renderUnavailableMetricCell()}
                       </TableCell>
-                      <TableCell className="text-center">{adSetMetrics ? formatCurrency(adSetMetrics.cpm) : renderUnavailableMetricCell()}</TableCell>
-                      <TableCell className="text-center">{adSetMetrics?.cpp ? formatCurrency(adSetMetrics.cpp) : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">{adSetMetrics ? formatCurrency(adSetMetrics.cpm, currency) : renderUnavailableMetricCell()}</TableCell>
+                      <TableCell className="text-center">{adSetMetrics?.cpp ? formatCurrency(adSetMetrics.cpp, currency) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{adSetMetrics?.frequency ? formatNumber(adSetMetrics.frequency) : renderUnavailableMetricCell()}</TableCell>
                       <TableCell className="text-center">{renderUnavailableMetricCell()}</TableCell>
                     </TableRow>
@@ -2394,22 +2517,22 @@ export function MetaAdsInventoryPanel({
                   <TableRow key={row.key} className={rowClass()}>
                     <TableCell>
                       <div className="space-y-1">
-                        <div className="flex items-center gap-2 pl-12">
-                          <span className="inline-flex h-7 w-7 shrink-0" aria-hidden="true" />
+                        <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
+                          <span className="inline-flex h-7 w-7" aria-hidden="true" />
                           <MetaAdsEntityInlineBadge
                             kind="ad"
                             label="Anúncio"
                             toneClass="border-amber-500/20 bg-amber-500/10 text-amber-100"
                           />
-                          <button type="button" className={itemButtonClass} onClick={() => setDetail({ kind: 'ad', title: ad.name || ad.id, payload: ad })}>
+                          <button type="button" className={adItemClass} onClick={() => setDetail({ kind: 'ad', title: ad.name || ad.id, payload: ad })}>
                             {ad.name || ad.id}
                           </button>
                         </div>
-                        <div className="pl-[5.5rem] font-mono text-xs text-blue-100/60">{ad.id}</div>
+                        <div className="pl-[4.375rem] font-mono text-xs text-blue-100/60">{ad.id}</div>
                       </div>
                     </TableCell>
                     <TableCell className="text-center">
-                      <Badge className="border border-slate-700 bg-slate-900/70 text-slate-100">#{adRankMap.get(ad.id) || '—'}</Badge>
+                      <MetaAdsRankBadge rank={adRankMap.get(ad.id)} />
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex justify-center">
@@ -2426,9 +2549,9 @@ export function MetaAdsInventoryPanel({
                           />
                       </div>
                     </TableCell>
-                    <TableCell className="text-center">{adMetrics ? formatCurrency(adMetrics.spend) : renderUnavailableMetricCell()}</TableCell>
+                    <TableCell className="text-center">{adMetrics ? formatCurrency(adMetrics.spend, currency) : renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{adMetrics ? formatNumber(adMetrics.conversations) : renderUnavailableMetricCell()}</TableCell>
-                    <TableCell className="text-center">{adCostPerConversation !== null ? formatCurrency(adCostPerConversation) : renderUnavailableMetricCell()}</TableCell>
+                    <TableCell className="text-center">{adCostPerConversation !== null ? formatCurrency(adCostPerConversation, currency) : renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{adMetrics ? formatNumber(adMetrics.clicks) : renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{adMetrics?.reach ? formatNumber(adMetrics.reach) : renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{adMetrics ? formatNumber(adMetrics.impressions) : renderUnavailableMetricCell()}</TableCell>
@@ -2449,11 +2572,12 @@ export function MetaAdsInventoryPanel({
                           primary={adMetrics.cpc}
                           secondary={adMetrics.linkCpc}
                           kind="currency"
+                          currency={currency}
                         />
                       ) : renderUnavailableMetricCell()}
                     </TableCell>
-                    <TableCell className="text-center">{adMetrics ? formatCurrency(adMetrics.cpm) : renderUnavailableMetricCell()}</TableCell>
-                    <TableCell className="text-center">{adMetrics?.cpp ? formatCurrency(adMetrics.cpp) : renderUnavailableMetricCell()}</TableCell>
+                    <TableCell className="text-center">{adMetrics ? formatCurrency(adMetrics.cpm, currency) : renderUnavailableMetricCell()}</TableCell>
+                    <TableCell className="text-center">{adMetrics?.cpp ? formatCurrency(adMetrics.cpp, currency) : renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{adMetrics?.frequency ? formatNumber(adMetrics.frequency) : renderUnavailableMetricCell()}</TableCell>
                     <TableCell className="text-center">{renderUnavailableMetricCell()}</TableCell>
                   </TableRow>
@@ -2475,36 +2599,47 @@ export function MetaAdsInventoryPanel({
             </div>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
           {filteredCreatives.length === 0 ? (
             <div className="text-sm text-slate-300">Nenhum criativo encontrado.</div>
           ) : (
-            filteredCreatives.map((creative) => (
-              <button
-                key={creative.id}
-                type="button"
-                onClick={() => setDetail({ kind: 'creative', title: creative.name || creative.id, payload: creative })}
-                className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-3 text-left transition hover:bg-slate-900/75"
-              >
-                {creative.thumbnailUrl ? (
-                  <img
-                    src={creative.thumbnailUrl}
-                    alt={creative.name || creative.id}
-                    className="mb-3 h-28 w-full rounded-xl object-cover"
-                  />
-                ) : null}
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <div className="font-medium text-white">{creative.name || creative.id}</div>
-                    <Badge className="border border-slate-700 bg-slate-900/70 text-slate-100">#{creativeRankMap.get(creative.id) || '—'}</Badge>
+            filteredCreatives.map((creative) => {
+              const displayName = getMetaAdsCreativeDisplayName(creative)
+              const mediaUrl = creative.imageUrl || creative.thumbnailUrl
+              const dynamicName = hasMetaDynamicProductToken(creative.name)
+              return (
+                <button
+                  key={creative.id}
+                  type="button"
+                  onClick={() => setDetail({ kind: 'creative', title: displayName, payload: creative })}
+                  className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-2.5 text-left transition hover:bg-slate-900/75"
+                >
+                  {mediaUrl ? (
+                    <img
+                      src={mediaUrl}
+                      alt={displayName}
+                      loading="lazy"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
+                      className="mb-2.5 h-24 w-full rounded-xl bg-slate-950/70 object-contain"
+                    />
+                  ) : null}
+                  <div className="space-y-1">
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1 truncate font-medium text-white">{displayName}</div>
+                      <MetaAdsRankBadge rank={creativeRankMap.get(creative.id)} />
+                    </div>
+                    {dynamicName ? (
+                      <div className="text-[11px] text-slate-400">Modelo dinâmico da Meta</div>
+                    ) : null}
+                    <div className="truncate font-mono text-xs text-slate-400">{creative.id}</div>
+                    <div className="truncate text-xs text-slate-300">Campanha: {creative.campaignName || creative.campaignId || '—'}</div>
+                    <div className="truncate text-xs text-slate-300">Conjunto: {creative.adSetName || creative.adSetId || '—'}</div>
+                    <div className="truncate text-xs text-slate-300">Anúncio: {creative.adName || creative.adId || '—'}</div>
                   </div>
-                  <div className="font-mono text-xs text-slate-400">{creative.id}</div>
-                  <div className="text-xs text-slate-300">Campanha: {creative.campaignName || creative.campaignId || '—'}</div>
-                  <div className="text-xs text-slate-300">Conjunto: {creative.adSetName || creative.adSetId || '—'}</div>
-                  <div className="text-xs text-slate-300">Anúncio: {creative.adName || creative.adId || '—'}</div>
-                </div>
-              </button>
-            ))
+                </button>
+              )
+            })
           )}
         </CardContent>
       </Card>

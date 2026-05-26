@@ -52,6 +52,7 @@ export type MetaAdCreativeRef = {
   id?: string
   name?: string
   thumbnail_url?: string | null
+  image_url?: string | null
   effective_object_story_id?: string | null
 }
 
@@ -102,6 +103,7 @@ export type MetaCreativeInventoryItem = {
   id: string
   name: string
   thumbnailUrl?: string | null
+  imageUrl?: string | null
   effectiveObjectStoryId?: string | null
   adId?: string | null
   adName?: string | null

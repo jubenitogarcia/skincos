@@ -51,6 +51,7 @@ export type MetaAd = {
     id?: string
     name?: string
     thumbnail_url?: string
+    image_url?: string
     effective_object_story_id?: string
   }
 }
@@ -299,7 +300,7 @@ export async function listMetaAds(accessToken: string, adAccountId: string, vers
   const rows = await collectPaged<any>(
     `/${normalizeAccountId(adAccountId)}/ads`,
     {
-      fields: 'id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,effective_object_story_id}',
+      fields: 'id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id}',
       limit: 500,
     },
     accessToken,
@@ -320,6 +321,7 @@ export async function listMetaAds(accessToken: string, adAccountId: string, vers
           id: esc(row.creative.id),
           name: esc(row.creative.name),
           thumbnail_url: esc(row.creative.thumbnail_url),
+          image_url: esc(row.creative.image_url),
           effective_object_story_id: esc(row.creative.effective_object_story_id),
         }
       : undefined,

@@ -53,8 +53,8 @@ export function EntityDetailModal({
 
         <div className="space-y-6">
           {previewUrl ? (
-            <div className="overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-900/60">
-              <img src={previewUrl} alt={title} className="h-64 w-full object-cover" />
+            <div className="overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-950/80">
+              <img src={previewUrl} alt={title} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-64 w-full object-contain" />
             </div>
           ) : null}
 

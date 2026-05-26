@@ -9,6 +9,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Button } from '@/button'
 import { Badge } from '@/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/alert-dialog'
 import { Tabs, TabsContent } from '@/tabs'
 import { Input } from '@/input'
 import { BrDatePickerInput } from '@/br-date-picker'
@@ -22,7 +32,7 @@ import { dispatchInsumosHeaderAction, subscribeInsumosHeaderState } from '@/insu
 import type { InsumosHeaderState, InsumosOverviewPeriod } from '@/insumosTypes'
 import { dispatchMetaAdsHeaderAction, subscribeMetaAdsHeaderState } from '@/metaAdsHeaderBridge'
 import type { MetaAdsHeaderState } from '@/metaAdsTypes'
-import { CalendarX2, CheckCircle2, Circle, CircleDot, Download, Pencil, Plus, RefreshCw, Shield, Sparkles, X } from 'lucide-react'
+import { CalendarX2, CheckCircle2, Download, Pencil, Plus, RefreshCw, Shield, Sparkles, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -367,6 +377,11 @@ export default function AppFunctionalNeatlab() {
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
         const [escalaHeaderState, setEscalaHeaderState] = useState<EscalaHeaderState | null>(null)
         const [metaAdsHeaderState, setMetaAdsHeaderState] = useState<MetaAdsHeaderState | null>(null)
+        const [metaAdsAccountRemovalId, setMetaAdsAccountRemovalId] = useState<string | null>(null)
+        const metaAdsAccountPendingRemoval = useMemo(
+            () => (metaAdsHeaderState?.accounts || []).find((account) => account.id === metaAdsAccountRemovalId) || null,
+            [metaAdsAccountRemovalId, metaAdsHeaderState?.accounts],
+        )
 				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<InsumosHeaderState['status']>(null)
 				    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<InsumosHeaderState['stock']>(null)
                     const defaultEstoqueThresholds = React.useMemo(() => ({ warning: 50000, critical: 20000 }), [])
@@ -685,6 +700,32 @@ export default function AppFunctionalNeatlab() {
 
         return (
 	        <NotificationProvider>
+            <AlertDialog open={Boolean(metaAdsAccountPendingRemoval)} onOpenChange={(open) => !open && setMetaAdsAccountRemovalId(null)}>
+                <AlertDialogContent className="border-slate-800/80 bg-slate-950 text-slate-100">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Remover conta Meta Ads?</AlertDialogTitle>
+                        <AlertDialogDescription className="text-slate-300">
+                            A conta {metaAdsAccountPendingRemoval?.name || metaAdsAccountPendingRemoval?.id || 'selecionada'} será removida da lista deste usuário no CRM. Isso não exclui nada no Meta Ads; para desfazer, use “Adicionar conexão” e autorize a conta novamente.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80">
+                            Cancelar
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                            className="bg-rose-500 text-white hover:bg-rose-400"
+                            onClick={() => {
+                                if (metaAdsAccountPendingRemoval?.id) {
+                                    dispatchMetaAdsHeaderAction({ type: 'remove-account', value: metaAdsAccountPendingRemoval.id })
+                                }
+                                setMetaAdsAccountRemovalId(null)
+                            }}
+                        >
+                            Remover conta
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
             <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
                 <DialogContent className="max-w-xl">
                     <DialogHeader>
@@ -1274,33 +1315,33 @@ export default function AppFunctionalNeatlab() {
                                                                                             ? 'bg-rose-500/12 text-rose-100 focus:bg-rose-500/20 focus:text-rose-50'
                                                                                             : 'bg-slate-950 text-slate-100 focus:bg-slate-800/90'
                                                                             return (
-                                                                                <SelectItem key={account.id} value={account.id} className={statusTone}>
-                                                                                    <div className="flex w-full items-center justify-between gap-3 pr-1">
+                                                                                <SelectItem
+                                                                                    key={account.id}
+                                                                                    value={account.id}
+                                                                                    className={statusTone}
+                                                                                    hideIndicator
+                                                                                    action={
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="inline-flex size-5 items-center justify-center rounded-full border border-white/15 text-blue-100/70 transition hover:border-rose-300/50 hover:bg-rose-500/15 hover:text-rose-100"
+                                                                                            aria-label={`Remover ${account.name || account.id} da lista`}
+                                                                                            tabIndex={-1}
+                                                                                            onPointerDown={(event) => {
+                                                                                                event.preventDefault()
+                                                                                                event.stopPropagation()
+                                                                                                setMetaAdsAccountRemovalId(account.id)
+                                                                                            }}
+                                                                                            onClick={(event) => {
+                                                                                                event.preventDefault()
+                                                                                                event.stopPropagation()
+                                                                                            }}
+                                                                                        >
+                                                                                            <X className="size-3" aria-hidden="true" />
+                                                                                        </button>
+                                                                                    }
+                                                                                >
+                                                                                    <div className="flex min-w-0 items-center pr-7">
                                                                                         <span className="truncate">{account.name || account.id}</span>
-                                                                                        <span className="inline-flex items-center gap-2">
-                                                                                            {account.statusTone === 'success' ? (
-                                                                                                <CircleDot className="size-3.5 text-emerald-300" aria-hidden="true" />
-                                                                                            ) : (
-                                                                                                <Circle className={`size-3.5 ${account.statusTone === 'warning' ? 'text-amber-300' : account.statusTone === 'danger' ? 'text-rose-300' : 'text-slate-400'}`} aria-hidden="true" />
-                                                                                            )}
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                className="inline-flex size-5 items-center justify-center rounded-full border border-white/15 text-blue-100/70 transition hover:border-rose-300/50 hover:bg-rose-500/15 hover:text-rose-100"
-                                                                                                aria-label={`Remover ${account.name || account.id} da lista`}
-                                                                                                tabIndex={-1}
-                                                                                                onPointerDown={(event) => {
-                                                                                                    event.preventDefault()
-                                                                                                    event.stopPropagation()
-                                                                                                    dispatchMetaAdsHeaderAction({ type: 'remove-account', value: account.id })
-                                                                                                }}
-                                                                                                onClick={(event) => {
-                                                                                                    event.preventDefault()
-                                                                                                    event.stopPropagation()
-                                                                                                }}
-                                                                                            >
-                                                                                                <X className="size-3" aria-hidden="true" />
-                                                                                            </button>
-                                                                                        </span>
                                                                                     </div>
                                                                                 </SelectItem>
                                                                             )
