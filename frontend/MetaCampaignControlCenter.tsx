@@ -669,7 +669,7 @@ export function MetaCampaignControlCenter() {
                 onRetry={handleRefresh}
               />
               {inventory ? (
-                <MetaAdsInventoryPanel inventory={inventory} report={report} inventoryError={inventoryError} onRetry={handleRefresh} />
+                <MetaAdsInventoryPanel selectedAccount={selectedAccount} inventory={inventory} report={report} inventoryError={inventoryError} onRetry={handleRefresh} />
               ) : (
                 <MetaAdsEmptyState
                   message="Ainda não foi possível carregar o inventário desta conta."

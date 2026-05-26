@@ -448,7 +448,8 @@ function buildInventory(campaigns: GraphMetaCampaign[], adsets: GraphMetaAdSet[]
       creativesById.set(ad.creative.id, {
         id: ad.creative.id,
         name: ad.creative.name || ad.name,
-        thumbnailUrl: ad.creative.thumbnail_url || null,
+        thumbnailUrl: ad.creative.image_url || ad.creative.thumbnail_url || null,
+        imageUrl: ad.creative.image_url || null,
         effectiveObjectStoryId: ad.creative.effective_object_story_id || null,
         adId: ad.id,
         adName: ad.name,
