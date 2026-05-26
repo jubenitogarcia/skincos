@@ -13,6 +13,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Stack principal (recomendado): `./backend/scripts/dev.sh watch`
 - CRM (frontend + API): `./frontend/restart_crm.sh --watch-full`
 - CRM local production-like: `npm run crm:local`
+- Preflight de autonomia Codex/deploy: `npm run codex:preflight`
 - Website público: `npm run website:dev` (porta padrão do Next: `http://localhost:3000`)
 - macOS (sem terminal): dê duplo clique em `start-platform.command`
  - Meta Ads (API + worker): `./backend/scripts/meta-ads.sh start`
@@ -97,6 +98,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Mapa do backend: `backend/docs/INDEX.md`
 - Política de lockfiles: `backend/docs/LOCKFILES.md`
 - Segredos e rotação: `docs/secrets-rotation.md`
+- Autonomia Codex/deploy: `docs/codex-autonomy.md`
 - Observabilidade/SLOs: `docs/observability.md`
 - Catálogo de serviços: `docs/service-catalog.md`
 - Ownership e operação: `docs/ownership-model.md`

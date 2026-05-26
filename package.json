@@ -8,6 +8,7 @@
     "quality:backend:python": "cd backend && python -m pytest tests/unit --cov=config --cov-report=term --cov-fail-under=80",
     "quality:security": "node ./scripts/check-js-security-exceptions.mjs && bash ./backend/scripts/ci-no-demo-guard.sh",
     "quality:critical": "npm run quality:frontend && npm run quality:website && npm run quality:backend:crm-api && npm run quality:backend:python && npm run quality:security",
+    "codex:preflight": "bash ./scripts/codex-preflight.sh",
     "website:install": "npm --prefix website ci",
     "website:dev": "npm --prefix website run dev",
     "website:local": "bash ./scripts/run-local-website.sh",
