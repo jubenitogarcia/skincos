@@ -295,7 +295,7 @@ test.describe('meta ads', () => {
     await expect(page.getByText('Comece conectando a Meta ao CRM.')).toHaveCount(0)
     await expect(page.getByText('OAuth:')).toHaveCount(0)
 
-    await expect(page.locator('body')).toContainText('Estrutura operacional')
+    await expect(page.locator('body')).toContainText('Mapa da conta Meta')
     await expect(page.getByRole('button', { name: 'Campanha Primavera' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Conjunto 1' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Anúncio 1', exact: true })).toBeVisible()

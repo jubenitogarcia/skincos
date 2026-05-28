@@ -53,6 +53,17 @@ export type MetaAd = {
     thumbnail_url?: string
     image_url?: string
     effective_object_story_id?: string
+    object_story_id?: string
+    object_story_spec?: unknown
+    asset_feed_spec?: unknown
+    image_hash?: string
+    video_id?: string
+    title?: string
+    body?: string
+    call_to_action_type?: string
+    url_tags?: string
+    instagram_permalink_url?: string
+    object_url?: string
   }
 }
 
@@ -98,7 +109,7 @@ const ENTITY_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
   adset:
     'id,account_id,name,status,effective_status,campaign{id,name},campaign_id,daily_budget,lifetime_budget,bid_strategy,billing_event,optimization_goal,promoted_object,targeting,start_time,end_time,created_time,updated_time,issues_info,recommendations',
   ad:
-    'id,account_id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id,object_story_spec,url_tags,title,body,call_to_action_type},tracking_specs,conversion_specs,created_time,updated_time,issues_info,recommendations',
+    'id,account_id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,object_story_spec,asset_feed_spec,image_hash,video_id,url_tags,title,body,call_to_action_type,instagram_permalink_url,object_url},tracking_specs,conversion_specs,created_time,updated_time,issues_info,recommendations',
   creative:
     'id,account_id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,object_story_spec,asset_feed_spec,image_hash,video_id,body,title,call_to_action_type,url_tags,instagram_permalink_url,object_url,created_time,updated_time',
 }
@@ -106,7 +117,7 @@ const ENTITY_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
 const ENTITY_SAFE_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
   campaign: 'id,account_id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time,created_time,updated_time',
   adset: 'id,account_id,name,status,effective_status,campaign{id,name},campaign_id,daily_budget,lifetime_budget,bid_strategy,optimization_goal,start_time,end_time,created_time,updated_time',
-  ad: 'id,account_id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id},created_time,updated_time',
+  ad: 'id,account_id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,title,body,call_to_action_type,url_tags},created_time,updated_time',
   creative: 'id,account_id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,title,body,url_tags',
 }
 
