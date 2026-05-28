@@ -113,6 +113,50 @@ export type MetaCreativeInventoryItem = {
   campaignName?: string | null
 }
 
+export type MetaAdsEntityType = 'campaign' | 'adset' | 'ad' | 'creative'
+
+export type MetaAdsEntityPatch = {
+  name?: string
+  status?: 'ACTIVE' | 'PAUSED'
+  daily_budget?: string
+  lifetime_budget?: string
+  start_time?: string
+  stop_time?: string
+  end_time?: string
+  bid_strategy?: string
+  optimization_goal?: string
+}
+
+export type MetaAdsLiveEntityDetail = {
+  type: MetaAdsEntityType
+  id: string
+  accountId: string
+  editable: boolean
+  readOnlyReason?: string | null
+  editableFields: string[]
+  fields: Record<string, unknown>
+  raw?: Record<string, unknown>
+  updatedAt: string
+}
+
+export type MetaAdsEntityDetailResponse = {
+  ok: boolean
+  entity: MetaAdsLiveEntityDetail
+}
+
+export type MetaAdsEntityUpdateResponse = {
+  ok: boolean
+  entity: MetaAdsLiveEntityDetail
+  changedFields: string[]
+  audit: {
+    entityType: MetaAdsEntityType
+    entityId: string
+    adAccountId: string
+    changedFields: string[]
+    timestamp: string
+  }
+}
+
 export type MetaAdsInventory = {
   campaigns: MetaCampaignRow[]
   adSets: MetaAdSet[]

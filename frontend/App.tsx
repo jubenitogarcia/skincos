@@ -980,9 +980,8 @@ export default function AppFunctionalNeatlab() {
 	                                    const isLocked = !UNLOCKED_MODULE_KEYS.has(m.key)
 	                                    const isActive = active === m.key
 	                                    return (
-                                        <TooltipLabel label={m.label} description={isLocked ? 'Módulo em breve.' : undefined}>
+                                        <TooltipLabel key={m.key} label={m.label} description={isLocked ? 'Módulo em breve.' : undefined}>
                                             <button
-                                                key={m.key}
                                                 onClick={() => {
                                                     if (isLocked) return
                                                     setActive(m.key)

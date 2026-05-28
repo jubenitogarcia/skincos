@@ -1,5 +1,6 @@
 import { Button } from '@/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import type { ReactNode } from 'react'
 
 function formatDetailValue(value: unknown) {
   if (value == null || value === '') return '—'
@@ -35,6 +36,8 @@ export function EntityDetailModal({
   description,
   previewUrl,
   sections,
+  children,
+  footer,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -42,6 +45,8 @@ export function EntityDetailModal({
   description: string
   previewUrl?: string | null
   sections: EntityDetailSection[]
+  children?: ReactNode
+  footer?: ReactNode
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -58,6 +63,8 @@ export function EntityDetailModal({
             </div>
           ) : null}
 
+          {children}
+
           {sections.map((section) => (
             <div key={section.title} className="space-y-3">
               <div className="text-sm font-medium text-white">{section.title}</div>
@@ -71,14 +78,16 @@ export function EntityDetailModal({
         </div>
 
         <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80"
-            onClick={() => onOpenChange(false)}
-          >
-            Fechar
-          </Button>
+          {footer || (
+            <Button
+              type="button"
+              variant="outline"
+              className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80"
+              onClick={() => onOpenChange(false)}
+            >
+              Fechar
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -32,6 +32,43 @@ import type {
 } from '@/metaAdsTypes'
 
 const DEFAULT_REPORT_WINDOW_DAYS: MetaAdsReportWindowDays = 30
+const META_ADS_CACHE_TTL_MS = 5 * 60 * 1000
+const META_ADS_CACHE_PREFIX = 'skincos.metaAds.cache.v1'
+
+type MetaAdsOverviewCachePayload = {
+  summary: MetaAdsSummaryResponse
+  trend: MetaAdsTrendPoint[]
+}
+
+function getMetaAdsCacheKey(kind: string, accountId: string, range?: MetaAdsCustomDateRange) {
+  const rangeKey = range ? `${range.since}:${range.until}` : 'account'
+  return `${META_ADS_CACHE_PREFIX}:${kind}:${accountId || 'selected'}:${rangeKey}`
+}
+
+function readMetaAdsCache<T>(kind: string, accountId: string, range?: MetaAdsCustomDateRange): T | null {
+  try {
+    if (typeof window === 'undefined') return null
+    const raw = window.localStorage.getItem(getMetaAdsCacheKey(kind, accountId, range))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { savedAt?: number; data?: T }
+    if (!parsed.savedAt || Date.now() - parsed.savedAt > META_ADS_CACHE_TTL_MS) return null
+    return parsed.data ?? null
+  } catch {
+    return null
+  }
+}
+
+function writeMetaAdsCache<T>(kind: string, accountId: string, data: T, range?: MetaAdsCustomDateRange) {
+  try {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(
+      getMetaAdsCacheKey(kind, accountId, range),
+      JSON.stringify({ savedAt: Date.now(), data }),
+    )
+  } catch {
+    // Cache is an optimization only; never block the CRM if storage is unavailable.
+  }
+}
 
 const buildRange = (days: MetaAdsReportWindowDays) => {
   const since = format(subDays(new Date(), Math.max(0, days - 1)), 'yyyy-MM-dd')
@@ -65,6 +102,9 @@ export function MetaCampaignControlCenter() {
   const [inventoryError, setInventoryError] = useState<MetaAdsApiError | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [overviewLoading, setOverviewLoading] = useState(false)
+  const [reportLoading, setReportLoading] = useState(false)
+  const [inventoryLoading, setInventoryLoading] = useState(false)
   const [manualToken, setManualToken] = useState('')
   const [reportWindowDays, setReportWindowDays] = useState<MetaAdsReportWindowDays>(DEFAULT_REPORT_WINDOW_DAYS)
   const [customRange, setCustomRange] = useState<MetaAdsCustomDateRange | null>(null)
@@ -184,9 +224,21 @@ export function MetaCampaignControlCenter() {
   const loadOverview = async (options?: {
     windowDays?: MetaAdsReportWindowDays
     custom?: MetaAdsCustomDateRange | null
+    accountId?: string
   }) => {
+    const range = getEffectiveRange(options)
+    const accountKey = options?.accountId || status?.connection.selectedAdAccountId || selectedAccount?.id || 'selected'
+    const cached = readMetaAdsCache<MetaAdsOverviewCachePayload>('overview', accountKey, range)
+    let hasUsableCache = false
+    if (cached?.summary) {
+      hasUsableCache = true
+      setSummary(cached.summary)
+      setTrend(Array.isArray(cached.trend) ? cached.trend : [])
+      setOverviewError(null)
+    }
+    setOverviewLoading(true)
     try {
-      const { since, until } = getEffectiveRange(options)
+      const { since, until } = range
       const [nextSummary, nextTrend] = await Promise.all([
         metaAdsApi.summary({ since, until }),
         metaAdsApi.trend({ since, until }),
@@ -194,38 +246,74 @@ export function MetaCampaignControlCenter() {
       setSummary(nextSummary)
       setTrend(Array.isArray(nextTrend) ? nextTrend : [])
       setOverviewError(null)
+      writeMetaAdsCache<MetaAdsOverviewCachePayload>(
+        'overview',
+        accountKey,
+        { summary: nextSummary, trend: Array.isArray(nextTrend) ? nextTrend : [] },
+        range,
+      )
     } catch (error: any) {
-      setSummary(null)
-      setTrend([])
+      if (!hasUsableCache) {
+        setSummary(null)
+        setTrend([])
+      }
       setOverviewError(error)
       throw error
+    } finally {
+      setOverviewLoading(false)
     }
   }
 
   const loadReport = async (options?: {
     windowDays?: MetaAdsReportWindowDays
     custom?: MetaAdsCustomDateRange | null
+    accountId?: string
   }) => {
+    const range = getEffectiveRange(options)
+    const accountKey = options?.accountId || status?.connection.selectedAdAccountId || selectedAccount?.id || 'selected'
+    const cached = readMetaAdsCache<MetaAdsReportResponse>('report', accountKey, range)
+    let hasUsableCache = false
+    if (cached) {
+      hasUsableCache = true
+      setReport(cached)
+      setReportError(null)
+    }
+    setReportLoading(true)
     try {
-      const nextReport = await metaAdsApi.report(getEffectiveRange(options))
+      const nextReport = await metaAdsApi.report(range)
       setReport(nextReport)
       setReportError(null)
+      writeMetaAdsCache('report', accountKey, nextReport, range)
     } catch (error) {
-      setReport(null)
+      if (!hasUsableCache) setReport(null)
       setReportError(error instanceof Error ? error.message : 'Falha ao carregar o consolidado de Meta Ads')
       throw error
+    } finally {
+      setReportLoading(false)
     }
   }
 
-  const loadInventory = async () => {
+  const loadInventory = async (accountId?: string) => {
+    const accountKey = accountId || status?.connection.selectedAdAccountId || selectedAccount?.id || 'selected'
+    const cached = readMetaAdsCache<MetaInventoryResponse['inventory']>('inventory', accountKey)
+    let hasUsableCache = false
+    if (cached) {
+      hasUsableCache = true
+      setInventory(cached)
+      setInventoryError(null)
+    }
+    setInventoryLoading(true)
     try {
       const data = await metaAdsApi.inventory()
       setInventory(data.inventory || null)
       setInventoryError(null)
+      if (data.inventory) writeMetaAdsCache('inventory', accountKey, data.inventory)
     } catch (error: any) {
-      setInventory(null)
+      if (!hasUsableCache) setInventory(null)
       setInventoryError(error)
       throw error
+    } finally {
+      setInventoryLoading(false)
     }
   }
 
@@ -249,7 +337,11 @@ export function MetaCampaignControlCenter() {
       return nextStatus
     }
 
-    await Promise.allSettled([loadOverview(), loadReport(), loadInventory()])
+    await Promise.allSettled([
+      loadOverview({ accountId: nextStatus.connection.selectedAdAccountId }),
+      loadReport({ accountId: nextStatus.connection.selectedAdAccountId }),
+      loadInventory(nextStatus.connection.selectedAdAccountId),
+    ])
     return nextStatus
   }
 
@@ -471,12 +563,34 @@ export function MetaCampaignControlCenter() {
   }
 
   const handleRemoveAccount = async (adAccountId: string) => {
+    const previousAccounts = accounts
+    const removedAccount = accounts.find((account) => account.id === adAccountId)
+    const nextAccounts = accounts.filter((account) => account.id !== adAccountId)
+    setAccounts(nextAccounts)
+    if (removedAccount?.isSelected) {
+      setSummary(null)
+      setTrend([])
+      setReport(null)
+      setInventory(null)
+      setStatus((current) =>
+        current
+          ? {
+              ...current,
+              connection: {
+                ...current.connection,
+                selectedAdAccountId: nextAccounts.find((account) => account.isSelected)?.id || '',
+              },
+            }
+          : current,
+      )
+    }
     setRefreshing(true)
     try {
       await metaAdsApi.removeAdAccount({ adAccountId })
       await refreshConnectedState()
       toast.success('Conta removida da lista do Meta Ads')
     } catch (error: any) {
+      setAccounts(previousAccounts)
       setAccountsError(error)
       toast.error(error?.message || 'Falha ao remover conta da lista')
     } finally {
@@ -667,14 +781,26 @@ export function MetaCampaignControlCenter() {
                 report={report}
                 overviewError={overviewError}
                 onRetry={handleRefresh}
+                loading={loading || overviewLoading || reportLoading}
+                syncing={refreshing || overviewLoading || reportLoading}
               />
               {inventory ? (
-                <MetaAdsInventoryPanel selectedAccount={selectedAccount} inventory={inventory} report={report} inventoryError={inventoryError} onRetry={handleRefresh} />
+                <MetaAdsInventoryPanel
+                  selectedAccount={selectedAccount}
+                  inventory={inventory}
+                  report={report}
+                  inventoryError={inventoryError}
+                  onRetry={handleRefresh}
+                  onEntityUpdated={handleRefresh}
+                  loading={loading || inventoryLoading || reportLoading}
+                  syncing={refreshing || inventoryLoading || reportLoading}
+                />
               ) : (
                 <MetaAdsEmptyState
-                  message="Ainda não foi possível carregar o inventário desta conta."
-                  actionLabel="Atualizar agora"
-                  onAction={handleRefresh}
+                  message={inventoryLoading ? 'Sincronizando inventário da conta Meta Ads...' : 'Ainda não foi possível carregar o inventário desta conta.'}
+                  actionLabel={inventoryLoading ? undefined : 'Atualizar agora'}
+                  onAction={inventoryLoading ? undefined : handleRefresh}
+                  loading={inventoryLoading || loading}
                 />
               )}
               <MetaTrackingDashboard

@@ -11,6 +11,7 @@ import {
 } from '../../_lib/metaAdsStore'
 import {
   debugMetaAccessToken,
+  getMetaAdsEntityDetail,
   getMetaAdsSummary,
   getMetaAdsTrend,
   getMetaProfile,
@@ -21,8 +22,10 @@ import {
   listMetaAdSets,
   listMetaCampaigns,
   listMetaAdsInsights,
+  updateMetaAdsEntity,
   type MetaAdSet as GraphMetaAdSet,
   type MetaCampaign as GraphMetaCampaign,
+  type MetaAdsEntityType as GraphMetaAdsEntityType,
 } from '../../_lib/metaAdsGraph'
 import {
   aggregateMetaAdsWorkflowSummary,
@@ -37,6 +40,7 @@ import type {
   MetaAdsReportAdSet,
   MetaAdsReportCampaign,
   MetaAdsReportFallbackReason,
+  MetaAdsEntityPatch,
   MetaCampaignRow,
   MetaCreativeInventoryItem,
 } from '../../../metaAdsTypes'
@@ -1265,6 +1269,247 @@ async function handleReport(context: any) {
   return json(200, await buildGraphFallbackReport(selected, range, cfg, reportWindow, 'worker_unconfigured'))
 }
 
+const META_ADS_EDITABLE_FIELDS: Record<Exclude<GraphMetaAdsEntityType, 'creative'>, Set<string>> = {
+  campaign: new Set(['name', 'status', 'daily_budget', 'lifetime_budget', 'start_time', 'stop_time']),
+  adset: new Set(['name', 'status', 'daily_budget', 'lifetime_budget', 'start_time', 'end_time', 'bid_strategy', 'optimization_goal']),
+  ad: new Set(['name', 'status']),
+}
+
+function normalizeAccountIdForCompare(value: unknown) {
+  return String(value || '').trim().replace(/^act_/, '')
+}
+
+function normalizeEntityAccountId(detail: any) {
+  return normalizeAccountIdForCompare(detail?.account_id || detail?.account?.id)
+}
+
+function normalizeMetaStatus(value: unknown) {
+  const status = String(value || '').trim().toUpperCase()
+  if (!status) return ''
+  if (!['ACTIVE', 'PAUSED'].includes(status)) {
+    throw new MetaAdsRouteError(400, 'META_ADS_INVALID_STATUS', {
+      message: 'O status informado não é permitido nesta edição.',
+      hint: 'Use apenas Ativa ou Pausada para alterações feitas pelo CRM.',
+      retryable: false,
+    })
+  }
+  return status
+}
+
+function sanitizeBudgetValue(value: unknown, label: string) {
+  if (value === null || value === undefined || value === '') return ''
+  const raw = String(value).trim()
+  if (!/^\d+$/.test(raw)) {
+    throw new MetaAdsRouteError(400, 'META_ADS_INVALID_BUDGET', {
+      message: `${label} deve ser informado em centavos, usando somente números.`,
+      hint: 'A Meta espera orçamento como inteiro na menor unidade da moeda da conta.',
+      retryable: false,
+    })
+  }
+  return raw
+}
+
+function sanitizeDateValue(value: unknown, label: string) {
+  if (value === null || value === undefined || value === '') return ''
+  const raw = String(value).trim()
+  const timestamp = Date.parse(raw)
+  if (!Number.isFinite(timestamp)) {
+    throw new MetaAdsRouteError(400, 'META_ADS_INVALID_DATE', {
+      message: `${label} deve ser uma data válida.`,
+      hint: 'Use uma data em formato ISO ou selecione a data pelo campo do CRM.',
+      retryable: false,
+    })
+  }
+  return raw
+}
+
+function sanitizeEntityPatch(type: Exclude<GraphMetaAdsEntityType, 'creative'>, input: MetaAdsEntityPatch) {
+  const allowed = META_ADS_EDITABLE_FIELDS[type]
+  const patch: Record<string, string> = {}
+  const unknownFields = Object.keys(input || {}).filter((field) => !allowed.has(field))
+  if (unknownFields.length) {
+    throw new MetaAdsRouteError(400, 'META_ADS_FIELD_NOT_EDITABLE', {
+      message: 'Um ou mais campos enviados não podem ser editados pelo CRM.',
+      hint: `Campos bloqueados: ${unknownFields.join(', ')}.`,
+      retryable: false,
+      extra: { unknownFields, editableFields: Array.from(allowed) },
+    })
+  }
+
+  if (typeof input.name !== 'undefined') {
+    const name = String(input.name || '').trim()
+    if (!name) {
+      throw new MetaAdsRouteError(400, 'META_ADS_NAME_REQUIRED', {
+        message: 'O nome não pode ficar vazio.',
+        retryable: false,
+      })
+    }
+    patch.name = name
+  }
+  if (typeof input.status !== 'undefined') {
+    const status = normalizeMetaStatus(input.status)
+    if (status) patch.status = status
+  }
+  if (typeof input.daily_budget !== 'undefined') {
+    const value = sanitizeBudgetValue(input.daily_budget, 'Orçamento diário')
+    if (value) patch.daily_budget = value
+  }
+  if (typeof input.lifetime_budget !== 'undefined') {
+    const value = sanitizeBudgetValue(input.lifetime_budget, 'Orçamento vitalício')
+    if (value) patch.lifetime_budget = value
+  }
+  if (typeof input.start_time !== 'undefined') {
+    const value = sanitizeDateValue(input.start_time, 'Data de início')
+    if (value) patch.start_time = value
+  }
+  if (typeof input.stop_time !== 'undefined') {
+    const value = sanitizeDateValue(input.stop_time, 'Data de fim da campanha')
+    if (value) patch.stop_time = value
+  }
+  if (typeof input.end_time !== 'undefined') {
+    const value = sanitizeDateValue(input.end_time, 'Data de fim do conjunto')
+    if (value) patch.end_time = value
+  }
+  if (typeof input.bid_strategy !== 'undefined') {
+    const value = String(input.bid_strategy || '').trim()
+    if (value) patch.bid_strategy = value
+  }
+  if (typeof input.optimization_goal !== 'undefined') {
+    const value = String(input.optimization_goal || '').trim()
+    if (value) patch.optimization_goal = value
+  }
+
+  if (!Object.keys(patch).length) {
+    throw new MetaAdsRouteError(400, 'META_ADS_EMPTY_PATCH', {
+      message: 'Nenhuma alteração válida foi enviada.',
+      retryable: false,
+    })
+  }
+  return patch
+}
+
+function buildLiveEntity(type: GraphMetaAdsEntityType, detail: any, adAccountId: string, scopes: string[]) {
+  const editableFields = type === 'creative' ? [] : Array.from(META_ADS_EDITABLE_FIELDS[type])
+  const hasAdsManagement = scopes.includes('ads_management')
+  const editable = type !== 'creative' && hasAdsManagement
+  return {
+    type,
+    id: String(detail?.id || '').trim(),
+    accountId: normalizeAccountIdForCompare(detail?.account_id || adAccountId),
+    editable,
+    readOnlyReason:
+      type === 'creative'
+        ? 'Criativos ficam somente leitura nesta versão. Alterações seguras exigem criar uma variação e substituir no anúncio.'
+        : hasAdsManagement
+          ? null
+          : 'A conexão atual não possui o escopo ads_management para editar no Gerenciador de Anúncios.',
+    editableFields,
+    fields: detail || {},
+    raw: detail || {},
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+async function getVerifiedEntityDetail(
+  selected: { connection: MetaAdsConnection; adAccountId: string },
+  type: GraphMetaAdsEntityType,
+  entityId: string,
+  cfg: ReturnType<typeof runtimeConfig>,
+) {
+  const detail = await getMetaAdsEntityDetail(
+    selected.connection.accessToken,
+    type,
+    entityId,
+    cfg.graphVersion,
+    cfg.appSecret,
+  )
+  const detailAccountId = normalizeEntityAccountId(detail)
+  if (detailAccountId && detailAccountId !== normalizeAccountIdForCompare(selected.adAccountId)) {
+    throw new MetaAdsRouteError(403, 'META_ADS_ENTITY_ACCOUNT_MISMATCH', {
+      message: 'Este item não pertence à conta de anúncios selecionada.',
+      hint: 'Troque para a conta correta antes de abrir ou editar este item.',
+      retryable: false,
+    })
+  }
+  return detail
+}
+
+function parseEntityRoute(rest: string) {
+  const match = rest.match(/^\/entities\/(campaign|adset|ad|creative)\/([^/]+)\/?$/)
+  if (!match) return null
+  return {
+    type: match[1] as GraphMetaAdsEntityType,
+    id: decodeURIComponent(match[2] || ''),
+  }
+}
+
+async function handleEntityDetail(context: any, type: GraphMetaAdsEntityType, entityId: string) {
+  const userOrRes = await requireSocialAdmin(context)
+  if (userOrRes instanceof Response) return userOrRes
+  const selected = await withSelectedAccount(context, userOrRes.id)
+  if ('error' in selected) return selected.error
+
+  const cfg = runtimeConfig(context)
+  const detail = await getVerifiedEntityDetail(selected, type, entityId, cfg)
+  const scopes = normalizeScopes([...(selected.connection.grantedScopes || []), ...(selected.connection.scopes || [])])
+  return json(200, {
+    ok: true,
+    entity: buildLiveEntity(type, detail, selected.adAccountId, scopes),
+  })
+}
+
+async function handleEntityUpdate(context: any, type: GraphMetaAdsEntityType, entityId: string) {
+  const userOrRes = await requireSocialAdmin(context)
+  if (userOrRes instanceof Response) return userOrRes
+  const csrfRes = requireCsrfForMutations(context)
+  if (csrfRes) return csrfRes
+  const selected = await withSelectedAccount(context, userOrRes.id)
+  if ('error' in selected) return selected.error
+
+  if (type === 'creative') {
+    return apiError(405, 'META_ADS_CREATIVE_READ_ONLY', {
+      message: 'Criativos estão em modo somente leitura nesta versão.',
+      hint: 'Para alterar criativos com segurança será necessário criar uma variação e substituir no anúncio.',
+      retryable: false,
+    })
+  }
+
+  const scopes = normalizeScopes([...(selected.connection.grantedScopes || []), ...(selected.connection.scopes || [])])
+  if (!scopes.includes('ads_management')) {
+    return apiError(403, 'META_ADS_SCOPE_REQUIRED', {
+      message: 'A conexão atual não permite editar itens no Gerenciador de Anúncios.',
+      hint: 'Reconecte a Meta concedendo o escopo ads_management.',
+      retryable: false,
+      extra: { requiredScope: 'ads_management', grantedScopes: scopes },
+    })
+  }
+
+  const cfg = runtimeConfig(context)
+  const before = await getVerifiedEntityDetail(selected, type, entityId, cfg)
+  const body = await context.request.json().catch(() => null)
+  const patch = sanitizeEntityPatch(type, (body?.patch || body || {}) as MetaAdsEntityPatch)
+  await updateMetaAdsEntity(selected.connection.accessToken, type, entityId, patch, cfg.graphVersion, cfg.appSecret)
+  const after = await getVerifiedEntityDetail(selected, type, entityId, cfg)
+  const changedFields = Object.keys(patch)
+  const audit = {
+    entityType: type,
+    entityId,
+    adAccountId: selected.adAccountId,
+    changedFields,
+    timestamp: new Date().toISOString(),
+    before: Object.fromEntries(changedFields.map((field) => [field, before?.[field]])),
+    after: Object.fromEntries(changedFields.map((field) => [field, after?.[field]])),
+    userId: userOrRes.id,
+  }
+
+  return json(200, {
+    ok: true,
+    entity: buildLiveEntity(type, after, selected.adAccountId, scopes),
+    changedFields,
+    audit,
+  })
+}
+
 async function handleInventory(context: any) {
   const userOrRes = await requireSocialAdmin(context)
   if (userOrRes instanceof Response) return userOrRes
@@ -1292,19 +1537,22 @@ export async function onRequest(context: any): Promise<Response> {
     const url = new URL(request.url)
     const prefix = '/api/meta-ads'
     const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
+    const entityRoute = parseEntityRoute(rest)
 
-    if (method === 'GET' && (rest === '/status' || rest === '/status/')) return handleStatus(context)
-    if (method === 'GET' && (rest === '/oauth/start' || rest === '/oauth/start/')) return handleOauthStart(context)
-    if (method === 'GET' && (rest === '/oauth/callback' || rest === '/oauth/callback/')) return handleOauthCallback(context)
-    if (method === 'POST' && (rest === '/connect/manual' || rest === '/connect/manual/')) return handleManualConnect(context)
-    if (method === 'POST' && (rest === '/disconnect' || rest === '/disconnect/')) return handleDisconnect(context)
-    if (method === 'GET' && (rest === '/ad-accounts' || rest === '/ad-accounts/')) return handleListAccounts(context)
-    if (method === 'POST' && (rest === '/ad-accounts/select' || rest === '/ad-accounts/select/')) return handleSelectAccount(context)
-    if (method === 'POST' && (rest === '/ad-accounts/remove' || rest === '/ad-accounts/remove/')) return handleRemoveAccount(context)
-    if (method === 'GET' && (rest === '/summary' || rest === '/summary/')) return handleSummary(context)
-    if (method === 'GET' && (rest === '/trend' || rest === '/trend/')) return handleTrend(context)
-    if (method === 'GET' && (rest === '/report' || rest === '/report/')) return handleReport(context)
-    if (method === 'GET' && (rest === '/inventory' || rest === '/inventory/')) return handleInventory(context)
+    if (method === 'GET' && (rest === '/status' || rest === '/status/')) return await handleStatus(context)
+    if (method === 'GET' && (rest === '/oauth/start' || rest === '/oauth/start/')) return await handleOauthStart(context)
+    if (method === 'GET' && (rest === '/oauth/callback' || rest === '/oauth/callback/')) return await handleOauthCallback(context)
+    if (method === 'POST' && (rest === '/connect/manual' || rest === '/connect/manual/')) return await handleManualConnect(context)
+    if (method === 'POST' && (rest === '/disconnect' || rest === '/disconnect/')) return await handleDisconnect(context)
+    if (method === 'GET' && (rest === '/ad-accounts' || rest === '/ad-accounts/')) return await handleListAccounts(context)
+    if (method === 'POST' && (rest === '/ad-accounts/select' || rest === '/ad-accounts/select/')) return await handleSelectAccount(context)
+    if (method === 'POST' && (rest === '/ad-accounts/remove' || rest === '/ad-accounts/remove/')) return await handleRemoveAccount(context)
+    if (method === 'GET' && (rest === '/summary' || rest === '/summary/')) return await handleSummary(context)
+    if (method === 'GET' && (rest === '/trend' || rest === '/trend/')) return await handleTrend(context)
+    if (method === 'GET' && (rest === '/report' || rest === '/report/')) return await handleReport(context)
+    if (method === 'GET' && (rest === '/inventory' || rest === '/inventory/')) return await handleInventory(context)
+    if (entityRoute && method === 'GET') return await handleEntityDetail(context, entityRoute.type, entityRoute.id)
+    if (entityRoute && method === 'PATCH') return await handleEntityUpdate(context, entityRoute.type, entityRoute.id)
 
     return apiError(404, 'NOT_FOUND', {
       message: 'Endpoint Meta Ads não encontrado.',

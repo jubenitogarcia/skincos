@@ -8,10 +8,12 @@ import { Button } from '@/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { EntityDetailModal, type EntityDetailSection } from '@/EntityDetailModal'
+import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
 import { Textarea } from '@/textarea'
 import { TooltipLabel } from '@/tooltip'
+import { metaAdsApi } from '@/metaAdsApi'
 import type {
   MetaAdAccount,
   MetaAd,
@@ -23,16 +25,20 @@ import type {
   MetaAdsSummaryResponse,
   MetaAdsTab,
   MetaAdsTrendPoint,
+  MetaAdsLiveEntityDetail,
+  MetaAdsEntityPatch,
   MetaCampaignRow,
   MetaCreativeInventoryItem,
 } from '@/metaAdsTypes'
 import { describeMetaAdAccountStatus } from '@/metaAdsState'
+import { toast } from 'sonner'
 import {
   ArrowClockwise,
   CaretDown,
   CaretRight,
   CurrencyDollar,
   CheckCircle,
+  DotsSixVertical,
   Eye,
   FacebookLogo,
   FadersHorizontal,
@@ -102,8 +108,10 @@ type MetaAdsOverviewMetricLayout = {
   visible: boolean
   size: MetaAdsOverviewMetricSize
 }
+type MetaAdsInventoryColumnKey = MetaAdsInventorySortKey
 
 const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v1'
+const META_ADS_INVENTORY_COLUMN_WIDTHS_KEY = 'skincos.metaAds.layout.inventoryColumns.v1'
 const DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT: MetaAdsOverviewMetricLayout[] = [
   { key: 'spend', visible: true, size: 'compact' },
   { key: 'conversations', visible: true, size: 'compact' },
@@ -118,6 +126,48 @@ const DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT: MetaAdsOverviewMetricLayout[] = [
   { key: 'cpm', visible: true, size: 'compact' },
   { key: 'cpp', visible: true, size: 'compact' },
   { key: 'frequency', visible: true, size: 'compact' },
+]
+const META_ADS_INVENTORY_COLUMN_LIMITS: Record<MetaAdsInventoryColumnKey, { width: number; min: number; max: number }> = {
+  item: { width: 300, min: 220, max: 520 },
+  rank: { width: 86, min: 72, max: 120 },
+  status: { width: 92, min: 76, max: 128 },
+  objective: { width: 112, min: 88, max: 160 },
+  items: { width: 92, min: 78, max: 132 },
+  spend: { width: 124, min: 104, max: 176 },
+  conversations: { width: 112, min: 92, max: 156 },
+  cpcv: { width: 108, min: 92, max: 152 },
+  clicks: { width: 104, min: 88, max: 144 },
+  reach: { width: 108, min: 92, max: 152 },
+  impressions: { width: 118, min: 98, max: 164 },
+  engagement: { width: 112, min: 92, max: 154 },
+  igRedirect: { width: 152, min: 124, max: 220 },
+  ctr: { width: 116, min: 96, max: 164 },
+  cpc: { width: 116, min: 96, max: 164 },
+  cpm: { width: 108, min: 90, max: 152 },
+  cpp: { width: 108, min: 90, max: 152 },
+  frequency: { width: 112, min: 92, max: 152 },
+  cul: { width: 108, min: 90, max: 152 },
+}
+const META_ADS_INVENTORY_COLUMN_ORDER: MetaAdsInventoryColumnKey[] = [
+  'item',
+  'rank',
+  'status',
+  'objective',
+  'items',
+  'spend',
+  'conversations',
+  'cpcv',
+  'clicks',
+  'reach',
+  'impressions',
+  'engagement',
+  'igRedirect',
+  'ctr',
+  'cpc',
+  'cpm',
+  'cpp',
+  'frequency',
+  'cul',
 ]
 
 function parseMetaAdsOverviewMetricLayout(raw: string | null | undefined): MetaAdsOverviewMetricLayout[] {
@@ -145,6 +195,39 @@ function parseMetaAdsOverviewMetricLayout(raw: string | null | undefined): MetaA
     return normalized.length ? normalized : DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT
   } catch {
     return DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT
+  }
+}
+
+function clampMetaAdsInventoryColumnWidth(key: MetaAdsInventoryColumnKey, width: number) {
+  const limits = META_ADS_INVENTORY_COLUMN_LIMITS[key]
+  return Math.min(limits.max, Math.max(limits.min, Math.round(width)))
+}
+
+function getDefaultMetaAdsInventoryColumnWidths(): Record<MetaAdsInventoryColumnKey, number> {
+  return META_ADS_INVENTORY_COLUMN_ORDER.reduce(
+    (acc, key) => {
+      acc[key] = META_ADS_INVENTORY_COLUMN_LIMITS[key].width
+      return acc
+    },
+    {} as Record<MetaAdsInventoryColumnKey, number>,
+  )
+}
+
+function parseMetaAdsInventoryColumnWidths(raw: string | null | undefined): Record<MetaAdsInventoryColumnKey, number> {
+  const defaults = getDefaultMetaAdsInventoryColumnWidths()
+  try {
+    const parsed = raw ? JSON.parse(raw) : null
+    if (!parsed || typeof parsed !== 'object') return defaults
+    return META_ADS_INVENTORY_COLUMN_ORDER.reduce(
+      (acc, key) => {
+        const value = Number((parsed as Record<string, unknown>)[key])
+        acc[key] = Number.isFinite(value) ? clampMetaAdsInventoryColumnWidth(key, value) : defaults[key]
+        return acc
+      },
+      {} as Record<MetaAdsInventoryColumnKey, number>,
+    )
+  } catch {
+    return defaults
   }
 }
 
@@ -601,11 +684,11 @@ function MetaAdsMetricTile({
   const body = (
     <CardContent
       tabIndex={tooltipLabel || description ? 0 : undefined}
-      className={`flex flex-col items-center justify-center gap-1 p-2 text-center outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 ${isWide ? 'min-h-[94px]' : 'min-h-[84px]'}`}
+      className={`flex flex-col items-center justify-center gap-1 p-2 text-center outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 ${isWide ? 'min-h-[104px] sm:min-h-[112px]' : 'min-h-[76px] sm:min-h-[84px]'}`}
     >
       {content}
       <div className="space-y-0.5">
-        <div className="text-[1.05rem] font-semibold leading-tight text-white sm:text-[1.2rem] lg:text-[1.3rem]">{value}</div>
+        <div className="text-[1rem] font-semibold leading-tight text-white sm:text-[1.12rem] lg:text-[1.2rem]">{value}</div>
         {isWide && description ? <div className="mx-auto max-w-52 text-[10px] leading-snug text-slate-400">{description}</div> : null}
       </div>
     </CardContent>
@@ -634,14 +717,14 @@ function MetaAdsMetricTile({
   }
 
   return (
-    <Card className={`group relative gap-0 overflow-hidden py-0 transition ${panelClass} ${isWide ? 'col-span-2' : ''}`}>
+    <Card className={`group relative gap-0 overflow-hidden py-0 transition hover:border-sky-400/25 hover:bg-slate-900/70 ${panelClass}`}>
       <button
         type="button"
-        className="absolute left-2 top-2 z-10 inline-flex h-6 w-6 cursor-grab items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/45 text-slate-500 opacity-45 shadow-sm transition hover:scale-105 hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 active:cursor-grabbing group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+        className="absolute left-2 top-2 z-10 inline-flex h-6 w-6 cursor-grab items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/45 text-slate-500 opacity-60 shadow-sm transition hover:scale-105 hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 active:cursor-grabbing group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
         aria-label={`Mover card ${tooltipLabel || label}`}
         {...dragHandleProps}
       >
-        <FadersHorizontal className="h-3.5 w-3.5" />
+        <DotsSixVertical className="h-3.5 w-3.5" weight="bold" />
       </button>
       {onHide ? (
         <button
@@ -667,7 +750,7 @@ function MetaAdsMetricTile({
       {onResize ? (
         <button
           type="button"
-          className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-slate-500/10 text-transparent opacity-55 transition hover:border-sky-300/60 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+          className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
           aria-label={`${isWide ? 'Reduzir' : 'Ampliar'} card ${tooltipLabel || label}`}
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
@@ -676,9 +759,41 @@ function MetaAdsMetricTile({
             resizeStartRef.current = null
           }}
         >
-          redimensionar
+          <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-br-xl border-b border-r border-sky-200/35" aria-hidden="true" />
         </button>
       ) : null}
+    </Card>
+  )
+}
+
+function MetaAdsSyncOverlay({
+  show,
+  label = 'Sincronizando dados da Meta',
+}: {
+  show?: boolean
+  label?: string
+}) {
+  if (!show) return null
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20 flex items-start justify-end rounded-[inherit] bg-slate-950/18 p-3">
+      <div className="inline-flex items-center gap-2 rounded-full border border-sky-400/25 bg-slate-950/85 px-3 py-1.5 text-xs font-medium text-sky-100 shadow-[0_12px_32px_rgba(14,165,233,0.16)] backdrop-blur-md">
+        <Spinner className="h-3.5 w-3.5 animate-spin text-sky-300" />
+        {label}
+      </div>
+    </div>
+  )
+}
+
+function MetaAdsLoadingCard({ label = 'Carregando dados da Meta Ads' }: { label?: string }) {
+  return (
+    <Card className={panelClass}>
+      <CardContent className="flex min-h-40 flex-col items-center justify-center gap-3 py-10 text-center text-sm text-slate-300">
+        <Spinner className="h-6 w-6 animate-spin text-sky-300" />
+        <div className="space-y-1">
+          <div className="font-medium text-white">{label}</div>
+          <div className="text-xs text-slate-500">Mantendo dados recentes em cache para acelerar a próxima abertura.</div>
+        </div>
+      </CardContent>
     </Card>
   )
 }
@@ -698,10 +813,21 @@ function describeAdAccountStatus(account: MetaAdAccount) {
   }
 }
 
-export function MetaAdsEmptyState({ message, actionLabel, onAction }: { message: string; actionLabel?: string; onAction?: () => void }) {
+export function MetaAdsEmptyState({
+  message,
+  actionLabel,
+  onAction,
+  loading,
+}: {
+  message: string
+  actionLabel?: string
+  onAction?: () => void
+  loading?: boolean
+}) {
   return (
     <Card className={panelClass}>
       <CardContent className="flex flex-col items-center gap-3 py-10 text-center text-sm text-slate-300">
+        {loading ? <Spinner className="h-5 w-5 animate-spin text-sky-300" /> : null}
         <div>{message}</div>
         {actionLabel && onAction ? <Button variant="outline" onClick={onAction}>{actionLabel}</Button> : null}
       </CardContent>
@@ -903,15 +1029,59 @@ function MetaAdsEntityDetailDialog({
   detail,
   open,
   onOpenChange,
+  onEntityUpdated,
 }: {
   detail: MetaAdsEntityDetail | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  onEntityUpdated?: () => void | Promise<void>
 }) {
+  const [liveEntity, setLiveEntity] = useState<MetaAdsLiveEntityDetail | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    if (!open || !detail) return
+    let cancelled = false
+    setLiveEntity(null)
+    setDetailError(null)
+    setLoadingDetail(true)
+
+    metaAdsApi.entityDetail(detail.kind, detail.payload.id)
+      .then((response) => {
+        if (cancelled) return
+        setLiveEntity(response.entity)
+        const nextForm: Record<string, string> = {}
+        for (const field of response.entity.editableFields || []) {
+          const value = response.entity.fields?.[field]
+          if (value !== undefined && value !== null) nextForm[field] = String(value)
+        }
+        setForm(nextForm)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setDetailError(error?.message || 'Falha ao carregar os dados live da Meta.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingDetail(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [detail, open])
+
   if (!detail) return null
 
-  const previewUrl = detail.kind === 'creative' ? detail.payload.imageUrl || detail.payload.thumbnailUrl : undefined
+  const fields = liveEntity?.fields || detail.payload
+  const previewUrl =
+    detail.kind === 'creative'
+      ? String((fields as any).image_url || (fields as any).thumbnail_url || detail.payload.imageUrl || detail.payload.thumbnailUrl || '')
+      : undefined
   const hasValue = (value: unknown) => value !== undefined && value !== null && value !== ''
+  const fieldValue = (key: string, fallback?: unknown) => (hasValue((fields as any)?.[key]) ? (fields as any)[key] : fallback)
   const filterSections = (sections: EntityDetailSection[]) =>
     sections
       .map((section) => ({
@@ -927,10 +1097,12 @@ function MetaAdsEntityDetailDialog({
       {
         title: 'Identificação',
         fields: [
-          { label: 'Nome', value: payload.name },
-          { label: 'ID', value: payload.id },
-          { label: 'Status', value: payload.effective_status || payload.status },
-          { label: 'Objetivo', value: payload.objective },
+          { label: 'Nome', value: fieldValue('name', payload.name) },
+          { label: 'ID', value: fieldValue('id', payload.id) },
+          { label: 'Status configurado', value: fieldValue('status', payload.status) },
+          { label: 'Status efetivo', value: fieldValue('effective_status', payload.effective_status || payload.status) },
+          { label: 'Objetivo', value: fieldValue('objective', payload.objective) },
+          { label: 'Tipo de compra', value: fieldValue('buying_type') },
         ],
       },
       {
@@ -943,15 +1115,18 @@ function MetaAdsEntityDetailDialog({
       {
         title: 'Orçamento',
         fields: [
-          { label: 'Orçamento diário', value: payload.daily_budget },
-          { label: 'Orçamento vitalício', value: payload.lifetime_budget },
+          { label: 'Orçamento diário', value: fieldValue('daily_budget', payload.daily_budget) },
+          { label: 'Orçamento vitalício', value: fieldValue('lifetime_budget', payload.lifetime_budget) },
+          { label: 'Estratégia de lance', value: fieldValue('bid_strategy') },
         ],
       },
       {
         title: 'Janela operacional',
         fields: [
-          { label: 'Início', value: payload.start_time },
-          { label: 'Fim', value: payload.stop_time },
+          { label: 'Início', value: fieldValue('start_time', payload.start_time) },
+          { label: 'Fim', value: fieldValue('stop_time', payload.stop_time) },
+          { label: 'Criado em', value: fieldValue('created_time') },
+          { label: 'Atualizado em', value: fieldValue('updated_time') },
         ],
       },
     ])
@@ -961,10 +1136,11 @@ function MetaAdsEntityDetailDialog({
       {
         title: 'Identificação',
         fields: [
-          { label: 'Nome', value: payload.name },
-          { label: 'ID', value: payload.id },
-          { label: 'Status', value: payload.effective_status || payload.status },
-          { label: 'Campanha', value: payload.campaign_name || payload.campaign_id },
+          { label: 'Nome', value: fieldValue('name', payload.name) },
+          { label: 'ID', value: fieldValue('id', payload.id) },
+          { label: 'Status configurado', value: fieldValue('status', payload.status) },
+          { label: 'Status efetivo', value: fieldValue('effective_status', payload.effective_status || payload.status) },
+          { label: 'Campanha', value: (fields as any)?.campaign?.name || payload.campaign_name || payload.campaign_id },
         ],
       },
       {
@@ -974,17 +1150,20 @@ function MetaAdsEntityDetailDialog({
       {
         title: 'Otimização e orçamento',
         fields: [
-          { label: 'Meta de otimização', value: payload.optimization_goal },
-          { label: 'Estratégia de lance', value: payload.bid_strategy },
-          { label: 'Orçamento diário', value: payload.daily_budget },
-          { label: 'Orçamento vitalício', value: payload.lifetime_budget },
+          { label: 'Meta de otimização', value: fieldValue('optimization_goal', payload.optimization_goal) },
+          { label: 'Evento de cobrança', value: fieldValue('billing_event') },
+          { label: 'Estratégia de lance', value: fieldValue('bid_strategy', payload.bid_strategy) },
+          { label: 'Orçamento diário', value: fieldValue('daily_budget', payload.daily_budget) },
+          { label: 'Orçamento vitalício', value: fieldValue('lifetime_budget', payload.lifetime_budget) },
         ],
       },
       {
         title: 'Janela operacional',
         fields: [
-          { label: 'Início', value: payload.start_time },
-          { label: 'Fim', value: payload.end_time },
+          { label: 'Início', value: fieldValue('start_time', payload.start_time) },
+          { label: 'Fim', value: fieldValue('end_time', payload.end_time) },
+          { label: 'Criado em', value: fieldValue('created_time') },
+          { label: 'Atualizado em', value: fieldValue('updated_time') },
         ],
       },
     ])
@@ -994,18 +1173,21 @@ function MetaAdsEntityDetailDialog({
       {
         title: 'Identificação',
         fields: [
-          { label: 'Nome', value: payload.name },
-          { label: 'ID', value: payload.id },
-          { label: 'Status', value: payload.effective_status || payload.status },
+          { label: 'Nome', value: fieldValue('name', payload.name) },
+          { label: 'ID', value: fieldValue('id', payload.id) },
+          { label: 'Status configurado', value: fieldValue('status', payload.status) },
+          { label: 'Status efetivo', value: fieldValue('effective_status', payload.effective_status || payload.status) },
         ],
       },
       {
         title: 'Relacionamentos',
         fields: [
-          { label: 'Campanha', value: payload.campaign_name || payload.campaign_id },
-          { label: 'Conjunto de anúncios', value: payload.adset_name || payload.adset_id },
-          { label: 'Criativo', value: payload.creative?.name || payload.creative?.id },
-          { label: 'Story ID efetivo', value: payload.creative?.effective_object_story_id },
+          { label: 'Campanha', value: (fields as any)?.campaign?.name || payload.campaign_name || payload.campaign_id },
+          { label: 'Conjunto de anúncios', value: (fields as any)?.adset?.name || payload.adset_name || payload.adset_id },
+          { label: 'Criativo', value: (fields as any)?.creative?.name || payload.creative?.name || payload.creative?.id },
+          { label: 'Story ID efetivo', value: (fields as any)?.creative?.effective_object_story_id || payload.creative?.effective_object_story_id },
+          { label: 'Criado em', value: fieldValue('created_time') },
+          { label: 'Atualizado em', value: fieldValue('updated_time') },
         ],
       },
     ])
@@ -1018,9 +1200,12 @@ function MetaAdsEntityDetailDialog({
         title: 'Identificação',
         fields: [
           { label: 'Nome', value: displayName },
-          { label: 'Nome original na Meta', value: dynamicName ? payload.name : null },
-          { label: 'ID', value: payload.id },
-          { label: 'Story ID efetivo', value: payload.effectiveObjectStoryId },
+          { label: 'Nome original na Meta', value: dynamicName ? fieldValue('name', payload.name) : null },
+          { label: 'ID', value: fieldValue('id', payload.id) },
+          { label: 'Story ID efetivo', value: fieldValue('effective_object_story_id', payload.effectiveObjectStoryId) },
+          { label: 'Object story ID', value: fieldValue('object_story_id') },
+          { label: 'Tipo CTA', value: fieldValue('call_to_action_type') },
+          { label: 'URL tags', value: fieldValue('url_tags') },
         ],
       },
       {
@@ -1032,6 +1217,43 @@ function MetaAdsEntityDetailDialog({
         ],
       },
     ])
+  }
+
+  const editableFields = liveEntity?.editableFields || []
+  const canEdit = Boolean(liveEntity?.editable && editableFields.length)
+  const changedPatch = editableFields.reduce((patch, field) => {
+    const previous = String((liveEntity?.fields as any)?.[field] ?? '')
+    const next = String(form[field] ?? '')
+    if (next !== previous) {
+      ;(patch as Record<string, string>)[field] = next
+    }
+    return patch
+  }, {} as MetaAdsEntityPatch)
+  const hasChanges = Object.keys(changedPatch).length > 0
+  const setFormField = (field: string, value: string) => setForm((current) => ({ ...current, [field]: value }))
+  const handleSave = async () => {
+    if (!detail || !hasChanges) return
+    const sensitive = Object.keys(changedPatch).some((field) => field === 'status' || field.includes('budget'))
+    if (sensitive && !window.confirm('Confirmar alteração no Gerenciador de Anúncios da Meta? A mudança será aplicada na conta selecionada.')) {
+      return
+    }
+    setSaving(true)
+    try {
+      const response = await metaAdsApi.updateEntity(detail.kind, detail.payload.id, changedPatch)
+      setLiveEntity(response.entity)
+      const nextForm: Record<string, string> = {}
+      for (const field of response.entity.editableFields || []) {
+        const value = response.entity.fields?.[field]
+        if (value !== undefined && value !== null) nextForm[field] = String(value)
+      }
+      setForm(nextForm)
+      toast.success('Alteração enviada para o Gerenciador de Anúncios')
+      await onEntityUpdated?.()
+    } catch (error: any) {
+      toast.error(error?.message || 'Falha ao atualizar item na Meta')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -1050,7 +1272,98 @@ function MetaAdsEntityDetailDialog({
       }
       previewUrl={previewUrl}
       sections={sections}
-    />
+      footer={
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            className="border-slate-700 bg-slate-900/60 text-slate-100 hover:bg-slate-800/80"
+            onClick={() => onOpenChange(false)}
+            disabled={saving}
+          >
+            Fechar
+          </Button>
+          {canEdit ? (
+            <Button
+              type="button"
+              className="bg-sky-500 text-slate-950 hover:bg-sky-400"
+              onClick={handleSave}
+              disabled={!hasChanges || saving || loadingDetail}
+            >
+              {saving ? 'Salvando na Meta...' : 'Salvar na Meta'}
+            </Button>
+          ) : null}
+        </div>
+      }
+    >
+      <div className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-medium text-white">Dados live do Gerenciador de Anúncios</div>
+            <div className="text-xs text-slate-400">
+              {loadingDetail
+                ? 'Carregando configuração atual da Meta...'
+                : detailError
+                  ? detailError
+                  : liveEntity
+                    ? `Atualizado em ${new Date(liveEntity.updatedAt).toLocaleString('pt-BR')}`
+                    : 'Abrindo com os dados locais do inventário.'}
+            </div>
+          </div>
+          {loadingDetail ? <Spinner className="h-5 w-5 animate-spin text-sky-300" /> : null}
+          {!loadingDetail && liveEntity?.editable ? <Badge className="bg-emerald-500/15 text-emerald-100">Editável</Badge> : null}
+          {!loadingDetail && liveEntity && !liveEntity.editable ? <Badge className="bg-slate-700/70 text-slate-200">Somente leitura</Badge> : null}
+        </div>
+        {liveEntity?.readOnlyReason ? <div className="mt-3 text-xs text-slate-300">{liveEntity.readOnlyReason}</div> : null}
+      </div>
+
+      {canEdit ? (
+        <div className="space-y-3 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
+          <div>
+            <div className="text-sm font-medium text-white">Edição segura</div>
+            <div className="text-xs text-slate-400">Somente os campos abaixo são enviados para a Meta. Campos bloqueados permanecem apenas leitura.</div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {editableFields.includes('name') ? (
+              <label className="space-y-1 text-xs text-slate-300">
+                Nome
+                <Input value={form.name || ''} onChange={(event) => setFormField('name', event.target.value)} className="h-10 border-slate-700 bg-slate-950/70 text-slate-100" />
+              </label>
+            ) : null}
+            {editableFields.includes('status') ? (
+              <label className="space-y-1 text-xs text-slate-300">
+                Status
+                <Select value={form.status || ''} onValueChange={(value) => setFormField('status', value)}>
+                  <SelectTrigger className="h-10 border-slate-700 bg-slate-950/70 text-slate-100">
+                    <SelectValue placeholder="Selecione" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ACTIVE">Ativa</SelectItem>
+                    <SelectItem value="PAUSED">Pausada</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+            ) : null}
+            {(['daily_budget', 'lifetime_budget', 'start_time', 'stop_time', 'end_time', 'bid_strategy', 'optimization_goal'] as const).map((field) =>
+              editableFields.includes(field) ? (
+                <label key={field} className="space-y-1 text-xs text-slate-300">
+                  {{
+                    daily_budget: 'Orçamento diário (centavos)',
+                    lifetime_budget: 'Orçamento vitalício (centavos)',
+                    start_time: 'Início',
+                    stop_time: 'Fim da campanha',
+                    end_time: 'Fim do conjunto',
+                    bid_strategy: 'Estratégia de lance',
+                    optimization_goal: 'Meta de otimização',
+                  }[field]}
+                  <Input value={form[field] || ''} onChange={(event) => setFormField(field, event.target.value)} className="h-10 border-slate-700 bg-slate-950/70 text-slate-100" />
+                </label>
+              ) : null,
+            )}
+          </div>
+        </div>
+      ) : null}
+    </EntityDetailModal>
   )
 }
 
@@ -1297,6 +1610,8 @@ export function MetaAdsOverviewPanel({
   report,
   overviewError,
   onRetry,
+  loading,
+  syncing,
 }: {
   selectedAccount: MetaAdAccount
   summary: MetaAdsSummaryResponse | null
@@ -1304,6 +1619,8 @@ export function MetaAdsOverviewPanel({
   report: MetaAdsReportResponse | null
   overviewError: MetaAdsApiError | null
   onRetry?: () => void
+  loading?: boolean
+  syncing?: boolean
 }) {
   const [metricLayout, setMetricLayout] = useState<MetaAdsOverviewMetricLayout[]>(() => {
     try {
@@ -1603,6 +1920,16 @@ export function MetaAdsOverviewPanel({
       return next
     })
   }
+  const hasOverviewData = Boolean(primarySummary || trend.length || report)
+
+  if (loading && !hasOverviewData) {
+    return (
+      <>
+        <MetaAdsPersistentError error={overviewError} onRetry={onRetry} />
+        <MetaAdsLoadingCard label="Sincronizando resumo da conta Meta Ads" />
+      </>
+    )
+  }
 
   return (
     <>
@@ -1645,8 +1972,9 @@ export function MetaAdsOverviewPanel({
             <div
               ref={dropProvided.innerRef}
               {...dropProvided.droppableProps}
-              className="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-2"
+              className="relative grid grid-flow-dense grid-cols-[repeat(auto-fit,minmax(8.25rem,1fr))] gap-2 sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]"
             >
+              <MetaAdsSyncOverlay show={syncing && hasOverviewData} label="Atualizando métricas" />
               {visibleMetricTiles.length > 0 ? (
                 visibleMetricTiles.map((tile, index) => (
                   <Draggable key={tile.key} draggableId={`meta-ads-metric-${tile.key}`} index={index}>
@@ -1695,7 +2023,8 @@ export function MetaAdsOverviewPanel({
         </Droppable>
       </DragDropContext>
 
-      <Card className={panelClass}>
+      <Card className={`${panelClass} relative overflow-hidden`}>
+        <MetaAdsSyncOverlay show={syncing && trend.length > 0} label="Atualizando tendência" />
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <PresentationChart className="h-5 w-5 text-sky-300" />
@@ -1758,19 +2087,41 @@ export function MetaAdsInventoryPanel({
   report,
   inventoryError,
   onRetry,
+  onEntityUpdated,
+  loading,
+  syncing,
 }: {
   selectedAccount: MetaAdAccount
   inventory: MetaAdsInventory
   report: MetaAdsReportResponse | null
   inventoryError: MetaAdsApiError | null
   onRetry?: () => void
+  onEntityUpdated?: () => void | Promise<void>
+  loading?: boolean
+  syncing?: boolean
 }) {
   const [detail, setDetail] = useState<MetaAdsEntityDetail | null>(null)
   const [collapsedCampaignIds, setCollapsedCampaignIds] = useState<string[]>([])
   const [collapsedAdSetIds, setCollapsedAdSetIds] = useState<string[]>([])
   const [sortKey, setSortKey] = useState<MetaAdsInventorySortKey>('rank')
   const [sortDir, setSortDir] = useState<MetaAdsInventorySortDir>('asc')
+  const [columnWidths, setColumnWidths] = useState<Record<MetaAdsInventoryColumnKey, number>>(() => {
+    try {
+      return parseMetaAdsInventoryColumnWidths(window.localStorage.getItem(META_ADS_INVENTORY_COLUMN_WIDTHS_KEY))
+    } catch {
+      return getDefaultMetaAdsInventoryColumnWidths()
+    }
+  })
+  const columnResizeRef = useRef<{ key: MetaAdsInventoryColumnKey; startX: number; startWidth: number } | null>(null)
   const currency = selectedAccount.currency || 'USD'
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(META_ADS_INVENTORY_COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths))
+    } catch {
+      // Column sizing is a preference; ignore storage failures.
+    }
+  }, [columnWidths])
 
   const campaignOrderMap = useMemo(
     () => new Map(inventory.campaigns.map((campaign, index) => [campaign.id, index])),
@@ -2148,12 +2499,17 @@ export function MetaAdsInventoryPanel({
     return ((adOrderMap.get(left.id) ?? 0) - (adOrderMap.get(right.id) ?? 0))
   }, [adMetricsMap, adOrderMap, adRankMap, filteredCreativesByAd, sortKey, sortMultiplier])
 
-  const rowClass = () => 'border-slate-800/80 transition hover:bg-slate-900/45'
+  const rowClass = (level: InventoryTreeRow['level']) => {
+    const base = 'border-slate-800/80 transition'
+    if (level === 'campaign') return `${base} bg-sky-500/[0.045] hover:bg-sky-500/[0.09]`
+    if (level === 'adset') return `${base} bg-fuchsia-500/[0.04] hover:bg-fuchsia-500/[0.085]`
+    return `${base} bg-amber-500/[0.035] hover:bg-amber-500/[0.08]`
+  }
 
   const itemButtonClass = 'min-w-0 truncate text-left transition hover:text-sky-200'
-  const campaignItemClass = `${itemButtonClass} text-[15px] font-semibold text-white`
-  const adSetItemClass = `${itemButtonClass} text-sm font-medium text-slate-100`
-  const adItemClass = `${itemButtonClass} text-sm font-normal text-slate-200`
+  const campaignItemClass = `${itemButtonClass} text-[15px] font-semibold tracking-[0.01em] text-white`
+  const adSetItemClass = `${itemButtonClass} text-sm font-medium italic text-fuchsia-50`
+  const adItemClass = `${itemButtonClass} text-[13px] font-normal text-amber-50/90`
   const describeCount = (filteredCount: number, totalCount: number, singular: string, plural: string) =>
     filteredCount === totalCount ? `${totalCount} ${totalCount === 1 ? singular : plural}` : `${filteredCount} de ${totalCount}`
   const toggleCampaign = (campaignId: string) => {
@@ -2211,6 +2567,32 @@ export function MetaAdsInventoryPanel({
     filteredAdSetsByCampaign,
     filteredCampaigns,
   ])
+  const inventoryTableWidth = useMemo(
+    () => META_ADS_INVENTORY_COLUMN_ORDER.reduce((sum, key) => sum + columnWidths[key], 0),
+    [columnWidths],
+  )
+
+  const handleColumnResizeStart = (key: MetaAdsInventoryColumnKey, event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    columnResizeRef.current = { key, startX: event.clientX, startWidth: columnWidths[key] }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const handleColumnResizeMove = (event: PointerEvent<HTMLButtonElement>) => {
+    const state = columnResizeRef.current
+    if (!state) return
+    event.preventDefault()
+    const nextWidth = clampMetaAdsInventoryColumnWidth(state.key, state.startWidth + event.clientX - state.startX)
+    setColumnWidths((current) => (current[state.key] === nextWidth ? current : { ...current, [state.key]: nextWidth }))
+  }
+
+  const handleColumnResizeEnd = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!columnResizeRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+    columnResizeRef.current = null
+  }
 
   const renderUnavailableMetricCell = () => (
     <MetaAdsTableTooltip
@@ -2221,11 +2603,11 @@ export function MetaAdsInventoryPanel({
     </MetaAdsTableTooltip>
   )
 
-  const columnHelp: Partial<Record<MetaAdsInventorySortKey | 'statusLabel' | 'objectiveLabel', { label: string; description?: string }>> = {
+  const columnHelp: Partial<Record<MetaAdsInventoryColumnKey, { label: string; description?: string }>> = {
     item: { label: 'Item', description: 'Nome da campanha, conjunto ou anúncio.' },
     rank: { label: 'Rank', description: 'Posição relativa pelo consolidado do período.' },
-    statusLabel: { label: 'Status', description: 'Situação operacional atual do item na Meta.' },
-    objectiveLabel: { label: 'Objetivo', description: 'Objetivo principal de entrega e otimização.' },
+    status: { label: 'Status', description: 'Situação operacional atual do item na Meta.' },
+    objective: { label: 'Objetivo', description: 'Objetivo principal de entrega e otimização.' },
     items: { label: 'Itens', description: 'Quantidade de itens filhos ativos e inativos.' },
     spend: { label: 'Investimento', description: 'Valor total investido no período selecionado.' },
     conversations: { label: 'Conversa', description: 'Conversas iniciadas atribuídas ao item.' },
@@ -2243,7 +2625,7 @@ export function MetaAdsInventoryPanel({
     cul: { label: 'CU / CUL', description: 'Cliques únicos e cliques únicos em link, quando disponíveis.' },
   }
 
-  const renderSortHead = (key: MetaAdsInventorySortKey, label: string) => {
+  const renderSortHead = (key: MetaAdsInventoryColumnKey, label: string) => {
     const isActive = sortKey === key
     const help = columnHelp[key]
     return (
@@ -2277,11 +2659,45 @@ export function MetaAdsInventoryPanel({
     )
   }
 
+  const renderResizableHead = (key: MetaAdsInventoryColumnKey, label: string, className = 'text-center') => (
+    <TableHead
+      data-testid={`meta-ads-inventory-head-${key}`}
+      className={`sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 px-2 backdrop-blur-md ${className}`}
+      style={{
+        width: columnWidths[key],
+        minWidth: columnWidths[key],
+        maxWidth: columnWidths[key],
+      }}
+    >
+      <div className={`relative flex h-10 items-center ${className.includes('text-left') ? 'justify-start' : 'justify-center'}`}>
+        {renderSortHead(key, label)}
+        <button
+          type="button"
+          data-testid={`meta-ads-column-resize-${key}`}
+          aria-label={`Ajustar largura da coluna ${columnHelp[key]?.label || label}`}
+          className="absolute -right-2 top-1/2 h-7 w-3 -translate-y-1/2 cursor-col-resize rounded-full border border-transparent transition hover:border-sky-400/35 hover:bg-sky-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+          onPointerDown={(event) => handleColumnResizeStart(key, event)}
+          onPointerMove={handleColumnResizeMove}
+          onPointerUp={handleColumnResizeEnd}
+          onPointerCancel={handleColumnResizeEnd}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+        >
+          <span className="mx-auto block h-4 w-px rounded-full bg-slate-500/55" aria-hidden="true" />
+        </button>
+      </div>
+    </TableHead>
+  )
+
   return (
     <>
       <MetaAdsPersistentError error={inventoryError} onRetry={onRetry} />
-      <MetaAdsEntityDetailDialog detail={detail} open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)} />
-      <Card className={panelClass}>
+      {loading && !inventoryTreeRows.length ? <MetaAdsLoadingCard label="Sincronizando estrutura operacional" /> : null}
+      <MetaAdsEntityDetailDialog detail={detail} open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)} onEntityUpdated={onEntityUpdated} />
+      <Card className={`${panelClass} relative overflow-hidden`}>
+        <MetaAdsSyncOverlay show={syncing && inventoryTreeRows.length > 0} label="Atualizando estrutura" />
         <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
@@ -2295,32 +2711,41 @@ export function MetaAdsInventoryPanel({
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow className="border-slate-800">
-                <TableHead>{renderSortHead('item', 'Item')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('rank', 'Rank')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('status', 'Status')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('objective', 'Objetivo')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('items', 'Itens')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('spend', 'Invest.')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('conversations', 'Conversa')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('cpcv', 'CPCv')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('clicks', 'Clique')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('reach', 'Alcance')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('impressions', 'Impressão')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('engagement', 'Engaj.')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('igRedirect', 'Redirecionamento')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('ctr', 'CTR/CTRL')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('cpc', 'CPC/CPCL')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('cpm', 'CPM')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('cpp', 'CPP')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('frequency', 'Frequência')}</TableHead>
-                <TableHead className="text-center">{renderSortHead('cul', 'CU/CUL')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+        <CardContent className="px-6 pb-6">
+          <div
+            data-testid="meta-ads-inventory-scroll"
+            className="max-h-[min(62vh,36rem)] overflow-auto rounded-2xl border border-slate-800/75 bg-slate-950/20 shadow-inner scrollbar-thin scrollbar-thumb-slate-700/70 scrollbar-track-slate-950/40"
+          >
+            <table className="caption-bottom table-fixed text-sm" style={{ width: inventoryTableWidth, minWidth: '100%' }}>
+              <colgroup>
+                {META_ADS_INVENTORY_COLUMN_ORDER.map((key) => (
+                  <col key={key} style={{ width: columnWidths[key] }} />
+                ))}
+              </colgroup>
+              <TableHeader>
+                <TableRow className="border-slate-800">
+                  {renderResizableHead('item', 'Item', 'text-left')}
+                  {renderResizableHead('rank', 'Rank')}
+                  {renderResizableHead('status', 'Status')}
+                  {renderResizableHead('objective', 'Objetivo')}
+                  {renderResizableHead('items', 'Itens')}
+                  {renderResizableHead('spend', 'Invest.')}
+                  {renderResizableHead('conversations', 'Conversa')}
+                  {renderResizableHead('cpcv', 'CPCv')}
+                  {renderResizableHead('clicks', 'Clique')}
+                  {renderResizableHead('reach', 'Alcance')}
+                  {renderResizableHead('impressions', 'Impressão')}
+                  {renderResizableHead('engagement', 'Engaj.')}
+                  {renderResizableHead('igRedirect', 'Redirecionamento')}
+                  {renderResizableHead('ctr', 'CTR/CTRL')}
+                  {renderResizableHead('cpc', 'CPC/CPCL')}
+                  {renderResizableHead('cpm', 'CPM')}
+                  {renderResizableHead('cpp', 'CPP')}
+                  {renderResizableHead('frequency', 'Frequência')}
+                  {renderResizableHead('cul', 'CU/CUL')}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
               {inventoryTreeRows.map((row) => {
                 if (row.level === 'campaign') {
                   const campaign = row.campaign
@@ -2333,7 +2758,7 @@ export function MetaAdsInventoryPanel({
                       ? campaignMetrics.spend / campaignMetrics.conversations
                       : null
                   return (
-                    <TableRow key={row.key} className={rowClass()}>
+                    <TableRow key={row.key} className={rowClass(row.level)}>
                       <TableCell>
                         <div className="space-y-1">
                           <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
@@ -2425,7 +2850,7 @@ export function MetaAdsInventoryPanel({
                       ? adSetMetrics.spend / adSetMetrics.conversations
                       : null
                   return (
-                    <TableRow key={row.key} className={rowClass()}>
+                    <TableRow key={row.key} className={rowClass(row.level)}>
                       <TableCell>
                         <div className="space-y-1">
                           <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
@@ -2514,7 +2939,7 @@ export function MetaAdsInventoryPanel({
                     ? adMetrics.spend / adMetrics.conversations
                     : null
                 return (
-                  <TableRow key={row.key} className={rowClass()}>
+                  <TableRow key={row.key} className={rowClass(row.level)}>
                     <TableCell>
                       <div className="space-y-1">
                         <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
@@ -2584,7 +3009,8 @@ export function MetaAdsInventoryPanel({
                 )
               })}
             </TableBody>
-          </Table>
+          </table>
+          </div>
         </CardContent>
       </Card>
 

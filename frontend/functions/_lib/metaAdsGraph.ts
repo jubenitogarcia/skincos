@@ -90,6 +90,26 @@ export type MetaInsight = {
   frequency?: number
 }
 
+export type MetaAdsEntityType = 'campaign' | 'adset' | 'ad' | 'creative'
+
+const ENTITY_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
+  campaign:
+    'id,account_id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,buying_type,special_ad_categories,start_time,stop_time,created_time,updated_time,issues_info,recommendations',
+  adset:
+    'id,account_id,name,status,effective_status,campaign{id,name},campaign_id,daily_budget,lifetime_budget,bid_strategy,billing_event,optimization_goal,promoted_object,targeting,start_time,end_time,created_time,updated_time,issues_info,recommendations',
+  ad:
+    'id,account_id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id,object_story_spec,url_tags,title,body,call_to_action_type},tracking_specs,conversion_specs,created_time,updated_time,issues_info,recommendations',
+  creative:
+    'id,account_id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,object_story_spec,asset_feed_spec,image_hash,video_id,body,title,call_to_action_type,url_tags,instagram_permalink_url,object_url,created_time,updated_time',
+}
+
+const ENTITY_SAFE_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
+  campaign: 'id,account_id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time,created_time,updated_time',
+  adset: 'id,account_id,name,status,effective_status,campaign{id,name},campaign_id,daily_budget,lifetime_budget,bid_strategy,optimization_goal,start_time,end_time,created_time,updated_time',
+  ad: 'id,account_id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id},created_time,updated_time',
+  creative: 'id,account_id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,title,body,url_tags',
+}
+
 function parseGraphBaseUrl(version?: string) {
   return `https://graph.facebook.com/${esc(version) || DEFAULT_GRAPH_VERSION}`
 }
@@ -174,6 +194,43 @@ async function graphFetch<T = any>(
   const data = await res.json().catch(() => null)
   if (!res.ok || data?.error) {
     throw new Error(data?.error?.message || data?.error_description || `Meta Graph HTTP ${res.status}`)
+  }
+  return data as T
+}
+
+async function graphPost<T = any>(
+  path: string,
+  params: Record<string, string | number | boolean | undefined | null>,
+  accessToken: string,
+  version?: string,
+  appSecret?: string,
+): Promise<T> {
+  const body = new URLSearchParams()
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value == null || value === '') continue
+    body.set(key, String(value))
+  }
+  body.set('access_token', accessToken)
+  const appSecretProof = await buildAppSecretProof(accessToken, appSecret)
+  if (appSecretProof) body.set('appsecret_proof', appSecretProof)
+
+  const url = `${parseGraphBaseUrl(version)}${path.startsWith('/') ? '' : '/'}${path}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok || data?.error) {
+    const err = data?.error || {}
+    const message = err?.error_user_msg || err?.message || data?.error_description || `Meta Graph HTTP ${res.status}`
+    const error = new Error(message)
+    ;(error as any).meta = err
+    ;(error as any).status = res.status
+    throw error
   }
   return data as T
 }
@@ -462,6 +519,49 @@ export async function listMetaAdsInsights(
       frequency: parseOptionalNumber(row?.frequency),
     }
   })
+}
+
+export async function getMetaAdsEntityDetail(
+  accessToken: string,
+  type: MetaAdsEntityType,
+  id: string,
+  version?: string,
+  appSecret?: string,
+) {
+  const cleanId = esc(id)
+  if (!cleanId) throw new Error('Meta Ads entity id is required')
+  try {
+    return await graphFetch<any>(
+      `/${cleanId}`,
+      { fields: ENTITY_DETAIL_FIELDS[type] },
+      accessToken,
+      version,
+      appSecret,
+    )
+  } catch (error) {
+    const detail = await graphFetch<any>(
+      `/${cleanId}`,
+      { fields: ENTITY_SAFE_DETAIL_FIELDS[type] },
+      accessToken,
+      version,
+      appSecret,
+    )
+    detail._crm_detail_warning = String((error as Error | null)?.message || error || 'detail_fields_fallback')
+    return detail
+  }
+}
+
+export async function updateMetaAdsEntity(
+  accessToken: string,
+  type: Exclude<MetaAdsEntityType, 'creative'>,
+  id: string,
+  patch: Record<string, string | number | boolean | undefined | null>,
+  version?: string,
+  appSecret?: string,
+) {
+  const cleanId = esc(id)
+  if (!cleanId) throw new Error('Meta Ads entity id is required')
+  return graphPost<any>(`/${cleanId}`, patch, accessToken, version, appSecret)
 }
 
 export async function debugMetaAccessToken(

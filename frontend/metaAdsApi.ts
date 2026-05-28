@@ -3,6 +3,7 @@ import {
   connectMetaAdsManualLocal,
   disconnectMetaAdsLocal,
   getMetaAdsLocalInventory,
+  getMetaAdsLocalEntityDetail,
   getMetaAdsLocalReport,
   getMetaAdsLocalStatus,
   getMetaAdsLocalSummary,
@@ -12,6 +13,7 @@ import {
   removeMetaAdsLocalAccount,
   selectMetaAdsLocalAccount,
   simulateMetaAdsOAuthConnect,
+  updateMetaAdsLocalEntity,
 } from '@/metaAdsLocalMock'
 import { normalizeMetaAdsApiError } from '@/metaAdsState'
 import type {
@@ -21,6 +23,10 @@ import type {
   MetaAdsSummaryResponse,
   MetaAdsTrendPoint,
   MetaInventoryResponse,
+  MetaAdsEntityDetailResponse,
+  MetaAdsEntityPatch,
+  MetaAdsEntityType,
+  MetaAdsEntityUpdateResponse,
 } from '@/metaAdsTypes'
 
 const META_ADS_API_URL =
@@ -104,4 +110,15 @@ export const metaAdsApi = {
       : request<MetaAdsReportResponse>(`/report${search ? `?${search}` : ''}`)
   },
   inventory: () => (isMetaAdsLocalMockEnabled() ? getMetaAdsLocalInventory() : request<MetaInventoryResponse>('/inventory')),
+  entityDetail: (type: MetaAdsEntityType, id: string) =>
+    isMetaAdsLocalMockEnabled()
+      ? getMetaAdsLocalEntityDetail(type, id)
+      : request<MetaAdsEntityDetailResponse>(`/entities/${type}/${encodeURIComponent(id)}`),
+  updateEntity: (type: MetaAdsEntityType, id: string, patch: MetaAdsEntityPatch) =>
+    isMetaAdsLocalMockEnabled()
+      ? updateMetaAdsLocalEntity(type, id, patch)
+      : request<MetaAdsEntityUpdateResponse>(`/entities/${type}/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ patch }),
+        }),
 }
