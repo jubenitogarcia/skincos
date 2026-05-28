@@ -54,6 +54,7 @@ import {
   Spinner,
   Target,
   TrendUp,
+  TreeStructure,
   Users,
   WarningCircle,
 } from '@phosphor-icons/react'
@@ -102,6 +103,7 @@ type MetaAdsOverviewMetricKey =
   | 'cpm'
   | 'cpp'
   | 'frequency'
+  | 'trend'
 type MetaAdsOverviewMetricSize = 'compact' | 'wide'
 type MetaAdsOverviewMetricLayout = {
   key: MetaAdsOverviewMetricKey
@@ -126,6 +128,7 @@ const DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT: MetaAdsOverviewMetricLayout[] = [
   { key: 'cpm', visible: true, size: 'compact' },
   { key: 'cpp', visible: true, size: 'compact' },
   { key: 'frequency', visible: true, size: 'compact' },
+  { key: 'trend', visible: true, size: 'wide' },
 ]
 const META_ADS_INVENTORY_COLUMN_LIMITS: Record<MetaAdsInventoryColumnKey, { width: number; min: number; max: number }> = {
   item: { width: 300, min: 220, max: 520 },
@@ -169,6 +172,93 @@ const META_ADS_INVENTORY_COLUMN_ORDER: MetaAdsInventoryColumnKey[] = [
   'frequency',
   'cul',
 ]
+const META_ADS_LIVE_FIELD_LABELS: Record<string, string> = {
+  account_id: 'Conta de anúncios',
+  adset: 'Conjunto de anúncios',
+  adset_id: 'ID do conjunto',
+  asset_feed_spec: 'Configuração dinâmica',
+  bid_strategy: 'Estratégia de lance',
+  billing_event: 'Evento de cobrança',
+  body: 'Texto',
+  buying_type: 'Tipo de compra',
+  call_to_action_type: 'Chamada para ação',
+  campaign: 'Campanha',
+  campaign_id: 'ID da campanha',
+  conversion_specs: 'Conversões configuradas',
+  created_time: 'Criado em',
+  creative: 'Criativo',
+  daily_budget: 'Orçamento diário',
+  effective_object_story_id: 'Story ID efetivo',
+  effective_status: 'Status efetivo',
+  end_time: 'Fim',
+  id: 'ID',
+  image_hash: 'Hash da imagem',
+  image_url: 'Imagem',
+  instagram_permalink_url: 'Link do Instagram',
+  issues_info: 'Avisos da Meta',
+  lifetime_budget: 'Orçamento vitalício',
+  name: 'Nome',
+  object_story_id: 'Object story ID',
+  object_story_spec: 'Conteúdo do post/anúncio',
+  object_url: 'URL de destino',
+  objective: 'Objetivo',
+  optimization_goal: 'Meta de otimização',
+  promoted_object: 'Objeto promovido',
+  recommendations: 'Recomendações da Meta',
+  special_ad_categories: 'Categorias especiais',
+  start_time: 'Início',
+  status: 'Status configurado',
+  stop_time: 'Fim',
+  targeting: 'Segmentação',
+  thumbnail_url: 'Miniatura',
+  title: 'Título',
+  tracking_specs: 'Tracking configurado',
+  updated_time: 'Atualizado em',
+  url_tags: 'Parâmetros de URL',
+  video_id: 'ID do vídeo',
+}
+const META_ADS_LIVE_FIELD_ORDER = [
+  'name',
+  'id',
+  'account_id',
+  'status',
+  'effective_status',
+  'objective',
+  'optimization_goal',
+  'daily_budget',
+  'lifetime_budget',
+  'bid_strategy',
+  'buying_type',
+  'billing_event',
+  'start_time',
+  'stop_time',
+  'end_time',
+  'campaign',
+  'campaign_id',
+  'adset',
+  'adset_id',
+  'creative',
+  'promoted_object',
+  'targeting',
+  'special_ad_categories',
+  'tracking_specs',
+  'conversion_specs',
+  'object_story_spec',
+  'asset_feed_spec',
+  'thumbnail_url',
+  'image_url',
+  'title',
+  'body',
+  'call_to_action_type',
+  'url_tags',
+  'instagram_permalink_url',
+  'object_url',
+  'issues_info',
+  'recommendations',
+  'created_time',
+  'updated_time',
+] as const
+const META_ADS_HIDDEN_LIVE_FIELDS = new Set(['_crm_detail_warning'])
 
 function parseMetaAdsOverviewMetricLayout(raw: string | null | undefined): MetaAdsOverviewMetricLayout[] {
   try {
@@ -196,6 +286,128 @@ function parseMetaAdsOverviewMetricLayout(raw: string | null | undefined): MetaA
   } catch {
     return DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT
   }
+}
+
+function getMetaAdsLiveFieldLabel(field: string) {
+  return META_ADS_LIVE_FIELD_LABELS[field] || field.replace(/_/g, ' ')
+}
+
+function summarizeMetaAdsLiveObject(value: Record<string, unknown>) {
+  const preferredKeys = ['name', 'id', 'status', 'effective_status', 'objective', 'optimization_goal', 'pixel_id', 'page_id', 'custom_event_type', 'application_id']
+  const visibleParts = preferredKeys
+    .filter((key) => value[key] !== undefined && value[key] !== null && value[key] !== '')
+    .map((key) => `${getMetaAdsLiveFieldLabel(key)}: ${String(value[key])}`)
+  if (visibleParts.length) return visibleParts.slice(0, 4).join(' · ')
+
+  const primitiveParts = Object.entries(value)
+    .filter(([, item]) => ['string', 'number', 'boolean'].includes(typeof item))
+    .slice(0, 4)
+    .map(([key, item]) => `${getMetaAdsLiveFieldLabel(key)}: ${String(item)}`)
+  if (primitiveParts.length) return primitiveParts.join(' · ')
+
+  const keys = Object.keys(value)
+  return keys.length ? `Configuração disponível (${keys.length} ${keys.length === 1 ? 'campo' : 'campos'})` : ''
+}
+
+function formatMetaAdsLiveFieldValue(field: string, value: unknown) {
+  if (value === null || value === undefined || value === '') return ''
+  if (typeof value === 'boolean') return value ? 'Sim' : 'Não'
+  if (typeof value === 'number') return String(value)
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    if (!value.length) return ''
+    const primitiveValues = value.filter((item) => ['string', 'number', 'boolean'].includes(typeof item))
+    if (primitiveValues.length === value.length) return primitiveValues.map(String).join(', ')
+    return `${value.length} ${value.length === 1 ? 'registro disponível' : 'registros disponíveis'}`
+  }
+  if (typeof value === 'object') {
+    const summary = summarizeMetaAdsLiveObject(value as Record<string, unknown>)
+    if (summary) return summary
+    return `Configuração disponível em ${getMetaAdsLiveFieldLabel(field).toLowerCase()}`
+  }
+  return String(value)
+}
+
+type MetaAdsLiveFieldCard = {
+  key: string
+  label: string
+  value: string
+}
+
+function buildMetaAdsLiveFieldCards(fields: Record<string, unknown>, editableFields: Set<string>) {
+  const entries = Object.entries(fields)
+    .filter(([key]) => !META_ADS_HIDDEN_LIVE_FIELDS.has(key))
+    .map(([key, value]) => ({
+      key,
+      label: getMetaAdsLiveFieldLabel(key),
+      value: formatMetaAdsLiveFieldValue(key, value),
+      editable: editableFields.has(key),
+      order: META_ADS_LIVE_FIELD_ORDER.indexOf(key as (typeof META_ADS_LIVE_FIELD_ORDER)[number]),
+    }))
+    .filter((field) => field.value)
+    .sort((left, right) => {
+      const leftOrder = left.order >= 0 ? left.order : 999
+      const rightOrder = right.order >= 0 ? right.order : 999
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder
+      return left.label.localeCompare(right.label, 'pt-BR')
+    })
+
+  return {
+    editable: entries.filter((field) => field.editable).map(({ key, label, value }) => ({ key, label, value })),
+    readOnly: entries.filter((field) => !field.editable).map(({ key, label, value }) => ({ key, label, value })),
+  }
+}
+
+function MetaAdsLiveFieldPanel({
+  title,
+  description,
+  fields,
+  tone,
+}: {
+  title: string
+  description: string
+  fields: MetaAdsLiveFieldCard[]
+  tone: 'editable' | 'blocked' | 'readonly'
+}) {
+  if (!fields.length) return null
+  const toneClass =
+    tone === 'editable'
+      ? 'border-sky-500/20 bg-sky-500/5'
+      : tone === 'blocked'
+        ? 'border-amber-500/20 bg-amber-500/5'
+      : 'border-slate-800/80 bg-slate-900/45'
+  const badgeClass =
+    tone === 'editable'
+      ? 'bg-sky-400/15 text-sky-100'
+      : tone === 'blocked'
+        ? 'bg-amber-400/15 text-amber-100'
+      : 'bg-slate-700/70 text-slate-200'
+  const badgeLabel =
+    tone === 'editable'
+      ? 'Editável'
+      : tone === 'blocked'
+        ? 'Bloqueado nesta sessão'
+        : 'Somente leitura'
+
+  return (
+    <div className={`space-y-3 rounded-2xl border p-4 ${toneClass}`}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-sm font-medium text-white">{title}</div>
+          <div className="text-xs text-slate-400">{description}</div>
+        </div>
+        <Badge className={badgeClass}>{badgeLabel}</Badge>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {fields.map((field) => (
+          <div key={field.key} className="rounded-2xl border border-slate-800/80 bg-slate-950/45 p-3">
+            <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">{field.label}</div>
+            <div className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-100">{field.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function clampMetaAdsInventoryColumnWidth(key: MetaAdsInventoryColumnKey, width: number) {
@@ -766,6 +978,150 @@ function MetaAdsMetricTile({
   )
 }
 
+function MetaAdsTrendWidget({
+  trend,
+  currency,
+  syncing,
+  size,
+  dragHandleProps,
+  onHide,
+  onResize,
+}: {
+  trend: MetaAdsTrendPoint[]
+  currency: string
+  syncing?: boolean
+  size?: MetaAdsOverviewMetricSize
+  dragHandleProps?: DraggableProvidedDragHandleProps | null
+  onHide?: () => void
+  onResize?: () => void
+}) {
+  const resizeStartRef = useRef<{ x: number; y: number; resized: boolean } | null>(null)
+  const isWide = size === 'wide'
+  const trendTicks = useMemo(() => buildTrendTicks(trend), [trend])
+  const trendAxisFormatter = useMemo(
+    () => (value: string) => formatTrendAxisLabel(value, trend.length),
+    [trend.length],
+  )
+  const chartHeightClass = isWide ? 'h-72' : 'h-52'
+
+  const handleResizePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!onResize) return
+    event.preventDefault()
+    event.stopPropagation()
+    resizeStartRef.current = { x: event.clientX, y: event.clientY, resized: false }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+  const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!onResize || !resizeStartRef.current || resizeStartRef.current.resized) return
+    const deltaX = event.clientX - resizeStartRef.current.x
+    const deltaY = event.clientY - resizeStartRef.current.y
+    if (Math.abs(deltaX) < 28 && Math.abs(deltaY) < 18) return
+    resizeStartRef.current.resized = true
+    onResize()
+  }
+  const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!onResize || !resizeStartRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (!resizeStartRef.current.resized) onResize()
+    resizeStartRef.current = null
+  }
+
+  return (
+    <Card className={`${panelClass} group relative overflow-hidden`}>
+      <MetaAdsSyncOverlay show={syncing && trend.length > 0} label="Atualizando tendência" />
+      <button
+        type="button"
+        className="absolute left-3 top-3 z-10 inline-flex h-6 w-6 cursor-grab items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/45 text-slate-500 opacity-60 shadow-sm transition hover:scale-105 hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 active:cursor-grabbing group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+        aria-label="Mover gráfico de tendência"
+        {...dragHandleProps}
+      >
+        <DotsSixVertical className="h-3.5 w-3.5" weight="bold" />
+      </button>
+      {onHide ? (
+        <button
+          type="button"
+          className="absolute right-3 top-3 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/55 text-slate-400 opacity-0 shadow-sm transition hover:border-rose-400/40 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+          aria-label="Ocultar gráfico de tendência"
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onHide()
+          }}
+        >
+          <EyeSlash className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+      <CardHeader className="pl-11">
+        <CardTitle className="flex items-center gap-2">
+          <PresentationChart className="h-5 w-5 text-sky-300" />
+          Tendência de gasto
+        </CardTitle>
+        <CardDescription className="text-slate-300">Histórico de investimento da conta selecionada.</CardDescription>
+      </CardHeader>
+      <CardContent className={`${chartHeightClass} pt-2`}>
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={trend}>
+            <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+            <XAxis
+              dataKey="day"
+              ticks={trendTicks}
+              minTickGap={24}
+              tickFormatter={trendAxisFormatter}
+              tick={{ fill: 'rgba(219,234,254,0.78)', fontSize: 11 }}
+              tickLine={false}
+              axisLine={{ stroke: 'rgba(148,163,184,0.18)' }}
+              interval="preserveStartEnd"
+              tickMargin={10}
+            />
+            <YAxis
+              tick={{ fill: 'rgba(219,234,254,0.78)', fontSize: 11 }}
+              tickLine={false}
+              axisLine={{ stroke: 'rgba(148,163,184,0.18)' }}
+              width={38}
+            />
+            <RechartsTooltip
+              labelFormatter={formatTrendTooltipLabel}
+              formatter={(value: number) => [formatCurrency(value, currency), 'Investimento']}
+              contentStyle={{
+                backgroundColor: 'rgba(2, 6, 23, 0.92)',
+                border: '1px solid rgba(148, 163, 184, 0.2)',
+                borderRadius: '16px',
+                color: 'white',
+              }}
+              itemStyle={{ color: '#e2e8f0' }}
+              labelStyle={{ color: '#f8fafc' }}
+            />
+            <Line
+              type="monotone"
+              dataKey="spend"
+              stroke="#38bdf8"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, fill: '#7dd3fc', stroke: '#082f49', strokeWidth: 2 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </CardContent>
+      {onResize ? (
+        <button
+          type="button"
+          className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+          aria-label={`${isWide ? 'Reduzir' : 'Ampliar'} gráfico de tendência`}
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerUp}
+          onPointerCancel={() => {
+            resizeStartRef.current = null
+          }}
+        >
+          <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-br-xl border-b border-r border-sky-200/35" aria-hidden="true" />
+        </button>
+      ) : null}
+    </Card>
+  )
+}
+
 function MetaAdsSyncOverlay({
   show,
   label = 'Sincronizando dados da Meta',
@@ -1082,6 +1438,22 @@ function MetaAdsEntityDetailDialog({
       : undefined
   const hasValue = (value: unknown) => value !== undefined && value !== null && value !== ''
   const fieldValue = (key: string, fallback?: unknown) => (hasValue((fields as any)?.[key]) ? (fields as any)[key] : fallback)
+  const adLinkedCreative =
+    detail.kind === 'ad'
+      ? ((fields as any)?.creative || (detail.payload as MetaAd).creative || null)
+      : null
+  const adLinkedCreativePreview = adLinkedCreative
+    ? String(adLinkedCreative.image_url || adLinkedCreative.thumbnail_url || '')
+    : ''
+  const adLinkedCreativeName = adLinkedCreative
+    ? getMetaAdsCreativeDisplayName({
+        id: String(adLinkedCreative.id || ''),
+        name: String(adLinkedCreative.name || adLinkedCreative.id || 'Criativo vinculado'),
+        imageUrl: adLinkedCreative.image_url || null,
+        thumbnailUrl: adLinkedCreative.thumbnail_url || null,
+        effectiveObjectStoryId: adLinkedCreative.effective_object_story_id || null,
+      })
+    : ''
   const filterSections = (sections: EntityDetailSection[]) =>
     sections
       .map((section) => ({
@@ -1184,8 +1556,13 @@ function MetaAdsEntityDetailDialog({
         fields: [
           { label: 'Campanha', value: (fields as any)?.campaign?.name || payload.campaign_name || payload.campaign_id },
           { label: 'Conjunto de anúncios', value: (fields as any)?.adset?.name || payload.adset_name || payload.adset_id },
-          { label: 'Criativo', value: (fields as any)?.creative?.name || payload.creative?.name || payload.creative?.id },
+          { label: 'Criativo', value: adLinkedCreativeName || (fields as any)?.creative?.name || payload.creative?.name || payload.creative?.id },
           { label: 'Story ID efetivo', value: (fields as any)?.creative?.effective_object_story_id || payload.creative?.effective_object_story_id },
+          { label: 'CTA', value: (fields as any)?.creative?.call_to_action_type || payload.creative?.call_to_action_type },
+          { label: 'Título do criativo', value: (fields as any)?.creative?.title || payload.creative?.title },
+          { label: 'Texto do criativo', value: (fields as any)?.creative?.body || payload.creative?.body },
+          { label: 'URL de destino', value: (fields as any)?.creative?.object_url || payload.creative?.object_url },
+          { label: 'Tags de URL', value: (fields as any)?.creative?.url_tags || payload.creative?.url_tags },
           { label: 'Criado em', value: fieldValue('created_time') },
           { label: 'Atualizado em', value: fieldValue('updated_time') },
         ],
@@ -1221,6 +1598,10 @@ function MetaAdsEntityDetailDialog({
 
   const editableFields = liveEntity?.editableFields || []
   const canEdit = Boolean(liveEntity?.editable && editableFields.length)
+  const hasPotentialEditableFields = Boolean(editableFields.length)
+  const liveFieldGroups = liveEntity
+    ? buildMetaAdsLiveFieldCards(liveEntity.fields || {}, new Set(editableFields))
+    : { editable: [], readOnly: [] }
   const changedPatch = editableFields.reduce((patch, field) => {
     const previous = String((liveEntity?.fields as any)?.[field] ?? '')
     const next = String(form[field] ?? '')
@@ -1317,6 +1698,61 @@ function MetaAdsEntityDetailDialog({
         {liveEntity?.readOnlyReason ? <div className="mt-3 text-xs text-slate-300">{liveEntity.readOnlyReason}</div> : null}
       </div>
 
+      <MetaAdsLiveFieldPanel
+        title="Campos editáveis pela API da Meta"
+        description={
+          canEdit
+            ? 'Valores atuais dos campos que este CRM pode enviar de volta para a Meta com validação e confirmação.'
+            : 'A Meta permite editar estes campos, mas a conexão atual não possui permissão de gerenciamento; por isso eles ficam visíveis sem edição.'
+        }
+        fields={liveFieldGroups.editable}
+        tone={canEdit ? 'editable' : hasPotentialEditableFields ? 'blocked' : 'readonly'}
+      />
+
+      {detail.kind === 'ad' && adLinkedCreative ? (
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium text-white">Criativo vinculado ao anúncio</div>
+              <div className="text-xs text-slate-400">Dados retornados pela Meta para o criativo usado por este anúncio.</div>
+            </div>
+            <Badge className="bg-amber-500/15 text-amber-100">Leitura</Badge>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]">
+            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
+              {adLinkedCreativePreview ? (
+                <img src={adLinkedCreativePreview} alt="" className="h-28 w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
+              ) : (
+                <div className="flex h-28 items-center justify-center text-xs text-slate-500">Sem prévia</div>
+              )}
+            </div>
+            <div className="min-w-0 space-y-2 text-sm">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Nome</div>
+                <div className="truncate text-slate-100">{adLinkedCreativeName}</div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">ID</div>
+                  <div className="break-all font-mono text-xs text-blue-100/70">{adLinkedCreative.id || '—'}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Story ID</div>
+                  <div className="break-all font-mono text-xs text-blue-100/70">{adLinkedCreative.effective_object_story_id || adLinkedCreative.object_story_id || '—'}</div>
+                </div>
+              </div>
+              {adLinkedCreative.title || adLinkedCreative.body || adLinkedCreative.call_to_action_type ? (
+                <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-3 text-xs text-slate-300">
+                  {adLinkedCreative.title ? <div className="font-medium text-slate-100">{adLinkedCreative.title}</div> : null}
+                  {adLinkedCreative.body ? <div className="mt-1 line-clamp-3">{adLinkedCreative.body}</div> : null}
+                  {adLinkedCreative.call_to_action_type ? <div className="mt-2 text-slate-400">CTA: {adLinkedCreative.call_to_action_type}</div> : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {canEdit ? (
         <div className="space-y-3 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
           <div>
@@ -1363,6 +1799,13 @@ function MetaAdsEntityDetailDialog({
           </div>
         </div>
       ) : null}
+
+      <MetaAdsLiveFieldPanel
+        title="Campos somente leitura retornados pela Meta"
+        description="Informações disponíveis para conferência no CRM, mas bloqueadas para edição segura nesta versão ou pela própria API da Meta."
+        fields={liveFieldGroups.readOnly}
+        tone="readonly"
+      />
     </EntityDetailModal>
   )
 }
@@ -1640,11 +2083,6 @@ export function MetaAdsOverviewPanel({
 
   const reportSummary = report?.summary || null
   const primarySummary = reportSummary || summary
-  const trendTicks = useMemo(() => buildTrendTicks(trend), [trend])
-  const trendAxisFormatter = useMemo(
-    () => (value: string) => formatTrendAxisLabel(value, trend.length),
-    [trend.length],
-  )
   const reportTotals = useMemo(() => {
     const campaigns = report?.campaigns || []
     return campaigns.reduce(
@@ -1877,25 +2315,37 @@ export function MetaAdsOverviewPanel({
       selectedAccount.currency,
     ],
   )
+  const overviewTiles = useMemo(
+    () => [
+      ...metricTiles,
+      {
+        key: 'trend' as const,
+        label: 'Tendência de gasto',
+        tooltipLabel: 'Tendência de gasto',
+        description: 'Histórico visual do investimento da conta no período selecionado.',
+      },
+    ],
+    [metricTiles],
+  )
 
   const visibleMetricTiles = useMemo(() => {
-    const byKey = new Map(metricTiles.map((tile) => [tile.key, tile]))
+    const byKey = new Map(overviewTiles.map((tile) => [tile.key, tile]))
     return metricLayout
       .map((config) => {
         const tile = byKey.get(config.key)
         if (!tile || !config.visible) return null
         return { ...tile, size: config.size }
       })
-      .filter(Boolean) as Array<(typeof metricTiles)[number] & { size: MetaAdsOverviewMetricSize }>
-  }, [metricLayout, metricTiles])
+      .filter(Boolean) as Array<(typeof overviewTiles)[number] & { size: MetaAdsOverviewMetricSize }>
+  }, [metricLayout, overviewTiles])
 
   const hiddenMetricTiles = useMemo(() => {
-    const byKey = new Map(metricTiles.map((tile) => [tile.key, tile]))
+    const byKey = new Map(overviewTiles.map((tile) => [tile.key, tile]))
     return metricLayout
       .filter((config) => !config.visible)
       .map((config) => byKey.get(config.key))
-      .filter(Boolean) as typeof metricTiles
-  }, [metricLayout, metricTiles])
+      .filter(Boolean) as typeof overviewTiles
+  }, [metricLayout, overviewTiles])
 
   const updateMetricTile = (key: MetaAdsOverviewMetricKey, patch: Partial<MetaAdsOverviewMetricLayout>) => {
     setMetricLayout((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)))
@@ -1982,21 +2432,33 @@ export function MetaAdsOverviewPanel({
                       <div
                         ref={dragProvided.innerRef}
                         {...dragProvided.draggableProps}
-                        className={`${tile.size === 'wide' ? 'col-span-2' : ''} ${snapshot.isDragging ? 'z-30' : ''}`}
+                        className={`${tile.key === 'trend' ? (tile.size === 'wide' ? 'col-span-2 md:col-span-3 xl:col-span-4' : 'col-span-2') : tile.size === 'wide' ? 'col-span-2' : ''} ${snapshot.isDragging ? 'z-30' : ''}`}
                       >
-                        <MetaAdsMetricTile
-                          label={tile.label}
-                          tooltipLabel={tile.tooltipLabel}
-                          description={tile.description}
-                          subtitle={tile.subtitle}
-                          value={tile.value}
-                          icon={tile.icon}
-                          toneClass={tile.toneClass}
-                          size={tile.size}
-                          dragHandleProps={dragProvided.dragHandleProps}
-                          onHide={() => updateMetricTile(tile.key, { visible: false })}
-                          onResize={() => updateMetricTile(tile.key, { size: tile.size === 'wide' ? 'compact' : 'wide' })}
-                        />
+                        {tile.key === 'trend' ? (
+                          <MetaAdsTrendWidget
+                            trend={trend}
+                            currency={selectedAccount.currency || 'USD'}
+                            syncing={syncing}
+                            size={tile.size}
+                            dragHandleProps={dragProvided.dragHandleProps}
+                            onHide={() => updateMetricTile(tile.key, { visible: false })}
+                            onResize={() => updateMetricTile(tile.key, { size: tile.size === 'wide' ? 'compact' : 'wide' })}
+                          />
+                        ) : (
+                          <MetaAdsMetricTile
+                            label={tile.label}
+                            tooltipLabel={tile.tooltipLabel}
+                            description={tile.description}
+                            subtitle={tile.subtitle}
+                            value={tile.value}
+                            icon={tile.icon}
+                            toneClass={tile.toneClass}
+                            size={tile.size}
+                            dragHandleProps={dragProvided.dragHandleProps}
+                            onHide={() => updateMetricTile(tile.key, { visible: false })}
+                            onResize={() => updateMetricTile(tile.key, { size: tile.size === 'wide' ? 'compact' : 'wide' })}
+                          />
+                        )}
                       </div>
                     )}
                   </Draggable>
@@ -2022,61 +2484,6 @@ export function MetaAdsOverviewPanel({
           )}
         </Droppable>
       </DragDropContext>
-
-      <Card className={`${panelClass} relative overflow-hidden`}>
-        <MetaAdsSyncOverlay show={syncing && trend.length > 0} label="Atualizando tendência" />
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <PresentationChart className="h-5 w-5 text-sky-300" />
-            Tendência de gasto
-          </CardTitle>
-          <CardDescription className="text-slate-300">Histórico de investimento da conta selecionada.</CardDescription>
-        </CardHeader>
-        <CardContent className="h-72 pt-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={trend}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-              <XAxis
-                dataKey="day"
-                ticks={trendTicks}
-                minTickGap={24}
-                tickFormatter={trendAxisFormatter}
-                tick={{ fill: 'rgba(219,234,254,0.78)', fontSize: 11 }}
-                tickLine={false}
-                axisLine={{ stroke: 'rgba(148,163,184,0.18)' }}
-                interval="preserveStartEnd"
-                tickMargin={10}
-              />
-              <YAxis
-                tick={{ fill: 'rgba(219,234,254,0.78)', fontSize: 11 }}
-                tickLine={false}
-                axisLine={{ stroke: 'rgba(148,163,184,0.18)' }}
-                width={38}
-              />
-              <RechartsTooltip
-                labelFormatter={formatTrendTooltipLabel}
-                formatter={(value: number) => [formatCurrency(value, selectedAccount.currency || 'USD'), 'Investimento']}
-                contentStyle={{
-                  backgroundColor: 'rgba(2, 6, 23, 0.92)',
-                  border: '1px solid rgba(148, 163, 184, 0.2)',
-                  borderRadius: '16px',
-                  color: 'white',
-                }}
-                itemStyle={{ color: '#e2e8f0' }}
-                labelStyle={{ color: '#f8fafc' }}
-              />
-              <Line
-                type="monotone"
-                dataKey="spend"
-                stroke="#38bdf8"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4, fill: '#7dd3fc', stroke: '#082f49', strokeWidth: 2 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
     </>
   )
 }
@@ -2694,19 +3101,19 @@ export function MetaAdsInventoryPanel({
   return (
     <>
       <MetaAdsPersistentError error={inventoryError} onRetry={onRetry} />
-      {loading && !inventoryTreeRows.length ? <MetaAdsLoadingCard label="Sincronizando estrutura operacional" /> : null}
+      {loading && !inventoryTreeRows.length ? <MetaAdsLoadingCard label="Sincronizando mapa da conta Meta" /> : null}
       <MetaAdsEntityDetailDialog detail={detail} open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)} onEntityUpdated={onEntityUpdated} />
       <Card className={`${panelClass} relative overflow-hidden`}>
-        <MetaAdsSyncOverlay show={syncing && inventoryTreeRows.length > 0} label="Atualizando estrutura" />
+        <MetaAdsSyncOverlay show={syncing && inventoryTreeRows.length > 0} label="Atualizando mapa da conta" />
         <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <FadersHorizontal className="h-5 w-5 text-sky-300" />
-                Estrutura operacional
+                <TreeStructure className="h-5 w-5 text-sky-300" />
+                Mapa da conta Meta
               </CardTitle>
               <CardDescription className="text-slate-300">
-                Árvore única de campanha, conjunto de anúncios e anúncio. Use a seta à esquerda para expandir ou compactar a hierarquia sem perder as colunas operacionais.
+                Hierarquia navegável de campanhas, conjuntos de anúncios e anúncios. Use a seta à esquerda para expandir ou compactar sem perder as métricas operacionais.
               </CardDescription>
             </div>
           </div>
@@ -2852,7 +3259,7 @@ export function MetaAdsInventoryPanel({
                   return (
                     <TableRow key={row.key} className={rowClass(row.level)}>
                       <TableCell>
-                        <div className="space-y-1">
+                        <div className="space-y-1 pl-3">
                           <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
                             <button
                               type="button"
@@ -2941,7 +3348,7 @@ export function MetaAdsInventoryPanel({
                 return (
                   <TableRow key={row.key} className={rowClass(row.level)}>
                     <TableCell>
-                      <div className="space-y-1">
+                      <div className="space-y-1 pl-6">
                         <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
                           <span className="inline-flex h-7 w-7" aria-hidden="true" />
                           <MetaAdsEntityInlineBadge

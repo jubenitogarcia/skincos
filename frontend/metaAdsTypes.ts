@@ -54,6 +54,17 @@ export type MetaAdCreativeRef = {
   thumbnail_url?: string | null
   image_url?: string | null
   effective_object_story_id?: string | null
+  object_story_id?: string | null
+  object_story_spec?: unknown
+  asset_feed_spec?: unknown
+  image_hash?: string | null
+  video_id?: string | null
+  title?: string | null
+  body?: string | null
+  call_to_action_type?: string | null
+  url_tags?: string | null
+  instagram_permalink_url?: string | null
+  object_url?: string | null
 }
 
 export type MetaCampaignRow = {

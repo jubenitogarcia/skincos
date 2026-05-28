@@ -5,7 +5,19 @@ import type { ReactNode } from 'react'
 function formatDetailValue(value: unknown) {
   if (value == null || value === '') return '—'
   if (typeof value === 'boolean') return value ? 'Sim' : 'Não'
-  if (Array.isArray(value)) return value.length ? value.join(', ') : '—'
+  if (Array.isArray(value)) {
+    if (!value.length) return '—'
+    const primitiveValues = value.filter((item) => ['string', 'number', 'boolean'].includes(typeof item))
+    if (primitiveValues.length === value.length) return primitiveValues.map(String).join(', ')
+    return `${value.length} ${value.length === 1 ? 'registro disponível' : 'registros disponíveis'}`
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => ['string', 'number', 'boolean'].includes(typeof item))
+      .slice(0, 3)
+      .map(([key, item]) => `${key.replace(/_/g, ' ')}: ${String(item)}`)
+    return entries.length ? entries.join(' · ') : 'Configuração disponível'
+  }
   return String(value)
 }
 

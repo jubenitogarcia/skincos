@@ -101,6 +101,29 @@ describe('Meta Ads live entity API', () => {
     )
   })
 
+  it('keeps potentially editable fields visible but locked without ads_management', async () => {
+    mockConnection(['ads_read'])
+    ;(getMetaAdsEntityDetail as Mock).mockResolvedValue({
+      id: 'cmp_1',
+      account_id: 'act_123',
+      name: 'Campanha Primavera',
+      status: 'ACTIVE',
+    })
+
+    const response = await onRequest(createContext('https://crm.skincos.com.br/api/meta-ads/entities/campaign/cmp_1'))
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        ok: true,
+        entity: expect.objectContaining({
+          editable: false,
+          editableFields: expect.arrayContaining(['name', 'status']),
+          readOnlyReason: expect.stringContaining('ads_management'),
+        }),
+      }),
+    )
+  })
+
   it('rejects live details for entities outside the selected ad account', async () => {
     ;(getMetaAdsEntityDetail as Mock).mockResolvedValue({
       id: 'cmp_1',

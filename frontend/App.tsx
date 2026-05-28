@@ -1298,13 +1298,14 @@ export default function AppFunctionalNeatlab() {
                                                                         <SelectValue placeholder="Conta de anúncios" />
                                                                     </SelectTrigger>
                                                                     <SelectContent>
-                                                                        <SelectItem value="__meta_ads_add_connection__" className="bg-slate-950 text-sky-100 focus:bg-sky-500/15 focus:text-sky-50">
-                                                                            <div className="flex w-full items-center gap-2 pr-4">
-                                                                                <Plus className="size-3.5 text-sky-300" aria-hidden="true" />
-                                                                                <span>Adicionar conexão</span>
-                                                                            </div>
-                                                                        </SelectItem>
-                                                                        {(metaAdsHeaderState?.accounts || []).map((account) => {
+                                                                        {[...(metaAdsHeaderState?.accounts || [])]
+                                                                            .sort((a, b) => {
+                                                                                if (a.id === metaAdsHeaderState?.selectedAccountId) return -1
+                                                                                if (b.id === metaAdsHeaderState?.selectedAccountId) return 1
+                                                                                return (a.name || a.id).localeCompare(b.name || b.id, 'pt-BR')
+                                                                            })
+                                                                            .map((account) => {
+                                                                            const isSelectedAccount = account.id === metaAdsHeaderState?.selectedAccountId
                                                                             const statusTone =
                                                                                 account.statusTone === 'success'
                                                                                     ? 'bg-emerald-500/12 text-emerald-100 focus:bg-emerald-500/20 focus:text-emerald-50'
@@ -1317,7 +1318,7 @@ export default function AppFunctionalNeatlab() {
                                                                                 <SelectItem
                                                                                     key={account.id}
                                                                                     value={account.id}
-                                                                                    className={statusTone}
+                                                                                    className={`${statusTone} ${isSelectedAccount ? 'border-l-2 border-sky-300/80 font-semibold ring-1 ring-inset ring-sky-300/20' : 'border-l-2 border-transparent font-normal'}`}
                                                                                     hideIndicator
                                                                                     action={
                                                                                         <button
@@ -1340,11 +1341,17 @@ export default function AppFunctionalNeatlab() {
                                                                                     }
                                                                                 >
                                                                                     <div className="flex min-w-0 items-center pr-7">
-                                                                                        <span className="truncate">{account.name || account.id}</span>
+                                                                                        <span className={`truncate ${isSelectedAccount ? 'text-white' : ''}`}>{account.name || account.id}</span>
                                                                                     </div>
                                                                                 </SelectItem>
                                                                             )
                                                                         })}
+                                                                        <SelectItem value="__meta_ads_add_connection__" className="bg-slate-950 text-sky-100 focus:bg-sky-500/15 focus:text-sky-50">
+                                                                            <div className="flex w-full items-center gap-2 pr-4">
+                                                                                <Plus className="size-3.5 text-sky-300" aria-hidden="true" />
+                                                                                <span>Adicionar conexão</span>
+                                                                            </div>
+                                                                        </SelectItem>
                                                                     </SelectContent>
                                                                 </Select>
                                                             </div>
