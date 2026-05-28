@@ -2,6 +2,10 @@ import type {
   MetaAdAccount,
   MetaAdsReportResponse,
   MetaAdsApiError,
+  MetaAdsEntityDetailResponse,
+  MetaAdsEntityPatch,
+  MetaAdsEntityType,
+  MetaAdsEntityUpdateResponse,
   MetaAdsReportWindowDays,
   MetaAdsStatusResponse,
   MetaAdsSummaryResponse,
@@ -27,8 +31,11 @@ type MetaAdsLocalState = {
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const STORAGE_KEY = 'metaAds.localState.v1'
+const ENTITY_PATCH_STORAGE_KEY = 'metaAds.localEntityPatches.v1'
 const SCENARIO_QUERY_KEY = 'metaAdsLocalScenario'
 const DEFAULT_ACCOUNT_ID = 'act_123'
+
+type LocalEntityPatchMap = Partial<Record<MetaAdsEntityType, Record<string, MetaAdsEntityPatch>>>
 
 function resolveRequestedDays(params?: { since?: string; until?: string }): number {
   const since = params?.since ? new Date(params.since) : null
@@ -67,6 +74,36 @@ function interpolateMetric(days: number, anchors: { d7: number; d30: number; d60
 function roundMetric(value: number, digits = 2) {
   const factor = 10 ** digits
   return Math.round(value * factor) / factor
+}
+
+function readLocalEntityPatches(): LocalEntityPatchMap {
+  try {
+    return JSON.parse(window.localStorage.getItem(ENTITY_PATCH_STORAGE_KEY) || '{}') || {}
+  } catch {
+    return {}
+  }
+}
+
+function writeLocalEntityPatch(type: MetaAdsEntityType, id: string, patch: MetaAdsEntityPatch) {
+  const current = readLocalEntityPatches()
+  current[type] = {
+    ...(current[type] || {}),
+    [id]: {
+      ...((current[type] || {})[id] || {}),
+      ...patch,
+    },
+  }
+  window.localStorage.setItem(ENTITY_PATCH_STORAGE_KEY, JSON.stringify(current))
+}
+
+function applyLocalEntityPatches(inventory: MetaInventoryResponse['inventory']) {
+  const patches = readLocalEntityPatches()
+  return {
+    campaigns: inventory.campaigns.map((campaign) => ({ ...campaign, ...((patches.campaign || {})[campaign.id] || {}) })),
+    adSets: inventory.adSets.map((adSet) => ({ ...adSet, ...((patches.adset || {})[adSet.id] || {}) })),
+    ads: inventory.ads.map((ad) => ({ ...ad, ...((patches.ad || {})[ad.id] || {}) })),
+    creatives: inventory.creatives.map((creative) => ({ ...creative, ...((patches.creative || {})[creative.id] || {}) })),
+  }
 }
 
 function buildAdaptiveTrend(
@@ -453,7 +490,7 @@ export async function getMetaAdsLocalInventory(): Promise<MetaInventoryResponse>
     return {
       ok: true,
       accountId,
-      inventory: {
+      inventory: applyLocalEntityPatches({
         campaigns: [
           {
             id: 'cmp_ret_1',
@@ -502,14 +539,14 @@ export async function getMetaAdsLocalInventory(): Promise<MetaInventoryResponse>
             adName: 'Anúncio Remarketing 1',
           },
         ],
-      },
+      }),
     }
   }
 
   return {
     ok: true,
     accountId,
-    inventory: {
+    inventory: applyLocalEntityPatches({
       campaigns: [
           {
             id: 'cmp_1',
@@ -605,6 +642,83 @@ export async function getMetaAdsLocalInventory(): Promise<MetaInventoryResponse>
           effectiveObjectStoryId: 'story_2',
         },
       ],
+    }),
+  }
+}
+
+function localEditableFields(type: MetaAdsEntityType) {
+  if (type === 'creative') return []
+  if (type === 'ad') return ['name', 'status']
+  if (type === 'campaign') return ['name', 'status', 'daily_budget', 'lifetime_budget', 'start_time', 'stop_time']
+  return ['name', 'status', 'daily_budget', 'lifetime_budget', 'start_time', 'end_time', 'bid_strategy', 'optimization_goal']
+}
+
+function buildLocalEntityDetail(type: MetaAdsEntityType, id: string, fields: Record<string, unknown>, accountId: string): MetaAdsEntityDetailResponse {
+  const editableFields = localEditableFields(type)
+  return {
+    ok: true,
+    entity: {
+      type,
+      id,
+      accountId,
+      editable: type !== 'creative',
+      readOnlyReason:
+        type === 'creative'
+          ? 'Criativos ficam somente leitura nesta versão local; alterações reais exigem criar uma variação e substituir no anúncio.'
+          : null,
+      editableFields,
+      fields,
+      raw: fields,
+      updatedAt: new Date().toISOString(),
+    },
+  }
+}
+
+export async function getMetaAdsLocalEntityDetail(type: MetaAdsEntityType, id: string): Promise<MetaAdsEntityDetailResponse> {
+  const inventory = await getMetaAdsLocalInventory()
+  const entity =
+    type === 'campaign'
+      ? inventory.inventory.campaigns.find((item) => item.id === id)
+      : type === 'adset'
+        ? inventory.inventory.adSets.find((item) => item.id === id)
+        : type === 'ad'
+          ? inventory.inventory.ads.find((item) => item.id === id)
+          : inventory.inventory.creatives.find((item) => item.id === id)
+  if (!entity) {
+    throw {
+      code: 'META_ADS_ENTITY_NOT_FOUND',
+      message: 'Item Meta Ads não encontrado no mock local.',
+      retryable: false,
+    }
+  }
+  return buildLocalEntityDetail(type, id, entity as Record<string, unknown>, inventory.accountId)
+}
+
+export async function updateMetaAdsLocalEntity(
+  type: MetaAdsEntityType,
+  id: string,
+  patch: MetaAdsEntityPatch,
+): Promise<MetaAdsEntityUpdateResponse> {
+  if (type === 'creative') {
+    throw {
+      code: 'META_ADS_CREATIVE_READ_ONLY',
+      message: 'Criativos estão em modo somente leitura nesta versão.',
+      retryable: false,
+    }
+  }
+  writeLocalEntityPatch(type, id, patch)
+  const detail = await getMetaAdsLocalEntityDetail(type, id)
+  const changedFields = Object.keys(patch)
+  return {
+    ok: true,
+    entity: detail.entity,
+    changedFields,
+    audit: {
+      entityType: type,
+      entityId: id,
+      adAccountId: detail.entity.accountId,
+      changedFields,
+      timestamp: new Date().toISOString(),
     },
   }
 }

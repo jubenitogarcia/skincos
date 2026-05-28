@@ -11,7 +11,7 @@ import {
   buildMetaAdsWorkflowReport,
   normalizeMetaAdsWorkflowAccountId,
 } from '../metaAdsWorkflowReport'
-import { listMetaAdsInsights } from '../functions/_lib/metaAdsGraph'
+import { getMetaAdsEntityDetail, listMetaAdsInsights, updateMetaAdsEntity } from '../functions/_lib/metaAdsGraph'
 import type { MetaAdsStatusResponse } from '../metaAdsTypes'
 
 const baseStatus = (overrides: Partial<MetaAdsStatusResponse> = {}): MetaAdsStatusResponse => ({
@@ -433,5 +433,69 @@ describe('Meta Ads state helpers', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  it('fetches live Meta Ads entity details with the expected Graph fields', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 'cmp_1',
+          account_id: 'act_123',
+          name: 'Campanha Primavera',
+          status: 'ACTIVE',
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    )
+
+    const detail = await getMetaAdsEntityDetail('token', 'campaign', 'cmp_1', 'v20.0')
+    expect(detail).toMatchObject({ id: 'cmp_1', account_id: 'act_123', status: 'ACTIVE' })
+    const requestedUrl = String((globalThis.fetch as any).mock.calls[0][0])
+    expect(requestedUrl).toContain('/v20.0/cmp_1?')
+    expect(requestedUrl).toContain('fields=')
+    expect(decodeURIComponent(requestedUrl)).toContain('daily_budget')
+    expect(decodeURIComponent(requestedUrl)).toContain('issues_info')
+  })
+
+  it('falls back to safe entity detail fields when rich Meta fields are rejected', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: 'Unsupported field issues_info' } }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'cmp_1', account_id: 'act_123', name: 'Campanha 1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+
+    const detail = await getMetaAdsEntityDetail('token', 'campaign', 'cmp_1', 'v20.0')
+    expect(detail).toMatchObject({ id: 'cmp_1', account_id: 'act_123', _crm_detail_warning: 'Unsupported field issues_info' })
+    const fallbackUrl = String((globalThis.fetch as any).mock.calls[1][0])
+    expect(decodeURIComponent(fallbackUrl)).not.toContain('issues_info')
+  })
+
+  it('updates Meta Ads entities through POST form payloads', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    const result = await updateMetaAdsEntity('token', 'ad', 'ad_1', { name: 'Novo anúncio', status: 'PAUSED' }, 'v20.0')
+    expect(result).toEqual({ success: true })
+    const [url, init] = (globalThis.fetch as any).mock.calls[0]
+    expect(String(url)).toBe('https://graph.facebook.com/v20.0/ad_1')
+    expect(init.method).toBe('POST')
+    expect(String(init.body)).toContain('name=Novo+an%C3%BAncio')
+    expect(String(init.body)).toContain('status=PAUSED')
+    expect(String(init.body)).toContain('access_token=token')
   })
 })
