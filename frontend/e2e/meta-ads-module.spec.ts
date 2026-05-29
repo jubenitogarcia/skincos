@@ -311,13 +311,13 @@ test.describe('meta ads', () => {
     await page.getByRole('button', { name: 'Campanha Primavera' }).click()
     await expect(page.getByRole('dialog')).toContainText('Campanha Primavera')
     await expect(page.getByRole('dialog')).toContainText('Orçamento diário')
-    await expect(page.getByRole('dialog')).toContainText('12000')
+    await expect(page.getByRole('dialog')).toContainText('R$ 120,00')
     await page.getByRole('button', { name: 'Fechar' }).click()
 
     await page.getByRole('button', { name: 'Conjunto 1' }).click()
     await expect(page.getByRole('dialog')).toContainText('Conjunto 1')
     await expect(page.getByRole('dialog')).toContainText('Anúncios associados')
-    await expect(page.getByRole('dialog')).toContainText('LEAD_GENERATION')
+    await expect(page.getByRole('dialog')).toContainText('Campanha Primavera')
     await page.getByRole('button', { name: 'Fechar' }).click()
 
     await page.getByRole('button', { name: 'Anúncio 1', exact: true }).click()

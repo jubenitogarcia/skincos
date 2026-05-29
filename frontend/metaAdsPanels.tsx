@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { EntityDetailModal, type EntityDetailSection } from '@/EntityDetailModal'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
+import { Switch } from '@/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
 import { Textarea } from '@/textarea'
 import { TooltipLabel } from '@/tooltip'
@@ -259,6 +260,9 @@ const META_ADS_LIVE_FIELD_ORDER = [
   'updated_time',
 ] as const
 const META_ADS_HIDDEN_LIVE_FIELDS = new Set(['_crm_detail_warning'])
+const META_ADS_MODAL_HEADER_FIELDS = new Set(['id', 'account_id', 'name', 'status', 'effective_status', 'objective', 'optimization_goal', 'buying_type'])
+const META_ADS_MODAL_TIMELINE_FIELDS = new Set(['start_time', 'stop_time', 'end_time', 'created_time', 'updated_time'])
+const META_ADS_BUDGET_FIELDS = new Set(['daily_budget', 'lifetime_budget'])
 
 function parseMetaAdsOverviewMetricLayout(raw: string | null | undefined): MetaAdsOverviewMetricLayout[] {
   try {
@@ -309,10 +313,41 @@ function summarizeMetaAdsLiveObject(value: Record<string, unknown>) {
   return keys.length ? `Configuração disponível (${keys.length} ${keys.length === 1 ? 'campo' : 'campos'})` : ''
 }
 
+function formatMetaAdsLiveDate(value: unknown) {
+  if (value === null || value === undefined || value === '') return ''
+  const raw = String(value)
+  const normalized = raw.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) return raw
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function formatMetaAdsBudgetFromCents(value: unknown, currency = 'BRL') {
+  if (value === null || value === undefined || value === '') return ''
+  const cents = Number(String(value).replace(/[^\d.-]/g, ''))
+  if (!Number.isFinite(cents)) return String(value)
+  return formatCurrency(cents / 100, currency)
+}
+
+function parseMetaAdsBudgetToCents(value: string) {
+  const normalized = value.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.')
+  const amount = Number(normalized)
+  if (!Number.isFinite(amount)) return ''
+  return String(Math.max(0, Math.round(amount * 100)))
+}
+
 function formatMetaAdsLiveFieldValue(field: string, value: unknown) {
   if (value === null || value === undefined || value === '') return ''
   if (typeof value === 'boolean') return value ? 'Sim' : 'Não'
   if (typeof value === 'number') return String(value)
+  if (META_ADS_BUDGET_FIELDS.has(field)) return formatMetaAdsBudgetFromCents(value)
+  if (META_ADS_MODAL_TIMELINE_FIELDS.has(field)) return formatMetaAdsLiveDate(value)
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
     if (!value.length) return ''
@@ -334,9 +369,9 @@ type MetaAdsLiveFieldCard = {
   value: string
 }
 
-function buildMetaAdsLiveFieldCards(fields: Record<string, unknown>, editableFields: Set<string>) {
+function buildMetaAdsLiveFieldCards(fields: Record<string, unknown>, editableFields: Set<string>, excludedFields = new Set<string>()) {
   const entries = Object.entries(fields)
-    .filter(([key]) => !META_ADS_HIDDEN_LIVE_FIELDS.has(key))
+    .filter(([key]) => !META_ADS_HIDDEN_LIVE_FIELDS.has(key) && !excludedFields.has(key))
     .map(([key, value]) => ({
       key,
       label: getMetaAdsLiveFieldLabel(key),
@@ -375,7 +410,7 @@ function MetaAdsLiveFieldPanel({
       ? 'border-sky-500/20 bg-sky-500/5'
       : tone === 'blocked'
         ? 'border-amber-500/20 bg-amber-500/5'
-      : 'border-slate-800/80 bg-slate-900/45'
+      : 'border-slate-800/70 bg-slate-900/30'
   const badgeClass =
     tone === 'editable'
       ? 'bg-sky-400/15 text-sky-100'
@@ -388,6 +423,10 @@ function MetaAdsLiveFieldPanel({
       : tone === 'blocked'
         ? 'Bloqueado nesta sessão'
         : 'Somente leitura'
+  const fieldClass =
+    tone === 'readonly'
+      ? 'border-slate-800/65 bg-slate-950/35 opacity-75'
+      : 'border-slate-800/80 bg-slate-950/45'
 
   return (
     <div className={`space-y-3 rounded-2xl border p-4 ${toneClass}`}>
@@ -396,13 +435,13 @@ function MetaAdsLiveFieldPanel({
           <div className="text-sm font-medium text-white">{title}</div>
           <div className="text-xs text-slate-400">{description}</div>
         </div>
-        <Badge className={badgeClass}>{badgeLabel}</Badge>
+        {tone === 'readonly' ? null : <Badge className={badgeClass}>{badgeLabel}</Badge>}
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {fields.map((field) => (
-          <div key={field.key} className="rounded-2xl border border-slate-800/80 bg-slate-950/45 p-3">
+          <div key={field.key} className={`rounded-2xl border p-3 ${fieldClass}`}>
             <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">{field.label}</div>
-            <div className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-100">{field.value}</div>
+            <div className={`mt-1 whitespace-pre-wrap break-words text-sm ${tone === 'readonly' ? 'text-slate-300' : 'text-slate-100'}`}>{field.value}</div>
           </div>
         ))}
       </div>
@@ -1381,6 +1420,44 @@ export function MetaAdsPersistentError({
   )
 }
 
+function metaAdsStatusToBoolean(status?: string) {
+  return String(status || '').toUpperCase() === 'ACTIVE'
+}
+
+function metaAdsStatusFromBoolean(active: boolean) {
+  return active ? 'ACTIVE' : 'PAUSED'
+}
+
+function metaAdsStatusDisplay(status?: string) {
+  const normalized = String(status || '').toUpperCase()
+  if (normalized === 'ACTIVE') return 'Ativa'
+  if (normalized === 'PAUSED') return 'Pausada'
+  if (normalized === 'DELETED') return 'Excluída'
+  if (normalized === 'ARCHIVED') return 'Arquivada'
+  return normalized || 'Indefinido'
+}
+
+function MetaAdsModalHeaderIcon({
+  icon,
+  label,
+  description,
+  value,
+}: {
+  icon: ReactNode
+  label: string
+  description: string
+  value?: unknown
+}) {
+  if (value === undefined || value === null || value === '') return null
+  return (
+    <TooltipLabel label={label} description={`${description} Valor atual: ${String(value)}.`}>
+      <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-sky-400/25 bg-sky-400/10 text-sky-100 shadow-[0_0_24px_rgba(56,189,248,0.12)]">
+        {icon}
+      </span>
+    </TooltipLabel>
+  )
+}
+
 function MetaAdsEntityDetailDialog({
   detail,
   open,
@@ -1438,6 +1515,10 @@ function MetaAdsEntityDetailDialog({
       : undefined
   const hasValue = (value: unknown) => value !== undefined && value !== null && value !== ''
   const fieldValue = (key: string, fallback?: unknown) => (hasValue((fields as any)?.[key]) ? (fields as any)[key] : fallback)
+  const currentStatus = String(form.status || fieldValue('status', (detail.payload as any).status) || fieldValue('effective_status', (detail.payload as any).effective_status) || '')
+  const currentEntityId = String(fieldValue('id', detail.payload.id) || detail.payload.id || '')
+  const currentObjective = fieldValue('objective', (detail.payload as any).objective) || fieldValue('optimization_goal', (detail.payload as any).optimization_goal)
+  const currentBuyingType = fieldValue('buying_type')
   const adLinkedCreative =
     detail.kind === 'ad'
       ? ((fields as any)?.creative || (detail.payload as MetaAd).creative || null)
@@ -1467,31 +1548,23 @@ function MetaAdsEntityDetailDialog({
     const payload = detail.payload
     sections = filterSections([
       {
-        title: 'Identificação',
-        fields: [
-          { label: 'Nome', value: fieldValue('name', payload.name) },
-          { label: 'ID', value: fieldValue('id', payload.id) },
-          { label: 'Status configurado', value: fieldValue('status', payload.status) },
-          { label: 'Status efetivo', value: fieldValue('effective_status', payload.effective_status || payload.status) },
-          { label: 'Objetivo', value: fieldValue('objective', payload.objective) },
-          { label: 'Tipo de compra', value: fieldValue('buying_type') },
-        ],
-      },
-      {
         title: 'Estrutura',
         fields: [
           { label: 'Conjuntos totais', value: payload.totals?.adSets ?? payload.adSets?.length },
           { label: 'Anúncios totais', value: payload.totals?.ads },
         ],
       },
-      {
-        title: 'Orçamento',
-        fields: [
-          { label: 'Orçamento diário', value: fieldValue('daily_budget', payload.daily_budget) },
-          { label: 'Orçamento vitalício', value: fieldValue('lifetime_budget', payload.lifetime_budget) },
-          { label: 'Estratégia de lance', value: fieldValue('bid_strategy') },
-        ],
-      },
+      ...(!liveEntity
+        ? [
+            {
+              title: 'Orçamento configurado',
+              fields: [
+                { label: 'Orçamento diário', value: fieldValue('daily_budget', payload.daily_budget) },
+                { label: 'Orçamento vitalício', value: fieldValue('lifetime_budget', payload.lifetime_budget) },
+              ],
+            },
+          ]
+        : []),
       {
         title: 'Janela operacional',
         fields: [
@@ -1506,12 +1579,8 @@ function MetaAdsEntityDetailDialog({
     const payload = detail.payload
     sections = filterSections([
       {
-        title: 'Identificação',
+        title: 'Relacionamentos',
         fields: [
-          { label: 'Nome', value: fieldValue('name', payload.name) },
-          { label: 'ID', value: fieldValue('id', payload.id) },
-          { label: 'Status configurado', value: fieldValue('status', payload.status) },
-          { label: 'Status efetivo', value: fieldValue('effective_status', payload.effective_status || payload.status) },
           { label: 'Campanha', value: (fields as any)?.campaign?.name || payload.campaign_name || payload.campaign_id },
         ],
       },
@@ -1522,13 +1591,21 @@ function MetaAdsEntityDetailDialog({
       {
         title: 'Otimização e orçamento',
         fields: [
-          { label: 'Meta de otimização', value: fieldValue('optimization_goal', payload.optimization_goal) },
           { label: 'Evento de cobrança', value: fieldValue('billing_event') },
           { label: 'Estratégia de lance', value: fieldValue('bid_strategy', payload.bid_strategy) },
-          { label: 'Orçamento diário', value: fieldValue('daily_budget', payload.daily_budget) },
-          { label: 'Orçamento vitalício', value: fieldValue('lifetime_budget', payload.lifetime_budget) },
         ],
       },
+      ...(!liveEntity
+        ? [
+            {
+              title: 'Orçamento configurado',
+              fields: [
+                { label: 'Orçamento diário', value: fieldValue('daily_budget', payload.daily_budget) },
+                { label: 'Orçamento vitalício', value: fieldValue('lifetime_budget', payload.lifetime_budget) },
+              ],
+            },
+          ]
+        : []),
       {
         title: 'Janela operacional',
         fields: [
@@ -1543,26 +1620,21 @@ function MetaAdsEntityDetailDialog({
     const payload = detail.payload
     sections = filterSections([
       {
-        title: 'Identificação',
-        fields: [
-          { label: 'Nome', value: fieldValue('name', payload.name) },
-          { label: 'ID', value: fieldValue('id', payload.id) },
-          { label: 'Status configurado', value: fieldValue('status', payload.status) },
-          { label: 'Status efetivo', value: fieldValue('effective_status', payload.effective_status || payload.status) },
-        ],
-      },
-      {
         title: 'Relacionamentos',
         fields: [
           { label: 'Campanha', value: (fields as any)?.campaign?.name || payload.campaign_name || payload.campaign_id },
           { label: 'Conjunto de anúncios', value: (fields as any)?.adset?.name || payload.adset_name || payload.adset_id },
-          { label: 'Criativo', value: adLinkedCreativeName || (fields as any)?.creative?.name || payload.creative?.name || payload.creative?.id },
           { label: 'Story ID efetivo', value: (fields as any)?.creative?.effective_object_story_id || payload.creative?.effective_object_story_id },
           { label: 'CTA', value: (fields as any)?.creative?.call_to_action_type || payload.creative?.call_to_action_type },
           { label: 'Título do criativo', value: (fields as any)?.creative?.title || payload.creative?.title },
           { label: 'Texto do criativo', value: (fields as any)?.creative?.body || payload.creative?.body },
           { label: 'URL de destino', value: (fields as any)?.creative?.object_url || payload.creative?.object_url },
           { label: 'Tags de URL', value: (fields as any)?.creative?.url_tags || payload.creative?.url_tags },
+        ],
+      },
+      {
+        title: 'Janela operacional',
+        fields: [
           { label: 'Criado em', value: fieldValue('created_time') },
           { label: 'Atualizado em', value: fieldValue('updated_time') },
         ],
@@ -1578,7 +1650,6 @@ function MetaAdsEntityDetailDialog({
         fields: [
           { label: 'Nome', value: displayName },
           { label: 'Nome original na Meta', value: dynamicName ? fieldValue('name', payload.name) : null },
-          { label: 'ID', value: fieldValue('id', payload.id) },
           { label: 'Story ID efetivo', value: fieldValue('effective_object_story_id', payload.effectiveObjectStoryId) },
           { label: 'Object story ID', value: fieldValue('object_story_id') },
           { label: 'Tipo CTA', value: fieldValue('call_to_action_type') },
@@ -1593,14 +1664,26 @@ function MetaAdsEntityDetailDialog({
           { label: 'Anúncio', value: payload.adName || payload.adId },
         ],
       },
+      {
+        title: 'Janela operacional',
+        fields: [
+          { label: 'Criado em', value: fieldValue('created_time') },
+          { label: 'Atualizado em', value: fieldValue('updated_time') },
+        ],
+      },
     ])
   }
 
   const editableFields = liveEntity?.editableFields || []
   const canEdit = Boolean(liveEntity?.editable && editableFields.length)
   const hasPotentialEditableFields = Boolean(editableFields.length)
+  const modalExcludedFields = new Set([
+    ...META_ADS_MODAL_HEADER_FIELDS,
+    ...META_ADS_MODAL_TIMELINE_FIELDS,
+    ...(canEdit ? editableFields : []),
+  ])
   const liveFieldGroups = liveEntity
-    ? buildMetaAdsLiveFieldCards(liveEntity.fields || {}, new Set(editableFields))
+    ? buildMetaAdsLiveFieldCards(liveEntity.fields || {}, new Set(editableFields), modalExcludedFields)
     : { editable: [], readOnly: [] }
   const changedPatch = editableFields.reduce((patch, field) => {
     const previous = String((liveEntity?.fields as any)?.[field] ?? '')
@@ -1652,6 +1735,46 @@ function MetaAdsEntityDetailDialog({
               : 'Configuração consolidada do criativo selecionado.'
       }
       previewUrl={previewUrl}
+      headerAccessory={
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          {currentEntityId ? (
+            <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs font-mono text-slate-300">
+              ID {currentEntityId}
+            </span>
+          ) : null}
+          {detail.kind !== 'creative' && editableFields.includes('status') ? (
+            <TooltipLabel label="Status" description="Ative ou pause este item no Gerenciador de Anúncios. A alteração é aplicada somente ao salvar.">
+              <label className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-200">
+                <Switch
+                  checked={metaAdsStatusToBoolean(currentStatus)}
+                  onCheckedChange={(checked) => setFormField('status', metaAdsStatusFromBoolean(checked))}
+                  disabled={saving || loadingDetail || !canEdit}
+                  className="data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-slate-700"
+                />
+                {metaAdsStatusDisplay(currentStatus)}
+              </label>
+            </TooltipLabel>
+          ) : detail.kind !== 'creative' && currentStatus ? (
+            <TooltipLabel label="Status" description="Estado atual retornado pela Meta. Esta conexão não permite alterar o status neste item.">
+              <span className="inline-flex rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-300">
+                {metaAdsStatusDisplay(currentStatus)}
+              </span>
+            </TooltipLabel>
+          ) : null}
+          <MetaAdsModalHeaderIcon
+            icon={<Target className="h-4 w-4" />}
+            label={detail.kind === 'adset' ? 'Meta de otimização' : 'Objetivo'}
+            description="Define o objetivo operacional configurado na Meta para orientar entrega e otimização."
+            value={currentObjective}
+          />
+          <MetaAdsModalHeaderIcon
+            icon={<CurrencyDollar className="h-4 w-4" />}
+            label="Tipo de compra"
+            description="Modelo usado pela Meta para comprar mídia, como leilão ou reserva."
+            value={currentBuyingType}
+          />
+        </div>
+      }
       sections={sections}
       footer={
         <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end">
@@ -1698,16 +1821,14 @@ function MetaAdsEntityDetailDialog({
         {liveEntity?.readOnlyReason ? <div className="mt-3 text-xs text-slate-300">{liveEntity.readOnlyReason}</div> : null}
       </div>
 
-      <MetaAdsLiveFieldPanel
-        title="Campos editáveis pela API da Meta"
-        description={
-          canEdit
-            ? 'Valores atuais dos campos que este CRM pode enviar de volta para a Meta com validação e confirmação.'
-            : 'A Meta permite editar estes campos, mas a conexão atual não possui permissão de gerenciamento; por isso eles ficam visíveis sem edição.'
-        }
-        fields={liveFieldGroups.editable}
-        tone={canEdit ? 'editable' : hasPotentialEditableFields ? 'blocked' : 'readonly'}
-      />
+      {!canEdit && hasPotentialEditableFields ? (
+        <MetaAdsLiveFieldPanel
+          title="Campos editáveis pela API da Meta"
+          description="A Meta permite editar estes campos, mas a conexão atual não possui permissão de gerenciamento; por isso eles ficam visíveis sem edição."
+          fields={liveFieldGroups.editable}
+          tone="blocked"
+        />
+      ) : null}
 
       {detail.kind === 'ad' && adLinkedCreative ? (
         <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
@@ -1766,33 +1887,24 @@ function MetaAdsEntityDetailDialog({
                 <Input value={form.name || ''} onChange={(event) => setFormField('name', event.target.value)} className="h-10 border-slate-700 bg-slate-950/70 text-slate-100" />
               </label>
             ) : null}
-            {editableFields.includes('status') ? (
-              <label className="space-y-1 text-xs text-slate-300">
-                Status
-                <Select value={form.status || ''} onValueChange={(value) => setFormField('status', value)}>
-                  <SelectTrigger className="h-10 border-slate-700 bg-slate-950/70 text-slate-100">
-                    <SelectValue placeholder="Selecione" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ACTIVE">Ativa</SelectItem>
-                    <SelectItem value="PAUSED">Pausada</SelectItem>
-                  </SelectContent>
-                </Select>
-              </label>
-            ) : null}
             {(['daily_budget', 'lifetime_budget', 'start_time', 'stop_time', 'end_time', 'bid_strategy', 'optimization_goal'] as const).map((field) =>
               editableFields.includes(field) ? (
                 <label key={field} className="space-y-1 text-xs text-slate-300">
                   {{
-                    daily_budget: 'Orçamento diário (centavos)',
-                    lifetime_budget: 'Orçamento vitalício (centavos)',
+                    daily_budget: 'Orçamento diário',
+                    lifetime_budget: 'Orçamento vitalício',
                     start_time: 'Início',
                     stop_time: 'Fim da campanha',
                     end_time: 'Fim do conjunto',
                     bid_strategy: 'Estratégia de lance',
                     optimization_goal: 'Meta de otimização',
                   }[field]}
-                  <Input value={form[field] || ''} onChange={(event) => setFormField(field, event.target.value)} className="h-10 border-slate-700 bg-slate-950/70 text-slate-100" />
+                  <Input
+                    value={META_ADS_BUDGET_FIELDS.has(field) ? formatMetaAdsBudgetFromCents(form[field]) : form[field] || ''}
+                    onChange={(event) => setFormField(field, META_ADS_BUDGET_FIELDS.has(field) ? parseMetaAdsBudgetToCents(event.target.value) : event.target.value)}
+                    className="h-10 border-slate-700 bg-slate-950/70 text-slate-100"
+                    inputMode={META_ADS_BUDGET_FIELDS.has(field) ? 'decimal' : undefined}
+                  />
                 </label>
               ) : null,
             )}
@@ -1801,8 +1913,8 @@ function MetaAdsEntityDetailDialog({
       ) : null}
 
       <MetaAdsLiveFieldPanel
-        title="Campos somente leitura retornados pela Meta"
-        description="Informações disponíveis para conferência no CRM, mas bloqueadas para edição segura nesta versão ou pela própria API da Meta."
+        title="Informações bloqueadas para edição"
+        description="Dados retornados pela Meta que ficam disponíveis para conferência, mas não devem ser alterados diretamente neste fluxo."
         fields={liveFieldGroups.readOnly}
         tone="readonly"
       />

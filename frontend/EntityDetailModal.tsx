@@ -2,7 +2,34 @@ import { Button } from '@/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import type { ReactNode } from 'react'
 
-function formatDetailValue(value: unknown) {
+const DATE_LABEL_PATTERN = /(início|fim|criado em|atualizado em)/i
+const BUDGET_LABEL_PATTERN = /orçamento/i
+
+function formatDetailDate(value: string) {
+  const normalized = value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function formatDetailBudget(value: string) {
+  if (/^(R\$|US\$)/i.test(value.trim())) return value
+  const cents = Number(value.replace(/[^\d.-]/g, ''))
+  if (!Number.isFinite(cents)) return value
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    maximumFractionDigits: 2,
+  }).format(cents / 100)
+}
+
+function formatDetailValue(value: unknown, label?: string) {
   if (value == null || value === '') return '—'
   if (typeof value === 'boolean') return value ? 'Sim' : 'Não'
   if (Array.isArray(value)) {
@@ -18,7 +45,9 @@ function formatDetailValue(value: unknown) {
       .map(([key, item]) => `${key.replace(/_/g, ' ')}: ${String(item)}`)
     return entries.length ? entries.join(' · ') : 'Configuração disponível'
   }
-  return String(value)
+  const stringValue = String(value)
+  if (label && BUDGET_LABEL_PATTERN.test(label)) return formatDetailBudget(stringValue)
+  return label && DATE_LABEL_PATTERN.test(label) ? formatDetailDate(stringValue) : stringValue
 }
 
 export function EntityDetailField({
@@ -31,7 +60,7 @@ export function EntityDetailField({
   return (
     <div className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-3">
       <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">{label}</div>
-      <div className="mt-1 text-sm text-slate-100">{formatDetailValue(value)}</div>
+      <div className="mt-1 text-sm text-slate-100">{formatDetailValue(value, label)}</div>
     </div>
   )
 }
@@ -47,6 +76,7 @@ export function EntityDetailModal({
   title,
   description,
   previewUrl,
+  headerAccessory,
   sections,
   children,
   footer,
@@ -56,6 +86,7 @@ export function EntityDetailModal({
   title: string
   description: string
   previewUrl?: string | null
+  headerAccessory?: ReactNode
   sections: EntityDetailSection[]
   children?: ReactNode
   footer?: ReactNode
@@ -64,8 +95,13 @@ export function EntityDetailModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent resizable={false} className="max-h-[85vh] max-w-4xl overflow-y-auto border-slate-800/80 bg-slate-950 text-slate-100">
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription className="text-slate-300">{description}</DialogDescription>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <DialogTitle>{title}</DialogTitle>
+              <DialogDescription className="text-slate-300">{description}</DialogDescription>
+            </div>
+            {headerAccessory ? <div className="shrink-0">{headerAccessory}</div> : null}
+          </div>
         </DialogHeader>
 
         <div className="space-y-6">
