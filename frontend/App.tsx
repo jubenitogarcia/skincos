@@ -1801,9 +1801,9 @@ export default function AppFunctionalNeatlab() {
                         </header>
 
                         {/* Premium Main Content */}
-                        <main className={`flex-1 p-8 relative ${active === 'atendimento' ? 'overflow-hidden flex min-h-0 flex-col' : 'overflow-auto'}`}>
+                        <main className={`flex-1 p-8 relative ${active === 'atendimento' ? 'overflow-hidden flex min-h-0 flex-col' : 'overflow-auto'} ${active === 'meta-ads' ? 'meta-ads-main' : ''}`}>
                             {/* Content Background */}
-                            <div className="absolute inset-0 bg-white/[0.02] backdrop-blur-sm"></div>
+                            <div className={`absolute inset-0 ${active === 'meta-ads' ? 'meta-ads-main-bg' : 'bg-white/[0.02] backdrop-blur-sm'}`}></div>
 
                             <div className={`relative z-10 ${active === 'atendimento' ? 'flex h-full min-h-0 flex-col' : ''}`}>
                                 <div className="hidden">{search}</div>
