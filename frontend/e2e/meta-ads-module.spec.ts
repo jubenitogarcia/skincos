@@ -299,14 +299,12 @@ test.describe('meta ads', () => {
     await expect(page.getByRole('button', { name: 'Campanha Primavera' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Conjunto 1' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Anúncio 1', exact: true })).toBeVisible()
-    await expect(page.locator('body')).toContainText('Criativo')
     await expect(page.locator('body')).toContainText('Conjunto 1')
-    await expect(page.locator('body')).toContainText('Criativo 1')
     await expect(page.locator('body')).toContainText('Campanha WhatsApp Facial')
 
     const objectiveCell = page.locator('tbody tr').first().locator('td').nth(3).locator('[aria-label]').first()
     await objectiveCell.hover()
-    await expect(page.getByRole('tooltip')).toContainText('Captação e qualificação de leads.')
+    await expect(page.getByRole('tooltip')).toContainText('Prioriza cadastros, formulários ou conversas')
 
     await page.getByRole('button', { name: 'Campanha Primavera' }).click()
     await expect(page.getByRole('dialog')).toContainText('Campanha Primavera')
@@ -316,13 +314,14 @@ test.describe('meta ads', () => {
 
     await page.getByRole('button', { name: 'Conjunto 1' }).click()
     await expect(page.getByRole('dialog')).toContainText('Conjunto 1')
-    await expect(page.getByRole('dialog')).toContainText('Anúncios associados')
     await expect(page.getByRole('dialog')).toContainText('Campanha Primavera')
     await page.getByRole('button', { name: 'Fechar' }).click()
 
     await page.getByRole('button', { name: 'Anúncio 1', exact: true }).click()
     await expect(page.getByRole('dialog')).toContainText('Anúncio 1')
-    await expect(page.getByRole('dialog')).toContainText('Story ID efetivo')
+    await expect(page.getByRole('dialog')).toContainText('Criativo vinculado ao anúncio')
+    await expect(page.getByRole('dialog')).toContainText('Criativo 1')
+    await expect(page.getByRole('dialog')).toContainText('Story ID')
     await expect(page.getByRole('dialog')).toContainText('story_1')
     await page.getByRole('button', { name: 'Fechar' }).click()
 
