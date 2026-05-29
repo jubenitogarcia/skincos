@@ -552,6 +552,15 @@ body {
   border-color: rgba(71, 85, 105, 0.45);
 }
 
+.meta-ads-main {
+  background-color: rgba(5, 12, 24, 0.18);
+}
+
+.meta-ads-main-bg {
+  background: linear-gradient(180deg, rgba(8, 22, 43, 0.38) 0%, rgba(7, 18, 35, 0.28) 42%, rgba(5, 13, 27, 0.38) 100%), rgba(255, 255, 255, 0.015);
+  backdrop-filter: blur(10px);
+}
+
 .escala-surface .glass-morphism {
   background: rgba(15, 23, 42, 0.4);
   border-color: rgba(148, 163, 184, 0.25);

@@ -8,6 +8,8 @@ type DialogSize = "default" | "wideTable"
 type DialogContentProps = ComponentProps<typeof DialogPrimitive.Content> & {
   resizable?: boolean
   size?: DialogSize
+  closeIcon?: React.ReactNode
+  closeLabel?: string
 }
 
 function Dialog({
@@ -53,11 +55,15 @@ DialogOverlay.displayName = "DialogOverlay"
 function DialogContent({
   resizable,
   size = "default",
+  closeIcon,
+  closeLabel = "Close",
   className,
   children,
   ...props
 }: DialogContentProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const resizeHandleRef = useRef<HTMLDivElement | null>(null)
+  const resizeActiveRef = useRef(false)
   const [canResize, setCanResize] = useState(false)
   const [resizeSize, setResizeSize] = useState<{ width: number; height: number } | null>(null)
   const sizeClassName =
@@ -93,8 +99,60 @@ function DialogContent({
     }
   }, [allowResize])
 
-  const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!canResize || !contentRef.current) return
+  useEffect(() => {
+    const handle = resizeHandleRef.current
+    if (!canResize || !handle) return
+
+    const startResize = (event: PointerEvent | MouseEvent) => {
+      if (resizeActiveRef.current || !contentRef.current) return
+      resizeActiveRef.current = true
+      const rect = contentRef.current.getBoundingClientRect()
+      const startX = event.clientX
+      const startY = event.clientY
+      const startWidth = rect.width
+      const startHeight = rect.height
+      const minWidth = 420
+      const minHeight = 260
+      const onMove = (moveEvent: PointerEvent | MouseEvent) => {
+        const dx = moveEvent.clientX - startX
+        const dy = moveEvent.clientY - startY
+        const maxWidth = window.innerWidth - 16
+        const maxHeight = window.innerHeight - 16
+        const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + dx))
+        const nextHeight = Math.min(maxHeight, Math.max(minHeight, startHeight + dy))
+        if (contentRef.current) {
+          contentRef.current.style.width = `${nextWidth}px`
+          contentRef.current.style.height = `${nextHeight}px`
+        }
+        setResizeSize({ width: nextWidth, height: nextHeight })
+      }
+      const onUp = () => {
+        resizeActiveRef.current = false
+        window.removeEventListener("pointermove", onMove)
+        window.removeEventListener("mousemove", onMove)
+        window.removeEventListener("pointerup", onUp)
+        window.removeEventListener("mouseup", onUp)
+      }
+      window.addEventListener("pointermove", onMove)
+      window.addEventListener("mousemove", onMove)
+      window.addEventListener("pointerup", onUp)
+      window.addEventListener("mouseup", onUp)
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    handle.addEventListener("pointerdown", startResize)
+    handle.addEventListener("mousedown", startResize)
+    return () => {
+      handle.removeEventListener("pointerdown", startResize)
+      handle.removeEventListener("mousedown", startResize)
+      resizeActiveRef.current = false
+    }
+  }, [canResize])
+
+  const handleResizeStart = (event: React.PointerEvent<HTMLDivElement> | React.MouseEvent<HTMLDivElement>) => {
+    if (!canResize || resizeActiveRef.current || !contentRef.current) return
+    resizeActiveRef.current = true
     const rect = contentRef.current.getBoundingClientRect()
     const startX = event.clientX
     const startY = event.clientY
@@ -102,21 +160,30 @@ function DialogContent({
     const startHeight = rect.height
     const minWidth = 420
     const minHeight = 260
-    const onMove = (moveEvent: PointerEvent) => {
+    const onMove = (moveEvent: PointerEvent | MouseEvent) => {
       const dx = moveEvent.clientX - startX
       const dy = moveEvent.clientY - startY
       const maxWidth = window.innerWidth - 16
       const maxHeight = window.innerHeight - 16
       const nextWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + dx))
       const nextHeight = Math.min(maxHeight, Math.max(minHeight, startHeight + dy))
+      if (contentRef.current) {
+        contentRef.current.style.width = `${nextWidth}px`
+        contentRef.current.style.height = `${nextHeight}px`
+      }
       setResizeSize({ width: nextWidth, height: nextHeight })
     }
     const onUp = () => {
+      resizeActiveRef.current = false
       window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("mousemove", onMove)
       window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("mouseup", onUp)
     }
     window.addEventListener("pointermove", onMove)
+    window.addEventListener("mousemove", onMove)
     window.addEventListener("pointerup", onUp)
+    window.addEventListener("mouseup", onUp)
     event.preventDefault()
     event.stopPropagation()
   }
@@ -139,8 +206,12 @@ function DialogContent({
         {children}
         {canResize ? (
           <div
-            className="absolute bottom-2 right-2 h-4 w-4 cursor-se-resize text-blue-200/50 hover:text-blue-100/80"
+            ref={resizeHandleRef}
+            className="absolute bottom-2 right-2 h-4 w-4 cursor-se-resize text-blue-200/50 hover:text-blue-100/80 [&_svg]:pointer-events-none"
+            onPointerDownCapture={handleResizeStart}
             onPointerDown={handleResizeStart}
+            onMouseDownCapture={handleResizeStart}
+            onMouseDown={handleResizeStart}
             aria-hidden="true"
           >
             <svg viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -148,9 +219,12 @@ function DialogContent({
             </svg>
           </div>
         ) : null}
-        <DialogPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-3 right-3 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none sm:top-4 sm:right-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4">
-          <XIcon />
-          <span className="sr-only">Close</span>
+        <DialogPrimitive.Close
+          aria-label={closeLabel}
+          className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-3 right-3 inline-flex h-7 w-7 items-center justify-center rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none sm:top-4 sm:right-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+        >
+          {closeIcon || <XIcon />}
+          <span className="sr-only">{closeLabel}</span>
         </DialogPrimitive.Close>
       </DialogPrimitive.Content>
     </DialogPortal>

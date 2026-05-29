@@ -117,8 +117,8 @@ const ENTITY_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
 const ENTITY_SAFE_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
   campaign: 'id,account_id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time,created_time,updated_time',
   adset: 'id,account_id,name,status,effective_status,campaign{id,name},campaign_id,daily_budget,lifetime_budget,bid_strategy,optimization_goal,start_time,end_time,created_time,updated_time',
-  ad: 'id,account_id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,title,body,call_to_action_type,url_tags},created_time,updated_time',
-  creative: 'id,account_id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,title,body,url_tags',
+  ad: 'id,account_id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,object_story_spec,asset_feed_spec,image_hash,video_id,title,body,call_to_action_type,url_tags,instagram_permalink_url,object_url},created_time,updated_time',
+  creative: 'id,account_id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,object_story_spec,asset_feed_spec,image_hash,video_id,title,body,call_to_action_type,url_tags,instagram_permalink_url,object_url',
 }
 
 function parseGraphBaseUrl(version?: string) {

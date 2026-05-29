@@ -1,5 +1,6 @@
 import { Button } from '@/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import { TooltipLabel } from '@/tooltip'
 import type { ReactNode } from 'react'
 
 const DATE_LABEL_PATTERN = /(início|fim|criado em|atualizado em)/i
@@ -53,10 +54,29 @@ function formatDetailValue(value: unknown, label?: string) {
 export function EntityDetailField({
   label,
   value,
+  icon,
+  description,
 }: {
   label: string
   value: unknown
+  icon?: ReactNode
+  description?: string
 }) {
+  if (icon) {
+    return (
+      <TooltipLabel label={label} description={description}>
+        <div className="flex items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/55 p-3">
+          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sky-400/20 bg-sky-400/10 text-sky-100" aria-hidden>
+            {icon}
+          </span>
+          <span className="min-w-0">
+            <span className="sr-only">{label}</span>
+            <span className="block text-xl font-semibold leading-tight text-slate-100">{formatDetailValue(value, label)}</span>
+          </span>
+        </div>
+      </TooltipLabel>
+    )
+  }
   return (
     <div className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-3">
       <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">{label}</div>
@@ -67,7 +87,7 @@ export function EntityDetailField({
 
 export type EntityDetailSection = {
   title: string
-  fields: Array<{ label: string; value: unknown }>
+  fields: Array<{ label: string; value: unknown; icon?: ReactNode; description?: string }>
 }
 
 export function EntityDetailModal({
@@ -75,39 +95,53 @@ export function EntityDetailModal({
   onOpenChange,
   title,
   description,
+  titleMeta,
   previewUrl,
   headerAccessory,
+  closeIcon,
+  closeLabel,
   sections,
   children,
   footer,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  title: string
+  title: ReactNode
   description: string
+  titleMeta?: ReactNode
   previewUrl?: string | null
   headerAccessory?: ReactNode
+  closeIcon?: ReactNode
+  closeLabel?: string
   sections: EntityDetailSection[]
   children?: ReactNode
   footer?: ReactNode
 }) {
+  const titleText = typeof title === 'string' ? title : description
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent resizable={false} className="max-h-[85vh] max-w-4xl overflow-y-auto border-slate-800/80 bg-slate-950 text-slate-100">
+      <DialogContent
+        className="max-h-[90vh] overflow-y-auto border-slate-800/80 bg-slate-950 text-slate-100"
+        style={{ width: 'min(92vw, 56rem)', maxWidth: 'calc(100vw - 1rem)' }}
+        closeIcon={closeIcon}
+        closeLabel={closeLabel}
+      >
         <DialogHeader>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <DialogTitle>{title}</DialogTitle>
-              <DialogDescription className="text-slate-300">{description}</DialogDescription>
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="text-xl leading-tight sm:text-2xl">{title}</DialogTitle>
+              <DialogDescription className="max-w-2xl text-slate-300">{description}</DialogDescription>
+              {titleMeta ? <div className="mt-2">{titleMeta}</div> : null}
             </div>
-            {headerAccessory ? <div className="shrink-0">{headerAccessory}</div> : null}
+            {headerAccessory ? <div className="max-w-full shrink-0 sm:max-w-[52%]">{headerAccessory}</div> : null}
           </div>
         </DialogHeader>
 
         <div className="space-y-6">
           {previewUrl ? (
             <div className="overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-950/80">
-              <img src={previewUrl} alt={title} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-64 w-full object-contain" />
+              <img src={previewUrl} alt={titleText} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-64 w-full object-contain" />
             </div>
           ) : null}
 
@@ -118,7 +152,7 @@ export function EntityDetailModal({
               <div className="text-sm font-medium text-white">{section.title}</div>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {section.fields.map((field) => (
-                  <EntityDetailField key={`${section.title}:${field.label}`} label={field.label} value={field.value} />
+                  <EntityDetailField key={`${section.title}:${field.label}`} label={field.label} value={field.value} icon={field.icon} description={field.description} />
                 ))}
               </div>
             </div>

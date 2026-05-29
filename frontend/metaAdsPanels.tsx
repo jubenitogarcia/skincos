@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactElement, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactElement, type ReactNode } from 'react'
 import { DragDropContext, Draggable, Droppable, type DraggableProvidedDragHandleProps, type DropResult } from '@hello-pangea/dnd'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { CartesianGrid, LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts'
 import { Badge } from '@/badge'
 import { Button } from '@/button'
+import { Calendar } from '@/calendar'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { EntityDetailModal, type EntityDetailSection } from '@/EntityDetailModal'
 import { Input } from '@/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Switch } from '@/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/table'
@@ -29,14 +31,17 @@ import type {
   MetaAdsLiveEntityDetail,
   MetaAdsEntityPatch,
   MetaCampaignRow,
+  MetaAdCreativeRef,
   MetaCreativeInventoryItem,
 } from '@/metaAdsTypes'
 import { describeMetaAdAccountStatus } from '@/metaAdsState'
 import { toast } from 'sonner'
 import {
   ArrowClockwise,
+  CalendarBlank,
   CaretDown,
   CaretRight,
+  Clock,
   CurrencyDollar,
   CheckCircle,
   DotsSixVertical,
@@ -48,9 +53,11 @@ import {
   InstagramLogo,
   Link,
   Lock,
+  Minus,
   EyeSlash,
   PauseCircle,
   PresentationChart,
+  Plus,
   ShieldCheck,
   Spinner,
   Target,
@@ -109,27 +116,38 @@ type MetaAdsOverviewMetricSize = 'compact' | 'wide'
 type MetaAdsOverviewMetricLayout = {
   key: MetaAdsOverviewMetricKey
   visible: boolean
-  size: MetaAdsOverviewMetricSize
+  width: number
+  height: number
 }
 type MetaAdsInventoryColumnKey = MetaAdsInventorySortKey
 
-const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v1'
+const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v2'
 const META_ADS_INVENTORY_COLUMN_WIDTHS_KEY = 'skincos.metaAds.layout.inventoryColumns.v1'
+const META_ADS_METRIC_TILE_DIMENSIONS = {
+  minWidth: 140,
+  maxWidth: 680,
+  minHeight: 96,
+  maxHeight: 520,
+  defaultWidth: 164,
+  defaultHeight: 118,
+  trendWidth: 520,
+  trendHeight: 340,
+} as const
 const DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT: MetaAdsOverviewMetricLayout[] = [
-  { key: 'spend', visible: true, size: 'compact' },
-  { key: 'conversations', visible: true, size: 'compact' },
-  { key: 'cpcv', visible: true, size: 'compact' },
-  { key: 'clicks', visible: true, size: 'compact' },
-  { key: 'reach', visible: true, size: 'compact' },
-  { key: 'impressions', visible: true, size: 'compact' },
-  { key: 'engagement', visible: true, size: 'compact' },
-  { key: 'redirect', visible: true, size: 'compact' },
-  { key: 'ctr', visible: true, size: 'compact' },
-  { key: 'cpc', visible: true, size: 'compact' },
-  { key: 'cpm', visible: true, size: 'compact' },
-  { key: 'cpp', visible: true, size: 'compact' },
-  { key: 'frequency', visible: true, size: 'compact' },
-  { key: 'trend', visible: true, size: 'wide' },
+  { key: 'spend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'conversations', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'cpcv', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'clicks', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'reach', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'impressions', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'engagement', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'redirect', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'ctr', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'cpc', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'cpm', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'cpp', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'frequency', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
+  { key: 'trend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.trendWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.trendHeight },
 ]
 const META_ADS_INVENTORY_COLUMN_LIMITS: Record<MetaAdsInventoryColumnKey, { width: number; min: number; max: number }> = {
   item: { width: 300, min: 220, max: 520 },
@@ -260,9 +278,29 @@ const META_ADS_LIVE_FIELD_ORDER = [
   'updated_time',
 ] as const
 const META_ADS_HIDDEN_LIVE_FIELDS = new Set(['_crm_detail_warning'])
-const META_ADS_MODAL_HEADER_FIELDS = new Set(['id', 'account_id', 'name', 'status', 'effective_status', 'objective', 'optimization_goal', 'buying_type'])
+const META_ADS_MODAL_HEADER_FIELDS = new Set(['id', 'account_id', 'name', 'status', 'effective_status', 'objective', 'optimization_goal', 'buying_type', 'bid_strategy'])
 const META_ADS_MODAL_TIMELINE_FIELDS = new Set(['start_time', 'stop_time', 'end_time', 'created_time', 'updated_time'])
+const META_ADS_EDITABLE_DATE_FIELDS = new Set(['start_time', 'stop_time', 'end_time'])
 const META_ADS_BUDGET_FIELDS = new Set(['daily_budget', 'lifetime_budget'])
+
+function clampMetaAdsMetricDimension(value: unknown, min: number, max: number, fallback: number) {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) return fallback
+  return Math.min(max, Math.max(min, Math.round(numberValue)))
+}
+
+function getDefaultMetaAdsMetricDimensions(key: MetaAdsOverviewMetricKey, legacySize?: MetaAdsOverviewMetricSize) {
+  if (key === 'trend') {
+    return {
+      width: legacySize === 'compact' ? 320 : META_ADS_METRIC_TILE_DIMENSIONS.trendWidth,
+      height: legacySize === 'compact' ? 250 : META_ADS_METRIC_TILE_DIMENSIONS.trendHeight,
+    }
+  }
+  return {
+    width: legacySize === 'wide' ? 340 : META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth,
+    height: legacySize === 'wide' ? 156 : META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight,
+  }
+}
 
 function parseMetaAdsOverviewMetricLayout(raw: string | null | undefined): MetaAdsOverviewMetricLayout[] {
   try {
@@ -278,7 +316,18 @@ function parseMetaAdsOverviewMetricLayout(raw: string | null | undefined): MetaA
         return {
           key,
           visible: item?.visible !== false,
-          size: item?.size === 'wide' ? 'wide' : 'compact',
+          width: clampMetaAdsMetricDimension(
+            item?.width,
+            META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
+            META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
+            getDefaultMetaAdsMetricDimensions(key, item?.size === 'wide' ? 'wide' : 'compact').width,
+          ),
+          height: clampMetaAdsMetricDimension(
+            item?.height,
+            META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
+            META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
+            getDefaultMetaAdsMetricDimensions(key, item?.size === 'wide' ? 'wide' : 'compact').height,
+          ),
         } satisfies MetaAdsOverviewMetricLayout
       })
       .filter(Boolean) as MetaAdsOverviewMetricLayout[]
@@ -328,6 +377,78 @@ function formatMetaAdsLiveDate(value: unknown) {
   }).format(date)
 }
 
+function getMetaAdsDateOffset(value: unknown) {
+  const match = String(value || '').match(/(Z|[+-]\d{2}:?\d{2})$/)
+  return match ? match[1].replace(':', '') : '-0300'
+}
+
+function parseMetaAdsFriendlyDate(value: string, previousValue: unknown) {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return trimmed
+  const match = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{2}|\d{4})(?:[\s,]+(\d{1,2}):(\d{2}))?$/)
+  if (!match) return null
+  const day = Number(match[1])
+  const month = Number(match[2])
+  const yearInput = Number(match[3])
+  const year = match[3].length === 2 ? 2000 + yearInput : yearInput
+  const hour = match[4] === undefined ? 0 : Number(match[4])
+  const minute = match[5] === undefined ? 0 : Number(match[5])
+  const date = new Date(year, month - 1, day, hour, minute)
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day ||
+    date.getHours() !== hour ||
+    date.getMinutes() !== minute
+  ) {
+    return null
+  }
+  const two = (numberValue: number) => String(numberValue).padStart(2, '0')
+  return `${year}-${two(month)}-${two(day)}T${two(hour)}:${two(minute)}:00${getMetaAdsDateOffset(previousValue)}`
+}
+
+function parseMetaAdsDateForPicker(value: unknown, previousValue: unknown) {
+  const parsed = typeof value === 'string' ? parseMetaAdsFriendlyDate(value, previousValue) : null
+  const raw = parsed === null ? String(previousValue || value || '') : String(parsed || value || previousValue || '')
+  if (!raw) return null
+  const normalized = raw.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) return null
+  return date
+}
+
+function formatMetaAdsDatePickerValue(date: Date) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function mergeMetaAdsDatePickerValue({
+  current,
+  date,
+  hour,
+  minute,
+}: {
+  current: Date | null
+  date?: Date
+  hour?: number
+  minute?: number
+}) {
+  const next = current ? new Date(current) : new Date()
+  if (date) {
+    next.setFullYear(date.getFullYear(), date.getMonth(), date.getDate())
+  }
+  if (hour !== undefined) next.setHours(hour)
+  if (minute !== undefined) next.setMinutes(minute)
+  next.setSeconds(0, 0)
+  return formatMetaAdsDatePickerValue(next)
+}
+
 function formatMetaAdsBudgetFromCents(value: unknown, currency = 'BRL') {
   if (value === null || value === undefined || value === '') return ''
   const cents = Number(String(value).replace(/[^\d.-]/g, ''))
@@ -335,11 +456,41 @@ function formatMetaAdsBudgetFromCents(value: unknown, currency = 'BRL') {
   return formatCurrency(cents / 100, currency)
 }
 
-function parseMetaAdsBudgetToCents(value: string) {
-  const normalized = value.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.')
+function parseMetaAdsCurrencyAmount(value: string) {
+  const compact = String(value || '').replace(/[^\d,.-]/g, '').trim()
+  if (!compact) return null
+  const hasComma = compact.includes(',')
+  const normalized = hasComma ? compact.replace(/\./g, '').replace(',', '.') : compact.replace(/,/g, '')
   const amount = Number(normalized)
-  if (!Number.isFinite(amount)) return ''
+  return Number.isFinite(amount) ? amount : null
+}
+
+function formatMetaAdsCurrencyInput(value: string, currency = 'BRL') {
+  const amount = parseMetaAdsCurrencyAmount(value)
+  return amount === null ? '' : formatCurrency(amount, currency)
+}
+
+function stepMetaAdsCurrencyInput(value: string, delta: number, currency = 'BRL') {
+  const amount = parseMetaAdsCurrencyAmount(value) ?? 0
+  return formatCurrency(Math.max(0, amount + delta), currency)
+}
+
+function parseMetaAdsBudgetToCents(value: string) {
+  const amount = parseMetaAdsCurrencyAmount(value)
+  if (amount === null) return ''
   return String(Math.max(0, Math.round(amount * 100)))
+}
+
+function formatMetaAdsEditableValue(field: string, value: unknown) {
+  if (META_ADS_BUDGET_FIELDS.has(field)) return formatMetaAdsBudgetFromCents(value)
+  if (META_ADS_EDITABLE_DATE_FIELDS.has(field)) return formatMetaAdsLiveDate(value)
+  return value === null || value === undefined ? '' : String(value)
+}
+
+function parseMetaAdsEditableValue(field: string, value: string, previousValue: unknown) {
+  if (META_ADS_BUDGET_FIELDS.has(field)) return parseMetaAdsBudgetToCents(value)
+  if (META_ADS_EDITABLE_DATE_FIELDS.has(field)) return parseMetaAdsFriendlyDate(value, previousValue)
+  return value
 }
 
 function formatMetaAdsLiveFieldValue(field: string, value: unknown) {
@@ -591,6 +742,17 @@ function MetaAdsEntityGlyph({
   }
 }
 
+function MetaAdsLinkClicksGlyph({ className = 'h-5 w-5' }: { className?: string; weight?: unknown }) {
+  return (
+    <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+      <span className="absolute h-[78%] w-[78%] rounded-full border border-current opacity-55" />
+      <span className="absolute left-[24%] top-[48%] h-px w-[44%] -rotate-12 rounded-full bg-current" />
+      <span className="absolute right-[18%] top-[28%] h-[34%] w-[34%] rotate-45 border-r-2 border-t-2 border-current" />
+      <span className="absolute bottom-[18%] left-[18%] h-1.5 w-1.5 rounded-full bg-current" />
+    </span>
+  )
+}
+
 function MetaAdsEntityLevelBadge({
   kind,
   label,
@@ -666,8 +828,8 @@ function statusTone(status?: string) {
 
 function statusTooltip(status?: string) {
   const normalized = String(status || '').toUpperCase()
-  if (normalized === 'ACTIVE') return 'ativa'
-  if (normalized === 'PAUSED') return 'inativo'
+  if (normalized === 'ACTIVE') return 'ligado'
+  if (normalized === 'PAUSED') return 'desligado'
   if (normalized === 'ARCHIVED') return 'arquivado'
   return normalized ? normalized.toLowerCase() : 'sem status'
 }
@@ -718,39 +880,39 @@ function describeObjective(objective?: string | null) {
   const normalized = String(objective || '').toUpperCase()
   if (normalized === 'LEADS' || normalized === 'LEAD_GENERATION') {
     return {
-      title: normalized || 'Leads',
-      description: 'Captação e qualificação de leads.',
+      title: 'Geração de Lead',
+      description: 'Prioriza cadastros, formulários ou conversas com potencial de virar atendimento.',
       icon: Target,
       toneClass: 'border-sky-500/25 bg-sky-500/12 text-sky-100',
     }
   }
   if (normalized === 'MESSAGES' || normalized === 'ENGAGED_USERS') {
     return {
-      title: normalized || 'Mensagens',
-      description: 'Incentiva conversas e atendimentos iniciados.',
+      title: normalized === 'ENGAGED_USERS' ? 'Engajamento' : 'Mensagens',
+      description: normalized === 'ENGAGED_USERS' ? 'Prioriza pessoas com maior chance de interagir com o anúncio.' : 'Prioriza conversas iniciadas nos canais configurados.',
       icon: ChatCircleDots,
       toneClass: 'border-emerald-500/25 bg-emerald-500/12 text-emerald-100',
     }
   }
   if (normalized === 'LINK_CLICKS' || normalized === 'TRAFFIC' || normalized === 'OUTBOUND_CLICKS') {
     return {
-      title: normalized || 'Cliques em link',
-      description: 'Foco em tráfego e cliques em destinos externos.',
-      icon: Link,
+      title: normalized === 'TRAFFIC' ? 'Tráfego' : 'Cliques no link',
+      description: 'Prioriza visitas ao destino configurado, como site, WhatsApp ou landing page.',
+      icon: MetaAdsLinkClicksGlyph,
       toneClass: 'border-violet-500/25 bg-violet-500/12 text-violet-100',
     }
   }
   if (normalized === 'SALES' || normalized === 'CONVERSIONS') {
     return {
-      title: normalized || 'Conversões',
-      description: 'Otimização para conversões e resultado final.',
+      title: normalized === 'SALES' ? 'Vendas' : 'Conversões',
+      description: 'Prioriza ações de valor, como compra, agendamento ou outra conversão configurada.',
       icon: PresentationChart,
       toneClass: 'border-amber-500/25 bg-amber-500/12 text-amber-100',
     }
   }
   return {
-    title: normalized || 'Sem objetivo',
-    description: normalized ? 'Objetivo retornado pela Meta sem mapeamento visual específico.' : 'Sem objetivo informado pela Meta.',
+    title: normalized ? formatMetaAdsEnumLabel(normalized) : 'Sem objetivo',
+    description: normalized ? 'Objetivo informado pela Meta para orientar a entrega deste item.' : 'Sem objetivo informado pela Meta.',
     icon: WarningCircle,
     toneClass: 'border-slate-700 bg-slate-900/70 text-slate-200',
   }
@@ -890,6 +1052,100 @@ function getMetaAdsCreativeDisplayName(creative: MetaCreativeInventoryItem) {
   return sanitizedName.length <= 72 ? sanitizedName : 'Criativo dinâmico'
 }
 
+function formatMetaAdsEnumLabel(value?: unknown) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const normalized = raw.toUpperCase()
+  const labels: Record<string, string> = {
+    AUCTION: 'Leilão',
+    BUYING_TYPE_AUCTION: 'Leilão',
+    LEADS: 'Geração de Lead',
+    LEAD_GENERATION: 'Geração de Lead',
+    OUTCOME_LEADS: 'Geração de Leads',
+    CONVERSATIONS: 'Conversas',
+    MESSAGES: 'Mensagens',
+    ENGAGED_USERS: 'Engajamento',
+    TRAFFIC: 'Tráfego',
+    LINK_CLICKS: 'Cliques no link',
+    OUTBOUND_CLICKS: 'Cliques externos',
+    REACH: 'Alcance',
+    IMPRESSIONS: 'Impressões',
+    POST_ENGAGEMENT: 'Engajamento',
+    SALES: 'Vendas',
+    CONVERSIONS: 'Conversões',
+    OFFSITE_CONVERSIONS: 'Conversões no site',
+    LEARN_MORE: 'Saiba mais',
+    SIGN_UP: 'Cadastre-se',
+    CONTACT_US: 'Fale conosco',
+    WHATSAPP_MESSAGE: 'Enviar mensagem',
+    MESSAGE_PAGE: 'Enviar mensagem',
+    BOOK_NOW: 'Agendar agora',
+    APPLY_NOW: 'Inscrever-se',
+    DOWNLOAD: 'Baixar',
+    SHOP_NOW: 'Comprar agora',
+    GET_QUOTE: 'Solicitar orçamento',
+    LOWEST_COST_WITHOUT_CAP: 'Menor custo sem limite',
+    LOWEST_COST_WITH_BID_CAP: 'Menor custo com limite de lance',
+    COST_CAP: 'Controle de custo',
+    BID_CAP: 'Limite de lance',
+  }
+  if (labels[normalized]) return labels[normalized]
+  return normalized
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+    .join(' ')
+}
+
+function describeMetaAdsHeaderValue(kind: 'objective' | 'optimization_goal' | 'bid_strategy' | 'buying_type', value?: unknown) {
+  const normalized = String(value || '').trim().toUpperCase()
+  const generic: Record<typeof kind, string> = {
+    objective: 'Define o resultado principal que a campanha busca entregar.',
+    optimization_goal: 'Define o tipo de resultado que o conjunto prioriza na entrega.',
+    bid_strategy: 'Define como a Meta distribui o orçamento durante os leilões.',
+    buying_type: 'Define como a entrega dos anúncios é comprada na Meta.',
+  }
+  const descriptions: Record<string, string> = {
+    LEAD_GENERATION: 'Prioriza pessoas com maior chance de enviar cadastro ou iniciar uma conversa qualificada.',
+    LEADS: 'Prioriza pessoas com maior chance de enviar cadastro ou iniciar uma conversa qualificada.',
+    OUTCOME_LEADS: 'Prioriza oportunidades de lead dentro da configuração atual da campanha.',
+    MESSAGES: 'Prioriza conversas iniciadas nos canais configurados para o anúncio.',
+    CONVERSATIONS: 'Prioriza conversas iniciadas nos canais configurados para o anúncio.',
+    ENGAGED_USERS: 'Prioriza pessoas com maior chance de interagir com o anúncio.',
+    TRAFFIC: 'Prioriza visitas ao destino configurado, como site, WhatsApp ou landing page.',
+    LINK_CLICKS: 'Prioriza pessoas com maior probabilidade de clicar no link.',
+    OUTBOUND_CLICKS: 'Prioriza cliques que levam a pessoa para fora da Meta.',
+    REACH: 'Busca alcançar o maior número possível de pessoas do público definido.',
+    IMPRESSIONS: 'Busca gerar o maior volume possível de exibições.',
+    POST_ENGAGEMENT: 'Prioriza curtidas, comentários, compartilhamentos e outras interações.',
+    SALES: 'Prioriza ações de valor, como compra, agendamento ou outra conversão configurada.',
+    CONVERSIONS: 'Prioriza ações de valor, como compra, agendamento ou outra conversão configurada.',
+    OFFSITE_CONVERSIONS: 'Prioriza ações de conversão registradas fora da Meta, como no site.',
+    LOWEST_COST_WITHOUT_CAP: 'A Meta busca o maior volume de resultados dentro do orçamento, sem limite máximo de lance definido.',
+    LOWEST_COST_WITH_BID_CAP: 'A Meta tenta manter o menor custo possível sem ultrapassar o limite de lance configurado.',
+    COST_CAP: 'A Meta tenta manter o custo médio próximo do valor definido.',
+    BID_CAP: 'A entrega respeita um limite máximo de lance em cada leilão.',
+    AUCTION: 'Os anúncios competem em leilão a cada oportunidade de entrega.',
+    BUYING_TYPE_AUCTION: 'Os anúncios competem em leilão a cada oportunidade de entrega.',
+  }
+  return descriptions[normalized] || generic[kind]
+}
+
+function MetaAdsHeaderTooltipDescription({
+  value,
+  description,
+}: {
+  value: string
+  description: string
+}) {
+  return (
+    <span className="block space-y-1">
+      <span className="block font-medium text-slate-100">{value}</span>
+      <span className="block">{description}</span>
+    </span>
+  )
+}
+
 function MetaAdsMetricTile({
   label,
   tooltipLabel,
@@ -898,7 +1154,8 @@ function MetaAdsMetricTile({
   value,
   icon: Icon,
   toneClass,
-  size,
+  width,
+  height,
   dragHandleProps,
   onHide,
   onResize,
@@ -910,37 +1167,39 @@ function MetaAdsMetricTile({
   value: ReactNode
   icon: typeof CurrencyDollar
   toneClass: string
-  size?: MetaAdsOverviewMetricSize
+  width: number
+  height: number
   dragHandleProps?: DraggableProvidedDragHandleProps | null
   onHide?: () => void
-  onResize?: () => void
+  onResize?: (dimensions: { width: number; height: number }) => void
 }) {
-  const resizeStartRef = useRef<{ x: number; y: number; resized: boolean } | null>(null)
-  const isWide = size === 'wide'
+  const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
+  const spacious = width >= 250 || height >= 150
+  const roomy = width >= 320 && height >= 176
   const labelNode = <div className="text-[9px] font-medium uppercase tracking-[0.14em] text-slate-400 sm:text-[10px]">{label}</div>
   const iconNode = (
-    <div className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${toneClass}`}>
-      <Icon className="h-3 w-3" weight="fill" />
+    <div className={`inline-flex ${roomy ? 'h-9 w-9' : spacious ? 'h-7 w-7' : 'h-6 w-6'} items-center justify-center rounded-full border ${toneClass}`}>
+      <Icon className={roomy ? 'h-4 w-4' : 'h-3 w-3'} weight="fill" />
     </div>
   )
   const content = (
-    <div className="flex flex-col items-center gap-1.5">
+    <div className={`${spacious ? 'flex-row text-left' : 'flex-col text-center'} flex items-center justify-center gap-2`}>
       {iconNode}
       <div className="space-y-0.5">
         {labelNode}
-        {subtitle ? <div className="text-[9px] leading-tight text-slate-500">{subtitle}</div> : null}
+        {subtitle && spacious ? <div className="text-[9px] leading-tight text-slate-500">{subtitle}</div> : null}
       </div>
     </div>
   )
   const body = (
     <CardContent
       tabIndex={tooltipLabel || description ? 0 : undefined}
-      className={`flex flex-col items-center justify-center gap-1 p-2 text-center outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 ${isWide ? 'min-h-[104px] sm:min-h-[112px]' : 'min-h-[76px] sm:min-h-[84px]'}`}
+      className={`${spacious ? 'items-start text-left' : 'items-center text-center'} flex h-full flex-col justify-center gap-2 p-3 outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45`}
     >
       {content}
-      <div className="space-y-0.5">
-        <div className="text-[1rem] font-semibold leading-tight text-white sm:text-[1.12rem] lg:text-[1.2rem]">{value}</div>
-        {isWide && description ? <div className="mx-auto max-w-52 text-[10px] leading-snug text-slate-400">{description}</div> : null}
+      <div className={spacious ? 'space-y-1' : 'space-y-0.5'}>
+        <div className={`${roomy ? 'text-[1.35rem]' : spacious ? 'text-[1.16rem]' : 'text-[1.05rem]'} font-semibold leading-tight text-white`}>{value}</div>
+        {roomy && description ? <div className="max-w-64 text-[10px] leading-snug text-slate-400">{description}</div> : null}
       </div>
     </CardContent>
   )
@@ -948,27 +1207,34 @@ function MetaAdsMetricTile({
     if (!onResize) return
     event.preventDefault()
     event.stopPropagation()
-    resizeStartRef.current = { x: event.clientX, y: event.clientY, resized: false }
+    resizeStartRef.current = { x: event.clientX, y: event.clientY, width, height }
     event.currentTarget.setPointerCapture?.(event.pointerId)
   }
   const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!onResize || !resizeStartRef.current || resizeStartRef.current.resized) return
-    const deltaX = event.clientX - resizeStartRef.current.x
-    const deltaY = event.clientY - resizeStartRef.current.y
-    if (Math.abs(deltaX) < 28 && Math.abs(deltaY) < 18) return
-    resizeStartRef.current.resized = true
-    onResize()
+    if (!onResize || !resizeStartRef.current) return
+    const nextWidth = clampMetaAdsMetricDimension(
+      resizeStartRef.current.width + event.clientX - resizeStartRef.current.x,
+      META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
+      META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
+      resizeStartRef.current.width,
+    )
+    const nextHeight = clampMetaAdsMetricDimension(
+      resizeStartRef.current.height + event.clientY - resizeStartRef.current.y,
+      META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
+      META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
+      resizeStartRef.current.height,
+    )
+    onResize({ width: nextWidth, height: nextHeight })
   }
   const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
     event.preventDefault()
     event.stopPropagation()
-    if (!resizeStartRef.current.resized) onResize()
     resizeStartRef.current = null
   }
 
   return (
-    <Card className={`group relative gap-0 overflow-hidden py-0 transition hover:border-sky-400/25 hover:bg-slate-900/70 ${panelClass}`}>
+    <Card className={`group relative h-full gap-0 overflow-hidden py-0 transition hover:border-sky-400/25 hover:bg-slate-900/70 ${panelClass}`}>
       <button
         type="button"
         className="absolute left-2 top-2 z-10 inline-flex h-6 w-6 cursor-grab items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/45 text-slate-500 opacity-60 shadow-sm transition hover:scale-105 hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 active:cursor-grabbing group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
@@ -980,7 +1246,7 @@ function MetaAdsMetricTile({
       {onHide ? (
         <button
           type="button"
-          className="absolute right-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/55 text-slate-400 opacity-0 shadow-sm transition hover:border-rose-400/40 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+          className="absolute right-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/60 text-slate-400 opacity-70 shadow-sm transition hover:border-rose-400/40 hover:text-rose-100 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
           aria-label={`Ocultar card ${tooltipLabel || label}`}
           onClick={(event) => {
             event.preventDefault()
@@ -1002,7 +1268,7 @@ function MetaAdsMetricTile({
         <button
           type="button"
           className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
-          aria-label={`${isWide ? 'Reduzir' : 'Ampliar'} card ${tooltipLabel || label}`}
+          aria-label={`Redimensionar card ${tooltipLabel || label}`}
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
           onPointerUp={handleResizePointerUp}
@@ -1021,7 +1287,8 @@ function MetaAdsTrendWidget({
   trend,
   currency,
   syncing,
-  size,
+  width,
+  height,
   dragHandleProps,
   onHide,
   onResize,
@@ -1029,45 +1296,53 @@ function MetaAdsTrendWidget({
   trend: MetaAdsTrendPoint[]
   currency: string
   syncing?: boolean
-  size?: MetaAdsOverviewMetricSize
+  width: number
+  height: number
   dragHandleProps?: DraggableProvidedDragHandleProps | null
   onHide?: () => void
-  onResize?: () => void
+  onResize?: (dimensions: { width: number; height: number }) => void
 }) {
-  const resizeStartRef = useRef<{ x: number; y: number; resized: boolean } | null>(null)
-  const isWide = size === 'wide'
+  const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
+  const roomy = width >= 440 && height >= 300
   const trendTicks = useMemo(() => buildTrendTicks(trend), [trend])
   const trendAxisFormatter = useMemo(
     () => (value: string) => formatTrendAxisLabel(value, trend.length),
     [trend.length],
   )
-  const chartHeightClass = isWide ? 'h-72' : 'h-52'
+  const chartHeight = Math.max(150, height - (roomy ? 108 : 78))
 
   const handleResizePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize) return
     event.preventDefault()
     event.stopPropagation()
-    resizeStartRef.current = { x: event.clientX, y: event.clientY, resized: false }
+    resizeStartRef.current = { x: event.clientX, y: event.clientY, width, height }
     event.currentTarget.setPointerCapture?.(event.pointerId)
   }
   const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!onResize || !resizeStartRef.current || resizeStartRef.current.resized) return
-    const deltaX = event.clientX - resizeStartRef.current.x
-    const deltaY = event.clientY - resizeStartRef.current.y
-    if (Math.abs(deltaX) < 28 && Math.abs(deltaY) < 18) return
-    resizeStartRef.current.resized = true
-    onResize()
+    if (!onResize || !resizeStartRef.current) return
+    const nextWidth = clampMetaAdsMetricDimension(
+      resizeStartRef.current.width + event.clientX - resizeStartRef.current.x,
+      META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
+      META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
+      resizeStartRef.current.width,
+    )
+    const nextHeight = clampMetaAdsMetricDimension(
+      resizeStartRef.current.height + event.clientY - resizeStartRef.current.y,
+      META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
+      META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
+      resizeStartRef.current.height,
+    )
+    onResize({ width: nextWidth, height: nextHeight })
   }
   const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
     event.preventDefault()
     event.stopPropagation()
-    if (!resizeStartRef.current.resized) onResize()
     resizeStartRef.current = null
   }
 
   return (
-    <Card className={`${panelClass} group relative overflow-hidden`}>
+    <Card className={`${panelClass} group relative h-full overflow-hidden`}>
       <MetaAdsSyncOverlay show={syncing && trend.length > 0} label="Atualizando tendência" />
       <button
         type="button"
@@ -1080,7 +1355,7 @@ function MetaAdsTrendWidget({
       {onHide ? (
         <button
           type="button"
-          className="absolute right-3 top-3 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/55 text-slate-400 opacity-0 shadow-sm transition hover:border-rose-400/40 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+          className="absolute right-3 top-3 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/60 text-slate-400 opacity-70 shadow-sm transition hover:border-rose-400/40 hover:text-rose-100 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
           aria-label="Ocultar gráfico de tendência"
           onClick={(event) => {
             event.preventDefault()
@@ -1091,14 +1366,14 @@ function MetaAdsTrendWidget({
           <EyeSlash className="h-3.5 w-3.5" />
         </button>
       ) : null}
-      <CardHeader className="pl-11">
-        <CardTitle className="flex items-center gap-2">
+      <CardHeader className={`${roomy ? 'pl-11' : 'px-10 py-3'} gap-1.5`}>
+        <CardTitle className="flex items-center gap-2 text-sm sm:text-base">
           <PresentationChart className="h-5 w-5 text-sky-300" />
           Tendência de gasto
         </CardTitle>
-        <CardDescription className="text-slate-300">Histórico de investimento da conta selecionada.</CardDescription>
+        {roomy ? <CardDescription className="text-slate-300">Histórico de investimento da conta selecionada.</CardDescription> : null}
       </CardHeader>
-      <CardContent className={`${chartHeightClass} pt-2`}>
+      <CardContent className="pt-2" style={{ height: chartHeight }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={trend}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
@@ -1146,7 +1421,7 @@ function MetaAdsTrendWidget({
         <button
           type="button"
           className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
-          aria-label={`${isWide ? 'Reduzir' : 'Ampliar'} gráfico de tendência`}
+          aria-label="Redimensionar gráfico de tendência"
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
           onPointerUp={handleResizePointerUp}
@@ -1437,6 +1712,15 @@ function metaAdsStatusDisplay(status?: string) {
   return normalized || 'Indefinido'
 }
 
+function metaAdsStatusControlLabel(status?: string) {
+  const normalized = String(status || '').toUpperCase()
+  if (normalized === 'ACTIVE') return 'ligado'
+  if (normalized === 'PAUSED') return 'desligado'
+  if (normalized === 'DELETED') return 'excluido'
+  if (normalized === 'ARCHIVED') return 'arquivado'
+  return normalized ? normalized.toLowerCase() : 'sem status'
+}
+
 function MetaAdsModalHeaderIcon({
   icon,
   label,
@@ -1445,12 +1729,12 @@ function MetaAdsModalHeaderIcon({
 }: {
   icon: ReactNode
   label: string
-  description: string
+  description: ReactNode
   value?: unknown
 }) {
   if (value === undefined || value === null || value === '') return null
   return (
-    <TooltipLabel label={label} description={`${description} Valor atual: ${String(value)}.`}>
+    <TooltipLabel label={label} description={description}>
       <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-sky-400/25 bg-sky-400/10 text-sky-100 shadow-[0_0_24px_rgba(56,189,248,0.12)]">
         {icon}
       </span>
@@ -1458,16 +1742,483 @@ function MetaAdsModalHeaderIcon({
   )
 }
 
+function MetaAdsModalHeaderStat({
+  icon,
+  label,
+  description,
+  value,
+}: {
+  icon: ReactNode
+  label: string
+  description?: ReactNode
+  value?: unknown
+}) {
+  if (value === undefined || value === null || value === '') return null
+  return (
+    <TooltipLabel label={label} description={description || String(value)}>
+      <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-sky-400/20 bg-sky-400/8 px-2 text-sky-100">
+        <span className="inline-flex h-5 w-5 items-center justify-center text-sky-200" aria-hidden>
+          {icon}
+        </span>
+        <span className="text-xs font-semibold leading-none">{String(value)}</span>
+      </span>
+    </TooltipLabel>
+  )
+}
+
+function formatMetaAdsCountDescription(value: unknown, singular: string, plural: string, context: string) {
+  const count = Number(value)
+  const safeCount = Number.isFinite(count) ? count : 0
+  const suffix = context ? ` ${context}` : ''
+  return `${safeCount} ${safeCount === 1 ? singular : plural}${suffix}.`
+}
+
+function MetaAdsTitleMetaBadge({
+  kind,
+  label,
+  value,
+}: {
+  kind: MetaAdsEntityKind
+  label: string
+  value?: string
+}) {
+  const trimmedValue = String(value || '').trim()
+  if (!trimmedValue) return null
+  return (
+    <TooltipLabel label={label} description={trimmedValue}>
+      <span className="inline-flex max-w-64 items-center gap-1.5 rounded-full border border-sky-400/20 bg-sky-400/8 px-2.5 py-1 text-xs text-sky-100">
+        <MetaAdsEntityGlyph kind={kind} className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{trimmedValue}</span>
+      </span>
+    </TooltipLabel>
+  )
+}
+
+function MetaAdsEditableTitleInput({
+  value,
+  onChange,
+  disabled,
+  label,
+}: {
+  value: string
+  onChange: (value: string) => void
+  disabled: boolean
+  label: string
+}) {
+  const inputWidth = `${Math.max(8, Math.min(42, value.length + 1))}ch`
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  return (
+    <span className="group inline-flex max-w-full items-center gap-1.5">
+      <span className="inline-flex max-w-[calc(100%-2.25rem)] rounded-lg border border-transparent px-0.5 py-0.5 transition hover:border-sky-400/25 hover:bg-sky-400/5 focus-within:border-sky-400/35 focus-within:bg-sky-400/8 focus-within:ring-2 focus-within:ring-sky-400/35">
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          disabled={disabled}
+          aria-label={label}
+          style={{ width: inputWidth, maxWidth: '100%' }}
+          className="block min-w-0 bg-transparent text-xl font-semibold leading-tight text-white outline-none transition disabled:cursor-not-allowed disabled:opacity-70 sm:text-2xl"
+        />
+      </span>
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full border border-sky-400/20 bg-sky-400/8 text-sky-100 shadow-[0_0_18px_rgba(56,189,248,0.12)] transition hover:border-sky-300/45 hover:bg-sky-400/15 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+        aria-label={`Editar ${label.toLowerCase()}`}
+        disabled={disabled}
+        onClick={() => inputRef.current?.focus()}
+      >
+        <span className="relative h-3.5 w-3.5 rotate-[-38deg]">
+          <span className="absolute left-1 top-0 h-3 w-1.5 rounded-sm border border-current bg-current/20" />
+          <span className="absolute left-[0.275rem] top-3 h-0 w-0 border-l-[3px] border-r-[3px] border-t-[4px] border-l-transparent border-r-transparent border-t-current" />
+          <span className="absolute left-1 top-[-0.2rem] h-1 w-1.5 rounded-t-sm bg-current" />
+        </span>
+      </button>
+    </span>
+  )
+}
+
+function MetaAdsBudgetStepperInput({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string
+  onChange: (value: string) => void
+  disabled: boolean
+}) {
+  const changeBy = (delta: number) => onChange(stepMetaAdsCurrencyInput(value, delta))
+  return (
+    <div className="flex h-10 items-center overflow-hidden rounded-md border border-slate-700 bg-slate-950/70 text-slate-100 focus-within:ring-2 focus-within:ring-sky-400/55">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-10 w-10 shrink-0 rounded-none border-r border-slate-800 text-slate-300 hover:bg-slate-800/70 hover:text-white"
+        onClick={() => changeBy(-5)}
+        disabled={disabled}
+        aria-label="Reduzir orçamento em R$ 5,00"
+      >
+        <Minus className="h-4 w-4" aria-hidden="true" />
+      </Button>
+      <Input
+        value={value}
+        onChange={(event) => onChange(formatMetaAdsCurrencyInput(event.target.value))}
+        onBlur={(event) => onChange(formatMetaAdsCurrencyInput(event.target.value))}
+        className="h-10 min-w-0 flex-1 border-0 bg-transparent px-3 text-slate-100 shadow-none focus-visible:ring-0"
+        inputMode="decimal"
+        placeholder="R$ 0,00"
+        disabled={disabled}
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-10 w-10 shrink-0 rounded-none border-l border-slate-800 text-slate-300 hover:bg-slate-800/70 hover:text-white"
+        onClick={() => changeBy(5)}
+        disabled={disabled}
+        aria-label="Aumentar orçamento em R$ 5,00"
+      >
+        <Plus className="h-4 w-4" aria-hidden="true" />
+      </Button>
+    </div>
+  )
+}
+
+function MetaAdsBidStrategyGlyph() {
+  return (
+    <span className="relative flex h-4 w-4 items-end justify-center gap-0.5" aria-hidden="true">
+      <span className="h-1.5 w-1 rounded-full bg-current opacity-55" />
+      <span className="h-3 w-1 rounded-full bg-current opacity-80" />
+      <span className="h-4 w-1 rounded-full bg-current" />
+      <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full border border-current bg-slate-950" />
+    </span>
+  )
+}
+
+function MetaAdsStatusIcon({ status }: { status?: string }) {
+  const active = metaAdsStatusToBoolean(status)
+  const label = metaAdsStatusControlLabel(status)
+  const normalized = String(status || '').toUpperCase()
+  const paused = normalized === 'PAUSED'
+  const Icon = active ? CheckCircle : paused ? PauseCircle : WarningCircle
+  const className = active
+    ? 'border-emerald-400/35 bg-emerald-500/15 text-emerald-100'
+    : paused
+      ? 'border-amber-400/35 bg-amber-500/15 text-amber-100'
+      : 'border-slate-700 bg-slate-900/70 text-slate-200'
+  return (
+    <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full border ${className}`} aria-label={`Status: ${label}`}>
+      <Icon className="h-4 w-4" weight="fill" aria-hidden="true" />
+    </span>
+  )
+}
+
+function MetaAdsDateTimePickerInput({
+  value,
+  previousValue,
+  onChange,
+  label,
+  disabled,
+}: {
+  value: string
+  previousValue: unknown
+  onChange: (next: string) => void
+  label: string
+  disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const selected = useMemo(() => parseMetaAdsDateForPicker(value, previousValue), [previousValue, value])
+  const selectedHour = selected ? String(selected.getHours()).padStart(2, '0') : '00'
+  const selectedMinute = selected ? String(selected.getMinutes()).padStart(2, '0') : '00'
+  const displayValue = selected ? formatMetaAdsDatePickerValue(selected) : 'Selecionar data e hora'
+  const hourOptions = useMemo(() => Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0')), [])
+  const minuteOptions = useMemo(() => Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0')), [])
+
+  const updateDate = (date?: Date) => {
+    if (!date) return
+    onChange(mergeMetaAdsDatePickerValue({ current: selected, date }))
+  }
+  const updateHour = (hour: string) => {
+    onChange(mergeMetaAdsDatePickerValue({ current: selected, hour: Number(hour) }))
+  }
+  const updateMinute = (minute: string) => {
+    onChange(mergeMetaAdsDatePickerValue({ current: selected, minute: Number(minute) }))
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="glass-morphism flex h-10 w-full items-center justify-between rounded-md border border-slate-700 bg-slate-950/70 px-3 text-left text-sm text-slate-100 transition hover:border-sky-400/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label={`${label}: ${displayValue}`}
+          disabled={disabled}
+        >
+          <span>{displayValue}</span>
+          <CalendarBlank className="h-4 w-4 text-sky-200" aria-hidden="true" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto border-slate-700 bg-slate-950 p-3 text-slate-100">
+        <div className="grid gap-3 md:grid-cols-[auto_11rem]">
+          <Calendar
+            mode="single"
+            selected={selected || undefined}
+            onSelect={updateDate}
+            initialFocus
+          />
+          <div className="flex flex-col justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-xs font-medium text-slate-200">
+                <Clock className="h-4 w-4 text-sky-200" aria-hidden="true" />
+                Horário
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Select value={selectedHour} onValueChange={updateHour}>
+                  <SelectTrigger className="h-9 border-slate-700 bg-slate-950/70 text-slate-100">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60">
+                    {hourOptions.map((hour) => (
+                      <SelectItem key={hour} value={hour}>{hour}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={selectedMinute} onValueChange={updateMinute}>
+                  <SelectTrigger className="h-9 border-slate-700 bg-slate-950/70 text-slate-100">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60">
+                    {minuteOptions.map((minute) => (
+                      <SelectItem key={minute} value={minute}>{minute}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <Button type="button" size="sm" variant="outline" className="border-slate-700 bg-slate-950/70 text-slate-100" onClick={() => setOpen(false)}>
+              Aplicar
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+type MetaAdsResolvedAdCreative = MetaCreativeInventoryItem & {
+  raw?: MetaAdCreativeRef
+}
+
+function mergeMetaAdsCreativeForAd({
+  raw,
+  matched,
+  ad,
+}: {
+  raw?: MetaAdCreativeRef | null
+  matched?: MetaCreativeInventoryItem | null
+  ad: MetaAd
+}): MetaAdsResolvedAdCreative | null {
+  const id = String(matched?.id || raw?.id || '').trim()
+  if (!id) return null
+  return {
+    id,
+    name: String(matched?.name || raw?.name || ad.name || id),
+    thumbnailUrl: matched?.thumbnailUrl || matched?.imageUrl || raw?.thumbnail_url || raw?.image_url || null,
+    imageUrl: matched?.imageUrl || raw?.image_url || matched?.thumbnailUrl || raw?.thumbnail_url || null,
+    effectiveObjectStoryId: matched?.effectiveObjectStoryId || raw?.effective_object_story_id || raw?.object_story_id || null,
+    adId: matched?.adId || ad.id || null,
+    adName: matched?.adName || ad.name || null,
+    adSetId: matched?.adSetId || ad.adset_id || null,
+    adSetName: matched?.adSetName || ad.adset_name || null,
+    campaignId: matched?.campaignId || ad.campaign_id || null,
+    campaignName: matched?.campaignName || ad.campaign_name || null,
+    raw: raw || undefined,
+  }
+}
+
+function resolveMetaAdsAdCreatives({
+  ad,
+  fields,
+  creatives,
+}: {
+  ad: MetaAd
+  fields: unknown
+  creatives: MetaCreativeInventoryItem[]
+}) {
+  const rawCreative = (((fields as any)?.creative || ad.creative || null) as MetaAdCreativeRef | null)
+  const rawId = String(rawCreative?.id || '').trim()
+  const rawStoryId = String(rawCreative?.effective_object_story_id || rawCreative?.object_story_id || '').trim()
+  const matches = creatives.filter((creative) => {
+    const creativeStoryId = String(creative.effectiveObjectStoryId || '').trim()
+    return (
+      creative.adId === ad.id ||
+      (rawId && creative.id === rawId) ||
+      (rawStoryId && creativeStoryId === rawStoryId)
+    )
+  })
+  const byId = new Map<string, MetaAdsResolvedAdCreative>()
+  const addCreative = (creative: MetaAdsResolvedAdCreative | null) => {
+    if (!creative?.id) return
+    byId.set(creative.id, creative)
+  }
+  matches.forEach((matched) => {
+    addCreative(mergeMetaAdsCreativeForAd({
+      raw: rawId === matched.id || rawStoryId === matched.effectiveObjectStoryId ? rawCreative : null,
+      matched,
+      ad,
+    }))
+  })
+  if (rawCreative) {
+    const matched = matches.find((creative) => creative.id === rawId || creative.effectiveObjectStoryId === rawStoryId)
+    addCreative(mergeMetaAdsCreativeForAd({ raw: rawCreative, matched, ad }))
+  }
+  return Array.from(byId.values())
+}
+
+type MetaAdsCreativeVariationGroup = {
+  label: string
+  values: string[]
+}
+
+function asMetaAdsRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function getMetaAdsObjectValue(source: unknown, path: string[]) {
+  let current = source
+  for (const key of path) {
+    const record = asMetaAdsRecord(current)
+    if (!record) return undefined
+    current = record[key]
+  }
+  return current
+}
+
+function extractMetaAdsCreativeValue(value: unknown) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim()
+  const record = asMetaAdsRecord(value)
+  if (!record) return ''
+  const candidate =
+    record.text ||
+    record.body ||
+    record.title ||
+    record.name ||
+    record.description ||
+    record.type ||
+    record.call_to_action_type ||
+    record.website_url ||
+    record.url ||
+    record.link ||
+    record.hash ||
+    record.image_hash ||
+    record.video_id
+  return typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate).trim() : ''
+}
+
+function collectMetaAdsCreativeValues(values: unknown[], formatter?: (value: string) => string) {
+  const seen = new Set<string>()
+  const collected: string[] = []
+  values.flatMap((value) => Array.isArray(value) ? value : [value]).forEach((value) => {
+    const extracted = extractMetaAdsCreativeValue(value)
+    if (!extracted) return
+    const formatted = formatter ? formatter(extracted) : extracted
+    const normalized = formatted.toLowerCase()
+    if (!formatted || seen.has(normalized)) return
+    seen.add(normalized)
+    collected.push(formatted)
+  })
+  return collected
+}
+
+function formatMetaAdsCreativeActionLabel(value: string) {
+  return formatMetaAdsEnumLabel(value)
+}
+
+function buildMetaAdsCreativeVariationGroups(raw?: MetaAdCreativeRef): MetaAdsCreativeVariationGroup[] {
+  if (!raw) return []
+  const assetFeed = asMetaAdsRecord(raw.asset_feed_spec)
+  const objectStory = asMetaAdsRecord(raw.object_story_spec)
+  const objectLinkData = getMetaAdsObjectValue(objectStory, ['link_data'])
+  const objectVideoData = getMetaAdsObjectValue(objectStory, ['video_data'])
+  const objectPhotoData = getMetaAdsObjectValue(objectStory, ['photo_data'])
+  const objectCallToAction = getMetaAdsObjectValue(objectStory, ['link_data', 'call_to_action']) || getMetaAdsObjectValue(objectStory, ['video_data', 'call_to_action'])
+  const objectCallToActionValue = getMetaAdsObjectValue(objectCallToAction, ['value'])
+
+  const groups: MetaAdsCreativeVariationGroup[] = [
+    {
+      label: 'Textos',
+      values: collectMetaAdsCreativeValues([
+        raw.body,
+        assetFeed?.bodies,
+        getMetaAdsObjectValue(objectLinkData, ['message']),
+        getMetaAdsObjectValue(objectVideoData, ['message']),
+        getMetaAdsObjectValue(objectPhotoData, ['caption']),
+      ]),
+    },
+    {
+      label: 'Títulos',
+      values: collectMetaAdsCreativeValues([
+        raw.title,
+        assetFeed?.titles,
+        getMetaAdsObjectValue(objectLinkData, ['name']),
+        getMetaAdsObjectValue(objectVideoData, ['title']),
+      ]),
+    },
+    {
+      label: 'Descrições',
+      values: collectMetaAdsCreativeValues([
+        assetFeed?.descriptions,
+        getMetaAdsObjectValue(objectLinkData, ['description']),
+      ]),
+    },
+    {
+      label: 'CTAs',
+      values: collectMetaAdsCreativeValues([
+        raw.call_to_action_type,
+        assetFeed?.call_to_action_types,
+        getMetaAdsObjectValue(objectCallToAction, ['type']),
+      ], formatMetaAdsCreativeActionLabel),
+    },
+    {
+      label: 'URLs',
+      values: collectMetaAdsCreativeValues([
+        raw.object_url,
+        assetFeed?.link_urls,
+        getMetaAdsObjectValue(objectLinkData, ['link']),
+        getMetaAdsObjectValue(objectCallToActionValue, ['link']),
+      ]),
+    },
+    {
+      label: 'Mídias',
+      values: collectMetaAdsCreativeValues([
+        raw.image_hash,
+        raw.video_id,
+        assetFeed?.images,
+        assetFeed?.videos,
+      ]),
+    },
+  ]
+
+  return groups.filter((group) => group.values.length > 0)
+}
+
 function MetaAdsEntityDetailDialog({
   detail,
   open,
   onOpenChange,
   onEntityUpdated,
+  onOpenRelatedDetail,
+  hasBackTarget,
+  creatives = [],
 }: {
   detail: MetaAdsEntityDetail | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onEntityUpdated?: () => void | Promise<void>
+  onOpenRelatedDetail?: (detail: MetaAdsEntityDetail) => void
+  hasBackTarget?: boolean
+  creatives?: MetaCreativeInventoryItem[]
 }) {
   const [liveEntity, setLiveEntity] = useState<MetaAdsLiveEntityDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
@@ -1489,7 +2240,7 @@ function MetaAdsEntityDetailDialog({
         const nextForm: Record<string, string> = {}
         for (const field of response.entity.editableFields || []) {
           const value = response.entity.fields?.[field]
-          if (value !== undefined && value !== null) nextForm[field] = String(value)
+          if (value !== undefined && value !== null) nextForm[field] = formatMetaAdsEditableValue(field, value)
         }
         setForm(nextForm)
       })
@@ -1519,22 +2270,47 @@ function MetaAdsEntityDetailDialog({
   const currentEntityId = String(fieldValue('id', detail.payload.id) || detail.payload.id || '')
   const currentObjective = fieldValue('objective', (detail.payload as any).objective) || fieldValue('optimization_goal', (detail.payload as any).optimization_goal)
   const currentBuyingType = fieldValue('buying_type')
-  const adLinkedCreative =
-    detail.kind === 'ad'
-      ? ((fields as any)?.creative || (detail.payload as MetaAd).creative || null)
+  const currentBidStrategy = fieldValue('bid_strategy', (detail.payload as any).bid_strategy)
+  const currentTitle = detail.kind === 'creative' ? getMetaAdsCreativeDisplayName(detail.payload) : detail.title
+  const currentEditableTitle = Object.prototype.hasOwnProperty.call(form, 'name')
+    ? form.name
+    : String(fieldValue('name', currentTitle) || currentTitle)
+  const campaignAdSetTotal = detail.kind === 'campaign'
+    ? ((detail.payload as MetaCampaignRow).totals?.adSets ?? (detail.payload as MetaCampaignRow).adSets?.length)
+    : null
+  const campaignAdTotal = detail.kind === 'campaign' ? (detail.payload as MetaCampaignRow).totals?.ads : null
+  const adSetParentCampaignLabel =
+    detail.kind === 'adset'
+      ? String((fields as any)?.campaign?.name || (detail.payload as MetaAdSet).campaign_name || (detail.payload as MetaAdSet).campaign_id || '')
+      : ''
+  const adSetAssociatedAdsTotal =
+    detail.kind === 'adset'
+      ? ((detail.payload as MetaAdSet).ads_count ?? (detail.payload as MetaAdSet).ads?.length)
       : null
-  const adLinkedCreativePreview = adLinkedCreative
-    ? String(adLinkedCreative.image_url || adLinkedCreative.thumbnail_url || '')
-    : ''
-  const adLinkedCreativeName = adLinkedCreative
-    ? getMetaAdsCreativeDisplayName({
-        id: String(adLinkedCreative.id || ''),
-        name: String(adLinkedCreative.name || adLinkedCreative.id || 'Criativo vinculado'),
-        imageUrl: adLinkedCreative.image_url || null,
-        thumbnailUrl: adLinkedCreative.thumbnail_url || null,
-        effectiveObjectStoryId: adLinkedCreative.effective_object_story_id || null,
-      })
-    : ''
+  const adParentCampaignLabel =
+    detail.kind === 'ad'
+      ? String((fields as any)?.campaign?.name || (detail.payload as MetaAd).campaign_name || (detail.payload as MetaAd).campaign_id || '')
+      : ''
+  const adParentAdSetLabel =
+    detail.kind === 'ad'
+      ? String((fields as any)?.adset?.name || (detail.payload as MetaAd).adset_name || (detail.payload as MetaAd).adset_id || '')
+      : ''
+  const adLinkedCreatives =
+    detail.kind === 'ad'
+      ? resolveMetaAdsAdCreatives({ ad: detail.payload as MetaAd, fields, creatives })
+      : []
+  const creativeParentCampaignLabel =
+    detail.kind === 'creative'
+      ? String((detail.payload as MetaCreativeInventoryItem).campaignName || (detail.payload as MetaCreativeInventoryItem).campaignId || '')
+      : ''
+  const creativeParentAdSetLabel =
+    detail.kind === 'creative'
+      ? String((detail.payload as MetaCreativeInventoryItem).adSetName || (detail.payload as MetaCreativeInventoryItem).adSetId || '')
+      : ''
+  const creativeParentAdLabel =
+    detail.kind === 'creative'
+      ? String((detail.payload as MetaCreativeInventoryItem).adName || (detail.payload as MetaCreativeInventoryItem).adId || '')
+      : ''
   const filterSections = (sections: EntityDetailSection[]) =>
     sections
       .map((section) => ({
@@ -1547,13 +2323,6 @@ function MetaAdsEntityDetailDialog({
   if (detail.kind === 'campaign') {
     const payload = detail.payload
     sections = filterSections([
-      {
-        title: 'Estrutura',
-        fields: [
-          { label: 'Conjuntos totais', value: payload.totals?.adSets ?? payload.adSets?.length },
-          { label: 'Anúncios totais', value: payload.totals?.ads },
-        ],
-      },
       ...(!liveEntity
         ? [
             {
@@ -1565,34 +2334,14 @@ function MetaAdsEntityDetailDialog({
             },
           ]
         : []),
-      {
-        title: 'Janela operacional',
-        fields: [
-          { label: 'Início', value: fieldValue('start_time', payload.start_time) },
-          { label: 'Fim', value: fieldValue('stop_time', payload.stop_time) },
-          { label: 'Criado em', value: fieldValue('created_time') },
-          { label: 'Atualizado em', value: fieldValue('updated_time') },
-        ],
-      },
     ])
   } else if (detail.kind === 'adset') {
     const payload = detail.payload
     sections = filterSections([
       {
-        title: 'Relacionamentos',
-        fields: [
-          { label: 'Campanha', value: (fields as any)?.campaign?.name || payload.campaign_name || payload.campaign_id },
-        ],
-      },
-      {
-        title: 'Estrutura',
-        fields: [{ label: 'Anúncios associados', value: payload.ads_count ?? payload.ads?.length }],
-      },
-      {
         title: 'Otimização e orçamento',
         fields: [
           { label: 'Evento de cobrança', value: fieldValue('billing_event') },
-          { label: 'Estratégia de lance', value: fieldValue('bid_strategy', payload.bid_strategy) },
         ],
       },
       ...(!liveEntity
@@ -1606,97 +2355,61 @@ function MetaAdsEntityDetailDialog({
             },
           ]
         : []),
-      {
-        title: 'Janela operacional',
-        fields: [
-          { label: 'Início', value: fieldValue('start_time', payload.start_time) },
-          { label: 'Fim', value: fieldValue('end_time', payload.end_time) },
-          { label: 'Criado em', value: fieldValue('created_time') },
-          { label: 'Atualizado em', value: fieldValue('updated_time') },
-        ],
-      },
     ])
   } else if (detail.kind === 'ad') {
     const payload = detail.payload
     sections = filterSections([
       {
-        title: 'Relacionamentos',
+        title: 'Detalhes do criativo',
         fields: [
-          { label: 'Campanha', value: (fields as any)?.campaign?.name || payload.campaign_name || payload.campaign_id },
-          { label: 'Conjunto de anúncios', value: (fields as any)?.adset?.name || payload.adset_name || payload.adset_id },
-          { label: 'Story ID efetivo', value: (fields as any)?.creative?.effective_object_story_id || payload.creative?.effective_object_story_id },
-          { label: 'CTA', value: (fields as any)?.creative?.call_to_action_type || payload.creative?.call_to_action_type },
+          { label: 'CTA', value: formatMetaAdsEnumLabel((fields as any)?.creative?.call_to_action_type || payload.creative?.call_to_action_type) },
           { label: 'Título do criativo', value: (fields as any)?.creative?.title || payload.creative?.title },
           { label: 'Texto do criativo', value: (fields as any)?.creative?.body || payload.creative?.body },
           { label: 'URL de destino', value: (fields as any)?.creative?.object_url || payload.creative?.object_url },
           { label: 'Tags de URL', value: (fields as any)?.creative?.url_tags || payload.creative?.url_tags },
         ],
       },
-      {
-        title: 'Janela operacional',
-        fields: [
-          { label: 'Criado em', value: fieldValue('created_time') },
-          { label: 'Atualizado em', value: fieldValue('updated_time') },
-        ],
-      },
     ])
   } else {
-    const payload = detail.payload
-    const displayName = getMetaAdsCreativeDisplayName(payload)
-    const dynamicName = hasMetaDynamicProductToken(payload.name)
-    sections = filterSections([
-      {
-        title: 'Identificação',
-        fields: [
-          { label: 'Nome', value: displayName },
-          { label: 'Nome original na Meta', value: dynamicName ? fieldValue('name', payload.name) : null },
-          { label: 'Story ID efetivo', value: fieldValue('effective_object_story_id', payload.effectiveObjectStoryId) },
-          { label: 'Object story ID', value: fieldValue('object_story_id') },
-          { label: 'Tipo CTA', value: fieldValue('call_to_action_type') },
-          { label: 'URL tags', value: fieldValue('url_tags') },
-        ],
-      },
-      {
-        title: 'Relacionamentos',
-        fields: [
-          { label: 'Campanha', value: payload.campaignName || payload.campaignId },
-          { label: 'Conjunto de anúncios', value: payload.adSetName || payload.adSetId },
-          { label: 'Anúncio', value: payload.adName || payload.adId },
-        ],
-      },
-      {
-        title: 'Janela operacional',
-        fields: [
-          { label: 'Criado em', value: fieldValue('created_time') },
-          { label: 'Atualizado em', value: fieldValue('updated_time') },
-        ],
-      },
-    ])
+    sections = []
   }
 
   const editableFields = liveEntity?.editableFields || []
+  const visibleEditableFields = editableFields.filter((field) => !['bid_strategy', 'optimization_goal', 'name', 'status'].includes(field))
+  const hasVisibleEditableFields = visibleEditableFields.length > 0
   const canEdit = Boolean(liveEntity?.editable && editableFields.length)
-  const hasPotentialEditableFields = Boolean(editableFields.length)
-  const modalExcludedFields = new Set([
-    ...META_ADS_MODAL_HEADER_FIELDS,
-    ...META_ADS_MODAL_TIMELINE_FIELDS,
-    ...(canEdit ? editableFields : []),
-  ])
-  const liveFieldGroups = liveEntity
-    ? buildMetaAdsLiveFieldCards(liveEntity.fields || {}, new Set(editableFields), modalExcludedFields)
-    : { editable: [], readOnly: [] }
-  const changedPatch = editableFields.reduce((patch, field) => {
-    const previous = String((liveEntity?.fields as any)?.[field] ?? '')
+  const editablePanelTitle =
+    detail.kind === 'campaign'
+      ? 'Ajustes da campanha'
+      : detail.kind === 'adset'
+        ? 'Ajustes do conjunto'
+        : detail.kind === 'ad'
+          ? 'Ajustes do anúncio'
+          : 'Ajustes disponíveis'
+  const editablePanelDescription = 'Altere os dados disponíveis abaixo. As mudanças só entram em vigor quando você clicar em Salvar.'
+  const changedFields = editableFields.filter((field) => {
+    const previous = formatMetaAdsEditableValue(field, (liveEntity?.fields as any)?.[field])
     const next = String(form[field] ?? '')
-    if (next !== previous) {
-      ;(patch as Record<string, string>)[field] = next
-    }
-    return patch
-  }, {} as MetaAdsEntityPatch)
-  const hasChanges = Object.keys(changedPatch).length > 0
+    return next !== previous
+  })
+  const hasChanges = changedFields.length > 0
   const setFormField = (field: string, value: string) => setForm((current) => ({ ...current, [field]: value }))
   const handleSave = async () => {
     if (!detail || !hasChanges) return
+    const changedPatch = changedFields.reduce((patch, field) => {
+      const parsed = parseMetaAdsEditableValue(field, String(form[field] ?? ''), (liveEntity?.fields as any)?.[field])
+      if (parsed === null) {
+        ;(patch as any).__invalidField = field
+        return patch
+      }
+      ;(patch as Record<string, string>)[field] = parsed
+      return patch
+    }, {} as MetaAdsEntityPatch & { __invalidField?: string })
+    if (changedPatch.__invalidField) {
+      toast.error(`Use DD/MM/AA, HH:mm no campo ${getMetaAdsLiveFieldLabel(changedPatch.__invalidField)}.`)
+      return
+    }
+    delete changedPatch.__invalidField
     const sensitive = Object.keys(changedPatch).some((field) => field === 'status' || field.includes('budget'))
     if (sensitive && !window.confirm('Confirmar alteração no Gerenciador de Anúncios da Meta? A mudança será aplicada na conta selecionada.')) {
       return
@@ -1708,7 +2421,7 @@ function MetaAdsEntityDetailDialog({
       const nextForm: Record<string, string> = {}
       for (const field of response.entity.editableFields || []) {
         const value = response.entity.fields?.[field]
-        if (value !== undefined && value !== null) nextForm[field] = String(value)
+        if (value !== undefined && value !== null) nextForm[field] = formatMetaAdsEditableValue(field, value)
       }
       setForm(nextForm)
       toast.success('Alteração enviada para o Gerenciador de Anúncios')
@@ -1724,7 +2437,24 @@ function MetaAdsEntityDetailDialog({
     <EntityDetailModal
       open={open}
       onOpenChange={onOpenChange}
-      title={detail.kind === 'creative' ? getMetaAdsCreativeDisplayName(detail.payload) : detail.title}
+      title={
+        canEdit && editableFields.includes('name') && detail.kind !== 'creative' ? (
+          <MetaAdsEditableTitleInput
+            value={currentEditableTitle}
+            onChange={(value) => setFormField('name', value)}
+            disabled={saving || loadingDetail}
+            label={
+              detail.kind === 'campaign'
+                ? 'Nome da campanha'
+                : detail.kind === 'adset'
+                  ? 'Nome do conjunto'
+                  : 'Nome do anúncio'
+            }
+          />
+        ) : (
+          currentTitle
+        )
+      }
       description={
         detail.kind === 'campaign'
           ? 'Configuração consolidada da campanha selecionada.'
@@ -1734,43 +2464,126 @@ function MetaAdsEntityDetailDialog({
               ? 'Configuração consolidada do anúncio selecionado.'
               : 'Configuração consolidada do criativo selecionado.'
       }
+      titleMeta={
+        currentEntityId || adSetParentCampaignLabel || adParentCampaignLabel || adParentAdSetLabel ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {detail.kind === 'adset' ? (
+              <MetaAdsTitleMetaBadge kind="campaign" label="Campanha pai" value={adSetParentCampaignLabel} />
+            ) : null}
+            {detail.kind === 'ad' ? (
+              <>
+                <MetaAdsTitleMetaBadge kind="campaign" label="Campanha pai" value={adParentCampaignLabel} />
+                <MetaAdsTitleMetaBadge kind="adset" label="Conjunto de anúncios pai" value={adParentAdSetLabel} />
+              </>
+            ) : null}
+            {currentEntityId ? (
+              <span className="inline-flex rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs font-mono text-slate-300">
+                ID {currentEntityId}
+              </span>
+            ) : null}
+          </div>
+        ) : null
+      }
       previewUrl={previewUrl}
+      closeIcon={hasBackTarget ? <span aria-hidden="true">↩</span> : undefined}
+      closeLabel={hasBackTarget ? 'Voltar' : 'Close'}
       headerAccessory={
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          {currentEntityId ? (
-            <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs font-mono text-slate-300">
-              ID {currentEntityId}
-            </span>
+          {detail.kind === 'creative' ? (
+            <>
+              <MetaAdsModalHeaderIcon
+                icon={<MetaAdsEntityGlyph kind="campaign" className="h-4 w-4" />}
+                label="Campanha pai"
+                description={creativeParentCampaignLabel}
+                value={creativeParentCampaignLabel}
+              />
+              <MetaAdsModalHeaderIcon
+                icon={<MetaAdsEntityGlyph kind="adset" className="h-4 w-4" />}
+                label="Conjunto de anúncios pai"
+                description={creativeParentAdSetLabel}
+                value={creativeParentAdSetLabel}
+              />
+              <MetaAdsModalHeaderIcon
+                icon={<MetaAdsEntityGlyph kind="ad" className="h-4 w-4" />}
+                label="Anúncio pai"
+                description={creativeParentAdLabel}
+                value={creativeParentAdLabel}
+              />
+            </>
           ) : null}
           {detail.kind !== 'creative' && editableFields.includes('status') ? (
-            <TooltipLabel label="Status" description="Ative ou pause este item no Gerenciador de Anúncios. A alteração é aplicada somente ao salvar.">
-              <label className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-200">
+            <TooltipLabel label="Status" description="Ative ou pause este item. A mudança só entra em vigor ao salvar.">
+              <label className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-2 text-xs text-slate-200" aria-label="Status">
                 <Switch
                   checked={metaAdsStatusToBoolean(currentStatus)}
                   onCheckedChange={(checked) => setFormField('status', metaAdsStatusFromBoolean(checked))}
                   disabled={saving || loadingDetail || !canEdit}
-                  className="data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-slate-700"
+                  className="data-[state=checked]:!bg-emerald-500 data-[state=unchecked]:!bg-slate-700"
                 />
-                {metaAdsStatusDisplay(currentStatus)}
               </label>
             </TooltipLabel>
           ) : detail.kind !== 'creative' && currentStatus ? (
-            <TooltipLabel label="Status" description="Estado atual retornado pela Meta. Esta conexão não permite alterar o status neste item.">
-              <span className="inline-flex rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-300">
-                {metaAdsStatusDisplay(currentStatus)}
+            <TooltipLabel label="Status" description="Status atual deste item.">
+              <span>
+                <MetaAdsStatusIcon status={currentStatus} />
               </span>
             </TooltipLabel>
           ) : null}
+          {detail.kind === 'campaign' ? (
+            <>
+              <MetaAdsModalHeaderStat
+                icon={<MetaAdsEntityGlyph kind="adset" className="h-4 w-4" />}
+                label="Conjuntos"
+                description={formatMetaAdsCountDescription(campaignAdSetTotal, 'conjunto vinculado', 'conjuntos vinculados', 'à campanha')}
+                value={campaignAdSetTotal}
+              />
+              <MetaAdsModalHeaderStat
+                icon={<MetaAdsEntityGlyph kind="ad" className="h-4 w-4" />}
+                label="Anúncios"
+                description={formatMetaAdsCountDescription(campaignAdTotal, 'anúncio vinculado', 'anúncios vinculados', 'à campanha')}
+                value={campaignAdTotal}
+              />
+            </>
+          ) : null}
+          {detail.kind === 'adset' ? (
+            <MetaAdsModalHeaderStat
+              icon={<MetaAdsEntityGlyph kind="ad" className="h-4 w-4" />}
+              label="Anúncios"
+              description={formatMetaAdsCountDescription(adSetAssociatedAdsTotal, 'anúncio neste conjunto', 'anúncios neste conjunto', '')}
+              value={adSetAssociatedAdsTotal}
+            />
+          ) : null}
+          <MetaAdsModalHeaderIcon
+            icon={<MetaAdsBidStrategyGlyph />}
+            label="Estratégia de lance"
+            description={
+              <MetaAdsHeaderTooltipDescription
+                value={formatMetaAdsEnumLabel(currentBidStrategy)}
+                description={describeMetaAdsHeaderValue('bid_strategy', currentBidStrategy)}
+              />
+            }
+            value={currentBidStrategy}
+          />
           <MetaAdsModalHeaderIcon
             icon={<Target className="h-4 w-4" />}
             label={detail.kind === 'adset' ? 'Meta de otimização' : 'Objetivo'}
-            description="Define o objetivo operacional configurado na Meta para orientar entrega e otimização."
+            description={
+              <MetaAdsHeaderTooltipDescription
+                value={formatMetaAdsEnumLabel(currentObjective)}
+                description={describeMetaAdsHeaderValue(detail.kind === 'adset' ? 'optimization_goal' : 'objective', currentObjective)}
+              />
+            }
             value={currentObjective}
           />
           <MetaAdsModalHeaderIcon
             icon={<CurrencyDollar className="h-4 w-4" />}
             label="Tipo de compra"
-            description="Modelo usado pela Meta para comprar mídia, como leilão ou reserva."
+            description={
+              <MetaAdsHeaderTooltipDescription
+                value={formatMetaAdsEnumLabel(currentBuyingType)}
+                description={describeMetaAdsHeaderValue('buying_type', currentBuyingType)}
+              />
+            }
             value={currentBuyingType}
           />
         </div>
@@ -1785,7 +2598,7 @@ function MetaAdsEntityDetailDialog({
             onClick={() => onOpenChange(false)}
             disabled={saving}
           >
-            Fechar
+            {hasBackTarget ? 'Voltar' : 'Fechar'}
           </Button>
           {canEdit ? (
             <Button
@@ -1794,101 +2607,103 @@ function MetaAdsEntityDetailDialog({
               onClick={handleSave}
               disabled={!hasChanges || saving || loadingDetail}
             >
-              {saving ? 'Salvando na Meta...' : 'Salvar na Meta'}
+              {saving ? 'Salvando...' : 'Salvar'}
             </Button>
           ) : null}
         </div>
       }
     >
-      <div className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="text-sm font-medium text-white">Dados live do Gerenciador de Anúncios</div>
-            <div className="text-xs text-slate-400">
-              {loadingDetail
-                ? 'Carregando configuração atual da Meta...'
-                : detailError
-                  ? detailError
-                  : liveEntity
-                    ? `Atualizado em ${new Date(liveEntity.updatedAt).toLocaleString('pt-BR')}`
-                    : 'Abrindo com os dados locais do inventário.'}
-            </div>
-          </div>
-          {loadingDetail ? <Spinner className="h-5 w-5 animate-spin text-sky-300" /> : null}
-          {!loadingDetail && liveEntity?.editable ? <Badge className="bg-emerald-500/15 text-emerald-100">Editável</Badge> : null}
-          {!loadingDetail && liveEntity && !liveEntity.editable ? <Badge className="bg-slate-700/70 text-slate-200">Somente leitura</Badge> : null}
+      {loadingDetail || detailError ? (
+        <div className="flex items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/45 p-4 text-sm text-slate-300">
+          {loadingDetail ? <Spinner className="h-4 w-4 animate-spin text-sky-300" /> : <WarningCircle className="h-4 w-4 text-amber-300" />}
+          <span>{loadingDetail ? 'Carregando dados atualizados.' : detailError}</span>
         </div>
-        {liveEntity?.readOnlyReason ? <div className="mt-3 text-xs text-slate-300">{liveEntity.readOnlyReason}</div> : null}
-      </div>
-
-      {!canEdit && hasPotentialEditableFields ? (
-        <MetaAdsLiveFieldPanel
-          title="Campos editáveis pela API da Meta"
-          description="A Meta permite editar estes campos, mas a conexão atual não possui permissão de gerenciamento; por isso eles ficam visíveis sem edição."
-          fields={liveFieldGroups.editable}
-          tone="blocked"
-        />
       ) : null}
 
-      {detail.kind === 'ad' && adLinkedCreative ? (
+      {detail.kind === 'ad' && adLinkedCreatives.length ? (
         <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-medium text-white">Criativo vinculado ao anúncio</div>
-              <div className="text-xs text-slate-400">Dados retornados pela Meta para o criativo usado por este anúncio.</div>
+              <div className="text-sm font-medium text-white">{adLinkedCreatives.length === 1 ? 'Criativo vinculado ao anúncio' : 'Criativos vinculados ao anúncio'}</div>
+              <div className="text-xs text-slate-400">Clique em um criativo para abrir os detalhes.</div>
             </div>
-            <Badge className="bg-amber-500/15 text-amber-100">Leitura</Badge>
           </div>
-          <div className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]">
-            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
-              {adLinkedCreativePreview ? (
-                <img src={adLinkedCreativePreview} alt="" className="h-28 w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
-              ) : (
-                <div className="flex h-28 items-center justify-center text-xs text-slate-500">Sem prévia</div>
-              )}
-            </div>
-            <div className="min-w-0 space-y-2 text-sm">
-              <div>
-                <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Nome</div>
-                <div className="truncate text-slate-100">{adLinkedCreativeName}</div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">ID</div>
-                  <div className="break-all font-mono text-xs text-blue-100/70">{adLinkedCreative.id || '—'}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Story ID</div>
-                  <div className="break-all font-mono text-xs text-blue-100/70">{adLinkedCreative.effective_object_story_id || adLinkedCreative.object_story_id || '—'}</div>
-                </div>
-              </div>
-              {adLinkedCreative.title || adLinkedCreative.body || adLinkedCreative.call_to_action_type ? (
-                <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-3 text-xs text-slate-300">
-                  {adLinkedCreative.title ? <div className="font-medium text-slate-100">{adLinkedCreative.title}</div> : null}
-                  {adLinkedCreative.body ? <div className="mt-1 line-clamp-3">{adLinkedCreative.body}</div> : null}
-                  {adLinkedCreative.call_to_action_type ? <div className="mt-2 text-slate-400">CTA: {adLinkedCreative.call_to_action_type}</div> : null}
-                </div>
-              ) : null}
-            </div>
+          <div className="grid gap-3">
+            {adLinkedCreatives.map((creative) => {
+              const creativeName = getMetaAdsCreativeDisplayName(creative)
+              const preview = creative.imageUrl || creative.thumbnailUrl
+              const raw = creative.raw
+              const variationGroups = buildMetaAdsCreativeVariationGroups(raw)
+              return (
+                <button
+                  key={creative.id}
+                  type="button"
+                  onClick={() => onOpenRelatedDetail?.({ kind: 'creative', title: creativeName, payload: creative })}
+                  className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/45 p-3 text-left transition hover:border-amber-300/35 hover:bg-amber-400/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/35 sm:grid-cols-[10rem_minmax(0,1fr)]"
+                >
+                  <span className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
+                    {preview ? (
+                      <img src={preview} alt={creativeName} className="h-28 w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
+                    ) : (
+                      <span className="flex h-28 items-center justify-center text-xs text-slate-500">Sem prévia</span>
+                    )}
+                  </span>
+                  <span className="min-w-0 space-y-2 text-sm">
+                    <span className="block">
+                      <span className="block text-[10px] uppercase tracking-[0.16em] text-slate-500">Nome</span>
+                      <span className="block truncate text-slate-100">{creativeName}</span>
+                    </span>
+                    <span className="grid gap-2 sm:grid-cols-2">
+                      <span>
+                        <span className="block text-[10px] uppercase tracking-[0.16em] text-slate-500">ID</span>
+                        <span className="block break-all font-mono text-xs text-blue-100/70">{creative.id || '—'}</span>
+                      </span>
+                      <span>
+                        <span className="block text-[10px] uppercase tracking-[0.16em] text-slate-500">Story ID</span>
+                        <span className="block break-all font-mono text-xs text-blue-100/70">{creative.effectiveObjectStoryId || raw?.object_story_id || '—'}</span>
+                      </span>
+                    </span>
+                    {variationGroups.length ? (
+                      <span className="block rounded-xl border border-slate-800 bg-slate-950/45 p-3 text-xs text-slate-300">
+                        <span className="block font-medium text-slate-100">Variações disponíveis</span>
+                        <span className="mt-2 grid gap-2 sm:grid-cols-2">
+                          {variationGroups.map((group) => (
+                            <span key={group.label} className="block rounded-lg border border-slate-800/80 bg-slate-950/50 p-2">
+                              <span className="block text-[10px] uppercase tracking-[0.16em] text-slate-500">{group.label}</span>
+                              <span className="mt-1 block space-y-1 text-slate-200">
+                                {group.values.slice(0, 3).map((value) => (
+                                  <span key={value} className="block line-clamp-2">{value}</span>
+                                ))}
+                                {group.values.length > 3 ? <span className="block text-slate-500">+{group.values.length - 3} variações</span> : null}
+                              </span>
+                            </span>
+                          ))}
+                        </span>
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </div>
       ) : null}
 
-      {canEdit ? (
+      {canEdit && hasVisibleEditableFields ? (
         <div className="space-y-3 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
           <div>
-            <div className="text-sm font-medium text-white">Edição segura</div>
-            <div className="text-xs text-slate-400">Somente os campos abaixo são enviados para a Meta. Campos bloqueados permanecem apenas leitura.</div>
+            <div className="text-sm font-medium text-white">{editablePanelTitle}</div>
+            <div className="text-xs text-slate-400">{editablePanelDescription}</div>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            {editableFields.includes('name') ? (
+            {visibleEditableFields.includes('name') ? (
               <label className="space-y-1 text-xs text-slate-300">
                 Nome
                 <Input value={form.name || ''} onChange={(event) => setFormField('name', event.target.value)} className="h-10 border-slate-700 bg-slate-950/70 text-slate-100" />
               </label>
             ) : null}
-            {(['daily_budget', 'lifetime_budget', 'start_time', 'stop_time', 'end_time', 'bid_strategy', 'optimization_goal'] as const).map((field) =>
-              editableFields.includes(field) ? (
+            {(['daily_budget', 'lifetime_budget', 'start_time', 'stop_time', 'end_time'] as const).map((field) =>
+              visibleEditableFields.includes(field) ? (
                 <label key={field} className="space-y-1 text-xs text-slate-300">
                   {{
                     daily_budget: 'Orçamento diário',
@@ -1896,28 +2711,28 @@ function MetaAdsEntityDetailDialog({
                     start_time: 'Início',
                     stop_time: 'Fim da campanha',
                     end_time: 'Fim do conjunto',
-                    bid_strategy: 'Estratégia de lance',
-                    optimization_goal: 'Meta de otimização',
                   }[field]}
-                  <Input
-                    value={META_ADS_BUDGET_FIELDS.has(field) ? formatMetaAdsBudgetFromCents(form[field]) : form[field] || ''}
-                    onChange={(event) => setFormField(field, META_ADS_BUDGET_FIELDS.has(field) ? parseMetaAdsBudgetToCents(event.target.value) : event.target.value)}
-                    className="h-10 border-slate-700 bg-slate-950/70 text-slate-100"
-                    inputMode={META_ADS_BUDGET_FIELDS.has(field) ? 'decimal' : undefined}
-                  />
+                  {META_ADS_EDITABLE_DATE_FIELDS.has(field) ? (
+                    <MetaAdsDateTimePickerInput
+                      value={form[field] || ''}
+                      previousValue={(liveEntity?.fields as any)?.[field]}
+                      onChange={(next) => setFormField(field, next)}
+                      label={getMetaAdsLiveFieldLabel(field)}
+                      disabled={saving || loadingDetail}
+                    />
+                  ) : (
+                    <MetaAdsBudgetStepperInput
+                      value={form[field] || ''}
+                      onChange={(next) => setFormField(field, next)}
+                      disabled={saving || loadingDetail}
+                    />
+                  )}
                 </label>
               ) : null,
             )}
           </div>
         </div>
       ) : null}
-
-      <MetaAdsLiveFieldPanel
-        title="Informações bloqueadas para edição"
-        description="Dados retornados pela Meta que ficam disponíveis para conferência, mas não devem ser alterados diretamente neste fluxo."
-        fields={liveFieldGroups.readOnly}
-        tone="readonly"
-      />
     </EntityDetailModal>
   )
 }
@@ -2446,9 +3261,9 @@ export function MetaAdsOverviewPanel({
       .map((config) => {
         const tile = byKey.get(config.key)
         if (!tile || !config.visible) return null
-        return { ...tile, size: config.size }
+        return { ...tile, width: config.width, height: config.height }
       })
-      .filter(Boolean) as Array<(typeof overviewTiles)[number] & { size: MetaAdsOverviewMetricSize }>
+      .filter(Boolean) as Array<(typeof overviewTiles)[number] & { width: number; height: number }>
   }, [metricLayout, overviewTiles])
 
   const hiddenMetricTiles = useMemo(() => {
@@ -2499,7 +3314,7 @@ export function MetaAdsOverviewPanel({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div className="space-y-1">
           <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Resumo da conta</div>
-          <div className="text-xs text-slate-500">Arraste pela alça. Use o canto inferior direito para alternar detalhes. Oculte apenas o que não usa.</div>
+          <div className="text-xs text-slate-500">Arraste pela alça. Redimensione livremente pelo canto inferior direito. Oculte apenas o que não usa.</div>
         </div>
         {hiddenMetricTiles.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -2534,7 +3349,7 @@ export function MetaAdsOverviewPanel({
             <div
               ref={dropProvided.innerRef}
               {...dropProvided.droppableProps}
-              className="relative grid grid-flow-dense grid-cols-[repeat(auto-fit,minmax(8.25rem,1fr))] gap-2 sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]"
+              className="relative flex flex-wrap items-stretch gap-2"
             >
               <MetaAdsSyncOverlay show={syncing && hasOverviewData} label="Atualizando métricas" />
               {visibleMetricTiles.length > 0 ? (
@@ -2544,17 +3359,25 @@ export function MetaAdsOverviewPanel({
                       <div
                         ref={dragProvided.innerRef}
                         {...dragProvided.draggableProps}
-                        className={`${tile.key === 'trend' ? (tile.size === 'wide' ? 'col-span-2 md:col-span-3 xl:col-span-4' : 'col-span-2') : tile.size === 'wide' ? 'col-span-2' : ''} ${snapshot.isDragging ? 'z-30' : ''}`}
+                        className={`min-w-0 flex-none ${snapshot.isDragging ? 'z-30' : ''}`}
+                        style={
+                          {
+                            ...dragProvided.draggableProps.style,
+                            width: `min(${tile.width}px, 100%)`,
+                            height: tile.height,
+                          } as CSSProperties
+                        }
                       >
                         {tile.key === 'trend' ? (
                           <MetaAdsTrendWidget
                             trend={trend}
                             currency={selectedAccount.currency || 'USD'}
                             syncing={syncing}
-                            size={tile.size}
+                            width={tile.width}
+                            height={tile.height}
                             dragHandleProps={dragProvided.dragHandleProps}
                             onHide={() => updateMetricTile(tile.key, { visible: false })}
-                            onResize={() => updateMetricTile(tile.key, { size: tile.size === 'wide' ? 'compact' : 'wide' })}
+                            onResize={(dimensions) => updateMetricTile(tile.key, dimensions)}
                           />
                         ) : (
                           <MetaAdsMetricTile
@@ -2565,10 +3388,11 @@ export function MetaAdsOverviewPanel({
                             value={tile.value}
                             icon={tile.icon}
                             toneClass={tile.toneClass}
-                            size={tile.size}
+                            width={tile.width}
+                            height={tile.height}
                             dragHandleProps={dragProvided.dragHandleProps}
                             onHide={() => updateMetricTile(tile.key, { visible: false })}
-                            onResize={() => updateMetricTile(tile.key, { size: tile.size === 'wide' ? 'compact' : 'wide' })}
+                            onResize={(dimensions) => updateMetricTile(tile.key, dimensions)}
                           />
                         )}
                       </div>
@@ -2620,6 +3444,7 @@ export function MetaAdsInventoryPanel({
   syncing?: boolean
 }) {
   const [detail, setDetail] = useState<MetaAdsEntityDetail | null>(null)
+  const [detailStack, setDetailStack] = useState<MetaAdsEntityDetail[]>([])
   const [collapsedCampaignIds, setCollapsedCampaignIds] = useState<string[]>([])
   const [collapsedAdSetIds, setCollapsedAdSetIds] = useState<string[]>([])
   const [sortKey, setSortKey] = useState<MetaAdsInventorySortKey>('rank')
@@ -2633,6 +3458,24 @@ export function MetaAdsInventoryPanel({
   })
   const columnResizeRef = useRef<{ key: MetaAdsInventoryColumnKey; startX: number; startWidth: number } | null>(null)
   const currency = selectedAccount.currency || 'USD'
+  const openEntityDetail = useCallback((nextDetail: MetaAdsEntityDetail) => {
+    setDetailStack([])
+    setDetail(nextDetail)
+  }, [])
+  const openRelatedDetail = useCallback((nextDetail: MetaAdsEntityDetail) => {
+    setDetailStack((current) => (detail ? [...current, detail] : current))
+    setDetail(nextDetail)
+  }, [detail])
+  const handleDetailOpenChange = useCallback((open: boolean) => {
+    if (open) return
+    if (detailStack.length > 0) {
+      const previous = detailStack[detailStack.length - 1]
+      setDetailStack((current) => current.slice(0, -1))
+      setDetail(previous)
+      return
+    }
+    setDetail(null)
+  }, [detailStack])
 
   useEffect(() => {
     try {
@@ -2715,16 +3558,6 @@ export function MetaAdsInventoryPanel({
       .map((ad) => ad.id)
     return new Map([...rankedAdIds, ...fallbackIds].map((adId, index) => [adId, index + 1]))
   }, [adSetRankMap, campaignRankMap, inventory.ads, report?.ads])
-  const creativeRankMap = useMemo(() => {
-    const sorted = [...inventory.creatives].sort((left, right) => {
-      const adRankDiff = (adRankMap.get(left.adId || '') || 999) - (adRankMap.get(right.adId || '') || 999)
-      if (adRankDiff) return adRankDiff
-      const campaignRankDiff = (campaignRankMap.get(left.campaignId || '') || 999) - (campaignRankMap.get(right.campaignId || '') || 999)
-      if (campaignRankDiff) return campaignRankDiff
-      return (left.name || left.id).localeCompare(right.name || right.id, 'pt-BR')
-    })
-    return new Map(sorted.map((item, index) => [item.id, index + 1]))
-  }, [adRankMap, campaignRankMap, inventory.creatives])
   const campaignMetricsMap = useMemo(
     () => new Map((report?.campaigns || []).map((campaign) => [campaign.campaignId, campaign])),
     [report?.campaigns],
@@ -2785,15 +3618,6 @@ export function MetaAdsInventoryPanel({
       })
     return map
   }, [filteredAds])
-  const filteredCreativesByAdSet = useMemo(() => {
-    const map = new Map<string, MetaCreativeInventoryItem[]>()
-    filteredCreatives.forEach((creative) => {
-      const adSetId = creative.adSetId || ''
-      if (!map.has(adSetId)) map.set(adSetId, [])
-      map.get(adSetId)!.push(creative)
-    })
-    return map
-  }, [filteredCreatives])
   const filteredCreativesByAd = useMemo(() => {
     const map = new Map<string, MetaCreativeInventoryItem[]>()
     filteredCreatives.forEach((creative) => {
@@ -3214,7 +4038,15 @@ export function MetaAdsInventoryPanel({
     <>
       <MetaAdsPersistentError error={inventoryError} onRetry={onRetry} />
       {loading && !inventoryTreeRows.length ? <MetaAdsLoadingCard label="Sincronizando mapa da conta Meta" /> : null}
-      <MetaAdsEntityDetailDialog detail={detail} open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)} onEntityUpdated={onEntityUpdated} />
+      <MetaAdsEntityDetailDialog
+        detail={detail}
+        open={Boolean(detail)}
+        onOpenChange={handleDetailOpenChange}
+        onEntityUpdated={onEntityUpdated}
+        onOpenRelatedDetail={openRelatedDetail}
+        hasBackTarget={detail?.kind === 'creative' && detailStack.length > 0}
+        creatives={inventory.creatives}
+      />
       <Card className={`${panelClass} relative overflow-hidden`}>
         <MetaAdsSyncOverlay show={syncing && inventoryTreeRows.length > 0} label="Atualizando mapa da conta" />
         <CardHeader>
@@ -3294,7 +4126,7 @@ export function MetaAdsInventoryPanel({
                               label="Campanha"
                               toneClass="border-sky-500/20 bg-sky-500/10 text-sky-100"
                             />
-                            <button type="button" className={campaignItemClass} onClick={() => setDetail({ kind: 'campaign', title: campaign.name || campaign.id, payload: campaign })}>
+                            <button type="button" className={campaignItemClass} onClick={() => openEntityDetail({ kind: 'campaign', title: campaign.name || campaign.id, payload: campaign })}>
                               {campaign.name || campaign.id}
                             </button>
                           </div>
@@ -3386,7 +4218,7 @@ export function MetaAdsInventoryPanel({
                               label="Conjunto"
                               toneClass="border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-100"
                             />
-                            <button type="button" className={adSetItemClass} onClick={() => setDetail({ kind: 'adset', title: adSet.name || adSet.id, payload: adSet })}>
+                            <button type="button" className={adSetItemClass} onClick={() => openEntityDetail({ kind: 'adset', title: adSet.name || adSet.id, payload: adSet })}>
                               {adSet.name || adSet.id}
                             </button>
                           </div>
@@ -3468,7 +4300,7 @@ export function MetaAdsInventoryPanel({
                             label="Anúncio"
                             toneClass="border-amber-500/20 bg-amber-500/10 text-amber-100"
                           />
-                          <button type="button" className={adItemClass} onClick={() => setDetail({ kind: 'ad', title: ad.name || ad.id, payload: ad })}>
+                          <button type="button" className={adItemClass} onClick={() => openEntityDetail({ kind: 'ad', title: ad.name || ad.id, payload: ad })}>
                             {ad.name || ad.id}
                           </button>
                         </div>
@@ -3530,62 +4362,6 @@ export function MetaAdsInventoryPanel({
             </TableBody>
           </table>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card className={panelClass}>
-        <CardHeader>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <CardTitle>Criativo</CardTitle>
-              <CardDescription className="text-slate-300">
-                Criativos deduplicados a partir dos anúncios retornados pela Meta para a conta selecionada. Ranking segue a campanha consolidada e a hierarquia do anúncio pai.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-          {filteredCreatives.length === 0 ? (
-            <div className="text-sm text-slate-300">Nenhum criativo encontrado.</div>
-          ) : (
-            filteredCreatives.map((creative) => {
-              const displayName = getMetaAdsCreativeDisplayName(creative)
-              const mediaUrl = creative.imageUrl || creative.thumbnailUrl
-              const dynamicName = hasMetaDynamicProductToken(creative.name)
-              return (
-                <button
-                  key={creative.id}
-                  type="button"
-                  onClick={() => setDetail({ kind: 'creative', title: displayName, payload: creative })}
-                  className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-2.5 text-left transition hover:bg-slate-900/75"
-                >
-                  {mediaUrl ? (
-                    <img
-                      src={mediaUrl}
-                      alt={displayName}
-                      loading="lazy"
-                      decoding="async"
-                      referrerPolicy="no-referrer"
-                      className="mb-2.5 h-24 w-full rounded-xl bg-slate-950/70 object-contain"
-                    />
-                  ) : null}
-                  <div className="space-y-1">
-                    <div className="flex items-start gap-2">
-                      <div className="min-w-0 flex-1 truncate font-medium text-white">{displayName}</div>
-                      <MetaAdsRankBadge rank={creativeRankMap.get(creative.id)} />
-                    </div>
-                    {dynamicName ? (
-                      <div className="text-[11px] text-slate-400">Modelo dinâmico da Meta</div>
-                    ) : null}
-                    <div className="truncate font-mono text-xs text-slate-400">{creative.id}</div>
-                    <div className="truncate text-xs text-slate-300">Campanha: {creative.campaignName || creative.campaignId || '—'}</div>
-                    <div className="truncate text-xs text-slate-300">Conjunto: {creative.adSetName || creative.adSetId || '—'}</div>
-                    <div className="truncate text-xs text-slate-300">Anúncio: {creative.adName || creative.adId || '—'}</div>
-                  </div>
-                </button>
-              )
-            })
-          )}
         </CardContent>
       </Card>
     </>
