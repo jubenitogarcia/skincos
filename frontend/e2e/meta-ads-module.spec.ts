@@ -319,7 +319,7 @@ test.describe('meta ads', () => {
 
     await page.getByRole('button', { name: 'Anúncio 1', exact: true }).click()
     await expect(page.getByRole('dialog')).toContainText('Anúncio 1')
-    await expect(page.getByRole('dialog')).toContainText('Criativo do anúncio')
+    await expect(page.getByRole('dialog')).toContainText('Criativos do anúncio')
     await expect(page.getByRole('dialog')).toContainText('Criativo 1')
     await expect(page.getByRole('dialog')).toContainText('Story ID')
     await expect(page.getByRole('dialog')).toContainText('story_1')
