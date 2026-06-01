@@ -13,6 +13,7 @@ async function mockCrmUser(page: Page) {
 async function openMetaAds(page: Page) {
   await page.addInitScript(() => {
     localStorage.setItem('app.activeModule', 'meta-ads')
+    localStorage.removeItem('skincos.metaAds.layout.overviewMetrics.v5')
   })
   await page.goto('/')
   await page.reload()
@@ -278,6 +279,58 @@ test.describe('meta ads', () => {
       })
     })
 
+    await page.route('**/api/meta-ads/entities/ad/ad_1', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          entity: {
+            type: 'ad',
+            id: 'ad_1',
+            accountId: '123',
+            editable: true,
+            editableFields: ['name', 'status'],
+            fields: {
+              id: 'ad_1',
+              account_id: 'act_123',
+              name: 'Anúncio 1',
+              status: 'ACTIVE',
+              effective_status: 'ACTIVE',
+              campaign_id: 'cmp_1',
+              campaign_name: 'Campanha Primavera',
+              adset_id: 'set_1',
+              adset_name: 'Conjunto 1',
+              creative: {
+                id: 'cr_1',
+                name: 'Criativo 1',
+                effective_object_story_id: 'story_1',
+                thumbnail_url: '/icons/insumos-icon-192.png',
+                image_url: '/icons/insumos-icon-192.png',
+                body: 'Texto principal',
+                title: 'Título principal',
+                call_to_action_type: 'MESSAGE_PAGE',
+                object_url: 'https://example.com',
+                asset_feed_spec: {
+                  bodies: [{ text: 'Texto principal' }, { text: 'Texto alternativo' }],
+                  titles: [{ text: 'Título principal' }, { text: 'Título alternativo' }],
+                  descriptions: [{ text: 'Descrição principal' }],
+                  call_to_action_types: ['MESSAGE_PAGE'],
+                  link_urls: [{ website_url: 'https://example.com' }],
+                  images: [
+                    { hash: 'hash_3x4', url: '/icons/insumos-icon-192.png', width: 900, height: 1200 },
+                    { hash: 'hash_2x1', url: '/icons/icon-512.png', width: 1200, height: 600 },
+                  ],
+                },
+              },
+            },
+            raw: {},
+            updatedAt: '2026-05-14T12:00:00.000Z',
+          },
+        }),
+      })
+    })
+
     await openMetaAds(page)
 
     await expect(page.getByText('Conta Meta pronta para operar')).toHaveCount(0)
@@ -296,6 +349,23 @@ test.describe('meta ads', () => {
     await expect(page.getByText('Comece conectando a Meta ao CRM.')).toHaveCount(0)
     await expect(page.getByText('OAuth:')).toHaveCount(0)
 
+    const spendFormatButton = page.getByLabel('Alternar formato do card Investimento')
+    await spendFormatButton.click()
+    await expect.poll(async () => page.evaluate(() => {
+      const layout = JSON.parse(localStorage.getItem('skincos.metaAds.layout.overviewMetrics.v5') || '[]')
+      return layout.find((item: { key?: string; aspect?: string }) => item.key === 'spend')?.aspect
+    })).toBe('2:1')
+    await spendFormatButton.click()
+    await expect.poll(async () => page.evaluate(() => {
+      const layout = JSON.parse(localStorage.getItem('skincos.metaAds.layout.overviewMetrics.v5') || '[]')
+      return layout.find((item: { key?: string; aspect?: string }) => item.key === 'spend')?.aspect
+    })).toBe('1:1')
+    await spendFormatButton.click()
+    await expect.poll(async () => page.evaluate(() => {
+      const layout = JSON.parse(localStorage.getItem('skincos.metaAds.layout.overviewMetrics.v5') || '[]')
+      return layout.find((item: { key?: string; aspect?: string }) => item.key === 'spend')?.aspect
+    })).toBe('4:3')
+
     await expect(page.locator('body')).toContainText('Mapa da conta Meta')
     await expect(page.getByRole('button', { name: 'Campanha Primavera' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Conjunto 1' })).toBeVisible()
@@ -305,7 +375,7 @@ test.describe('meta ads', () => {
 
     const objectiveCell = page.locator('tbody tr').first().locator('td').nth(3).locator('[aria-label]').first()
     await objectiveCell.hover()
-    await expect(page.getByRole('tooltip')).toContainText('Prioriza cadastros, formulários ou conversas')
+    await expect(page.getByRole('tooltip').filter({ hasText: 'Geração de Lead' })).toContainText('Prioriza pessoas com maior chance')
 
     await page.getByRole('button', { name: 'Campanha Primavera' }).click()
     await expect(page.getByRole('dialog')).toContainText('Campanha Primavera')
@@ -319,12 +389,20 @@ test.describe('meta ads', () => {
     await page.getByRole('button', { name: 'Fechar' }).click()
 
     await page.getByRole('button', { name: 'Anúncio 1', exact: true }).click()
-    await expect(page.getByRole('dialog')).toContainText('Anúncio 1')
+    await expect(page.getByRole('dialog').locator('input').first()).toHaveValue('Anúncio 1')
     await expect(page.getByRole('dialog')).toContainText('Criativos do anúncio')
     await expect(page.getByRole('dialog')).toContainText('Mídias do criativo')
+    await expect(page.getByRole('dialog').getByText('Mídias do criativo')).toHaveCount(1)
+    await expect(page.getByRole('dialog')).toContainText('Variações do criativo')
+    await expect(page.getByRole('dialog').getByText('Mídias', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('dialog')).toContainText('Criativo 1')
     await expect(page.getByRole('dialog')).toContainText('Story ID')
     await expect(page.getByRole('dialog')).toContainText('story_1')
+    const mediaHeading = page.getByRole('dialog').getByText('Mídias do criativo')
+    const variationsHeading = page.getByRole('dialog').getByText('Variações do criativo')
+    const mediaBox = await mediaHeading.boundingBox()
+    const variationsBox = await variationsHeading.boundingBox()
+    expect(mediaBox?.y ?? 0).toBeLessThan(variationsBox?.y ?? 0)
     await page.getByRole('button', { name: 'Fechar' }).click()
 
     const firstRow = page.locator('tbody tr').first()
