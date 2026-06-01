@@ -278,7 +278,7 @@ const META_ADS_LIVE_FIELD_ORDER = [
   'updated_time',
 ] as const
 const META_ADS_HIDDEN_LIVE_FIELDS = new Set(['_crm_detail_warning'])
-const META_ADS_MODAL_HEADER_FIELDS = new Set(['id', 'account_id', 'name', 'status', 'effective_status', 'objective', 'optimization_goal', 'buying_type', 'bid_strategy'])
+const META_ADS_MODAL_HEADER_FIELDS = new Set(['id', 'account_id', 'name', 'status', 'effective_status', 'objective', 'optimization_goal', 'buying_type', 'bid_strategy', 'billing_event'])
 const META_ADS_MODAL_TIMELINE_FIELDS = new Set(['start_time', 'stop_time', 'end_time', 'created_time', 'updated_time'])
 const META_ADS_EDITABLE_DATE_FIELDS = new Set(['start_time', 'stop_time', 'end_time'])
 const META_ADS_BUDGET_FIELDS = new Set(['daily_budget', 'lifetime_budget'])
@@ -919,7 +919,7 @@ function describeObjective(objective?: string | null) {
 }
 
 function MetaAdsObjectiveBadge({ objective }: { objective?: string | null }) {
-  const { title, description, icon: Icon, toneClass } = describeObjective(objective)
+  const { title, description, toneClass } = describeObjective(objective)
   const iconToneClass = toneClass.includes('sky')
     ? 'text-sky-300'
     : toneClass.includes('emerald')
@@ -935,7 +935,7 @@ function MetaAdsObjectiveBadge({ objective }: { objective?: string | null }) {
         className={`inline-flex h-10 w-10 items-center justify-center rounded-full ${iconToneClass}`}
         aria-label={`${title}: ${description}`}
       >
-        <Icon className="h-5 w-5" weight="fill" aria-hidden="true" />
+        <MetaAdsObjectiveSignalGlyph value={objective} className="h-5 w-5" />
       </span>
     </MetaAdsTableTooltip>
   )
@@ -1071,6 +1071,16 @@ function formatMetaAdsEnumLabel(value?: unknown) {
     REACH: 'Alcance',
     IMPRESSIONS: 'Impressões',
     POST_ENGAGEMENT: 'Engajamento',
+    PAGE_LIKES: 'Curtidas na página',
+    EVENT_RESPONSES: 'Respostas ao evento',
+    VIDEO_VIEWS: 'Visualizações de vídeo',
+    APP_INSTALLS: 'Instalações do app',
+    BRAND_AWARENESS: 'Reconhecimento da marca',
+    LOCAL_AWARENESS: 'Reconhecimento local',
+    STORE_VISITS: 'Visitas à loja',
+    VALUE: 'Valor',
+    LANDING_PAGE_VIEWS: 'Visualizações da página',
+    QUALITY_CALL: 'Ligação qualificada',
     SALES: 'Vendas',
     CONVERSIONS: 'Conversões',
     OFFSITE_CONVERSIONS: 'Conversões no site',
@@ -1088,6 +1098,14 @@ function formatMetaAdsEnumLabel(value?: unknown) {
     LOWEST_COST_WITH_BID_CAP: 'Menor custo com limite de lance',
     COST_CAP: 'Controle de custo',
     BID_CAP: 'Limite de lance',
+    ABSOLUTE_OCPM: 'Otimização por mil impressões',
+    TARGET_COST: 'Custo alvo',
+    NONE: 'Sem estratégia definida',
+    RESERVED: 'Reservado',
+    REACH_AND_FREQUENCY: 'Alcance e frequência',
+    CLICKS: 'Cliques',
+    THRUPLAY: 'ThruPlay',
+    TWO_SECOND_CONTINUOUS_VIDEO_VIEWS: 'Visualizações contínuas',
   }
   if (labels[normalized]) return labels[normalized]
   return normalized
@@ -1097,14 +1115,26 @@ function formatMetaAdsEnumLabel(value?: unknown) {
     .join(' ')
 }
 
-function describeMetaAdsHeaderValue(kind: 'objective' | 'optimization_goal' | 'bid_strategy' | 'buying_type', value?: unknown) {
+type MetaAdsHeaderSignalKind = 'objective' | 'optimization_goal' | 'bid_strategy' | 'buying_type' | 'billing_event'
+
+function describeMetaAdsHeaderValue(kind: MetaAdsHeaderSignalKind, value?: unknown) {
   const normalized = String(value || '').trim().toUpperCase()
-  const generic: Record<typeof kind, string> = {
+  const generic: Record<MetaAdsHeaderSignalKind, string> = {
     objective: 'Define o resultado principal que a campanha busca entregar.',
     optimization_goal: 'Define o tipo de resultado que o conjunto prioriza na entrega.',
     bid_strategy: 'Define como a Meta distribui o orçamento durante os leilões.',
     buying_type: 'Define como a entrega dos anúncios é comprada na Meta.',
+    billing_event: 'Define qual entrega a Meta usa para calcular a cobrança.',
   }
+  const billingDescriptions: Record<string, string> = {
+    IMPRESSIONS: 'A cobrança acompanha o volume de impressões entregues.',
+    LINK_CLICKS: 'A cobrança acompanha cliques no link configurado.',
+    CLICKS: 'A cobrança acompanha cliques registrados no anúncio.',
+    CONVERSATIONS: 'A cobrança acompanha conversas iniciadas pelos anúncios.',
+    THRUPLAY: 'A cobrança acompanha visualizações de vídeo qualificadas como ThruPlay.',
+    TWO_SECOND_CONTINUOUS_VIDEO_VIEWS: 'A cobrança acompanha visualizações contínuas de vídeo por pelo menos dois segundos.',
+  }
+  if (kind === 'billing_event') return billingDescriptions[normalized] || generic.billing_event
   const descriptions: Record<string, string> = {
     LEAD_GENERATION: 'Prioriza pessoas com maior chance de enviar cadastro ou iniciar uma conversa qualificada.',
     LEADS: 'Prioriza pessoas com maior chance de enviar cadastro ou iniciar uma conversa qualificada.',
@@ -1125,8 +1155,12 @@ function describeMetaAdsHeaderValue(kind: 'objective' | 'optimization_goal' | 'b
     LOWEST_COST_WITH_BID_CAP: 'A Meta tenta manter o menor custo possível sem ultrapassar o limite de lance configurado.',
     COST_CAP: 'A Meta tenta manter o custo médio próximo do valor definido.',
     BID_CAP: 'A entrega respeita um limite máximo de lance em cada leilão.',
+    TARGET_COST: 'A Meta tenta manter o custo próximo de um alvo definido ao longo da entrega.',
+    ABSOLUTE_OCPM: 'Usa otimização por mil impressões quando a configuração exige entrega mais controlada.',
     AUCTION: 'Os anúncios competem em leilão a cada oportunidade de entrega.',
     BUYING_TYPE_AUCTION: 'Os anúncios competem em leilão a cada oportunidade de entrega.',
+    RESERVED: 'Entrega comprada antecipadamente com volume e preço mais previsíveis.',
+    REACH_AND_FREQUENCY: 'Entrega planejada para controlar alcance e frequência antes da veiculação.',
   }
   return descriptions[normalized] || generic[kind]
 }
@@ -1884,13 +1918,139 @@ function MetaAdsBudgetStepperInput({
   )
 }
 
-function MetaAdsBidStrategyGlyph() {
+function MetaAdsAuctionGlyph({ className = 'h-4 w-4' }: { className?: string }) {
   return (
-    <span className="relative flex h-4 w-4 items-end justify-center gap-0.5" aria-hidden="true">
-      <span className="h-1.5 w-1 rounded-full bg-current opacity-55" />
-      <span className="h-3 w-1 rounded-full bg-current opacity-80" />
-      <span className="h-4 w-1 rounded-full bg-current" />
-      <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full border border-current bg-slate-950" />
+    <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+      <span className="absolute bottom-[18%] left-[18%] h-[52%] w-[52%] rounded-sm border border-current rotate-45 opacity-80" />
+      <span className="absolute right-[16%] top-[18%] h-[28%] w-[28%] rounded-full bg-current" />
+      <span className="absolute bottom-[12%] right-[12%] h-px w-[42%] -rotate-45 rounded-full bg-current opacity-70" />
+    </span>
+  )
+}
+
+function MetaAdsReachFrequencyGlyph({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+      <span className="absolute h-[72%] w-[72%] rounded-full border border-current opacity-60" />
+      <span className="absolute h-[44%] w-[44%] rounded-full border border-current" />
+      <span className="absolute right-[12%] top-[18%] h-1.5 w-1.5 rounded-full bg-current" />
+    </span>
+  )
+}
+
+function MetaAdsSignalFallbackGlyph({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+      <span className="absolute h-[74%] w-[74%] rounded-full border border-current opacity-65" />
+      <span className="absolute h-[20%] w-[20%] rounded-full bg-current" />
+      <span className="absolute right-[12%] top-[12%] h-[28%] w-[28%] rounded-full border border-current" />
+    </span>
+  )
+}
+
+function MetaAdsBidStrategyGlyph({ value, className = 'h-4 w-4' }: { value?: unknown; className?: string }) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (normalized === 'COST_CAP' || normalized === 'TARGET_COST') {
+    return (
+      <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+        <span className="absolute h-[74%] w-[74%] rounded-full border border-current opacity-65" />
+        <span className="absolute left-[24%] top-[47%] h-px w-[52%] rounded-full bg-current" />
+        <span className="absolute left-[46%] top-[18%] h-[62%] w-px rounded-full bg-current" />
+        <span className="absolute h-[24%] w-[24%] rounded-full bg-current" />
+      </span>
+    )
+  }
+  if (normalized === 'BID_CAP' || normalized === 'LOWEST_COST_WITH_BID_CAP') {
+    return (
+      <span className={`relative inline-flex items-end justify-center gap-0.5 ${className}`} aria-hidden="true">
+        <span className="h-[34%] w-[18%] rounded-full bg-current opacity-45" />
+        <span className="h-[58%] w-[18%] rounded-full bg-current opacity-70" />
+        <span className="h-[82%] w-[18%] rounded-full bg-current" />
+        <span className="absolute right-[7%] top-[5%] h-[34%] w-[34%] rounded-full border border-current bg-slate-950" />
+      </span>
+    )
+  }
+  return (
+    <span className={`relative inline-flex items-end justify-center gap-0.5 ${className}`} aria-hidden="true">
+      <span className="h-[30%] w-[18%] rounded-full bg-current opacity-55" />
+      <span className="h-[58%] w-[18%] rounded-full bg-current opacity-80" />
+      <span className="h-[84%] w-[18%] rounded-full bg-current" />
+      <span className="absolute left-[14%] top-[16%] h-px w-[70%] rotate-[-28deg] rounded-full bg-current opacity-80" />
+    </span>
+  )
+}
+
+function MetaAdsObjectiveSignalGlyph({ value, className = 'h-4 w-4' }: { value?: unknown; className?: string }) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (normalized === 'LEADS' || normalized === 'LEAD_GENERATION' || normalized === 'OUTCOME_LEADS') {
+    return (
+      <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+        <span className="absolute left-[16%] top-[18%] h-[28%] w-[28%] rounded-full border border-current" />
+        <span className="absolute right-[16%] top-[18%] h-[28%] w-[28%] rounded-full border border-current opacity-70" />
+        <span className="absolute bottom-[14%] h-[38%] w-[70%] rounded-full border border-current" />
+      </span>
+    )
+  }
+  if (normalized === 'MESSAGES' || normalized === 'CONVERSATIONS') {
+    return <ChatCircleDots className={className} weight="fill" aria-hidden="true" />
+  }
+  if (normalized === 'LINK_CLICKS' || normalized === 'TRAFFIC' || normalized === 'OUTBOUND_CLICKS') {
+    return <MetaAdsLinkClicksGlyph className={className} />
+  }
+  if (normalized === 'REACH' || normalized === 'IMPRESSIONS') {
+    return <MetaAdsReachFrequencyGlyph className={className} />
+  }
+  if (normalized === 'APP_INSTALLS') {
+    return (
+      <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+        <span className="absolute h-[78%] w-[54%] rounded-sm border border-current" />
+        <span className="absolute bottom-[18%] h-px w-[30%] rounded-full bg-current" />
+        <span className="absolute top-[20%] h-[30%] w-px rounded-full bg-current" />
+        <span className="absolute top-[38%] h-px w-[28%] rounded-full bg-current" />
+      </span>
+    )
+  }
+  if (normalized === 'VIDEO_VIEWS' || normalized === 'THRUPLAY') {
+    return <MetaAdsBillingEventGlyph value="THRUPLAY" className={className} />
+  }
+  if (normalized === 'SALES' || normalized === 'CONVERSIONS' || normalized === 'OFFSITE_CONVERSIONS') {
+    return (
+      <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+        <span className="absolute h-[66%] w-[66%] rounded-full border border-current" />
+        <span className="absolute bottom-[18%] h-[28%] w-[48%] rounded-t-full border border-current border-b-0" />
+        <span className="absolute top-[18%] h-[16%] w-[36%] rounded-full bg-current" />
+      </span>
+    )
+  }
+  return <MetaAdsSignalFallbackGlyph className={className} />
+}
+
+function MetaAdsBuyingTypeGlyph({ value, className = 'h-4 w-4' }: { value?: unknown; className?: string }) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (normalized === 'RESERVED' || normalized === 'REACH_AND_FREQUENCY') {
+    return <MetaAdsReachFrequencyGlyph className={className} />
+  }
+  return <MetaAdsAuctionGlyph className={className} />
+}
+
+function MetaAdsBillingEventGlyph({ value, className = 'h-4 w-4' }: { value?: unknown; className?: string }) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (normalized === 'IMPRESSIONS') return <MetaAdsReachFrequencyGlyph className={className} />
+  if (normalized === 'LINK_CLICKS' || normalized === 'CLICKS') return <MetaAdsLinkClicksGlyph className={className} />
+  if (normalized === 'CONVERSATIONS') return <ChatCircleDots className={className} weight="fill" aria-hidden="true" />
+  if (normalized.includes('VIDEO') || normalized === 'THRUPLAY') {
+    return (
+      <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+        <span className="absolute h-[68%] w-[82%] rounded-sm border border-current" />
+        <span className="absolute ml-0.5 h-0 w-0 border-y-[4px] border-l-[6px] border-y-transparent border-l-current" />
+      </span>
+    )
+  }
+  return (
+    <span className={`relative inline-flex items-center justify-center ${className}`} aria-hidden="true">
+      <span className="absolute h-[76%] w-[76%] rounded-full border border-current opacity-65" />
+      <span className="absolute h-[52%] w-px rounded-full bg-current" />
+      <span className="absolute bottom-[18%] h-px w-[46%] rounded-full bg-current" />
     </span>
   )
 }
@@ -2203,12 +2363,79 @@ function buildMetaAdsCreativeVariationGroups(raw?: MetaAdCreativeRef): MetaAdsCr
   return groups.filter((group) => group.values.length > 0)
 }
 
+function MetaAdsCreativeVariationPanel({ group }: { group: MetaAdsCreativeVariationGroup }) {
+  return (
+    <div className="min-w-0 rounded-xl border border-slate-800/85 bg-slate-950/40 p-3">
+      <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">{group.label}</div>
+      <div className="mt-2 space-y-2">
+        {group.values.map((value, index) => (
+          <div key={`${group.label}-${index}-${value}`} className="rounded-lg border border-slate-800/70 bg-slate-950/55 px-3 py-2 text-xs leading-5 text-slate-200">
+            {group.values.length > 1 ? <span className="mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-sky-300/80">Variação {index + 1}</span> : null}
+            <span className="whitespace-pre-wrap break-words">{value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MetaAdsAdCreativeDetails({ creative }: { creative: MetaAdsResolvedAdCreative }) {
+  const creativeName = getMetaAdsCreativeDisplayName(creative)
+  const preview = creative.imageUrl || creative.thumbnailUrl
+  const raw = creative.raw
+  const variationGroups = buildMetaAdsCreativeVariationGroups(raw)
+  const storyId = creative.effectiveObjectStoryId || raw?.object_story_id || '—'
+
+  return (
+    <article className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+      <div className="mb-3">
+        <div className="text-sm font-medium text-white">Criativo do anúncio</div>
+        <div className="text-xs text-slate-400">Textos, títulos, descrições e variações usados por este anúncio.</div>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[12rem_minmax(0,1fr)]">
+        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
+          {preview ? (
+            <img src={preview} alt={creativeName} className="h-40 w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="flex h-40 items-center justify-center text-xs text-slate-500">Sem prévia</div>
+          )}
+        </div>
+        <div className="min-w-0 space-y-3">
+          <div>
+            <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">Criativo</div>
+            <div className="break-words text-base font-medium text-slate-100">{creativeName}</div>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            <div className="rounded-xl border border-slate-800/85 bg-slate-950/45 p-3">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">ID</div>
+              <div className="break-all font-mono text-xs text-blue-100/75">{creative.id || '—'}</div>
+            </div>
+            <div className="rounded-xl border border-slate-800/85 bg-slate-950/45 p-3">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Story ID</div>
+              <div className="break-all font-mono text-xs text-blue-100/75">{storyId}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {variationGroups.length ? (
+        <div className="mt-4">
+          <div className="mb-3 text-sm font-medium text-slate-100">Variações do criativo</div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {variationGroups.map((group) => (
+              <MetaAdsCreativeVariationPanel key={group.label} group={group} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
 function MetaAdsEntityDetailDialog({
   detail,
   open,
   onOpenChange,
   onEntityUpdated,
-  onOpenRelatedDetail,
   hasBackTarget,
   creatives = [],
 }: {
@@ -2216,7 +2443,6 @@ function MetaAdsEntityDetailDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   onEntityUpdated?: () => void | Promise<void>
-  onOpenRelatedDetail?: (detail: MetaAdsEntityDetail) => void
   hasBackTarget?: boolean
   creatives?: MetaCreativeInventoryItem[]
 }) {
@@ -2229,20 +2455,31 @@ function MetaAdsEntityDetailDialog({
   useEffect(() => {
     if (!open || !detail) return
     let cancelled = false
-    setLiveEntity(null)
     setDetailError(null)
+    const applyEntity = (entity: MetaAdsLiveEntityDetail) => {
+      setLiveEntity(entity)
+      const nextForm: Record<string, string> = {}
+      for (const field of entity.editableFields || []) {
+        const value = entity.fields?.[field]
+        if (value !== undefined && value !== null) nextForm[field] = formatMetaAdsEditableValue(field, value)
+      }
+      setForm(nextForm)
+    }
+    const cached = metaAdsApi.cachedEntityDetail(detail.kind, detail.payload.id)
+    if (cached?.entity) {
+      applyEntity(cached.entity)
+      setLoadingDetail(false)
+      return () => {
+        cancelled = true
+      }
+    }
+    setLiveEntity(null)
     setLoadingDetail(true)
 
     metaAdsApi.entityDetail(detail.kind, detail.payload.id)
       .then((response) => {
         if (cancelled) return
-        setLiveEntity(response.entity)
-        const nextForm: Record<string, string> = {}
-        for (const field of response.entity.editableFields || []) {
-          const value = response.entity.fields?.[field]
-          if (value !== undefined && value !== null) nextForm[field] = formatMetaAdsEditableValue(field, value)
-        }
-        setForm(nextForm)
+        applyEntity(response.entity)
       })
       .catch((error) => {
         if (cancelled) return
@@ -2271,6 +2508,7 @@ function MetaAdsEntityDetailDialog({
   const currentObjective = fieldValue('objective', (detail.payload as any).objective) || fieldValue('optimization_goal', (detail.payload as any).optimization_goal)
   const currentBuyingType = fieldValue('buying_type')
   const currentBidStrategy = fieldValue('bid_strategy', (detail.payload as any).bid_strategy)
+  const currentBillingEvent = fieldValue('billing_event')
   const currentTitle = detail.kind === 'creative' ? getMetaAdsCreativeDisplayName(detail.payload) : detail.title
   const currentEditableTitle = Object.prototype.hasOwnProperty.call(form, 'name')
     ? form.name
@@ -2338,12 +2576,6 @@ function MetaAdsEntityDetailDialog({
   } else if (detail.kind === 'adset') {
     const payload = detail.payload
     sections = filterSections([
-      {
-        title: 'Otimização e orçamento',
-        fields: [
-          { label: 'Evento de cobrança', value: fieldValue('billing_event') },
-        ],
-      },
       ...(!liveEntity
         ? [
             {
@@ -2357,19 +2589,7 @@ function MetaAdsEntityDetailDialog({
         : []),
     ])
   } else if (detail.kind === 'ad') {
-    const payload = detail.payload
-    sections = filterSections([
-      {
-        title: 'Detalhes do criativo',
-        fields: [
-          { label: 'CTA', value: formatMetaAdsEnumLabel((fields as any)?.creative?.call_to_action_type || payload.creative?.call_to_action_type) },
-          { label: 'Título do criativo', value: (fields as any)?.creative?.title || payload.creative?.title },
-          { label: 'Texto do criativo', value: (fields as any)?.creative?.body || payload.creative?.body },
-          { label: 'URL de destino', value: (fields as any)?.creative?.object_url || payload.creative?.object_url },
-          { label: 'Tags de URL', value: (fields as any)?.creative?.url_tags || payload.creative?.url_tags },
-        ],
-      },
-    ])
+    sections = []
   } else {
     sections = []
   }
@@ -2554,7 +2774,7 @@ function MetaAdsEntityDetailDialog({
             />
           ) : null}
           <MetaAdsModalHeaderIcon
-            icon={<MetaAdsBidStrategyGlyph />}
+            icon={<MetaAdsBidStrategyGlyph value={currentBidStrategy} />}
             label="Estratégia de lance"
             description={
               <MetaAdsHeaderTooltipDescription
@@ -2565,7 +2785,7 @@ function MetaAdsEntityDetailDialog({
             value={currentBidStrategy}
           />
           <MetaAdsModalHeaderIcon
-            icon={<Target className="h-4 w-4" />}
+            icon={<MetaAdsObjectiveSignalGlyph value={currentObjective} />}
             label={detail.kind === 'adset' ? 'Meta de otimização' : 'Objetivo'}
             description={
               <MetaAdsHeaderTooltipDescription
@@ -2576,7 +2796,7 @@ function MetaAdsEntityDetailDialog({
             value={currentObjective}
           />
           <MetaAdsModalHeaderIcon
-            icon={<CurrencyDollar className="h-4 w-4" />}
+            icon={<MetaAdsBuyingTypeGlyph value={currentBuyingType} />}
             label="Tipo de compra"
             description={
               <MetaAdsHeaderTooltipDescription
@@ -2586,6 +2806,19 @@ function MetaAdsEntityDetailDialog({
             }
             value={currentBuyingType}
           />
+          {detail.kind === 'adset' ? (
+            <MetaAdsModalHeaderIcon
+              icon={<MetaAdsBillingEventGlyph value={currentBillingEvent} />}
+              label="Evento de cobrança"
+              description={
+                <MetaAdsHeaderTooltipDescription
+                  value={formatMetaAdsEnumLabel(currentBillingEvent)}
+                  description={describeMetaAdsHeaderValue('billing_event', currentBillingEvent)}
+                />
+              }
+              value={currentBillingEvent}
+            />
+          ) : null}
         </div>
       }
       sections={sections}
@@ -2621,71 +2854,10 @@ function MetaAdsEntityDetailDialog({
       ) : null}
 
       {detail.kind === 'ad' && adLinkedCreatives.length ? (
-        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium text-white">{adLinkedCreatives.length === 1 ? 'Criativo vinculado ao anúncio' : 'Criativos vinculados ao anúncio'}</div>
-              <div className="text-xs text-slate-400">Clique em um criativo para abrir os detalhes.</div>
-            </div>
-          </div>
-          <div className="grid gap-3">
-            {adLinkedCreatives.map((creative) => {
-              const creativeName = getMetaAdsCreativeDisplayName(creative)
-              const preview = creative.imageUrl || creative.thumbnailUrl
-              const raw = creative.raw
-              const variationGroups = buildMetaAdsCreativeVariationGroups(raw)
-              return (
-                <button
-                  key={creative.id}
-                  type="button"
-                  onClick={() => onOpenRelatedDetail?.({ kind: 'creative', title: creativeName, payload: creative })}
-                  className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/45 p-3 text-left transition hover:border-amber-300/35 hover:bg-amber-400/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/35 sm:grid-cols-[10rem_minmax(0,1fr)]"
-                >
-                  <span className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
-                    {preview ? (
-                      <img src={preview} alt={creativeName} className="h-28 w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
-                    ) : (
-                      <span className="flex h-28 items-center justify-center text-xs text-slate-500">Sem prévia</span>
-                    )}
-                  </span>
-                  <span className="min-w-0 space-y-2 text-sm">
-                    <span className="block">
-                      <span className="block text-[10px] uppercase tracking-[0.16em] text-slate-500">Nome</span>
-                      <span className="block truncate text-slate-100">{creativeName}</span>
-                    </span>
-                    <span className="grid gap-2 sm:grid-cols-2">
-                      <span>
-                        <span className="block text-[10px] uppercase tracking-[0.16em] text-slate-500">ID</span>
-                        <span className="block break-all font-mono text-xs text-blue-100/70">{creative.id || '—'}</span>
-                      </span>
-                      <span>
-                        <span className="block text-[10px] uppercase tracking-[0.16em] text-slate-500">Story ID</span>
-                        <span className="block break-all font-mono text-xs text-blue-100/70">{creative.effectiveObjectStoryId || raw?.object_story_id || '—'}</span>
-                      </span>
-                    </span>
-                    {variationGroups.length ? (
-                      <span className="block rounded-xl border border-slate-800 bg-slate-950/45 p-3 text-xs text-slate-300">
-                        <span className="block font-medium text-slate-100">Variações disponíveis</span>
-                        <span className="mt-2 grid gap-2 sm:grid-cols-2">
-                          {variationGroups.map((group) => (
-                            <span key={group.label} className="block rounded-lg border border-slate-800/80 bg-slate-950/50 p-2">
-                              <span className="block text-[10px] uppercase tracking-[0.16em] text-slate-500">{group.label}</span>
-                              <span className="mt-1 block space-y-1 text-slate-200">
-                                {group.values.slice(0, 3).map((value) => (
-                                  <span key={value} className="block line-clamp-2">{value}</span>
-                                ))}
-                                {group.values.length > 3 ? <span className="block text-slate-500">+{group.values.length - 3} variações</span> : null}
-                              </span>
-                            </span>
-                          ))}
-                        </span>
-                      </span>
-                    ) : null}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
+        <div className="grid gap-3">
+          {adLinkedCreatives.map((creative) => (
+            <MetaAdsAdCreativeDetails key={creative.id} creative={creative} />
+          ))}
         </div>
       ) : null}
 
@@ -3311,38 +3483,32 @@ export function MetaAdsOverviewPanel({
   return (
     <>
       <MetaAdsPersistentError error={overviewError} onRetry={onRetry} />
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-1">
-          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Resumo da conta</div>
-          <div className="text-xs text-slate-500">Arraste pela alça. Redimensione livremente pelo canto inferior direito. Oculte apenas o que não usa.</div>
-        </div>
-        {hiddenMetricTiles.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Ocultas</span>
-            {hiddenMetricTiles.map((tile) => (
-              <Button
-                key={tile.key}
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 rounded-full border border-slate-800 bg-slate-900/55 px-2 text-[11px] text-slate-300 hover:border-sky-400/35 hover:bg-slate-800/80 hover:text-white"
-                onClick={() => updateMetricTile(tile.key, { visible: true })}
-              >
-                + {tile.label}
-              </Button>
-            ))}
+      {hiddenMetricTiles.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Ocultas</span>
+          {hiddenMetricTiles.map((tile) => (
             <Button
+              key={tile.key}
               type="button"
               variant="ghost"
               size="sm"
-              className="h-7 px-2 text-[11px] text-slate-400 hover:bg-slate-800/80 hover:text-white"
-              onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
+              className="h-7 rounded-full border border-slate-800 bg-slate-900/55 px-2 text-[11px] text-slate-300 hover:border-sky-400/35 hover:bg-slate-800/80 hover:text-white"
+              onClick={() => updateMetricTile(tile.key, { visible: true })}
             >
-              Restaurar padrão
+              + {tile.label}
             </Button>
-          </div>
-        ) : null}
-      </div>
+          ))}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-[11px] text-slate-400 hover:bg-slate-800/80 hover:text-white"
+            onClick={() => setMetricLayout(DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT)}
+          >
+            Restaurar padrão
+          </Button>
+        </div>
+      ) : null}
       <DragDropContext onDragEnd={handleMetricDragEnd}>
         <Droppable droppableId="meta-ads-overview-metrics" direction="horizontal">
           {(dropProvided) => (
@@ -3444,7 +3610,6 @@ export function MetaAdsInventoryPanel({
   syncing?: boolean
 }) {
   const [detail, setDetail] = useState<MetaAdsEntityDetail | null>(null)
-  const [detailStack, setDetailStack] = useState<MetaAdsEntityDetail[]>([])
   const [collapsedCampaignIds, setCollapsedCampaignIds] = useState<string[]>([])
   const [collapsedAdSetIds, setCollapsedAdSetIds] = useState<string[]>([])
   const [sortKey, setSortKey] = useState<MetaAdsInventorySortKey>('rank')
@@ -3459,23 +3624,12 @@ export function MetaAdsInventoryPanel({
   const columnResizeRef = useRef<{ key: MetaAdsInventoryColumnKey; startX: number; startWidth: number } | null>(null)
   const currency = selectedAccount.currency || 'USD'
   const openEntityDetail = useCallback((nextDetail: MetaAdsEntityDetail) => {
-    setDetailStack([])
     setDetail(nextDetail)
   }, [])
-  const openRelatedDetail = useCallback((nextDetail: MetaAdsEntityDetail) => {
-    setDetailStack((current) => (detail ? [...current, detail] : current))
-    setDetail(nextDetail)
-  }, [detail])
   const handleDetailOpenChange = useCallback((open: boolean) => {
     if (open) return
-    if (detailStack.length > 0) {
-      const previous = detailStack[detailStack.length - 1]
-      setDetailStack((current) => current.slice(0, -1))
-      setDetail(previous)
-      return
-    }
     setDetail(null)
-  }, [detailStack])
+  }, [])
 
   useEffect(() => {
     try {
@@ -4043,8 +4197,6 @@ export function MetaAdsInventoryPanel({
         open={Boolean(detail)}
         onOpenChange={handleDetailOpenChange}
         onEntityUpdated={onEntityUpdated}
-        onOpenRelatedDetail={openRelatedDetail}
-        hasBackTarget={detail?.kind === 'creative' && detailStack.length > 0}
         creatives={inventory.creatives}
       />
       <Card className={`${panelClass} relative overflow-hidden`}>
@@ -4063,11 +4215,13 @@ export function MetaAdsInventoryPanel({
           </div>
         </CardHeader>
         <CardContent className="px-6 pb-6">
-          <div
-            data-testid="meta-ads-inventory-scroll"
-            className="max-h-[min(62vh,36rem)] overflow-auto rounded-2xl border border-slate-800/75 bg-slate-950/20 shadow-inner scrollbar-thin scrollbar-thumb-slate-700/70 scrollbar-track-slate-950/40"
-          >
-            <table className="caption-bottom table-fixed text-sm" style={{ width: inventoryTableWidth, minWidth: '100%' }}>
+          <div className="overflow-hidden rounded-2xl border border-slate-800/75 bg-slate-950/20 shadow-inner">
+            <div
+              data-testid="meta-ads-inventory-scroll"
+              className="max-h-[min(62vh,36rem)] overflow-auto scrollbar-thin scrollbar-thumb-slate-700/70 scrollbar-track-transparent"
+              style={{ scrollbarGutter: 'stable both-edges' }}
+            >
+              <table className="caption-bottom table-fixed text-sm" style={{ width: inventoryTableWidth, minWidth: '100%' }}>
               <colgroup>
                 {META_ADS_INVENTORY_COLUMN_ORDER.map((key) => (
                   <col key={key} style={{ width: columnWidths[key] }} />
@@ -4360,7 +4514,8 @@ export function MetaAdsInventoryPanel({
                 )
               })}
             </TableBody>
-          </table>
+              </table>
+            </div>
           </div>
         </CardContent>
       </Card>

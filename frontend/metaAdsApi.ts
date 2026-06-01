@@ -31,6 +31,49 @@ import type {
 
 const META_ADS_API_URL =
   (import.meta as any).env?.VITE_META_ADS_API_URL || '/api/meta-ads'
+const META_ADS_ENTITY_DETAIL_CACHE_PREFIX = 'skincos:meta-ads:entity-detail:v1'
+const META_ADS_ENTITY_DETAIL_CACHE_TTL_MS = 1000 * 60 * 30
+
+const entityDetailMemoryCache = new Map<string, { value: MetaAdsEntityDetailResponse; cachedAt: number }>()
+
+function entityDetailCacheKey(type: MetaAdsEntityType, id: string) {
+  return `${META_ADS_ENTITY_DETAIL_CACHE_PREFIX}:${type}:${id}`
+}
+
+function readCachedEntityDetail(type: MetaAdsEntityType, id: string) {
+  const key = entityDetailCacheKey(type, id)
+  const memoryEntry = entityDetailMemoryCache.get(key)
+  const now = Date.now()
+  if (memoryEntry && now - memoryEntry.cachedAt <= META_ADS_ENTITY_DETAIL_CACHE_TTL_MS) {
+    return memoryEntry.value
+  }
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { cachedAt?: number; value?: MetaAdsEntityDetailResponse }
+    if (!parsed?.cachedAt || !parsed.value || now - parsed.cachedAt > META_ADS_ENTITY_DETAIL_CACHE_TTL_MS) {
+      window.localStorage.removeItem(key)
+      return null
+    }
+    entityDetailMemoryCache.set(key, { value: parsed.value, cachedAt: parsed.cachedAt })
+    return parsed.value
+  } catch {
+    return null
+  }
+}
+
+function writeCachedEntityDetail(type: MetaAdsEntityType, id: string, value: MetaAdsEntityDetailResponse) {
+  const key = entityDetailCacheKey(type, id)
+  const cachedAt = Date.now()
+  entityDetailMemoryCache.set(key, { value, cachedAt })
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ cachedAt, value }))
+  } catch {
+    // Cache is an optimization only; storage quota or privacy failures should not block the CRM.
+  }
+}
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {})
@@ -110,15 +153,24 @@ export const metaAdsApi = {
       : request<MetaAdsReportResponse>(`/report${search ? `?${search}` : ''}`)
   },
   inventory: () => (isMetaAdsLocalMockEnabled() ? getMetaAdsLocalInventory() : request<MetaInventoryResponse>('/inventory')),
-  entityDetail: (type: MetaAdsEntityType, id: string) =>
-    isMetaAdsLocalMockEnabled()
-      ? getMetaAdsLocalEntityDetail(type, id)
-      : request<MetaAdsEntityDetailResponse>(`/entities/${type}/${encodeURIComponent(id)}`),
-  updateEntity: (type: MetaAdsEntityType, id: string, patch: MetaAdsEntityPatch) =>
-    isMetaAdsLocalMockEnabled()
-      ? updateMetaAdsLocalEntity(type, id, patch)
-      : request<MetaAdsEntityUpdateResponse>(`/entities/${type}/${encodeURIComponent(id)}`, {
+  cachedEntityDetail: (type: MetaAdsEntityType, id: string) => readCachedEntityDetail(type, id),
+  entityDetail: async (type: MetaAdsEntityType, id: string) => {
+    const cached = readCachedEntityDetail(type, id)
+    if (cached) return cached
+    const response = isMetaAdsLocalMockEnabled()
+      ? await getMetaAdsLocalEntityDetail(type, id)
+      : await request<MetaAdsEntityDetailResponse>(`/entities/${type}/${encodeURIComponent(id)}`)
+    writeCachedEntityDetail(type, id, response)
+    return response
+  },
+  updateEntity: async (type: MetaAdsEntityType, id: string, patch: MetaAdsEntityPatch) => {
+    const response = isMetaAdsLocalMockEnabled()
+      ? await updateMetaAdsLocalEntity(type, id, patch)
+      : await request<MetaAdsEntityUpdateResponse>(`/entities/${type}/${encodeURIComponent(id)}`, {
           method: 'PATCH',
           body: JSON.stringify({ patch }),
-        }),
+        })
+    writeCachedEntityDetail(type, id, { ok: true, entity: response.entity })
+    return response
+  },
 }

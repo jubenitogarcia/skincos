@@ -33,6 +33,7 @@ export type MetaAdSet = {
   daily_budget?: string
   lifetime_budget?: string
   bid_strategy?: string
+  billing_event?: string
   optimization_goal?: string
   start_time?: string
   end_time?: string
@@ -116,7 +117,7 @@ const ENTITY_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
 
 const ENTITY_SAFE_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
   campaign: 'id,account_id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time,created_time,updated_time',
-  adset: 'id,account_id,name,status,effective_status,campaign{id,name},campaign_id,daily_budget,lifetime_budget,bid_strategy,optimization_goal,start_time,end_time,created_time,updated_time',
+  adset: 'id,account_id,name,status,effective_status,campaign{id,name},campaign_id,daily_budget,lifetime_budget,bid_strategy,billing_event,optimization_goal,start_time,end_time,created_time,updated_time',
   ad: 'id,account_id,name,status,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,object_story_spec,asset_feed_spec,image_hash,video_id,title,body,call_to_action_type,url_tags,instagram_permalink_url,object_url},created_time,updated_time',
   creative: 'id,account_id,name,thumbnail_url,image_url,effective_object_story_id,object_story_id,object_story_spec,asset_feed_spec,image_hash,video_id,title,body,call_to_action_type,url_tags,instagram_permalink_url,object_url',
 }
@@ -342,7 +343,7 @@ export async function listMetaAdSets(accessToken: string, adAccountId: string, v
   const rows = await collectPaged<any>(
     `/${normalizeAccountId(adAccountId)}/adsets`,
     {
-      fields: 'id,name,status,effective_status,campaign_id,daily_budget,lifetime_budget,bid_strategy,optimization_goal,start_time,end_time',
+      fields: 'id,name,status,effective_status,campaign_id,daily_budget,lifetime_budget,bid_strategy,billing_event,optimization_goal,start_time,end_time',
       limit: 500,
     },
     accessToken,
@@ -358,6 +359,7 @@ export async function listMetaAdSets(accessToken: string, adAccountId: string, v
     daily_budget: esc(row?.daily_budget),
     lifetime_budget: esc(row?.lifetime_budget),
     bid_strategy: esc(row?.bid_strategy),
+    billing_event: esc(row?.billing_event),
     optimization_goal: esc(row?.optimization_goal),
     start_time: esc(row?.start_time),
     end_time: esc(row?.end_time),
