@@ -114,7 +114,7 @@ type MetaAdsOverviewMetricKey =
   | 'frequency'
   | 'trend'
 type MetaAdsOverviewMetricSize = 'compact' | 'wide'
-type MetaAdsOverviewMetricAspect = '1:1' | '4:3' | '2:1'
+type MetaAdsOverviewMetricAspect = '1:1' | '3:4' | '2:1'
 type MetaAdsOverviewMetricLayout = {
   key: MetaAdsOverviewMetricKey
   visible: boolean
@@ -124,7 +124,7 @@ type MetaAdsOverviewMetricLayout = {
 }
 type MetaAdsInventoryColumnKey = MetaAdsInventorySortKey
 
-const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v3'
+const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v4'
 const META_ADS_INVENTORY_COLUMN_WIDTHS_KEY = 'skincos.metaAds.layout.inventoryColumns.v1'
 const META_ADS_METRIC_TILE_DIMENSIONS = {
   minWidth: 140,
@@ -132,30 +132,30 @@ const META_ADS_METRIC_TILE_DIMENSIONS = {
   minHeight: 96,
   maxHeight: 520,
   defaultWidth: 168,
-  defaultHeight: 126,
+  defaultHeight: 224,
   trendWidth: 520,
   trendHeight: 260,
 } as const
 const META_ADS_METRIC_ASPECT_RATIOS: Record<MetaAdsOverviewMetricAspect, number> = {
   '1:1': 1,
-  '4:3': 4 / 3,
+  '3:4': 3 / 4,
   '2:1': 2,
 }
-const META_ADS_METRIC_ASPECT_ORDER: MetaAdsOverviewMetricAspect[] = ['1:1', '4:3', '2:1']
+const META_ADS_METRIC_ASPECT_ORDER: MetaAdsOverviewMetricAspect[] = ['1:1', '3:4', '2:1']
 const DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT: MetaAdsOverviewMetricLayout[] = [
-  { key: 'spend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'conversations', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'cpcv', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'clicks', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'reach', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'impressions', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'engagement', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'redirect', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'ctr', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'cpc', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'cpm', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'cpp', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
-  { key: 'frequency', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'spend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'conversations', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'cpcv', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'clicks', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'reach', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'impressions', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'engagement', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'redirect', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'ctr', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'cpc', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'cpm', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'cpp', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'frequency', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
   { key: 'trend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.trendWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.trendHeight, aspect: '2:1' },
 ]
 const META_ADS_INVENTORY_COLUMN_LIMITS: Record<MetaAdsInventoryColumnKey, { width: number; min: number; max: number }> = {
@@ -299,13 +299,14 @@ function clampMetaAdsMetricDimension(value: unknown, min: number, max: number, f
 }
 
 function getMetaAdsMetricAspect(value: unknown, width?: unknown, height?: unknown): MetaAdsOverviewMetricAspect {
-  if (value === '1:1' || value === '4:3' || value === '2:1') return value
-  const ratio = Number(width) > 0 && Number(height) > 0 ? Number(width) / Number(height) : META_ADS_METRIC_ASPECT_RATIOS['4:3']
+  if (value === '1:1' || value === '3:4' || value === '2:1') return value
+  if (value === '4:3') return '3:4'
+  const ratio = Number(width) > 0 && Number(height) > 0 ? Number(width) / Number(height) : META_ADS_METRIC_ASPECT_RATIOS['3:4']
   return META_ADS_METRIC_ASPECT_ORDER.reduce((closest, option) => {
     const closestDelta = Math.abs(META_ADS_METRIC_ASPECT_RATIOS[closest] - ratio)
     const optionDelta = Math.abs(META_ADS_METRIC_ASPECT_RATIOS[option] - ratio)
     return optionDelta < closestDelta ? option : closest
-  }, '4:3' as MetaAdsOverviewMetricAspect)
+  }, '3:4' as MetaAdsOverviewMetricAspect)
 }
 
 function fitMetaAdsMetricDimensionsToAspect(width: unknown, aspect: MetaAdsOverviewMetricAspect, fallbackHeight: number) {
@@ -362,26 +363,14 @@ function fitMetaAdsMetricBoxToAspect(width: number, height: number, aspect: Meta
   return widthDelta <= heightDelta ? byWidth : byHeight
 }
 
-function resizeMetaAdsMetricDimensions(
-  start: { x: number; y: number; width: number; height: number },
-  event: PointerEvent<HTMLButtonElement>,
+function cycleMetaAdsMetricDimensions(
+  width: number,
+  height: number,
+  currentAspect: MetaAdsOverviewMetricAspect,
 ) {
-  const deltaX = event.clientX - start.x
-  const deltaY = event.clientY - start.y
-  const rawWidth = clampMetaAdsMetricDimension(
-    start.width + deltaX,
-    META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
-    META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
-    start.width,
-  )
-  const rawHeight = clampMetaAdsMetricDimension(
-    start.height + deltaY,
-    META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
-    META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
-    start.height,
-  )
-  const aspect = getMetaAdsMetricAspect(undefined, rawWidth, rawHeight)
-  return { ...fitMetaAdsMetricBoxToAspect(rawWidth, rawHeight, aspect), aspect }
+  const currentIndex = META_ADS_METRIC_ASPECT_ORDER.indexOf(currentAspect)
+  const aspect = META_ADS_METRIC_ASPECT_ORDER[(currentIndex + 1) % META_ADS_METRIC_ASPECT_ORDER.length]
+  return { ...fitMetaAdsMetricBoxToAspect(width, height, aspect), aspect }
 }
 
 function getDefaultMetaAdsMetricDimensions(key: MetaAdsOverviewMetricKey, legacySize?: MetaAdsOverviewMetricSize) {
@@ -1307,7 +1296,6 @@ function MetaAdsMetricTile({
   onHide?: () => void
   onResize?: (dimensions: { width: number; height: number; aspect?: MetaAdsOverviewMetricAspect }) => void
 }) {
-  const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
   const spacious = width >= 250 || height >= 150
   const roomy = width >= 320 && height >= 176
   const labelNode = <div className="text-[9px] font-medium uppercase tracking-[0.14em] text-slate-400 sm:text-[10px]">{label}</div>
@@ -1337,24 +1325,6 @@ function MetaAdsMetricTile({
       </div>
     </CardContent>
   )
-  const handleResizePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!onResize) return
-    event.preventDefault()
-    event.stopPropagation()
-    resizeStartRef.current = { x: event.clientX, y: event.clientY, width, height }
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-  }
-  const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!onResize || !resizeStartRef.current) return
-    onResize(resizeMetaAdsMetricDimensions(resizeStartRef.current, event))
-  }
-  const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!onResize || !resizeStartRef.current) return
-    event.preventDefault()
-    event.stopPropagation()
-    resizeStartRef.current = null
-  }
-
   return (
     <Card className={`group relative h-full gap-0 overflow-hidden py-0 transition hover:border-sky-400/25 hover:bg-slate-900/70 ${panelClass}`}>
       <button
@@ -1387,16 +1357,15 @@ function MetaAdsMetricTile({
         body
       )}
       {onResize ? (
-        <TooltipLabel label="Redimensionar card" description={`Arraste o canto. O formato encaixa automaticamente em 1:1, 4:3 ou 2:1. Atual: ${aspect}.`}>
+        <TooltipLabel label="Alternar formato" description={`Clique para alternar entre 1:1, 3:4 e 2:1. Atual: ${aspect}.`}>
           <button
             type="button"
-            className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
-            aria-label={`Redimensionar card ${tooltipLabel || label}`}
-            onPointerDown={handleResizePointerDown}
-            onPointerMove={handleResizePointerMove}
-            onPointerUp={handleResizePointerUp}
-            onPointerCancel={() => {
-              resizeStartRef.current = null
+            className="absolute bottom-1.5 right-1.5 z-10 h-6 w-6 rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-65 transition hover:border-sky-300/70 hover:bg-sky-400/10 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+            aria-label={`Alternar formato do card ${tooltipLabel || label}`}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              onResize(cycleMetaAdsMetricDimensions(width, height, aspect))
             }}
           >
             <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-br-xl border-b border-r border-sky-200/35" aria-hidden="true" />
@@ -1428,7 +1397,6 @@ function MetaAdsTrendWidget({
   onHide?: () => void
   onResize?: (dimensions: { width: number; height: number; aspect?: MetaAdsOverviewMetricAspect }) => void
 }) {
-  const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
   const roomy = width >= 440 && height >= 300
   const trendTicks = useMemo(() => buildTrendTicks(trend), [trend])
   const trendAxisFormatter = useMemo(
@@ -1436,24 +1404,6 @@ function MetaAdsTrendWidget({
     [trend.length],
   )
   const chartHeight = Math.max(150, height - (roomy ? 108 : 78))
-
-  const handleResizePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!onResize) return
-    event.preventDefault()
-    event.stopPropagation()
-    resizeStartRef.current = { x: event.clientX, y: event.clientY, width, height }
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-  }
-  const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!onResize || !resizeStartRef.current) return
-    onResize(resizeMetaAdsMetricDimensions(resizeStartRef.current, event))
-  }
-  const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!onResize || !resizeStartRef.current) return
-    event.preventDefault()
-    event.stopPropagation()
-    resizeStartRef.current = null
-  }
 
   return (
     <Card className={`${panelClass} group relative h-full overflow-hidden`}>
@@ -1532,16 +1482,15 @@ function MetaAdsTrendWidget({
         </ResponsiveContainer>
       </CardContent>
       {onResize ? (
-        <TooltipLabel label="Redimensionar gráfico" description={`Arraste o canto. O formato encaixa automaticamente em 1:1, 4:3 ou 2:1. Atual: ${aspect}.`}>
+        <TooltipLabel label="Alternar formato" description={`Clique para alternar entre 1:1, 3:4 e 2:1. Atual: ${aspect}.`}>
           <button
             type="button"
-            className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
-            aria-label="Redimensionar gráfico de tendência"
-            onPointerDown={handleResizePointerDown}
-            onPointerMove={handleResizePointerMove}
-            onPointerUp={handleResizePointerUp}
-            onPointerCancel={() => {
-              resizeStartRef.current = null
+            className="absolute bottom-1.5 right-1.5 z-10 h-6 w-6 rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-65 transition hover:border-sky-300/70 hover:bg-sky-400/10 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+            aria-label="Alternar formato do gráfico de tendência"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              onResize(cycleMetaAdsMetricDimensions(width, height, aspect))
             }}
           >
             <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-br-xl border-b border-r border-sky-200/35" aria-hidden="true" />
@@ -2582,10 +2531,6 @@ function MetaAdsAdCreativeDetails({ creative }: { creative: MetaAdsResolvedAdCre
 
   return (
     <article className="rounded-2xl border border-slate-700/80 bg-slate-900/35 p-4">
-      <div className="mb-3">
-        <div className="text-sm font-medium text-white">Criativo do anúncio</div>
-        <div className="text-xs text-slate-400">Textos, títulos, descrições e variações usados por este anúncio.</div>
-      </div>
       <div className="grid gap-4 lg:grid-cols-[12rem_minmax(0,1fr)]">
         <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
           {preview ? (
@@ -2640,6 +2585,25 @@ function MetaAdsAdCreativeDetails({ creative }: { creative: MetaAdsResolvedAdCre
         </DialogContent>
       </Dialog>
     </article>
+  )
+}
+
+function MetaAdsAdCreativesSection({ creatives }: { creatives: MetaAdsResolvedAdCreative[] }) {
+  if (!creatives.length) return null
+  return (
+    <section className="space-y-3 rounded-2xl border border-slate-700/80 bg-slate-900/30 p-4">
+      <div>
+        <div className="text-sm font-medium text-white">Criativos do anúncio</div>
+        <div className="text-xs text-slate-400">
+          Textos, títulos, descrições, CTAs e mídias usados por este anúncio.
+        </div>
+      </div>
+      <div className="grid gap-3">
+        {creatives.map((creative) => (
+          <MetaAdsAdCreativeDetails key={creative.id} creative={creative} />
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -2825,6 +2789,15 @@ function MetaAdsEntityDetailDialog({
     return next !== previous
   })
   const hasChanges = changedFields.length > 0
+  const showEntityLoadingState = loadingDetail && !liveEntity
+  const loadingDetailLabel =
+    detail.kind === 'campaign'
+      ? 'Carregando informações da campanha.'
+      : detail.kind === 'adset'
+        ? 'Carregando informações do conjunto.'
+        : detail.kind === 'ad'
+          ? 'Carregando informações do anúncio.'
+          : 'Carregando informações do criativo.'
   const setFormField = (field: string, value: string) => setForm((current) => ({ ...current, [field]: value }))
   const handleSave = async () => {
     if (!detail || !hasChanges) return
@@ -3063,19 +3036,15 @@ function MetaAdsEntityDetailDialog({
       {loadingDetail || detailError ? (
         <div className="flex items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/45 p-4 text-sm text-slate-300">
           {loadingDetail ? <Spinner className="h-4 w-4 animate-spin text-sky-300" /> : <WarningCircle className="h-4 w-4 text-amber-300" />}
-          <span>{loadingDetail ? 'Carregando dados atualizados.' : detailError}</span>
+          <span>{loadingDetail ? loadingDetailLabel : detailError}</span>
         </div>
       ) : null}
 
-      {detail.kind === 'ad' && adLinkedCreatives.length ? (
-        <div className="grid gap-3">
-          {adLinkedCreatives.map((creative) => (
-            <MetaAdsAdCreativeDetails key={creative.id} creative={creative} />
-          ))}
-        </div>
+      {!showEntityLoadingState && detail.kind === 'ad' && adLinkedCreatives.length ? (
+        <MetaAdsAdCreativesSection creatives={adLinkedCreatives} />
       ) : null}
 
-      {canEdit && hasVisibleEditableFields ? (
+      {!showEntityLoadingState && canEdit && hasVisibleEditableFields ? (
         <div className="space-y-3 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
           <div>
             <div className="text-sm font-medium text-white">{editablePanelTitle}</div>
@@ -4218,6 +4187,15 @@ export function MetaAdsInventoryPanel({
     if (level === 'adset') return `${base} bg-fuchsia-500/[0.04] hover:bg-fuchsia-500/[0.085]`
     return `${base} bg-amber-500/[0.035] hover:bg-amber-500/[0.08]`
   }
+  const stickyItemCellClass = (level: InventoryTreeRow['level']) => {
+    const tone =
+      level === 'campaign'
+        ? 'bg-slate-950/95'
+        : level === 'adset'
+          ? 'bg-[#0c0a1a]/95'
+          : 'bg-[#111018]/95'
+    return `sticky left-0 z-20 border-r border-slate-800/80 ${tone} shadow-[14px_0_22px_rgba(2,6,23,0.32)] backdrop-blur-md`
+  }
 
   const itemButtonClass = 'min-w-0 truncate text-left transition hover:text-sky-200'
   const campaignItemClass = `${itemButtonClass} text-[15px] font-semibold tracking-[0.01em] text-white`
@@ -4375,14 +4353,14 @@ export function MetaAdsInventoryPanel({
   const renderResizableHead = (key: MetaAdsInventoryColumnKey, label: string, className = 'text-center') => (
     <TableHead
       data-testid={`meta-ads-inventory-head-${key}`}
-      className={`sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 px-2 backdrop-blur-md ${className}`}
+      className={`sticky top-0 ${key === 'item' ? 'left-0 z-40 border-r shadow-[14px_0_22px_rgba(2,6,23,0.36)]' : 'z-30'} border-b border-slate-800 bg-slate-950/95 px-2 text-center backdrop-blur-md ${className}`}
       style={{
         width: columnWidths[key],
         minWidth: columnWidths[key],
         maxWidth: columnWidths[key],
       }}
     >
-      <div className={`relative flex h-10 items-center ${className.includes('text-left') ? 'justify-start' : 'justify-center'}`}>
+      <div className="relative flex h-10 items-center justify-center">
         {renderSortHead(key, label)}
         <button
           type="button"
@@ -4445,7 +4423,7 @@ export function MetaAdsInventoryPanel({
               </colgroup>
               <TableHeader>
                 <TableRow className="border-slate-800">
-                  {renderResizableHead('item', 'Item', 'text-left')}
+                  {renderResizableHead('item', 'Item')}
                   {renderResizableHead('rank', 'Rank')}
                   {renderResizableHead('status', 'Status')}
                   {renderResizableHead('objective', 'Objetivo')}
@@ -4480,7 +4458,7 @@ export function MetaAdsInventoryPanel({
                       : null
                   return (
                     <TableRow key={row.key} className={rowClass(row.level)}>
-                      <TableCell>
+                      <TableCell className={stickyItemCellClass(row.level)}>
                         <div className="space-y-1">
                           <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
                             <button
@@ -4572,7 +4550,7 @@ export function MetaAdsInventoryPanel({
                       : null
                   return (
                     <TableRow key={row.key} className={rowClass(row.level)}>
-                      <TableCell>
+                      <TableCell className={stickyItemCellClass(row.level)}>
                         <div className="space-y-1 pl-3">
                           <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
                             <button
@@ -4661,7 +4639,7 @@ export function MetaAdsInventoryPanel({
                     : null
                 return (
                   <TableRow key={row.key} className={rowClass(row.level)}>
-                    <TableCell>
+                    <TableCell className={stickyItemCellClass(row.level)}>
                       <div className="space-y-1 pl-6">
                         <div className="grid grid-cols-[1.75rem_1.75rem_minmax(0,1fr)] items-center gap-2">
                           <span className="inline-flex h-7 w-7" aria-hidden="true" />
