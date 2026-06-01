@@ -201,20 +201,35 @@ describe('Meta Ads live entity API', () => {
     )
   })
 
-  it('keeps creatives read-only in V1', async () => {
+  it('updates the allowlisted creative name through Graph after ownership validation', async () => {
+    ;(getMetaAdsEntityDetail as Mock)
+      .mockResolvedValueOnce({
+        id: 'cr_1',
+        account_id: 'act_123',
+        name: 'Criativo 1',
+      })
+      .mockResolvedValueOnce({
+        id: 'cr_1',
+        account_id: 'act_123',
+        name: 'Criativo atualizado',
+      })
+    ;(updateMetaAdsEntity as Mock).mockResolvedValue({ success: true })
+
     const response = await onRequest(
       createContext('https://crm.skincos.com.br/api/meta-ads/entities/creative/cr_1', {
         method: 'PATCH',
-        body: JSON.stringify({ patch: { name: 'Novo criativo' } }),
+        body: JSON.stringify({ patch: { name: 'Criativo atualizado' } }),
       }),
     )
 
-    expect(response.status).toBe(405)
-    expect(updateMetaAdsEntity).not.toHaveBeenCalled()
+    expect(response.status).toBe(200)
+    expect(updateMetaAdsEntity).toHaveBeenCalledWith('token', 'creative', 'cr_1', {
+      name: 'Criativo atualizado',
+    }, 'v20.0', '')
     await expect(response.json()).resolves.toEqual(
       expect.objectContaining({
-        ok: false,
-        code: 'META_ADS_CREATIVE_READ_ONLY',
+        ok: true,
+        changedFields: ['name'],
       }),
     )
   })

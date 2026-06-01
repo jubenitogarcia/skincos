@@ -1269,10 +1269,11 @@ async function handleReport(context: any) {
   return json(200, await buildGraphFallbackReport(selected, range, cfg, reportWindow, 'worker_unconfigured'))
 }
 
-const META_ADS_EDITABLE_FIELDS: Record<Exclude<GraphMetaAdsEntityType, 'creative'>, Set<string>> = {
+const META_ADS_EDITABLE_FIELDS: Record<GraphMetaAdsEntityType, Set<string>> = {
   campaign: new Set(['name', 'status', 'daily_budget', 'lifetime_budget', 'start_time', 'stop_time']),
   adset: new Set(['name', 'status', 'daily_budget', 'lifetime_budget', 'start_time', 'end_time', 'bid_strategy', 'optimization_goal']),
   ad: new Set(['name', 'status']),
+  creative: new Set(['name']),
 }
 
 function normalizeAccountIdForCompare(value: unknown) {
@@ -1323,7 +1324,7 @@ function sanitizeDateValue(value: unknown, label: string) {
   return raw
 }
 
-function sanitizeEntityPatch(type: Exclude<GraphMetaAdsEntityType, 'creative'>, input: MetaAdsEntityPatch) {
+function sanitizeEntityPatch(type: GraphMetaAdsEntityType, input: MetaAdsEntityPatch) {
   const allowed = META_ADS_EDITABLE_FIELDS[type]
   const patch: Record<string, string> = {}
   const unknownFields = Object.keys(input || {}).filter((field) => !allowed.has(field))
@@ -1389,20 +1390,18 @@ function sanitizeEntityPatch(type: Exclude<GraphMetaAdsEntityType, 'creative'>, 
 }
 
 function buildLiveEntity(type: GraphMetaAdsEntityType, detail: any, adAccountId: string, scopes: string[]) {
-  const editableFields = type === 'creative' ? [] : Array.from(META_ADS_EDITABLE_FIELDS[type])
+  const editableFields = Array.from(META_ADS_EDITABLE_FIELDS[type])
   const hasAdsManagement = scopes.includes('ads_management')
-  const editable = type !== 'creative' && hasAdsManagement
+  const editable = hasAdsManagement && editableFields.length > 0
   return {
     type,
     id: String(detail?.id || '').trim(),
     accountId: normalizeAccountIdForCompare(detail?.account_id || adAccountId),
     editable,
     readOnlyReason:
-      type === 'creative'
-        ? 'Criativos ficam somente leitura nesta versão. Alterações seguras exigem criar uma variação e substituir no anúncio.'
-        : hasAdsManagement
-          ? null
-          : 'A conexão atual não possui o escopo ads_management para editar no Gerenciador de Anúncios.',
+      hasAdsManagement
+        ? null
+        : 'A conexão atual não possui o escopo ads_management para editar no Gerenciador de Anúncios.',
     editableFields,
     fields: detail || {},
     raw: detail || {},
@@ -1465,14 +1464,6 @@ async function handleEntityUpdate(context: any, type: GraphMetaAdsEntityType, en
   if (csrfRes) return csrfRes
   const selected = await withSelectedAccount(context, userOrRes.id)
   if ('error' in selected) return selected.error
-
-  if (type === 'creative') {
-    return apiError(405, 'META_ADS_CREATIVE_READ_ONLY', {
-      message: 'Criativos estão em modo somente leitura nesta versão.',
-      hint: 'Para alterar criativos com segurança será necessário criar uma variação e substituir no anúncio.',
-      retryable: false,
-    })
-  }
 
   const scopes = normalizeScopes([...(selected.connection.grantedScopes || []), ...(selected.connection.scopes || [])])
   if (!scopes.includes('ads_management')) {
