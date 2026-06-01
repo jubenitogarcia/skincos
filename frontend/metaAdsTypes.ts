@@ -91,6 +91,7 @@ export type MetaAdSet = {
   daily_budget?: string
   lifetime_budget?: string
   bid_strategy?: string
+  billing_event?: string
   optimization_goal?: string
   start_time?: string
   end_time?: string
