@@ -53,6 +53,7 @@ import {
   InstagramLogo,
   Link,
   Lock,
+  MagnifyingGlassPlus,
   Minus,
   EyeSlash,
   PauseCircle,
@@ -324,35 +325,63 @@ function fitMetaAdsMetricDimensionsToAspect(width: unknown, aspect: MetaAdsOverv
   return { width: Math.round(nextHeight * ratio), height: nextHeight }
 }
 
+function fitMetaAdsMetricBoxToAspect(width: number, height: number, aspect: MetaAdsOverviewMetricAspect) {
+  const ratio = META_ADS_METRIC_ASPECT_RATIOS[aspect]
+  const byWidthHeight = clampMetaAdsMetricDimension(
+    Math.round(width / ratio),
+    META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
+    META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
+    height,
+  )
+  const byWidth = {
+    width: clampMetaAdsMetricDimension(
+      Math.round(byWidthHeight * ratio),
+      META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
+      META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
+      width,
+    ),
+    height: byWidthHeight,
+  }
+  const byHeightWidth = clampMetaAdsMetricDimension(
+    Math.round(height * ratio),
+    META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
+    META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
+    width,
+  )
+  const byHeight = {
+    width: byHeightWidth,
+    height: clampMetaAdsMetricDimension(
+      Math.round(byHeightWidth / ratio),
+      META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
+      META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
+      height,
+    ),
+  }
+  const widthDelta = Math.abs(byWidth.width - width) + Math.abs(byWidth.height - height)
+  const heightDelta = Math.abs(byHeight.width - width) + Math.abs(byHeight.height - height)
+  return widthDelta <= heightDelta ? byWidth : byHeight
+}
+
 function resizeMetaAdsMetricDimensions(
   start: { x: number; y: number; width: number; height: number },
   event: PointerEvent<HTMLButtonElement>,
-  aspect: MetaAdsOverviewMetricAspect,
 ) {
-  const ratio = META_ADS_METRIC_ASPECT_RATIOS[aspect]
   const deltaX = event.clientX - start.x
   const deltaY = event.clientY - start.y
-  if (Math.abs(deltaY) > Math.abs(deltaX)) {
-    const nextHeight = clampMetaAdsMetricDimension(
-      start.height + deltaY,
-      META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
-      META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
-      start.height,
-    )
-    const nextWidth = clampMetaAdsMetricDimension(
-      Math.round(nextHeight * ratio),
-      META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
-      META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
-      start.width,
-    )
-    return { width: nextWidth, height: Math.round(nextWidth / ratio) }
-  }
-  return fitMetaAdsMetricDimensionsToAspect(start.width + deltaX, aspect, start.height)
-}
-
-function getNextMetaAdsMetricAspect(aspect: MetaAdsOverviewMetricAspect) {
-  const index = META_ADS_METRIC_ASPECT_ORDER.indexOf(aspect)
-  return META_ADS_METRIC_ASPECT_ORDER[(index + 1) % META_ADS_METRIC_ASPECT_ORDER.length]
+  const rawWidth = clampMetaAdsMetricDimension(
+    start.width + deltaX,
+    META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
+    META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
+    start.width,
+  )
+  const rawHeight = clampMetaAdsMetricDimension(
+    start.height + deltaY,
+    META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
+    META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
+    start.height,
+  )
+  const aspect = getMetaAdsMetricAspect(undefined, rawWidth, rawHeight)
+  return { ...fitMetaAdsMetricBoxToAspect(rawWidth, rawHeight, aspect), aspect }
 }
 
 function getDefaultMetaAdsMetricDimensions(key: MetaAdsOverviewMetricKey, legacySize?: MetaAdsOverviewMetricSize) {
@@ -1263,7 +1292,6 @@ function MetaAdsMetricTile({
   dragHandleProps,
   onHide,
   onResize,
-  onAspectChange,
 }: {
   label: string
   tooltipLabel?: string
@@ -1277,8 +1305,7 @@ function MetaAdsMetricTile({
   aspect: MetaAdsOverviewMetricAspect
   dragHandleProps?: DraggableProvidedDragHandleProps | null
   onHide?: () => void
-  onResize?: (dimensions: { width: number; height: number }) => void
-  onAspectChange?: (aspect: MetaAdsOverviewMetricAspect, dimensions: { width: number; height: number }) => void
+  onResize?: (dimensions: { width: number; height: number; aspect?: MetaAdsOverviewMetricAspect }) => void
 }) {
   const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
   const spacious = width >= 250 || height >= 150
@@ -1319,7 +1346,7 @@ function MetaAdsMetricTile({
   }
   const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
-    onResize(resizeMetaAdsMetricDimensions(resizeStartRef.current, event, aspect))
+    onResize(resizeMetaAdsMetricDimensions(resizeStartRef.current, event))
   }
   const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
@@ -1359,37 +1386,22 @@ function MetaAdsMetricTile({
       ) : (
         body
       )}
-      {onAspectChange ? (
-        <TooltipLabel label="Formato do card" description={`Formato atual: ${aspect}. Clique para alternar entre 1:1, 4:3 e 2:1.`}>
+      {onResize ? (
+        <TooltipLabel label="Redimensionar card" description={`Arraste o canto. O formato encaixa automaticamente em 1:1, 4:3 ou 2:1. Atual: ${aspect}.`}>
           <button
             type="button"
-            className="absolute bottom-2 left-2 z-10 inline-flex h-6 min-w-8 items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/55 px-2 text-[10px] font-medium text-slate-400 opacity-70 shadow-sm transition hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
-            aria-label={`Alterar formato do card ${tooltipLabel || label}`}
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              const nextAspect = getNextMetaAdsMetricAspect(aspect)
-              onAspectChange(nextAspect, fitMetaAdsMetricDimensionsToAspect(width, nextAspect, height))
+            className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+            aria-label={`Redimensionar card ${tooltipLabel || label}`}
+            onPointerDown={handleResizePointerDown}
+            onPointerMove={handleResizePointerMove}
+            onPointerUp={handleResizePointerUp}
+            onPointerCancel={() => {
+              resizeStartRef.current = null
             }}
           >
-            {aspect}
+            <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-br-xl border-b border-r border-sky-200/35" aria-hidden="true" />
           </button>
         </TooltipLabel>
-      ) : null}
-      {onResize ? (
-        <button
-          type="button"
-          className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
-          aria-label={`Redimensionar card ${tooltipLabel || label}`}
-          onPointerDown={handleResizePointerDown}
-          onPointerMove={handleResizePointerMove}
-          onPointerUp={handleResizePointerUp}
-          onPointerCancel={() => {
-            resizeStartRef.current = null
-          }}
-        >
-          <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-br-xl border-b border-r border-sky-200/35" aria-hidden="true" />
-        </button>
       ) : null}
     </Card>
   )
@@ -1405,7 +1417,6 @@ function MetaAdsTrendWidget({
   dragHandleProps,
   onHide,
   onResize,
-  onAspectChange,
 }: {
   trend: MetaAdsTrendPoint[]
   currency: string
@@ -1415,8 +1426,7 @@ function MetaAdsTrendWidget({
   aspect: MetaAdsOverviewMetricAspect
   dragHandleProps?: DraggableProvidedDragHandleProps | null
   onHide?: () => void
-  onResize?: (dimensions: { width: number; height: number }) => void
-  onAspectChange?: (aspect: MetaAdsOverviewMetricAspect, dimensions: { width: number; height: number }) => void
+  onResize?: (dimensions: { width: number; height: number; aspect?: MetaAdsOverviewMetricAspect }) => void
 }) {
   const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
   const roomy = width >= 440 && height >= 300
@@ -1436,7 +1446,7 @@ function MetaAdsTrendWidget({
   }
   const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
-    onResize(resizeMetaAdsMetricDimensions(resizeStartRef.current, event, aspect))
+    onResize(resizeMetaAdsMetricDimensions(resizeStartRef.current, event))
   }
   const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
@@ -1521,37 +1531,22 @@ function MetaAdsTrendWidget({
           </LineChart>
         </ResponsiveContainer>
       </CardContent>
-      {onAspectChange ? (
-        <TooltipLabel label="Formato do gráfico" description={`Formato atual: ${aspect}. Clique para alternar entre 1:1, 4:3 e 2:1.`}>
+      {onResize ? (
+        <TooltipLabel label="Redimensionar gráfico" description={`Arraste o canto. O formato encaixa automaticamente em 1:1, 4:3 ou 2:1. Atual: ${aspect}.`}>
           <button
             type="button"
-            className="absolute bottom-2 left-3 z-10 inline-flex h-6 min-w-8 items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/55 px-2 text-[10px] font-medium text-slate-400 opacity-70 shadow-sm transition hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
-            aria-label="Alterar formato do gráfico de tendência"
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              const nextAspect = getNextMetaAdsMetricAspect(aspect)
-              onAspectChange(nextAspect, fitMetaAdsMetricDimensionsToAspect(width, nextAspect, height))
+            className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+            aria-label="Redimensionar gráfico de tendência"
+            onPointerDown={handleResizePointerDown}
+            onPointerMove={handleResizePointerMove}
+            onPointerUp={handleResizePointerUp}
+            onPointerCancel={() => {
+              resizeStartRef.current = null
             }}
           >
-            {aspect}
+            <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-br-xl border-b border-r border-sky-200/35" aria-hidden="true" />
           </button>
         </TooltipLabel>
-      ) : null}
-      {onResize ? (
-        <button
-          type="button"
-          className="absolute bottom-1.5 right-1.5 z-10 h-5 w-5 cursor-se-resize rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-60 transition hover:border-sky-300/70 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
-          aria-label="Redimensionar gráfico de tendência"
-          onPointerDown={handleResizePointerDown}
-          onPointerMove={handleResizePointerMove}
-          onPointerUp={handleResizePointerUp}
-          onPointerCancel={() => {
-            resizeStartRef.current = null
-          }}
-        >
-          <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-br-xl border-b border-r border-sky-200/35" aria-hidden="true" />
-        </button>
       ) : null}
     </Card>
   )
@@ -2324,7 +2319,15 @@ function resolveMetaAdsAdCreatives({
 
 type MetaAdsCreativeVariationGroup = {
   label: string
-  values: string[]
+  values: MetaAdsCreativeVariationItem[]
+  kind?: 'text' | 'media'
+}
+
+type MetaAdsCreativeVariationItem = {
+  value: string
+  previewUrl?: string | null
+  aspectLabel?: string | null
+  mediaKind?: 'image' | 'video'
 }
 
 function asMetaAdsRecord(value: unknown): Record<string, unknown> | null {
@@ -2365,7 +2368,7 @@ function extractMetaAdsCreativeValue(value: unknown) {
 
 function collectMetaAdsCreativeValues(values: unknown[], formatter?: (value: string) => string) {
   const seen = new Set<string>()
-  const collected: string[] = []
+  const collected: MetaAdsCreativeVariationItem[] = []
   values.flatMap((value) => Array.isArray(value) ? value : [value]).forEach((value) => {
     const extracted = extractMetaAdsCreativeValue(value)
     if (!extracted) return
@@ -2373,7 +2376,7 @@ function collectMetaAdsCreativeValues(values: unknown[], formatter?: (value: str
     const normalized = formatted.toLowerCase()
     if (!formatted || seen.has(normalized)) return
     seen.add(normalized)
-    collected.push(formatted)
+    collected.push({ value: formatted })
   })
   return collected
 }
@@ -2382,7 +2385,67 @@ function formatMetaAdsCreativeActionLabel(value: string) {
   return formatMetaAdsEnumLabel(value)
 }
 
-function buildMetaAdsCreativeVariationGroups(raw?: MetaAdCreativeRef): MetaAdsCreativeVariationGroup[] {
+function extractMetaAdsCreativeMediaUrl(record: Record<string, unknown> | null) {
+  if (!record) return null
+  const candidate =
+    record.url ||
+    record.image_url ||
+    record.thumbnail_url ||
+    record.permalink_url ||
+    record.picture ||
+    record.source
+  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null
+}
+
+function getMetaAdsMediaAspectLabel(value: unknown) {
+  const record = asMetaAdsRecord(value)
+  if (!record) return null
+  const width = Number(record.width || record.original_width)
+  const height = Number(record.height || record.original_height)
+  if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+    const ratio = width / height
+    if (Math.abs(ratio - 1) < 0.08) return '1x1'
+    if (Math.abs(ratio - 0.75) < 0.08) return '3x4'
+    if (Math.abs(ratio - 4 / 3) < 0.08) return '4x3'
+    if (Math.abs(ratio - 2) < 0.12) return '2x1'
+    const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a)
+    const divisor = gcd(Math.round(width), Math.round(height)) || 1
+    const simplifiedWidth = Math.round(width / divisor)
+    const simplifiedHeight = Math.round(height / divisor)
+    if (simplifiedWidth > 0 && simplifiedHeight > 0 && simplifiedWidth <= 9 && simplifiedHeight <= 9) return `${simplifiedWidth}x${simplifiedHeight}`
+  }
+  const aspect = String(record.aspect_ratio || record.aspect || record.crop || '').trim().toLowerCase()
+  if (aspect) {
+    if (aspect.includes('1:1') || aspect.includes('1x1') || aspect.includes('square')) return '1x1'
+    if (aspect.includes('3:4') || aspect.includes('3x4') || aspect.includes('vertical')) return '3x4'
+    if (aspect.includes('4:3') || aspect.includes('4x3')) return '4x3'
+    if (aspect.includes('2:1') || aspect.includes('2x1') || aspect.includes('wide')) return '2x1'
+  }
+  return null
+}
+
+function collectMetaAdsCreativeMediaValues(values: unknown[], fallbackPreview?: string | null) {
+  const seen = new Set<string>()
+  const collected: MetaAdsCreativeVariationItem[] = []
+  values.flatMap((value) => Array.isArray(value) ? value : [value]).forEach((value, index) => {
+    const extracted = extractMetaAdsCreativeValue(value)
+    if (!extracted) return
+    const normalized = extracted.toLowerCase()
+    if (seen.has(normalized)) return
+    seen.add(normalized)
+    const record = asMetaAdsRecord(value)
+    const previewUrl = extractMetaAdsCreativeMediaUrl(record) || (index === 0 ? fallbackPreview || null : null)
+    collected.push({
+      value: extracted,
+      previewUrl,
+      aspectLabel: getMetaAdsMediaAspectLabel(value),
+      mediaKind: record?.video_id || record?.source ? 'video' : 'image',
+    })
+  })
+  return collected
+}
+
+function buildMetaAdsCreativeVariationGroups(raw?: MetaAdCreativeRef, fallbackPreview?: string | null): MetaAdsCreativeVariationGroup[] {
   if (!raw) return []
   const assetFeed = asMetaAdsRecord(raw.asset_feed_spec)
   const objectStory = asMetaAdsRecord(raw.object_story_spec)
@@ -2438,27 +2501,70 @@ function buildMetaAdsCreativeVariationGroups(raw?: MetaAdCreativeRef): MetaAdsCr
     },
     {
       label: 'Mídias',
-      values: collectMetaAdsCreativeValues([
+      kind: 'media',
+      values: collectMetaAdsCreativeMediaValues([
         raw.image_hash,
         raw.video_id,
         assetFeed?.images,
         assetFeed?.videos,
-      ]),
+      ], fallbackPreview),
     },
   ]
 
   return groups.filter((group) => group.values.length > 0)
 }
 
-function MetaAdsCreativeVariationPanel({ group }: { group: MetaAdsCreativeVariationGroup }) {
+function MetaAdsCreativeVariationPanel({
+  group,
+  onPreview,
+}: {
+  group: MetaAdsCreativeVariationGroup
+  onPreview?: (item: MetaAdsCreativeVariationItem, index: number) => void
+}) {
   return (
     <div className="min-w-0 rounded-xl border border-slate-800/85 bg-slate-950/40 p-3">
       <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">{group.label}</div>
-      <div className="mt-2 space-y-2">
-        {group.values.map((value, index) => (
-          <div key={`${group.label}-${index}-${value}`} className="rounded-lg border border-slate-800/70 bg-slate-950/55 px-3 py-2 text-xs leading-5 text-slate-200">
-            {group.values.length > 1 ? <span className="mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-sky-300/80">Variação {index + 1}</span> : null}
-            <span className="whitespace-pre-wrap break-words">{value}</span>
+      <div className={group.kind === 'media' ? 'mt-2 grid gap-2 sm:grid-cols-2' : 'mt-2 space-y-2'}>
+        {group.values.map((item, index) => (
+          <div key={`${group.label}-${index}-${item.value}`} className="rounded-lg border border-slate-800/70 bg-slate-950/55 px-3 py-2 text-xs leading-5 text-slate-200">
+            {group.kind === 'media' ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-sky-300/80">
+                    Variação {index + 1}{item.aspectLabel ? ` · ${item.aspectLabel}` : ''}
+                  </span>
+                  {item.previewUrl ? (
+                    <button
+                      type="button"
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-sky-400/25 bg-sky-400/10 text-sky-100 transition hover:border-sky-300/50 hover:bg-sky-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+                      aria-label={`Expandir mídia da variação ${index + 1}`}
+                      onClick={() => onPreview?.(item, index)}
+                    >
+                      <MagnifyingGlassPlus className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+                {item.previewUrl ? (
+                  <button
+                    type="button"
+                    className="group/media block w-full overflow-hidden rounded-lg border border-slate-700/70 bg-slate-950/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+                    onClick={() => onPreview?.(item, index)}
+                  >
+                    <img src={item.previewUrl} alt={`Mídia da variação ${index + 1}`} className="h-28 w-full object-cover transition group-hover/media:scale-[1.02]" loading="lazy" referrerPolicy="no-referrer" />
+                  </button>
+                ) : (
+                  <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-slate-700/70 bg-slate-950/60 text-[11px] text-slate-500">
+                    Miniatura indisponível
+                  </div>
+                )}
+                <span className="block break-all font-mono text-[11px] text-blue-100/70">{item.value}</span>
+              </div>
+            ) : (
+              <>
+                {group.values.length > 1 ? <span className="mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-sky-300/80">Variação {index + 1}</span> : null}
+                <span className="whitespace-pre-wrap break-words">{item.value}</span>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -2470,8 +2576,9 @@ function MetaAdsAdCreativeDetails({ creative }: { creative: MetaAdsResolvedAdCre
   const creativeName = getMetaAdsCreativeDisplayName(creative)
   const preview = creative.imageUrl || creative.thumbnailUrl
   const raw = creative.raw
-  const variationGroups = buildMetaAdsCreativeVariationGroups(raw)
+  const variationGroups = buildMetaAdsCreativeVariationGroups(raw, preview)
   const storyId = creative.effectiveObjectStoryId || raw?.object_story_id || '—'
+  const [expandedMedia, setExpandedMedia] = useState<{ item: MetaAdsCreativeVariationItem; index: number } | null>(null)
 
   return (
     <article className="rounded-2xl border border-slate-700/80 bg-slate-900/35 p-4">
@@ -2509,11 +2616,29 @@ function MetaAdsAdCreativeDetails({ creative }: { creative: MetaAdsResolvedAdCre
           <div className="mb-3 text-sm font-medium text-slate-100">Variações do criativo</div>
           <div className="grid gap-3 lg:grid-cols-2">
             {variationGroups.map((group) => (
-              <MetaAdsCreativeVariationPanel key={group.label} group={group} />
+              <MetaAdsCreativeVariationPanel key={group.label} group={group} onPreview={(item, index) => setExpandedMedia({ item, index })} />
             ))}
           </div>
         </div>
       ) : null}
+      <Dialog open={Boolean(expandedMedia)} onOpenChange={(open) => !open && setExpandedMedia(null)}>
+        <DialogContent className="max-w-4xl border-slate-800/80 bg-slate-950 p-4 text-slate-100">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              Mídia da variação {(expandedMedia?.index ?? 0) + 1}
+              {expandedMedia?.item.aspectLabel ? ` · ${expandedMedia.item.aspectLabel}` : ''}
+            </DialogTitle>
+            <DialogDescription className="break-all font-mono text-xs text-slate-400">
+              {expandedMedia?.item.value}
+            </DialogDescription>
+          </DialogHeader>
+          {expandedMedia?.item.previewUrl ? (
+            <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/60">
+              <img src={expandedMedia.item.previewUrl} alt={`Mídia da variação ${(expandedMedia.index || 0) + 1}`} className="max-h-[72vh] w-full object-contain" referrerPolicy="no-referrer" />
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </article>
   )
 }
@@ -3538,9 +3663,6 @@ export function MetaAdsOverviewPanel({
   const updateMetricTile = (key: MetaAdsOverviewMetricKey, patch: Partial<MetaAdsOverviewMetricLayout>) => {
     setMetricLayout((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)))
   }
-  const updateMetricTileAspect = (key: MetaAdsOverviewMetricKey, aspect: MetaAdsOverviewMetricAspect, dimensions: { width: number; height: number }) => {
-    updateMetricTile(key, { aspect, ...dimensions })
-  }
 
   const handleMetricDragEnd = (result: DropResult) => {
     if (!result.destination || result.destination.droppableId !== 'meta-ads-overview-metrics') return
@@ -3637,7 +3759,6 @@ export function MetaAdsOverviewPanel({
                             dragHandleProps={dragProvided.dragHandleProps}
                             onHide={() => updateMetricTile(tile.key, { visible: false })}
                             onResize={(dimensions) => updateMetricTile(tile.key, dimensions)}
-                            onAspectChange={(aspect, dimensions) => updateMetricTileAspect(tile.key, aspect, dimensions)}
                           />
                         ) : (
                           <MetaAdsMetricTile
@@ -3654,7 +3775,6 @@ export function MetaAdsOverviewPanel({
                             dragHandleProps={dragProvided.dragHandleProps}
                             onHide={() => updateMetricTile(tile.key, { visible: false })}
                             onResize={(dimensions) => updateMetricTile(tile.key, dimensions)}
-                            onAspectChange={(aspect, dimensions) => updateMetricTileAspect(tile.key, aspect, dimensions)}
                           />
                         )}
                       </div>
@@ -4311,11 +4431,11 @@ export function MetaAdsInventoryPanel({
           </div>
         </CardHeader>
         <CardContent className="px-6 pb-6">
-          <div className="overflow-hidden rounded-2xl border border-slate-800/75 bg-slate-950/20 shadow-inner">
+          <div className="relative isolate overflow-hidden rounded-2xl border border-slate-800/75 bg-slate-950/50 shadow-inner">
             <div
               data-testid="meta-ads-inventory-scroll"
-              className="max-h-[min(62vh,36rem)] overflow-auto scrollbar-thin scrollbar-thumb-slate-700/70 scrollbar-track-transparent"
-              style={{ scrollbarGutter: 'stable both-edges' }}
+              className="max-h-[min(62vh,36rem)] overflow-auto rounded-[inherit] scrollbar-thin scrollbar-thumb-slate-700/70 scrollbar-track-transparent [&::-webkit-scrollbar-corner]:bg-transparent"
+              style={{ scrollbarGutter: 'stable' }}
             >
               <table className="caption-bottom table-fixed text-sm" style={{ width: inventoryTableWidth, minWidth: '100%' }}>
               <colgroup>
