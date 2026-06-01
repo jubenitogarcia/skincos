@@ -188,6 +188,7 @@ test.describe('meta ads', () => {
                 adSetId: 'set_1',
                 adId: 'ad_1',
                 adName: 'Anúncio 1',
+                thumbnailUrl: '/icons/insumos-icon-192.png',
                 effectiveObjectStoryId: 'story_1',
               },
               {
@@ -320,6 +321,7 @@ test.describe('meta ads', () => {
     await page.getByRole('button', { name: 'Anúncio 1', exact: true }).click()
     await expect(page.getByRole('dialog')).toContainText('Anúncio 1')
     await expect(page.getByRole('dialog')).toContainText('Criativos do anúncio')
+    await expect(page.getByRole('dialog')).toContainText('Mídias do criativo')
     await expect(page.getByRole('dialog')).toContainText('Criativo 1')
     await expect(page.getByRole('dialog')).toContainText('Story ID')
     await expect(page.getByRole('dialog')).toContainText('story_1')

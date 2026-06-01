@@ -114,7 +114,7 @@ type MetaAdsOverviewMetricKey =
   | 'frequency'
   | 'trend'
 type MetaAdsOverviewMetricSize = 'compact' | 'wide'
-type MetaAdsOverviewMetricAspect = '1:1' | '3:4' | '2:1'
+type MetaAdsOverviewMetricAspect = '1:1' | '4:3' | '2:1'
 type MetaAdsOverviewMetricLayout = {
   key: MetaAdsOverviewMetricKey
   visible: boolean
@@ -124,38 +124,38 @@ type MetaAdsOverviewMetricLayout = {
 }
 type MetaAdsInventoryColumnKey = MetaAdsInventorySortKey
 
-const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v4'
+const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v5'
 const META_ADS_INVENTORY_COLUMN_WIDTHS_KEY = 'skincos.metaAds.layout.inventoryColumns.v1'
 const META_ADS_METRIC_TILE_DIMENSIONS = {
   minWidth: 140,
   maxWidth: 680,
   minHeight: 96,
   maxHeight: 520,
-  defaultWidth: 168,
-  defaultHeight: 224,
+  defaultWidth: 224,
+  defaultHeight: 168,
   trendWidth: 520,
   trendHeight: 260,
 } as const
 const META_ADS_METRIC_ASPECT_RATIOS: Record<MetaAdsOverviewMetricAspect, number> = {
   '1:1': 1,
-  '3:4': 3 / 4,
+  '4:3': 4 / 3,
   '2:1': 2,
 }
-const META_ADS_METRIC_ASPECT_ORDER: MetaAdsOverviewMetricAspect[] = ['1:1', '3:4', '2:1']
+const META_ADS_METRIC_ASPECT_ORDER: MetaAdsOverviewMetricAspect[] = ['1:1', '4:3', '2:1']
 const DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT: MetaAdsOverviewMetricLayout[] = [
-  { key: 'spend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'conversations', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'cpcv', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'clicks', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'reach', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'impressions', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'engagement', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'redirect', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'ctr', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'cpc', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'cpm', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'cpp', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
-  { key: 'frequency', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '3:4' },
+  { key: 'spend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'conversations', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'cpcv', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'clicks', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'reach', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'impressions', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'engagement', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'redirect', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'ctr', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'cpc', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'cpm', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'cpp', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'frequency', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
   { key: 'trend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.trendWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.trendHeight, aspect: '2:1' },
 ]
 const META_ADS_INVENTORY_COLUMN_LIMITS: Record<MetaAdsInventoryColumnKey, { width: number; min: number; max: number }> = {
@@ -299,14 +299,14 @@ function clampMetaAdsMetricDimension(value: unknown, min: number, max: number, f
 }
 
 function getMetaAdsMetricAspect(value: unknown, width?: unknown, height?: unknown): MetaAdsOverviewMetricAspect {
-  if (value === '1:1' || value === '3:4' || value === '2:1') return value
-  if (value === '4:3') return '3:4'
-  const ratio = Number(width) > 0 && Number(height) > 0 ? Number(width) / Number(height) : META_ADS_METRIC_ASPECT_RATIOS['3:4']
+  if (value === '1:1' || value === '4:3' || value === '2:1') return value
+  if (value === '3:4') return '4:3'
+  const ratio = Number(width) > 0 && Number(height) > 0 ? Number(width) / Number(height) : META_ADS_METRIC_ASPECT_RATIOS['4:3']
   return META_ADS_METRIC_ASPECT_ORDER.reduce((closest, option) => {
     const closestDelta = Math.abs(META_ADS_METRIC_ASPECT_RATIOS[closest] - ratio)
     const optionDelta = Math.abs(META_ADS_METRIC_ASPECT_RATIOS[option] - ratio)
     return optionDelta < closestDelta ? option : closest
-  }, '3:4' as MetaAdsOverviewMetricAspect)
+  }, '4:3' as MetaAdsOverviewMetricAspect)
 }
 
 function fitMetaAdsMetricDimensionsToAspect(width: unknown, aspect: MetaAdsOverviewMetricAspect, fallbackHeight: number) {
@@ -382,7 +382,7 @@ function getDefaultMetaAdsMetricDimensions(key: MetaAdsOverviewMetricKey, legacy
   }
   return {
     width: legacySize === 'wide' ? 340 : META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth,
-    height: legacySize === 'wide' ? 170 : META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight,
+    height: legacySize === 'wide' ? 255 : META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight,
   }
 }
 
@@ -1296,37 +1296,48 @@ function MetaAdsMetricTile({
   onHide?: () => void
   onResize?: (dimensions: { width: number; height: number; aspect?: MetaAdsOverviewMetricAspect }) => void
 }) {
-  const spacious = width >= 250 || height >= 150
-  const roomy = width >= 320 && height >= 176
-  const labelNode = <div className="text-[9px] font-medium uppercase tracking-[0.14em] text-slate-400 sm:text-[10px]">{label}</div>
+  const isSquare = aspect === '1:1'
+  const isWide = aspect === '2:1'
+  const isLandscape = aspect === '4:3'
+  const roomy = width >= 300 && height >= 150
+  const labelNode = <div className={`${isWide ? 'text-[10px]' : 'text-[9px] sm:text-[10px]'} font-medium uppercase tracking-[0.14em] text-slate-400`}>{label}</div>
   const iconNode = (
-    <div className={`inline-flex ${roomy ? 'h-9 w-9' : spacious ? 'h-7 w-7' : 'h-6 w-6'} items-center justify-center rounded-full border ${toneClass}`}>
-      <Icon className={roomy ? 'h-4 w-4' : 'h-3 w-3'} weight="fill" />
-    </div>
-  )
-  const content = (
-    <div className={`${spacious ? 'flex-row text-left' : 'flex-col text-center'} flex items-center justify-center gap-2`}>
-      {iconNode}
-      <div className="space-y-0.5">
-        {labelNode}
-        {subtitle && spacious ? <div className="text-[9px] leading-tight text-slate-500">{subtitle}</div> : null}
-      </div>
+    <div className={`inline-flex ${roomy || isSquare ? 'h-9 w-9' : 'h-8 w-8'} shrink-0 items-center justify-center rounded-full border ${toneClass}`}>
+      <Icon className={roomy || isSquare ? 'h-4 w-4' : 'h-3.5 w-3.5'} weight="fill" />
     </div>
   )
   const body = (
     <CardContent
       tabIndex={tooltipLabel || description ? 0 : undefined}
-      className={`${spacious ? 'items-start text-left' : 'items-center text-center'} flex h-full flex-col justify-center gap-2 p-3 outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45`}
+      className={`flex h-full outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 ${
+        isWide
+          ? 'items-center justify-between gap-4 px-10 py-4 text-left'
+          : isLandscape
+            ? 'items-start justify-between gap-3 p-4 text-left'
+            : 'items-center justify-center gap-3 p-4 text-center'
+      }`}
     >
-      {content}
-      <div className={spacious ? 'space-y-1' : 'space-y-0.5'}>
-        <div className={`${roomy ? 'text-[1.35rem]' : spacious ? 'text-[1.16rem]' : 'text-[1.05rem]'} font-semibold leading-tight text-white`}>{value}</div>
-        {roomy && description ? <div className="max-w-64 text-[10px] leading-snug text-slate-400">{description}</div> : null}
+      <div className={`${isWide ? 'flex min-w-0 items-center gap-3' : 'flex min-w-0 flex-col gap-2'} ${isSquare ? 'items-center' : 'items-start'}`}>
+        {iconNode}
+        <div className={`min-w-0 space-y-0.5 ${isSquare ? 'text-center' : ''}`}>
+          {labelNode}
+          {subtitle && !isSquare ? <div className="text-[9px] leading-tight text-slate-500">{subtitle}</div> : null}
+        </div>
+      </div>
+      <div className={`${isWide ? 'min-w-[7rem] text-right' : isSquare ? 'text-center' : 'w-full'} space-y-1`}>
+        <div className={`${isWide ? 'text-[1.35rem]' : isLandscape ? 'text-[1.3rem]' : 'text-[1.24rem]'} font-semibold leading-tight text-white`}>{value}</div>
+        {description && (isWide || (isLandscape && roomy)) ? <div className={`${isWide ? 'ml-auto max-w-40' : 'max-w-56'} text-[10px] leading-snug text-slate-400`}>{description}</div> : null}
       </div>
     </CardContent>
   )
+  const aspectClass =
+    aspect === '2:1'
+      ? 'bg-[radial-gradient(circle_at_15%_20%,rgba(14,165,233,0.13),transparent_36%),rgba(2,6,23,0.72)]'
+      : aspect === '4:3'
+        ? 'bg-[linear-gradient(135deg,rgba(15,23,42,0.88),rgba(2,6,23,0.74))]'
+        : 'bg-[radial-gradient(circle_at_50%_20%,rgba(56,189,248,0.12),transparent_42%),rgba(2,6,23,0.78)]'
   return (
-    <Card className={`group relative h-full gap-0 overflow-hidden py-0 transition hover:border-sky-400/25 hover:bg-slate-900/70 ${panelClass}`}>
+    <Card className={`group relative h-full gap-0 overflow-hidden py-0 transition hover:border-sky-400/25 hover:bg-slate-900/70 ${panelClass} ${aspectClass}`}>
       <button
         type="button"
         className="absolute left-2 top-2 z-10 inline-flex h-6 w-6 cursor-grab items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/45 text-slate-500 opacity-60 shadow-sm transition hover:scale-105 hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 active:cursor-grabbing group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
@@ -1357,7 +1368,7 @@ function MetaAdsMetricTile({
         body
       )}
       {onResize ? (
-        <TooltipLabel label="Alternar formato" description={`Clique para alternar entre 1:1, 3:4 e 2:1. Atual: ${aspect}.`}>
+        <TooltipLabel label="Alternar formato" description={`Clique para alternar entre 1:1, 4:3 e 2:1. Atual: ${aspect}.`}>
           <button
             type="button"
             className="absolute bottom-1.5 right-1.5 z-10 h-6 w-6 rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-65 transition hover:border-sky-300/70 hover:bg-sky-400/10 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
@@ -1397,16 +1408,24 @@ function MetaAdsTrendWidget({
   onHide?: () => void
   onResize?: (dimensions: { width: number; height: number; aspect?: MetaAdsOverviewMetricAspect }) => void
 }) {
-  const roomy = width >= 440 && height >= 300
+  const isWide = aspect === '2:1'
+  const isSquare = aspect === '1:1'
+  const roomy = isWide ? width >= 440 && height >= 240 : width >= 300 && height >= 220
   const trendTicks = useMemo(() => buildTrendTicks(trend), [trend])
   const trendAxisFormatter = useMemo(
     () => (value: string) => formatTrendAxisLabel(value, trend.length),
     [trend.length],
   )
-  const chartHeight = Math.max(150, height - (roomy ? 108 : 78))
+  const chartHeight = Math.max(isSquare ? 120 : 140, height - (roomy ? 104 : 76))
+  const trendAspectClass =
+    isWide
+      ? 'bg-[radial-gradient(circle_at_15%_20%,rgba(14,165,233,0.13),transparent_36%),rgba(2,6,23,0.72)]'
+      : aspect === '4:3'
+        ? 'bg-[linear-gradient(135deg,rgba(15,23,42,0.88),rgba(2,6,23,0.74))]'
+        : 'bg-[radial-gradient(circle_at_50%_20%,rgba(56,189,248,0.12),transparent_42%),rgba(2,6,23,0.78)]'
 
   return (
-    <Card className={`${panelClass} group relative h-full overflow-hidden`}>
+    <Card className={`${panelClass} ${trendAspectClass} group relative h-full overflow-hidden`}>
       <MetaAdsSyncOverlay show={syncing && trend.length > 0} label="Atualizando tendência" />
       <button
         type="button"
@@ -1430,12 +1449,12 @@ function MetaAdsTrendWidget({
           <EyeSlash className="h-3.5 w-3.5" />
         </button>
       ) : null}
-      <CardHeader className={`${roomy ? 'pl-11' : 'px-10 py-3'} gap-1.5`}>
-        <CardTitle className="flex items-center gap-2 text-sm sm:text-base">
+      <CardHeader className={`${roomy ? 'pl-11 pr-10 pt-5' : 'px-10 py-3'} gap-1.5`}>
+        <CardTitle className={`flex items-center gap-2 ${isSquare ? 'text-sm' : 'text-sm sm:text-base'}`}>
           <PresentationChart className="h-5 w-5 text-sky-300" />
           Tendência de gasto
         </CardTitle>
-        {roomy ? <CardDescription className="text-slate-300">Histórico de investimento da conta selecionada.</CardDescription> : null}
+        {roomy && !isSquare ? <CardDescription className="text-slate-300">Histórico de investimento da conta selecionada.</CardDescription> : null}
       </CardHeader>
       <CardContent className="pt-2" style={{ height: chartHeight }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -1482,7 +1501,7 @@ function MetaAdsTrendWidget({
         </ResponsiveContainer>
       </CardContent>
       {onResize ? (
-        <TooltipLabel label="Alternar formato" description={`Clique para alternar entre 1:1, 3:4 e 2:1. Atual: ${aspect}.`}>
+        <TooltipLabel label="Alternar formato" description={`Clique para alternar entre 1:1, 4:3 e 2:1. Atual: ${aspect}.`}>
           <button
             type="button"
             className="absolute bottom-1.5 right-1.5 z-10 h-6 w-6 rounded-br-2xl border-b border-r border-slate-500/50 bg-gradient-to-br from-transparent via-transparent to-sky-300/10 opacity-65 transition hover:border-sky-300/70 hover:bg-sky-400/10 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
@@ -2521,46 +2540,117 @@ function MetaAdsCreativeVariationPanel({
   )
 }
 
+function MetaAdsCreativeMediaShowcase({
+  group,
+  creativeName,
+  fallbackPreview,
+  onPreview,
+}: {
+  group?: MetaAdsCreativeVariationGroup
+  creativeName: string
+  fallbackPreview?: string | null
+  onPreview: (item: MetaAdsCreativeVariationItem, index: number) => void
+}) {
+  const mediaItems = group?.values || []
+  if (!mediaItems.length && !fallbackPreview) return null
+
+  return (
+    <div className="rounded-2xl border border-sky-500/20 bg-sky-500/5 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-slate-100">Mídias do criativo</div>
+          <div className="text-xs text-slate-400">Miniaturas das variações usadas neste anúncio.</div>
+        </div>
+        {mediaItems.length ? (
+          <span className="rounded-full border border-sky-400/20 bg-sky-400/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-sky-200">
+            {mediaItems.length} {mediaItems.length === 1 ? 'variação' : 'variações'}
+          </span>
+        ) : null}
+      </div>
+      {mediaItems.length ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {mediaItems.map((item, index) => (
+            <article key={`media-${index}-${item.value}`} className="min-w-0 rounded-xl border border-slate-800/85 bg-slate-950/55 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-sky-300/80">
+                  Variação {index + 1}{item.aspectLabel ? ` · ${item.aspectLabel}` : ''}
+                </span>
+                {item.previewUrl ? (
+                  <button
+                    type="button"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-sky-400/25 bg-sky-400/10 text-sky-100 transition hover:border-sky-300/50 hover:bg-sky-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+                    aria-label={`Expandir mídia da variação ${index + 1}`}
+                    onClick={() => onPreview(item, index)}
+                  >
+                    <MagnifyingGlassPlus className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
+              {item.previewUrl ? (
+                <button
+                  type="button"
+                  className="group/media block w-full overflow-hidden rounded-lg border border-slate-700/70 bg-slate-950/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+                  onClick={() => onPreview(item, index)}
+                >
+                  <img src={item.previewUrl} alt={`Mídia da variação ${index + 1}`} className="aspect-[4/3] w-full object-cover transition group-hover/media:scale-[1.02]" loading="lazy" referrerPolicy="no-referrer" />
+                </button>
+              ) : (
+                <div className="flex aspect-[4/3] items-center justify-center rounded-lg border border-dashed border-slate-700/70 bg-slate-950/60 text-[11px] text-slate-500">
+                  Miniatura indisponível
+                </div>
+              )}
+              <span className="mt-2 block break-all font-mono text-[11px] leading-5 text-blue-100/70">{item.value}</span>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
+          <img src={fallbackPreview || ''} alt={creativeName} className="max-h-72 w-full object-contain" loading="lazy" referrerPolicy="no-referrer" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MetaAdsAdCreativeDetails({ creative }: { creative: MetaAdsResolvedAdCreative }) {
   const creativeName = getMetaAdsCreativeDisplayName(creative)
   const preview = creative.imageUrl || creative.thumbnailUrl
   const raw = creative.raw
   const variationGroups = buildMetaAdsCreativeVariationGroups(raw, preview)
+  const mediaGroup = variationGroups.find((group) => group.kind === 'media')
+  const contentVariationGroups = variationGroups.filter((group) => group.kind !== 'media')
   const storyId = creative.effectiveObjectStoryId || raw?.object_story_id || '—'
   const [expandedMedia, setExpandedMedia] = useState<{ item: MetaAdsCreativeVariationItem; index: number } | null>(null)
 
   return (
     <article className="rounded-2xl border border-slate-700/80 bg-slate-900/35 p-4">
-      <div className="grid gap-4 lg:grid-cols-[12rem_minmax(0,1fr)]">
-        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">
-          {preview ? (
-            <img src={preview} alt={creativeName} className="h-40 w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
-          ) : (
-            <div className="flex h-40 items-center justify-center text-xs text-slate-500">Sem prévia</div>
-          )}
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">Criativo</div>
+          <div className="break-words text-base font-medium text-slate-100">{creativeName}</div>
         </div>
-        <div className="min-w-0 space-y-3">
-          <div>
-            <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">Criativo</div>
-            <div className="break-words text-base font-medium text-slate-100">{creativeName}</div>
-          </div>
-          <div className="grid gap-2 md:grid-cols-2">
-            <div className="rounded-xl border border-slate-800/85 bg-slate-950/45 p-3">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">ID</div>
-              <div className="break-all font-mono text-xs text-blue-100/75">{creative.id || '—'}</div>
-            </div>
-            <div className="rounded-xl border border-slate-800/85 bg-slate-950/45 p-3">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Story ID</div>
-              <div className="break-all font-mono text-xs text-blue-100/75">{storyId}</div>
-            </div>
-          </div>
+        <div className="flex min-w-0 flex-wrap gap-2 text-[11px]">
+          <span className="rounded-full border border-slate-800/85 bg-slate-950/45 px-2.5 py-1 font-mono text-blue-100/75">
+            ID {creative.id || '—'}
+          </span>
+          <span className="rounded-full border border-slate-800/85 bg-slate-950/45 px-2.5 py-1 font-mono text-blue-100/75">
+            Story ID {storyId}
+          </span>
         </div>
       </div>
-      {variationGroups.length ? (
+
+      <MetaAdsCreativeMediaShowcase
+        group={mediaGroup}
+        creativeName={creativeName}
+        fallbackPreview={preview}
+        onPreview={(item, index) => setExpandedMedia({ item, index })}
+      />
+
+      {contentVariationGroups.length ? (
         <div className="mt-4">
           <div className="mb-3 text-sm font-medium text-slate-100">Variações do criativo</div>
           <div className="grid gap-3 lg:grid-cols-2">
-            {variationGroups.map((group) => (
+            {contentVariationGroups.map((group) => (
               <MetaAdsCreativeVariationPanel key={group.label} group={group} onPreview={(item, index) => setExpandedMedia({ item, index })} />
             ))}
           </div>
