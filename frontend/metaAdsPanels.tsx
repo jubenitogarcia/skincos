@@ -113,41 +113,49 @@ type MetaAdsOverviewMetricKey =
   | 'frequency'
   | 'trend'
 type MetaAdsOverviewMetricSize = 'compact' | 'wide'
+type MetaAdsOverviewMetricAspect = '1:1' | '4:3' | '2:1'
 type MetaAdsOverviewMetricLayout = {
   key: MetaAdsOverviewMetricKey
   visible: boolean
   width: number
   height: number
+  aspect: MetaAdsOverviewMetricAspect
 }
 type MetaAdsInventoryColumnKey = MetaAdsInventorySortKey
 
-const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v2'
+const META_ADS_OVERVIEW_METRIC_LAYOUT_KEY = 'skincos.metaAds.layout.overviewMetrics.v3'
 const META_ADS_INVENTORY_COLUMN_WIDTHS_KEY = 'skincos.metaAds.layout.inventoryColumns.v1'
 const META_ADS_METRIC_TILE_DIMENSIONS = {
   minWidth: 140,
   maxWidth: 680,
   minHeight: 96,
   maxHeight: 520,
-  defaultWidth: 164,
-  defaultHeight: 118,
+  defaultWidth: 168,
+  defaultHeight: 126,
   trendWidth: 520,
-  trendHeight: 340,
+  trendHeight: 260,
 } as const
+const META_ADS_METRIC_ASPECT_RATIOS: Record<MetaAdsOverviewMetricAspect, number> = {
+  '1:1': 1,
+  '4:3': 4 / 3,
+  '2:1': 2,
+}
+const META_ADS_METRIC_ASPECT_ORDER: MetaAdsOverviewMetricAspect[] = ['1:1', '4:3', '2:1']
 const DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT: MetaAdsOverviewMetricLayout[] = [
-  { key: 'spend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'conversations', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'cpcv', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'clicks', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'reach', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'impressions', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'engagement', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'redirect', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'ctr', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'cpc', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'cpm', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'cpp', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'frequency', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight },
-  { key: 'trend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.trendWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.trendHeight },
+  { key: 'spend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'conversations', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'cpcv', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'clicks', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'reach', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'impressions', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'engagement', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'redirect', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'ctr', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'cpc', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'cpm', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'cpp', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'frequency', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight, aspect: '4:3' },
+  { key: 'trend', visible: true, width: META_ADS_METRIC_TILE_DIMENSIONS.trendWidth, height: META_ADS_METRIC_TILE_DIMENSIONS.trendHeight, aspect: '2:1' },
 ]
 const META_ADS_INVENTORY_COLUMN_LIMITS: Record<MetaAdsInventoryColumnKey, { width: number; min: number; max: number }> = {
   item: { width: 300, min: 220, max: 520 },
@@ -289,16 +297,74 @@ function clampMetaAdsMetricDimension(value: unknown, min: number, max: number, f
   return Math.min(max, Math.max(min, Math.round(numberValue)))
 }
 
+function getMetaAdsMetricAspect(value: unknown, width?: unknown, height?: unknown): MetaAdsOverviewMetricAspect {
+  if (value === '1:1' || value === '4:3' || value === '2:1') return value
+  const ratio = Number(width) > 0 && Number(height) > 0 ? Number(width) / Number(height) : META_ADS_METRIC_ASPECT_RATIOS['4:3']
+  return META_ADS_METRIC_ASPECT_ORDER.reduce((closest, option) => {
+    const closestDelta = Math.abs(META_ADS_METRIC_ASPECT_RATIOS[closest] - ratio)
+    const optionDelta = Math.abs(META_ADS_METRIC_ASPECT_RATIOS[option] - ratio)
+    return optionDelta < closestDelta ? option : closest
+  }, '4:3' as MetaAdsOverviewMetricAspect)
+}
+
+function fitMetaAdsMetricDimensionsToAspect(width: unknown, aspect: MetaAdsOverviewMetricAspect, fallbackHeight: number) {
+  const ratio = META_ADS_METRIC_ASPECT_RATIOS[aspect]
+  const nextWidth = clampMetaAdsMetricDimension(
+    width,
+    META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
+    META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
+    META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth,
+  )
+  const nextHeight = clampMetaAdsMetricDimension(
+    Math.round(nextWidth / ratio),
+    META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
+    META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
+    fallbackHeight,
+  )
+  return { width: Math.round(nextHeight * ratio), height: nextHeight }
+}
+
+function resizeMetaAdsMetricDimensions(
+  start: { x: number; y: number; width: number; height: number },
+  event: PointerEvent<HTMLButtonElement>,
+  aspect: MetaAdsOverviewMetricAspect,
+) {
+  const ratio = META_ADS_METRIC_ASPECT_RATIOS[aspect]
+  const deltaX = event.clientX - start.x
+  const deltaY = event.clientY - start.y
+  if (Math.abs(deltaY) > Math.abs(deltaX)) {
+    const nextHeight = clampMetaAdsMetricDimension(
+      start.height + deltaY,
+      META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
+      META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
+      start.height,
+    )
+    const nextWidth = clampMetaAdsMetricDimension(
+      Math.round(nextHeight * ratio),
+      META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
+      META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
+      start.width,
+    )
+    return { width: nextWidth, height: Math.round(nextWidth / ratio) }
+  }
+  return fitMetaAdsMetricDimensionsToAspect(start.width + deltaX, aspect, start.height)
+}
+
+function getNextMetaAdsMetricAspect(aspect: MetaAdsOverviewMetricAspect) {
+  const index = META_ADS_METRIC_ASPECT_ORDER.indexOf(aspect)
+  return META_ADS_METRIC_ASPECT_ORDER[(index + 1) % META_ADS_METRIC_ASPECT_ORDER.length]
+}
+
 function getDefaultMetaAdsMetricDimensions(key: MetaAdsOverviewMetricKey, legacySize?: MetaAdsOverviewMetricSize) {
   if (key === 'trend') {
     return {
       width: legacySize === 'compact' ? 320 : META_ADS_METRIC_TILE_DIMENSIONS.trendWidth,
-      height: legacySize === 'compact' ? 250 : META_ADS_METRIC_TILE_DIMENSIONS.trendHeight,
+      height: legacySize === 'compact' ? 160 : META_ADS_METRIC_TILE_DIMENSIONS.trendHeight,
     }
   }
   return {
     width: legacySize === 'wide' ? 340 : META_ADS_METRIC_TILE_DIMENSIONS.defaultWidth,
-    height: legacySize === 'wide' ? 156 : META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight,
+    height: legacySize === 'wide' ? 170 : META_ADS_METRIC_TILE_DIMENSIONS.defaultHeight,
   }
 }
 
@@ -313,21 +379,24 @@ function parseMetaAdsOverviewMetricLayout(raw: string | null | undefined): MetaA
         if (!DEFAULT_META_ADS_OVERVIEW_METRIC_LAYOUT.some((entry) => entry.key === key)) return null
         if (seen.has(key)) return null
         seen.add(key)
-        return {
-          key,
-          visible: item?.visible !== false,
-          width: clampMetaAdsMetricDimension(
+        const fallback = getDefaultMetaAdsMetricDimensions(key, item?.size === 'wide' ? 'wide' : 'compact')
+        const aspect = getMetaAdsMetricAspect(item?.aspect, item?.width, item?.height)
+        const dimensions = fitMetaAdsMetricDimensionsToAspect(
+          clampMetaAdsMetricDimension(
             item?.width,
             META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
             META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
-            getDefaultMetaAdsMetricDimensions(key, item?.size === 'wide' ? 'wide' : 'compact').width,
+            fallback.width,
           ),
-          height: clampMetaAdsMetricDimension(
-            item?.height,
-            META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
-            META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
-            getDefaultMetaAdsMetricDimensions(key, item?.size === 'wide' ? 'wide' : 'compact').height,
-          ),
+          aspect,
+          fallback.height,
+        )
+        return {
+          key,
+          visible: item?.visible !== false,
+          width: dimensions.width,
+          height: dimensions.height,
+          aspect,
         } satisfies MetaAdsOverviewMetricLayout
       })
       .filter(Boolean) as MetaAdsOverviewMetricLayout[]
@@ -1190,9 +1259,11 @@ function MetaAdsMetricTile({
   toneClass,
   width,
   height,
+  aspect,
   dragHandleProps,
   onHide,
   onResize,
+  onAspectChange,
 }: {
   label: string
   tooltipLabel?: string
@@ -1203,9 +1274,11 @@ function MetaAdsMetricTile({
   toneClass: string
   width: number
   height: number
+  aspect: MetaAdsOverviewMetricAspect
   dragHandleProps?: DraggableProvidedDragHandleProps | null
   onHide?: () => void
   onResize?: (dimensions: { width: number; height: number }) => void
+  onAspectChange?: (aspect: MetaAdsOverviewMetricAspect, dimensions: { width: number; height: number }) => void
 }) {
   const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
   const spacious = width >= 250 || height >= 150
@@ -1246,19 +1319,7 @@ function MetaAdsMetricTile({
   }
   const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
-    const nextWidth = clampMetaAdsMetricDimension(
-      resizeStartRef.current.width + event.clientX - resizeStartRef.current.x,
-      META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
-      META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
-      resizeStartRef.current.width,
-    )
-    const nextHeight = clampMetaAdsMetricDimension(
-      resizeStartRef.current.height + event.clientY - resizeStartRef.current.y,
-      META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
-      META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
-      resizeStartRef.current.height,
-    )
-    onResize({ width: nextWidth, height: nextHeight })
+    onResize(resizeMetaAdsMetricDimensions(resizeStartRef.current, event, aspect))
   }
   const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
@@ -1298,6 +1359,23 @@ function MetaAdsMetricTile({
       ) : (
         body
       )}
+      {onAspectChange ? (
+        <TooltipLabel label="Formato do card" description={`Formato atual: ${aspect}. Clique para alternar entre 1:1, 4:3 e 2:1.`}>
+          <button
+            type="button"
+            className="absolute bottom-2 left-2 z-10 inline-flex h-6 min-w-8 items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/55 px-2 text-[10px] font-medium text-slate-400 opacity-70 shadow-sm transition hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+            aria-label={`Alterar formato do card ${tooltipLabel || label}`}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              const nextAspect = getNextMetaAdsMetricAspect(aspect)
+              onAspectChange(nextAspect, fitMetaAdsMetricDimensionsToAspect(width, nextAspect, height))
+            }}
+          >
+            {aspect}
+          </button>
+        </TooltipLabel>
+      ) : null}
       {onResize ? (
         <button
           type="button"
@@ -1323,18 +1401,22 @@ function MetaAdsTrendWidget({
   syncing,
   width,
   height,
+  aspect,
   dragHandleProps,
   onHide,
   onResize,
+  onAspectChange,
 }: {
   trend: MetaAdsTrendPoint[]
   currency: string
   syncing?: boolean
   width: number
   height: number
+  aspect: MetaAdsOverviewMetricAspect
   dragHandleProps?: DraggableProvidedDragHandleProps | null
   onHide?: () => void
   onResize?: (dimensions: { width: number; height: number }) => void
+  onAspectChange?: (aspect: MetaAdsOverviewMetricAspect, dimensions: { width: number; height: number }) => void
 }) {
   const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
   const roomy = width >= 440 && height >= 300
@@ -1354,19 +1436,7 @@ function MetaAdsTrendWidget({
   }
   const handleResizePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
-    const nextWidth = clampMetaAdsMetricDimension(
-      resizeStartRef.current.width + event.clientX - resizeStartRef.current.x,
-      META_ADS_METRIC_TILE_DIMENSIONS.minWidth,
-      META_ADS_METRIC_TILE_DIMENSIONS.maxWidth,
-      resizeStartRef.current.width,
-    )
-    const nextHeight = clampMetaAdsMetricDimension(
-      resizeStartRef.current.height + event.clientY - resizeStartRef.current.y,
-      META_ADS_METRIC_TILE_DIMENSIONS.minHeight,
-      META_ADS_METRIC_TILE_DIMENSIONS.maxHeight,
-      resizeStartRef.current.height,
-    )
-    onResize({ width: nextWidth, height: nextHeight })
+    onResize(resizeMetaAdsMetricDimensions(resizeStartRef.current, event, aspect))
   }
   const handleResizePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
     if (!onResize || !resizeStartRef.current) return
@@ -1451,6 +1521,23 @@ function MetaAdsTrendWidget({
           </LineChart>
         </ResponsiveContainer>
       </CardContent>
+      {onAspectChange ? (
+        <TooltipLabel label="Formato do gráfico" description={`Formato atual: ${aspect}. Clique para alternar entre 1:1, 4:3 e 2:1.`}>
+          <button
+            type="button"
+            className="absolute bottom-2 left-3 z-10 inline-flex h-6 min-w-8 items-center justify-center rounded-full border border-slate-700/75 bg-slate-950/55 px-2 text-[10px] font-medium text-slate-400 opacity-70 shadow-sm transition hover:border-sky-400/40 hover:text-sky-100 hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+            aria-label="Alterar formato do gráfico de tendência"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              const nextAspect = getNextMetaAdsMetricAspect(aspect)
+              onAspectChange(nextAspect, fitMetaAdsMetricDimensionsToAspect(width, nextAspect, height))
+            }}
+          >
+            {aspect}
+          </button>
+        </TooltipLabel>
+      ) : null}
       {onResize ? (
         <button
           type="button"
@@ -2387,7 +2474,7 @@ function MetaAdsAdCreativeDetails({ creative }: { creative: MetaAdsResolvedAdCre
   const storyId = creative.effectiveObjectStoryId || raw?.object_story_id || '—'
 
   return (
-    <article className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+    <article className="rounded-2xl border border-slate-700/80 bg-slate-900/35 p-4">
       <div className="mb-3">
         <div className="text-sm font-medium text-white">Criativo do anúncio</div>
         <div className="text-xs text-slate-400">Textos, títulos, descrições e variações usados por este anúncio.</div>
@@ -2658,7 +2745,7 @@ function MetaAdsEntityDetailDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={
-        canEdit && editableFields.includes('name') && detail.kind !== 'creative' ? (
+        canEdit && editableFields.includes('name') ? (
           <MetaAdsEditableTitleInput
             value={currentEditableTitle}
             onChange={(value) => setFormField('name', value)}
@@ -2668,7 +2755,9 @@ function MetaAdsEntityDetailDialog({
                 ? 'Nome da campanha'
                 : detail.kind === 'adset'
                   ? 'Nome do conjunto'
-                  : 'Nome do anúncio'
+                  : detail.kind === 'ad'
+                    ? 'Nome do anúncio'
+                    : 'Nome do criativo'
             }
           />
         ) : (
@@ -3433,9 +3522,9 @@ export function MetaAdsOverviewPanel({
       .map((config) => {
         const tile = byKey.get(config.key)
         if (!tile || !config.visible) return null
-        return { ...tile, width: config.width, height: config.height }
+        return { ...tile, width: config.width, height: config.height, aspect: config.aspect }
       })
-      .filter(Boolean) as Array<(typeof overviewTiles)[number] & { width: number; height: number }>
+      .filter(Boolean) as Array<(typeof overviewTiles)[number] & { width: number; height: number; aspect: MetaAdsOverviewMetricAspect }>
   }, [metricLayout, overviewTiles])
 
   const hiddenMetricTiles = useMemo(() => {
@@ -3448,6 +3537,9 @@ export function MetaAdsOverviewPanel({
 
   const updateMetricTile = (key: MetaAdsOverviewMetricKey, patch: Partial<MetaAdsOverviewMetricLayout>) => {
     setMetricLayout((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)))
+  }
+  const updateMetricTileAspect = (key: MetaAdsOverviewMetricKey, aspect: MetaAdsOverviewMetricAspect, dimensions: { width: number; height: number }) => {
+    updateMetricTile(key, { aspect, ...dimensions })
   }
 
   const handleMetricDragEnd = (result: DropResult) => {
@@ -3541,9 +3633,11 @@ export function MetaAdsOverviewPanel({
                             syncing={syncing}
                             width={tile.width}
                             height={tile.height}
+                            aspect={tile.aspect}
                             dragHandleProps={dragProvided.dragHandleProps}
                             onHide={() => updateMetricTile(tile.key, { visible: false })}
                             onResize={(dimensions) => updateMetricTile(tile.key, dimensions)}
+                            onAspectChange={(aspect, dimensions) => updateMetricTileAspect(tile.key, aspect, dimensions)}
                           />
                         ) : (
                           <MetaAdsMetricTile
@@ -3556,9 +3650,11 @@ export function MetaAdsOverviewPanel({
                             toneClass={tile.toneClass}
                             width={tile.width}
                             height={tile.height}
+                            aspect={tile.aspect}
                             dragHandleProps={dragProvided.dragHandleProps}
                             onHide={() => updateMetricTile(tile.key, { visible: false })}
                             onResize={(dimensions) => updateMetricTile(tile.key, dimensions)}
+                            onAspectChange={(aspect, dimensions) => updateMetricTileAspect(tile.key, aspect, dimensions)}
                           />
                         )}
                       </div>

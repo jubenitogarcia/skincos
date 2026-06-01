@@ -566,7 +566,7 @@ export async function getMetaAdsEntityDetail(
 
 export async function updateMetaAdsEntity(
   accessToken: string,
-  type: Exclude<MetaAdsEntityType, 'creative'>,
+  type: MetaAdsEntityType,
   id: string,
   patch: Record<string, string | number | boolean | undefined | null>,
   version?: string,

@@ -704,7 +704,7 @@ export async function getMetaAdsLocalInventory(): Promise<MetaInventoryResponse>
 }
 
 function localEditableFields(type: MetaAdsEntityType) {
-  if (type === 'creative') return []
+  if (type === 'creative') return ['name']
   if (type === 'ad') return ['name', 'status']
   if (type === 'campaign') return ['name', 'status', 'daily_budget', 'lifetime_budget', 'start_time', 'stop_time']
   return ['name', 'status', 'daily_budget', 'lifetime_budget', 'start_time', 'end_time', 'bid_strategy', 'optimization_goal']
@@ -718,11 +718,8 @@ function buildLocalEntityDetail(type: MetaAdsEntityType, id: string, fields: Rec
       type,
       id,
       accountId,
-      editable: type !== 'creative',
-      readOnlyReason:
-        type === 'creative'
-          ? 'Criativos ficam somente leitura nesta versão local; alterações reais exigem criar uma variação e substituir no anúncio.'
-          : null,
+      editable: editableFields.length > 0,
+      readOnlyReason: null,
       editableFields,
       fields,
       raw: fields,
@@ -756,13 +753,6 @@ export async function updateMetaAdsLocalEntity(
   id: string,
   patch: MetaAdsEntityPatch,
 ): Promise<MetaAdsEntityUpdateResponse> {
-  if (type === 'creative') {
-    throw {
-      code: 'META_ADS_CREATIVE_READ_ONLY',
-      message: 'Criativos estão em modo somente leitura nesta versão.',
-      retryable: false,
-    }
-  }
   writeLocalEntityPatch(type, id, patch)
   const detail = await getMetaAdsLocalEntityDetail(type, id)
   const changedFields = Object.keys(patch)
