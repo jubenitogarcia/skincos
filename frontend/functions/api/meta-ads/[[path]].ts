@@ -22,6 +22,7 @@ import {
   listMetaAdSets,
   listMetaCampaigns,
   listMetaAdsInsights,
+  listMetaAdImagesByHashes,
   updateMetaAdsEntity,
   type MetaAdSet as GraphMetaAdSet,
   type MetaCampaign as GraphMetaCampaign,
@@ -1284,6 +1285,73 @@ function normalizeEntityAccountId(detail: any) {
   return normalizeAccountIdForCompare(detail?.account_id || detail?.account?.id)
 }
 
+function asMetaAdsRecord(value: unknown): Record<string, any> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : null
+}
+
+function collectEntityImageHashes(value: unknown, hashes = new Set<string>()) {
+  if (!value) return hashes
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectEntityImageHashes(item, hashes))
+    return hashes
+  }
+  const record = asMetaAdsRecord(value)
+  if (!record) return hashes
+  const hash = String(record.hash || record.image_hash || '').trim()
+  if (hash) hashes.add(hash)
+  Object.values(record).forEach((item) => {
+    if (item && typeof item === 'object') collectEntityImageHashes(item, hashes)
+  })
+  return hashes
+}
+
+function enrichEntityImages(value: unknown, imageMap: Map<string, any>) {
+  if (!value) return
+  if (Array.isArray(value)) {
+    value.forEach((item) => enrichEntityImages(item, imageMap))
+    return
+  }
+  const record = asMetaAdsRecord(value)
+  if (!record) return
+  const hash = String(record.hash || record.image_hash || '').trim()
+  const image = hash ? imageMap.get(hash) : null
+  if (image) {
+    record.url ||= image.url || image.permalink_url || ''
+    record.image_url ||= image.url || image.permalink_url || ''
+    record.thumbnail_url ||= image.url || image.permalink_url || ''
+    record.width ||= image.width
+    record.height ||= image.height
+    record.name ||= image.name
+  }
+  Object.values(record).forEach((item) => {
+    if (item && typeof item === 'object') enrichEntityImages(item, imageMap)
+  })
+}
+
+async function enrichDetailCreativeMedia(
+  selected: { connection: MetaAdsConnection; adAccountId: string },
+  detail: any,
+  cfg: ReturnType<typeof runtimeConfig>,
+) {
+  const target = detail?.creative && typeof detail.creative === 'object' ? detail.creative : detail
+  const hashes = Array.from(collectEntityImageHashes(target))
+  if (!hashes.length) return detail
+  try {
+    const images = await listMetaAdImagesByHashes(
+      selected.connection.accessToken,
+      selected.adAccountId,
+      hashes,
+      cfg.graphVersion,
+      cfg.appSecret,
+    )
+    const imageMap = new Map(images.map((image) => [image.hash, image]))
+    enrichEntityImages(target, imageMap)
+  } catch (error) {
+    detail._crm_media_warning = String((error as Error | null)?.message || error || 'media_enrichment_failed')
+  }
+  return detail
+}
+
 function normalizeMetaStatus(value: unknown) {
   const status = String(value || '').trim().toUpperCase()
   if (!status) return ''
@@ -1450,6 +1518,9 @@ async function handleEntityDetail(context: any, type: GraphMetaAdsEntityType, en
 
   const cfg = runtimeConfig(context)
   const detail = await getVerifiedEntityDetail(selected, type, entityId, cfg)
+  if (type === 'ad' || type === 'creative') {
+    await enrichDetailCreativeMedia(selected, detail, cfg)
+  }
   const scopes = normalizeScopes([...(selected.connection.grantedScopes || []), ...(selected.connection.scopes || [])])
   return json(200, {
     ok: true,

@@ -104,6 +104,15 @@ export type MetaInsight = {
 
 export type MetaAdsEntityType = 'campaign' | 'adset' | 'ad' | 'creative'
 
+export type MetaAdImageAsset = {
+  hash: string
+  url?: string
+  permalink_url?: string
+  width?: number
+  height?: number
+  name?: string
+}
+
 const ENTITY_DETAIL_FIELDS: Record<MetaAdsEntityType, string> = {
   campaign:
     'id,account_id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,buying_type,special_ad_categories,start_time,stop_time,created_time,updated_time,issues_info,recommendations',
@@ -562,6 +571,36 @@ export async function getMetaAdsEntityDetail(
     detail._crm_detail_warning = String((error as Error | null)?.message || error || 'detail_fields_fallback')
     return detail
   }
+}
+
+export async function listMetaAdImagesByHashes(
+  accessToken: string,
+  adAccountId: string,
+  hashes: string[],
+  version?: string,
+  appSecret?: string,
+): Promise<MetaAdImageAsset[]> {
+  const uniqueHashes = Array.from(new Set(hashes.map((hash) => esc(hash)).filter(Boolean)))
+  if (!uniqueHashes.length) return []
+  const data = await graphFetch<any>(
+    `/${normalizeAccountId(adAccountId)}/adimages`,
+    {
+      fields: 'hash,url,permalink_url,width,height,name',
+      hashes: JSON.stringify(uniqueHashes),
+      limit: 100,
+    },
+    accessToken,
+    version,
+    appSecret,
+  )
+  return (Array.isArray(data?.data) ? data.data : []).map((row: any) => ({
+    hash: esc(row?.hash),
+    url: esc(row?.url),
+    permalink_url: esc(row?.permalink_url),
+    width: parseOptionalNumber(row?.width),
+    height: parseOptionalNumber(row?.height),
+    name: esc(row?.name),
+  })).filter((row: MetaAdImageAsset) => row.hash)
 }
 
 export async function updateMetaAdsEntity(
