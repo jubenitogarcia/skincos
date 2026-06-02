@@ -255,6 +255,38 @@ async function ensureSchema(db: D1DatabaseLike) {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_behavior_page_path ON site_behavior_events(page_path, created_at_ms);").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_behavior_unit ON site_behavior_events(unit_slug, created_at_ms);").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_behavior_service ON site_behavior_events(service_id, created_at_ms);").run();
+
+    await db
+        .prepare(
+            `CREATE TABLE IF NOT EXISTS site_custom_urls (
+                id TEXT PRIMARY KEY,
+                site_host TEXT NOT NULL,
+                name TEXT NOT NULL,
+                slug_path TEXT NOT NULL,
+                destination_url TEXT NOT NULL,
+                destination_host TEXT,
+                destination_path TEXT,
+                description TEXT,
+                source TEXT NOT NULL DEFAULT 'manual',
+                placement TEXT,
+                unit_slug TEXT,
+                service_id TEXT,
+                utm_source TEXT,
+                utm_medium TEXT,
+                utm_campaign TEXT,
+                utm_content TEXT,
+                utm_term TEXT,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            );`,
+        )
+        .run();
+
+    await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_site_custom_urls_host_slug ON site_custom_urls(site_host, slug_path);").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_custom_urls_updated ON site_custom_urls(updated_at_ms);").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_custom_urls_campaign ON site_custom_urls(utm_campaign, updated_at_ms);").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_custom_urls_unit ON site_custom_urls(unit_slug, updated_at_ms);").run();
 }
 
 async function tryAddColumn(db: D1DatabaseLike, table: string, columnDef: string) {

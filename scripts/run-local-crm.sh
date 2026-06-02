@@ -41,12 +41,12 @@ Perfis:
 
 Opções:
   --profile NAME                 realistic | session
-  --module NAME                  Abre o CRM já no módulo informado (ex.: meta-ads)
+  --module NAME                  Abre o CRM já no módulo informado (ex.: meta-ads, site-tracking)
   --crm-host HOST                Host do Vite (default: 127.0.0.1)
   --vite-port PORT               Porta do Vite (default: 5173)
   --pages-port PORT              Porta do Pages local (default: 8791)
   --meta-ads-scenario NAME       live | disconnected | connected-no-account | connected-ready | unauthorized
-                                 Ativa um cenário local controlado do Meta Ads em localhost.
+                                 Ativa um cenário local controlado do Meta Ads/tracking em localhost.
   --skip-build                   Não roda build do frontend antes de subir o Pages local
   --with-insumos                 Sobe Worker local do Insumos e aponta o CRM para ele
   --insumos-port PORT            Porta do Worker local de Insumos (default: 8787)
@@ -61,6 +61,7 @@ Opções:
 Exemplos:
   ./scripts/run-local-crm.sh
   ./scripts/run-local-crm.sh --module meta-ads
+  ./scripts/run-local-crm.sh --module site-tracking
   ./scripts/run-local-crm.sh --module meta-ads --meta-ads-scenario live
   ./scripts/run-local-crm.sh --module meta-ads --smoke
   ./scripts/run-local-crm.sh /meta-ads --with-insumos --insumos-snapshot ./tmp/insumos.json
@@ -121,11 +122,11 @@ if [[ -n "$CRM_MODULE" ]]; then
   CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "module" "$CRM_MODULE")"
 fi
 
-if [[ "$CRM_MODULE" == "meta-ads" && -z "$CRM_META_ADS_SCENARIO" && "$CRM_PROFILE" == "realistic" ]]; then
+if [[ ("$CRM_MODULE" == "meta-ads" || "$CRM_MODULE" == "site-tracking") && -z "$CRM_META_ADS_SCENARIO" && "$CRM_PROFILE" == "realistic" ]]; then
   CRM_META_ADS_SCENARIO="connected-ready"
 fi
 
-if [[ "$CRM_MODULE" == "meta-ads" && -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
+if [[ ("$CRM_MODULE" == "meta-ads" || "$CRM_MODULE" == "site-tracking") && -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
   CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "metaAdsLocalScenario" "$CRM_META_ADS_SCENARIO")"
 fi
 
@@ -320,8 +321,8 @@ echo "Rota inicial: $CRM_ROUTE"
 if [[ -n "$CRM_MODULE" ]]; then
   echo "Módulo inicial: $CRM_MODULE"
 fi
-if [[ "$CRM_MODULE" == "meta-ads" && -n "$CRM_META_ADS_SCENARIO" ]]; then
-  echo "Cenário Meta Ads: $CRM_META_ADS_SCENARIO"
+if [[ ("$CRM_MODULE" == "meta-ads" || "$CRM_MODULE" == "site-tracking") && -n "$CRM_META_ADS_SCENARIO" ]]; then
+  echo "Cenário local de tracking: $CRM_META_ADS_SCENARIO"
 fi
 echo "URLs:"
 echo "  Local  : $DEFAULT_URL"
@@ -439,8 +440,8 @@ if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
 else
   echo "  - Insumos continua usando o target definido em frontend/.dev.vars ou frontend/wrangler.toml."
 fi
-if [[ "$CRM_MODULE" == "meta-ads" && -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
-  echo "  - Meta Ads está em cenário local controlado; o fluxo de conexão é simulado só em localhost."
+if [[ ("$CRM_MODULE" == "meta-ads" || "$CRM_MODULE" == "site-tracking") && -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
+  echo "  - Meta Ads/tracking está em cenário local controlado; o fluxo é simulado só em localhost."
 fi
 echo ""
 

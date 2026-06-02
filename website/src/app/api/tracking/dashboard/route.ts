@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBookingDb, type BookingRequestRow } from "@/lib/bookingDb";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
+import { serializeSiteCustomUrl, type SiteCustomUrlRow } from "@/lib/siteCustomUrls";
 
 export const dynamic = "force-dynamic";
 
@@ -367,6 +368,32 @@ export async function GET(request: Request) {
             .all<SiteBehaviorRow>()
     ).results ?? [];
 
+    const customUrlRows = (
+        await db
+            .prepare(
+                `SELECT
+                    u.id, u.site_host, u.name, u.slug_path, u.destination_url, u.destination_host, u.destination_path,
+                    u.description, u.source, u.placement, u.unit_slug, u.service_id,
+                    u.utm_source, u.utm_medium, u.utm_campaign, u.utm_content, u.utm_term,
+                    u.active, u.created_at_ms, u.updated_at_ms,
+                    COUNT(e.id) AS click_count,
+                    MAX(e.created_at_ms) AS last_click_at_ms
+                 FROM site_custom_urls u
+                 LEFT JOIN site_behavior_events e
+                    ON e.created_at_ms >= ? AND e.created_at_ms < ?
+                    AND (
+                        e.link_url = u.destination_url
+                        OR e.link_path = u.destination_path
+                        OR (u.utm_campaign IS NOT NULL AND e.utm_campaign = u.utm_campaign)
+                    )
+                 GROUP BY u.id
+                 ORDER BY u.updated_at_ms DESC
+                 LIMIT ?`,
+            )
+            .bind(sinceMs, untilMs, limit)
+            .all<SiteCustomUrlRow>()
+    ).results ?? [];
+
     const sourceCounts = new Map<string, number>();
     const campaignCounts = new Map<string, number>();
     const unitCounts = new Map<string, number>();
@@ -650,6 +677,7 @@ export async function GET(request: Request) {
     };
 
     const customLinks = {
+        managedUrls: customUrlRows.map(serializeSiteCustomUrl),
         topLinks: sortMapEntries(behaviorLinkCounts, "linkUrl").slice(0, 10),
         topUtmContent: sortMapEntries(behaviorUtmContentCounts, "utmContent").slice(0, 10),
         linksMissingUtm: sortMapEntries(behaviorMissingUtmLinkCounts, "linkUrl").slice(0, 10),

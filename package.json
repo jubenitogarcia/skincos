@@ -2,6 +2,7 @@
   "scripts": {
     "crm:local": "bash ./scripts/run-local-crm.sh",
     "crm:local:meta-ads": "CRM_MODULE=meta-ads bash ./scripts/run-local-crm.sh",
+    "crm:local:site-tracking": "CRM_MODULE=site-tracking CRM_META_ADS_SCENARIO=connected-ready bash ./scripts/run-local-crm.sh",
     "quality:frontend": "npm --prefix frontend run lint && npm --prefix frontend run typecheck && npm --prefix frontend run test && npm --prefix frontend run build",
     "quality:website": "npm --prefix website run lint && npm --prefix website run typecheck && npm --prefix website run test && npm --prefix website run build",
     "quality:backend:crm-api": "npm --prefix backend/apps/crm-api test",

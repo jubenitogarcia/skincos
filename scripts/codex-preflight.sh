@@ -154,21 +154,21 @@ check_github() {
 check_cloudflare() {
   $SKIP_CLOUDFLARE && { warn "Cloudflare auth check skipped"; return; }
 
-  if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-    ok "CLOUDFLARE_API_TOKEN is present in local environment"
-    return
+  local strict_arg=()
+  if $STRICT || $CI_MODE; then
+    strict_arg=(--strict)
   fi
 
-  if [[ -d frontend ]]; then
-    if (cd frontend && npx --yes wrangler@4 whoami >/tmp/codex-wrangler-whoami.log 2>&1); then
-      ok "Wrangler is authenticated locally"
-      sed -n '1,28p' /tmp/codex-wrangler-whoami.log | sed 's/^/     /'
+  if [[ -x scripts/cloudflare-token-health.sh ]]; then
+    if scripts/cloudflare-token-health.sh "${strict_arg[@]}" >/tmp/codex-cloudflare-token-health.log 2>&1; then
+      ok "Cloudflare token health check passed"
+      sed -n '1,36p' /tmp/codex-cloudflare-token-health.log | sed 's/^/     /'
     else
-      cat /tmp/codex-wrangler-whoami.log >&2 || true
-      fail "Wrangler is not authenticated and CLOUDFLARE_API_TOKEN is not set"
+      cat /tmp/codex-cloudflare-token-health.log >&2 || true
+      fail "Cloudflare token health check failed"
     fi
   else
-    fail "frontend directory not found; cannot run wrangler whoami"
+    fail "scripts/cloudflare-token-health.sh is missing or not executable"
   fi
 }
 

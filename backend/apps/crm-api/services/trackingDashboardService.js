@@ -92,6 +92,100 @@ async function fetchWebsiteTrackingOverview({ days, limit, offsetDays = 0 }) {
     }
 }
 
+async function fetchWebsiteTrackingCustomUrls({ method = 'GET', payload = null, limit = 100 } = {}) {
+    const baseUrl = sanitizeBaseUrl(process.env.TRACKING_WEBSITE_BASE_URL)
+    const token = String(process.env.TRACKING_DASHBOARD_TOKEN || '').trim()
+    const requestUrl = new URL('/api/tracking/custom-urls', baseUrl)
+    requestUrl.searchParams.set('limit', String(limit))
+
+    const headers = { accept: 'application/json' }
+    if (token) headers.authorization = `Bearer ${token}`
+    if (payload) headers['content-type'] = 'application/json'
+
+    try {
+        const response = await fetch(requestUrl, {
+            method,
+            headers,
+            body: payload ? JSON.stringify(payload) : undefined,
+        })
+        const text = await response.text()
+        let data = null
+        try {
+            data = text ? JSON.parse(text) : null
+        } catch {
+            data = null
+        }
+        if (!response.ok || data?.ok === false) {
+            return {
+                ok: false,
+                status: response.status,
+                sourceUrl: requestUrl.toString(),
+                error: data?.error || `HTTP ${response.status}`,
+            }
+        }
+        return {
+            ok: true,
+            status: response.status,
+            sourceUrl: requestUrl.toString(),
+            data,
+        }
+    } catch (error) {
+        return {
+            ok: false,
+            status: 0,
+            sourceUrl: requestUrl.toString(),
+            error: error instanceof Error ? error.message : 'website_custom_urls_failed',
+        }
+    }
+}
+
+export async function getTrackingCustomUrls({ limit = 100 } = {}) {
+    const response = await fetchWebsiteTrackingCustomUrls({ method: 'GET', limit })
+    if (!response.ok) {
+        return {
+            ok: false,
+            error: response.error,
+            status: response.status,
+            customUrls: [],
+        }
+    }
+    return {
+        ok: true,
+        sourceUrl: response.sourceUrl,
+        customUrls: response.data?.customUrls || [],
+    }
+}
+
+export async function createTrackingCustomUrl(payload) {
+    const response = await fetchWebsiteTrackingCustomUrls({ method: 'POST', payload, limit: 200 })
+    if (!response.ok) {
+        return {
+            ok: false,
+            error: response.error,
+            status: response.status,
+        }
+    }
+    return {
+        ok: true,
+        customUrl: response.data?.customUrl || null,
+    }
+}
+
+export async function updateTrackingCustomUrl(payload) {
+    const response = await fetchWebsiteTrackingCustomUrls({ method: 'PATCH', payload, limit: 200 })
+    if (!response.ok) {
+        return {
+            ok: false,
+            error: response.error,
+            status: response.status,
+        }
+    }
+    return {
+        ok: true,
+        customUrl: response.data?.customUrl || null,
+    }
+}
+
 function toNumber(value) {
     const parsed = Number(value || 0)
     return Number.isFinite(parsed) ? parsed : 0
