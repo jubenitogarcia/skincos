@@ -2,6 +2,7 @@ import { trackEvent, type AnalyticsEventParams } from "@/lib/analytics";
 import { campaignParamsForEvent } from "@/lib/campaign";
 import { trackContactConversion, trackLeadConversion } from "@/lib/conversions";
 import { readExperienceContextParams } from "@/lib/experienceContext";
+import { trackSiteBehaviorEvent, type SiteBehaviorEventName } from "@/lib/siteBehavior";
 
 export type LeadPlacement =
     | "header"
@@ -47,6 +48,17 @@ export function trackAgendarClick(params: {
     if (params.whatsappUrl) payload.whatsappUrl = params.whatsappUrl;
 
     trackEvent("cta_agendar_click", payload);
+    trackSiteBehaviorEvent({
+        eventName: "cta_click",
+        placement: params.placement,
+        source: "whatsapp",
+        unitSlug: params.unitSlug,
+        linkUrl: params.whatsappUrl ?? null,
+        metadata: {
+            destination: "whatsapp",
+            doctorName: params.doctorName ?? null,
+        },
+    });
     trackLeadConversion({
         ...readExperienceContextParams(),
         source: "whatsapp",
@@ -75,6 +87,17 @@ export function trackBookingStart(params: {
     if (params.variant) payload.variant = params.variant;
 
     trackEvent("cta_booking_start", payload);
+    trackSiteBehaviorEvent({
+        eventName: "cta_click",
+        placement: params.placement,
+        source: "booking",
+        unitSlug: params.unitSlug,
+        metadata: {
+            destination: "booking",
+            experience: params.experience ?? null,
+            variant: params.variant ?? null,
+        },
+    });
     trackLeadConversion({
         ...readExperienceContextParams(),
         source: "booking",
@@ -104,6 +127,27 @@ export function trackBookingRequestSubmitted(params: {
             time: params.time,
         }),
     );
+    trackSiteBehaviorEvent({
+        eventName: "booking_confirmed",
+        unitSlug: params.unitSlug,
+        serviceId: params.serviceId,
+        bookingId: params.bookingId,
+        metadata: {
+            doctorSlug: params.doctorSlug,
+            durationMinutes: params.durationMinutes,
+            date: params.date,
+            time: params.time,
+        },
+    });
+}
+
+function siteBehaviorEventForBookingStep(step: string): SiteBehaviorEventName | null {
+    if (step === "details_opened") return "booking_step_view";
+    if (step === "unit_selected" || step === "doctor_selected" || step === "service_selected" || step === "date_selected" || step === "time_selected") {
+        return "booking_step_completed";
+    }
+    if (step === "submit_attempt" || step === "submit_error") return "booking_submit_attempt";
+    return null;
 }
 
 export function trackBookingFunnelStep(params: {
@@ -135,6 +179,25 @@ export function trackBookingFunnelStep(params: {
             selectedCount: params.selectedCount ?? null,
         }),
     );
+    const siteEventName = siteBehaviorEventForBookingStep(params.step);
+    if (siteEventName) {
+        trackSiteBehaviorEvent({
+            eventName: siteEventName,
+            placement: params.placement ?? "booking_page",
+            unitSlug: params.unitSlug ?? null,
+            serviceId: params.serviceId ?? null,
+            metadata: {
+                step: params.step,
+                doctorSlug: params.doctorSlug ?? null,
+                date: params.date ?? null,
+                time: params.time ?? null,
+                detailsStage: params.detailsStage ?? null,
+                restored: params.restored ?? false,
+                errorReason: params.errorReason ?? null,
+                selectedCount: params.selectedCount ?? null,
+            },
+        });
+    }
 }
 
 export function trackExperienceShortcutClick(params: {
@@ -168,6 +231,17 @@ export function trackDoctorWhatsappClick(params: {
 }) {
     trackEvent("doctor_whatsapp_click", {
         ...withCampaign(params),
+    });
+    trackSiteBehaviorEvent({
+        eventName: "whatsapp_redirect_click",
+        placement: "doctor",
+        source: "doctor_whatsapp",
+        unitSlug: params.unitSlug,
+        linkUrl: params.whatsappUrl,
+        metadata: {
+            doctorName: params.doctorName,
+            unitSigla: params.unitSigla,
+        },
     });
     trackContactConversion({
         source: "doctor_whatsapp",

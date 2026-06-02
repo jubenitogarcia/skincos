@@ -7,6 +7,7 @@ import CookieBanner from "@/components/CookieBanner";
 import Analytics from "@/components/Analytics";
 import MarketingPixels from "@/components/MarketingPixels";
 import CampaignAttribution from "@/components/CampaignAttribution";
+import SiteBehaviorTracker from "@/components/SiteBehaviorTracker";
 import WebVitalsReporter from "@/components/WebVitalsReporter";
 import HomeHashScroller from "@/components/HomeHashScroller";
 import { getSiteConfigFromHost } from "@/lib/site-config";
@@ -129,6 +130,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {site.key === "espacofacial" ? (
           <Suspense fallback={null}>
             <CampaignAttribution />
+            <SiteBehaviorTracker />
           </Suspense>
         ) : null}
         <script

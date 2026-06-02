@@ -908,6 +908,15 @@ export default function BookingFlow() {
                 pageUrl: typeof window !== "undefined" ? window.location.href : null,
                 pagePath: typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}${window.location.hash}` : null,
             });
+            trackBookingFunnelStep({
+                step: "submit_attempt",
+                unitSlug,
+                doctorSlug: effectiveDoctor.slug,
+                serviceId: primaryService.id,
+                date: dateKey,
+                time: timeKey,
+                detailsStage: "contact",
+            });
             const res = await fetch("/api/booking/request", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
