@@ -34,6 +34,69 @@ export type TrackingOverviewResponse = {
     label: string
     summary: string
   }
+  siteBehavior?: {
+    summary?: {
+      events?: number
+      sessions?: number
+      pageViews?: number
+      ctaClicks?: number
+      customLinkClicks?: number
+      externalLinkClicks?: number
+      whatsappRedirectClicks?: number
+      bookingStepViews?: number
+      bookingStepCompleted?: number
+      bookingSubmitAttempts?: number
+      bookingConfirmed?: number
+    }
+    topPages?: Array<{ pagePath: string; count: number }>
+    topEntryPages?: Array<{ pagePath: string; count: number }>
+    topBookingLandingPages?: Array<{ pagePath: string; count: number }>
+    byUnit?: Array<{ unitSlug: string; count: number }>
+    byService?: Array<{ serviceId: string; count: number }>
+  } | null
+  customLinks?: {
+    topLinks?: Array<{ linkUrl: string; count: number }>
+    topUtmContent?: Array<{ utmContent: string; count: number }>
+    linksMissingUtm?: Array<{ linkUrl: string; count: number }>
+    byPlacement?: Array<{ placement: string; count: number }>
+    whatsappByUnit?: Array<{ unitSlug: string; count: number }>
+    recentClicks?: Array<{
+      id: string
+      createdAtMs: number
+      eventName: string
+      linkUrl: string | null
+      linkHost: string | null
+      linkPath: string | null
+      placement: string | null
+      source: string | null
+      unitSlug: string | null
+      serviceId: string | null
+      pagePath: string | null
+      utmSource: string | null
+      utmCampaign: string | null
+      utmContent: string | null
+    }>
+  } | null
+  siteFunnel?: {
+    sessions?: number
+    pageViews?: number
+    ctaClicks?: number
+    bookingStarted?: number
+    finalStepOpened?: number
+    submitAttempts?: number
+    confirmedBookings?: number
+    visitToBookingRate?: number
+    ctaToBookingRate?: number
+  } | null
+  behaviorQuality?: {
+    eventsWithCampaign?: number
+    eventsWithFacebookIds?: number
+    analyticsConsentEvents?: number
+    marketingConsentEvents?: number
+    campaignCoverage?: number
+    facebookIdCoverage?: number
+    marketingConsentCoverage?: number
+  } | null
   reconciliation?: {
     buckets?: Array<{
       bucket: 'sem_origem' | 'origem_first_party' | 'origem_meta_completa'
@@ -224,6 +287,101 @@ export function getMetaTrackingLocalOverview(days = 30): TrackingOverviewRespons
       status: 'healthy',
       label: 'Tracking íntegro no preview local',
       summary: 'Atributos first-party, Schedule via CAPI e cliques WhatsApp estão consistentes neste cenário de teste.',
+    },
+    siteBehavior: {
+      summary: {
+        events: 420,
+        sessions: 118,
+        pageViews: 226,
+        ctaClicks: 54,
+        customLinkClicks: 18,
+        externalLinkClicks: 9,
+        whatsappRedirectClicks: 31,
+        bookingStepViews: 37,
+        bookingStepCompleted: 104,
+        bookingSubmitAttempts: 29,
+        bookingConfirmed: 28,
+      },
+      topPages: [
+        { pagePath: '/agendamento?unit=novo-hamburgo&service=botox', count: 74 },
+        { pagePath: '/', count: 52 },
+        { pagePath: '/barrashoppingsul', count: 31 },
+      ],
+      topEntryPages: [
+        { pagePath: '/agendamento?unit=novo-hamburgo&service=botox', count: 41 },
+        { pagePath: '/', count: 29 },
+      ],
+      topBookingLandingPages: [
+        { pagePath: '/agendamento?unit=novo-hamburgo&service=botox', count: 16 },
+        { pagePath: '/', count: 8 },
+      ],
+      byUnit: [
+        { unitSlug: 'novo-hamburgo', count: 67 },
+        { unitSlug: 'barrashoppingsul', count: 44 },
+      ],
+      byService: [
+        { serviceId: 'botox', count: 48 },
+        { serviceId: 'preenchimento-labial', count: 19 },
+      ],
+    },
+    customLinks: {
+      topLinks: [
+        { linkUrl: 'https://espacofacial.com/agendamento?unit=novo-hamburgo&service=botox&utm_source=meta', count: 18 },
+        { linkUrl: 'https://espacofacial.com/api/whatsapp/redirect?dest=...', count: 12 },
+      ],
+      topUtmContent: [
+        { utmContent: 'video_botox_nh_01', count: 21 },
+        { utmContent: 'story_bss_02', count: 9 },
+      ],
+      linksMissingUtm: [
+        { linkUrl: 'https://espacofacial.com/agendamento', count: 4 },
+      ],
+      byPlacement: [
+        { placement: 'header', count: 18 },
+        { placement: 'booking_page', count: 14 },
+      ],
+      whatsappByUnit: [
+        { unitSlug: 'novo-hamburgo', count: 18 },
+        { unitSlug: 'barrashoppingsul', count: 13 },
+      ],
+      recentClicks: [
+        {
+          id: 'click_preview_1',
+          createdAtMs: now - 30 * 60 * 1000,
+          eventName: 'whatsapp_redirect_click',
+          linkUrl: 'https://espacofacial.com/api/whatsapp/redirect?dest=...',
+          linkHost: 'espacofacial.com',
+          linkPath: '/api/whatsapp/redirect',
+          placement: 'booking_page',
+          source: 'whatsapp',
+          unitSlug: 'novo-hamburgo',
+          serviceId: 'botox',
+          pagePath: '/agendamento',
+          utmSource: 'meta',
+          utmCampaign: 'botox_novo_hamburgo',
+          utmContent: 'video_botox_nh_01',
+        },
+      ],
+    },
+    siteFunnel: {
+      sessions: 118,
+      pageViews: 226,
+      ctaClicks: 103,
+      bookingStarted: 104,
+      finalStepOpened: 37,
+      submitAttempts: 29,
+      confirmedBookings: 28,
+      visitToBookingRate: 24,
+      ctaToBookingRate: 27,
+    },
+    behaviorQuality: {
+      eventsWithCampaign: 338,
+      eventsWithFacebookIds: 291,
+      analyticsConsentEvents: 420,
+      marketingConsentEvents: 392,
+      campaignCoverage: 80,
+      facebookIdCoverage: 69,
+      marketingConsentCoverage: 93,
     },
     reconciliation: {
       buckets: [

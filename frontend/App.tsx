@@ -173,6 +173,7 @@ const UsersModule = lazy(() => import('@/UsersModule').then(m => ({ default: m.U
 const SystemStatusModule = lazy(() => import('@/SystemStatusModule').then(m => ({ default: m.SystemStatusModule })))
 const PontoModule = lazy(() => import('@/PontoModule').then(m => ({ default: m.PontoModule })))
 const EscalaProfissionaisModule = lazy(() => import('@/EscalaProfissionaisModule').then(m => ({ default: m.EscalaProfissionaisModule })))
+const SiteTrackingModule = lazy(() => import('@/SiteTrackingModule').then(m => ({ default: m.SiteTrackingModule })))
 
 // TODO: Add remaining modules if needed
 
@@ -193,6 +194,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
     { key: 'atendimento', label: 'Atendimento', icon: '💬', component: <AtendimentoModule /> },
     { key: 'escala-profissionais', label: 'Escala', icon: '🗓️', component: <EscalaProfissionaisModule /> },
+    { key: 'site-tracking', label: 'Site EF', icon: '📍', component: <SiteTrackingModule /> },
     { key: 'meta-ads', label: 'Meta Ads', icon: '📢', component: <MetaCampaignControlCenter /> },
     { key: 'meta-command', label: 'Meta Command', icon: '🧭', component: <MetaCommandCenter /> },
     { key: 'meta-sync', label: 'Meta Sync', icon: '🔄', component: <MetaSyncMonitor /> },
@@ -324,7 +326,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'escala-profissionais']),
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)

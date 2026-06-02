@@ -36,6 +36,38 @@ type MetaDeliveryRow = {
     created_at_ms: number;
 };
 
+type SiteBehaviorRow = {
+    id: string;
+    event_name: string;
+    session_id: string;
+    created_at_ms: number;
+    page_url: string | null;
+    page_path: string | null;
+    page_host: string | null;
+    referrer: string | null;
+    landing_page: string | null;
+    utm_source: string | null;
+    utm_medium: string | null;
+    utm_campaign: string | null;
+    utm_content: string | null;
+    utm_term: string | null;
+    fbclid: string | null;
+    fbp: string | null;
+    fbc: string | null;
+    link_url: string | null;
+    link_host: string | null;
+    link_path: string | null;
+    link_type: string | null;
+    placement: string | null;
+    source: string | null;
+    unit_slug: string | null;
+    service_id: string | null;
+    booking_id: string | null;
+    consent_analytics: number;
+    consent_marketing: number;
+    metadata_json: string | null;
+};
+
 function json(data: unknown, init?: ResponseInit) {
     return NextResponse.json(data, {
         headers: { "cache-control": "no-store" },
@@ -169,6 +201,25 @@ function sortMapEntries(map: Map<string, number>, valueKey: string) {
         .map(([label, count]) => ({ [valueKey]: label, count }));
 }
 
+function percent(numerator: number, denominator: number): number {
+    if (!denominator) return 0;
+    return Math.max(0, Math.min(100, Math.round((numerator / denominator) * 100)));
+}
+
+function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
+    for (const value of values) {
+        const normalized = (value ?? "").trim();
+        if (normalized) return normalized;
+    }
+    return null;
+}
+
+function linkLabel(row: SiteBehaviorRow): string | null {
+    if (row.link_url) return row.link_url;
+    if (row.link_host || row.link_path) return `${row.link_host ?? ""}${row.link_path ?? ""}`;
+    return null;
+}
+
 function classifyCoverageBucket(params: {
     hasTrackingContext: boolean;
     hasMetaEventId: boolean;
@@ -298,6 +349,22 @@ export async function GET(request: Request) {
             )
             .bind(sinceMs, untilMs)
             .all<MetaDeliveryRow>()
+    ).results ?? [];
+
+    const siteBehaviorRows = (
+        await db
+            .prepare(
+                `SELECT id, event_name, session_id, created_at_ms, page_url, page_path, page_host, referrer, landing_page,
+                        utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, fbp, fbc,
+                        link_url, link_host, link_path, link_type, placement, source, unit_slug, service_id,
+                        booking_id, consent_analytics, consent_marketing, metadata_json
+                 FROM site_behavior_events
+                 WHERE created_at_ms >= ? AND created_at_ms < ?
+                 ORDER BY created_at_ms DESC
+                 LIMIT 5000`,
+            )
+            .bind(sinceMs, untilMs)
+            .all<SiteBehaviorRow>()
     ).results ?? [];
 
     const sourceCounts = new Map<string, number>();
@@ -490,6 +557,135 @@ export async function GET(request: Request) {
         { bucket: "origem_meta_completa", label: "Origem Meta completa", count: coverageBucketCounts.get("origem_meta_completa") ?? 0 },
     ];
 
+    const behaviorSessions = new Set<string>();
+    const behaviorEventCounts = new Map<string, number>();
+    const behaviorPageCounts = new Map<string, number>();
+    const behaviorEntryBySession = new Map<string, SiteBehaviorRow>();
+    const behaviorLandingToBookingCounts = new Map<string, number>();
+    const behaviorUtmContentCounts = new Map<string, number>();
+    const behaviorLinkCounts = new Map<string, number>();
+    const behaviorMissingUtmLinkCounts = new Map<string, number>();
+    const behaviorPlacementCounts = new Map<string, number>();
+    const behaviorWhatsappUnitCounts = new Map<string, number>();
+    const behaviorServiceCounts = new Map<string, number>();
+    const behaviorUnitCounts = new Map<string, number>();
+    let behaviorEventsWithCampaign = 0;
+    let behaviorEventsWithFbIds = 0;
+    let behaviorAnalyticsConsentEvents = 0;
+    let behaviorMarketingConsentEvents = 0;
+
+    for (const row of siteBehaviorRows) {
+        if (row.session_id) behaviorSessions.add(row.session_id);
+        incrementMap(behaviorEventCounts, row.event_name);
+        if (row.consent_analytics === 1) behaviorAnalyticsConsentEvents += 1;
+        if (row.consent_marketing === 1) behaviorMarketingConsentEvents += 1;
+        if ((row.utm_campaign ?? "").trim()) behaviorEventsWithCampaign += 1;
+        if ((row.fbclid ?? row.fbp ?? row.fbc ?? "").trim()) behaviorEventsWithFbIds += 1;
+        if (row.utm_content) incrementMap(behaviorUtmContentCounts, row.utm_content);
+        if (row.unit_slug) incrementMap(behaviorUnitCounts, row.unit_slug);
+        if (row.service_id) incrementMap(behaviorServiceCounts, row.service_id);
+
+        if (row.event_name === "page_view" && row.page_path) {
+            incrementMap(behaviorPageCounts, row.page_path);
+            const existing = behaviorEntryBySession.get(row.session_id);
+            if (!existing || row.created_at_ms < existing.created_at_ms) {
+                behaviorEntryBySession.set(row.session_id, row);
+            }
+        }
+
+        if (row.event_name === "booking_confirmed") {
+            incrementMap(behaviorLandingToBookingCounts, firstNonEmpty(row.landing_page, row.page_path, "sem_landing"));
+        }
+
+        if (row.event_name === "custom_link_click" || row.event_name === "external_link_click" || row.event_name === "whatsapp_redirect_click" || row.event_name === "cta_click") {
+            const label = linkLabel(row);
+            if (label) incrementMap(behaviorLinkCounts, label);
+            if (label && !row.utm_campaign) incrementMap(behaviorMissingUtmLinkCounts, label);
+            if (row.placement) incrementMap(behaviorPlacementCounts, row.placement);
+        }
+
+        if (row.event_name === "whatsapp_redirect_click") {
+            incrementMap(behaviorWhatsappUnitCounts, row.unit_slug);
+        }
+    }
+
+    const entryPageCounts = new Map<string, number>();
+    for (const row of behaviorEntryBySession.values()) {
+        incrementMap(entryPageCounts, firstNonEmpty(row.page_path, row.landing_page, "sem_pagina"));
+    }
+
+    const behaviorSummary = {
+        events: siteBehaviorRows.length,
+        sessions: behaviorSessions.size,
+        pageViews: behaviorEventCounts.get("page_view") ?? 0,
+        ctaClicks: behaviorEventCounts.get("cta_click") ?? 0,
+        customLinkClicks: behaviorEventCounts.get("custom_link_click") ?? 0,
+        externalLinkClicks: behaviorEventCounts.get("external_link_click") ?? 0,
+        whatsappRedirectClicks: behaviorEventCounts.get("whatsapp_redirect_click") ?? 0,
+        bookingStepViews: behaviorEventCounts.get("booking_step_view") ?? 0,
+        bookingStepCompleted: behaviorEventCounts.get("booking_step_completed") ?? 0,
+        bookingSubmitAttempts: behaviorEventCounts.get("booking_submit_attempt") ?? 0,
+        bookingConfirmed: behaviorEventCounts.get("booking_confirmed") ?? 0,
+    };
+
+    const siteFunnel = {
+        sessions: behaviorSummary.sessions,
+        pageViews: behaviorSummary.pageViews,
+        ctaClicks: behaviorSummary.ctaClicks + behaviorSummary.customLinkClicks + behaviorSummary.whatsappRedirectClicks,
+        bookingStarted: behaviorEventCounts.get("booking_step_completed") ?? 0,
+        finalStepOpened: behaviorSummary.bookingStepViews,
+        submitAttempts: behaviorSummary.bookingSubmitAttempts,
+        confirmedBookings: bookingRows.length,
+        visitToBookingRate: percent(bookingRows.length, behaviorSummary.sessions),
+        ctaToBookingRate: percent(bookingRows.length, behaviorSummary.ctaClicks + behaviorSummary.customLinkClicks + behaviorSummary.whatsappRedirectClicks),
+    };
+
+    const siteBehavior = {
+        summary: behaviorSummary,
+        topPages: sortMapEntries(behaviorPageCounts, "pagePath").slice(0, 10),
+        topEntryPages: sortMapEntries(entryPageCounts, "pagePath").slice(0, 10),
+        topBookingLandingPages: sortMapEntries(behaviorLandingToBookingCounts, "pagePath").slice(0, 10),
+        byUnit: sortMapEntries(behaviorUnitCounts, "unitSlug").slice(0, 10),
+        byService: sortMapEntries(behaviorServiceCounts, "serviceId").slice(0, 10),
+    };
+
+    const customLinks = {
+        topLinks: sortMapEntries(behaviorLinkCounts, "linkUrl").slice(0, 10),
+        topUtmContent: sortMapEntries(behaviorUtmContentCounts, "utmContent").slice(0, 10),
+        linksMissingUtm: sortMapEntries(behaviorMissingUtmLinkCounts, "linkUrl").slice(0, 10),
+        byPlacement: sortMapEntries(behaviorPlacementCounts, "placement").slice(0, 10),
+        whatsappByUnit: sortMapEntries(behaviorWhatsappUnitCounts, "unitSlug").slice(0, 10),
+        recentClicks: siteBehaviorRows
+            .filter((row) => ["custom_link_click", "external_link_click", "whatsapp_redirect_click", "cta_click"].includes(row.event_name))
+            .slice(0, limit)
+            .map((row) => ({
+                id: row.id,
+                createdAtMs: row.created_at_ms,
+                eventName: row.event_name,
+                linkUrl: row.link_url,
+                linkHost: row.link_host,
+                linkPath: row.link_path,
+                placement: row.placement,
+                source: row.source,
+                unitSlug: row.unit_slug,
+                serviceId: row.service_id,
+                pagePath: row.page_path,
+                utmSource: row.utm_source,
+                utmCampaign: row.utm_campaign,
+                utmContent: row.utm_content,
+            })),
+    };
+
+    const behaviorQuality = {
+        eventsWithCampaign: behaviorEventsWithCampaign,
+        eventsWithFacebookIds: behaviorEventsWithFbIds,
+        analyticsConsentEvents: behaviorAnalyticsConsentEvents,
+        marketingConsentEvents: behaviorMarketingConsentEvents,
+        campaignCoverage: percent(behaviorEventsWithCampaign, siteBehaviorRows.length),
+        facebookIdCoverage: percent(behaviorEventsWithFbIds, siteBehaviorRows.length),
+        marketingConsentCoverage: percent(behaviorMarketingConsentEvents, siteBehaviorRows.length),
+    };
+
     return json({
         ok: true,
         source: "website_d1",
@@ -522,6 +718,10 @@ export async function GET(request: Request) {
         topSources: sortMapEntries(sourceCounts, "utmSource").slice(0, 6),
         topCampaigns: sortMapEntries(campaignCounts, "utmCampaign").slice(0, 6),
         byUnit: sortMapEntries(unitCounts, "unitSlug").slice(0, 6),
+        siteBehavior,
+        customLinks,
+        siteFunnel,
+        behaviorQuality,
         recentBookings,
         recentIncompleteBookings,
         recentWhatsappClicks,
