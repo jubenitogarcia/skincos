@@ -55,6 +55,31 @@ export type TrackingOverviewResponse = {
     byService?: Array<{ serviceId: string; count: number }>
   } | null
   customLinks?: {
+    managedUrls?: Array<{
+      id: string
+      siteHost: string
+      name: string
+      slugPath: string
+      publicUrl: string
+      destinationUrl: string
+      destinationHost: string | null
+      destinationPath: string | null
+      description: string | null
+      source: string
+      placement: string | null
+      unitSlug: string | null
+      serviceId: string | null
+      utmSource: string | null
+      utmMedium: string | null
+      utmCampaign: string | null
+      utmContent: string | null
+      utmTerm: string | null
+      active: boolean
+      createdAtMs: number
+      updatedAtMs: number
+      clickCount: number
+      lastClickAtMs: number | null
+    }>
     topLinks?: Array<{ linkUrl: string; count: number }>
     topUtmContent?: Array<{ utmContent: string; count: number }>
     linksMissingUtm?: Array<{ linkUrl: string; count: number }>
@@ -325,6 +350,33 @@ export function getMetaTrackingLocalOverview(days = 30): TrackingOverviewRespons
       ],
     },
     customLinks: {
+      managedUrls: [
+        {
+          id: 'url_preview_1',
+          siteHost: 'espacofacial.com',
+          name: 'Botox Novo Hamburgo Meta',
+          slugPath: '/campanhas/botox-novo-hamburgo-meta',
+          publicUrl: 'https://espacofacial.com/campanhas/botox-novo-hamburgo-meta',
+          destinationUrl: 'https://espacofacial.com/agendamento?unit=novo-hamburgo&service=botox&utm_source=meta&utm_medium=paid_social&utm_campaign=botox_novo_hamburgo&utm_content=video_botox_nh_01',
+          destinationHost: 'espacofacial.com',
+          destinationPath: '/agendamento?unit=novo-hamburgo&service=botox&utm_source=meta&utm_medium=paid_social&utm_campaign=botox_novo_hamburgo&utm_content=video_botox_nh_01',
+          description: 'URL principal para anúncios de botox em Novo Hamburgo.',
+          source: 'manual',
+          placement: 'meta_ads',
+          unitSlug: 'novo-hamburgo',
+          serviceId: 'botox',
+          utmSource: 'meta',
+          utmMedium: 'paid_social',
+          utmCampaign: 'botox_novo_hamburgo',
+          utmContent: 'video_botox_nh_01',
+          utmTerm: null,
+          active: true,
+          createdAtMs: now - 12 * 24 * 60 * 60 * 1000,
+          updatedAtMs: now - 60 * 60 * 1000,
+          clickCount: 18,
+          lastClickAtMs: now - 30 * 60 * 1000,
+        },
+      ],
       topLinks: [
         { linkUrl: 'https://espacofacial.com/agendamento?unit=novo-hamburgo&service=botox&utm_source=meta', count: 18 },
         { linkUrl: 'https://espacofacial.com/api/whatsapp/redirect?dest=...', count: 12 },

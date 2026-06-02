@@ -69,7 +69,9 @@ Plataforma interna (local) para automações e operações da clínica.
 ### Testar CRM local
 - Launcher recomendado: `npm run crm:local`
 - Atalho direto para o módulo Meta Ads: `npm run crm:local:meta-ads`
+- Atalho direto para o módulo Site EF: `npm run crm:local:site-tracking`
 - Atalho macOS: `./start-crm-local.command`
+- Atalho macOS para Site EF: `./start-crm-site-tracking-local.command`
 - Perfil default: `realistic`
   - sobe o CRM via `Pages Functions` local (`frontend/scripts/dev_pages.sh`)
   - ativa bypass local de auth apenas em `localhost`
@@ -93,6 +95,12 @@ Plataforma interna (local) para automações e operações da clínica.
   - para pular o build prévio quando você só quiser iterar rápido em UI local: `npm run crm:local:meta-ads -- --skip-build`
   - para rodar uma smoke automatizada do módulo após subir o CRM:
     - `npm run crm:local:meta-ads -- --smoke`
+- Para testar `Site EF` / tracking do site antes de publicar:
+  - fluxo local simplificado: `npm run crm:local:site-tracking`
+    - abre o CRM já no módulo `Site EF`
+    - usa o cenário local `connected-ready`, que também habilita o mock local de tracking agregado em `localhost`
+    - para pular o build prévio quando você só quiser iterar rápido em UI local: `npm run crm:local:site-tracking -- --skip-build`
+  - no macOS, também é possível abrir por duplo clique em `start-crm-site-tracking-local.command`
 
 ## Docs
 - Mapa do backend: `backend/docs/INDEX.md`

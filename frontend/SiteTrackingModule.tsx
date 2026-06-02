@@ -1,125 +1,90 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Badge } from '@/badge'
-import { Button } from '@/button'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { DropResult } from '@hello-pangea/dnd'
 import { getMetaTrackingLocalOverview, isMetaTrackingLocalMockEnabled, type TrackingOverviewResponse } from '@/metaTrackingLocalMock'
-import { ArrowClockwise, ChartLineUp, CursorClick, Funnel, LinkSimple, Pulse, WarningCircle } from '@phosphor-icons/react'
+import {
+  ConnectionNotice,
+  ManagedSiteUrlsSection,
+  OperationalAlerts,
+  SiteBehaviorSections,
+  SiteFunnelSection,
+  SiteIssueAndClickSections,
+  SiteLinkSections,
+  SiteMetricsGrid,
+  type ManagedSiteUrlForm,
+} from '@/siteTrackingComponents'
+import { emitSiteTrackingHeaderState, subscribeSiteTrackingHeaderAction } from '@/siteTrackingHeaderBridge'
+import {
+  DEFAULT_SITE_METRIC_LAYOUT,
+  SITE_TRACKING_METRIC_LAYOUT_KEY,
+  formatSiteTrackingNumber,
+  formatSiteTrackingPercent,
+  isInternalPreviewAlert,
+  listOrEmpty,
+  parseSiteMetricLayout,
+  siteTrackingNumberValue,
+  type SiteMetricAspect,
+  type SiteMetricKey,
+  type SiteMetricLayout,
+  type WindowDays,
+} from '@/siteTrackingPresentation'
+import type { SiteTrackingHeaderSiteOption } from '@/siteTrackingTypes'
+import {
+  ArrowClockwise,
+  ChartLineUp,
+  CursorClick,
+  Funnel,
+  LinkSimple,
+  Pulse,
+  ShieldCheck,
+  WhatsappLogo,
+} from '@phosphor-icons/react'
 
-type WindowDays = 7 | 30 | 60 | 90
-
-const WINDOW_OPTIONS: WindowDays[] = [7, 30, 60, 90]
-
-function n(value: unknown): number {
-  const parsed = Number(value || 0)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-export function formatSiteTrackingNumber(value: unknown): string {
-  return new Intl.NumberFormat('pt-BR').format(n(value))
-}
-
-export function formatSiteTrackingPercent(value: unknown): string {
-  return `${formatSiteTrackingNumber(value)}%`
-}
-
-export function siteTrackingHealthTone(status?: string | null) {
-  if (status === 'healthy') return 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
-  if (status === 'critical') return 'border-red-400/30 bg-red-500/10 text-red-100'
-  return 'border-amber-400/30 bg-amber-500/10 text-amber-100'
-}
-
-export function funnelBarWidth(value: unknown, max: unknown): string {
-  const denominator = Math.max(1, n(max))
-  return `${Math.max(4, Math.min(100, Math.round((n(value) / denominator) * 100)))}%`
-}
-
-function fmtDate(ms?: number | null) {
-  if (!ms) return 'sem data'
-  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(ms))
-}
-
-function shortUrl(value?: string | null) {
-  if (!value) return 'sem link'
-  try {
-    const url = new URL(value)
-    return `${url.hostname}${url.pathname}${url.search ? '?...' : ''}`
-  } catch {
-    return value.length > 72 ? `${value.slice(0, 72)}...` : value
-  }
-}
-
-function listOrEmpty<T>(items: T[] | undefined | null): T[] {
-  return Array.isArray(items) ? items : []
-}
+const SITE_OPTIONS: SiteTrackingHeaderSiteOption[] = [
+  {
+    id: 'espacofacial.com',
+    name: 'espacofacial.com',
+    host: 'espacofacial.com',
+    statusLabel: 'Canônico do funil',
+    statusTone: 'success',
+  },
+]
+const SITE_TRACKING_SITE_NAMES_KEY = 'skincos.siteTracking.siteNames.v1'
 
 async function fetchSiteTrackingOverview(days: WindowDays): Promise<TrackingOverviewResponse> {
   if (isMetaTrackingLocalMockEnabled()) return getMetaTrackingLocalOverview(days)
   const response = await fetch(`/api/tracking/overview?days=${days}&limit=12`, { credentials: 'include' })
   const data = await response.json().catch(() => null)
   if (!response.ok || !data?.ok) {
-    throw new Error(data?.message || data?.error || `tracking_overview_${response.status}`)
+    throw new Error(data?.message || data?.error || `Não foi possível carregar os dados do site (${response.status})`)
   }
   return data as TrackingOverviewResponse
 }
 
-function MetricCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</div>
-      <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
-      {detail ? <div className="mt-1 text-xs text-slate-400">{detail}</div> : null}
-    </div>
-  )
-}
-
-function Section({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
-  return (
-    <section className="rounded-lg border border-white/10 bg-slate-950/60 p-5">
-      <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-300">
-        {icon}
-        {title}
-      </div>
-      {children}
-    </section>
-  )
-}
-
-function RankedList({
-  items,
-  labelKey,
-  empty,
-}: {
-  items: Array<Record<string, unknown>>
-  labelKey: string
-  empty: string
-}) {
-  if (!items.length) return <div className="text-sm text-slate-500">{empty}</div>
-  const max = Math.max(...items.map((item) => n(item.count)))
-  return (
-    <div className="space-y-3">
-      {items.map((item, index) => {
-        const label = String(item[labelKey] || 'sem valor')
-        const count = n(item.count)
-        return (
-          <div key={`${label}-${index}`} className="space-y-1">
-            <div className="flex items-center justify-between gap-3 text-sm">
-              <span className="min-w-0 truncate text-slate-200">{label}</span>
-              <span className="font-mono text-slate-400">{formatSiteTrackingNumber(count)}</span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-cyan-400" style={{ width: funnelBarWidth(count, max) }} />
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 export function SiteTrackingModule() {
   const [days, setDays] = useState<WindowDays>(30)
+  const [selectedSiteId, setSelectedSiteId] = useState('espacofacial.com')
   const [data, setData] = useState<TrackingOverviewResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [connectionNoticeOpen, setConnectionNoticeOpen] = useState(false)
+  const [savingManagedUrl, setSavingManagedUrl] = useState(false)
+  const [siteNameOverrides, setSiteNameOverrides] = useState<Record<string, string>>(() => {
+    try {
+      if (typeof window === 'undefined') return {}
+      const parsed = JSON.parse(window.localStorage.getItem(SITE_TRACKING_SITE_NAMES_KEY) || '{}')
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  })
+  const [metricLayout, setMetricLayout] = useState<SiteMetricLayout[]>(() => {
+    try {
+      if (typeof window === 'undefined') return DEFAULT_SITE_METRIC_LAYOUT
+      return parseSiteMetricLayout(window.localStorage.getItem(SITE_TRACKING_METRIC_LAYOUT_KEY))
+    } catch {
+      return DEFAULT_SITE_METRIC_LAYOUT
+    }
+  })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -127,7 +92,7 @@ export function SiteTrackingModule() {
     try {
       setData(await fetchSiteTrackingOverview(days))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'tracking_overview_failed')
+      setError(err instanceof Error ? err.message : 'Não foi possível carregar os dados do site')
     } finally {
       setLoading(false)
     }
@@ -137,176 +102,339 @@ export function SiteTrackingModule() {
     void load()
   }, [load])
 
-  const summary = data?.website?.data?.summary || {}
-  const behaviorSummary = data?.siteBehavior?.summary || {}
-  const funnel = data?.siteFunnel || {}
-  const quality = data?.behaviorQuality || {}
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SITE_TRACKING_METRIC_LAYOUT_KEY, JSON.stringify(metricLayout))
+    } catch {
+      // ignore local layout persistence errors
+    }
+  }, [metricLayout])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SITE_TRACKING_SITE_NAMES_KEY, JSON.stringify(siteNameOverrides))
+    } catch {
+      // ignore local name persistence errors
+    }
+  }, [siteNameOverrides])
+
+  const summary = useMemo(() => data?.website?.data?.summary || {}, [data?.website?.data?.summary])
+  const behaviorSummary = useMemo(() => data?.siteBehavior?.summary || {}, [data?.siteBehavior?.summary])
+  const funnel = useMemo(() => data?.siteFunnel || {}, [data?.siteFunnel])
+  const quality = useMemo(() => data?.behaviorQuality || {}, [data?.behaviorQuality])
   const alerts = listOrEmpty(data?.alerts)
+  const operationalAlerts = alerts.filter((alert) => !isInternalPreviewAlert(alert))
+  const siteOptions = useMemo(() => SITE_OPTIONS.map((site) => ({
+    ...site,
+    name: siteNameOverrides[site.id] || site.name,
+  })), [siteNameOverrides])
+  const selectedSite = siteOptions.find((site) => site.id === selectedSiteId) || siteOptions[0]
+  const headerUpdatedAt = data?.generatedAt ? new Date(data.generatedAt).toISOString() : undefined
+
+  useEffect(() => {
+    emitSiteTrackingHeaderState({
+      refreshing: loading,
+      sites: siteOptions,
+      selectedSiteId,
+      selectedSiteName: selectedSite?.name,
+      windowDays: days,
+      updatedAt: headerUpdatedAt,
+    })
+  }, [days, headerUpdatedAt, loading, selectedSite?.name, selectedSiteId, siteOptions])
+
+  useEffect(() => () => emitSiteTrackingHeaderState(null), [])
+
+  useEffect(() => {
+    return subscribeSiteTrackingHeaderAction((action) => {
+      if (action.type === 'refresh') {
+        void load()
+        return
+      }
+      if (action.type === 'set-window') {
+        setDays(action.value)
+        return
+      }
+      if (action.type === 'set-site') {
+        setSelectedSiteId(action.value)
+        return
+      }
+      if (action.type === 'connect') {
+        setConnectionNoticeOpen(true)
+        return
+      }
+      if (action.type === 'rename-site') {
+        const siteId = action.value || selectedSiteId
+        const currentSite = siteOptions.find((site) => site.id === siteId)
+        const currentName = currentSite?.name || currentSite?.host || siteId
+        const nextName = window.prompt('Nome exibido para este site', currentName)?.trim()
+        if (!nextName) return
+        setSiteNameOverrides((prev) => ({ ...prev, [siteId]: nextName }))
+      }
+    })
+  }, [load, selectedSiteId, siteOptions])
 
   const funnelRows = useMemo(() => [
-    { label: 'Sessões', value: n(funnel.sessions) },
-    { label: 'Pageviews', value: n(funnel.pageViews) },
-    { label: 'Cliques CTA/link', value: n(funnel.ctaClicks) },
-    { label: 'Agendamento iniciado', value: n(funnel.bookingStarted) },
-    { label: 'Etapa final aberta', value: n(funnel.finalStepOpened) },
-    { label: 'Agendamentos confirmados', value: n(funnel.confirmedBookings) },
+    { label: 'Sessões', value: siteTrackingNumberValue(funnel.sessions) },
+    { label: 'Pageviews', value: siteTrackingNumberValue(funnel.pageViews) },
+    { label: 'Cliques CTA/link', value: siteTrackingNumberValue(funnel.ctaClicks) },
+    { label: 'Agendamento iniciado', value: siteTrackingNumberValue(funnel.bookingStarted) },
+    { label: 'Etapa final aberta', value: siteTrackingNumberValue(funnel.finalStepOpened) },
+    { label: 'Agendamentos confirmados', value: siteTrackingNumberValue(funnel.confirmedBookings) },
   ], [funnel])
   const funnelMax = Math.max(...funnelRows.map((row) => row.value), 1)
+  const metricTiles = useMemo(() => [
+    {
+      key: 'sessions' as const,
+      label: 'Visitas',
+      tooltipLabel: 'Visitas no site',
+      description: 'Volume agregado de pessoas navegando pelo site no período selecionado.',
+      value: formatSiteTrackingNumber(behaviorSummary.sessions),
+      detail: `${formatSiteTrackingNumber(behaviorSummary.pageViews)} páginas vistas`,
+      icon: Pulse,
+      toneClass: 'border-cyan-500/25 bg-cyan-500/12 text-cyan-100',
+    },
+    {
+      key: 'bookings' as const,
+      label: 'Agendamentos',
+      tooltipLabel: 'Agendamentos confirmados',
+      description: 'Reservas confirmadas pelo fluxo do site no período selecionado.',
+      value: formatSiteTrackingNumber(summary.confirmedBookings),
+      detail: `${formatSiteTrackingPercent(data?.coverage?.trackingContext)} com origem`,
+      icon: Funnel,
+      toneClass: 'border-emerald-500/25 bg-emerald-500/12 text-emerald-100',
+    },
+    {
+      key: 'whatsapp' as const,
+      label: 'WhatsApp',
+      tooltipLabel: 'Cliques de WhatsApp no site',
+      description: 'Cliques em WhatsApp saindo do site com origem preservada.',
+      value: formatSiteTrackingNumber(summary.whatsappClicks),
+      detail: `${formatSiteTrackingPercent(data?.coverage?.whatsappTracking)} com origem`,
+      icon: WhatsappLogo,
+      toneClass: 'border-green-500/25 bg-green-500/12 text-green-100',
+    },
+    {
+      key: 'schedule' as const,
+      label: 'Conversões Meta',
+      tooltipLabel: 'Agendamentos enviados à Meta',
+      description: 'Agendamentos confirmados enviados para melhorar a otimização das campanhas.',
+      value: formatSiteTrackingNumber(summary.capiScheduleOk),
+      detail: `${formatSiteTrackingPercent(data?.coverage?.scheduleDelivery)} enviados`,
+      icon: ShieldCheck,
+      toneClass: 'border-blue-500/25 bg-blue-500/12 text-blue-100',
+    },
+    {
+      key: 'origin' as const,
+      label: 'Origem preservada',
+      tooltipLabel: 'Origem preservada',
+      description: 'Percentual de agendamentos em que foi possível manter campanha, fonte ou origem até a reserva.',
+      value: formatSiteTrackingPercent(data?.coverage?.trackingContext),
+      detail: 'campanha ou canal',
+      icon: LinkSimple,
+      toneClass: 'border-teal-500/25 bg-teal-500/12 text-teal-100',
+    },
+    {
+      key: 'reservationLink' as const,
+      label: 'Reserva vinculada',
+      tooltipLabel: 'Reserva vinculada',
+      description: 'Percentual de reservas com identificação suficiente para evitar contagem duplicada nos relatórios.',
+      value: formatSiteTrackingPercent(data?.coverage?.metaEventId),
+      detail: 'sem duplicidade',
+      icon: ShieldCheck,
+      toneClass: 'border-sky-500/25 bg-sky-500/12 text-sky-100',
+    },
+    {
+      key: 'facebook' as const,
+      label: 'Atribuição Meta',
+      tooltipLabel: 'Atribuição Meta',
+      description: 'Reservas com sinais suficientes para associar a origem a campanhas da Meta.',
+      value: formatSiteTrackingPercent(data?.coverage?.facebookIds),
+      detail: 'cliques identificados',
+      icon: LinkSimple,
+      toneClass: 'border-indigo-500/25 bg-indigo-500/12 text-indigo-100',
+    },
+    {
+      key: 'marketing' as const,
+      label: 'Consentimento',
+      tooltipLabel: 'Consentimento marketing',
+      description: 'Agendamentos em que o visitante autorizou mensuração de marketing.',
+      value: formatSiteTrackingPercent(data?.coverage?.marketingConsent),
+      detail: 'reservas permitidas',
+      icon: ChartLineUp,
+      toneClass: 'border-violet-500/25 bg-violet-500/12 text-violet-100',
+    },
+    {
+      key: 'campaign' as const,
+      label: 'Campanhas',
+      tooltipLabel: 'Campanhas identificadas',
+      description: 'Interações do site com campanha identificada no período.',
+      value: formatSiteTrackingPercent(quality.campaignCoverage),
+      detail: `${formatSiteTrackingNumber(quality.eventsWithCampaign)} interações`,
+      icon: CursorClick,
+      toneClass: 'border-amber-500/25 bg-amber-500/12 text-amber-100',
+    },
+    {
+      key: 'conversion' as const,
+      label: 'Visita -> Reserva',
+      tooltipLabel: 'Taxa de conversão visita para reserva',
+      description: 'Taxa agregada de sessões que chegaram a agendamento confirmado.',
+      value: formatSiteTrackingPercent(funnel.visitToBookingRate),
+      detail: `${formatSiteTrackingNumber(funnel.confirmedBookings)} reservas`,
+      icon: ArrowClockwise,
+      toneClass: 'border-rose-500/25 bg-rose-500/12 text-rose-100',
+    },
+  ], [
+    behaviorSummary.pageViews,
+    behaviorSummary.sessions,
+    data?.coverage?.facebookIds,
+    data?.coverage?.marketingConsent,
+    data?.coverage?.metaEventId,
+    data?.coverage?.scheduleDelivery,
+    data?.coverage?.trackingContext,
+    data?.coverage?.whatsappTracking,
+    funnel.confirmedBookings,
+    funnel.visitToBookingRate,
+    quality.campaignCoverage,
+    quality.eventsWithCampaign,
+    summary.capiScheduleOk,
+    summary.confirmedBookings,
+    summary.whatsappClicks,
+  ])
+  const visibleMetricTiles = useMemo(() => {
+    const byKey = new Map(metricTiles.map((tile) => [tile.key, tile]))
+    return metricLayout
+      .map((config) => {
+        const tile = byKey.get(config.key)
+        if (!tile || !config.visible) return null
+        return { ...tile, width: config.width, height: config.height, aspect: config.aspect }
+      })
+      .filter(Boolean) as Array<(typeof metricTiles)[number] & { width: number; height: number; aspect: SiteMetricAspect }>
+  }, [metricLayout, metricTiles])
+  const hiddenMetricTiles = useMemo(() => {
+    const byKey = new Map(metricTiles.map((tile) => [tile.key, tile]))
+    return metricLayout
+      .filter((config) => !config.visible)
+      .map((config) => byKey.get(config.key))
+      .filter(Boolean) as typeof metricTiles
+  }, [metricLayout, metricTiles])
+  const updateMetricTile = (key: SiteMetricKey, patch: Partial<SiteMetricLayout>) => {
+    setMetricLayout((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)))
+  }
+  const saveManagedUrl = async (form: ManagedSiteUrlForm) => {
+    setSavingManagedUrl(true)
+    try {
+      if (isMetaTrackingLocalMockEnabled()) {
+        const now = Date.now()
+        setData((prev) => {
+          if (!prev) return prev
+          const existing = prev.customLinks?.managedUrls || []
+          const nextUrl = {
+            id: form.id || `local_url_${now}`,
+            siteHost: selectedSiteId,
+            name: form.name,
+            slugPath: form.slugPath || `/campanhas/${form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'link'}`,
+            publicUrl: `https://${selectedSiteId}${form.slugPath || `/campanhas/${form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'link'}`}`,
+            destinationUrl: form.destinationUrl,
+            destinationHost: (() => {
+              try { return new URL(form.destinationUrl).hostname } catch { return null }
+            })(),
+            destinationPath: (() => {
+              try {
+                const url = new URL(form.destinationUrl)
+                return `${url.pathname}${url.search}${url.hash}`
+              } catch {
+                return null
+              }
+            })(),
+            description: form.description || null,
+            source: 'manual',
+            placement: form.placement || null,
+            unitSlug: form.unitSlug || null,
+            serviceId: form.serviceId || null,
+            utmSource: form.utmSource || null,
+            utmMedium: form.utmMedium || null,
+            utmCampaign: form.utmCampaign || null,
+            utmContent: form.utmContent || null,
+            utmTerm: form.utmTerm || null,
+            active: form.active,
+            createdAtMs: existing.find((item) => item.id === form.id)?.createdAtMs || now,
+            updatedAtMs: now,
+            clickCount: existing.find((item) => item.id === form.id)?.clickCount || 0,
+            lastClickAtMs: existing.find((item) => item.id === form.id)?.lastClickAtMs || null,
+          }
+          return {
+            ...prev,
+            customLinks: {
+              ...(prev.customLinks || {}),
+              managedUrls: form.id ? existing.map((item) => (item.id === form.id ? nextUrl : item)) : [nextUrl, ...existing],
+            },
+          }
+        })
+        return
+      }
+
+      const response = await fetch('/api/tracking/custom-urls', {
+        method: form.id ? 'PATCH' : 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ ...form, siteHost: selectedSiteId }),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.message || payload?.error || 'Não foi possível salvar a URL')
+      await load()
+    } finally {
+      setSavingManagedUrl(false)
+    }
+  }
+  const handleMetricDragEnd = (result: DropResult) => {
+    if (!result.destination || result.destination.droppableId !== 'site-tracking-metrics') return
+    if (result.source.index === result.destination.index) return
+    const visibleKeys = metricLayout.filter((item) => item.visible).map((item) => item.key)
+    const movedKey = visibleKeys[result.source.index]
+    if (!movedKey) return
+    setMetricLayout((prev) => {
+      const next = [...prev]
+      const sourceIndex = next.findIndex((item) => item.key === movedKey)
+      if (sourceIndex < 0) return prev
+      const [entry] = next.splice(sourceIndex, 1)
+      const visibleAfterRemoval = next.filter((item) => item.visible)
+      const beforeKey = visibleAfterRemoval[result.destination?.index ?? 0]?.key
+      const destinationIndex = beforeKey ? next.findIndex((item) => item.key === beforeKey) : next.length
+      next.splice(destinationIndex < 0 ? next.length : destinationIndex, 0, entry)
+      return next
+    })
+  }
 
   return (
     <div className="space-y-6 text-slate-100">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-cyan-200">
-            <Pulse className="h-5 w-5" />
-            Site Tracking
-          </div>
-          <h1 className="mt-2 text-3xl font-semibold text-white">espacofacial.com</h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-400">
-            Acompanhamento agregado de comportamento, campanhas, links personalizados, WhatsApp, agendamentos e qualidade de tracking do site.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {WINDOW_OPTIONS.map((option) => (
-            <Button
-              key={option}
-              variant={days === option ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setDays(option)}
-            >
-              {option}d
-            </Button>
-          ))}
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            <ArrowClockwise className={loading ? 'animate-spin' : ''} />
-            Atualizar
-          </Button>
-        </div>
-      </div>
-
       {error ? (
         <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-4 text-red-100">
-          Falha ao carregar tracking do site: {error}
+          Falha ao carregar acompanhamento do site: {error}
         </div>
       ) : null}
 
-      {data?.health ? (
-        <div className={`rounded-lg border p-4 ${siteTrackingHealthTone(data.health.status)}`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold uppercase tracking-wide">Saúde do tracking: {data.health.label}</div>
-              <div className="mt-1 text-sm opacity-90">{data.health.summary}</div>
-            </div>
-            {data.partial ? <Badge variant="warning">Leitura parcial</Badge> : <Badge variant="success">Leitura completa</Badge>}
-          </div>
-        </div>
-      ) : null}
+      {connectionNoticeOpen ? <ConnectionNotice onClose={() => setConnectionNoticeOpen(false)} /> : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Sessões anônimas" value={formatSiteTrackingNumber(behaviorSummary.sessions)} detail={`${formatSiteTrackingNumber(behaviorSummary.pageViews)} pageviews`} />
-        <MetricCard label="Agendamentos" value={formatSiteTrackingNumber(summary.confirmedBookings)} detail={`${formatSiteTrackingPercent(data?.coverage?.trackingContext)} com tracking_context`} />
-        <MetricCard label="WhatsApp no site" value={formatSiteTrackingNumber(summary.whatsappClicks)} detail={`${formatSiteTrackingPercent(data?.coverage?.whatsappTracking)} com contexto`} />
-        <MetricCard label="Schedule CAPI OK" value={formatSiteTrackingNumber(summary.capiScheduleOk)} detail={`${formatSiteTrackingPercent(data?.coverage?.scheduleDelivery)} entrega`} />
-        <MetricCard label="FB IDs" value={formatSiteTrackingPercent(data?.coverage?.facebookIds)} detail="fbp/fbc/fbclid em bookings" />
-        <MetricCard label="Consentimento marketing" value={formatSiteTrackingPercent(data?.coverage?.marketingConsent)} detail="bookings confirmados" />
-        <MetricCard label="Campanhas em eventos" value={formatSiteTrackingPercent(quality.campaignCoverage)} detail={`${formatSiteTrackingNumber(quality.eventsWithCampaign)} eventos com utm_campaign`} />
-        <MetricCard label="Taxa visita -> booking" value={formatSiteTrackingPercent(funnel.visitToBookingRate)} detail={`${formatSiteTrackingNumber(funnel.confirmedBookings)} confirmações`} />
-      </div>
+      <SiteMetricsGrid
+        hiddenMetricTiles={hiddenMetricTiles}
+        visibleMetricTiles={visibleMetricTiles}
+        onDragEnd={handleMetricDragEnd}
+        onHide={(key) => updateMetricTile(key, { visible: false })}
+        onResize={updateMetricTile}
+        onRestore={() => setMetricLayout(DEFAULT_SITE_METRIC_LAYOUT)}
+        onShow={(key) => updateMetricTile(key, { visible: true })}
+      />
 
-      {alerts.length ? (
-        <Section title="Alertas operacionais" icon={<WarningCircle className="h-5 w-5" />}>
-          <div className="grid gap-3 md:grid-cols-2">
-            {alerts.map((alert) => (
-              <div key={alert.code} className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
-                <Badge variant={alert.severity === 'critical' ? 'destructive' : 'warning'}>{alert.severity}</Badge>
-                <div className="mt-3 font-semibold text-white">{alert.title}</div>
-                <div className="mt-1 text-sm text-slate-400">{alert.message}</div>
-              </div>
-            ))}
-          </div>
-        </Section>
-      ) : null}
-
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <Section title="Funil do site" icon={<Funnel className="h-5 w-5" />}>
-          <div className="space-y-4">
-            {funnelRows.map((row) => (
-              <div key={row.label} className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-300">{row.label}</span>
-                  <span className="font-mono text-white">{formatSiteTrackingNumber(row.value)}</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                  <div className="h-full rounded-full bg-emerald-400" style={{ width: funnelBarWidth(row.value, funnelMax) }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Qualidade de tracking" icon={<ChartLineUp className="h-5 w-5" />}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <MetricCard label="tracking_context" value={formatSiteTrackingPercent(data?.coverage?.trackingContext)} />
-            <MetricCard label="meta_event_id" value={formatSiteTrackingPercent(data?.coverage?.metaEventId)} />
-            <MetricCard label="FB IDs" value={formatSiteTrackingPercent(data?.coverage?.facebookIds)} />
-            <MetricCard label="Marketing" value={formatSiteTrackingPercent(data?.coverage?.marketingConsent)} />
-          </div>
-        </Section>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Section title="Páginas mais vistas" icon={<CursorClick className="h-5 w-5" />}>
-          <RankedList items={listOrEmpty(data?.siteBehavior?.topPages)} labelKey="pagePath" empty="Sem pageviews agregados ainda." />
-        </Section>
-        <Section title="Entradas" icon={<CursorClick className="h-5 w-5" />}>
-          <RankedList items={listOrEmpty(data?.siteBehavior?.topEntryPages)} labelKey="pagePath" empty="Sem páginas de entrada no período." />
-        </Section>
-        <Section title="Campanhas" icon={<LinkSimple className="h-5 w-5" />}>
-          <RankedList items={listOrEmpty(data?.website?.data?.topCampaigns)} labelKey="utmCampaign" empty="Sem campanhas atribuídas no período." />
-        </Section>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Section title="Links personalizados e CTAs" icon={<LinkSimple className="h-5 w-5" />}>
-          <RankedList items={listOrEmpty(data?.customLinks?.topLinks)} labelKey="linkUrl" empty="Sem cliques em links rastreados." />
-        </Section>
-        <Section title="Links sem UTM" icon={<WarningCircle className="h-5 w-5" />}>
-          <RankedList items={listOrEmpty(data?.customLinks?.linksMissingUtm)} labelKey="linkUrl" empty="Nenhum link sem UTM relevante no período." />
-        </Section>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Section title="Bookings com tracking incompleto" icon={<WarningCircle className="h-5 w-5" />}>
-          <div className="space-y-3">
-            {listOrEmpty(data?.reconciliation?.incompleteBookings).slice(0, 8).map((booking) => (
-              <div key={booking.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-mono text-xs text-slate-400">{booking.id}</span>
-                  <Badge variant="outline">{booking.primaryCause}</Badge>
-                </div>
-                <div className="mt-2 text-sm text-slate-300">{booking.unitSlug} · {booking.utmSource || 'sem origem'} · {booking.utmCampaign || 'sem campanha'}</div>
-              </div>
-            ))}
-            {!listOrEmpty(data?.reconciliation?.incompleteBookings).length ? <div className="text-sm text-slate-500">Nenhum booking incompleto no período.</div> : null}
-          </div>
-        </Section>
-
-        <Section title="Cliques recentes" icon={<CursorClick className="h-5 w-5" />}>
-          <div className="space-y-3">
-            {listOrEmpty(data?.customLinks?.recentClicks).slice(0, 8).map((click) => (
-              <div key={click.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-semibold text-white">{click.eventName}</span>
-                  <span className="text-xs text-slate-500">{fmtDate(click.createdAtMs)}</span>
-                </div>
-                <div className="mt-1 truncate text-sm text-slate-300">{shortUrl(click.linkUrl)}</div>
-                <div className="mt-1 text-xs text-slate-500">{click.utmCampaign || 'sem campanha'} · {click.placement || 'sem placement'}</div>
-              </div>
-            ))}
-            {!listOrEmpty(data?.customLinks?.recentClicks).length ? <div className="text-sm text-slate-500">Nenhum clique recente no período.</div> : null}
-          </div>
-        </Section>
-      </div>
+      <OperationalAlerts alerts={operationalAlerts} />
+      <SiteFunnelSection rows={funnelRows} max={funnelMax} />
+      <SiteBehaviorSections data={data} />
+      <ManagedSiteUrlsSection
+        urls={listOrEmpty(data?.customLinks?.managedUrls)}
+        saving={savingManagedUrl}
+        onSave={saveManagedUrl}
+      />
+      <SiteLinkSections data={data} />
+      <SiteIssueAndClickSections data={data} />
     </div>
   )
 }

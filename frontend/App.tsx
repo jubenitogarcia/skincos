@@ -32,6 +32,8 @@ import { dispatchInsumosHeaderAction, subscribeInsumosHeaderState } from '@/insu
 import type { InsumosHeaderState, InsumosOverviewPeriod } from '@/insumosTypes'
 import { dispatchMetaAdsHeaderAction, subscribeMetaAdsHeaderState } from '@/metaAdsHeaderBridge'
 import type { MetaAdsHeaderState } from '@/metaAdsTypes'
+import { dispatchSiteTrackingHeaderAction, subscribeSiteTrackingHeaderState } from '@/siteTrackingHeaderBridge'
+import type { SiteTrackingHeaderState } from '@/siteTrackingTypes'
 import { CalendarX2, CheckCircle2, Download, Pencil, Plus, RefreshCw, Shield, Sparkles, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
@@ -379,6 +381,7 @@ export default function AppFunctionalNeatlab() {
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
         const [escalaHeaderState, setEscalaHeaderState] = useState<EscalaHeaderState | null>(null)
         const [metaAdsHeaderState, setMetaAdsHeaderState] = useState<MetaAdsHeaderState | null>(null)
+        const [siteTrackingHeaderState, setSiteTrackingHeaderState] = useState<SiteTrackingHeaderState | null>(null)
         const [metaAdsAccountRemovalId, setMetaAdsAccountRemovalId] = useState<string | null>(null)
         const metaAdsAccountPendingRemoval = useMemo(
             () => (metaAdsHeaderState?.accounts || []).find((account) => account.id === metaAdsAccountRemovalId) || null,
@@ -552,6 +555,12 @@ export default function AppFunctionalNeatlab() {
                     })
                 }, [])
 
+                React.useEffect(() => {
+                    return subscribeSiteTrackingHeaderState((detail) => {
+                        setSiteTrackingHeaderState(detail)
+                    })
+                }, [])
+
 	    // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
 	    React.useEffect(() => {
 	        try {
@@ -591,6 +600,12 @@ export default function AppFunctionalNeatlab() {
                 React.useEffect(() => {
                     if (active !== 'meta-ads') {
                         setMetaAdsHeaderState(null)
+                    }
+                }, [active])
+
+                React.useEffect(() => {
+                    if (active !== 'site-tracking') {
+                        setSiteTrackingHeaderState(null)
                     }
                 }, [active])
 
@@ -1053,7 +1068,7 @@ export default function AppFunctionalNeatlab() {
 					                                        </h1>
 			                                    </div>
 				                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
-				                                    <div className={`${active === 'escala-profissionais' || active === 'meta-ads' ? 'flex min-w-0' : 'hidden lg:flex'} items-center gap-2`}>
+				                                    <div className={`${active === 'escala-profissionais' || active === 'meta-ads' || active === 'site-tracking' ? 'flex min-w-0' : 'hidden lg:flex'} items-center gap-2`}>
 				                                        {active === 'insumos' ? (
 					                                            <>
 					                                                <Select
@@ -1358,6 +1373,73 @@ export default function AppFunctionalNeatlab() {
                                                                 </Select>
                                                             </div>
                                                         ) : null}
+                                                        {active === 'site-tracking' ? (
+                                                            <div className="flex items-center gap-2 max-w-[56vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                                                <Select
+                                                                    value={siteTrackingHeaderState?.selectedSiteId || ''}
+                                                                    onValueChange={(value) => {
+                                                                        if (value === '__site_tracking_add_connection__') {
+                                                                            dispatchSiteTrackingHeaderAction({ type: 'connect' })
+                                                                            return
+                                                                        }
+                                                                        if (value === '__site_tracking_rename_site__') {
+                                                                            dispatchSiteTrackingHeaderAction({ type: 'rename-site', value: siteTrackingHeaderState?.selectedSiteId })
+                                                                            return
+                                                                        }
+                                                                        dispatchSiteTrackingHeaderAction({ type: 'set-site', value })
+                                                                    }}
+                                                                    disabled={siteTrackingHeaderState?.refreshing}
+                                                                >
+                                                                    <SelectTrigger className="h-8 w-64 bg-white/[0.06] border-white/20 text-white">
+                                                                        <SelectValue placeholder="Site" />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        {[...(siteTrackingHeaderState?.sites || [])]
+                                                                            .sort((a, b) => {
+                                                                                if (a.id === siteTrackingHeaderState?.selectedSiteId) return -1
+                                                                                if (b.id === siteTrackingHeaderState?.selectedSiteId) return 1
+                                                                                return (a.name || a.host || a.id).localeCompare(b.name || b.host || b.id, 'pt-BR')
+                                                                            })
+                                                                            .map((site) => {
+                                                                                const isSelectedSite = site.id === siteTrackingHeaderState?.selectedSiteId
+                                                                                const statusTone =
+                                                                                    site.statusTone === 'success'
+                                                                                        ? 'bg-emerald-500/12 text-emerald-100 focus:bg-emerald-500/20 focus:text-emerald-50'
+                                                                                        : site.statusTone === 'warning'
+                                                                                            ? 'bg-amber-500/12 text-amber-100 focus:bg-amber-500/20 focus:text-amber-50'
+                                                                                            : site.statusTone === 'danger'
+                                                                                                ? 'bg-rose-500/12 text-rose-100 focus:bg-rose-500/20 focus:text-rose-50'
+                                                                                                : 'bg-slate-950 text-slate-100 focus:bg-slate-800/90'
+                                                                                return (
+                                                                                    <SelectItem
+                                                                                        key={site.id}
+                                                                                        value={site.id}
+                                                                                        className={`${statusTone} ${isSelectedSite ? 'border-l-2 border-cyan-300/80 font-semibold ring-1 ring-inset ring-cyan-300/20' : 'border-l-2 border-transparent font-normal'}`}
+                                                                                        hideIndicator
+                                                                                    >
+                                                                                        <div className="flex min-w-0 flex-col pr-4 leading-tight">
+                                                                                            <span className={`truncate ${isSelectedSite ? 'text-white' : ''}`}>{site.name || site.host || site.id}</span>
+                                                                                            {site.statusLabel ? <span className="truncate text-[10px] font-normal opacity-70">{site.statusLabel}</span> : null}
+                                                                                        </div>
+                                                                                    </SelectItem>
+                                                                                )
+                                                                            })}
+                                                                        <SelectItem value="__site_tracking_add_connection__" className="bg-slate-950 text-cyan-100 focus:bg-cyan-500/15 focus:text-cyan-50">
+                                                                            <div className="flex w-full items-center gap-2 pr-4">
+                                                                                <Plus className="size-3.5 text-cyan-300" aria-hidden="true" />
+                                                                                <span>Adicionar conexão</span>
+                                                                            </div>
+                                                                        </SelectItem>
+                                                                        <SelectItem value="__site_tracking_rename_site__" className="bg-slate-950 text-cyan-100 focus:bg-cyan-500/15 focus:text-cyan-50">
+                                                                            <div className="flex w-full items-center gap-2 pr-4">
+                                                                                <Pencil className="size-3.5 text-cyan-300" aria-hidden="true" />
+                                                                                <span>Renomear site</span>
+                                                                            </div>
+                                                                        </SelectItem>
+                                                                    </SelectContent>
+                                                                </Select>
+                                                            </div>
+                                                        ) : null}
 		                                    </div>
 	                                </div>
 
@@ -1502,6 +1584,45 @@ export default function AppFunctionalNeatlab() {
                                                 <TooltipContent>
                                                     {metaAdsHeaderState?.sessionUpdatedAt
                                                         ? `Atualizar. Ultima atualizacao: ${new Date(metaAdsHeaderState.sessionUpdatedAt).toLocaleString('pt-BR')}`
+                                                        : 'Atualizar'}
+                                                </TooltipContent>
+                                            </Tooltip>
+                                        </div>
+                                    ) : null}
+                                    {active === 'site-tracking' ? (
+                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                            <div className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] p-1">
+                                                {[7, 30, 60, 90].map((period) => (
+                                                    <button
+                                                        key={period}
+                                                        type="button"
+                                                        className={`h-6 rounded-full px-2.5 text-xs transition ${
+                                                            siteTrackingHeaderState?.windowDays === period
+                                                                ? 'bg-white/16 text-white'
+                                                                : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                                        }`}
+                                                        onClick={() => dispatchSiteTrackingHeaderAction({ type: 'set-window', value: period as 7 | 30 | 60 | 90 })}
+                                                    >
+                                                        {period}d
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                        onClick={() => dispatchSiteTrackingHeaderAction({ type: 'refresh' })}
+                                                        disabled={siteTrackingHeaderState?.refreshing}
+                                                        aria-label="Atualizar Site EF"
+                                                    >
+                                                        <RefreshCw className={`size-3.5 ${siteTrackingHeaderState?.refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    {siteTrackingHeaderState?.updatedAt
+                                                        ? `Atualizar. Ultima atualizacao: ${new Date(siteTrackingHeaderState.updatedAt).toLocaleString('pt-BR')}`
                                                         : 'Atualizar'}
                                                 </TooltipContent>
                                             </Tooltip>
