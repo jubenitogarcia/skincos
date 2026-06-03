@@ -14,6 +14,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - CRM (frontend + API): `./frontend/restart_crm.sh --watch-full`
 - CRM local production-like: `npm run crm:local`
 - Preflight de autonomia Codex/deploy: `npm run codex:preflight`
+- Operação nativa no Codex App: `docs/codex-app-native.md`
 - Website público: `npm run website:dev` (porta padrão do Next: `http://localhost:3000`)
 - macOS (sem terminal): dê duplo clique em `start-platform.command`
  - Meta Ads (API + worker): `./backend/scripts/meta-ads.sh start`
@@ -95,11 +96,13 @@ Plataforma interna (local) para automações e operações da clínica.
   - para pular o build prévio quando você só quiser iterar rápido em UI local: `npm run crm:local:meta-ads -- --skip-build`
   - para rodar uma smoke automatizada do módulo após subir o CRM:
     - `npm run crm:local:meta-ads -- --smoke`
+    - por padrão a smoke roda Playwright em modo headless e não abre janela; para debug visual use `npm run crm:local:meta-ads -- --smoke --headed-smoke --browser`
 - Para testar `Site EF` / tracking do site antes de publicar:
   - fluxo local simplificado: `npm run crm:local:site-tracking`
     - abre o CRM já no módulo `Site EF`
     - usa o cenário local `connected-ready`, que também habilita o mock local de tracking agregado em `localhost`
     - para pular o build prévio quando você só quiser iterar rápido em UI local: `npm run crm:local:site-tracking -- --skip-build`
+    - para rodar a validação automatizada sem abrir janela: `npm run crm:local:site-tracking -- --smoke`
   - no macOS, também é possível abrir por duplo clique em `start-crm-site-tracking-local.command`
 
 ## Docs
@@ -107,6 +110,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Política de lockfiles: `backend/docs/LOCKFILES.md`
 - Segredos e rotação: `docs/secrets-rotation.md`
 - Autonomia Codex/deploy: `docs/codex-autonomy.md`
+- Codex App nativo: `docs/codex-app-native.md`
 - Observabilidade/SLOs: `docs/observability.md`
 - Catálogo de serviços: `docs/service-catalog.md`
 - Ownership e operação: `docs/ownership-model.md`

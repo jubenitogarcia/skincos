@@ -2,6 +2,8 @@
 
 This project is set up so Codex can implement, validate, ship, and verify changes with minimal human intervention.
 
+For Codex App plugin routing, local Browser QA, Sites prototyping, and headless agent commands, see `docs/codex-app-native.md`.
+
 ## What must stay valid
 
 - Local GitHub CLI auth: `gh auth status`
