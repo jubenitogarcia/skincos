@@ -48,13 +48,14 @@ function readJsonPathString(input, paths) {
     return null
 }
 
-async function fetchWebsiteTrackingOverview({ days, limit, offsetDays = 0 }) {
+async function fetchWebsiteTrackingOverview({ days, limit, offsetDays = 0, siteHost = null }) {
     const baseUrl = sanitizeBaseUrl(process.env.TRACKING_WEBSITE_BASE_URL)
     const token = String(process.env.TRACKING_DASHBOARD_TOKEN || '').trim()
     const requestUrl = new URL('/api/tracking/dashboard', baseUrl)
     requestUrl.searchParams.set('days', String(days))
     requestUrl.searchParams.set('limit', String(limit))
     requestUrl.searchParams.set('offsetDays', String(offsetDays))
+    if (siteHost) requestUrl.searchParams.set('siteHost', String(siteHost))
 
     const headers = { accept: 'application/json' }
     if (token) headers.authorization = `Bearer ${token}`
@@ -139,6 +140,53 @@ async function fetchWebsiteTrackingCustomUrls({ method = 'GET', payload = null, 
     }
 }
 
+async function fetchWebsiteTrackingSiteConnections({ method = 'GET', payload = null, limit = 100 } = {}) {
+    const baseUrl = sanitizeBaseUrl(process.env.TRACKING_WEBSITE_BASE_URL)
+    const token = String(process.env.TRACKING_DASHBOARD_TOKEN || '').trim()
+    const requestUrl = new URL('/api/tracking/site-connections', baseUrl)
+    requestUrl.searchParams.set('limit', String(limit))
+
+    const headers = { accept: 'application/json' }
+    if (token) headers.authorization = `Bearer ${token}`
+    if (payload) headers['content-type'] = 'application/json'
+
+    try {
+        const response = await fetch(requestUrl, {
+            method,
+            headers,
+            body: payload ? JSON.stringify(payload) : undefined,
+        })
+        const text = await response.text()
+        let data = null
+        try {
+            data = text ? JSON.parse(text) : null
+        } catch {
+            data = null
+        }
+        if (!response.ok || data?.ok === false) {
+            return {
+                ok: false,
+                status: response.status,
+                sourceUrl: requestUrl.toString(),
+                error: data?.error || `HTTP ${response.status}`,
+            }
+        }
+        return {
+            ok: true,
+            status: response.status,
+            sourceUrl: requestUrl.toString(),
+            data,
+        }
+    } catch (error) {
+        return {
+            ok: false,
+            status: 0,
+            sourceUrl: requestUrl.toString(),
+            error: error instanceof Error ? error.message : 'website_site_connections_failed',
+        }
+    }
+}
+
 export async function getTrackingCustomUrls({ limit = 100 } = {}) {
     const response = await fetchWebsiteTrackingCustomUrls({ method: 'GET', limit })
     if (!response.ok) {
@@ -165,6 +213,7 @@ export async function createTrackingCustomUrl(payload) {
             status: response.status,
         }
     }
+    cache = null
     return {
         ok: true,
         customUrl: response.data?.customUrl || null,
@@ -180,9 +229,59 @@ export async function updateTrackingCustomUrl(payload) {
             status: response.status,
         }
     }
+    cache = null
     return {
         ok: true,
         customUrl: response.data?.customUrl || null,
+    }
+}
+
+export async function getTrackingSiteConnections({ limit = 100 } = {}) {
+    const response = await fetchWebsiteTrackingSiteConnections({ method: 'GET', limit })
+    if (!response.ok) {
+        return {
+            ok: false,
+            error: response.error,
+            status: response.status,
+            siteConnections: [],
+        }
+    }
+    return {
+        ok: true,
+        sourceUrl: response.sourceUrl,
+        siteConnections: response.data?.siteConnections || [],
+    }
+}
+
+export async function createTrackingSiteConnection(payload) {
+    const response = await fetchWebsiteTrackingSiteConnections({ method: 'POST', payload, limit: 200 })
+    if (!response.ok) {
+        return {
+            ok: false,
+            error: response.error,
+            status: response.status,
+        }
+    }
+    cache = null
+    return {
+        ok: true,
+        siteConnection: response.data?.siteConnection || null,
+    }
+}
+
+export async function updateTrackingSiteConnection(payload) {
+    const response = await fetchWebsiteTrackingSiteConnections({ method: 'PATCH', payload, limit: 200 })
+    if (!response.ok) {
+        return {
+            ok: false,
+            error: response.error,
+            status: response.status,
+        }
+    }
+    cache = null
+    return {
+        ok: true,
+        siteConnection: response.data?.siteConnection || null,
     }
 }
 
@@ -653,8 +752,9 @@ async function fetchWhatsappAttributionOverview({ sinceIso, limit }) {
 export async function getTrackingDashboardOverview(params = {}) {
     const days = parsePositiveInt(params.days, 30, 90)
     const limit = parsePositiveInt(params.limit, 12, 50)
+    const siteHost = String(params.siteHost || '').trim() || null
     const cacheTtlMs = parsePositiveInt(process.env.TRACKING_DASHBOARD_CACHE_TTL_MS, DEFAULT_CACHE_TTL_MS, 300_000)
-    const cacheKey = `${days}:${limit}`
+    const cacheKey = `${days}:${limit}:${siteHost || 'all'}`
 
     if (cache && cache.key === cacheKey && Date.now() - cache.createdAt < cacheTtlMs) {
         return cache.value
@@ -662,8 +762,8 @@ export async function getTrackingDashboardOverview(params = {}) {
 
     const sinceIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
     const [website, previousWebsite, whatsapp] = await Promise.all([
-        fetchWebsiteTrackingOverview({ days, limit, offsetDays: 0 }),
-        fetchWebsiteTrackingOverview({ days, limit: Math.min(limit, 5), offsetDays: days }),
+        fetchWebsiteTrackingOverview({ days, limit, offsetDays: 0, siteHost }),
+        fetchWebsiteTrackingOverview({ days, limit: Math.min(limit, 5), offsetDays: days, siteHost }),
         fetchWhatsappAttributionOverview({ sinceIso, limit }),
     ])
 
@@ -712,6 +812,7 @@ export async function getTrackingDashboardOverview(params = {}) {
         reconciliation,
         siteBehavior: website.available ? website.data?.siteBehavior || null : null,
         customLinks: website.available ? website.data?.customLinks || null : null,
+        siteConnections: website.available ? website.data?.siteConnections || null : null,
         siteFunnel: website.available ? website.data?.siteFunnel || null : null,
         behaviorQuality: website.available ? website.data?.behaviorQuality || null : null,
         governance: buildGovernance(),

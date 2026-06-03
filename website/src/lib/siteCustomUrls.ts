@@ -1,4 +1,5 @@
 import { clampText, sanitizeOneLine, slugify } from "@/lib/bookingDb";
+import { DEFAULT_SITE_HOST, normalizeOptionalSiteHost } from "@/lib/siteConnections";
 
 export type SiteCustomUrlRow = {
     id: string;
@@ -46,8 +47,6 @@ export type NormalizedSiteCustomUrlInput = {
     active: boolean;
 };
 
-const DEFAULT_SITE_HOST = "espacofacial.com";
-const ALLOWED_SITE_HOSTS = new Set(["espacofacial.com", "www.espacofacial.com"]);
 const ALLOWED_DESTINATION_HOSTS = new Set([
     "espacofacial.com",
     "www.espacofacial.com",
@@ -66,9 +65,7 @@ function textOrNull(value: unknown, max = 160): string | null {
 }
 
 function canonicalHost(value: unknown): string {
-    const raw = textOrNull(value, 180)?.toLowerCase() ?? DEFAULT_SITE_HOST;
-    const host = raw.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^www\./, "");
-    return ALLOWED_SITE_HOSTS.has(host) ? host : DEFAULT_SITE_HOST;
+    return normalizeOptionalSiteHost(value) ?? DEFAULT_SITE_HOST;
 }
 
 function normalizeSlugPath(value: unknown, fallbackName: string): string {

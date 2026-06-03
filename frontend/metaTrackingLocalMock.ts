@@ -102,6 +102,23 @@ export type TrackingOverviewResponse = {
       utmContent: string | null
     }>
   } | null
+  siteConnections?: {
+    selectedSiteHost?: string | null
+    sites?: Array<{
+      id: string
+      siteHost: string
+      host: string
+      name: string
+      statusLabel: string | null
+      statusTone: 'success' | 'warning' | 'danger' | 'neutral'
+      source: string
+      active: boolean
+      createdAtMs: number
+      updatedAtMs: number
+      eventCount: number
+      lastEventAtMs: number | null
+    }>
+  } | null
   siteFunnel?: {
     sessions?: number
     pageViews?: number
@@ -412,6 +429,25 @@ export function getMetaTrackingLocalOverview(days = 30): TrackingOverviewRespons
           utmSource: 'meta',
           utmCampaign: 'botox_novo_hamburgo',
           utmContent: 'video_botox_nh_01',
+        },
+      ],
+    },
+    siteConnections: {
+      selectedSiteHost: 'espacofacial.com',
+      sites: [
+        {
+          id: 'espacofacial.com',
+          siteHost: 'espacofacial.com',
+          host: 'espacofacial.com',
+          name: 'espacofacial.com',
+          statusLabel: 'Canônico do funil',
+          statusTone: 'success',
+          source: 'system',
+          active: true,
+          createdAtMs: now - 30 * 24 * 60 * 60 * 1000,
+          updatedAtMs: now - 60 * 60 * 1000,
+          eventCount: 420,
+          lastEventAtMs: now - 10 * 60 * 1000,
         },
       ],
     },

@@ -52,6 +52,16 @@ type FunnelRow = {
 }
 
 export type ManagedSiteUrl = NonNullable<NonNullable<TrackingOverviewResponse['customLinks']>['managedUrls']>[number]
+export type SiteConnection = NonNullable<NonNullable<TrackingOverviewResponse['siteConnections']>['sites']>[number]
+
+export type SiteConnectionForm = {
+  id?: string
+  siteHost: string
+  name: string
+  statusLabel: string
+  statusTone: 'success' | 'warning' | 'danger' | 'neutral'
+  active: boolean
+}
 
 export type ManagedSiteUrlForm = {
   id?: string
@@ -83,6 +93,14 @@ const emptyManagedUrlForm: ManagedSiteUrlForm = {
   utmCampaign: '',
   utmContent: '',
   utmTerm: '',
+  active: true,
+}
+
+export const emptySiteConnectionForm: SiteConnectionForm = {
+  siteHost: '',
+  name: '',
+  statusLabel: 'Conexão ativa',
+  statusTone: 'success',
   active: true,
 }
 
@@ -279,19 +297,94 @@ export function RankedList({
   )
 }
 
-export function ConnectionNotice({ onClose }: { onClose: () => void }) {
+export function ConnectionNotice({
+  sites,
+  saving,
+  selectedSiteId,
+  onClose,
+  onSave,
+}: {
+  sites: SiteConnection[]
+  saving?: boolean
+  selectedSiteId?: string
+  onClose: () => void
+  onSave: (form: SiteConnectionForm) => Promise<void>
+}) {
+  const [form, setForm] = useState<SiteConnectionForm>(emptySiteConnectionForm)
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const activeSites = sites.filter((site) => site.active !== false)
+  const selectedSite = activeSites.find((site) => site.siteHost === selectedSiteId || site.id === selectedSiteId)
+  const update = (patch: Partial<SiteConnectionForm>) => setForm((prev) => ({ ...prev, ...patch }))
+
   return (
     <section className="rounded-2xl border border-cyan-400/25 bg-cyan-500/10 p-4 text-cyan-50 shadow-[0_20px_80px_rgba(8,145,178,0.12)]">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <div className="text-sm font-semibold uppercase tracking-wide">Nova conexão de site</div>
           <p className="mt-1 max-w-3xl text-sm text-cyan-100/80">
-            A primeira conexão ativa é o funil canônico <span className="font-mono">espacofacial.com</span>. Para adicionar outro site, crie a origem no backend/CRM e inclua a allowlist de domínio antes de aceitar eventos.
+            Conecte um domínio para liberar o filtro do dashboard por site. Eventos enviados com esse host aparecem no seletor e nas métricas do período.
           </p>
+          {selectedSite ? (
+            <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-950/40 px-3 py-1 text-xs text-cyan-100/85">
+              <span className="font-mono">{selectedSite.siteHost}</span>
+              <span>{selectedSite.statusLabel || 'Conexão ativa'}</span>
+            </div>
+          ) : null}
         </div>
         <Button variant="ghost" size="sm" className="border border-cyan-300/25 bg-cyan-400/10 text-cyan-50 hover:bg-cyan-400/18" onClick={onClose}>
           Fechar
         </Button>
+      </div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.72fr)]">
+        <div className="space-y-2">
+          {activeSites.map((site) => (
+            <div key={site.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/35 p-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-white">{site.name || site.siteHost}</div>
+                <div className="truncate font-mono text-xs text-cyan-100/70">{site.siteHost}</div>
+              </div>
+              <div className="text-right text-xs text-cyan-100/70">
+                <div>{site.statusLabel || 'Conexão ativa'}</div>
+                <div className="font-mono">{formatSiteTrackingNumber(site.eventCount)} eventos</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <form
+          className="space-y-3 rounded-xl border border-cyan-300/20 bg-slate-950/45 p-4"
+          onSubmit={async (event) => {
+            event.preventDefault()
+            setFeedback(null)
+            try {
+              await onSave(form)
+              setForm(emptySiteConnectionForm)
+              setFeedback('Conexão cadastrada.')
+            } catch (error) {
+              setFeedback(error instanceof Error ? error.message : 'Não foi possível cadastrar a conexão.')
+            }
+          }}
+        >
+          <div>
+            <div className="text-sm font-semibold text-white">Adicionar domínio</div>
+            <div className="text-xs text-cyan-100/65">Use apenas o host, por exemplo site.espacofacial.com.</div>
+          </div>
+          <ManagedUrlField label="Domínio" value={form.siteHost} placeholder="novo-dominio.com" onChange={(siteHost) => update({ siteHost })} />
+          <ManagedUrlField label="Nome no seletor" value={form.name} placeholder="Campanha institucional" onChange={(name) => update({ name })} />
+          <ManagedUrlField label="Status" value={form.statusLabel} placeholder="Conexão ativa" onChange={(statusLabel) => update({ statusLabel })} />
+          <label className="flex items-center gap-2 text-sm text-cyan-100/85">
+            <input
+              type="checkbox"
+              checked={form.active}
+              onChange={(event) => update({ active: event.target.checked })}
+              className="h-4 w-4 rounded border-cyan-900 bg-slate-950 text-cyan-500"
+            />
+            Conexão ativa
+          </label>
+          {feedback ? <div className="text-xs text-emerald-200">{feedback}</div> : null}
+          <Button type="submit" disabled={saving || !form.siteHost.trim()} className="w-full bg-cyan-500 text-slate-950 hover:bg-cyan-400">
+            {saving ? 'Salvando...' : 'Conectar site'}
+          </Button>
+        </form>
       </div>
     </section>
   )

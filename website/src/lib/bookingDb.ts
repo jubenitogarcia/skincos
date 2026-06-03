@@ -287,6 +287,25 @@ async function ensureSchema(db: D1DatabaseLike) {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_custom_urls_updated ON site_custom_urls(updated_at_ms);").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_custom_urls_campaign ON site_custom_urls(utm_campaign, updated_at_ms);").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_custom_urls_unit ON site_custom_urls(unit_slug, updated_at_ms);").run();
+
+    await db
+        .prepare(
+            `CREATE TABLE IF NOT EXISTS site_connections (
+                id TEXT PRIMARY KEY,
+                site_host TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status_label TEXT,
+                status_tone TEXT NOT NULL DEFAULT 'success',
+                source TEXT NOT NULL DEFAULT 'crm',
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            );`,
+        )
+        .run();
+
+    await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_site_connections_host ON site_connections(site_host);").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_site_connections_updated ON site_connections(updated_at_ms);").run();
 }
 
 async function tryAddColumn(db: D1DatabaseLike, table: string, columnDef: string) {
