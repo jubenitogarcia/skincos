@@ -14,8 +14,15 @@ CRM_PAGES_PORT="${CRM_PAGES_PORT:-8791}"
 CRM_ROUTE="${CRM_ROUTE:-/}"
 CRM_MODULE="${CRM_MODULE:-}"
 CRM_PROFILE="${CRM_PROFILE:-realistic}"
+if [[ -n "${CRM_OPEN_BROWSER+x}" ]]; then
+  CRM_OPEN_BROWSER_EXPLICIT=1
+else
+  CRM_OPEN_BROWSER_EXPLICIT=0
+fi
 CRM_OPEN_BROWSER="${CRM_OPEN_BROWSER:-1}"
 CRM_SMOKE="${CRM_SMOKE:-0}"
+CRM_SMOKE_HEADED="${CRM_SMOKE_HEADED:-${HEADED:-0}}"
+CRM_EXIT_AFTER_SMOKE="${CRM_EXIT_AFTER_SMOKE:-0}"
 CRM_BUILD_BEFORE_START="${CRM_BUILD_BEFORE_START:-1}"
 CRM_META_ADS_SCENARIO="${CRM_META_ADS_SCENARIO:-}"
 CRM_WITH_INSUMOS="${CRM_WITH_INSUMOS:-0}"
@@ -54,6 +61,9 @@ Opções:
   --refresh-insumos-snapshot     Exporta um snapshot novo do D1 remoto antes do seed
   --insumos-seed-token TOKEN     Token local usado para /admin/seed (default: dev-seed-token)
   --smoke                        Roda uma smoke local do módulo após subir o CRM
+  --exit-after-smoke             Encerra o CRM local depois da smoke
+  --headed-smoke                 Roda a smoke com janela visível para debug
+  --browser                      Abre o navegador automaticamente mesmo durante --smoke
   --no-browser                   Não abre o navegador automaticamente
   --stop                         Encerra a instância atual e sai
   -h, --help                     Mostrar ajuda
@@ -91,7 +101,10 @@ while [[ $# -gt 0 ]]; do
     --refresh-insumos-snapshot) CRM_REFRESH_INSUMOS_SNAPSHOT=1 ;;
     --insumos-seed-token) shift; CRM_INSUMOS_SEED_TOKEN="$1" ;;
     --smoke) CRM_SMOKE=1 ;;
-    --no-browser) CRM_OPEN_BROWSER=0 ;;
+    --exit-after-smoke) CRM_EXIT_AFTER_SMOKE=1 ;;
+    --headed-smoke) CRM_SMOKE_HEADED=1 ;;
+    --browser) CRM_OPEN_BROWSER=1; CRM_OPEN_BROWSER_EXPLICIT=1 ;;
+    --no-browser) CRM_OPEN_BROWSER=0; CRM_OPEN_BROWSER_EXPLICIT=1 ;;
     --stop) STOP_ONLY=1 ;;
     -h|--help) usage; exit 0 ;;
     *)
@@ -106,6 +119,14 @@ while [[ $# -gt 0 ]]; do
   esac
   shift || true
 done
+
+if [[ "$CRM_SMOKE" == "1" && "$CRM_OPEN_BROWSER_EXPLICIT" == "0" ]]; then
+  CRM_OPEN_BROWSER=0
+fi
+
+if [[ "$CRM_EXIT_AFTER_SMOKE" == "1" ]]; then
+  CRM_SMOKE=1
+fi
 
 append_query_param() {
   local url="$1"
@@ -417,14 +438,25 @@ if [[ "$CRM_SMOKE" == "1" ]]; then
     echo "[crm-local] Rodando smoke local do Meta Ads..."
     (
       cd "$FRONTEND_DIR"
-      CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" npm run smoke:meta-ads:local
+      CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
+    )
+  elif [[ "$CRM_MODULE" == "site-tracking" ]]; then
+    echo "[crm-local] Rodando smoke local do Site EF..."
+    (
+      cd "$FRONTEND_DIR"
+      CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
     )
   else
     echo "[crm-local] Rodando smoke local padrão..."
     (
       cd "$FRONTEND_DIR"
-      CRM_URL="$DEFAULT_URL" node ./scripts/crm-local-smoke.cjs
+      CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
     )
+  fi
+
+  if [[ "$CRM_EXIT_AFTER_SMOKE" == "1" ]]; then
+    echo "[crm-local] Smoke concluída; encerrando CRM local."
+    exit 0
   fi
 fi
 
