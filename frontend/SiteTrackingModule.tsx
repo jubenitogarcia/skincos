@@ -10,6 +10,7 @@ import {
   SiteIssueAndClickSections,
   SiteLinkSections,
   SiteMetricsGrid,
+  type SiteConnectionForm,
   type ManagedSiteUrlForm,
 } from '@/siteTrackingComponents'
 import { emitSiteTrackingHeaderState, subscribeSiteTrackingHeaderAction } from '@/siteTrackingHeaderBridge'
@@ -50,9 +51,11 @@ const SITE_OPTIONS: SiteTrackingHeaderSiteOption[] = [
 ]
 const SITE_TRACKING_SITE_NAMES_KEY = 'skincos.siteTracking.siteNames.v1'
 
-async function fetchSiteTrackingOverview(days: WindowDays): Promise<TrackingOverviewResponse> {
+async function fetchSiteTrackingOverview(days: WindowDays, siteHost: string): Promise<TrackingOverviewResponse> {
   if (isMetaTrackingLocalMockEnabled()) return getMetaTrackingLocalOverview(days)
-  const response = await fetch(`/api/tracking/overview?days=${days}&limit=12`, { credentials: 'include' })
+  const params = new URLSearchParams({ days: String(days), limit: '12' })
+  if (siteHost) params.set('siteHost', siteHost)
+  const response = await fetch(`/api/tracking/overview?${params.toString()}`, { credentials: 'include' })
   const data = await response.json().catch(() => null)
   if (!response.ok || !data?.ok) {
     throw new Error(data?.message || data?.error || `Não foi possível carregar os dados do site (${response.status})`)
@@ -68,6 +71,9 @@ export function SiteTrackingModule() {
   const [error, setError] = useState<string | null>(null)
   const [connectionNoticeOpen, setConnectionNoticeOpen] = useState(false)
   const [savingManagedUrl, setSavingManagedUrl] = useState(false)
+  const [savingSiteConnection, setSavingSiteConnection] = useState(false)
+  const [renameSiteId, setRenameSiteId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   const [siteNameOverrides, setSiteNameOverrides] = useState<Record<string, string>>(() => {
     try {
       if (typeof window === 'undefined') return {}
@@ -90,13 +96,13 @@ export function SiteTrackingModule() {
     setLoading(true)
     setError(null)
     try {
-      setData(await fetchSiteTrackingOverview(days))
+      setData(await fetchSiteTrackingOverview(days, selectedSiteId))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível carregar os dados do site')
     } finally {
       setLoading(false)
     }
-  }, [days])
+  }, [days, selectedSiteId])
 
   useEffect(() => {
     void load()
@@ -124,10 +130,24 @@ export function SiteTrackingModule() {
   const quality = useMemo(() => data?.behaviorQuality || {}, [data?.behaviorQuality])
   const alerts = listOrEmpty(data?.alerts)
   const operationalAlerts = alerts.filter((alert) => !isInternalPreviewAlert(alert))
-  const siteOptions = useMemo(() => SITE_OPTIONS.map((site) => ({
-    ...site,
-    name: siteNameOverrides[site.id] || site.name,
-  })), [siteNameOverrides])
+  const siteOptions = useMemo(() => {
+    const sites = new Map<string, SiteTrackingHeaderSiteOption>()
+    SITE_OPTIONS.forEach((site) => sites.set(site.id, site))
+    ;(data?.siteConnections?.sites || []).forEach((site) => {
+      if (site.active === false) return
+      sites.set(site.siteHost, {
+        id: site.siteHost,
+        name: site.name || site.siteHost,
+        host: site.siteHost,
+        statusLabel: site.statusLabel || 'Conexão ativa',
+        statusTone: site.statusTone === 'warning' || site.statusTone === 'danger' || site.statusTone === 'neutral' ? site.statusTone : 'success',
+      })
+    })
+    return Array.from(sites.values()).map((site) => ({
+      ...site,
+      name: siteNameOverrides[site.id] || site.name,
+    }))
+  }, [data?.siteConnections?.sites, siteNameOverrides])
   const selectedSite = siteOptions.find((site) => site.id === selectedSiteId) || siteOptions[0]
   const headerUpdatedAt = data?.generatedAt ? new Date(data.generatedAt).toISOString() : undefined
 
@@ -166,9 +186,8 @@ export function SiteTrackingModule() {
         const siteId = action.value || selectedSiteId
         const currentSite = siteOptions.find((site) => site.id === siteId)
         const currentName = currentSite?.name || currentSite?.host || siteId
-        const nextName = window.prompt('Nome exibido para este site', currentName)?.trim()
-        if (!nextName) return
-        setSiteNameOverrides((prev) => ({ ...prev, [siteId]: nextName }))
+        setRenameSiteId(siteId)
+        setRenameValue(currentName)
       }
     })
   }, [load, selectedSiteId, siteOptions])
@@ -386,6 +405,67 @@ export function SiteTrackingModule() {
       setSavingManagedUrl(false)
     }
   }
+  const saveSiteConnection = async (form: SiteConnectionForm) => {
+    setSavingSiteConnection(true)
+    try {
+      const siteHost = form.siteHost.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '')
+      if (!siteHost) throw new Error('Informe o domínio do site.')
+      if (isMetaTrackingLocalMockEnabled()) {
+        const now = Date.now()
+        setData((prev) => {
+          if (!prev) return prev
+          const existing = prev.siteConnections?.sites || []
+          const nextSite = {
+            id: form.id || siteHost,
+            siteHost,
+            host: siteHost,
+            name: form.name.trim() || siteHost,
+            statusLabel: form.statusLabel.trim() || 'Conexão ativa',
+            statusTone: form.statusTone,
+            source: 'crm',
+            active: form.active,
+            createdAtMs: existing.find((item) => item.siteHost === siteHost)?.createdAtMs || now,
+            updatedAtMs: now,
+            eventCount: existing.find((item) => item.siteHost === siteHost)?.eventCount || 0,
+            lastEventAtMs: existing.find((item) => item.siteHost === siteHost)?.lastEventAtMs || null,
+          }
+          return {
+            ...prev,
+            siteConnections: {
+              ...(prev.siteConnections || {}),
+              sites: existing.some((item) => item.siteHost === siteHost)
+                ? existing.map((item) => (item.siteHost === siteHost ? nextSite : item))
+                : [nextSite, ...existing],
+            },
+          }
+        })
+        setSelectedSiteId(siteHost)
+        return
+      }
+
+      const response = await fetch('/api/tracking/site-connections', {
+        method: form.id ? 'PATCH' : 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ ...form, siteHost }),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.message || payload?.error || 'Não foi possível salvar a conexão')
+      const savedHost = payload?.siteConnection?.siteHost || siteHost
+      setSelectedSiteId(savedHost)
+      await load()
+    } finally {
+      setSavingSiteConnection(false)
+    }
+  }
+  const saveRename = () => {
+    if (!renameSiteId) return
+    const nextName = renameValue.trim()
+    if (!nextName) return
+    setSiteNameOverrides((prev) => ({ ...prev, [renameSiteId]: nextName }))
+    setRenameSiteId(null)
+    setRenameValue('')
+  }
   const handleMetricDragEnd = (result: DropResult) => {
     if (!result.destination || result.destination.droppableId !== 'site-tracking-metrics') return
     if (result.source.index === result.destination.index) return
@@ -413,7 +493,57 @@ export function SiteTrackingModule() {
         </div>
       ) : null}
 
-      {connectionNoticeOpen ? <ConnectionNotice onClose={() => setConnectionNoticeOpen(false)} /> : null}
+      {connectionNoticeOpen ? (
+        <ConnectionNotice
+          sites={data?.siteConnections?.sites || []}
+          saving={savingSiteConnection}
+          selectedSiteId={selectedSiteId}
+          onClose={() => setConnectionNoticeOpen(false)}
+          onSave={saveSiteConnection}
+        />
+      ) : null}
+
+      {renameSiteId ? (
+        <div className="fixed inset-0 z-[80] flex items-start justify-center bg-slate-950/70 px-4 pt-24 backdrop-blur-sm">
+          <form
+            className="w-full max-w-md rounded-2xl border border-cyan-400/20 bg-slate-950 p-5 text-slate-100 shadow-[0_24px_100px_rgba(8,145,178,0.18)]"
+            onSubmit={(event) => {
+              event.preventDefault()
+              saveRename()
+            }}
+          >
+            <div className="text-sm font-semibold uppercase tracking-wide text-cyan-100">Renomear site</div>
+            <label className="mt-4 block space-y-1 text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
+              <span>Nome exibido</span>
+              <input
+                autoFocus
+                value={renameValue}
+                onChange={(event) => setRenameValue(event.target.value)}
+                className="h-10 w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 text-sm font-normal normal-case tracking-normal text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/20"
+              />
+            </label>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                className="h-9 rounded-lg border border-slate-700 px-3 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                onClick={() => {
+                  setRenameSiteId(null)
+                  setRenameValue('')
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={!renameValue.trim()}
+                className="h-9 rounded-lg bg-cyan-500 px-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Salvar
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       <SiteMetricsGrid
         hiddenMetricTiles={hiddenMetricTiles}

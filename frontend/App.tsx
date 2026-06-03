@@ -1375,7 +1375,7 @@ export default function AppFunctionalNeatlab() {
                                                         ) : null}
                                                         {active === 'site-tracking' ? (
                                                             <div className="flex items-center gap-2 max-w-[56vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                                                                <div className="flex items-center gap-1.5">
+                                                                <div className="flex h-8 w-64 items-stretch overflow-hidden rounded-md border border-white/20 bg-white/[0.06] text-white">
                                                                     <Select
                                                                         value={siteTrackingHeaderState?.selectedSiteId || ''}
                                                                         onValueChange={(value) => {
@@ -1383,15 +1383,11 @@ export default function AppFunctionalNeatlab() {
                                                                                 dispatchSiteTrackingHeaderAction({ type: 'connect' })
                                                                                 return
                                                                             }
-                                                                            if (value === '__site_tracking_rename_site__') {
-                                                                                dispatchSiteTrackingHeaderAction({ type: 'rename-site', value: siteTrackingHeaderState?.selectedSiteId })
-                                                                                return
-                                                                            }
                                                                             dispatchSiteTrackingHeaderAction({ type: 'set-site', value })
                                                                         }}
                                                                         disabled={siteTrackingHeaderState?.refreshing}
                                                                     >
-                                                                        <SelectTrigger className="h-8 w-64 bg-white/[0.06] border-white/20 text-white">
+                                                                        <SelectTrigger className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-3 text-white shadow-none focus-visible:ring-0">
                                                                             <SelectValue placeholder="Site" />
                                                                         </SelectTrigger>
                                                                         <SelectContent>
@@ -1431,21 +1427,23 @@ export default function AppFunctionalNeatlab() {
                                                                                     <span>Adicionar conexão</span>
                                                                                 </div>
                                                                             </SelectItem>
-                                                                            <SelectItem value="__site_tracking_rename_site__" className="bg-slate-950 text-cyan-100 focus:bg-cyan-500/15 focus:text-cyan-50">
-                                                                                <div className="flex w-full items-center gap-2 pr-4">
-                                                                                    <Pencil className="size-3.5 text-cyan-300" aria-hidden="true" />
-                                                                                    <span>Renomear site</span>
-                                                                                </div>
-                                                                            </SelectItem>
                                                                         </SelectContent>
                                                                     </Select>
                                                                     <button
                                                                         type="button"
-                                                                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/15 bg-white/[0.05] text-cyan-100/80 transition hover:border-cyan-300/50 hover:bg-cyan-400/10 hover:text-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        className="inline-flex h-full w-8 shrink-0 items-center justify-center border-l border-white/15 bg-white/[0.03] text-cyan-100/80 transition hover:bg-cyan-400/10 hover:text-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
                                                                         aria-label="Renomear site selecionado"
                                                                         title="Renomear site"
                                                                         disabled={siteTrackingHeaderState?.refreshing || !siteTrackingHeaderState?.selectedSiteId}
-                                                                        onClick={() => dispatchSiteTrackingHeaderAction({ type: 'rename-site', value: siteTrackingHeaderState?.selectedSiteId })}
+                                                                        onPointerDown={(event) => {
+                                                                            event.preventDefault()
+                                                                            event.stopPropagation()
+                                                                        }}
+                                                                        onClick={(event) => {
+                                                                            event.preventDefault()
+                                                                            event.stopPropagation()
+                                                                            dispatchSiteTrackingHeaderAction({ type: 'rename-site', value: siteTrackingHeaderState?.selectedSiteId })
+                                                                        }}
                                                                     >
                                                                         <Pencil className="size-3.5" aria-hidden="true" />
                                                                     </button>

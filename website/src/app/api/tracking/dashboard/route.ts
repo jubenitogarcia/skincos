@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 import { getBookingDb, type BookingRequestRow } from "@/lib/bookingDb";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 import { serializeSiteCustomUrl, type SiteCustomUrlRow } from "@/lib/siteCustomUrls";
+import {
+    DEFAULT_SITE_HOST,
+    defaultSiteConnection,
+    normalizeOptionalSiteHost,
+    serializeSiteConnection,
+    type SiteConnectionRow,
+} from "@/lib/siteConnections";
 
 export const dynamic = "force-dynamic";
 
@@ -221,6 +228,24 @@ function linkLabel(row: SiteBehaviorRow): string | null {
     return null;
 }
 
+function hostMatches(urlValue: string | null | undefined, siteHost: string | null): boolean {
+    if (!siteHost) return true;
+    const expected = siteHost.toLowerCase();
+    const expectedWww = `www.${expected}`;
+    try {
+        const parsed = new URL(urlValue ?? "");
+        const host = parsed.hostname.toLowerCase();
+        return host === expected || host === expectedWww;
+    } catch {
+        return expected === DEFAULT_SITE_HOST && !urlValue;
+    }
+}
+
+function pageHostMatches(pageHost: string | null | undefined, siteHost: string): boolean {
+    const normalized = (pageHost ?? "").toLowerCase();
+    return normalized === siteHost || normalized === `www.${siteHost}` || (siteHost === DEFAULT_SITE_HOST && !normalized);
+}
+
 function classifyCoverageBucket(params: {
     hasTrackingContext: boolean;
     hasMetaEventId: boolean;
@@ -306,6 +331,8 @@ export async function GET(request: Request) {
     const days = Math.min(parsePositiveInt(url.searchParams.get("days"), 30), 90);
     const offsetDays = Math.min(parsePositiveInt(url.searchParams.get("offsetDays"), 0), 365);
     const limit = Math.min(parsePositiveInt(url.searchParams.get("limit"), 12), 50);
+    const selectedSiteHost = normalizeOptionalSiteHost(url.searchParams.get("siteHost"));
+    const selectedSiteHostWww = selectedSiteHost ? `www.${selectedSiteHost}` : null;
     const untilMs = Date.now() - offsetDays * 24 * 60 * 60 * 1000;
     const sinceMs = untilMs - days * 24 * 60 * 60 * 1000;
 
@@ -352,26 +379,58 @@ export async function GET(request: Request) {
             .all<MetaDeliveryRow>()
     ).results ?? [];
 
-    const siteBehaviorRows = (
-        await db
-            .prepare(
-                `SELECT id, event_name, session_id, created_at_ms, page_url, page_path, page_host, referrer, landing_page,
+    const siteBehaviorQuery = selectedSiteHost
+        ? `SELECT id, event_name, session_id, created_at_ms, page_url, page_path, page_host, referrer, landing_page,
+                        utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, fbp, fbc,
+                        link_url, link_host, link_path, link_type, placement, source, unit_slug, service_id,
+                        booking_id, consent_analytics, consent_marketing, metadata_json
+                 FROM site_behavior_events
+                 WHERE created_at_ms >= ? AND created_at_ms < ?
+                   AND (
+                    lower(page_host) = ?
+                    OR lower(page_host) = ?
+                    OR (? = ? AND page_host IS NULL)
+                   )
+                 ORDER BY created_at_ms DESC
+                 LIMIT 5000`
+        : `SELECT id, event_name, session_id, created_at_ms, page_url, page_path, page_host, referrer, landing_page,
                         utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, fbp, fbc,
                         link_url, link_host, link_path, link_type, placement, source, unit_slug, service_id,
                         booking_id, consent_analytics, consent_marketing, metadata_json
                  FROM site_behavior_events
                  WHERE created_at_ms >= ? AND created_at_ms < ?
                  ORDER BY created_at_ms DESC
-                 LIMIT 5000`,
-            )
-            .bind(sinceMs, untilMs)
-            .all<SiteBehaviorRow>()
+                 LIMIT 5000`;
+    const siteBehaviorStatement = db.prepare(siteBehaviorQuery);
+    const siteBehaviorRows = (
+        await (selectedSiteHost
+            ? siteBehaviorStatement.bind(sinceMs, untilMs, selectedSiteHost, selectedSiteHostWww, selectedSiteHost, DEFAULT_SITE_HOST)
+            : siteBehaviorStatement.bind(sinceMs, untilMs)
+        ).all<SiteBehaviorRow>()
     ).results ?? [];
 
-    const customUrlRows = (
-        await db
-            .prepare(
-                `SELECT
+    const customUrlQuery = selectedSiteHost
+        ? `SELECT
+                    u.id, u.site_host, u.name, u.slug_path, u.destination_url, u.destination_host, u.destination_path,
+                    u.description, u.source, u.placement, u.unit_slug, u.service_id,
+                    u.utm_source, u.utm_medium, u.utm_campaign, u.utm_content, u.utm_term,
+                    u.active, u.created_at_ms, u.updated_at_ms,
+                    COUNT(e.id) AS click_count,
+                    MAX(e.created_at_ms) AS last_click_at_ms
+                 FROM site_custom_urls u
+                 LEFT JOIN site_behavior_events e
+                    ON e.created_at_ms >= ? AND e.created_at_ms < ?
+                    AND (lower(e.page_host) = ? OR lower(e.page_host) = ?)
+                    AND (
+                        e.link_url = u.destination_url
+                        OR e.link_path = u.destination_path
+                        OR (u.utm_campaign IS NOT NULL AND e.utm_campaign = u.utm_campaign)
+                    )
+                 WHERE u.site_host = ?
+                 GROUP BY u.id
+                 ORDER BY u.updated_at_ms DESC
+                 LIMIT ?`
+        : `SELECT
                     u.id, u.site_host, u.name, u.slug_path, u.destination_url, u.destination_host, u.destination_path,
                     u.description, u.source, u.placement, u.unit_slug, u.service_id,
                     u.utm_source, u.utm_medium, u.utm_campaign, u.utm_content, u.utm_term,
@@ -388,10 +447,32 @@ export async function GET(request: Request) {
                     )
                  GROUP BY u.id
                  ORDER BY u.updated_at_ms DESC
-                 LIMIT ?`,
+                 LIMIT ?`;
+    const customUrlStatement = db.prepare(customUrlQuery);
+    const customUrlRows = (
+        await (selectedSiteHost
+            ? customUrlStatement.bind(sinceMs, untilMs, selectedSiteHost, selectedSiteHostWww, selectedSiteHost, limit)
+            : customUrlStatement.bind(sinceMs, untilMs, limit)
+        ).all<SiteCustomUrlRow>()
+    ).results ?? [];
+
+    const siteConnectionRows = (
+        await db
+            .prepare(
+                `SELECT
+                    c.id, c.site_host, c.name, c.status_label, c.status_tone, c.source,
+                    c.active, c.created_at_ms, c.updated_at_ms,
+                    COUNT(e.id) AS event_count,
+                    MAX(e.created_at_ms) AS last_event_at_ms
+                 FROM site_connections c
+                 LEFT JOIN site_behavior_events e
+                    ON lower(e.page_host) = c.site_host
+                    OR lower(e.page_host) = ('www.' || c.site_host)
+                 GROUP BY c.id
+                 ORDER BY c.updated_at_ms DESC
+                 LIMIT 100`,
             )
-            .bind(sinceMs, untilMs, limit)
-            .all<SiteCustomUrlRow>()
+            .all<SiteConnectionRow>()
     ).results ?? [];
 
     const sourceCounts = new Map<string, number>();
@@ -410,8 +491,11 @@ export async function GET(request: Request) {
     ]);
     const scheduleStatusByBookingId = new Map<string, string>();
 
+    const scopedWhatsappRows = selectedSiteHost
+        ? whatsappRows.filter((row) => hostMatches(row.page_url, selectedSiteHost))
+        : whatsappRows;
     let whatsappClicksWithTracking = 0;
-    const recentWhatsappClicks = whatsappRows.slice(0, limit).map((row) => {
+    const recentWhatsappClicks = scopedWhatsappRows.slice(0, limit).map((row) => {
         const tracking = normalizeAttribution(safeJsonParse(row.tracking_context_json));
         if (row.tracking_context_json) whatsappClicksWithTracking += 1;
         return {
@@ -429,7 +513,7 @@ export async function GET(request: Request) {
             utmCampaign: tracking.utmCampaign,
         };
     });
-    whatsappClicksWithTracking += whatsappRows.slice(limit).filter((row) => row.tracking_context_json).length;
+    whatsappClicksWithTracking += scopedWhatsappRows.slice(limit).filter((row) => row.tracking_context_json).length;
 
     let capiScheduleOk = 0;
     let capiScheduleFailed = 0;
@@ -704,6 +788,15 @@ export async function GET(request: Request) {
             })),
     };
 
+    const serializedConnections = siteConnectionRows.map(serializeSiteConnection);
+    if (!serializedConnections.some((site) => site.siteHost === DEFAULT_SITE_HOST)) {
+        const canonicalConnection = defaultSiteConnection();
+        const canonicalEvents = siteBehaviorRows.filter((row) => pageHostMatches(row.page_host, DEFAULT_SITE_HOST));
+        canonicalConnection.eventCount = canonicalEvents.length;
+        canonicalConnection.lastEventAtMs = canonicalEvents[0]?.created_at_ms ?? null;
+        serializedConnections.unshift(canonicalConnection);
+    }
+
     const behaviorQuality = {
         eventsWithCampaign: behaviorEventsWithCampaign,
         eventsWithFacebookIds: behaviorEventsWithFbIds,
@@ -731,7 +824,7 @@ export async function GET(request: Request) {
             bookingsWithMarketingConsent,
             bookingsWithAnalyticsConsent,
             bookingsWithFacebookIds: bookingsWithFbIdentifiers,
-            whatsappClicks: whatsappRows.length,
+            whatsappClicks: scopedWhatsappRows.length,
             whatsappClicksWithTrackingContext: whatsappClicksWithTracking,
             capiScheduleOk,
             capiScheduleFailed,
@@ -748,6 +841,10 @@ export async function GET(request: Request) {
         byUnit: sortMapEntries(unitCounts, "unitSlug").slice(0, 6),
         siteBehavior,
         customLinks,
+        siteConnections: {
+            selectedSiteHost,
+            sites: serializedConnections,
+        },
         siteFunnel,
         behaviorQuality,
         recentBookings,
