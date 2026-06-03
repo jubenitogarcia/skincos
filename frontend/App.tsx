@@ -1375,69 +1375,81 @@ export default function AppFunctionalNeatlab() {
                                                         ) : null}
                                                         {active === 'site-tracking' ? (
                                                             <div className="flex items-center gap-2 max-w-[56vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                                                                <Select
-                                                                    value={siteTrackingHeaderState?.selectedSiteId || ''}
-                                                                    onValueChange={(value) => {
-                                                                        if (value === '__site_tracking_add_connection__') {
-                                                                            dispatchSiteTrackingHeaderAction({ type: 'connect' })
-                                                                            return
-                                                                        }
-                                                                        if (value === '__site_tracking_rename_site__') {
-                                                                            dispatchSiteTrackingHeaderAction({ type: 'rename-site', value: siteTrackingHeaderState?.selectedSiteId })
-                                                                            return
-                                                                        }
-                                                                        dispatchSiteTrackingHeaderAction({ type: 'set-site', value })
-                                                                    }}
-                                                                    disabled={siteTrackingHeaderState?.refreshing}
-                                                                >
-                                                                    <SelectTrigger className="h-8 w-64 bg-white/[0.06] border-white/20 text-white">
-                                                                        <SelectValue placeholder="Site" />
-                                                                    </SelectTrigger>
-                                                                    <SelectContent>
-                                                                        {[...(siteTrackingHeaderState?.sites || [])]
-                                                                            .sort((a, b) => {
-                                                                                if (a.id === siteTrackingHeaderState?.selectedSiteId) return -1
-                                                                                if (b.id === siteTrackingHeaderState?.selectedSiteId) return 1
-                                                                                return (a.name || a.host || a.id).localeCompare(b.name || b.host || b.id, 'pt-BR')
-                                                                            })
-                                                                            .map((site) => {
-                                                                                const isSelectedSite = site.id === siteTrackingHeaderState?.selectedSiteId
-                                                                                const statusTone =
-                                                                                    site.statusTone === 'success'
-                                                                                        ? 'bg-emerald-500/12 text-emerald-100 focus:bg-emerald-500/20 focus:text-emerald-50'
-                                                                                        : site.statusTone === 'warning'
-                                                                                            ? 'bg-amber-500/12 text-amber-100 focus:bg-amber-500/20 focus:text-amber-50'
-                                                                                            : site.statusTone === 'danger'
-                                                                                                ? 'bg-rose-500/12 text-rose-100 focus:bg-rose-500/20 focus:text-rose-50'
-                                                                                                : 'bg-slate-950 text-slate-100 focus:bg-slate-800/90'
-                                                                                return (
-                                                                                    <SelectItem
-                                                                                        key={site.id}
-                                                                                        value={site.id}
-                                                                                        className={`${statusTone} ${isSelectedSite ? 'border-l-2 border-cyan-300/80 font-semibold ring-1 ring-inset ring-cyan-300/20' : 'border-l-2 border-transparent font-normal'}`}
-                                                                                        hideIndicator
-                                                                                    >
-                                                                                        <div className="flex min-w-0 flex-col pr-4 leading-tight">
-                                                                                            <span className={`truncate ${isSelectedSite ? 'text-white' : ''}`}>{site.name || site.host || site.id}</span>
-                                                                                            {site.statusLabel ? <span className="truncate text-[10px] font-normal opacity-70">{site.statusLabel}</span> : null}
-                                                                                        </div>
-                                                                                    </SelectItem>
-                                                                                )
-                                                                            })}
-                                                                        <SelectItem value="__site_tracking_add_connection__" className="bg-slate-950 text-cyan-100 focus:bg-cyan-500/15 focus:text-cyan-50">
-                                                                            <div className="flex w-full items-center gap-2 pr-4">
-                                                                                <Plus className="size-3.5 text-cyan-300" aria-hidden="true" />
-                                                                                <span>Adicionar conexão</span>
-                                                                            </div>
-                                                                        </SelectItem>
-                                                                        <SelectItem value="__site_tracking_rename_site__" className="bg-slate-950 text-cyan-100 focus:bg-cyan-500/15 focus:text-cyan-50">
-                                                                            <div className="flex w-full items-center gap-2 pr-4">
-                                                                                <Pencil className="size-3.5 text-cyan-300" aria-hidden="true" />
-                                                                                <span>Renomear site</span>
-                                                                            </div>
-                                                                        </SelectItem>
-                                                                    </SelectContent>
-                                                                </Select>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <Select
+                                                                        value={siteTrackingHeaderState?.selectedSiteId || ''}
+                                                                        onValueChange={(value) => {
+                                                                            if (value === '__site_tracking_add_connection__') {
+                                                                                dispatchSiteTrackingHeaderAction({ type: 'connect' })
+                                                                                return
+                                                                            }
+                                                                            if (value === '__site_tracking_rename_site__') {
+                                                                                dispatchSiteTrackingHeaderAction({ type: 'rename-site', value: siteTrackingHeaderState?.selectedSiteId })
+                                                                                return
+                                                                            }
+                                                                            dispatchSiteTrackingHeaderAction({ type: 'set-site', value })
+                                                                        }}
+                                                                        disabled={siteTrackingHeaderState?.refreshing}
+                                                                    >
+                                                                        <SelectTrigger className="h-8 w-64 bg-white/[0.06] border-white/20 text-white">
+                                                                            <SelectValue placeholder="Site" />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            {[...(siteTrackingHeaderState?.sites || [])]
+                                                                                .sort((a, b) => {
+                                                                                    if (a.id === siteTrackingHeaderState?.selectedSiteId) return -1
+                                                                                    if (b.id === siteTrackingHeaderState?.selectedSiteId) return 1
+                                                                                    return (a.name || a.host || a.id).localeCompare(b.name || b.host || b.id, 'pt-BR')
+                                                                                })
+                                                                                .map((site) => {
+                                                                                    const isSelectedSite = site.id === siteTrackingHeaderState?.selectedSiteId
+                                                                                    const statusTone =
+                                                                                        site.statusTone === 'success'
+                                                                                            ? 'bg-emerald-500/12 text-emerald-100 focus:bg-emerald-500/20 focus:text-emerald-50'
+                                                                                            : site.statusTone === 'warning'
+                                                                                                ? 'bg-amber-500/12 text-amber-100 focus:bg-amber-500/20 focus:text-amber-50'
+                                                                                                : site.statusTone === 'danger'
+                                                                                                    ? 'bg-rose-500/12 text-rose-100 focus:bg-rose-500/20 focus:text-rose-50'
+                                                                                                    : 'bg-slate-950 text-slate-100 focus:bg-slate-800/90'
+                                                                                    return (
+                                                                                        <SelectItem
+                                                                                            key={site.id}
+                                                                                            value={site.id}
+                                                                                            className={`${statusTone} ${isSelectedSite ? 'border-l-2 border-cyan-300/80 font-semibold ring-1 ring-inset ring-cyan-300/20' : 'border-l-2 border-transparent font-normal'}`}
+                                                                                            hideIndicator
+                                                                                        >
+                                                                                            <div className="flex min-w-0 flex-col pr-4 leading-tight">
+                                                                                                <span className={`truncate ${isSelectedSite ? 'text-white' : ''}`}>{site.name || site.host || site.id}</span>
+                                                                                                {site.statusLabel ? <span className="truncate text-[10px] font-normal opacity-70">{site.statusLabel}</span> : null}
+                                                                                            </div>
+                                                                                        </SelectItem>
+                                                                                    )
+                                                                                })}
+                                                                            <SelectItem value="__site_tracking_add_connection__" className="bg-slate-950 text-cyan-100 focus:bg-cyan-500/15 focus:text-cyan-50">
+                                                                                <div className="flex w-full items-center gap-2 pr-4">
+                                                                                    <Plus className="size-3.5 text-cyan-300" aria-hidden="true" />
+                                                                                    <span>Adicionar conexão</span>
+                                                                                </div>
+                                                                            </SelectItem>
+                                                                            <SelectItem value="__site_tracking_rename_site__" className="bg-slate-950 text-cyan-100 focus:bg-cyan-500/15 focus:text-cyan-50">
+                                                                                <div className="flex w-full items-center gap-2 pr-4">
+                                                                                    <Pencil className="size-3.5 text-cyan-300" aria-hidden="true" />
+                                                                                    <span>Renomear site</span>
+                                                                                </div>
+                                                                            </SelectItem>
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/15 bg-white/[0.05] text-cyan-100/80 transition hover:border-cyan-300/50 hover:bg-cyan-400/10 hover:text-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        aria-label="Renomear site selecionado"
+                                                                        title="Renomear site"
+                                                                        disabled={siteTrackingHeaderState?.refreshing || !siteTrackingHeaderState?.selectedSiteId}
+                                                                        onClick={() => dispatchSiteTrackingHeaderAction({ type: 'rename-site', value: siteTrackingHeaderState?.selectedSiteId })}
+                                                                    >
+                                                                        <Pencil className="size-3.5" aria-hidden="true" />
+                                                                    </button>
+                                                                </div>
                                                             </div>
                                                         ) : null}
 		                                    </div>
