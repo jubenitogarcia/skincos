@@ -452,8 +452,9 @@ async function fetchWhatsappAttributionOverview({ sinceIso, limit }) {
         }
     }
 
-    const client = await pgPool.connect()
+    let client = null
     try {
+        client = await pgPool.connect()
         const summaryRes = await client.query(
             `
             select
@@ -639,8 +640,13 @@ async function fetchWhatsappAttributionOverview({ sinceIso, limit }) {
                 recentAppointments,
             },
         }
+    } catch (error) {
+        return {
+            available: false,
+            error: error instanceof Error ? error.message : 'whatsapp_database_unavailable',
+        }
     } finally {
-        client.release()
+        if (client) client.release()
     }
 }
 
