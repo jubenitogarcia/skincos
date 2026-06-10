@@ -17,6 +17,13 @@ WhatsApp/
 └── scripts/               # Build and deployment scripts
 ```
 
+### Source Layout
+
+`apps/whatsapp-api/src` is the canonical source tree for the gateway WhatsApp
+API/client code. The repository root keeps `src` as a symlink to that directory
+so legacy imports such as `require('./src/Client')` and older root-level tests
+continue to work without maintaining a second copy of the same files.
+
 ## 🚀 Getting Started
 
 ### Prerequisites
