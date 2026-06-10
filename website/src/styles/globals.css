@@ -8621,7 +8621,9 @@ video.heroMediaEl {
   }
 
   .heroMedia {
-    max-height: 440px;
+    height: clamp(560px, calc(100vw * 16 / 9), 720px);
+    max-height: none;
+    min-height: 0;
   }
 
   .heroMediaEl {
@@ -8752,8 +8754,9 @@ video.heroMediaEl {
   }
 
   .heroMedia {
-    max-height: 380px;
-    min-height: 260px;
+    height: clamp(560px, calc(100vw * 16 / 9), 720px);
+    max-height: none;
+    min-height: 0;
   }
 
   .homeUnitSelector__actions {
