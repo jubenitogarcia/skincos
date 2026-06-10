@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { composeHeroMediaItems, getLocalHeroItems, resolveScopedHeroMediaItems } from "../src/lib/heroMediaShared";
+import {
+    HERO_JUNHO_2026_DESKTOP_ITEMS,
+    HERO_JUNHO_2026_MOBILE_ITEMS,
+    composeHeroMediaItems,
+    getLocalHeroItems,
+    resolveScopedHeroMediaItems,
+} from "../src/lib/heroMediaShared";
 import type { HeroMediaItem } from "../src/lib/heroMediaShared";
 
 test("compose hero media orders unit-specific banners before global banners", () => {
@@ -83,11 +89,25 @@ test("scoped resolver selects global + current unit and defaults missing scope t
     );
 });
 
-test("local hero items compose unit-specific and global banners for a unit page", () => {
+test("local hero items use the Junho 2026 global campaign for a unit page", () => {
     const items = getLocalHeroItems("desktop", { unitSlug: "barrashoppingsul" });
 
-    assert.equal(items.length, 11);
-    assert.ok(items[0]?.src.includes("/images/hero/campaigns/maes-2026/"));
-    assert.ok(items.some((item) => item.src.includes("/images/hero/campaigns/maes-2026/")));
-    assert.ok(items.some((item) => item.src.includes("/images/hero/campaigns/clube-botox-2026/")));
+    assert.equal(items.length, 13);
+    assert.ok(items.every((item) => item.src.includes("/images/hero/campaigns/junho-2026/desktop/")));
+    assert.ok(items.every((item) => item.scope !== "unit:barrashoppingsul"));
+});
+
+test("Junho 2026 local hero campaign keeps separate desktop and mobile assets", () => {
+    assert.equal(HERO_JUNHO_2026_DESKTOP_ITEMS.length, 13);
+    assert.equal(HERO_JUNHO_2026_MOBILE_ITEMS.length, 13);
+
+    assert.ok(HERO_JUNHO_2026_DESKTOP_ITEMS.every((item) => item.src.includes("/desktop/")));
+    assert.ok(HERO_JUNHO_2026_DESKTOP_ITEMS.every((item) => item.src.endsWith("__2x1.png")));
+    assert.ok(HERO_JUNHO_2026_MOBILE_ITEMS.every((item) => item.src.includes("/mobile/")));
+    assert.ok(HERO_JUNHO_2026_MOBILE_ITEMS.every((item) => item.src.endsWith("__9x16.png")));
+
+    assert.deepEqual(
+        HERO_JUNHO_2026_DESKTOP_ITEMS.map((item) => item.id?.replace("junho-2026-desktop-", "")),
+        HERO_JUNHO_2026_MOBILE_ITEMS.map((item) => item.id?.replace("junho-2026-mobile-", "")),
+    );
 });

@@ -175,10 +175,12 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
             string
         >;
     useEffect(() => {
-        if (Array.isArray(initialItems) && initialItems.length) return;
         if (typeof window === "undefined") return;
         const mql = window.matchMedia("(max-width: 900px)");
-        const update = () => setVariant(mql.matches ? "mobile" : "desktop");
+        const update = () => {
+            const nextVariant = mql.matches ? "mobile" : "desktop";
+            setVariant((current) => (current === nextVariant ? current : nextVariant));
+        };
         update();
         if (typeof mql.addEventListener === "function") {
             mql.addEventListener("change", update);
@@ -186,7 +188,7 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
         }
         mql.addListener(update);
         return () => mql.removeListener(update);
-    }, [initialItems]);
+    }, []);
 
     const [items, setItems] = useState<HeroMediaItem[]>(() => {
         const startupStoredUnitSlug = typeof window === "undefined" ? null : getStoredUnitSlug();
@@ -206,7 +208,7 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     const storedUnitSlug = typeof window === "undefined" ? null : getStoredUnitSlug();
     const targetUnitSlug = unit?.slug ?? storedUnitSlug ?? initialUnitSlug ?? null;
     const targetCampaignKey = campaignKey(variant, targetUnitSlug);
-    const initialCampaignKey = campaignKey(variant, initialUnitSlug ?? null);
+    const initialCampaignKey = campaignKey(initialVariant ?? variant, initialUnitSlug ?? null);
     const visibleItems = loadedCampaignKey === targetCampaignKey ? items : EMPTY_HERO_ITEMS;
 
     const markImageReady = useCallback((src: string) => {
@@ -300,7 +302,7 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
         };
     }, [hasInitialItems, initialCampaignKey, initialItems, targetCampaignKey, targetUnitSlug, variant]);
 
-    const effectiveVariant = initialVariant ?? variant;
+    const effectiveVariant = variant;
 
     useEffect(() => {
         setIndex(0);
