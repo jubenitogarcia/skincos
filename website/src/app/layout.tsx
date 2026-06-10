@@ -18,6 +18,7 @@ const buildTime = process.env.NEXT_PUBLIC_BUILD_TIME ?? "";
 const brandUiFont = Oxanium({
   subsets: ["latin"],
   display: "swap",
+  preload: false,
   variable: "--font-brand-ui-loaded",
   weight: ["400", "500", "600", "700", "800"],
 });
@@ -25,6 +26,7 @@ const brandUiFont = Oxanium({
 const brandTextFont = Urbanist({
   subsets: ["latin"],
   display: "swap",
+  preload: false,
   variable: "--font-brand-text-loaded",
   weight: ["300", "400", "500", "600", "700", "800"],
 });
