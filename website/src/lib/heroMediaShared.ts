@@ -30,180 +30,115 @@ export type HeroMediaScopeBuckets = {
     globalItems: HeroMediaItem[];
 };
 
-export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = [
+const HERO_JUNHO_2026_CAMPAIGN_ITEMS = [
     {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-01.png",
-        alt: "Mês das Mães - Espaço Facial",
+        id: "botox-3-regioes-50ui-699",
+        desktopFile: "botox_3_regioes_50ui__rosto__price__699__meta__story__estatico__campaign__2x1.png",
+        mobileFile: "botox_3_regioes_50ui__rosto__price__699__meta__story__estatico__campaign__9x16.png",
+        alt: "Botox 3 regiões 50 UI por R$ 699 - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-02.png",
-        alt: "Mês das Mães - Botox 3 Regiões",
+        id: "botox-3-regioes-60ui-799",
+        desktopFile: "botox_3_regioes_60ui__rosto__799__campaign__2x1.png",
+        mobileFile: "botox_3_regioes_60ui__rosto__799__campaign__9x16.png",
+        alt: "Botox 3 regiões 60 UI por R$ 799 - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-03.png",
-        alt: "Mês das Mães - Bioestimulador de Colágeno",
+        id: "botox-3-regioes-599",
+        desktopFile: "botox_3_regioes__rosto__price__599__meta__story__estatico__campaign__2x1.png",
+        mobileFile: "botox_3_regioes__rosto__price__599__meta__story__estatico__campaign__9x16.png",
+        alt: "Botox 3 regiões por R$ 599 - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-04.jpg",
-        alt: "Mês das Mães - Bioestimulador de Colágeno destaque",
+        id: "combo-botox-full-face-labial-hidragloss-v1",
+        desktopFile: "combo_botox_full_face_preenchimento_labial_hidragloss__rosto__10x14990__campaign__V1__2x1.png",
+        mobileFile: "combo_botox_full_face_preenchimento_labial_hidragloss__rosto__10x14990__campaign__V1__9x16.png",
+        alt: "Combo Botox Full Face, preenchimento labial e Hidragloss em 10x de R$ 149,90 - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-05.jpg",
-        alt: "Mês das Mães - Laser Lavieen",
+        id: "combo-botox-full-face-labial-hidragloss-v2",
+        desktopFile: "combo_botox_full_face_preenchimento_labial_hidragloss__rosto__10x14990__campaign__V2__2x1.png",
+        mobileFile: "combo_botox_full_face_preenchimento_labial_hidragloss__rosto__10x14990__campaign__V2__9x16.png",
+        alt: "Combo Botox Full Face, preenchimento labial e Hidragloss - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-06.jpg",
-        alt: "Mês das Mães - Bioestimulador de Colágeno oferta",
+        id: "combo-botox-preenchimento-40ui-1ml",
+        desktopFile: "combo_botox_preenchimento__40ui_1ml__10x97__campaign__2x1.png",
+        mobileFile: "combo_botox_preenchimento__40ui_1ml__10x97__campaign__9x16.png",
+        alt: "Combo Botox 40 UI e preenchimento 1 ml em 10x de R$ 97 - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-07.jpg",
-        alt: "Mês das Mães - Preenchimento Labial",
+        id: "combo-botox-preenchimento-mulher-40ui-1ml",
+        desktopFile: "combo_botox_preenchimento__mulher__40ui_1ml__10x97__campaign__2x1.png",
+        mobileFile: "combo_botox_preenchimento__mulher__40ui_1ml__10x97__campaign__9x16.png",
+        alt: "Combo Botox e preenchimento 40 UI + 1 ml - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-08.jpg",
-        alt: "Mês das Mães - Botox 3 Regiões campanha",
+        id: "combo-botox-preenchimento-facial",
+        desktopFile: "combo_botox_preenchimento_facial__rosto__parcelado__10x97__campaign__2x1.png",
+        mobileFile: "combo_botox_preenchimento_facial__rosto__parcelado__10x97__campaign__9x16.png",
+        alt: "Combo Botox e preenchimento facial em 10x de R$ 97 - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-09.jpg",
-        alt: "Mês das Mães - Botox 3 Regiões visual",
+        id: "combo-pele-renovada",
+        desktopFile: "combo_pele_renovada__peeling_microagulhamento_intradermoterapia__450__campaign__2x1.png",
+        mobileFile: "combo_pele_renovada__peeling_microagulhamento_intradermoterapia__450__campaign__9x16.png",
+        alt: "Combo pele renovada com peeling, microagulhamento e intradermoterapia - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/clube-botox-2026/banner-01.jpg",
-        alt: "Clube do Botox - campanha masculina",
+        id: "combo-preenchimento-sculptra",
+        desktopFile: "combo_preenchimento_sculptra__1ml__10x249__campaign__2x1.png",
+        mobileFile: "combo_preenchimento_sculptra__1ml__10x249__campaign__9x16.png",
+        alt: "Combo preenchimento e Sculptra 1 ml em 10x de R$ 249 - campanha Junho 2026",
     },
     {
-        type: "image",
-        src: "/images/hero/campaigns/clube-botox-2026/banner-02.jpg",
-        alt: "Clube do Botox - campanha feminina",
+        id: "preenchimento-labial-antes-depois-namorados",
+        desktopFile: "preenchimento_labial__antes_depois__1ml599_2ml50off__campaign_namorados__2x1.png",
+        mobileFile: "preenchimento_labial__antes_depois__1ml599_2ml50off__campaign_namorados__9x16.png",
+        alt: "Preenchimento labial 1 ml por R$ 599 e segundo ml com 50% off - campanha Namorados 2026",
     },
-];
+    {
+        id: "preenchimento-labial-casal-namorados",
+        desktopFile: "preenchimento_labial__casal__1ml599_2ml50off__campaign_namorados__2x1.png",
+        mobileFile: "preenchimento_labial__casal__1ml599_2ml50off__campaign_namorados__9x16.png",
+        alt: "Preenchimento labial para casal - campanha Namorados 2026",
+    },
+    {
+        id: "preenchimento-labial-rosto-namorados",
+        desktopFile: "preenchimento_labial__rosto__1ml_599_2ml_50off_299__campaign_namorados__2x1.png",
+        mobileFile: "preenchimento_labial__rosto__1ml_599_2ml_50off_299__campaign_namorados__9x16.png",
+        alt: "Preenchimento labial 1 ml por R$ 599, segundo ml por R$ 299 - campanha Namorados 2026",
+    },
+] as const;
 
-export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = [
-    {
+function heroJunho2026ItemForVariant(
+    item: (typeof HERO_JUNHO_2026_CAMPAIGN_ITEMS)[number],
+    variant: HeroMediaVariant,
+    index: number,
+): HeroMediaItem {
+    const file = variant === "mobile" ? item.mobileFile : item.desktopFile;
+    return {
+        id: `junho-2026-${variant}-${item.id}`,
         type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-01.png",
-        alt: "Mês das Mães - Espaço Facial",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-02.png",
-        alt: "Mês das Mães - Botox 3 Regiões",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-03.png",
-        alt: "Mês das Mães - Bioestimulador de Colágeno",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-04.jpg",
-        alt: "Mês das Mães - Bioestimulador de Colágeno destaque",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-05.jpg",
-        alt: "Mês das Mães - Laser Lavieen",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-06.jpg",
-        alt: "Mês das Mães - Bioestimulador de Colágeno oferta",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-07.jpg",
-        alt: "Mês das Mães - Preenchimento Labial",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-08.jpg",
-        alt: "Mês das Mães - Botox 3 Regiões campanha",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-09.jpg",
-        alt: "Mês das Mães - Botox 3 Regiões visual",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/clube-botox-2026/banner-01.jpg",
-        alt: "Clube do Botox - campanha masculina",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/clube-botox-2026/banner-02.jpg",
-        alt: "Clube do Botox - campanha feminina",
-    },
-];
+        src: `/images/hero/campaigns/junho-2026/${variant}/${file}`,
+        alt: item.alt,
+        order: index + 1,
+    };
+}
 
-const HERO_MAES_2026_ITEMS: HeroMediaItem[] = [
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-01.png",
-        alt: "Mês das Mães - Espaço Facial",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-02.png",
-        alt: "Mês das Mães - Botox 3 Regiões",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-03.png",
-        alt: "Mês das Mães - Bioestimulador de Colágeno",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-04.jpg",
-        alt: "Mês das Mães - Bioestimulador de Colágeno destaque",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-05.jpg",
-        alt: "Mês das Mães - Laser Lavieen",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-06.jpg",
-        alt: "Mês das Mães - Bioestimulador de Colágeno oferta",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-07.jpg",
-        alt: "Mês das Mães - Preenchimento Labial",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-08.jpg",
-        alt: "Mês das Mães - Botox 3 Regiões campanha",
-    },
-    {
-        type: "image",
-        src: "/images/hero/campaigns/maes-2026/banner-09.jpg",
-        alt: "Mês das Mães - Botox 3 Regiões visual",
-    },
-];
+export const HERO_JUNHO_2026_DESKTOP_ITEMS: HeroMediaItem[] = HERO_JUNHO_2026_CAMPAIGN_ITEMS.map((item, index) =>
+    heroJunho2026ItemForVariant(item, "desktop", index),
+);
 
-export const LOCAL_HERO_ITEMS_BY_UNIT: Partial<Record<string, HeroMediaUnitCampaign>> = {
-    barrashoppingsul: {
-        desktop: HERO_MAES_2026_ITEMS,
-        mobile: HERO_MAES_2026_ITEMS,
-    },
-    novohamburgo: {
-        desktop: HERO_MAES_2026_ITEMS,
-        mobile: HERO_MAES_2026_ITEMS,
-    },
-};
+export const HERO_JUNHO_2026_MOBILE_ITEMS: HeroMediaItem[] = HERO_JUNHO_2026_CAMPAIGN_ITEMS.map((item, index) =>
+    heroJunho2026ItemForVariant(item, "mobile", index),
+);
+
+export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = HERO_JUNHO_2026_DESKTOP_ITEMS;
+
+export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = HERO_JUNHO_2026_MOBILE_ITEMS;
+
+export const LOCAL_HERO_ITEMS_BY_UNIT: Partial<Record<string, HeroMediaUnitCampaign>> = {};
 
 export function normalizeHeroUnitSlug(value: string | null | undefined): string {
     return (value ?? "")
