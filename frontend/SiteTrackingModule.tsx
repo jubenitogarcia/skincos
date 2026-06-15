@@ -45,7 +45,7 @@ const SITE_OPTIONS: SiteTrackingHeaderSiteOption[] = [
     id: 'espacofacial.com',
     name: 'espacofacial.com',
     host: 'espacofacial.com',
-    statusLabel: 'Canônico do funil',
+    statusLabel: 'Domínio principal',
     statusTone: 'success',
   },
 ]
@@ -150,6 +150,8 @@ export function SiteTrackingModule() {
   }, [data?.siteConnections?.sites, siteNameOverrides])
   const selectedSite = siteOptions.find((site) => site.id === selectedSiteId) || siteOptions[0]
   const headerUpdatedAt = data?.generatedAt ? new Date(data.generatedAt).toISOString() : undefined
+  const dataSourceLabel = data?.website?.data?.source || (data?.website?.available ? 'website_d1' : null)
+  const dataUpdatedLabel = data?.generatedAt ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(data.generatedAt)) : null
 
   useEffect(() => {
     emitSiteTrackingHeaderState({
@@ -545,6 +547,15 @@ export function SiteTrackingModule() {
         </div>
       ) : null}
 
+      {dataSourceLabel ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800/70 bg-slate-950/35 px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-slate-500">
+          <span>Fonte: {dataSourceLabel}</span>
+          {data?.window?.days ? <span>Janela: {data.window.days} dias</span> : null}
+          {dataUpdatedLabel ? <span>Atualizado: {dataUpdatedLabel}</span> : null}
+          {selectedSite?.host ? <span>Site: {selectedSite.host}</span> : null}
+        </div>
+      ) : null}
+
       <SiteMetricsGrid
         hiddenMetricTiles={hiddenMetricTiles}
         visibleMetricTiles={visibleMetricTiles}
@@ -560,6 +571,7 @@ export function SiteTrackingModule() {
       <SiteBehaviorSections data={data} />
       <ManagedSiteUrlsSection
         urls={listOrEmpty(data?.customLinks?.managedUrls)}
+        cloudflareRedirects={listOrEmpty(data?.customLinks?.cloudflareRedirects)}
         saving={savingManagedUrl}
         onSave={saveManagedUrl}
       />

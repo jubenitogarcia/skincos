@@ -80,6 +80,16 @@ export type TrackingOverviewResponse = {
       clickCount: number
       lastClickAtMs: number | null
     }>
+    cloudflareRedirects?: Array<{
+      id: string
+      siteHost: string
+      name: string
+      slugPath: string
+      publicUrl: string
+      destinationUrl: string
+      source: 'cloudflare_worker'
+      active: boolean
+    }>
     topLinks?: Array<{ linkUrl: string; count: number }>
     topUtmContent?: Array<{ utmContent: string; count: number }>
     linksMissingUtm?: Array<{ linkUrl: string; count: number }>
@@ -199,6 +209,7 @@ export type TrackingOverviewResponse = {
     error?: string
     sourceUrl?: string
     data?: {
+      source?: string
       summary?: Record<string, number>
       topSources?: Array<{ utmSource: string; count: number }>
       topCampaigns?: Array<{ utmCampaign: string; count: number }>
@@ -440,7 +451,7 @@ export function getMetaTrackingLocalOverview(days = 30): TrackingOverviewRespons
           siteHost: 'espacofacial.com',
           host: 'espacofacial.com',
           name: 'espacofacial.com',
-          statusLabel: 'Canônico do funil',
+          statusLabel: 'Domínio principal',
           statusTone: 'success',
           source: 'system',
           active: true,

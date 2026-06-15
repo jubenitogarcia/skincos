@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBookingDb, type BookingRequestRow } from "@/lib/bookingDb";
+import { listEsfaRedirects } from "@/lib/esfaRedirects";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 import { serializeSiteCustomUrl, type SiteCustomUrlRow } from "@/lib/siteCustomUrls";
 import {
@@ -762,6 +763,7 @@ export async function GET(request: Request) {
 
     const customLinks = {
         managedUrls: customUrlRows.map(serializeSiteCustomUrl),
+        cloudflareRedirects: listEsfaRedirects(),
         topLinks: sortMapEntries(behaviorLinkCounts, "linkUrl").slice(0, 10),
         topUtmContent: sortMapEntries(behaviorUtmContentCounts, "utmContent").slice(0, 10),
         linksMissingUtm: sortMapEntries(behaviorMissingUtmLinkCounts, "linkUrl").slice(0, 10),

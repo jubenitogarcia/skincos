@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { CircleCheck, Eye, EyeOff, KeyRound, LockKeyhole, Mail, ShieldCheck, UserRound } from 'lucide-react'
+import { CircleCheck, Eye, EyeOff, KeyRound, Mail, ShieldCheck, UserRound } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/card'
 import { Input } from '@/input'
 import { Button } from '@/button'
@@ -25,6 +25,7 @@ export function AuthScreen() {
     const [isVisible, setIsVisible] = useState(false)
     const [showPassword, setShowPassword] = useState(false)
     const [capsLock, setCapsLock] = useState(false)
+    const currentYear = new Date().getFullYear()
 
     useEffect(() => {
         setIsVisible(true)
@@ -119,9 +120,9 @@ export function AuthScreen() {
             <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-6 sm:px-6 lg:grid lg:grid-cols-[minmax(0,1fr)_480px] lg:items-center lg:gap-12 lg:py-10">
                 <header className={`order-1 mb-8 flex items-center justify-between transition-all duration-700 lg:absolute lg:left-6 lg:right-6 lg:top-6 ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
                     <img
-                        src="/brand/espacofacial-logo-official-white.svg"
+                        src="/brand/espacofacial-logo-light.svg"
                         alt="Espaço Facial"
-                        className="h-10 w-auto max-w-[230px] sm:h-12 sm:max-w-[280px]"
+                        className="h-11 w-[230px] object-contain object-left sm:h-12 sm:w-[280px]"
                     />
                     <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-slate-300">
                         <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.65)]" />
@@ -130,27 +131,26 @@ export function AuthScreen() {
                 </header>
 
                 <section className={`order-3 mt-8 max-w-xl transition-all duration-700 lg:order-none lg:mt-0 ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-                    <div className="mb-5 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold uppercase text-slate-300">
-                        <LockKeyhole className="h-3.5 w-3.5" aria-hidden />
-                        CRM corporativo
-                    </div>
                     <h1 className="max-w-xl text-3xl font-semibold leading-tight text-white sm:text-4xl lg:text-5xl">
                         Relacionamento, operações e crescimento em uma única plataforma.
                     </h1>
                     <p className="mt-5 max-w-lg text-base leading-7 text-slate-300">
                         Acesso restrito para equipes autorizadas. Perfis, unidades e módulos são definidos por convite administrativo e aplicados no backend do CRM.
                     </p>
-                    <div className="mt-8 grid gap-3 text-sm text-slate-300 sm:grid-cols-3">
+                    <div className="mt-8 grid gap-3 text-center text-sm text-slate-300 sm:grid-cols-3">
                         <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
-                            <div className="text-lg font-semibold text-white">Convite</div>
+                            <KeyRound className="mx-auto h-5 w-5 text-cyan-200" aria-hidden />
+                            <div className="mt-3 text-lg font-semibold text-white">Convite</div>
                             <div className="mt-1 text-slate-400">Cadastro com token único</div>
                         </div>
                         <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
-                            <div className="text-lg font-semibold text-white">Escopo</div>
+                            <UserRound className="mx-auto h-5 w-5 text-violet-200" aria-hidden />
+                            <div className="mt-3 text-lg font-semibold text-white">Escopo</div>
                             <div className="mt-1 text-slate-400">Módulos e unidades por usuário</div>
                         </div>
                         <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
-                            <div className="text-lg font-semibold text-white">Sessão</div>
+                            <ShieldCheck className="mx-auto h-5 w-5 text-emerald-200" aria-hidden />
+                            <div className="mt-3 text-lg font-semibold text-white">Sessão</div>
                             <div className="mt-1 text-slate-400">Cookies seguros e CSRF</div>
                         </div>
                     </div>
@@ -279,7 +279,7 @@ export function AuthScreen() {
                                         Senha {mode === 'signup' && '(mínimo de 6 caracteres)'}
                                     </label>
                                     <div className="relative">
-                                        <LockKeyhole className={iconChrome} aria-hidden />
+                                        <KeyRound className={iconChrome} aria-hidden />
                                         <Input
                                             id="auth-password"
                                             name="password"
@@ -364,7 +364,7 @@ export function AuthScreen() {
                 </main>
 
                 <footer className={`order-4 mt-8 pb-2 text-center text-xs text-slate-500 transition-all duration-700 delay-200 lg:col-span-2 ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-                    © 2024 Espaço Facial CRM
+                    © {currentYear} Espaço Facial CRM
                 </footer>
             </div>
         </div>
