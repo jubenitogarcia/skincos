@@ -64,6 +64,7 @@ model User {
   memberships  Membership[]
   metaConnections MetaConnection[]
   auditLogs    AuditLog[]
+  bulkOperations BulkOperation[]
 }
 
 model Org {
@@ -124,6 +125,7 @@ model AdAccount {
   adSets        AdSet[]
   ads           Ad[]
   insights      InsightsDaily[]
+  alerts        Alert[]
 
   @@unique([orgId, metaAccountId])
 }

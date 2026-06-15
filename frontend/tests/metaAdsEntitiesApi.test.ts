@@ -69,6 +69,7 @@ function mockConnection(scopes = ['ads_read', 'ads_management']) {
 describe('Meta Ads live entity API', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    vi.clearAllMocks()
     mockConnection()
   })
 

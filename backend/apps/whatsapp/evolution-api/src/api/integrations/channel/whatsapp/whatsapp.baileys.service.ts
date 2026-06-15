@@ -419,8 +419,10 @@ export class BaileysStartupService extends ChannelStartupService {
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
 
       // Special handling for "conflict type=replaced" errors - pause longer
-      const isConflictError = lastDisconnect?.error?.message?.includes?.('conflict') ||
-        lastDisconnect?.error?.output?.payload?.error?.message?.includes?.('conflict');
+      const disconnectError = lastDisconnect?.error as (Error & Partial<Boom>) | undefined;
+      const isConflictError =
+        disconnectError?.message?.includes?.('conflict') ||
+        String(disconnectError?.output?.payload?.error ?? '').includes('conflict');
 
       if (shouldReconnect) {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
@@ -600,7 +602,7 @@ export class BaileysStartupService extends ChannelStartupService {
     if (this.client) {
       try {
         // Close existing WebSocket connection first
-        this.client.ws?.terminate?.();
+        (this.client.ws as { terminate?: () => void })?.terminate?.();
         this.client.ws?.close?.();
 
         // Wait for proper cleanup before proceeding (increased delay)
@@ -1659,10 +1661,15 @@ export class BaileysStartupService extends ChannelStartupService {
 
     'group-participants.update': (participantsUpdate: {
       id: string;
-      participants: string[];
+      participants: Array<string | { id: string }>;
       action: ParticipantAction;
     }) => {
-      this.sendDataWebhook(Events.GROUP_PARTICIPANTS_UPDATE, participantsUpdate);
+      this.sendDataWebhook(Events.GROUP_PARTICIPANTS_UPDATE, {
+        ...participantsUpdate,
+        participants: participantsUpdate.participants.map((participant) =>
+          typeof participant === 'string' ? participant : participant.id,
+        ),
+      });
 
       this.updateGroupMetadataCache(participantsUpdate.id);
     },
@@ -2183,7 +2190,7 @@ export class BaileysStartupService extends ChannelStartupService {
         const msg = m?.message ? m : ((await this.getMessage(m.key, true)) as proto.IWebMessageInfo);
 
         if (msg) {
-          quoted = msg;
+          quoted = msg as WAMessage;
         }
       }
 
@@ -2637,7 +2644,8 @@ export class BaileysStartupService extends ChannelStartupService {
 
           const response = await axios.get(mediaMessage.media, config);
 
-          mimetype = response.headers['content-type'];
+          const contentType = response.headers['content-type'];
+          mimetype = typeof contentType === 'string' ? contentType : contentType ? String(contentType) : false;
         }
       }
 
@@ -3433,9 +3441,10 @@ export class BaileysStartupService extends ChannelStartupService {
           }
 
           const numberJid = numberVerified?.jid || user.jid;
+          const verifiedWithLid = numberVerified as (typeof numberVerified & { lid?: string }) | undefined;
           const lid =
-            typeof numberVerified?.lid === 'string'
-              ? numberVerified.lid
+            typeof verifiedWithLid?.lid === 'string'
+              ? verifiedWithLid.lid
               : numberJid.includes('@lid')
                 ? numberJid.split('@')[1]
                 : undefined;

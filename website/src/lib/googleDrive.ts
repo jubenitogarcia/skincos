@@ -4,6 +4,15 @@ type ServiceAccountJson = {
     token_uri?: string;
 };
 
+type BufferConstructorLike = {
+    from(value: Uint8Array): { toString(encoding: "base64"): string };
+    from(value: string, encoding: "base64"): Uint8Array;
+};
+
+function getBufferConstructor(): BufferConstructorLike | undefined {
+    return (globalThis as typeof globalThis & { Buffer?: BufferConstructorLike }).Buffer;
+}
+
 function nowSeconds(): number {
     return Math.floor(Date.now() / 1000);
 }
@@ -15,8 +24,7 @@ function base64UrlEncodeFromBytes(bytes: Uint8Array): string {
         for (const b of bytes) binary += String.fromCharCode(b);
         base64 = btoa(binary);
     } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const buf = (globalThis as any).Buffer?.from?.(bytes);
+        const buf = getBufferConstructor()?.from(bytes);
         if (!buf) throw new Error("No base64 encoder available");
         base64 = buf.toString("base64");
     }
@@ -51,8 +59,7 @@ function decodePemToPkcs8(pem: string): ArrayBuffer {
         bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const buf = (globalThis as any).Buffer?.from?.(normalized, "base64");
+        const buf = getBufferConstructor()?.from(normalized, "base64");
         if (!buf) throw new Error("No base64 decoder available");
         bytes = new Uint8Array(buf);
     }

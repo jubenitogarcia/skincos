@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Worker, Queue, QueueScheduler } from 'bullmq';
+import { Worker, Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import pino from 'pino';
 import { prisma } from '@meta/db';
@@ -300,4 +300,3 @@ process.on('SIGINT', async () => {
   await connection.quit();
   process.exit(0);
 });
-new QueueScheduler(QUEUE_PACING, { connection });

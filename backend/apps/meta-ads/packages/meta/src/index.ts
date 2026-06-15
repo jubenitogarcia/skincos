@@ -1,5 +1,6 @@
 import pino from 'pino';
-import bizSdk from 'facebook-nodejs-business-sdk';
+
+const bizSdk = require('facebook-nodejs-business-sdk');
 
 export type MetaClientConfig = {
   accessToken: string;

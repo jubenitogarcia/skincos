@@ -24,7 +24,7 @@ function redirect(to: string, status = 301): Response {
     });
 }
 
-export default {
+const worker = {
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url);
 
@@ -57,3 +57,5 @@ export default {
         return new Response("Not Found", { status: 404 });
     },
 };
+
+export default worker;

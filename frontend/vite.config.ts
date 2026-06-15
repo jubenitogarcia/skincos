@@ -1169,12 +1169,18 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          ui: ['@radix-ui/react-tabs', '@radix-ui/react-dialog', '@radix-ui/react-select'],
-          icons: ['@phosphor-icons/react'],
-          charts: ['recharts', 'd3'],
-          utils: ['date-fns', 'clsx', 'tailwind-merge']
+        manualChunks(id) {
+          const chunkGroups: Record<string, string[]> = {
+            vendor: ['react', 'react-dom'],
+            ui: ['@radix-ui/react-tabs', '@radix-ui/react-dialog', '@radix-ui/react-select'],
+            icons: ['@phosphor-icons/react'],
+            charts: ['recharts', 'd3'],
+            utils: ['date-fns', 'clsx', 'tailwind-merge'],
+          };
+
+          return Object.entries(chunkGroups).find(([, packages]) =>
+            packages.some((pkg) => id.includes(`/node_modules/${pkg}/`)),
+          )?.[0];
         }
       }
     },
