@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (no submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
@@ -35,9 +35,9 @@ jobs:
           bash backend/scripts/ci-no-demo-guard.sh
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: "22.12.0"
           cache: npm
           cache-dependency-path: website/package-lock.json
 

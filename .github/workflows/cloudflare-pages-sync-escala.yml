@@ -33,13 +33,13 @@ jobs:
           echo "project=${PROJECT:-skincos}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22.12.0"
 
       - name: Checkout (for worker wrangler config)
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Sync Pages secret (Escala) by environment
         env:
