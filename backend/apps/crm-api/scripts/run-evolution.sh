@@ -13,6 +13,7 @@ fi
 DEFAULT_EVOLUTION_ENV_IN_REPO="$ROOT_DIR/backend/apps/whatsapp/evolution-api/.env"
 DEFAULT_EVOLUTION_ENV_LEGACY="$HOME/Automation/n8n/evolution-api/.env"
 EVOLUTION_ENV="${EVOLUTION_ENV:-$DEFAULT_EVOLUTION_ENV_IN_REPO}"
+APP_DIR="$ROOT_DIR/backend/apps/crm-api"
 
 if [[ ! -f "$EVOLUTION_ENV" && -f "$DEFAULT_EVOLUTION_ENV_LEGACY" ]]; then
   EVOLUTION_ENV="$DEFAULT_EVOLUTION_ENV_LEGACY"
@@ -36,11 +37,26 @@ export CRM_PUBLIC_URL="${CRM_PUBLIC_URL:-https://api.skincos.com.br}"
 export CRM_API_PORT="${CRM_API_PORT:-8099}"
 export PORT="${PORT:-$CRM_API_PORT}"
 
+ensure_crm_api_dependencies() {
+  if [[ "${CRM_API_SKIP_DEP_INSTALL:-false}" == "true" ]]; then
+    return 0
+  fi
+
+  if [[ -d "$APP_DIR/node_modules/express" && -d "$APP_DIR/node_modules/http-proxy-middleware" ]]; then
+    return 0
+  fi
+
+  echo "[crm-api] Installing production dependencies in $APP_DIR" >&2
+  (cd "$APP_DIR" && npm install --omit=dev --no-audit --no-fund)
+}
+
 if [[ -n "${CRM_BASIC_AUTH:-}" ]]; then
   export CRM_BASIC_AUTH
 else
   echo "[crm-api] CRM_BASIC_AUTH not set; protected restart/proxy routes may require explicit credentials." >&2
 fi
 
-cd "$ROOT_DIR"
-exec node backend/apps/crm-api/server.js
+ensure_crm_api_dependencies
+
+cd "$APP_DIR"
+exec node server.js

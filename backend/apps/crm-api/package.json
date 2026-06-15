@@ -13,12 +13,16 @@
     "axios": "1.18.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
-    "googleapis": "^148.0.0",
+    "googleapis": "^173.0.0",
     "http-proxy-middleware": "^3.0.5",
     "luxon": "^3.7.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+  "overrides": {
+    "glob": "^13.0.6",
+    "rimraf": "^6.0.1"
   }
 }

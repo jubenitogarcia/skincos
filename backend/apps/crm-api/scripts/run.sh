@@ -43,11 +43,26 @@ cd "$APP_DIR"
 export CRM_API_PORT="$PORT"
 export PORT="$PORT"
 
+ensure_dependencies() {
+  if [[ "${CRM_API_SKIP_DEP_INSTALL:-false}" == "true" ]]; then
+    return 0
+  fi
+
+  if [[ -d "$APP_DIR/node_modules/express" && -d "$APP_DIR/node_modules/http-proxy-middleware" ]]; then
+    return 0
+  fi
+
+  echo "[crm-api] Installing production dependencies in $APP_DIR" >&2
+  npm install --omit=dev --no-audit --no-fund
+}
+
 case "$cmd" in
   start)
+    ensure_dependencies
     exec node server.js
     ;;
   watch)
+    ensure_dependencies
     if [[ -x "$APP_DIR/node_modules/.bin/nodemon" ]]; then
       exec "$APP_DIR/node_modules/.bin/nodemon" --quiet --watch . --ext js,mjs,cjs,json server.js
     fi
@@ -76,4 +91,3 @@ case "$cmd" in
     exit 1
     ;;
 esac
-
