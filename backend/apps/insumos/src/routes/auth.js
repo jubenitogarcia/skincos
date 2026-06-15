@@ -795,6 +795,7 @@ export async function handleAuthRoutes({
                         role: outUser.role || "CONSULTOR",
                         photoUrl: outUser.photoUrl,
                         allowedUnits: outUser.allowedUnits || [],
+                        allowedModules: outUser.allowedModules || [],
                     }
                     : null;
 
