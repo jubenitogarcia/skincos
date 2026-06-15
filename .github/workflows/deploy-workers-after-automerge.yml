@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout workflow helpers
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -104,15 +104,15 @@ jobs:
 
       - name: Checkout merge commit
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ steps.pr.outputs.merge_commit_sha }}
 
       - name: Setup Node
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22.12.0"
 
       - name: Setup pnpm (corepack)
         if: ${{ steps.pr.outputs.eligible == 'true' && steps.changes.outputs.workers_changed == 'true' && steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}

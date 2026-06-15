@@ -154,13 +154,15 @@ check_github() {
 check_cloudflare() {
   $SKIP_CLOUDFLARE && { warn "Cloudflare auth check skipped"; return; }
 
-  local strict_arg=()
-  if $STRICT || $CI_MODE; then
-    strict_arg=(--strict)
-  fi
-
   if [[ -x scripts/cloudflare-token-health.sh ]]; then
-    if scripts/cloudflare-token-health.sh "${strict_arg[@]}" >/tmp/codex-cloudflare-token-health.log 2>&1; then
+    local status=0
+    if $STRICT || $CI_MODE; then
+      scripts/cloudflare-token-health.sh --strict >/tmp/codex-cloudflare-token-health.log 2>&1 || status=$?
+    else
+      scripts/cloudflare-token-health.sh >/tmp/codex-cloudflare-token-health.log 2>&1 || status=$?
+    fi
+
+    if [[ "$status" -eq 0 ]]; then
       ok "Cloudflare token health check passed"
       sed -n '1,36p' /tmp/codex-cloudflare-token-health.log | sed 's/^/     /'
     else
