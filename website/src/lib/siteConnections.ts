@@ -83,7 +83,7 @@ export function defaultSiteConnection() {
         siteHost: DEFAULT_SITE_HOST,
         name: DEFAULT_SITE_HOST,
         host: DEFAULT_SITE_HOST,
-        statusLabel: "Canônico do funil",
+        statusLabel: "Domínio principal",
         statusTone: "success" as const,
         source: "system",
         active: true,

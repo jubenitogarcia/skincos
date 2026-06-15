@@ -1413,6 +1413,25 @@ export default function AppFunctionalNeatlab() {
                                                                                             value={site.id}
                                                                                             className={`${statusTone} ${isSelectedSite ? 'border-l-2 border-cyan-300/80 font-semibold ring-1 ring-inset ring-cyan-300/20' : 'border-l-2 border-transparent font-normal'}`}
                                                                                             hideIndicator
+                                                                                            action={
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    className="inline-flex size-6 items-center justify-center rounded-md text-cyan-100/70 transition hover:bg-cyan-400/15 hover:text-cyan-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40"
+                                                                                                    aria-label={`Renomear ${site.name || site.host || site.id}`}
+                                                                                                    title="Renomear site"
+                                                                                                    onPointerDown={(event) => {
+                                                                                                        event.preventDefault()
+                                                                                                        event.stopPropagation()
+                                                                                                    }}
+                                                                                                    onClick={(event) => {
+                                                                                                        event.preventDefault()
+                                                                                                        event.stopPropagation()
+                                                                                                        dispatchSiteTrackingHeaderAction({ type: 'rename-site', value: site.id })
+                                                                                                    }}
+                                                                                                >
+                                                                                                    <Pencil className="size-3.5" aria-hidden="true" />
+                                                                                                </button>
+                                                                                            }
                                                                                         >
                                                                                             <div className="flex min-w-0 flex-col pr-4 leading-tight">
                                                                                                 <span className={`truncate ${isSelectedSite ? 'text-white' : ''}`}>{site.name || site.host || site.id}</span>
@@ -1429,24 +1448,6 @@ export default function AppFunctionalNeatlab() {
                                                                             </SelectItem>
                                                                         </SelectContent>
                                                                     </Select>
-                                                                    <button
-                                                                        type="button"
-                                                                        className="inline-flex h-full w-8 shrink-0 items-center justify-center border-l border-white/15 bg-white/[0.03] text-cyan-100/80 transition hover:bg-cyan-400/10 hover:text-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                        aria-label="Renomear site selecionado"
-                                                                        title="Renomear site"
-                                                                        disabled={siteTrackingHeaderState?.refreshing || !siteTrackingHeaderState?.selectedSiteId}
-                                                                        onPointerDown={(event) => {
-                                                                            event.preventDefault()
-                                                                            event.stopPropagation()
-                                                                        }}
-                                                                        onClick={(event) => {
-                                                                            event.preventDefault()
-                                                                            event.stopPropagation()
-                                                                            dispatchSiteTrackingHeaderAction({ type: 'rename-site', value: siteTrackingHeaderState?.selectedSiteId })
-                                                                        }}
-                                                                    >
-                                                                        <Pencil className="size-3.5" aria-hidden="true" />
-                                                                    </button>
                                                                 </div>
                                                             </div>
                                                         ) : null}

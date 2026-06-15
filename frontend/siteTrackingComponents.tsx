@@ -52,6 +52,7 @@ type FunnelRow = {
 }
 
 export type ManagedSiteUrl = NonNullable<NonNullable<TrackingOverviewResponse['customLinks']>['managedUrls']>[number]
+export type CloudflareRedirectUrl = NonNullable<NonNullable<TrackingOverviewResponse['customLinks']>['cloudflareRedirects']>[number]
 export type SiteConnection = NonNullable<NonNullable<TrackingOverviewResponse['siteConnections']>['sites']>[number]
 
 export type SiteConnectionForm = {
@@ -287,7 +288,7 @@ export function RankedList({
               <span className="min-w-0 truncate text-slate-200">{label}</span>
               <span className="font-mono text-slate-400">{formatSiteTrackingNumber(count)}</span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+            <div className="h-1.5 max-w-md overflow-hidden rounded-full bg-white/10">
               <div className="h-full rounded-full bg-cyan-400" style={{ width: funnelBarWidth(count, max) }} />
             </div>
           </div>
@@ -535,7 +536,7 @@ export function SiteFunnelSection({ rows, max }: { rows: FunnelRow[]; max: numbe
 
 export function SiteBehaviorSections({ data }: { data: TrackingOverviewResponse | null }) {
   return (
-    <div className="grid gap-6 xl:grid-cols-3">
+    <div className="grid gap-4 lg:grid-cols-3">
       <SiteTrackingSection title="Páginas mais vistas" icon={<CursorClick className="h-5 w-5" />}>
         <RankedList items={listOrEmpty(data?.siteBehavior?.topPages)} labelKey="pagePath" empty="Sem pageviews agregados ainda." />
       </SiteTrackingSection>
@@ -551,10 +552,12 @@ export function SiteBehaviorSections({ data }: { data: TrackingOverviewResponse 
 
 export function ManagedSiteUrlsSection({
   urls,
+  cloudflareRedirects,
   saving,
   onSave,
 }: {
   urls: ManagedSiteUrl[]
+  cloudflareRedirects: CloudflareRedirectUrl[]
   saving?: boolean
   onSave: (form: ManagedSiteUrlForm) => Promise<void>
 }) {
@@ -579,6 +582,13 @@ export function ManagedSiteUrlsSection({
     <SiteTrackingSection title="URLs personalizadas" icon={<LinkSimple className="h-5 w-5" />}>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.8fr)]">
         <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Gerenciadas no CRM</div>
+              <div className="text-xs text-slate-500">Registros salvos no D1 e editáveis por esta tela.</div>
+            </div>
+            <Badge variant="outline">{formatSiteTrackingNumber(urls.length)}</Badge>
+          </div>
           {urls.length ? urls.map((url) => (
             <div key={url.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -613,7 +623,36 @@ export function ManagedSiteUrlsSection({
                 </div>
               </div>
             </div>
-          )) : <div className="rounded-xl border border-dashed border-slate-800 bg-white/[0.02] p-5 text-sm text-slate-500">Nenhuma URL personalizada cadastrada ainda.</div>}
+          )) : <div className="rounded-xl border border-dashed border-slate-800 bg-white/[0.02] p-5 text-sm text-slate-500">Nenhuma URL gerenciada no CRM cadastrada ainda.</div>}
+
+          <div className="pt-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Atalhos Cloudflare</div>
+                <div className="text-xs text-slate-500">Links read-only do worker esfa.co. Edição permanece no catálogo de redirects.</div>
+              </div>
+              <Badge variant="outline">{formatSiteTrackingNumber(cloudflareRedirects.length)}</Badge>
+            </div>
+            <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+              {cloudflareRedirects.length ? cloudflareRedirects.map((url) => (
+                <div key={url.id} className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-slate-100">{url.name}</span>
+                        <Badge variant="secondary">Cloudflare</Badge>
+                      </div>
+                      <div className="mt-1 truncate font-mono text-xs text-cyan-100">{url.publicUrl}</div>
+                      <div className="mt-1 truncate text-sm text-slate-400">{shortUrl(url.destinationUrl)}</div>
+                    </div>
+                    <div className="text-right text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                      Read-only
+                    </div>
+                  </div>
+                </div>
+              )) : <div className="rounded-xl border border-dashed border-slate-800 bg-white/[0.02] p-5 text-sm text-slate-500">Nenhum atalho Cloudflare carregado.</div>}
+            </div>
+          </div>
         </div>
 
         <form
