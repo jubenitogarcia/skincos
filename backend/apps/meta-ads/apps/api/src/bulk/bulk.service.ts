@@ -3,6 +3,13 @@ import { PrismaService } from '../common/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { bulkActionSchema, budgetAdjustmentSchema, renameTemplateSchema } from '@meta/shared';
 
+type BulkEntity = {
+  metaId: string;
+  name: string;
+  status: string;
+  dailyBudget?: number | null;
+};
+
 @Injectable()
 export class BulkService {
   constructor(private prisma: PrismaService, private queue: QueueService) {}
@@ -131,7 +138,7 @@ export class BulkService {
     });
   }
 
-  private async loadEntities(orgId: string, entityType: string, ids: string[]) {
+  private async loadEntities(orgId: string, entityType: string, ids: string[]): Promise<BulkEntity[]> {
     if (entityType === 'campaign') {
       return this.prisma.campaign.findMany({ where: { orgId, metaId: { in: ids } } });
     }
