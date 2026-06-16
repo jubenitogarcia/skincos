@@ -33,6 +33,8 @@ export function normalizeSiteTrackingHeaderState(detail: unknown): SiteTrackingH
     windowDays: isWindowDays(payload.windowDays) ? payload.windowDays : 30,
     selectedSiteName: payload.selectedSiteName ? String(payload.selectedSiteName) : undefined,
     updatedAt: payload.updatedAt ? String(payload.updatedAt) : undefined,
+    dataSourceLabel: payload.dataSourceLabel ? String(payload.dataSourceLabel) : undefined,
+    dataSiteHost: payload.dataSiteHost ? String(payload.dataSiteHost) : undefined,
   }
 }
 

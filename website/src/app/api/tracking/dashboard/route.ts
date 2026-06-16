@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBookingDb, type BookingRequestRow } from "@/lib/bookingDb";
-import { listEsfaRedirects } from "@/lib/esfaRedirects";
+import { ESFA_SITE_HOST, listEsfaFallbackRedirects } from "@/lib/esfaManagedRedirects";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 import { serializeSiteCustomUrl, type SiteCustomUrlRow } from "@/lib/siteCustomUrls";
 import {
@@ -410,6 +410,10 @@ export async function GET(request: Request) {
         ).all<SiteBehaviorRow>()
     ).results ?? [];
 
+    const managedUrlHosts = selectedSiteHost
+        ? Array.from(new Set(selectedSiteHost === DEFAULT_SITE_HOST ? [selectedSiteHost, ESFA_SITE_HOST] : [selectedSiteHost]))
+        : [];
+    const customUrlHostPlaceholders = managedUrlHosts.map(() => "?").join(", ");
     const customUrlQuery = selectedSiteHost
         ? `SELECT
                     u.id, u.site_host, u.name, u.slug_path, u.destination_url, u.destination_host, u.destination_path,
@@ -427,7 +431,7 @@ export async function GET(request: Request) {
                         OR e.link_path = u.destination_path
                         OR (u.utm_campaign IS NOT NULL AND e.utm_campaign = u.utm_campaign)
                     )
-                 WHERE u.site_host = ?
+                 WHERE u.site_host IN (${customUrlHostPlaceholders})
                  GROUP BY u.id
                  ORDER BY u.updated_at_ms DESC
                  LIMIT ?`
@@ -452,7 +456,7 @@ export async function GET(request: Request) {
     const customUrlStatement = db.prepare(customUrlQuery);
     const customUrlRows = (
         await (selectedSiteHost
-            ? customUrlStatement.bind(sinceMs, untilMs, selectedSiteHost, selectedSiteHostWww, selectedSiteHost, limit)
+            ? customUrlStatement.bind(sinceMs, untilMs, selectedSiteHost, selectedSiteHostWww, ...managedUrlHosts, limit)
             : customUrlStatement.bind(sinceMs, untilMs, limit)
         ).all<SiteCustomUrlRow>()
     ).results ?? [];
@@ -763,7 +767,7 @@ export async function GET(request: Request) {
 
     const customLinks = {
         managedUrls: customUrlRows.map(serializeSiteCustomUrl),
-        cloudflareRedirects: listEsfaRedirects(),
+        cloudflareRedirects: listEsfaFallbackRedirects(customUrlRows),
         topLinks: sortMapEntries(behaviorLinkCounts, "linkUrl").slice(0, 10),
         topUtmContent: sortMapEntries(behaviorUtmContentCounts, "utmContent").slice(0, 10),
         linksMissingUtm: sortMapEntries(behaviorMissingUtmLinkCounts, "linkUrl").slice(0, 10),

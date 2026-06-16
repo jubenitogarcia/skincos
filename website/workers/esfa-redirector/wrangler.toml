@@ -7,3 +7,8 @@ routes = [
 	{ pattern = "esfa.co/*", zone_name = "esfa.co" },
 	{ pattern = "www.esfa.co/*", zone_name = "esfa.co" },
 ]
+
+[[d1_databases]]
+binding = "BOOKING_DB"
+database_name = "espacofacial-booking"
+database_id = "9765b1fb-11a4-462c-9657-8a438c755725"
