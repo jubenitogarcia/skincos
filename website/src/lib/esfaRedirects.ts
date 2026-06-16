@@ -124,7 +124,7 @@ export function normalizeEsfaRedirectPath(pathname: string): string {
   return lower;
 }
 
-function labelFromPath(path: string): string {
+export function buildEsfaRedirectLabel(path: string): string {
   return path
     .replace(/^\/+/, '')
     .split('/')
@@ -133,17 +133,24 @@ function labelFromPath(path: string): string {
     .join(' / ') || 'Início';
 }
 
-export function listEsfaRedirects() {
+export function listEsfaRedirects(options: { excludePaths?: Iterable<string> } = {}) {
+  const excludedPaths = new Set(
+    Array.from(options.excludePaths ?? [], (value) => normalizeEsfaRedirectPath(String(value || ''))).filter(Boolean),
+  );
   return Object.entries(ESFA_REDIRECTS)
-    .sort(([a], [b]) => a.localeCompare(b, 'pt-BR'))
-    .map(([slugPath, destinationUrl]) => ({
-      id: `esfa:${slugPath}`,
-      siteHost: 'esfa.co',
-      name: labelFromPath(slugPath),
-      slugPath,
-      publicUrl: `https://esfa.co${slugPath}`,
-      destinationUrl,
-      source: 'cloudflare_worker' as const,
-      active: true,
-    }));
+    .map(([rawSlugPath, destinationUrl]) => {
+      const slugPath = normalizeEsfaRedirectPath(rawSlugPath);
+      return {
+        id: `esfa:${slugPath}`,
+        siteHost: 'esfa.co',
+        name: buildEsfaRedirectLabel(slugPath),
+        slugPath,
+        publicUrl: `https://esfa.co${slugPath}`,
+        destinationUrl,
+        source: 'cloudflare_worker' as const,
+        active: true,
+      };
+    })
+    .filter((entry) => !excludedPaths.has(entry.slugPath))
+    .sort((a, b) => a.slugPath.localeCompare(b.slugPath, 'pt-BR'));
 }

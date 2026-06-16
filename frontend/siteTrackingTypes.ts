@@ -17,6 +17,8 @@ export type SiteTrackingHeaderState = {
   windowDays: SiteTrackingWindowDays
   selectedSiteName?: string
   updatedAt?: string
+  dataSourceLabel?: string
+  dataSiteHost?: string
 }
 
 export type SiteTrackingHeaderAction =

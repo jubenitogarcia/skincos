@@ -56,6 +56,12 @@ const ALLOWED_DESTINATION_HOSTS = new Set([
     "api.whatsapp.com",
     "wa.me",
     "wa.skincos.com.br",
+    "www.google.com",
+    "payment-link-v3.stone.com.br",
+    "www.facebook.com",
+    "www.instagram.com",
+    "chat.whatsapp.com",
+    "auto.bsbank.com.br",
 ]);
 
 function textOrNull(value: unknown, max = 160): string | null {
@@ -77,7 +83,7 @@ function normalizeSlugPath(value: unknown, fallbackName: string): string {
             .replace(/\s+/g, "-")
             .replace(/[?#].*$/, "")
             .toLowerCase();
-        if (/^\/[a-z0-9][a-z0-9._/-]{1,178}$/.test(clean) && !clean.startsWith("/api/")) return clean;
+        if (/^\/[\p{L}\p{N}][\p{L}\p{N}._/-]{1,178}$/u.test(clean) && !clean.startsWith("/api/")) return clean;
     }
     const fallback = slugify(fallbackName || "campanha");
     return `/campanhas/${fallback || "link"}`;

@@ -151,7 +151,6 @@ export function SiteTrackingModule() {
   const selectedSite = siteOptions.find((site) => site.id === selectedSiteId) || siteOptions[0]
   const headerUpdatedAt = data?.generatedAt ? new Date(data.generatedAt).toISOString() : undefined
   const dataSourceLabel = data?.website?.data?.source || (data?.website?.available ? 'website_d1' : null)
-  const dataUpdatedLabel = data?.generatedAt ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(data.generatedAt)) : null
 
   useEffect(() => {
     emitSiteTrackingHeaderState({
@@ -161,8 +160,10 @@ export function SiteTrackingModule() {
       selectedSiteName: selectedSite?.name,
       windowDays: days,
       updatedAt: headerUpdatedAt,
+      dataSourceLabel: dataSourceLabel || undefined,
+      dataSiteHost: selectedSite?.host || undefined,
     })
-  }, [days, headerUpdatedAt, loading, selectedSite?.name, selectedSiteId, siteOptions])
+  }, [dataSourceLabel, days, headerUpdatedAt, loading, selectedSite?.host, selectedSite?.name, selectedSiteId, siteOptions])
 
   useEffect(() => () => emitSiteTrackingHeaderState(null), [])
 
@@ -351,10 +352,10 @@ export function SiteTrackingModule() {
           const existing = prev.customLinks?.managedUrls || []
           const nextUrl = {
             id: form.id || `local_url_${now}`,
-            siteHost: selectedSiteId,
+            siteHost: form.siteHost || selectedSiteId,
             name: form.name,
             slugPath: form.slugPath || `/campanhas/${form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'link'}`,
-            publicUrl: `https://${selectedSiteId}${form.slugPath || `/campanhas/${form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'link'}`}`,
+            publicUrl: `https://${form.siteHost || selectedSiteId}${form.slugPath || `/campanhas/${form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'link'}`}`,
             destinationUrl: form.destinationUrl,
             destinationHost: (() => {
               try { return new URL(form.destinationUrl).hostname } catch { return null }
@@ -398,7 +399,7 @@ export function SiteTrackingModule() {
         method: form.id ? 'PATCH' : 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ ...form, siteHost: selectedSiteId }),
+        body: JSON.stringify({ ...form, siteHost: form.siteHost || selectedSiteId }),
       })
       const payload = await response.json().catch(() => null)
       if (!response.ok || payload?.ok === false) throw new Error(payload?.message || payload?.error || 'Não foi possível salvar a URL')
@@ -488,7 +489,7 @@ export function SiteTrackingModule() {
   }
 
   return (
-    <div className="space-y-6 text-slate-100">
+    <div className="min-w-0 max-w-full space-y-6 overflow-x-hidden text-slate-100">
       {error ? (
         <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-4 text-red-100">
           Falha ao carregar acompanhamento do site: {error}
@@ -547,15 +548,6 @@ export function SiteTrackingModule() {
         </div>
       ) : null}
 
-      {dataSourceLabel ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800/70 bg-slate-950/35 px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-slate-500">
-          <span>Fonte: {dataSourceLabel}</span>
-          {data?.window?.days ? <span>Janela: {data.window.days} dias</span> : null}
-          {dataUpdatedLabel ? <span>Atualizado: {dataUpdatedLabel}</span> : null}
-          {selectedSite?.host ? <span>Site: {selectedSite.host}</span> : null}
-        </div>
-      ) : null}
-
       <SiteMetricsGrid
         hiddenMetricTiles={hiddenMetricTiles}
         visibleMetricTiles={visibleMetricTiles}
@@ -570,6 +562,7 @@ export function SiteTrackingModule() {
       <SiteFunnelSection rows={funnelRows} max={funnelMax} />
       <SiteBehaviorSections data={data} />
       <ManagedSiteUrlsSection
+        defaultSiteHost={selectedSiteId}
         urls={listOrEmpty(data?.customLinks?.managedUrls)}
         cloudflareRedirects={listOrEmpty(data?.customLinks?.cloudflareRedirects)}
         saving={savingManagedUrl}

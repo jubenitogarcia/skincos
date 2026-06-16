@@ -387,6 +387,10 @@ export default function AppFunctionalNeatlab() {
             () => (metaAdsHeaderState?.accounts || []).find((account) => account.id === metaAdsAccountRemovalId) || null,
             [metaAdsAccountRemovalId, metaAdsHeaderState?.accounts],
         )
+        const siteTrackingSelectedSite = useMemo(
+            () => (siteTrackingHeaderState?.sites || []).find((site) => site.id === siteTrackingHeaderState?.selectedSiteId) || null,
+            [siteTrackingHeaderState],
+        )
 				    const [insumosHeaderStatus, setInsumosHeaderStatus] = useState<InsumosHeaderState['status']>(null)
 				    const [insumosHeaderEstoque, setInsumosHeaderEstoque] = useState<InsumosHeaderState['stock']>(null)
                     const defaultEstoqueThresholds = React.useMemo(() => ({ warning: 50000, critical: 20000 }), [])
@@ -1374,8 +1378,8 @@ export default function AppFunctionalNeatlab() {
                                                             </div>
                                                         ) : null}
                                                         {active === 'site-tracking' ? (
-                                                            <div className="flex items-center gap-2 max-w-[56vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                                                                <div className="flex h-8 w-64 items-stretch overflow-hidden rounded-md border border-white/20 bg-white/[0.06] text-white">
+                                                            <div className="flex min-w-0 items-center gap-2">
+                                                                <div className="flex h-10 min-w-[18rem] max-w-[min(26rem,42vw)] flex-1 items-stretch overflow-hidden rounded-xl border border-white/20 bg-white/[0.06] text-white">
                                                                     <Select
                                                                         value={siteTrackingHeaderState?.selectedSiteId || ''}
                                                                         onValueChange={(value) => {
@@ -1388,7 +1392,14 @@ export default function AppFunctionalNeatlab() {
                                                                         disabled={siteTrackingHeaderState?.refreshing}
                                                                     >
                                                                         <SelectTrigger className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-3 text-white shadow-none focus-visible:ring-0">
-                                                                            <SelectValue placeholder="Site" />
+                                                                            <div className="flex min-w-0 flex-1 flex-col items-start justify-center text-left leading-none">
+                                                                                <span className="w-full truncate text-[15px] font-semibold text-white">
+                                                                                    {siteTrackingSelectedSite?.name || siteTrackingHeaderState?.selectedSiteName || 'Selecione um site'}
+                                                                                </span>
+                                                                                <span className="mt-1 w-full truncate text-[11px] font-medium text-slate-400">
+                                                                                    {siteTrackingSelectedSite?.statusLabel || siteTrackingSelectedSite?.host || 'Sem conexão selecionada'}
+                                                                                </span>
+                                                                            </div>
                                                                         </SelectTrigger>
                                                                         <SelectContent>
                                                                             {[...(siteTrackingHeaderState?.sites || [])]
@@ -1601,7 +1612,7 @@ export default function AppFunctionalNeatlab() {
                                         </div>
                                     ) : null}
                                     {active === 'site-tracking' ? (
-                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                        <div className="flex shrink-0 items-center gap-1.5">
                                             <div className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] p-1">
                                                 {[7, 30, 60, 90].map((period) => (
                                                     <button
@@ -1631,10 +1642,18 @@ export default function AppFunctionalNeatlab() {
                                                         <RefreshCw className={`size-3.5 ${siteTrackingHeaderState?.refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
                                                     </Button>
                                                 </TooltipTrigger>
-                                                <TooltipContent>
-                                                    {siteTrackingHeaderState?.updatedAt
-                                                        ? `Atualizar. Ultima atualizacao: ${new Date(siteTrackingHeaderState.updatedAt).toLocaleString('pt-BR')}`
-                                                        : 'Atualizar'}
+                                                <TooltipContent className="max-w-80">
+                                                    <div className="space-y-1">
+                                                        <div className="text-[11px] font-medium leading-tight text-white">Atualizar painel do Site EF</div>
+                                                        {siteTrackingHeaderState?.dataSourceLabel || siteTrackingHeaderState?.updatedAt || siteTrackingHeaderState?.dataSiteHost ? (
+                                                            <div className="space-y-0.5 text-[10px] leading-snug text-slate-300/92">
+                                                                {siteTrackingHeaderState?.dataSourceLabel ? <div>Fonte: {siteTrackingHeaderState.dataSourceLabel}</div> : null}
+                                                                <div>Janela: {siteTrackingHeaderState?.windowDays || 30} dias</div>
+                                                                {siteTrackingHeaderState?.updatedAt ? <div>Atualizado: {new Date(siteTrackingHeaderState.updatedAt).toLocaleString('pt-BR')}</div> : null}
+                                                                {siteTrackingHeaderState?.dataSiteHost ? <div>Site: {siteTrackingHeaderState.dataSiteHost}</div> : null}
+                                                            </div>
+                                                        ) : null}
+                                                    </div>
                                                 </TooltipContent>
                                             </Tooltip>
                                         </div>
@@ -1935,11 +1954,11 @@ export default function AppFunctionalNeatlab() {
                         </header>
 
                         {/* Premium Main Content */}
-                        <main className={`flex-1 p-8 relative ${active === 'atendimento' ? 'overflow-hidden flex min-h-0 flex-col' : 'overflow-auto'} ${active === 'meta-ads' ? 'meta-ads-main' : ''}`}>
+                        <main className={`relative flex-1 p-8 ${active === 'atendimento' ? 'flex min-h-0 flex-col overflow-hidden' : active === 'site-tracking' ? 'min-w-0 overflow-x-hidden overflow-y-auto' : 'overflow-auto'} ${active === 'meta-ads' ? 'meta-ads-main' : ''}`}>
                             {/* Content Background */}
                             <div className={`absolute inset-0 ${active === 'meta-ads' ? 'meta-ads-main-bg' : 'bg-white/[0.02] backdrop-blur-sm'}`}></div>
 
-                            <div className={`relative z-10 ${active === 'atendimento' ? 'flex h-full min-h-0 flex-col' : ''}`}>
+                            <div className={`relative z-10 min-w-0 ${active === 'atendimento' ? 'flex h-full min-h-0 flex-col' : active === 'site-tracking' ? 'max-w-full overflow-x-hidden' : ''}`}>
                                 <div className="hidden">{search}</div>
                                 <ErrorBoundary>
                                     <Suspense fallback={
@@ -1958,7 +1977,7 @@ export default function AppFunctionalNeatlab() {
                                                 const moduleEntry = m as (typeof modules)[number]
                                                 const isActive = moduleEntry.key === active
                                                 return (
-                                                    <div key={moduleEntry.key} hidden={!isActive} className={active === 'atendimento' ? 'h-full min-h-0' : undefined}>
+                                                    <div key={moduleEntry.key} hidden={!isActive} className={active === 'atendimento' ? 'h-full min-h-0' : active === 'site-tracking' ? 'min-w-0 max-w-full overflow-x-hidden' : undefined}>
                                                         {moduleEntry.component}
                                                     </div>
                                                 )

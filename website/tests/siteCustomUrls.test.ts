@@ -41,3 +41,16 @@ test("normalizeSiteCustomUrlInput rejects unsafe destinations and API slugs", ()
         "/campanhas/slug-api",
     );
 });
+
+test("normalizeSiteCustomUrlInput preserves unicode slugs and accepts approved external hosts", () => {
+    const input = normalizeSiteCustomUrlInput({
+        siteHost: "esfa.co",
+        name: "Avalie nosso espaço",
+        slugPath: "/bss/avalienossoespaço",
+        destinationUrl: "https://www.google.com/maps/place//data=!4m3!3m2!1s0x9519795c306ed865:0xb5f05aac9b865daa!12e1",
+    });
+
+    assert.equal(input.siteHost, "esfa.co");
+    assert.equal(input.slugPath, "/bss/avalienossoespaço");
+    assert.equal(input.destinationHost, "www.google.com");
+});

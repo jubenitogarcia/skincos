@@ -3,7 +3,9 @@ import { DragDropContext, Draggable, Droppable, type DraggableProvidedDragHandle
 import { Badge } from '@/badge'
 import { Button } from '@/button'
 import { Card, CardContent } from '@/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import type { TrackingOverviewResponse } from '@/metaTrackingLocalMock'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import {
   DEFAULT_SITE_METRIC_LAYOUT,
   cycleMetricDimensions,
@@ -26,6 +28,7 @@ import {
   EyeSlash,
   Funnel,
   LinkSimple,
+  Plus,
   Pulse,
   WarningCircle,
 } from '@phosphor-icons/react'
@@ -66,6 +69,7 @@ export type SiteConnectionForm = {
 
 export type ManagedSiteUrlForm = {
   id?: string
+  siteHost: string
   name: string
   slugPath: string
   destinationUrl: string
@@ -81,20 +85,23 @@ export type ManagedSiteUrlForm = {
   active: boolean
 }
 
-const emptyManagedUrlForm: ManagedSiteUrlForm = {
-  name: '',
-  slugPath: '',
-  destinationUrl: 'https://espacofacial.com/agendamento',
-  description: '',
-  placement: '',
-  unitSlug: '',
-  serviceId: '',
-  utmSource: 'meta',
-  utmMedium: 'paid_social',
-  utmCampaign: '',
-  utmContent: '',
-  utmTerm: '',
-  active: true,
+function createEmptyManagedUrlForm(siteHost: string): ManagedSiteUrlForm {
+  return {
+    siteHost,
+    name: '',
+    slugPath: '',
+    destinationUrl: 'https://espacofacial.com/agendamento',
+    description: '',
+    placement: '',
+    unitSlug: '',
+    serviceId: '',
+    utmSource: 'meta',
+    utmMedium: 'paid_social',
+    utmCampaign: '',
+    utmContent: '',
+    utmTerm: '',
+    active: true,
+  }
 }
 
 export const emptySiteConnectionForm: SiteConnectionForm = {
@@ -108,6 +115,7 @@ export const emptySiteConnectionForm: SiteConnectionForm = {
 function managedUrlToForm(url: ManagedSiteUrl): ManagedSiteUrlForm {
   return {
     id: url.id,
+    siteHost: url.siteHost || 'espacofacial.com',
     name: url.name || '',
     slugPath: url.slugPath || '',
     destinationUrl: url.destinationUrl || 'https://espacofacial.com/agendamento',
@@ -122,6 +130,12 @@ function managedUrlToForm(url: ManagedSiteUrl): ManagedSiteUrlForm {
     utmTerm: url.utmTerm || '',
     active: url.active !== false,
   }
+}
+
+function formatManagedUrlHostLabel(siteHost: string) {
+  if (siteHost === 'esfa.co') return 'esfa.co · atalho curto'
+  if (siteHost === 'espacofacial.com') return 'espacofacial.com · site principal'
+  return siteHost
 }
 
 function ManagedUrlField({
@@ -254,12 +268,25 @@ function SiteMetricTile({
   )
 }
 
-export function SiteTrackingSection({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+export function SiteTrackingSection({
+  title,
+  icon,
+  action,
+  children,
+}: {
+  title: string
+  icon: ReactNode
+  action?: ReactNode
+  children: ReactNode
+}) {
   return (
-    <section className={`rounded-2xl p-5 ${siteTrackingPanelClass}`}>
-      <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-300">
-        {icon}
-        {title}
+    <section className={`min-w-0 overflow-hidden rounded-2xl p-5 ${siteTrackingPanelClass}`}>
+      <div className="mb-4 flex items-center justify-between gap-3 text-sm font-semibold uppercase tracking-wide text-slate-300">
+        <div className="flex min-w-0 items-center gap-2">
+          {icon}
+          <span className="truncate">{title}</span>
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
       </div>
       {children}
     </section>
@@ -278,17 +305,17 @@ export function RankedList({
   if (!items.length) return <div className="text-sm text-slate-500">{empty}</div>
   const max = Math.max(...items.map((item) => siteTrackingNumberValue(item.count)))
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-3">
       {items.map((item, index) => {
         const label = String(item[labelKey] || 'sem valor')
         const count = siteTrackingNumberValue(item.count)
         return (
-          <div key={`${label}-${index}`} className="space-y-1">
+          <div key={`${label}-${index}`} className="min-w-0 space-y-1">
             <div className="flex items-center justify-between gap-3 text-sm">
               <span className="min-w-0 truncate text-slate-200">{label}</span>
               <span className="font-mono text-slate-400">{formatSiteTrackingNumber(count)}</span>
             </div>
-            <div className="h-1.5 max-w-md overflow-hidden rounded-full bg-white/10">
+            <div className="h-1.5 w-full max-w-full overflow-hidden rounded-full bg-white/10">
               <div className="h-full rounded-full bg-cyan-400" style={{ width: funnelBarWidth(count, max) }} />
             </div>
           </div>
@@ -536,7 +563,7 @@ export function SiteFunnelSection({ rows, max }: { rows: FunnelRow[]; max: numbe
 
 export function SiteBehaviorSections({ data }: { data: TrackingOverviewResponse | null }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
+    <div className="grid min-w-0 gap-4 xl:grid-cols-3">
       <SiteTrackingSection title="Páginas mais vistas" icon={<CursorClick className="h-5 w-5" />}>
         <RankedList items={listOrEmpty(data?.siteBehavior?.topPages)} labelKey="pagePath" empty="Sem pageviews agregados ainda." />
       </SiteTrackingSection>
@@ -551,19 +578,23 @@ export function SiteBehaviorSections({ data }: { data: TrackingOverviewResponse 
 }
 
 export function ManagedSiteUrlsSection({
+  defaultSiteHost,
   urls,
   cloudflareRedirects,
   saving,
   onSave,
 }: {
+  defaultSiteHost: string
   urls: ManagedSiteUrl[]
   cloudflareRedirects: CloudflareRedirectUrl[]
   saving?: boolean
   onSave: (form: ManagedSiteUrlForm) => Promise<void>
 }) {
-  const [form, setForm] = useState<ManagedSiteUrlForm>(emptyManagedUrlForm)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [form, setForm] = useState<ManagedSiteUrlForm>(() => createEmptyManagedUrlForm(defaultSiteHost))
   const [editingId, setEditingId] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
+  const hostOptions = Array.from(new Set([defaultSiteHost, 'esfa.co', ...urls.map((url) => url.siteHost)])).filter(Boolean)
 
   useEffect(() => {
     if (!editingId) return
@@ -571,17 +602,51 @@ export function ManagedSiteUrlsSection({
     if (current) setForm(managedUrlToForm(current))
   }, [editingId, urls])
 
+  useEffect(() => {
+    if (editingId || dialogOpen) return
+    setForm(createEmptyManagedUrlForm(defaultSiteHost))
+  }, [defaultSiteHost, dialogOpen, editingId])
+
   const update = (patch: Partial<ManagedSiteUrlForm>) => setForm((prev) => ({ ...prev, ...patch }))
-  const reset = () => {
+  const closeDialog = () => {
+    setDialogOpen(false)
     setEditingId(null)
-    setForm(emptyManagedUrlForm)
+    setForm(createEmptyManagedUrlForm(defaultSiteHost))
     setFeedback(null)
+  }
+  const openCreate = () => {
+    setEditingId(null)
+    setFeedback(null)
+    setForm(createEmptyManagedUrlForm(defaultSiteHost))
+    setDialogOpen(true)
+  }
+  const openEditor = (url: ManagedSiteUrl) => {
+    setEditingId(url.id)
+    setFeedback(null)
+    setForm(managedUrlToForm(url))
+    setDialogOpen(true)
   }
 
   return (
-    <SiteTrackingSection title="URLs personalizadas" icon={<LinkSimple className="h-5 w-5" />}>
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.8fr)]">
-        <div className="space-y-3">
+    <SiteTrackingSection
+      title="URLs personalizadas"
+      icon={<LinkSimple className="h-5 w-5" />}
+      action={
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 border-slate-700 bg-slate-950/60 text-slate-100 hover:bg-slate-800"
+          aria-label="Adicionar URL personalizada"
+          title="Adicionar URL personalizada"
+          onClick={openCreate}
+        >
+          <Plus className="h-4 w-4" weight="bold" />
+        </Button>
+      }
+    >
+      <div className="min-w-0 space-y-5">
+        <div className="min-w-0 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Gerenciadas no CRM</div>
@@ -589,131 +654,169 @@ export function ManagedSiteUrlsSection({
             </div>
             <Badge variant="outline">{formatSiteTrackingNumber(urls.length)}</Badge>
           </div>
-          {urls.length ? urls.map((url) => (
-            <div key={url.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-white">{url.name}</span>
-                    <Badge variant={url.active ? 'success' : 'secondary'}>{url.active ? 'Ativa' : 'Pausada'}</Badge>
-                  </div>
-                  <div className="mt-1 truncate font-mono text-xs text-cyan-100">{url.publicUrl}</div>
-                  <div className="mt-1 truncate text-sm text-slate-400">{shortUrl(url.destinationUrl)}</div>
-                  <div className="mt-2 text-xs text-slate-500">
-                    {url.utmCampaign || 'sem campanha'} · {url.unitSlug || 'sem unidade'} · {url.serviceId || 'sem procedimento'}
+          {urls.length ? (
+            <div className="max-h-[34rem] space-y-3 overflow-y-auto pr-1">
+              {urls.map((url) => (
+                <div key={url.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-white">{url.name}</span>
+                        <Badge variant={url.active ? 'success' : 'secondary'}>{url.active ? 'Ativa' : 'Pausada'}</Badge>
+                        <Badge variant="outline">{formatManagedUrlHostLabel(url.siteHost)}</Badge>
+                      </div>
+                      <div className="mt-1 break-all font-mono text-xs text-cyan-100">{url.publicUrl}</div>
+                      <div className="mt-1 break-all text-sm text-slate-400">{shortUrl(url.destinationUrl)}</div>
+                      <div className="mt-2 text-xs text-slate-500">
+                        {url.utmCampaign || 'sem campanha'} · {url.unitSlug || 'sem unidade'} · {url.serviceId || 'sem procedimento'}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <div className="text-right">
+                        <div className="font-mono text-lg font-semibold text-white">{formatSiteTrackingNumber(url.clickCount)}</div>
+                        <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">cliques</div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="border-slate-700 bg-slate-950/60 text-slate-100 hover:bg-slate-800"
+                        onClick={() => openEditor(url)}
+                      >
+                        Editar
+                      </Button>
+                    </div>
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <div className="text-right">
-                    <div className="font-mono text-lg font-semibold text-white">{formatSiteTrackingNumber(url.clickCount)}</div>
-                    <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">cliques</div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="border-slate-700 bg-slate-950/60 text-slate-100 hover:bg-slate-800"
-                    onClick={() => {
-                      setEditingId(url.id)
-                      setFeedback(null)
-                    }}
-                  >
-                    Editar
-                  </Button>
-                </div>
-              </div>
+              ))}
             </div>
-          )) : <div className="rounded-xl border border-dashed border-slate-800 bg-white/[0.02] p-5 text-sm text-slate-500">Nenhuma URL gerenciada no CRM cadastrada ainda.</div>}
+          ) : <div className="rounded-xl border border-dashed border-slate-800 bg-white/[0.02] p-5 text-sm text-slate-500">Nenhuma URL gerenciada no CRM cadastrada ainda.</div>}
 
           <div className="pt-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Atalhos Cloudflare</div>
-                <div className="text-xs text-slate-500">Links read-only do worker esfa.co. Edição permanece no catálogo de redirects.</div>
+                <div className="text-xs text-slate-500">Fallback operacional enquanto houver atalhos ainda não migrados para o CRM.</div>
               </div>
               <Badge variant="outline">{formatSiteTrackingNumber(cloudflareRedirects.length)}</Badge>
             </div>
-            <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
-              {cloudflareRedirects.length ? cloudflareRedirects.map((url) => (
-                <div key={url.id} className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-slate-100">{url.name}</span>
-                        <Badge variant="secondary">Cloudflare</Badge>
+            {cloudflareRedirects.length ? (
+              <div className="mt-3 max-h-[24rem] space-y-2 overflow-y-auto pr-1">
+                {cloudflareRedirects.map((url) => (
+                  <div key={url.id} className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-slate-100">{url.name}</span>
+                          <Badge variant="secondary">Cloudflare</Badge>
+                        </div>
+                        <div className="mt-1 break-all font-mono text-xs text-cyan-100">{url.publicUrl}</div>
+                        <div className="mt-1 break-all text-sm text-slate-400">{shortUrl(url.destinationUrl)}</div>
                       </div>
-                      <div className="mt-1 truncate font-mono text-xs text-cyan-100">{url.publicUrl}</div>
-                      <div className="mt-1 truncate text-sm text-slate-400">{shortUrl(url.destinationUrl)}</div>
-                    </div>
-                    <div className="text-right text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                      Read-only
+                      <div className="text-right text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                        Read-only
+                      </div>
                     </div>
                   </div>
-                </div>
-              )) : <div className="rounded-xl border border-dashed border-slate-800 bg-white/[0.02] p-5 text-sm text-slate-500">Nenhum atalho Cloudflare carregado.</div>}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-3 rounded-xl border border-emerald-500/15 bg-emerald-500/8 p-4 text-sm text-emerald-100/90">
+                Todos os atalhos esfa.co desta superfície já estão gerenciados no CRM.
+              </div>
+            )}
           </div>
         </div>
+      </div>
+      <Dialog open={dialogOpen} onOpenChange={(open) => {
+        setDialogOpen(open)
+        if (!open) closeDialog()
+      }}>
+        <DialogContent className="max-w-3xl border-slate-800/80 bg-slate-950 text-slate-100">
+          <DialogHeader>
+            <DialogTitle>{editingId ? 'Editar URL personalizada' : 'Adicionar URL personalizada'}</DialogTitle>
+            <DialogDescription>
+              Use para links de campanha, anúncios, atalhos curtos e redirecionamentos monitorados.
+            </DialogDescription>
+          </DialogHeader>
 
-        <form
-          className="space-y-3 rounded-xl border border-cyan-400/20 bg-cyan-500/[0.04] p-4"
-          onSubmit={async (event) => {
-            event.preventDefault()
-            setFeedback(null)
-            try {
-              await onSave(form)
-              setFeedback(editingId ? 'URL atualizada.' : 'URL cadastrada.')
-              setEditingId(null)
-              setForm(emptyManagedUrlForm)
-            } catch (error) {
-              setFeedback(error instanceof Error ? error.message : 'Não foi possível salvar a URL.')
-            }
-          }}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-white">{editingId ? 'Editar URL' : 'Adicionar URL'}</div>
-              <div className="text-xs text-slate-500">Use para links de campanha, anúncios e atalhos monitorados.</div>
+          <form
+            className="space-y-4"
+            onSubmit={async (event) => {
+              event.preventDefault()
+              setFeedback(null)
+              try {
+                await onSave(form)
+                closeDialog()
+              } catch (error) {
+                setFeedback(error instanceof Error ? error.message : 'Não foi possível salvar a URL.')
+              }
+            }}
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1 text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
+                <span>Host público</span>
+                <Select value={form.siteHost} onValueChange={(siteHost) => update({ siteHost })}>
+                  <SelectTrigger className="h-10 w-full border-slate-800 bg-slate-950/70 text-slate-100">
+                    <SelectValue placeholder="Selecione o host" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {hostOptions.map((siteHost) => (
+                      <SelectItem key={siteHost} value={siteHost}>
+                        {formatManagedUrlHostLabel(siteHost)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <ManagedUrlField label="Posicionamento" value={form.placement} placeholder="campaign" onChange={(placement) => update({ placement })} />
             </div>
-            {editingId ? (
-              <Button type="button" variant="ghost" size="sm" className="text-slate-400 hover:text-white" onClick={reset}>
+
+            <ManagedUrlField label="Nome" value={form.name} placeholder="Botox Novo Hamburgo Meta" onChange={(name) => update({ name })} />
+            <ManagedUrlField label="URL final" value={form.destinationUrl} placeholder="https://espacofacial.com/agendamento?unit=novo-hamburgo&service=botox" onChange={(destinationUrl) => update({ destinationUrl })} />
+            <ManagedUrlField label="Atalho" value={form.slugPath} placeholder="/campanhas/botox-novo-hamburgo-meta" onChange={(slugPath) => update({ slugPath })} />
+            <ManagedUrlField label="Descrição" value={form.description} placeholder="Resumo operacional do link" onChange={(description) => update({ description })} />
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ManagedUrlField label="utm_source" value={form.utmSource} onChange={(utmSource) => update({ utmSource })} />
+              <ManagedUrlField label="utm_medium" value={form.utmMedium} onChange={(utmMedium) => update({ utmMedium })} />
+              <ManagedUrlField label="utm_campaign" value={form.utmCampaign} onChange={(utmCampaign) => update({ utmCampaign })} />
+              <ManagedUrlField label="utm_content" value={form.utmContent} onChange={(utmContent) => update({ utmContent })} />
+              <ManagedUrlField label="utm_term" value={form.utmTerm} onChange={(utmTerm) => update({ utmTerm })} />
+              <ManagedUrlField label="Unidade" value={form.unitSlug} placeholder="novo-hamburgo" onChange={(unitSlug) => update({ unitSlug })} />
+              <ManagedUrlField label="Procedimento" value={form.serviceId} placeholder="botox" onChange={(serviceId) => update({ serviceId })} />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                checked={form.active}
+                onChange={(event) => update({ active: event.target.checked })}
+                className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-cyan-500"
+              />
+              URL ativa
+            </label>
+
+            {feedback ? <div className="text-sm text-rose-200">{feedback}</div> : null}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" className="border-slate-700 bg-slate-950/60 text-slate-100 hover:bg-slate-800" onClick={closeDialog}>
                 Cancelar
               </Button>
-            ) : null}
-          </div>
-          <ManagedUrlField label="Nome" value={form.name} placeholder="Botox Novo Hamburgo Meta" onChange={(name) => update({ name })} />
-          <ManagedUrlField label="URL final" value={form.destinationUrl} placeholder="https://espacofacial.com/agendamento?unit=novo-hamburgo&service=botox" onChange={(destinationUrl) => update({ destinationUrl })} />
-          <ManagedUrlField label="Atalho" value={form.slugPath} placeholder="/campanhas/botox-novo-hamburgo-meta" onChange={(slugPath) => update({ slugPath })} />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <ManagedUrlField label="utm_source" value={form.utmSource} onChange={(utmSource) => update({ utmSource })} />
-            <ManagedUrlField label="utm_medium" value={form.utmMedium} onChange={(utmMedium) => update({ utmMedium })} />
-            <ManagedUrlField label="utm_campaign" value={form.utmCampaign} onChange={(utmCampaign) => update({ utmCampaign })} />
-            <ManagedUrlField label="utm_content" value={form.utmContent} onChange={(utmContent) => update({ utmContent })} />
-            <ManagedUrlField label="Unidade" value={form.unitSlug} placeholder="novo-hamburgo" onChange={(unitSlug) => update({ unitSlug })} />
-            <ManagedUrlField label="Procedimento" value={form.serviceId} placeholder="botox" onChange={(serviceId) => update({ serviceId })} />
-          </div>
-          <label className="flex items-center gap-2 text-sm text-slate-300">
-            <input
-              type="checkbox"
-              checked={form.active}
-              onChange={(event) => update({ active: event.target.checked })}
-              className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-cyan-500"
-            />
-            URL ativa
-          </label>
-          {feedback ? <div className="text-xs text-emerald-300">{feedback}</div> : null}
-          <Button type="submit" disabled={saving || !form.name.trim() || !form.destinationUrl.trim()} className="w-full bg-cyan-500 text-slate-950 hover:bg-cyan-400">
-            {saving ? 'Salvando...' : editingId ? 'Salvar alterações' : 'Cadastrar URL'}
-          </Button>
-        </form>
-      </div>
+              <Button type="submit" disabled={saving || !form.name.trim() || !form.destinationUrl.trim()} className="bg-cyan-500 text-slate-950 hover:bg-cyan-400">
+                {saving ? 'Salvando...' : editingId ? 'Salvar alterações' : 'Cadastrar URL'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </SiteTrackingSection>
   )
 }
 
 export function SiteLinkSections({ data }: { data: TrackingOverviewResponse | null }) {
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
+    <div className="grid min-w-0 gap-6 xl:grid-cols-2">
       <SiteTrackingSection title="Links personalizados e CTAs" icon={<LinkSimple className="h-5 w-5" />}>
         <RankedList items={listOrEmpty(data?.customLinks?.topLinks)} labelKey="linkUrl" empty="Sem cliques em links rastreados." />
       </SiteTrackingSection>
@@ -728,7 +831,7 @@ export function SiteIssueAndClickSections({ data }: { data: TrackingOverviewResp
   const incompleteBookings = listOrEmpty(data?.reconciliation?.incompleteBookings)
   const recentClicks = listOrEmpty(data?.customLinks?.recentClicks)
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
+    <div className="grid min-w-0 gap-6 xl:grid-cols-2">
       <SiteTrackingSection title="Reservas com origem incompleta" icon={<WarningCircle className="h-5 w-5" />}>
         <div className="space-y-3">
           {incompleteBookings.slice(0, 8).map((booking) => (

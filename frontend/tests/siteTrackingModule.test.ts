@@ -83,6 +83,8 @@ describe('site tracking header bridge', () => {
       refreshing: true,
       selectedSiteId: 'espacofacial.com',
       windowDays: 999,
+      dataSourceLabel: 'website_d1',
+      dataSiteHost: 'espacofacial.com',
       sites: [
         { id: 'espacofacial.com', name: 'Espaço Facial', host: 'espacofacial.com', statusTone: 'success' },
         { id: '', name: 'invalid' },
@@ -93,6 +95,8 @@ describe('site tracking header bridge', () => {
       refreshing: true,
       selectedSiteId: 'espacofacial.com',
       windowDays: 30,
+      dataSourceLabel: 'website_d1',
+      dataSiteHost: 'espacofacial.com',
       sites: [{ id: 'espacofacial.com', name: 'Espaço Facial', host: 'espacofacial.com', statusTone: 'success' }],
     })
   })
