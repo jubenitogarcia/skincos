@@ -1,0 +1,19 @@
+{
+  "name": "@skincos/token-vault-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Internal Cloudflare Worker for n8n credential token storage.",
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.toml",
+    "deploy": "wrangler deploy --config wrangler.toml --keep-vars",
+    "deploy:staging": "wrangler deploy --config wrangler.toml --env staging --keep-vars",
+    "d1:migrate": "wrangler d1 migrations apply skincos-token-vault --config wrangler.toml --remote",
+    "d1:migrate:staging": "wrangler d1 migrations apply skincos-token-vault-staging --config wrangler.toml --env staging --remote",
+    "test": "node --test tests/*.test.js",
+    "seed:from-csv": "node scripts/build-seed-from-csv.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.100.0"
+  }
+}
