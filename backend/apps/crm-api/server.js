@@ -30,6 +30,7 @@ import { registerPontoRoutes } from './server/pontoRoutes.js'
 import { createHarmoniaRouter } from './server/harmonia/routes.js'
 import { startHarmoniaWorker } from './server/harmonia/worker.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
+import { createAtendimentoClinicaRouter } from './server/atendimentoClinica/routes.js'
 
 // Axios for facade requests to Unified System
 import axios from 'axios'
@@ -617,7 +618,7 @@ if (DEV_AUTH_ENABLED) {
     const DEV_AUTH_EMAIL = String(process.env.DEV_AUTH_EMAIL || 'dev@local.test').trim() || 'dev@local.test'
     const DEV_AUTH_ROLE = String(process.env.DEV_AUTH_ROLE || 'admin').trim() || 'admin'
     const DEV_AUTH_ALLOWED_UNITS = String(process.env.DEV_AUTH_ALLOWED_UNITS || '').trim()
-    const DEV_AUTH_ALLOWED_MODULES = String(process.env.DEV_AUTH_ALLOWED_MODULES || 'ponto').trim()
+    const DEV_AUTH_ALLOWED_MODULES = String(process.env.DEV_AUTH_ALLOWED_MODULES || 'ponto,atendimento-clinica').trim()
     const DEV_AUTH_AUTO = String(process.env.DEV_AUTH_AUTO || 'true').toLowerCase() !== 'false'
 
     const base64urlEncode = (input) => Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
@@ -921,6 +922,13 @@ try {
     console.log('✅ Tracking dashboard routes registered')
 } catch (e) {
     console.warn('⚠️  Tracking dashboard routes failed to register:', e?.message || String(e))
+}
+
+try {
+    app.use('/api/atendimento-clinica', createAtendimentoClinicaRouter({ getDevSession: devAuthSessionResolver }))
+    console.log('✅ Atendimento Clínica routes registered')
+} catch (e) {
+    console.warn('⚠️  Atendimento Clínica routes failed to register:', e?.message || String(e))
 }
 
 try {

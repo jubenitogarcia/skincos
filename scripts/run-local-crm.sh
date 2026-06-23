@@ -19,11 +19,25 @@ if [[ -n "${CRM_OPEN_BROWSER+x}" ]]; then
 else
   CRM_OPEN_BROWSER_EXPLICIT=0
 fi
-CRM_OPEN_BROWSER="${CRM_OPEN_BROWSER:-1}"
+is_codex_app_shell() {
+  [[ "${CODEX_SHELL:-}" == "1" || "${CODEX_CI:-}" == "1" || "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" == "Codex Desktop" ]]
+}
+
+if [[ "$CRM_OPEN_BROWSER_EXPLICIT" == "0" ]] && is_codex_app_shell; then
+  CRM_OPEN_BROWSER=0
+else
+  CRM_OPEN_BROWSER="${CRM_OPEN_BROWSER:-1}"
+fi
 CRM_SMOKE="${CRM_SMOKE:-0}"
 CRM_SMOKE_HEADED="${CRM_SMOKE_HEADED:-${HEADED:-0}}"
 CRM_EXIT_AFTER_SMOKE="${CRM_EXIT_AFTER_SMOKE:-0}"
-CRM_BUILD_BEFORE_START="${CRM_BUILD_BEFORE_START:-1}"
+if [[ -n "${CRM_BUILD_BEFORE_START+x}" ]]; then
+  CRM_BUILD_BEFORE_START="${CRM_BUILD_BEFORE_START}"
+elif is_codex_app_shell; then
+  CRM_BUILD_BEFORE_START=0
+else
+  CRM_BUILD_BEFORE_START=1
+fi
 CRM_META_ADS_SCENARIO="${CRM_META_ADS_SCENARIO:-}"
 CRM_WITH_INSUMOS="${CRM_WITH_INSUMOS:-0}"
 CRM_INSUMOS_PORT="${CRM_INSUMOS_PORT:-8787}"
@@ -198,6 +212,25 @@ stop_existing() {
   fi
 }
 
+stop_owned_port_listener() {
+  local port="$1"
+  local label="$2"
+  local pids
+  pids="$(lsof -ti tcp:"$port" 2>/dev/null || true)"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+  local pid
+  for pid in $pids; do
+    local args
+    args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    if [[ "$args" == *"$ROOT_DIR"* ]] && [[ "$args" == *"vite"* || "$args" == *"wrangler"* || "$args" == *"dev_pages.sh"* || "$args" == *"insumos.sh"* ]]; then
+      echo "[crm-local] Encerrando $label preso na porta $port (pid: $pid)"
+      terminate_pid "$pid"
+    fi
+  done
+}
+
 assert_port_free() {
   local port="$1"
   local label="$2"
@@ -310,6 +343,11 @@ start_insumos_local() {
 
 if [[ "$STOP_ONLY" == "1" ]]; then
   stop_existing
+  stop_owned_port_listener "$CRM_VITE_PORT" "vite"
+  stop_owned_port_listener "$CRM_PAGES_PORT" "pages"
+  if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+    stop_owned_port_listener "$CRM_INSUMOS_PORT" "insumos"
+  fi
   echo "CRM local finalizado."
   exit 0
 fi

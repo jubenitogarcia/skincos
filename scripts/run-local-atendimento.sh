@@ -7,7 +7,7 @@ CRM_API_PORT="${CRM_API_PORT:-8099}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 DEV_AUTH_EMAIL_DEFAULT="${DEV_AUTH_EMAIL:-jubenitogarcia@local.test}"
 DEV_AUTH_ROLE_DEFAULT="${DEV_AUTH_ROLE:-GESTOR}"
-DEV_AUTH_ALLOWED_MODULES_DEFAULT="${DEV_AUTH_ALLOWED_MODULES:-insumos,atendimento,ponto,status,users,escala-profissionais}"
+DEV_AUTH_ALLOWED_MODULES_DEFAULT="${DEV_AUTH_ALLOWED_MODULES:-insumos,atendimento,atendimento-clinica,faturamento,procedimentos,ponto,status,users,escala-profissionais}"
 LOCAL_AUTH_BYPASS_DEFAULT="${LOCAL_AUTH_BYPASS:-false}"
 
 free_port() {

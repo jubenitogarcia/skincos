@@ -7,11 +7,14 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test server/harmonia/__tests__/*.test.js"
+    "test": "node --test server/harmonia/__tests__/*.test.js server/atendimentoClinica/__tests__/*.test.js",
+    "import-atendimento-sheet": "node scripts/import-atendimento-sheet.mjs",
+    "import-gerencia-sheet": "node scripts/import-gerencia-sheet.mjs"
   },
   "dependencies": {
     "axios": "1.18.0",
     "cors": "^2.8.5",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "googleapis": "^173.0.0",
     "http-proxy-middleware": "^3.0.5",

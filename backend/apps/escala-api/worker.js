@@ -767,6 +767,313 @@ async function handleHolidayDelete(env, actor, body) {
   return { ok: true, status: 200, body: { ok: true } }
 }
 
+function safeJsonParse(value, fallback) {
+  try {
+    return JSON.parse(String(value || ''))
+  } catch {
+    return fallback
+  }
+}
+
+function mergeUnitLists(currentUnits, importedUnits) {
+  const byKey = new Map()
+  ;[...(Array.isArray(currentUnits) ? currentUnits : []), ...(Array.isArray(importedUnits) ? importedUnits : [])]
+    .map(normalizeName)
+    .filter(Boolean)
+    .forEach((unit) => {
+      const key = normalizeUnitKey(unit)
+      if (!byKey.has(key)) byKey.set(key, unit)
+    })
+  return Array.from(byKey.values())
+}
+
+function normalizeImportedProfessional(row) {
+  const name = normalizeName(row?.name)
+  const units = Array.isArray(row?.units)
+    ? row.units.map(normalizeName).filter(Boolean)
+    : normalizeName(row?.unit)
+      ? [normalizeName(row.unit)]
+      : []
+  if (!name) return null
+  return {
+    name,
+    status: normalizeName(row?.status) || 'Ativo',
+    units,
+    role: normalizeName(row?.role),
+    shift: normalizeName(row?.shift),
+    nickname: normalizeName(row?.nickname),
+    phone: normalizeName(row?.phone),
+    email: normalizeName(row?.email),
+    instagram: normalizeName(row?.instagram),
+    color: normalizeName(row?.color),
+  }
+}
+
+function normalizeImportedSchedule(row) {
+  const date = normalizeName(row?.date)
+  const unit = normalizeName(row?.unit)
+  const professional = normalizeName(row?.professional || row?.doctor || row?.name)
+  if (!date || !isValidDate(date) || !unit || !professional) return null
+  return { date, unit, professional }
+}
+
+function normalizeImportedClosedDay(row) {
+  const date = normalizeName(row?.date)
+  const unit = normalizeName(row?.unit)
+  if (!date || !isValidDate(date) || !unit) return null
+  return { date, unit, reason: normalizeName(row?.reason) || 'Sem Atendimento' }
+}
+
+function normalizeImportedHoliday(row) {
+  const date = normalizeName(row?.date)
+  const unit = normalizeName(row?.unit)
+  const name = normalizeName(row?.name || row?.reason)
+  if (!date || !isValidDate(date) || !unit || !name) return null
+  return { date, unit, name }
+}
+
+function buildCoverageSummary(scheduleRows, closedRows, holidayRows) {
+  const coverage = new Map()
+  const touch = (unit, date, field) => {
+    const key = `${unit}__${String(date || '').slice(0, 7)}`
+    if (!String(date || '').slice(0, 7)) return
+    const row = coverage.get(key) || { unit, month: String(date).slice(0, 7), scheduleEntries: 0, closedDays: 0, holidays: 0 }
+    row[field] += 1
+    coverage.set(key, row)
+  }
+  scheduleRows.forEach((row) => touch(row.unit, row.date, 'scheduleEntries'))
+  closedRows.forEach((row) => touch(row.unit, row.date, 'closedDays'))
+  holidayRows.forEach((row) => touch(row.unit, row.date, 'holidays'))
+  return Array.from(coverage.values()).sort((a, b) => `${a.month}:${a.unit}`.localeCompare(`${b.month}:${b.unit}`))
+}
+
+async function handleAtendimentoClinicaImport(env, actor, body) {
+  const input = body?.feed && typeof body.feed === 'object' ? body.feed : body || {}
+  const commit = Boolean(body?.commit)
+  const force = Boolean(body?.force)
+  const rawProfessionals = Array.isArray(input.professionals) ? input.professionals : []
+  const rawSchedule = Array.isArray(input.schedule) ? input.schedule : []
+  const rawClosedDays = Array.isArray(input.closedDays) ? input.closedDays : []
+  const rawHolidays = Array.isArray(input.holidays) ? input.holidays : []
+
+  const skipped = { professionals: 0, schedule: 0, closedDays: 0, holidays: 0 }
+  const professionals = rawProfessionals
+    .map(normalizeImportedProfessional)
+    .filter((row) => {
+      if (!row) {
+        skipped.professionals += 1
+        return false
+      }
+      const visibleUnits = row.units.filter((unit) => isUnitVisibleForActor(actor, unit))
+      if (!visibleUnits.length && row.units.length) {
+        skipped.professionals += 1
+        return false
+      }
+      row.units = visibleUnits
+      return true
+    })
+  const schedule = rawSchedule
+    .map(normalizeImportedSchedule)
+    .filter((row) => {
+      if (!row || !isUnitVisibleForActor(actor, row.unit)) {
+        skipped.schedule += 1
+        return false
+      }
+      return true
+    })
+  const closedDays = rawClosedDays
+    .map(normalizeImportedClosedDay)
+    .filter((row) => {
+      if (!row || !isUnitVisibleForActor(actor, row.unit)) {
+        skipped.closedDays += 1
+        return false
+      }
+      return true
+    })
+  const holidays = rawHolidays
+    .map(normalizeImportedHoliday)
+    .filter((row) => {
+      if (!row || !isUnitVisibleForActor(actor, row.unit)) {
+        skipped.holidays += 1
+        return false
+      }
+      return true
+    })
+
+  const hasColorColumn = await tableHasColumn(env, 'professionals', 'color')
+  const existingProfessionalsRes = await env.DB.prepare(
+    hasColorColumn
+      ? `select name, status, role, shift, nickname, phone, email, instagram, color, units_json from professionals`
+      : `select name, status, role, shift, nickname, phone, email, instagram, null as color, units_json from professionals`
+  ).all()
+  const existingScheduleRes = await env.DB.prepare(
+    `select date, unit, professional_name as professional from schedule_entries`
+  ).all()
+  const existingClosedRes = await env.DB.prepare(`select date, unit, reason from closed_days`).all()
+  const existingHolidaysRes = await env.DB.prepare(`select date, unit, name from holidays`).all()
+
+  const existingProfessionals = new Map((existingProfessionalsRes.results || []).map((row) => [normalizeName(row.name), row]))
+  const existingSchedule = new Set((existingScheduleRes.results || []).map((row) => `${row.date}__${normalizeUnitKey(row.unit)}__${normalizeName(row.professional)}`))
+  const existingScheduleByDay = new Set((existingScheduleRes.results || []).map((row) => `${row.date}__${normalizeUnitKey(row.unit)}`))
+  const existingClosed = new Map((existingClosedRes.results || []).map((row) => [`${row.date}__${normalizeUnitKey(row.unit)}`, row]))
+  const existingHolidays = new Set((existingHolidaysRes.results || []).map((row) => `${row.date}__${normalizeUnitKey(row.unit)}__${normalizeName(row.name)}`))
+
+  const summary = {
+    professionals: { source: professionals.length, existing: 0, toInsert: 0, toUpdate: 0, unchanged: 0, skipped: skipped.professionals },
+    schedule: { source: schedule.length, existing: 0, toInsert: 0, conflicts: 0, skipped: skipped.schedule },
+    closedDays: { source: closedDays.length, existing: 0, toInsert: 0, conflicts: 0, skipped: skipped.closedDays },
+    holidays: { source: holidays.length, existing: 0, toInsert: 0, skipped: skipped.holidays },
+    coverage: buildCoverageSummary(schedule, closedDays, holidays),
+  }
+  const statements = []
+  const now = new Date().toISOString()
+
+  for (const prof of professionals) {
+    const existing = existingProfessionals.get(prof.name)
+    if (!existing) {
+      summary.professionals.toInsert += 1
+      if (commit) {
+        const baseValues = [
+          crypto.randomUUID(),
+          prof.name,
+          prof.status || 'Ativo',
+          prof.role || null,
+          prof.shift || null,
+          prof.nickname || null,
+          prof.phone || null,
+          prof.email || null,
+          prof.instagram || null,
+        ]
+        statements.push(
+          hasColorColumn
+            ? env.DB.prepare(
+              `insert into professionals
+               (id, name, status, role, shift, nickname, phone, email, instagram, color, units_json, created_at, updated_at)
+               values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
+            ).bind(...baseValues, prof.color || null, JSON.stringify(prof.units || []), now, now)
+            : env.DB.prepare(
+              `insert into professionals
+               (id, name, status, role, shift, nickname, phone, email, instagram, units_json, created_at, updated_at)
+               values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
+            ).bind(...baseValues, JSON.stringify(prof.units || []), now, now)
+        )
+      }
+      continue
+    }
+    summary.professionals.existing += 1
+    const existingUnits = safeJsonParse(existing.units_json, [])
+    const mergedUnits = mergeUnitLists(existingUnits, prof.units)
+    const needsUpdate = force
+      || JSON.stringify(mergedUnits) !== JSON.stringify(existingUnits)
+      || (!normalizeName(existing.role) && prof.role)
+      || (!normalizeName(existing.shift) && prof.shift)
+      || (!normalizeName(existing.nickname) && prof.nickname)
+      || (!normalizeName(existing.phone) && prof.phone)
+      || (!normalizeName(existing.email) && prof.email)
+      || (!normalizeName(existing.instagram) && prof.instagram)
+      || (hasColorColumn && !normalizeName(existing.color) && prof.color)
+    if (!needsUpdate) {
+      summary.professionals.unchanged += 1
+      continue
+    }
+    summary.professionals.toUpdate += 1
+    if (commit) {
+      const next = {
+        status: force ? prof.status || existing.status || 'Ativo' : existing.status || prof.status || 'Ativo',
+        role: force ? prof.role || existing.role || null : existing.role || prof.role || null,
+        shift: force ? prof.shift || existing.shift || null : existing.shift || prof.shift || null,
+        nickname: force ? prof.nickname || existing.nickname || null : existing.nickname || prof.nickname || null,
+        phone: force ? prof.phone || existing.phone || null : existing.phone || prof.phone || null,
+        email: force ? prof.email || existing.email || null : existing.email || prof.email || null,
+        instagram: force ? prof.instagram || existing.instagram || null : existing.instagram || prof.instagram || null,
+        color: force ? prof.color || existing.color || null : existing.color || prof.color || null,
+      }
+      statements.push(
+        hasColorColumn
+          ? env.DB.prepare(
+            `update professionals
+             set name = ?1, status = ?2, role = ?3, shift = ?4, nickname = ?5, phone = ?6,
+                 email = ?7, instagram = ?8, color = ?9, units_json = ?10, updated_at = ?11
+             where name = ?12`
+          ).bind(prof.name, next.status, next.role, next.shift, next.nickname, next.phone, next.email, next.instagram, next.color, JSON.stringify(mergedUnits), now, prof.name)
+          : env.DB.prepare(
+            `update professionals
+             set name = ?1, status = ?2, role = ?3, shift = ?4, nickname = ?5, phone = ?6,
+                 email = ?7, instagram = ?8, units_json = ?9, updated_at = ?10
+             where name = ?11`
+          ).bind(prof.name, next.status, next.role, next.shift, next.nickname, next.phone, next.email, next.instagram, JSON.stringify(mergedUnits), now, prof.name)
+      )
+    }
+  }
+
+  for (const row of schedule) {
+    const key = `${row.date}__${normalizeUnitKey(row.unit)}__${row.professional}`
+    if (existingSchedule.has(key)) {
+      summary.schedule.existing += 1
+      continue
+    }
+    const closed = existingClosed.get(`${row.date}__${normalizeUnitKey(row.unit)}`)
+    if (closed && normalizeUnitKey(closed.reason) !== normalizeUnitKey('Sem Atendimento')) {
+      summary.schedule.conflicts += 1
+      continue
+    }
+    summary.schedule.toInsert += 1
+    if (commit) {
+      if (closed) statements.push(env.DB.prepare(`delete from closed_days where date = ?1 and unit = ?2`).bind(row.date, row.unit))
+      statements.push(
+        env.DB.prepare(
+          `insert or ignore into schedule_entries
+           (id, date, unit, professional_name, created_at, updated_at, created_by, updated_by)
+           values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+        ).bind(crypto.randomUUID(), row.date, row.unit, row.professional, now, now, actor.id, actor.id),
+      )
+    }
+  }
+
+  for (const row of closedDays) {
+    const key = `${row.date}__${normalizeUnitKey(row.unit)}`
+    if (existingClosed.has(key)) {
+      summary.closedDays.existing += 1
+      continue
+    }
+    if (existingScheduleByDay.has(key)) {
+      summary.closedDays.conflicts += 1
+      continue
+    }
+    summary.closedDays.toInsert += 1
+    if (commit) {
+      statements.push(
+        env.DB.prepare(
+          `insert or replace into closed_days
+           (id, date, unit, reason, created_at, updated_at, created_by, updated_by)
+           values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+        ).bind(crypto.randomUUID(), row.date, row.unit, row.reason, now, now, actor.id, actor.id),
+      )
+    }
+  }
+
+  for (const row of holidays) {
+    const key = `${row.date}__${normalizeUnitKey(row.unit)}__${row.name}`
+    if (existingHolidays.has(key)) {
+      summary.holidays.existing += 1
+      continue
+    }
+    summary.holidays.toInsert += 1
+    if (commit) {
+      statements.push(
+        env.DB.prepare(
+          `insert or replace into holidays
+           (id, date, unit, name, created_at, updated_at, created_by, updated_by)
+           values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+        ).bind(crypto.randomUUID(), row.date, row.unit, row.name, now, now, actor.id, actor.id),
+      )
+    }
+  }
+
+  if (commit && statements.length) await runStatements(env, statements)
+  return { ok: true, status: 200, body: { ok: true, dryRun: !commit, committed: commit, summary } }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
@@ -892,6 +1199,26 @@ export default {
           month,
           candidateDates: result.body.suggestions.length,
           durationMs: Date.now() - startedAt,
+        }))
+        return jsonResponse(result.body, { status: result.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
+      }
+
+      if (path === '/api/escala/admin/import/atendimento-clinica') {
+        if (request.method !== 'POST') {
+          return jsonResponse({ ok: false, error: 'METHOD_NOT_ALLOWED' }, { status: 405, headers: { ...corsHeaders, 'x-request-id': requestId } })
+        }
+        const body = await readJson(request)
+        if (!body) {
+          return jsonResponse({ ok: false, error: 'INVALID_JSON' }, { status: 400, headers: { ...corsHeaders, 'x-request-id': requestId } })
+        }
+        const result = await handleAtendimentoClinicaImport(env, actor, body)
+        console.log(JSON.stringify({
+          event: 'escala.import.atendimento_clinica',
+          requestId,
+          actor: actor.id,
+          committed: result.body.committed,
+          scheduleToInsert: result.body.summary?.schedule?.toInsert || 0,
+          closedToInsert: result.body.summary?.closedDays?.toInsert || 0,
         }))
         return jsonResponse(result.body, { status: result.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
       }

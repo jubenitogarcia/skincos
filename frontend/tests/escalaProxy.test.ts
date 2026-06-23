@@ -8,12 +8,14 @@ vi.mock('../functions/_lib/crmAuth', () => ({
 import { onRequest, __testables } from '../functions/api/escala/[[path]].ts'
 import { requireCrmUser, isLocalDevAuthBypassEnabled } from '../functions/_lib/crmAuth'
 
-function createContext(url: string, env: Record<string, unknown> = {}) {
+function createContext(url: string, env: Record<string, unknown> = {}, init: RequestInit = {}) {
   return {
     request: new Request(url, {
+      ...init,
       headers: {
         accept: 'application/json',
         'content-type': 'application/json',
+        ...(init.headers || {}),
       },
     }),
     env,
@@ -112,5 +114,87 @@ describe('Escala proxy contract', () => {
     )
 
     expect(enabled).toBe(false)
+  })
+
+  it('uses local mock mode to dry-run and commit Atendimento Clinica scale imports', async () => {
+    ;(requireCrmUser as Mock).mockResolvedValue({
+      id: 'gestor-1',
+      username: 'gestor',
+      email: 'gestor@local.test',
+      displayName: 'Gestor Local',
+      role: 'GESTOR',
+      allowedUnits: ['Novo Hamburgo'],
+    })
+    ;(isLocalDevAuthBypassEnabled as Mock).mockReturnValue(true)
+
+    const env = {
+      LOCAL_ESCALA_MOCK: 'true',
+      ESCALA_API_TARGET: '',
+      ESCALA_ACTOR_HMAC_KEY: '',
+    }
+    const feed = {
+      professionals: [{ name: 'Dra. Sincronizada Teste', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'] }],
+      schedule: [{ date: '2026-06-03', unit: 'Novo Hamburgo', professional: 'Dra. Sincronizada Teste' }],
+      closedDays: [{ date: '2026-06-04', unit: 'Novo Hamburgo', reason: 'Sem Atendimento' }],
+    }
+
+    const dryRunResponse = await onRequest(
+      createContext('http://localhost:5173/api/escala/admin/import/atendimento-clinica', env, {
+        method: 'POST',
+        body: JSON.stringify({ feed, dryRun: true }),
+      }),
+    )
+
+    expect(dryRunResponse.status).toBe(200)
+    await expect(dryRunResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        ok: true,
+        dryRun: true,
+        summary: expect.objectContaining({
+          professionals: expect.objectContaining({ toInsert: 1 }),
+          schedule: expect.objectContaining({ toInsert: 1 }),
+          closedDays: expect.objectContaining({ toInsert: 1 }),
+        }),
+      }),
+    )
+
+    const commitResponse = await onRequest(
+      createContext('http://localhost:5173/api/escala/admin/import/atendimento-clinica', env, {
+        method: 'POST',
+        body: JSON.stringify({ feed, commit: true }),
+      }),
+    )
+
+    expect(commitResponse.status).toBe(200)
+    await expect(commitResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        ok: true,
+        committed: true,
+        summary: expect.objectContaining({
+          professionals: expect.objectContaining({ toInsert: 1 }),
+          schedule: expect.objectContaining({ toInsert: 1 }),
+          closedDays: expect.objectContaining({ toInsert: 1 }),
+        }),
+      }),
+    )
+
+    const secondCommitResponse = await onRequest(
+      createContext('http://localhost:5173/api/escala/admin/import/atendimento-clinica', env, {
+        method: 'POST',
+        body: JSON.stringify({ feed, commit: true }),
+      }),
+    )
+
+    expect(secondCommitResponse.status).toBe(200)
+    await expect(secondCommitResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        ok: true,
+        summary: expect.objectContaining({
+          professionals: expect.objectContaining({ toInsert: 0 }),
+          schedule: expect.objectContaining({ toInsert: 0 }),
+          closedDays: expect.objectContaining({ toInsert: 0 }),
+        }),
+      }),
+    )
   })
 })

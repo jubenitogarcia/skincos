@@ -275,6 +275,154 @@ async function readJson(request: Request): Promise<any> {
   }
 }
 
+function normalizeImportProfessional(row: any): LocalProfessional | null {
+  const name = String(row?.name || '').trim()
+  if (!name) return null
+  const units = Array.isArray(row?.units)
+    ? row.units.map((unit: unknown) => String(unit || '').trim()).filter(Boolean)
+    : String(row?.unit || '').trim()
+      ? [String(row.unit).trim()]
+      : []
+  return {
+    name,
+    status: String(row?.status || 'Ativo').trim(),
+    units,
+    role: String(row?.role || '').trim(),
+    shift: String(row?.shift || '').trim(),
+    nickname: String(row?.nickname || '').trim(),
+    phone: String(row?.phone || '').trim(),
+    email: String(row?.email || '').trim(),
+    instagram: String(row?.instagram || '').trim(),
+    color: String(row?.color || '').trim(),
+  }
+}
+
+function mergeImportUnits(left: string[], right: string[]): string[] {
+  const byKey = new Map<string, string>()
+  ;[...left, ...right].forEach((unit) => {
+    const key = normalizeUnitKey(unit)
+    if (key && !byKey.has(key)) byKey.set(key, String(unit || '').trim())
+  })
+  return Array.from(byKey.values())
+}
+
+function buildLocalImportSummary(store: EscalaLocalStore, payload: any, actor: EscalaActor, commit: boolean) {
+  const input = payload?.feed && typeof payload.feed === 'object' ? payload.feed : payload || {}
+  const rawProfessionals = Array.isArray(input.professionals) ? input.professionals : []
+  const rawSchedule = Array.isArray(input.schedule) ? input.schedule : []
+  const rawClosedDays = Array.isArray(input.closedDays) ? input.closedDays : []
+  const rawHolidays = Array.isArray(input.holidays) ? input.holidays : []
+
+  const professionals = rawProfessionals
+    .map(normalizeImportProfessional)
+    .filter((row: LocalProfessional | null): row is LocalProfessional => {
+      if (!row) return false
+      row.units = row.units.filter((unit) => canUseUnit(actor, unit))
+      return !row.units.length || row.units.some((unit) => canUseUnit(actor, unit))
+    })
+  const schedule = rawSchedule
+    .map((row: any) => ({
+      date: String(row?.date || '').trim(),
+      unit: String(row?.unit || '').trim(),
+      professional: String(row?.professional || row?.doctor || '').trim(),
+    }))
+    .filter((row: LocalScheduleEntry) => isValidIsoDate(row.date) && row.unit && row.professional && canUseUnit(actor, row.unit))
+  const closedDays = rawClosedDays
+    .map((row: any) => ({
+      date: String(row?.date || '').trim(),
+      unit: String(row?.unit || '').trim(),
+      reason: String(row?.reason || 'Sem Atendimento').trim(),
+    }))
+    .filter((row: LocalClosedDay) => isValidIsoDate(row.date) && row.unit && canUseUnit(actor, row.unit))
+  const holidays = rawHolidays
+    .map((row: any) => ({
+      date: String(row?.date || '').trim(),
+      unit: String(row?.unit || '').trim(),
+      name: String(row?.name || row?.reason || '').trim(),
+    }))
+    .filter((row: LocalHoliday) => isValidIsoDate(row.date) && row.unit && row.name && canUseUnit(actor, row.unit))
+
+  const summary = {
+    professionals: { source: professionals.length, existing: 0, toInsert: 0, toUpdate: 0, unchanged: 0, skipped: rawProfessionals.length - professionals.length },
+    schedule: { source: schedule.length, existing: 0, toInsert: 0, conflicts: 0, skipped: rawSchedule.length - schedule.length },
+    closedDays: { source: closedDays.length, existing: 0, toInsert: 0, conflicts: 0, skipped: rawClosedDays.length - closedDays.length },
+    holidays: { source: holidays.length, existing: 0, toInsert: 0, skipped: rawHolidays.length - holidays.length },
+    coverage: [] as Array<{ unit: string; month: string; scheduleEntries: number; closedDays: number; holidays: number }>,
+  }
+
+  for (const prof of professionals) {
+    const existing = store.professionals.find((row) => row.name === prof.name)
+    if (!existing) {
+      summary.professionals.toInsert += 1
+      if (commit) store.professionals.push(prof)
+      continue
+    }
+    summary.professionals.existing += 1
+    const mergedUnits = mergeImportUnits(existing.units || [], prof.units || [])
+    if (JSON.stringify(mergedUnits) !== JSON.stringify(existing.units || [])) {
+      summary.professionals.toUpdate += 1
+      if (commit) existing.units = mergedUnits
+    } else {
+      summary.professionals.unchanged += 1
+    }
+  }
+
+  for (const row of schedule) {
+    const exists = store.schedule.some((item) => item.date === row.date && item.unit === row.unit && item.professional === row.professional)
+    if (exists) {
+      summary.schedule.existing += 1
+      continue
+    }
+    const blocked = store.closedDays.some((item) => item.date === row.date && item.unit === row.unit)
+    if (blocked) {
+      summary.schedule.conflicts += 1
+      continue
+    }
+    summary.schedule.toInsert += 1
+    if (commit) store.schedule.push(row)
+  }
+
+  for (const row of closedDays) {
+    const exists = store.closedDays.some((item) => item.date === row.date && item.unit === row.unit)
+    if (exists) {
+      summary.closedDays.existing += 1
+      continue
+    }
+    const hasSchedule = store.schedule.some((item) => item.date === row.date && item.unit === row.unit)
+    if (hasSchedule) {
+      summary.closedDays.conflicts += 1
+      continue
+    }
+    summary.closedDays.toInsert += 1
+    if (commit) store.closedDays.push(row)
+  }
+
+  for (const row of holidays) {
+    const exists = store.holidays.some((item) => item.date === row.date && item.unit === row.unit && item.name === row.name)
+    if (exists) {
+      summary.holidays.existing += 1
+      continue
+    }
+    summary.holidays.toInsert += 1
+    if (commit) store.holidays.push(row)
+  }
+
+  const coverage = new Map<string, { unit: string; month: string; scheduleEntries: number; closedDays: number; holidays: number }>()
+  const touch = (unit: string, date: string, key: 'scheduleEntries' | 'closedDays' | 'holidays') => {
+    const month = extractMonth(date)
+    if (!month) return
+    const id = `${unit}__${month}`
+    const item = coverage.get(id) || { unit, month, scheduleEntries: 0, closedDays: 0, holidays: 0 }
+    item[key] += 1
+    coverage.set(id, item)
+  }
+  schedule.forEach((row) => touch(row.unit, row.date, 'scheduleEntries'))
+  closedDays.forEach((row) => touch(row.unit, row.date, 'closedDays'))
+  holidays.forEach((row) => touch(row.unit, row.date, 'holidays'))
+  summary.coverage = Array.from(coverage.values()).sort((a, b) => `${a.month}:${a.unit}`.localeCompare(`${b.month}:${b.unit}`))
+  return summary
+}
+
 function isLocalEscalaMockEnabled(context: any, targetOrigin: string, actorKey: string): boolean {
   if (!isLocalEscalaDevModeAllowed(context)) return false
   const env = context?.env || {}
@@ -592,6 +740,20 @@ async function handleLocalEscalaRequest(
       ))
     }
     return done(200, { ok: true, source: 'local-mock' })
+  }
+
+  if (rest === '/admin/import/atendimento-clinica' && method === 'POST') {
+    const payload = await readJson(request)
+    if (!payload) return done(400, { ok: false, error: 'INVALID_PAYLOAD' })
+    const commit = Boolean(payload.commit)
+    const summary = buildLocalImportSummary(store, payload, actor, commit)
+    return done(200, {
+      ok: true,
+      dryRun: !commit,
+      committed: commit,
+      summary,
+      source: 'local-mock',
+    })
   }
 
   if (rest === '/schedule' && method === 'GET') {

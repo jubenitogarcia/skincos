@@ -85,3 +85,15 @@ Rotas: `/api/harmonia/*`
 
 ## Estado local / logs
 - Preferir `backend/var/` via `VAR_DIR` (quando executado pelos scripts do monorepo).
+
+## Atendimento Clínica
+Rotas: `/api/atendimento-clinica/*`
+
+- Persistência: PostgreSQL em `DATABASE_URL`.
+- Segurança Pages → API: `ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY` deve ser igual no Pages Function e no `crm-api`.
+- Importação inicial Google Sheets:
+  - `ATENDIMENTO_GOOGLE_SHEET_ID` (default: planilha histórica do acompanhamento)
+  - `ATENDIMENTO_GOOGLE_SA_FILE` (ou `HARMONIA_GOOGLE_SA_FILE`)
+  - Dry-run: `npm run import-atendimento-sheet`
+  - Gravação: `npm run import-atendimento-sheet -- --write`
+- Módulo CRM: `atendimento-clinica`; gestores/gerentes acessam tudo, usuários comuns precisam do módulo liberado e respeitam `allowedUnits`.

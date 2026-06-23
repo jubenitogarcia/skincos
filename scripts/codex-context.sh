@@ -80,6 +80,7 @@ site_check=npm run codex:site:check
 site_release_check=npm run codex:site:release-check
 site_ef_smoke=npm run codex:crm:site-smoke
 meta_ads_smoke=npm run codex:crm:meta-ads-smoke
+atendimento_clinica_smoke=npm run codex:crm:atendimento-clinica-smoke
 crm_local=npm run crm:local
 EOF
 

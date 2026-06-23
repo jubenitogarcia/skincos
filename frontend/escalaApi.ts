@@ -7,6 +7,20 @@ export const ESCALA_API_BASE =
 
 type ApiResponse<T> = { ok: boolean; error?: string; requestId?: string } & T
 
+export type EscalaAtendimentoImportSummary = {
+  professionals?: { source: number; existing: number; toInsert: number; toUpdate: number; unchanged: number; skipped: number }
+  schedule?: { source: number; existing: number; toInsert: number; conflicts: number; skipped: number }
+  closedDays?: { source: number; existing: number; toInsert: number; conflicts: number; skipped: number }
+  holidays?: { source: number; existing: number; toInsert: number; skipped: number }
+  coverage?: Array<{ unit: string; month: string; scheduleEntries: number; closedDays: number; holidays: number }>
+}
+
+export type EscalaAtendimentoImportResult = {
+  dryRun: boolean
+  committed: boolean
+  summary: EscalaAtendimentoImportSummary
+}
+
 function parseJsonResponse(text: string) {
   if (!text) return null
   try {
@@ -175,4 +189,37 @@ export async function addHoliday(payload: { date: string; unit: string; name: st
 
 export async function removeHoliday(payload: { date: string; unit: string; name: string }) {
   return apiWrite<{ ok: boolean }>(`/holidays`, 'DELETE', payload)
+}
+
+export async function fetchAtendimentoClinicaEscalaFeed() {
+  try {
+    const res = await fetch('/api/atendimento-clinica/management/feeds/escala', {
+      credentials: 'include',
+      headers: { accept: 'application/json' },
+    })
+    const text = await res.text()
+    const json = parseJsonResponse(text)
+    const requestId = String(res.headers.get('x-request-id') || '').trim() || undefined
+    if (!res.ok || json?.ok === false) {
+      return { ok: false, error: normalizeApiError(res, json, text), requestId } as ApiResponse<{ feed?: any }>
+    }
+    return { ok: true, feed: json, requestId } as ApiResponse<{ feed: any }>
+  } catch (error) {
+    return { ok: false, error: normalizeFetchError(error) } as ApiResponse<{ feed?: any }>
+  }
+}
+
+export async function importAtendimentoClinicaEscala(payload: { feed: any; dryRun?: boolean; commit?: boolean; force?: boolean }) {
+  return apiWrite<EscalaAtendimentoImportResult>(`/admin/import/atendimento-clinica`, 'POST', payload)
+}
+
+export async function syncAtendimentoClinicaEscala(options: { commit?: boolean; force?: boolean } = {}) {
+  const feed = await fetchAtendimentoClinicaEscalaFeed()
+  if (!feed.ok) return feed as ApiResponse<EscalaAtendimentoImportResult>
+  return importAtendimentoClinicaEscala({
+    feed: feed.feed,
+    dryRun: !options.commit,
+    commit: Boolean(options.commit),
+    force: Boolean(options.force),
+  })
 }
