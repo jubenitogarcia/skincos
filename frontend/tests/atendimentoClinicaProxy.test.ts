@@ -62,4 +62,15 @@ describe('Atendimento Clínica proxy helpers', () => {
       allowedModules: ['atendimento-clinica'],
     })
   })
+
+  it('falls back to escala keys when the dedicated atendimento key is absent', () => {
+    expect(__testables.resolveAtendimentoClinicaActorHmacKey({
+      ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY: '',
+      ESCALA_ACTOR_HMAC_KEY: 'escala-secret',
+      CRM_ESCALA_HMAC_KEY: 'crm-escala-secret',
+    })).toBe('escala-secret')
+    expect(__testables.resolveAtendimentoClinicaActorHmacKey({
+      CRM_ESCALA_HMAC_KEY: 'crm-escala-secret',
+    })).toBe('crm-escala-secret')
+  })
 })

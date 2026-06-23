@@ -108,7 +108,13 @@ function errorResponse(res, error) {
 
 export function createAtendimentoClinicaRouter(options = {}) {
     const store = options.store || createAtendimentoStore({ databaseUrl: options.databaseUrl })
-    const actorKey = String(options.actorHmacKey || process.env.ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY || '').trim()
+    const actorKey = String(
+        options.actorHmacKey ||
+        process.env.ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY ||
+        process.env.ESCALA_ACTOR_HMAC_KEY ||
+        process.env.CRM_ESCALA_HMAC_KEY ||
+        '',
+    ).trim()
     const getDevSession = options.getDevSession || null
     const expressRouter = options.routerFactory ? options.routerFactory() : express.Router()
 

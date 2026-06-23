@@ -136,7 +136,7 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
 
   const env = context.env || {}
   const targetOrigin = String(env.ATENDIMENTO_CLINICA_API_TARGET || env.CRM_API_TARGET || env.INSUMOS_API_TARGET || '').trim()
-  const actorKey = String(env.ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY || '').trim()
+  const actorKey = resolveAtendimentoClinicaActorHmacKey(env)
   const prefix = '/api/atendimento-clinica'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
 
@@ -148,7 +148,7 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
       mode: 'upstream',
       hint: !targetOrigin
         ? 'Configure ATENDIMENTO_CLINICA_API_TARGET ou CRM_API_TARGET no Cloudflare Pages/Functions.'
-        : (!actorKey ? 'Configure ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY para assinar o ator do CRM.' : undefined),
+        : (!actorKey ? 'Configure ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY ou ESCALA_ACTOR_HMAC_KEY para assinar o ator do CRM.' : undefined),
     }, { 'x-request-id': requestId })
   }
 
@@ -162,8 +162,8 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
   if (!actorKey) {
     return json(503, {
       ok: false,
-      error: 'ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY nao configurado',
-      hint: 'Defina ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY no Cloudflare Pages/Functions.',
+      error: 'ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY ou ESCALA_ACTOR_HMAC_KEY nao configurado',
+      hint: 'Defina ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY ou ESCALA_ACTOR_HMAC_KEY no Cloudflare Pages/Functions.',
     }, { 'x-request-id': requestId })
   }
 
@@ -202,5 +202,10 @@ export const __testables = {
   buildTargetUrl,
   hasModuleAccess,
   normalizeRole,
+  resolveAtendimentoClinicaActorHmacKey,
   toAtendimentoActor,
+}
+
+function resolveAtendimentoClinicaActorHmacKey(env: Record<string, unknown> = {}) {
+  return String(env.ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY || env.ESCALA_ACTOR_HMAC_KEY || env.CRM_ESCALA_HMAC_KEY || '').trim()
 }
