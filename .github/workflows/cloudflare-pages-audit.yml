@@ -68,7 +68,6 @@ jobs:
             "PONTO_PROXY_TOKEN",
             "PONTO_ACTOR_HMAC_KEY",
             "ESCALA_ACTOR_HMAC_KEY",
-            "ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY",
           ]
           with open("pages_project.json","r",encoding="utf-8") as f:
             data=json.load(f)

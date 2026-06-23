@@ -90,7 +90,7 @@ Rotas: `/api/harmonia/*`
 Rotas: `/api/atendimento-clinica/*`
 
 - Persistência: PostgreSQL em `DATABASE_URL`.
-- Segurança Pages → API: `ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY` deve ser igual no Pages Function e no `crm-api`.
+- Segurança Pages → API: `ATENDIMENTO_CLINICA_ACTOR_HMAC_KEY` deve ser igual no Pages Function e no `crm-api`; quando essa secret não existe, o código cai para `ESCALA_ACTOR_HMAC_KEY`/`CRM_ESCALA_HMAC_KEY` como fallback compartilhado.
 - Importação inicial Google Sheets:
   - `ATENDIMENTO_GOOGLE_SHEET_ID` (default: planilha histórica do acompanhamento)
   - `ATENDIMENTO_GOOGLE_SA_FILE` (ou `HARMONIA_GOOGLE_SA_FILE`)
