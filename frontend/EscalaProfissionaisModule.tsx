@@ -66,10 +66,12 @@ import { useEscalaPrefill } from '@/useEscalaPrefill'
 import {
   addClosedDay,
   addEscalaProfessional,
+  syncAtendimentoClinicaEscala,
   removeScheduleEntry,
   removeClosedDay,
   replaceScheduleEntries,
-  updateEscalaProfessional
+  updateEscalaProfessional,
+  type EscalaAtendimentoImportResult,
 } from '@/escalaApi'
 export const __testables = {
   mergeProfessionals,
@@ -125,6 +127,8 @@ export function EscalaProfissionaisModule() {
   const [savingTeamMember, setSavingTeamMember] = useState(false)
   const [teamFormMode, setTeamFormMode] = useState<EscalaTeamFormMode>('idle')
   const [showInactiveTeamMembers, setShowInactiveTeamMembers] = useState(false)
+  const [syncingAtendimentoClinica, setSyncingAtendimentoClinica] = useState(false)
+  const [atendimentoClinicaSyncResult, setAtendimentoClinicaSyncResult] = useState<EscalaAtendimentoImportResult | null>(null)
   const activeDateRef = useRef<string | null>(null)
   const selectedDatesRef = useRef<string[]>([])
   const dismissedPlanningAssistantRef = useRef(new Set<string>())
@@ -1027,6 +1031,47 @@ export function EscalaProfissionaisModule() {
     teamFormMode,
   ])
 
+  const atendimentoClinicaPendingCount = useMemo(() => {
+    const summary = atendimentoClinicaSyncResult?.summary
+    if (!summary) return 0
+    return Number(summary.professionals?.toInsert || 0)
+      + Number(summary.professionals?.toUpdate || 0)
+      + Number(summary.schedule?.toInsert || 0)
+      + Number(summary.closedDays?.toInsert || 0)
+      + Number(summary.holidays?.toInsert || 0)
+  }, [atendimentoClinicaSyncResult])
+
+  const atendimentoClinicaConflictCount = useMemo(() => {
+    const summary = atendimentoClinicaSyncResult?.summary
+    if (!summary) return 0
+    return Number(summary.schedule?.conflicts || 0) + Number(summary.closedDays?.conflicts || 0)
+  }, [atendimentoClinicaSyncResult])
+
+  const handleSyncAtendimentoClinica = useCallback(async (commit = false) => {
+    setSyncingAtendimentoClinica(true)
+    const result = await syncAtendimentoClinicaEscala({ commit })
+    setSyncingAtendimentoClinica(false)
+    if (!result.ok) {
+      toast.error(result.error || 'Falha ao sincronizar a escala importada.')
+      return
+    }
+    setAtendimentoClinicaSyncResult(result)
+    const summary = result.summary || {}
+    const pending = Number(summary.professionals?.toInsert || 0)
+      + Number(summary.professionals?.toUpdate || 0)
+      + Number(summary.schedule?.toInsert || 0)
+      + Number(summary.closedDays?.toInsert || 0)
+      + Number(summary.holidays?.toInsert || 0)
+    if (commit) {
+      toast.success(`Escala sincronizada: ${pending} item(ns) aplicados.`)
+      await refreshProfessionals(selectedUnit)
+      await refreshSchedule(selectedUnit, selectedMonth)
+      await refreshOverview()
+    } else {
+      toast.success(pending ? `Dry-run concluído: ${pending} item(ns) faltantes.` : 'Dry-run concluído: Escala já está sincronizada.')
+    }
+  }, [refreshOverview, refreshProfessionals, refreshSchedule, selectedMonth, selectedUnit])
+
   if (!canAccess) {
     return (
       <Card className="glass-card">
@@ -1054,12 +1099,45 @@ export function EscalaProfissionaisModule() {
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_344px]">
               <div className="flex flex-col gap-2" data-testid="escala-calendar-panel" data-escala-bulk-preserve="true">
                 <div className="flex flex-wrap items-start justify-end gap-2 pb-1">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-50/90 transition hover:border-emerald-200/40 hover:bg-emerald-400/15 disabled:cursor-not-allowed disabled:opacity-55"
+                    disabled={syncingAtendimentoClinica}
+                    onClick={() => void handleSyncAtendimentoClinica(false)}
+                    title="Conferir profissionais, escala e dias sem atendimento vindos de Atend. Clínica/Gerência antes de gravar."
+                  >
+                    <Sparkles className="size-4" />
+                    {syncingAtendimentoClinica ? 'Conferindo...' : 'Conferir Atend. Clínica'}
+                  </button>
+                  {atendimentoClinicaPendingCount > 0 ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-full border border-sky-300/20 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-50/90 transition hover:border-sky-200/40 hover:bg-sky-400/15 disabled:cursor-not-allowed disabled:opacity-55"
+                      disabled={syncingAtendimentoClinica}
+                      onClick={() => void handleSyncAtendimentoClinica(true)}
+                      title="Aplicar apenas os dados faltantes sem sobrescrever ajustes manuais da Escala."
+                    >
+                      Aplicar {atendimentoClinicaPendingCount}
+                    </button>
+                  ) : null}
                   {loadingSchedule ? (
                     <div className="text-[11px] text-slate-300/75">
                       <LoadingPercentText label="Atualizando agenda" showPercent={false} />
                     </div>
                   ) : null}
                 </div>
+                {atendimentoClinicaSyncResult ? (
+                  <div className="grid gap-2 rounded-2xl border border-white/10 bg-slate-950/35 px-3 py-2 text-[11px] text-slate-200/80 md:grid-cols-4">
+                    <span>
+                      Profissionais: {atendimentoClinicaSyncResult.summary?.professionals?.toInsert || 0} novos, {atendimentoClinicaSyncResult.summary?.professionals?.toUpdate || 0} atualizações
+                    </span>
+                    <span>Agenda: {atendimentoClinicaSyncResult.summary?.schedule?.toInsert || 0} faltantes</span>
+                    <span>Sem atendimento: {atendimentoClinicaSyncResult.summary?.closedDays?.toInsert || 0} faltantes</span>
+                    <span className={cn(atendimentoClinicaConflictCount ? 'text-amber-200' : 'text-emerald-200')}>
+                      Conflitos preservados: {atendimentoClinicaConflictCount}
+                    </span>
+                  </div>
+                ) : null}
                 {selectedDates.length ? (
                   <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-sky-300/16 bg-sky-400/8 px-3 py-2 text-[11px] text-sky-100/80">
                     <span className="text-[10px] uppercase tracking-[0.18em] text-sky-100/60">

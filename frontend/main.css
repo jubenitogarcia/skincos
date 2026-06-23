@@ -561,6 +561,26 @@ body {
   backdrop-filter: blur(10px);
 }
 
+.atendimento-clinica-main {
+  background-color: rgba(4, 18, 28, 0.18);
+}
+
+.atendimento-clinica-main-bg {
+  background: linear-gradient(180deg, rgba(6, 24, 38, 0.38) 0%, rgba(7, 28, 42, 0.24) 46%, rgba(4, 17, 30, 0.36) 100%), rgba(255, 255, 255, 0.012);
+  backdrop-filter: blur(10px);
+}
+
+.atendimento-clinica-surface .glass-card {
+  background: rgba(10, 18, 32, 0.74);
+  border-color: rgba(51, 65, 85, 0.78);
+  box-shadow: 0 20px 80px rgba(2, 6, 23, 0.36);
+}
+
+.atendimento-clinica-surface .glass-morphism {
+  background: rgba(15, 23, 42, 0.48);
+  border-color: rgba(71, 85, 105, 0.45);
+}
+
 .escala-surface .glass-morphism {
   background: rgba(15, 23, 42, 0.4);
   border-color: rgba(148, 163, 184, 0.25);

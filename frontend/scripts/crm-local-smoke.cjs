@@ -22,6 +22,8 @@ fs.mkdirSync(ARTIFACT_DIR, { recursive: true })
 
 const URL = process.env.CRM_URL || 'http://127.0.0.1:5173'
 const HEADED = process.env.HEADED === '1' || process.env.HEADED === 'true'
+const FULL_ASSETS = process.env.SMOKE_FULL_ASSETS === '1' || process.env.FULL_ASSETS === '1'
+const FULL_PAGE = process.env.SMOKE_FULL_PAGE === '1' || process.env.FULL_PAGE === '1'
 const TIMEOUT_MS = Math.max(5_000, parseInt(String(process.env.TIMEOUT_MS || ''), 10) || 60_000)
 
 function nowStamp() {
@@ -42,59 +44,73 @@ async function main() {
   const stamp = nowStamp()
   const shot = (name) => path.join(ARTIFACT_DIR, `crm-local-${stamp}-${name}.png`)
 
-  const browser = await chromium.launch({
-    headless: !HEADED,
-    args: [
-      '--disable-extensions',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--disable-background-timer-throttling',
-      '--mute-audio',
-      ...(HEADED ? [] : ['--disable-gpu']),
-    ],
-  })
+  let browser = null
+  let context = null
 
-  const context = await browser.newContext({
-    viewport: { width: 1365, height: 860 },
-    ignoreHTTPSErrors: true,
-  })
-  // Make the run deterministic and fast: start directly in the Ponto module.
-  await context.addInitScript(() => {
-    try { localStorage.setItem('app.activeModule', 'ponto') } catch { /* ignore */ }
-  })
-  const page = await context.newPage()
+  try {
+    browser = await chromium.launch({
+      headless: !HEADED,
+      args: [
+        '--disable-extensions',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-background-timer-throttling',
+        '--disable-dev-shm-usage',
+        '--disable-features=Translate,BackForwardCache',
+        '--mute-audio',
+        ...(HEADED ? [] : ['--disable-gpu']),
+      ],
+    })
 
-  const consoleErrors = []
-  page.on('console', (msg) => {
-    const t = msg.type()
-    if (t === 'error') consoleErrors.push(msg.text())
-  })
+    context = await browser.newContext({
+      viewport: { width: 1365, height: 860 },
+      ignoreHTTPSErrors: true,
+    })
+    if (!HEADED && !FULL_ASSETS) {
+      await context.route('**/*', async (route) => {
+        const type = route.request().resourceType()
+        if (type === 'image' || type === 'media' || type === 'font') return route.abort()
+        return route.continue()
+      })
+    }
+    // Make the run deterministic and fast: start directly in the Ponto module.
+    await context.addInitScript(() => {
+      try { localStorage.setItem('app.activeModule', 'ponto') } catch { /* ignore */ }
+    })
+    const page = await context.newPage()
 
-  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS })
+    const consoleErrors = []
+    page.on('console', (msg) => {
+      const t = msg.type()
+      if (t === 'error') consoleErrors.push(msg.text())
+    })
 
-  // Ensure module rendered.
-  await expectVisible(page.locator('h1, h2, [role="heading"]').filter({ hasText: 'Ponto' }), 'Ponto heading')
+    await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS })
 
-  // Build badge should be present (dev or sha).
-  await expectVisible(page.locator('text=/Build:\\s*/'), 'Build badge')
+    // Ensure module rendered.
+    await expectVisible(page.locator('h1, h2, [role="heading"]').filter({ hasText: 'Ponto' }), 'Ponto heading')
 
-  // Admin actions should be visible in the header (local dev admin session).
-  const adminButtons = ['Cadastrar', 'Editar', 'Exportar', 'Gerenciar Dispositivo']
-  for (const label of adminButtons) {
-    await expectVisible(page.locator(`button:has-text("${label}")`), `Admin action visible: ${label}`)
+    // Build badge should be present (dev or sha).
+    await expectVisible(page.locator('text=/Build:\\s*/'), 'Build badge')
+
+    // Admin actions should be visible in the header (local dev admin session).
+    const adminButtons = ['Cadastrar', 'Editar', 'Exportar', 'Gerenciar Dispositivo']
+    for (const label of adminButtons) {
+      await expectVisible(page.locator(`button:has-text("${label}")`), `Admin action visible: ${label}`)
+    }
+
+    await page.screenshot({ path: shot('ok'), fullPage: FULL_PAGE })
+
+    if (consoleErrors.length) {
+      console.log('[crm-local-smoke] Console errors (first 5):')
+      for (const e of consoleErrors.slice(0, 5)) console.log('  -', e)
+    }
+
+    console.log(`[crm-local-smoke] OK: ${URL}`)
+  } finally {
+    if (context) await context.close().catch(() => {})
+    if (browser) await browser.close().catch(() => {})
   }
-
-  await page.screenshot({ path: shot('ok'), fullPage: true })
-
-  if (consoleErrors.length) {
-    console.log('[crm-local-smoke] Console errors (first 5):')
-    for (const e of consoleErrors.slice(0, 5)) console.log('  -', e)
-  }
-
-  await context.close()
-  await browser.close()
-
-  console.log(`[crm-local-smoke] OK: ${URL}`)
 }
 
 main().catch((err) => {

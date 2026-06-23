@@ -81,6 +81,8 @@ async function main() {
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
       '--disable-background-timer-throttling',
+      '--disable-dev-shm-usage',
+      '--disable-features=Translate,BackForwardCache',
       '--mute-audio',
       '--disable-gpu',
     ],

@@ -26,6 +26,7 @@ const INSUMOS_ACTION = String(process.env.INSUMOS_ACTION || '').trim()
 const HEADED = process.env.HEADED === '1' || process.env.HEADED === 'true'
 const WAIT_MS = Math.max(5_000, parseInt(String(process.env.WAIT_MS || ''), 10) || 12_000)
 const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'true'
+const FULL_ASSETS = process.env.SMOKE_FULL_ASSETS === '1' || process.env.FULL_ASSETS === '1'
 const NO_SCREENSHOTS = process.env.NO_SCREENSHOTS === '1' || process.env.NO_SCREENSHOTS === 'true'
 const AUTO_LOGIN = process.env.AUTO_LOGIN === '1' || process.env.AUTO_LOGIN === 'true'
 const SMOKE_EMAIL = String(process.env.SMOKE_EMAIL || '').trim()
@@ -49,6 +50,8 @@ async function main() {
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
       '--disable-background-timer-throttling',
+      '--disable-dev-shm-usage',
+      '--disable-features=Translate,BackForwardCache',
       '--mute-audio',
       ...(HEADED ? [] : ['--disable-gpu']),
     ],
@@ -56,7 +59,7 @@ async function main() {
   const context = await browser.newContext({ viewport: { width: 1365, height: 860 } })
 
   // Speed up routine smoke runs: UI text assertions don't need images/media/fonts.
-  if (!HEADED) {
+  if (!HEADED && !FULL_ASSETS) {
     await context.route('**/*', async (route) => {
       const type = route.request().resourceType()
       if (type === 'image' || type === 'media' || type === 'font') return route.abort()

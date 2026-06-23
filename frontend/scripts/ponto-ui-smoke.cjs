@@ -31,6 +31,7 @@ const LOGIN_WAIT_MS = Math.max(
 )
 const TRACE = process.env.TRACE === '1' || process.env.TRACE === 'true'
 const FULL_PAGE = process.env.FULL_PAGE === '1' || process.env.FULL_PAGE === 'true'
+const FULL_ASSETS = process.env.SMOKE_FULL_ASSETS === '1' || process.env.FULL_ASSETS === '1'
 const NO_SCREENSHOTS = process.env.NO_SCREENSHOTS === '1' || process.env.NO_SCREENSHOTS === 'true'
 const IS_CI = !!process.env.CI
 const AUTO_LOGIN = process.env.AUTO_LOGIN === '1' || process.env.AUTO_LOGIN === 'true'
@@ -74,6 +75,8 @@ async function main() {
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
       '--disable-background-timer-throttling',
+      '--disable-dev-shm-usage',
+      '--disable-features=Translate,BackForwardCache',
       '--mute-audio',
       ...(disableGpu ? ['--disable-gpu'] : []),
     ],
@@ -96,7 +99,7 @@ async function main() {
   }
 
   // Speed up automation runs: UI text assertions don't need images/media/fonts.
-  if (!HEADED) {
+  if (!HEADED && !FULL_ASSETS) {
     await context.route('**/*', async (route) => {
       const type = route.request().resourceType()
       if (type === 'image' || type === 'media' || type === 'font') return route.abort()

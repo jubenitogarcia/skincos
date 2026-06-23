@@ -10,6 +10,13 @@ import { Button } from '@/button'
 import { Badge } from '@/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/dropdown-menu'
+import {
     AlertDialog,
     AlertDialogAction,
     AlertDialogCancel,
@@ -34,7 +41,9 @@ import { dispatchMetaAdsHeaderAction, subscribeMetaAdsHeaderState } from '@/meta
 import type { MetaAdsHeaderState } from '@/metaAdsTypes'
 import { dispatchSiteTrackingHeaderAction, subscribeSiteTrackingHeaderState } from '@/siteTrackingHeaderBridge'
 import type { SiteTrackingHeaderState } from '@/siteTrackingTypes'
-import { CalendarX2, CheckCircle2, Download, Pencil, Plus, RefreshCw, Shield, Sparkles, X } from 'lucide-react'
+import { dispatchAtendimentoClinicaHeaderAction, subscribeAtendimentoClinicaHeaderState } from '@/atendimentoClinicaHeaderBridge'
+import type { AtendimentoClinicaHeaderState } from '@/atendimentoClinicaHeaderBridge'
+import { BarChart3, CalendarX2, CheckCircle2, ChevronDown, ClipboardList, Download, Info, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Stethoscope, WalletCards, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -60,6 +69,13 @@ function formatMonthLabelHeader(value: string) {
     const date = new Date(2000, month - 1, 1)
     const label = date.toLocaleDateString('pt-BR', { month: 'long' })
     return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+function formatLocalIsoDate(date: Date) {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
 }
 
 type ApiError = {
@@ -128,6 +144,7 @@ const NotificationCenter = lazy(() => import('@/NotificationCenter').then(m => (
 const ReportsDashboard = lazy(() => import('@/ReportsDashboard').then(m => ({ default: m.ReportsDashboard })))
 const AccountingModule = lazy(() => import('@/AccountingModule').then(m => ({ default: m.AccountingModule })))
 const AtendimentoModule = lazy(() => import('@/AtendimentoModule').then(m => ({ default: m.AtendimentoModule })))
+const AtendimentoClinicaModule = lazy(() => import('@/AtendimentoClinicaModule').then(m => ({ default: m.AtendimentoClinicaModule })))
 const MetaCampaignControlCenter = lazy(() => import('@/MetaCampaignControlCenter').then(m => ({ default: m.MetaCampaignControlCenter })))
 const MetaCommandCenter = lazy(() => import('@/MetaCommandCenter').then(m => ({ default: m.MetaCommandCenter })))
 const MetaSyncMonitor = lazy(() => import('@/MetaSyncMonitor').then(m => ({ default: m.MetaSyncMonitor })))
@@ -171,6 +188,8 @@ const CapabilitiesCenter = lazy(() => import('@/CapabilitiesCenter').then(m => (
 const JobsCenter = lazy(() => import('@/JobsCenter').then(m => ({ default: m.JobsCenter })))
 const UnitMonitor = lazy(() => import('@/UnitMonitor').then(m => ({ default: m.UnitMonitor })))
 const InsumosModule = lazy(() => import('@/InsumosModule').then(m => ({ default: m.InsumosModule })))
+const FaturamentoModule = lazy(() => import('@/FaturamentoModule').then(m => ({ default: m.FaturamentoModule })))
+const ProcedimentosModule = lazy(() => import('@/ProcedimentosModule').then(m => ({ default: m.ProcedimentosModule })))
 const UsersModule = lazy(() => import('@/UsersModule').then(m => ({ default: m.UsersModule })))
 const SystemStatusModule = lazy(() => import('@/SystemStatusModule').then(m => ({ default: m.SystemStatusModule })))
 const PontoModule = lazy(() => import('@/PontoModule').then(m => ({ default: m.PontoModule })))
@@ -195,6 +214,29 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'leads', label: 'Leads', icon: '💎', component: <LeadsManager /> },
     { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
     { key: 'atendimento', label: 'Atendimento', icon: '💬', component: <AtendimentoModule /> },
+    {
+        key: 'atendimento-clinica',
+        label: 'Atend. Clínica',
+        icon: (
+            <span className="relative inline-flex h-5 w-5 items-center justify-center text-sky-100" aria-hidden>
+                <Stethoscope className="absolute h-4 w-4 -translate-x-1 translate-y-0.5" />
+                <ClipboardList className="absolute h-3.5 w-3.5 translate-x-1 -translate-y-0.5 text-emerald-200" />
+            </span>
+        ),
+        component: <AtendimentoClinicaModule />
+    },
+    {
+        key: 'faturamento',
+        label: 'Faturamento',
+        icon: <WalletCards className="h-5 w-5 text-emerald-100" aria-hidden />,
+        component: <FaturamentoModule />
+    },
+    {
+        key: 'procedimentos',
+        label: 'Procedimentos',
+        icon: <ClipboardList className="h-5 w-5 text-sky-100" aria-hidden />,
+        component: <ProcedimentosModule />
+    },
     { key: 'escala-profissionais', label: 'Escala', icon: '🗓️', component: <EscalaProfissionaisModule /> },
     { key: 'site-tracking', label: 'Site EF', icon: '📍', component: <SiteTrackingModule /> },
     { key: 'meta-ads', label: 'Meta Ads', icon: '📢', component: <MetaCampaignControlCenter /> },
@@ -262,6 +304,12 @@ export default function AppFunctionalNeatlab() {
                 : []
             if (!allowed.length) return true // compat: vazio/ausente => ALL
             if (allowed.includes(key)) return true
+            if (key === 'procedimentos') {
+                return allowed.some((m) => ['procedimentos', 'atendimento-clinica'].includes(m))
+            }
+            if (key === 'faturamento') {
+                return allowed.some((m) => ['faturamento', 'atendimento-clinica'].includes(m))
+            }
             if (key === 'atendimento') {
                 return allowed.some((m) => ['whatsapp-business', 'harmonia', 'omnichannel'].includes(m))
             }
@@ -328,7 +376,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais']),
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'atendimento', 'atendimento-clinica', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
@@ -379,6 +427,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [DEFAULT_MODULE_KEY, UNLOCKED_MODULE_KEYS, active])
         const [search, setSearch] = useState('')
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
+        const [atendimentoClinicaHeaderState, setAtendimentoClinicaHeaderState] = useState<AtendimentoClinicaHeaderState | null>(null)
         const [escalaHeaderState, setEscalaHeaderState] = useState<EscalaHeaderState | null>(null)
         const [metaAdsHeaderState, setMetaAdsHeaderState] = useState<MetaAdsHeaderState | null>(null)
         const [siteTrackingHeaderState, setSiteTrackingHeaderState] = useState<SiteTrackingHeaderState | null>(null)
@@ -510,6 +559,39 @@ export default function AppFunctionalNeatlab() {
                             : 'bg-white/10 text-blue-100/70 border-white/15'
 
 			    const insumosMounted = useMemo(() => mountedModuleKeys.includes('insumos'), [mountedModuleKeys])
+                const atendimentoClinicaQuickWindow = React.useMemo(() => {
+                    const filters = atendimentoClinicaHeaderState?.filters
+                    if (!filters?.from || !filters?.to) return null
+                    const from = new Date(`${filters.from}T12:00:00`)
+                    const to = new Date(`${filters.to}T12:00:00`)
+                    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null
+                    const diffDays = Math.round((to.getTime() - from.getTime()) / 86400000) + 1
+                    return diffDays === 7 || diffDays === 30 || diffDays === 60 ? diffDays : null
+                }, [atendimentoClinicaHeaderState?.filters])
+                const atendimentoClinicaAdvancedFiltersActive = React.useMemo(() => {
+                    const filters = atendimentoClinicaHeaderState?.filters
+                    if (!filters) return false
+                    return Boolean(
+                        filters.from ||
+                        filters.to ||
+                        (filters.procedure && filters.procedure !== 'all') ||
+                        filters.code ||
+                        (filters.injector && filters.injector !== 'all') ||
+                        filters.search,
+                    )
+                }, [atendimentoClinicaHeaderState?.filters])
+                const setAtendimentoClinicaQuickWindow = React.useCallback((days: 7 | 30 | 60) => {
+                    const to = new Date()
+                    const from = new Date()
+                    from.setDate(to.getDate() - days + 1)
+                    dispatchAtendimentoClinicaHeaderAction({
+                        type: 'set-filter',
+                        patch: {
+                            from: formatLocalIsoDate(from),
+                            to: formatLocalIsoDate(to),
+                        },
+                    })
+                }, [])
 			    const lastInsumosUnitRef = React.useRef<string | null>(null)
 			    React.useEffect(() => {
 			        if (!insumosMounted) return
@@ -539,6 +621,12 @@ export default function AppFunctionalNeatlab() {
                     }
                     window.addEventListener('skincos:atendimento:header', handler as EventListener)
                     return () => window.removeEventListener('skincos:atendimento:header', handler as EventListener)
+                }, [])
+
+                React.useEffect(() => {
+                    return subscribeAtendimentoClinicaHeaderState((detail) => {
+                        setAtendimentoClinicaHeaderState(detail)
+                    })
                 }, [])
 
                 const dispatchAtendimentoHeaderAction = React.useCallback((action: string) => {
@@ -1072,7 +1160,7 @@ export default function AppFunctionalNeatlab() {
 					                                        </h1>
 			                                    </div>
 				                                    <div className="w-px h-8 bg-white/20 hidden lg:block"></div>
-				                                    <div className={`${active === 'escala-profissionais' || active === 'meta-ads' || active === 'site-tracking' ? 'flex min-w-0' : 'hidden lg:flex'} items-center gap-2`}>
+				                                    <div className={`${active === 'escala-profissionais' || active === 'meta-ads' || active === 'site-tracking' || active === 'atendimento-clinica' ? 'flex min-w-0' : 'hidden lg:flex'} items-center gap-2`}>
 				                                        {active === 'insumos' ? (
 					                                            <>
 					                                                <Select
@@ -1462,10 +1550,57 @@ export default function AppFunctionalNeatlab() {
                                                                 </div>
                                                             </div>
                                                         ) : null}
-		                                    </div>
-	                                </div>
+                                                        {active === 'atendimento-clinica' ? (
+                                                            <div className="flex min-w-0 items-center gap-2" data-testid="atendimento-filters">
+                                                                <Select
+                                                                    value={atendimentoClinicaHeaderState?.filters.unit || 'all'}
+                                                                    onValueChange={(value) => dispatchAtendimentoClinicaHeaderAction({ type: 'set-filter', patch: { unit: value } })}
+                                                                >
+                                                                    <SelectTrigger className="h-8 w-56 shrink-0 bg-white/[0.06] border-white/20 text-white">
+                                                                        <SelectValue placeholder="Unidade" />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        <SelectItem value="all">Todas unidades</SelectItem>
+                                                                        {(atendimentoClinicaHeaderState?.units || []).map((unit) => (
+                                                                            <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>
+                                                                        ))}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                                <DropdownMenu>
+                                                                    <DropdownMenuTrigger asChild>
+                                                                        <Button
+                                                                            size="icon"
+                                                                            variant="ghost"
+                                                                            className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                                            data-testid="atendimento-context-menu"
+                                                                            aria-label="Contexto Atend. Clínica"
+                                                                            title="Contexto"
+                                                                        >
+                                                                            <Info className="size-3.5" aria-hidden="true" />
+                                                                        </Button>
+                                                                    </DropdownMenuTrigger>
+                                                                    <DropdownMenuContent align="start" className="w-72 border-slate-700 bg-slate-950/95 p-2 text-slate-100 shadow-2xl backdrop-blur-xl">
+                                                                        <DropdownMenuLabel className="text-slate-200">Contexto do dashboard</DropdownMenuLabel>
+                                                                        <DropdownMenuSeparator className="bg-slate-800" />
+                                                                        {[
+                                                                            ['Status', atendimentoClinicaHeaderState?.loading ? 'Atualizando dados' : 'Dados carregados'],
+                                                                            ['Unidade', atendimentoClinicaHeaderState?.activeUnitLabel || 'Todas unidades'],
+                                                                            ['Período', atendimentoClinicaHeaderState?.periodLabel || 'Todos os períodos'],
+                                                                            ['Listagem', `${Number(atendimentoClinicaHeaderState?.total || 0).toLocaleString('pt-BR')} linhas`],
+                                                                        ].map(([label, value]) => (
+                                                                            <div key={label} className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-xs">
+                                                                                <span className="text-slate-400">{label}</span>
+                                                                                <span className="min-w-0 truncate text-right font-medium text-slate-100">{value}</span>
+                                                                            </div>
+                                                                        ))}
+                                                                    </DropdownMenuContent>
+                                                                </DropdownMenu>
+                                                            </div>
+                                                        ) : null}
+			                                    </div>
+		                                </div>
 
-		                                <div className={`flex items-center gap-4 ${active === 'escala-profissionais' ? 'pr-44' : ''}`}>
+			                                <div className={`flex items-center gap-4 ${active === 'escala-profissionais' ? 'pr-44' : active === 'atendimento-clinica' ? 'pr-56' : ''}`}>
 	                                    {active === 'escala-profissionais' ? (
 		                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-escala-preserve-filter="true">
                                                     {[
@@ -1656,6 +1791,169 @@ export default function AppFunctionalNeatlab() {
                                                     </div>
                                                 </TooltipContent>
                                             </Tooltip>
+                                        </div>
+                                    ) : null}
+                                    {active === 'atendimento-clinica' ? (
+                                        <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                            <div className="flex shrink-0 items-center gap-1.5">
+                                                <div className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] p-1">
+                                                    {[7, 30, 60].map((period) => (
+                                                        <button
+                                                            key={period}
+                                                            type="button"
+                                                            className={`h-6 rounded-full px-2.5 text-xs transition ${
+                                                                atendimentoClinicaQuickWindow === period
+                                                                    ? 'bg-white/16 text-white'
+                                                                    : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                                            }`}
+                                                            onClick={() => setAtendimentoClinicaQuickWindow(period as 7 | 30 | 60)}
+                                                        >
+                                                            {period}d
+                                                        </button>
+                                                    ))}
+                                                    <DropdownMenu>
+                                                        <DropdownMenuTrigger asChild>
+                                                            <button
+                                                                type="button"
+                                                                className={`inline-flex h-6 w-6 items-center justify-center rounded-full transition ${
+                                                                    atendimentoClinicaAdvancedFiltersActive
+                                                                        ? 'bg-white/16 text-white'
+                                                                        : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                                                }`}
+                                                                aria-label="Filtros avançados"
+                                                                title="Filtros avançados"
+                                                            >
+                                                                <CalendarX2 className="size-3.5" aria-hidden="true" />
+                                                            </button>
+                                                        </DropdownMenuTrigger>
+                                                        <DropdownMenuContent align="end" className="w-[22rem] border-slate-700 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-xl">
+                                                            <DropdownMenuLabel className="px-0 text-slate-200">Filtros avançados</DropdownMenuLabel>
+                                                            <DropdownMenuSeparator className="-mx-3 bg-slate-800" />
+                                                            <div className="grid gap-2 pt-2">
+                                                                <div className="grid grid-cols-2 gap-2">
+                                                                    <Input
+                                                                        type="date"
+                                                                        value={atendimentoClinicaHeaderState?.filters.from || ''}
+                                                                        onChange={(event) => dispatchAtendimentoClinicaHeaderAction({ type: 'set-filter', patch: { from: event.target.value } })}
+                                                                        className="h-8 bg-white/[0.06] border-white/20 text-white"
+                                                                        aria-label="Data inicial"
+                                                                    />
+                                                                    <Input
+                                                                        type="date"
+                                                                        value={atendimentoClinicaHeaderState?.filters.to || ''}
+                                                                        onChange={(event) => dispatchAtendimentoClinicaHeaderAction({ type: 'set-filter', patch: { to: event.target.value } })}
+                                                                        className="h-8 bg-white/[0.06] border-white/20 text-white"
+                                                                        aria-label="Data final"
+                                                                    />
+                                                                </div>
+                                                                <Select
+                                                                    value={atendimentoClinicaHeaderState?.filters.procedure || 'all'}
+                                                                    onValueChange={(value) => dispatchAtendimentoClinicaHeaderAction({ type: 'set-filter', patch: { procedure: value } })}
+                                                                >
+                                                                    <SelectTrigger className="h-8 bg-white/[0.06] border-white/20 text-white">
+                                                                        <SelectValue placeholder="Procedimento" />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        <SelectItem value="all">Todos procedimentos</SelectItem>
+                                                                        {(atendimentoClinicaHeaderState?.procedures || []).map((procedure) => (
+                                                                            <SelectItem key={procedure.value} value={procedure.value}>{procedure.label}</SelectItem>
+                                                                        ))}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                                <div className="grid grid-cols-[0.7fr_1fr] gap-2">
+                                                                    <Input
+                                                                        value={atendimentoClinicaHeaderState?.filters.code || ''}
+                                                                        onChange={(event) => dispatchAtendimentoClinicaHeaderAction({ type: 'set-filter', patch: { code: event.target.value } })}
+                                                                        placeholder="#0799"
+                                                                        className="h-8 bg-white/[0.06] border-white/20 text-white placeholder:text-blue-200/40"
+                                                                        aria-label="Código"
+                                                                    />
+                                                                    <Select
+                                                                        value={atendimentoClinicaHeaderState?.filters.injector || 'all'}
+                                                                        onValueChange={(value) => dispatchAtendimentoClinicaHeaderAction({ type: 'set-filter', patch: { injector: value } })}
+                                                                    >
+                                                                        <SelectTrigger className="h-8 bg-white/[0.06] border-white/20 text-white">
+                                                                            <SelectValue placeholder="Injetor" />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            <SelectItem value="all">Todos injetores</SelectItem>
+                                                                            {(atendimentoClinicaHeaderState?.injectors || []).map((injector) => (
+                                                                                <SelectItem key={injector.value} value={injector.value}>{injector.label}</SelectItem>
+                                                                            ))}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                </div>
+                                                                <div className="relative">
+                                                                    <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-blue-200/45" aria-hidden="true" />
+                                                                    <Input
+                                                                        value={atendimentoClinicaHeaderState?.filters.search || ''}
+                                                                        onChange={(event) => dispatchAtendimentoClinicaHeaderAction({ type: 'set-filter', patch: { search: event.target.value } })}
+                                                                        placeholder="Buscar cliente"
+                                                                        className="h-8 bg-white/[0.06] border-white/20 pl-8 text-white placeholder:text-blue-200/40"
+                                                                        aria-label="Buscar cliente"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        </DropdownMenuContent>
+                                                    </DropdownMenu>
+                                                </div>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            size="icon"
+                                                            variant="ghost"
+                                                            className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                            onClick={() => dispatchAtendimentoClinicaHeaderAction({ type: 'refresh' })}
+                                                            disabled={atendimentoClinicaHeaderState?.loading}
+                                                            aria-label="Atualizar Atend. Clínica"
+                                                        >
+                                                            <RefreshCw className={`size-3.5 ${atendimentoClinicaHeaderState?.loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent className="max-w-72">
+                                                        <div className="space-y-1">
+                                                            <div className="text-[11px] font-medium leading-tight text-white">Atualizar Atend. Clínica</div>
+                                                            <div className="text-[10px] leading-snug text-slate-300/92">
+                                                                Último import: {atendimentoClinicaHeaderState?.latestImportLabel || 'Sem import recente'}
+                                                            </div>
+                                                        </div>
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            size="icon"
+                                                            variant="ghost"
+                                                            className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                            onClick={() => dispatchAtendimentoClinicaHeaderAction({ type: 'report' })}
+                                                            aria-label="Relatório Atend. Clínica"
+                                                            data-testid="atendimento-header-report"
+                                                        >
+                                                            <BarChart3 className="size-3.5" aria-hidden="true" />
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        Relatório
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            size="icon"
+                                                            variant="ghost"
+                                                            className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                            onClick={() => dispatchAtendimentoClinicaHeaderAction({ type: 'open-import' })}
+                                                            aria-label="Importar Gerência"
+                                                            data-testid="atendimento-header-import"
+                                                        >
+                                                            <Download className="size-3.5" aria-hidden="true" />
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        Importar Gerência
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </div>
                                         </div>
                                     ) : null}
                                     {active === 'atendimento' ? (
@@ -1954,9 +2252,9 @@ export default function AppFunctionalNeatlab() {
                         </header>
 
                         {/* Premium Main Content */}
-                        <main className={`relative flex-1 p-8 ${active === 'atendimento' ? 'flex min-h-0 flex-col overflow-hidden' : active === 'site-tracking' ? 'min-w-0 overflow-x-hidden overflow-y-auto' : 'overflow-auto'} ${active === 'meta-ads' ? 'meta-ads-main' : ''}`}>
+                        <main className={`relative flex-1 p-8 ${active === 'atendimento' ? 'flex min-h-0 flex-col overflow-hidden' : active === 'site-tracking' ? 'min-w-0 overflow-x-hidden overflow-y-auto' : 'overflow-auto'} ${active === 'meta-ads' ? 'meta-ads-main' : ''} ${active === 'atendimento-clinica' ? 'atendimento-clinica-main' : ''}`}>
                             {/* Content Background */}
-                            <div className={`absolute inset-0 ${active === 'meta-ads' ? 'meta-ads-main-bg' : 'bg-white/[0.02] backdrop-blur-sm'}`}></div>
+                            <div className={`absolute inset-0 ${active === 'meta-ads' ? 'meta-ads-main-bg' : active === 'atendimento-clinica' ? 'atendimento-clinica-main-bg' : 'bg-white/[0.02] backdrop-blur-sm'}`}></div>
 
                             <div className={`relative z-10 min-w-0 ${active === 'atendimento' ? 'flex h-full min-h-0 flex-col' : active === 'site-tracking' ? 'max-w-full overflow-x-hidden' : ''}`}>
                                 <div className="hidden">{search}</div>

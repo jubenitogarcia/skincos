@@ -71,8 +71,14 @@ Plataforma interna (local) para automações e operações da clínica.
 - Launcher recomendado: `npm run crm:local`
 - Atalho direto para o módulo Meta Ads: `npm run crm:local:meta-ads`
 - Atalho direto para o módulo Site EF: `npm run crm:local:site-tracking`
+- Atalho direto para o módulo Atend. Clínica: `npm run crm:local:atendimento-clinica`
+- Atalho recomendado no Codex App para CRM genérico sem abrir Chrome externo: `npm run codex:crm:local`
+- Atalho recomendado no Codex App para Atend. Clínica sem abrir Chrome externo: `npm run codex:crm:atendimento-clinica-local`
+- Diagnóstico read-only de memória/portas do CRM no Codex: `npm run codex:memory:crm`
+- Encerrar instâncias locais rastreadas do CRM: `npm run codex:crm:local-stop`
 - Atalho macOS: `./start-crm-local.command`
 - Atalho macOS para Site EF: `./start-crm-site-tracking-local.command`
+- Atalho macOS para Atend. Clínica: `./start-crm-atendimento-clinica-local.command`
 - Perfil default: `realistic`
   - sobe o CRM via `Pages Functions` local (`frontend/scripts/dev_pages.sh`)
   - ativa bypass local de auth apenas em `localhost`
@@ -88,7 +94,7 @@ Plataforma interna (local) para automações e operações da clínica.
     - abre o CRM já no módulo `Meta Ads`
     - no perfil `realistic`, usa por padrão o cenário local `connected-ready`
     - esse cenário simula conexão, seleção de conta, visão geral e inventário apenas em `localhost`
-    - por padrão, o launcher gera `build` do frontend antes de subir, para o shell local refletir a versão mais próxima do online
+    - fora do Codex App, por padrão o launcher gera `build` do frontend antes de subir, para o shell local refletir a versão mais próxima do online; dentro do Codex App, o build prévio é pulado por padrão para reduzir memória, e pode ser forçado com `CRM_BUILD_BEFORE_START=1`
     - também suprime preloads globais irrelevantes para esse foco local, como o status do Instagram
   - para validar o fluxo inicial de setup: `CRM_META_ADS_SCENARIO=disconnected npm run crm:local:meta-ads`
   - para testar estado de sessão expirada: `CRM_META_ADS_SCENARIO=unauthorized npm run crm:local:meta-ads`
@@ -104,6 +110,23 @@ Plataforma interna (local) para automações e operações da clínica.
     - para pular o build prévio quando você só quiser iterar rápido em UI local: `npm run crm:local:site-tracking -- --skip-build`
     - para rodar a validação automatizada sem abrir janela: `npm run crm:local:site-tracking -- --smoke`
   - no macOS, também é possível abrir por duplo clique em `start-crm-site-tracking-local.command`
+- Para testar `Atend. Clínica` antes de publicar:
+  - fluxo local com `crm-api` + frontend: `npm run crm:local:atendimento-clinica`
+    - abre o CRM já no módulo `Atend. Clínica`
+    - sobe o `crm-api` local com `NO_AUTH=true` e `atendimento-clinica` liberado no usuário dev
+    - usa `DATABASE_URL` do ambiente para carregar dados reais do módulo
+    - por padrão não roda build prévio, para abrir rápido e evitar ruído de chunks grandes no teste manual
+    - dentro do Codex App, o launcher não abre Chrome externo por padrão; use o URL impresso no browser embutido ou rode `npm run codex:crm:atendimento-clinica-local`
+    - fora do Codex App, o atalho macOS continua abrindo navegador automaticamente; para forçar manualmente use `--browser`, e para impedir use `--no-browser`
+    - para validar também o build antes de abrir: `npm run crm:local:atendimento-clinica -- --build`
+    - para rodar a validação automatizada sem abrir janela: `npm run crm:local:atendimento-clinica -- --smoke --exit-after-smoke`
+  - no macOS, também é possível abrir por duplo clique em `start-crm-atendimento-clinica-local.command`
+
+### Testar website local
+- Launcher recomendado: `npm run website:local`
+- Atalho recomendado no Codex App sem abrir Chrome externo: `npm run codex:website:local`
+- Encerrar a instância local rastreada do website: `npm run codex:website:local-stop`
+- Dentro do Codex App, `scripts/run-local-website.sh` não abre navegador externo por padrão; use o URL impresso no browser embutido. Fora do Codex App, o comportamento manual continua abrindo navegador automaticamente, salvo `--no-browser`.
 
 ## Docs
 - Mapa do backend: `backend/docs/INDEX.md`

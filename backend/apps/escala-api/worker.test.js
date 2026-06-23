@@ -221,6 +221,25 @@ class FakeD1 {
       return
     }
 
+    if (query.startsWith('insert or replace into closed_days')) {
+      const [id, date, unit, reason, createdAt, updatedAt, createdBy, updatedBy] = params
+      this.closedDays = this.closedDays.filter((row) => !(row.date === date && row.unit === unit))
+      this.closedDays.push({ id, date, unit, reason, created_at: createdAt, updated_at: updatedAt, created_by: createdBy, updated_by: updatedBy })
+      return
+    }
+
+    if (query.startsWith('delete from closed_days where date = ?1 and unit = ?2')) {
+      this.closedDays = this.closedDays.filter((row) => !(row.date === params[0] && row.unit === params[1]))
+      return
+    }
+
+    if (query.startsWith('insert or replace into holidays')) {
+      const [id, date, unit, name, createdAt, updatedAt, createdBy, updatedBy] = params
+      this.holidays = this.holidays.filter((row) => !(row.date === date && row.unit === unit && row.name === name))
+      this.holidays.push({ id, date, unit, name, created_at: createdAt, updated_at: updatedAt, created_by: createdBy, updated_by: updatedBy })
+      return
+    }
+
     throw new Error(`Unsupported run() query: ${sql}`)
   }
 }
@@ -768,4 +787,154 @@ test('Escala prefill enforces allowed unit scope', async () => {
 
   assert.equal(response.status, 403)
   assert.deepEqual(await response.json(), { ok: false, error: 'FORBIDDEN_UNIT' })
+})
+
+test('Escala imports Atendimento Clinica feed with dry-run and idempotent commit', async () => {
+  const db = new FakeD1()
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+  const actor = {
+    id: 'gestor-1',
+    email: 'gestor@local.test',
+    role: 'GESTOR',
+    allowedUnits: ['Novo Hamburgo'],
+  }
+  const feed = {
+    professionals: [
+      { name: 'Dra. Ana', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'] },
+    ],
+    schedule: [
+      { date: '2026-06-03', unit: 'Novo Hamburgo', professional: 'Dra. Ana' },
+    ],
+    closedDays: [
+      { date: '2026-06-04', unit: 'Novo Hamburgo', reason: 'Sem Atendimento' },
+    ],
+    holidays: [
+      { date: '2026-06-05', unit: 'Novo Hamburgo', name: 'Feriado local' },
+    ],
+  }
+
+  const dryRunResponse = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/admin/import/atendimento-clinica', {
+      method: 'POST',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor,
+      body: { feed, dryRun: true },
+    }),
+    env,
+  )
+
+  assert.equal(dryRunResponse.status, 200)
+  const dryRunJson = await dryRunResponse.json()
+  assert.equal(dryRunJson.dryRun, true)
+  assert.equal(dryRunJson.summary.professionals.toInsert, 1)
+  assert.equal(dryRunJson.summary.schedule.toInsert, 1)
+  assert.equal(dryRunJson.summary.closedDays.toInsert, 1)
+  assert.equal(dryRunJson.summary.holidays.toInsert, 1)
+  assert.deepEqual(db.professionals, [])
+  assert.deepEqual(db.scheduleEntries, [])
+  assert.deepEqual(db.closedDays, [])
+  assert.deepEqual(db.holidays, [])
+
+  const commitResponse = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/admin/import/atendimento-clinica', {
+      method: 'POST',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor,
+      body: { feed, commit: true },
+    }),
+    env,
+  )
+
+  assert.equal(commitResponse.status, 200)
+  const commitJson = await commitResponse.json()
+  assert.equal(commitJson.committed, true)
+  assert.equal(db.professionals.length, 1)
+  assert.equal(db.scheduleEntries.length, 1)
+  assert.equal(db.closedDays.length, 1)
+  assert.equal(db.holidays.length, 1)
+
+  const secondCommitResponse = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/admin/import/atendimento-clinica', {
+      method: 'POST',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor,
+      body: { feed, commit: true },
+    }),
+    env,
+  )
+
+  assert.equal(secondCommitResponse.status, 200)
+  const secondCommitJson = await secondCommitResponse.json()
+  assert.equal(secondCommitJson.summary.professionals.toInsert, 0)
+  assert.equal(secondCommitJson.summary.schedule.toInsert, 0)
+  assert.equal(secondCommitJson.summary.closedDays.toInsert, 0)
+  assert.equal(secondCommitJson.summary.holidays.toInsert, 0)
+  assert.equal(db.professionals.length, 1)
+  assert.equal(db.scheduleEntries.length, 1)
+  assert.equal(db.closedDays.length, 1)
+  assert.equal(db.holidays.length, 1)
+})
+
+test('Escala import preserves manual schedule and closed-day conflicts', async () => {
+  const db = new FakeD1()
+  db.scheduleEntries.push({
+    id: 'manual-1',
+    date: '2026-06-10',
+    unit: 'Novo Hamburgo',
+    professional_name: 'Dra. Ana',
+    created_at: '2026-06-01T00:00:00.000Z',
+    updated_at: '2026-06-01T00:00:00.000Z',
+    created_by: 'manual',
+    updated_by: 'manual',
+  })
+  db.closedDays.push({
+    id: 'manual-closed-1',
+    date: '2026-06-11',
+    unit: 'Novo Hamburgo',
+    reason: 'Manutenção',
+  })
+  const env = {
+    DB: db,
+    APP_ORIGIN: 'https://crm.local',
+    ESCALA_ACTOR_HMAC_KEY: 'test-secret',
+  }
+  const actor = {
+    id: 'gestor-1',
+    email: 'gestor@local.test',
+    role: 'GESTOR',
+    allowedUnits: ['Novo Hamburgo'],
+  }
+
+  const response = await worker.fetch(
+    await signedRequest('https://escala.local/api/escala/admin/import/atendimento-clinica', {
+      method: 'POST',
+      secret: env.ESCALA_ACTOR_HMAC_KEY,
+      actor,
+      body: {
+        commit: true,
+        feed: {
+          schedule: [
+            { date: '2026-06-11', unit: 'Novo Hamburgo', professional: 'Dra. Ana' },
+          ],
+          closedDays: [
+            { date: '2026-06-10', unit: 'Novo Hamburgo', reason: 'Sem Atendimento' },
+          ],
+        },
+      },
+    }),
+    env,
+  )
+
+  assert.equal(response.status, 200)
+  const json = await response.json()
+  assert.equal(json.summary.schedule.conflicts, 1)
+  assert.equal(json.summary.closedDays.conflicts, 1)
+  assert.equal(db.scheduleEntries.length, 1)
+  assert.equal(db.closedDays.length, 1)
+  assert.equal(db.scheduleEntries[0].date, '2026-06-10')
+  assert.equal(db.closedDays[0].date, '2026-06-11')
 })
