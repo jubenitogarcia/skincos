@@ -144,6 +144,9 @@ def _load_booking_env_file() -> None:
 
 
 def _prompt_yes_no(prompt: str, default: bool) -> bool:
+    if _is_non_interactive():
+        return default
+
     suffix = "Y/n" if default else "y/N"
     while True:
         raw = input(f"{prompt} ({suffix}): ").strip().lower()
@@ -168,8 +171,36 @@ def _env_flag(name: str) -> bool | None:
     return None
 
 
+def _is_non_interactive() -> bool:
+    if sys.stdin.isatty():
+        return False
+
+    non_interactive_env = _env_flag("EF_NON_INTERACTIVE")
+    if non_interactive_env is not None:
+        return non_interactive_env
+    return True
+
+
+def _safe_folder_name(value: str) -> str:
+    raw = (value or "").strip()
+    safe = "".join(ch if ch not in {"/", "\\", ":"} and ord(ch) >= 32 else "_" for ch in raw)
+    safe = safe.strip(" .")
+    return safe or "sem_unidade"
+
+
+def _unit_output_dir(base_output_dir: Path, unit_name: str) -> Path:
+    path = base_output_dir / _safe_folder_name(unit_name)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _choose_output_dir() -> Path:
     default = os.getenv("EF_OUTPUT_DIR", str(default_output_dir()))
+    if _is_non_interactive():
+        chosen = Path(default)
+        chosen.mkdir(parents=True, exist_ok=True)
+        return chosen
+
     raw = input(f"Pasta de saída (ENTER p/ padrão: {default}): ").strip()
     chosen = Path(raw) if raw else Path(default)
     chosen.mkdir(parents=True, exist_ok=True)
@@ -178,6 +209,9 @@ def _choose_output_dir() -> Path:
 
 def _choose_unit_name() -> str:
     default = os.getenv("EF_UNIT_NAME", "").strip()
+    if _is_non_interactive():
+        return default
+
     if default:
         raw = input(f"Unidade (opcional, ENTER p/ manter: {default}): ").strip()
         return raw or default
@@ -191,22 +225,43 @@ def _choose_unit_from_list() -> str:
     options = [o.strip() for o in env.split(",") if o.strip()] if env else ["BarraShoppingSul", "Novo Hamburgo"]
 
     default = os.getenv("EF_UNIT_NAME", "").strip()
-    if default:
+    if default and _is_non_interactive():
         return default
 
+    env_units = os.getenv("EF_UNITS", "").strip()
+    if env_units:
+        units = [o.strip() for o in env_units.split(",") if o.strip()]
+        if len(units) == 1:
+            return units[0]
+
     if not options:
-        return ""
-    if len(options) == 1:
+        return default
+    if default and default not in options:
+        options.append(default)
+    if len(options) == 1 and not default:
         return options[0]
+
+    if _is_non_interactive():
+        print(
+            "Unidade não definida em modo não interativo. "
+            "Defina EF_UNIT_NAME ou EF_UNITS com uma única unidade."
+        )
+        print(f"Opções disponíveis: {', '.join(options)}")
+        return ""
 
     print("\nEscolha a unidade:")
     for i, opt in enumerate(options, start=1):
         print(f"{i}) {opt}")
-    print("0) Pular")
+    if default:
+        print(f"0) Pular | ENTER p/ padrão: {default}")
+    else:
+        print("0) Pular")
 
     while True:
         raw = input("> ").strip()
-        if raw == "0" or raw == "":
+        if raw == "":
+            return default
+        if raw == "0":
             return ""
         try:
             idx = int(raw)
@@ -236,9 +291,7 @@ def _get_credentials(*, persist_session: bool) -> tuple[str, str]:
     if email_default and password_default:
         return email_default, password_default
 
-    non_interactive_env = _env_flag("EF_NON_INTERACTIVE")
-    non_interactive = (non_interactive_env is True) or (not sys.stdin.isatty())
-    if non_interactive:
+    if _is_non_interactive():
         if not email_default or not password_default:
             print(
                 "Credenciais ausentes em modo não interativo. "
@@ -437,6 +490,9 @@ def _run_agenda(
 
 
 def _prompt_int(prompt: str, default: int, *, min_value: int = 1, max_value: int = 3650) -> int:
+    if _is_non_interactive():
+        return default
+
     while True:
         raw = input(f"{prompt} (ENTER p/ padrão: {default}): ").strip()
         if raw == "":
@@ -453,6 +509,9 @@ def _prompt_int(prompt: str, default: int, *, min_value: int = 1, max_value: int
 
 
 def _prompt_date(prompt: str, default: str) -> str:
+    if _is_non_interactive():
+        return default
+
     while True:
         raw = input(f"{prompt} (DD/MM/AAAA) (ENTER p/ padrão: {default}): ").strip()
         val = raw or default
@@ -1129,7 +1188,8 @@ def _run_cash_combined(headless: bool, output_dir: Path, unit_name: str, persist
 
         start_name = datetime.strptime(start_str, "%d/%m/%Y").strftime("%Y%m%d")
         end_name = datetime.strptime(end_str, "%d/%m/%Y").strftime("%Y%m%d")
-        xlsx_path = output_dir / f"caixa_recebimentos_completo_{start_name}_a_{end_name}.xlsx"
+        xlsx_output_dir = _unit_output_dir(output_dir, unit_name)
+        xlsx_path = xlsx_output_dir / f"caixa_recebimentos_completo_{start_name}_a_{end_name}.xlsx"
 
         if not dry_run:
             with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
@@ -1482,7 +1542,7 @@ def main() -> int:
         "agenda_delta",
         "caixa",
         "cash",
-    } and not unit_name:
+    }:
         unit_name = _choose_unit_from_list()
         if not unit_name:
             print("Unidade não selecionada.")

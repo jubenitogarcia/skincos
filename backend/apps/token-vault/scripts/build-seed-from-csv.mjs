@@ -25,7 +25,7 @@ if (!rows.length) {
 const header = rows[0].map((value) => value.trim());
 const bodyRows = rows.slice(1).map((row) => Object.fromEntries(header.map((key, index) => [key, row[index] || ''])));
 const payloads = [];
-const stats = { threads: 0, instagram: 0 };
+const stats = { threads: 0, instagram: 0, facebook: 0 };
 
 for (const row of bodyRows) {
   const unit = slug(row.Unit || row.unit || '');
@@ -33,6 +33,8 @@ for (const row of bodyRows) {
   const thToken = clean(row.thToken);
   const igId = clean(row.igId);
   const igToken = clean(row.igToken);
+  const fbId = clean(row.fbId);
+  const fbToken = clean(row.fbToken);
 
   if (thId && thToken) {
     stats.threads += 1;
@@ -42,9 +44,13 @@ for (const row of bodyRows) {
     stats.instagram += 1;
     payloads.push(buildPayload({ provider: 'instagram', unit, externalAccountId: igId, token: igToken, source: row }));
   }
+  if (fbId && fbToken) {
+    stats.facebook += 1;
+    payloads.push(buildPayload({ provider: 'facebook', unit, externalAccountId: fbId, token: fbToken, source: row }));
+  }
 }
 
-console.error(`Importing token rows through API: threads=${stats.threads} instagram=${stats.instagram}`);
+console.error(`Importing token rows through API: threads=${stats.threads} instagram=${stats.instagram} facebook=${stats.facebook}`);
 
 for (const payload of payloads) {
   const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/v1/tokens`, {

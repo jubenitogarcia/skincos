@@ -69,7 +69,13 @@ async function main() {
     await expectVisible(page.getByRole('heading', { name: 'Atend. Clínica' }), 'Atend. Clínica heading')
     await expectVisible(page.getByTestId('atendimento-table'), 'Atendimentos table')
     await expectVisible(page.getByTestId('atendimento-charts-panel'), 'Atendimento charts panel')
-    await expectVisible(page.getByTestId('atendimento-new').or(page.getByText('Novo atendimento')), 'new attendance action')
+    await expectVisible(
+      page
+        .getByTestId('atendimento-inline-client')
+        .or(page.getByTestId('atendimento-new'))
+        .or(page.getByText('Novo atendimento')),
+      'new attendance action'
+    )
 
     const globalError = await page.getByText(/DATABASE_URL_not_configured|ATENDIMENTO_CLINICA_API_TARGET|UPSTREAM_UNREACHABLE/).first().isVisible().catch(() => false)
     if (globalError) {

@@ -6,7 +6,7 @@ Worker interno para substituir a aba `Credencial` do Google Sheets usada pelo wo
 
 - `GET /internal/token-vault/health`
 - `GET /internal/token-vault/contract`
-- `GET /internal/token-vault/v1/tokens?provider=threads|instagram&active=true`
+- `GET /internal/token-vault/v1/tokens?provider=threads|instagram|facebook&active=true`
 - `POST /internal/token-vault/v1/tokens`
 - `PATCH /internal/token-vault/v1/tokens/:id`
 
