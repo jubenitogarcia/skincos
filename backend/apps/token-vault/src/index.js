@@ -4,7 +4,7 @@ const JSON_HEADERS = {
   'cache-control': 'no-store',
 };
 
-const PROVIDERS = new Set(['threads', 'instagram']);
+const PROVIDERS = new Set(['threads', 'instagram', 'facebook']);
 
 export default {
   async fetch(request, env, ctx) {
@@ -310,6 +310,10 @@ async function serializeToken(row, env) {
     base.igId = row.external_account_id;
     base.igToken = token;
   }
+  if (row.provider === 'facebook') {
+    base.fbId = row.external_account_id;
+    base.fbToken = token;
+  }
 
   return base;
 }
@@ -385,7 +389,7 @@ function contract(requestId) {
     service: 'skincos-token-vault',
     endpoints: {
       health: 'GET /internal/token-vault/health',
-      listTokens: 'GET /internal/token-vault/v1/tokens?provider=threads|instagram&active=true',
+      listTokens: 'GET /internal/token-vault/v1/tokens?provider=threads|instagram|facebook&active=true',
       createToken: 'POST /internal/token-vault/v1/tokens',
       updateToken: 'PATCH /internal/token-vault/v1/tokens/:id',
     },

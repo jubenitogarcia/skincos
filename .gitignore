@@ -191,6 +191,7 @@ backend/tools/xiaomi/token_extractor_docker/
 
 # Playwright artifacts (never commit)
 .playwright-cli/
+.playwright-mcp/
 .playwright-output/
 frontend/test-results/
 output/
