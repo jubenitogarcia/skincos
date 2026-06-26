@@ -419,8 +419,8 @@ export function FaturamentoModule() {
 
       <div className="grid gap-3 md:grid-cols-3">
         <Metric label="Faturamento Atendimento" value={formatCurrencyBRL(commercial?.summary?.totalValue || 0)} detail="Base transacional do Atend. Clínica" />
-        <Metric label="Atendimentos" value={formatNumberBR(commercial?.summary?.totalAttendances || 0)} detail="Volume usado na reconciliação futura" />
-        <Metric label="Ticket médio" value={formatCurrencyBRL(commercial?.summary?.averageTicket || 0)} detail="Média por atendimento" />
+        <Metric label="Atendimentos" value={formatNumberBR(commercial?.summary?.totalAttendances || 0)} detail="Registros usados na reconciliação futura" />
+        <Metric label="Ticket médio" value={formatCurrencyBRL(commercial?.summary?.averageTicket || 0)} detail="Média por registro" />
       </div>
 
       <Card className={`${panelClass}`}>

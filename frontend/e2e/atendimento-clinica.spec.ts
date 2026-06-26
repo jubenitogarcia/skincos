@@ -43,15 +43,17 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
     ok: true,
     summary: {
       totalAttendances: rows.length,
+      quantityTotal: rows.reduce((acc, row) => acc + Number(row.quantity || 0), 0),
+      countMode: 'row',
       totalValue: rows.reduce((acc, row) => acc + row.value, 0),
       averageTicket: rows.length ? rows.reduce((acc, row) => acc + row.value, 0) / rows.length : 0,
       distinctClients: rows.length,
     },
-    monthly: [{ month: '2026-06', count: rows.length, value: rows.reduce((acc, row) => acc + row.value, 0) }],
+    monthly: [{ month: '2026-06', count: rows.length, quantityTotal: rows.reduce((acc, row) => acc + Number(row.quantity || 0), 0), value: rows.reduce((acc, row) => acc + row.value, 0) }],
     rankings: {
-      procedures: [{ label: 'Botox', count: rows.length, value: rows.reduce((acc, row) => acc + row.value, 0) }],
-      injectors: [{ label: 'Dra. Sintética', count: rows.length, value: rows.reduce((acc, row) => acc + row.value, 0) }],
-      consultants: [{ label: 'Consultora Sintética', count: rows.length, value: rows.reduce((acc, row) => acc + row.value, 0) }],
+      procedures: [{ label: 'Botox', count: rows.length, quantityTotal: rows.reduce((acc, row) => acc + Number(row.quantity || 0), 0), value: rows.reduce((acc, row) => acc + row.value, 0) }],
+      injectors: [{ label: 'Dra. Sintética', count: rows.length, quantityTotal: rows.reduce((acc, row) => acc + Number(row.quantity || 0), 0), value: rows.reduce((acc, row) => acc + row.value, 0) }],
+      consultants: [{ label: 'Consultora Sintética', count: rows.length, quantityTotal: rows.reduce((acc, row) => acc + Number(row.quantity || 0), 0), value: rows.reduce((acc, row) => acc + row.value, 0) }],
     },
   })
 
@@ -76,8 +78,8 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
           unit: 'novo-hamburgo',
           from: '2026-06-10',
           to: '2026-06-10',
-          summary: { doctors: 1, attendances: rows.length, totalValue: rows.reduce((acc, row) => acc + row.value, 0), remuneration: 100 },
-          doctors: [{ doctorName: 'Dra. Sintética', count: rows.length, totalValue: rows.reduce((acc, row) => acc + row.value, 0), remuneration: 100, rows: [] }],
+          summary: { doctors: 1, attendances: rows.length, quantityTotal: rows.reduce((acc, row) => acc + Number(row.quantity || 0), 0), totalValue: rows.reduce((acc, row) => acc + row.value, 0), remuneration: 100 },
+          doctors: [{ doctorName: 'Dra. Sintética', count: rows.length, quantityTotal: rows.reduce((acc, row) => acc + Number(row.quantity || 0), 0), totalValue: rows.reduce((acc, row) => acc + row.value, 0), remuneration: 100, rows: [] }],
         }),
       })
     }
@@ -97,22 +99,49 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
           source: { monthColumn: 'AG', weekColumn: 'AH', bxColumn: 'BX', bzColumn: 'BZ' },
           config: { fileNamePrefix: 'Informe Conversão', unitsOrder: ['BarraShoppingSul', 'Novo Hamburgo'], ignoreLabels: [], specialRows: [] },
           doctorRanking: {
+            period: { metricStart: '2026-06-10', metricEnd: '2026-06-10' },
             sections: [{
               unitName: 'Novo Hamburgo',
               unitSlug: 'novo-hamburgo',
-              metrics: { weeklyGoal: { label: 'Meta Semanal', weekValue: 20, totalValue: 20 }, cutLine: { label: 'Linha Corte', weekValue: 12, totalValue: 12 } },
-              doctors: [{ name: 'Dra. Sintética', weekValue: 14, totalValue: 3, score: 3, position: '1ª', rank: 1 }],
+              goalPlan: {
+                periodOperationalDays: 1,
+                periodGoal: 20,
+                dailyGoal: 20,
+                segments: [{ monthKey: '2026-06-01', monthlyGoal: 20, monthOperationalDays: 1, periodOperationalDays: 1, dailyGoal: 20, periodGoal: 20 }],
+              },
+              metrics: {
+                periodAttendanceTotal: { label: 'Total do período', weekValue: rows.reduce((acc, row) => acc + row.value, 0), totalValue: rows.reduce((acc, row) => acc + row.value, 0) },
+                rankedDoctorTotal: { label: 'Total ranqueável', weekValue: rows.reduce((acc, row) => acc + row.value, 0), totalValue: rows.reduce((acc, row) => acc + row.value, 0) },
+                periodGoal: { label: 'Meta do período', weekValue: 20, totalValue: 20 },
+                dailyGoal: { label: 'Meta diária', weekValue: 20, totalValue: 20 },
+                periodOperationalDays: { label: 'Dias período', weekValue: 1, totalValue: 1 },
+                cutLine: { label: 'Linha Corte', weekValue: 12, totalValue: 12 },
+                interval: { label: 'Intervalo', weekValue: 4, totalValue: 4 },
+                intervalMultiplier: { label: 'Multiplicador', weekValue: 0.75, totalValue: 0.75 },
+                lowerLimit: { label: 'Limite inferior', weekValue: 8, totalValue: 8 },
+                upperLimit: { label: 'Limite superior', weekValue: 16, totalValue: 16 },
+                level0: { label: 'Nível 0', weekValue: 0, totalValue: 0 },
+                level1: { label: 'Nível 1', weekValue: 0, totalValue: 0 },
+                level2: { label: 'Nível 2', weekValue: 1, totalValue: 1 },
+                level3: { label: 'Nível 3', weekValue: 0, totalValue: 0 },
+                outerRatio: { label: 'Razão exterior', weekValue: 0.1, totalValue: 0.1 },
+                upperRatio: { label: 'Razão superior', weekValue: 0.2, totalValue: 0.2 },
+                innerRatio: { label: 'Razão interior', weekValue: 0.3, totalValue: 0.3 },
+                lowerRatio: { label: 'Razão inferior', weekValue: 0.4, totalValue: 0.4 },
+                ratioDivisor: { label: 'Divisor razões', weekValue: 2, totalValue: 2 },
+              },
+              doctors: [{ name: 'Dra. Sintética', weekValue: 14, totalValue: 3, score: 3, position: '1ª', rank: 1, level: 2 }],
             }],
-            topDoctors: [{ name: 'Dra. Sintética', unitName: 'Novo Hamburgo', unitSlug: 'novo-hamburgo', weekValue: 14, totalValue: 3, score: 3, position: '1ª', rank: 1 }],
+            topDoctors: [{ name: 'Dra. Sintética', unitName: 'Novo Hamburgo', unitSlug: 'novo-hamburgo', weekValue: 14, totalValue: 3, score: 3, position: '1ª', rank: 1, level: 2 }],
           },
           sections: [],
           warnings: [],
-          summary: { sections: 1, rows: 4 },
+          summary: { sections: 1, rows: 4, doctorRankingSource: 'crm', scheduleSource: 'crm' },
         }),
       })
     }
     if (url.pathname.endsWith('/management/finance')) {
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, sourceTabs: [{ sourceTab: 'Caixa', rows: 2 }], items: [], attendanceTotals: { units: [{ unitSlug: 'novo-hamburgo', unitName: 'Novo Hamburgo', count: rows.length, value: rows.reduce((acc, row) => acc + row.value, 0) }] } }) })
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, sourceTabs: [{ sourceTab: 'Caixa', rows: 2 }], items: [], attendanceTotals: { units: [{ unitSlug: 'novo-hamburgo', unitName: 'Novo Hamburgo', count: rows.length, quantityTotal: rows.reduce((acc, row) => acc + Number(row.quantity || 0), 0), value: rows.reduce((acc, row) => acc + row.value, 0) }] } }) })
     }
     if (url.pathname.endsWith('/management/inventory')) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: [{ id: 'inv-1', product: 'Produto Sintético', barraShoppingSul: 1, novoHamburgo: 2, sourceRow: 2 }] }) })
@@ -166,14 +195,38 @@ test.describe('atendimento clinica', () => {
     await page.goto('/?module=atendimento-clinica')
 
     await expect(page.getByRole('heading', { name: 'Atend. Clínica' })).toBeVisible({ timeout: 30000 })
-    await expect(page.getByTestId('atendimento-context-menu')).toBeVisible()
-    await page.getByTestId('atendimento-context-menu').click()
-    await expect(page.getByText('Dados carregados')).toBeVisible()
-    await expect(page.getByText('Listagem', { exact: true })).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(page.getByTestId('atendimento-kpis')).toContainText('Ticket médio')
+    await expect(page.getByRole('button', { name: '7d' })).toHaveAttribute('title', 'Últimos 7 dias')
+    await expect(page.getByRole('button', { name: '30d' })).toHaveAttribute('title', 'Últimos 30 dias')
+    await expect(page.getByRole('button', { name: 'Semana atual' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Mês atual' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '60d' })).toHaveCount(0)
+    await page.getByTestId('atendimento-header-refresh').hover()
+    const refreshTooltip = page.getByRole('tooltip').filter({ hasText: 'Atualizar Atend. Clínica' })
+    await expect(refreshTooltip).toBeVisible()
+    await expect(refreshTooltip).toContainText('Status: Dados carregados')
+    await expect(refreshTooltip).toContainText('Listagem: 1 linhas')
+    await page.getByRole('button', { name: 'Semana atual' }).hover()
+    const weekTooltip = page.getByRole('tooltip').filter({ hasText: 'Semana atual' })
+    await expect(weekTooltip).toBeVisible()
+    await expect(weekTooltip).toContainText('Da segunda-feira até hoje.')
+    await page.getByRole('button', { name: 'Mês atual' }).hover()
+    const monthTooltip = page.getByRole('tooltip').filter({ hasText: 'Mês atual' })
+    await expect(monthTooltip).toBeVisible()
+    await expect(monthTooltip).toContainText('Do primeiro dia do mês até hoje.')
+    await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Ticket médio')
+    await expect(page.getByTestId('atendimento-kpis')).toContainText('Total do período')
+    await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Total ranqueável')
+    await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Doutores elegíveis')
+    await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Dias mês')
+    await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Fonte agenda')
+    await expect(page.getByTestId('atendimento-kpis')).toContainText('Faixas por doutor')
+    await expect(page.getByTestId('atendimento-kpi-ranking')).toHaveCount(0)
+    await expect(page.getByTestId('atendimento-kpi-resumo')).toHaveCount(0)
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Linha Corte')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Razão Exterior')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Resumo')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('3 pts')
     await expect(page.getByTestId('atendimento-filters')).toBeVisible()
-    await expect(page.getByLabel('Mover Ticket médio')).toBeAttached()
     await expect(page.getByText('Gerência', { exact: true })).toHaveCount(0)
     await expect(page.getByTestId('atendimento-conversion-ranking')).toContainText('Dra. Sintética')
     await expect(page.getByTestId('atendimento-row-client-row-1')).toHaveValue('Cliente Inicial')
@@ -190,6 +243,8 @@ test.describe('atendimento clinica', () => {
     await expect(page.getByTestId('atendimento-table')).not.toContainText('120 visíveis')
     await expect(page.getByText('Top procedimentos')).toHaveCount(0)
     await expect(page.getByTestId('atendimento-charts-panel')).toBeVisible()
+    await expect(page.getByTestId('atendimento-charts-panel')).toContainText('Ticket médio')
+    await expect(page.getByTestId('atendimento-charts-panel')).toContainText('Média por registro')
     for (const tabName of [/Inventário/, /Pessoas/, /Escala/, /Comercial/, /Conversão/, /Caixa/, /Importação/]) {
       await expect(page.getByRole('tab', { name: tabName })).toHaveCount(0)
     }
@@ -230,7 +285,12 @@ test.describe('atendimento clinica', () => {
 
     await expect(page.getByRole('heading', { name: 'Atend. Clínica' })).toBeVisible({ timeout: 30000 })
     await expect(page.getByTestId('atendimento-filters')).toBeVisible()
-    await expect(page.getByTestId('atendimento-kpis')).toContainText('Ticket médio')
+    await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Ticket médio')
+    await expect(page.getByTestId('atendimento-charts-panel')).toContainText('Ticket médio')
+    await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Dias mês')
+    await expect(page.getByTestId('atendimento-kpi-ranking')).toHaveCount(0)
+    await expect(page.getByTestId('atendimento-kpi-resumo')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '60d' })).toHaveCount(0)
     await expect(page.getByText('Gerência', { exact: true })).toHaveCount(0)
     await expect(page.getByTestId('atendimento-conversion-ranking')).toContainText('Dra. Sintética')
     for (const tabName of [/Inventário/, /Pessoas/, /Escala/, /Comercial/, /Conversão/, /Caixa/, /Importação/]) {
