@@ -68,15 +68,17 @@ export type AtendimentoClinicaReferences = {
 export type AtendimentoClinicaOverview = {
   summary: {
     totalAttendances: number
+    quantityTotal: number
+    countMode: 'row'
     totalValue: number
     averageTicket: number
     distinctClients: number
   }
-  monthly: Array<{ month: string; count: number; value: number }>
+  monthly: Array<{ month: string; count: number; quantityTotal: number; value: number }>
   rankings: {
-    procedures: Array<{ label: string; count: number; value: number }>
-    injectors: Array<{ label: string; count: number; value: number }>
-    consultants: Array<{ label: string; count: number; value: number }>
+    procedures: Array<{ label: string; count: number; quantityTotal: number; value: number }>
+    injectors: Array<{ label: string; count: number; quantityTotal: number; value: number }>
+    consultants: Array<{ label: string; count: number; quantityTotal: number; value: number }>
   }
 }
 
@@ -84,10 +86,11 @@ export type AtendimentoClinicaReportPreview = {
   unit: string
   from: string
   to: string
-  summary: { doctors: number; attendances: number; totalValue: number; remuneration: number }
+  summary: { doctors: number; attendances: number; quantityTotal: number; totalValue: number; remuneration: number }
   doctors: Array<{
     doctorName: string
     count: number
+    quantityTotal: number
     totalValue: number
     remuneration: number
     rows: Array<{ date: string; clientName: string; procedureName: string; quantity: number; value: number; consultantName: string }>
@@ -161,7 +164,7 @@ export type AtendimentoManagementFinance = {
   monthlyGoals?: AtendimentoMonthlyGoal[]
   monthlyGoalLevels?: AtendimentoMonthlyGoalLevel[]
   goalTables?: AtendimentoGoalTable[]
-  attendanceTotals?: { units: Array<{ unitSlug: string; unitName: string; count: number; value: number }> }
+  attendanceTotals?: { units: Array<{ unitSlug: string; unitName: string; count: number; quantityTotal: number; value: number }> }
 }
 
 export type AtendimentoMonthlyGoal = {
@@ -273,6 +276,19 @@ export type AtendimentoManagementConversionReport = {
       unitSlug: string
       isAggregate?: boolean
       aggregateNotice?: string
+      goalPlan?: {
+        periodOperationalDays: number
+        periodGoal: number
+        dailyGoal: number
+        segments: Array<{
+          monthKey: string
+          monthlyGoal: number
+          monthOperationalDays: number
+          periodOperationalDays: number
+          dailyGoal: number
+          periodGoal: number
+        }>
+      }
       metrics: Record<string, {
         label: string
         weekValue: number

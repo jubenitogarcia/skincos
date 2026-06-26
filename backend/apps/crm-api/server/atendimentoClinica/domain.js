@@ -404,7 +404,7 @@ export function calculateConversionGoalPlan(segments = []) {
     const periodGoal = normalizedSegments.reduce((sum, segment) => sum + segment.periodGoal, 0)
     const dailyGoal = periodOperationalDays > 0
         ? periodGoal / periodOperationalDays
-        : (monthOperationalDays > 0 ? monthlyGoal / monthOperationalDays : 0)
+        : 0
     return {
         monthlyGoal,
         monthOperationalDays,
@@ -485,6 +485,7 @@ export function calculateDoctorConversionRanking({
     monthOperationalDays = 0,
     weekOperationalDays = 0,
     dailyGoal,
+    periodGoal,
     weeklyGoal,
     intervalMultiplier = DEFAULT_CONVERSION_INTERVAL_MULTIPLIER,
 } = {}) {
@@ -507,14 +508,16 @@ export function calculateDoctorConversionRanking({
     const dailyGoalValue = Number.isFinite(Number(dailyGoal))
         ? Number(dailyGoal)
         : (safeMonthDays > 0 ? monthlyGoalValue / safeMonthDays : 0)
-    const weeklyGoalValue = Number.isFinite(Number(weeklyGoal))
-        ? Number(weeklyGoal)
+    const periodGoalValue = Number.isFinite(Number(periodGoal))
+        ? Number(periodGoal)
+        : Number.isFinite(Number(weeklyGoal))
+            ? Number(weeklyGoal)
         : dailyGoalValue * safeWeekDays
     const avg = average(valuesForStatistics)
     const medianValue = median(valuesForStatistics)
     const effectiveIntervalMultiplier = Math.max(0, Number(intervalMultiplier || 0))
     const standardDeviation = sampleStandardDeviation(valuesForStatistics)
-    const cutLine = (avg * 0.3) + (medianValue * 0.2) + (dailyGoalValue * 0.5)
+    const cutLine = (avg * 0.3) + (medianValue * 0.2) + (periodGoalValue * 0.5)
     const interval = standardDeviation * effectiveIntervalMultiplier
     const lowerLimit = cutLine - interval
     const upperLimit = cutLine + interval
@@ -530,7 +533,8 @@ export function calculateDoctorConversionRanking({
             median: medianValue,
             monthlyGoal: monthlyGoalValue,
             dailyGoal: dailyGoalValue,
-            weeklyGoal: weeklyGoalValue,
+            periodGoal: periodGoalValue,
+            weeklyGoal: periodGoalValue,
             cutLine,
             interval,
             lowerLimit,
@@ -565,7 +569,8 @@ export function calculateDoctorConversionRanking({
         monthOperationalDays: safeMonthDays,
         periodOperationalDays: safeWeekDays,
         dailyGoal: dailyGoalValue,
-        weeklyGoal: weeklyGoalValue,
+        periodGoal: periodGoalValue,
+        weeklyGoal: periodGoalValue,
         average: avg,
         median: medianValue,
         standardDeviation,
@@ -577,7 +582,7 @@ export function calculateDoctorConversionRanking({
         levelCounts,
         ratioDivisor,
         formulas: {
-            cutLine: 'linha_corte = (media * 0.30) + (mediana * 0.20) + (meta_diaria * 0.50)',
+            cutLine: 'linha_corte = (media_periodo * 0.30) + (mediana_periodo * 0.20) + (meta_periodo * 0.50)',
             interval: 'intervalo = desvio_padrao(realizado_doutores) * multiplicador_intervalo',
             ratioDivisor: 'divisor = (level0 * 0) + (level1 * 1) + (level2 * 2) + (level3 * 3)',
         },
@@ -835,7 +840,7 @@ function buildConversionDoctorRanking(rows, monthColumn, weekColumn, bxColumn, b
     const metricKeys = new Map([
         ['total', 'total'],
         ['meta mensal', 'monthlyGoal'],
-        ['meta semanal', 'weeklyGoal'],
+        ['meta semanal', 'periodGoal'],
         ['meta diaria', 'dailyGoal'],
         ['media', 'average'],
         ['mediana', 'median'],

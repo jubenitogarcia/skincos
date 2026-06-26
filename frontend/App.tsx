@@ -43,7 +43,7 @@ import { dispatchSiteTrackingHeaderAction, subscribeSiteTrackingHeaderState } fr
 import type { SiteTrackingHeaderState } from '@/siteTrackingTypes'
 import { dispatchAtendimentoClinicaHeaderAction, subscribeAtendimentoClinicaHeaderState } from '@/atendimentoClinicaHeaderBridge'
 import type { AtendimentoClinicaHeaderState } from '@/atendimentoClinicaHeaderBridge'
-import { BarChart3, CalendarX2, CheckCircle2, ChevronDown, ClipboardList, Download, Info, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Stethoscope, WalletCards, X } from 'lucide-react'
+import { BarChart3, CalendarX2, CheckCircle2, ChevronDown, ClipboardList, Download, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Stethoscope, WalletCards, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -76,6 +76,84 @@ function formatLocalIsoDate(date: Date) {
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
     return `${year}-${month}-${day}`
+}
+
+type AtendimentoClinicaQuickPreset = 'last7' | 'last30' | 'currentWeek' | 'currentMonth'
+
+const ATENDIMENTO_CLINICA_QUICK_PRESETS: Array<{
+    key: AtendimentoClinicaQuickPreset
+    label: string
+    tooltip: string
+    tooltipDescription?: string
+    icon?: 'currentWeek' | 'currentMonth'
+}> = [
+    { key: 'last7', label: '7d', tooltip: 'Últimos 7 dias' },
+    { key: 'last30', label: '30d', tooltip: 'Últimos 30 dias' },
+    { key: 'currentWeek', label: 'Semana atual', tooltip: 'Semana atual', tooltipDescription: 'Da segunda-feira até hoje.', icon: 'currentWeek' },
+    { key: 'currentMonth', label: 'Mês atual', tooltip: 'Mês atual', tooltipDescription: 'Do primeiro dia do mês até hoje.', icon: 'currentMonth' },
+]
+
+function AtendimentoClinicaCurrentWeekIcon() {
+    return (
+        <svg viewBox="0 0 20 20" fill="none" className="size-3.5" aria-hidden="true">
+            <path d="M5 3.75V5.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M15 3.75V5.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <rect x="3.25" y="4.75" width="13.5" height="11.5" rx="3" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M3.75 7.5H16.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <rect x="5.25" y="10" width="9.5" height="2.75" rx="1.375" fill="currentColor" fillOpacity="0.18" stroke="currentColor" strokeWidth="1.2" />
+        </svg>
+    )
+}
+
+function AtendimentoClinicaCurrentMonthIcon() {
+    return (
+        <svg viewBox="0 0 20 20" fill="none" className="size-3.5" aria-hidden="true">
+            <path d="M5 3.75V5.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M15 3.75V5.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <rect x="3.25" y="4.75" width="13.5" height="11.5" rx="3" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M3.75 7.5H16.25" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M6.25 10.5H8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            <path d="M9.25 10.5H11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            <path d="M12.25 10.5H14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            <path d="M6.25 13.25H13.75" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+    )
+}
+
+function renderAtendimentoClinicaQuickPresetIcon(icon?: 'currentWeek' | 'currentMonth') {
+    if (icon === 'currentWeek') return <AtendimentoClinicaCurrentWeekIcon />
+    if (icon === 'currentMonth') return <AtendimentoClinicaCurrentMonthIcon />
+    return null
+}
+
+function buildAtendimentoClinicaQuickRange(preset: AtendimentoClinicaQuickPreset, now = new Date()) {
+    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const from = new Date(to)
+    if (preset === 'last7') {
+        from.setDate(to.getDate() - 6)
+    } else if (preset === 'last30') {
+        from.setDate(to.getDate() - 29)
+    } else if (preset === 'currentWeek') {
+        const mondayOffset = (to.getDay() + 6) % 7
+        from.setDate(to.getDate() - mondayOffset)
+    } else {
+        from.setDate(1)
+    }
+    return {
+        from: formatLocalIsoDate(from),
+        to: formatLocalIsoDate(to),
+    }
+}
+
+function detectAtendimentoClinicaQuickPreset(filters?: { from?: string; to?: string } | null, now = new Date()): AtendimentoClinicaQuickPreset | null {
+    const from = String(filters?.from || '')
+    const to = String(filters?.to || '')
+    if (!from || !to) return null
+    for (const preset of ATENDIMENTO_CLINICA_QUICK_PRESETS) {
+        const range = buildAtendimentoClinicaQuickRange(preset.key, now)
+        if (range.from === from && range.to === to) return preset.key
+    }
+    return null
 }
 
 type ApiError = {
@@ -559,36 +637,30 @@ export default function AppFunctionalNeatlab() {
                             : 'bg-white/10 text-blue-100/70 border-white/15'
 
 			    const insumosMounted = useMemo(() => mountedModuleKeys.includes('insumos'), [mountedModuleKeys])
-                const atendimentoClinicaQuickWindow = React.useMemo(() => {
-                    const filters = atendimentoClinicaHeaderState?.filters
-                    if (!filters?.from || !filters?.to) return null
-                    const from = new Date(`${filters.from}T12:00:00`)
-                    const to = new Date(`${filters.to}T12:00:00`)
-                    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null
-                    const diffDays = Math.round((to.getTime() - from.getTime()) / 86400000) + 1
-                    return diffDays === 7 || diffDays === 30 || diffDays === 60 ? diffDays : null
-                }, [atendimentoClinicaHeaderState?.filters])
+                const atendimentoClinicaQuickWindow = React.useMemo(
+                    () => detectAtendimentoClinicaQuickPreset(atendimentoClinicaHeaderState?.filters),
+                    [atendimentoClinicaHeaderState?.filters],
+                )
                 const atendimentoClinicaAdvancedFiltersActive = React.useMemo(() => {
                     const filters = atendimentoClinicaHeaderState?.filters
                     if (!filters) return false
+                    const quickPreset = detectAtendimentoClinicaQuickPreset(filters)
                     return Boolean(
-                        filters.from ||
-                        filters.to ||
+                        ((filters.from || filters.to) && !quickPreset) ||
                         (filters.procedure && filters.procedure !== 'all') ||
                         filters.code ||
                         (filters.injector && filters.injector !== 'all') ||
+                        (filters.consultant && filters.consultant !== 'all') ||
                         filters.search,
                     )
                 }, [atendimentoClinicaHeaderState?.filters])
-                const setAtendimentoClinicaQuickWindow = React.useCallback((days: 7 | 30 | 60) => {
-                    const to = new Date()
-                    const from = new Date()
-                    from.setDate(to.getDate() - days + 1)
+                const setAtendimentoClinicaQuickWindow = React.useCallback((preset: AtendimentoClinicaQuickPreset) => {
+                    const { from, to } = buildAtendimentoClinicaQuickRange(preset)
                     dispatchAtendimentoClinicaHeaderAction({
                         type: 'set-filter',
                         patch: {
-                            from: formatLocalIsoDate(from),
-                            to: formatLocalIsoDate(to),
+                            from,
+                            to,
                         },
                     })
                 }, [])
@@ -1566,35 +1638,6 @@ export default function AppFunctionalNeatlab() {
                                                                         ))}
                                                                     </SelectContent>
                                                                 </Select>
-                                                                <DropdownMenu>
-                                                                    <DropdownMenuTrigger asChild>
-                                                                        <Button
-                                                                            size="icon"
-                                                                            variant="ghost"
-                                                                            className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
-                                                                            data-testid="atendimento-context-menu"
-                                                                            aria-label="Contexto Atend. Clínica"
-                                                                            title="Contexto"
-                                                                        >
-                                                                            <Info className="size-3.5" aria-hidden="true" />
-                                                                        </Button>
-                                                                    </DropdownMenuTrigger>
-                                                                    <DropdownMenuContent align="start" className="w-72 border-slate-700 bg-slate-950/95 p-2 text-slate-100 shadow-2xl backdrop-blur-xl">
-                                                                        <DropdownMenuLabel className="text-slate-200">Contexto do dashboard</DropdownMenuLabel>
-                                                                        <DropdownMenuSeparator className="bg-slate-800" />
-                                                                        {[
-                                                                            ['Status', atendimentoClinicaHeaderState?.loading ? 'Atualizando dados' : 'Dados carregados'],
-                                                                            ['Unidade', atendimentoClinicaHeaderState?.activeUnitLabel || 'Todas unidades'],
-                                                                            ['Período', atendimentoClinicaHeaderState?.periodLabel || 'Todos os períodos'],
-                                                                            ['Listagem', `${Number(atendimentoClinicaHeaderState?.total || 0).toLocaleString('pt-BR')} linhas`],
-                                                                        ].map(([label, value]) => (
-                                                                            <div key={label} className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-xs">
-                                                                                <span className="text-slate-400">{label}</span>
-                                                                                <span className="min-w-0 truncate text-right font-medium text-slate-100">{value}</span>
-                                                                            </div>
-                                                                        ))}
-                                                                    </DropdownMenuContent>
-                                                                </DropdownMenu>
                                                             </div>
                                                         ) : null}
 			                                    </div>
@@ -1797,19 +1840,46 @@ export default function AppFunctionalNeatlab() {
                                         <div className="flex items-center gap-1.5 max-w-[58vw] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                                             <div className="flex shrink-0 items-center gap-1.5">
                                                 <div className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] p-1">
-                                                    {[7, 30, 60].map((period) => (
-                                                        <button
-                                                            key={period}
-                                                            type="button"
-                                                            className={`h-6 rounded-full px-2.5 text-xs transition ${
-                                                                atendimentoClinicaQuickWindow === period
-                                                                    ? 'bg-white/16 text-white'
-                                                                    : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
-                                                            }`}
-                                                            onClick={() => setAtendimentoClinicaQuickWindow(period as 7 | 30 | 60)}
-                                                        >
-                                                            {period}d
-                                                        </button>
+                                                    {ATENDIMENTO_CLINICA_QUICK_PRESETS.map((preset) => (
+                                                        preset.icon ? (
+                                                            <Tooltip key={preset.key}>
+                                                                <TooltipTrigger asChild>
+                                                                    <button
+                                                                        type="button"
+                                                                        aria-label={preset.tooltip}
+                                                                        title={preset.tooltip}
+                                                                        className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs transition ${
+                                                                            atendimentoClinicaQuickWindow === preset.key
+                                                                                ? 'bg-white/16 text-white'
+                                                                                : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                                                        }`}
+                                                                        onClick={() => setAtendimentoClinicaQuickWindow(preset.key)}
+                                                                    >
+                                                                        <span className="inline-flex items-center justify-center opacity-90">{renderAtendimentoClinicaQuickPresetIcon(preset.icon)}</span>
+                                                                    </button>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent className="max-w-56">
+                                                                    <div className="space-y-1">
+                                                                        <div className="text-[11px] font-medium leading-tight text-white">{preset.tooltip}</div>
+                                                                        <div className="text-[10px] leading-snug text-slate-300/92">{preset.tooltipDescription}</div>
+                                                                    </div>
+                                                                </TooltipContent>
+                                                            </Tooltip>
+                                                        ) : (
+                                                            <button
+                                                                key={preset.key}
+                                                                type="button"
+                                                                title={preset.tooltip}
+                                                                className={`h-6 rounded-full px-2.5 text-xs transition ${
+                                                                    atendimentoClinicaQuickWindow === preset.key
+                                                                        ? 'bg-white/16 text-white'
+                                                                        : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
+                                                                }`}
+                                                                onClick={() => setAtendimentoClinicaQuickWindow(preset.key)}
+                                                            >
+                                                                {preset.label}
+                                                            </button>
+                                                        )
                                                     ))}
                                                     <DropdownMenu>
                                                         <DropdownMenuTrigger asChild>
@@ -1906,6 +1976,7 @@ export default function AppFunctionalNeatlab() {
                                                             onClick={() => dispatchAtendimentoClinicaHeaderAction({ type: 'refresh' })}
                                                             disabled={atendimentoClinicaHeaderState?.loading}
                                                             aria-label="Atualizar Atend. Clínica"
+                                                            data-testid="atendimento-header-refresh"
                                                         >
                                                             <RefreshCw className={`size-3.5 ${atendimentoClinicaHeaderState?.loading ? 'animate-spin' : ''}`} aria-hidden="true" />
                                                         </Button>
@@ -1913,8 +1984,12 @@ export default function AppFunctionalNeatlab() {
                                                     <TooltipContent className="max-w-72">
                                                         <div className="space-y-1">
                                                             <div className="text-[11px] font-medium leading-tight text-white">Atualizar Atend. Clínica</div>
-                                                            <div className="text-[10px] leading-snug text-slate-300/92">
-                                                                Último import: {atendimentoClinicaHeaderState?.latestImportLabel || 'Sem import recente'}
+                                                            <div className="space-y-0.5 text-[10px] leading-snug text-slate-300/92">
+                                                                <div>Status: {atendimentoClinicaHeaderState?.loading ? 'Atualizando dados' : 'Dados carregados'}</div>
+                                                                <div>Unidade: {atendimentoClinicaHeaderState?.activeUnitLabel || 'Todas unidades'}</div>
+                                                                <div>Período: {atendimentoClinicaHeaderState?.periodLabel || 'Todos os períodos'}</div>
+                                                                <div>Listagem: {Number(atendimentoClinicaHeaderState?.total || 0).toLocaleString('pt-BR')} linhas</div>
+                                                                <div>Último import: {atendimentoClinicaHeaderState?.latestImportLabel || 'Sem import recente'}</div>
                                                             </div>
                                                         </div>
                                                     </TooltipContent>

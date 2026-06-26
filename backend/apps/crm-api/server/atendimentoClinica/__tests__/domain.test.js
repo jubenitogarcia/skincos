@@ -50,28 +50,29 @@ test('calculates internal doctor conversion metrics using CRM values and weighte
     })
 
     assert.equal(result.dailyGoal, 3100)
+    assert.equal(result.periodGoal, 15500)
     assert.equal(result.weeklyGoal, 15500)
     assert.equal(result.monthOperationalDays, 20)
     assert.equal(result.periodOperationalDays, 5)
     assertNear(result.average, 5500)
     assert.equal(result.median, 5000)
     assertNear(result.standardDeviation, 5000)
-    assertNear(result.cutLine, 4200)
+    assertNear(result.cutLine, 10400)
     assertNear(result.interval, 3750)
     assert.equal(result.intervalMultiplier, 0.75)
-    assert.deepEqual(result.levelCounts, { level0: 1, level1: 1, level2: 1, level3: 1 })
-    assert.equal(result.ratioDivisor, 6)
-    assert.match(result.formulas.cutLine, /media \* 0\.30/)
+    assert.deepEqual(result.levelCounts, { level0: 3, level1: 0, level2: 1, level3: 0 })
+    assert.equal(result.ratioDivisor, 2)
+    assert.match(result.formulas.cutLine, /meta_periodo \* 0\.50/)
     assert.match(result.formulas.interval, /desvio_padrao/)
     assert.match(result.formulas.ratioDivisor, /level0 \* 0/)
-    assertNear(result.ratios.upperRatio, 5 / 6)
-    assertNear(result.ratios.lowerRatio, 1 / 6)
-    assertNear(result.ratios.innerRatio, 0.5)
-    assertNear(result.ratios.outerRatio, 0.5)
+    assertNear(result.ratios.upperRatio, 1)
+    assertNear(result.ratios.lowerRatio, 0)
+    assertNear(result.ratios.innerRatio, 1)
+    assertNear(result.ratios.outerRatio, 0)
     assert.deepEqual(result.ranking.map((doctor) => `${doctor.rank}:${doctor.name}:${doctor.score}`), [
-        '1:Dra Destaque:3',
-        '2:Dra Positiva:2',
-        '3:Dra Corte:1',
+        '1:Dra Destaque:2',
+        '2:Dra Positiva:0',
+        '3:Dra Corte:0',
         '4:Dra Zero:0',
     ])
 })
@@ -109,9 +110,9 @@ test('keeps zero doctors ranked and includes active zero values in statistical c
     assert.equal(result.median, 500)
     assert.deepEqual(result.ranking.map((doctor) => `${doctor.name}:${doctor.score}`), [
         'Dra Venda B:3',
-        'Dra Venda A:2',
-        'Dra Zero A:1',
-        'Dra Zero B:1',
+        'Dra Venda A:1',
+        'Dra Zero A:0',
+        'Dra Zero B:0',
     ])
 })
 
@@ -199,6 +200,15 @@ test('calculates weighted daily and period goals across multiple months', () => 
     assert.equal(plan.periodGoal, 300000)
     assertNear(plan.dailyGoal, 13636.3636)
     assert.equal(plan.weeklyGoal, 300000)
+})
+
+test('returns zero daily goal when selected period has no operational days', () => {
+    const plan = calculateConversionGoalPlan([
+        { monthKey: '2026-06-01', monthlyGoal: 300000, monthOperationalDays: 20, periodOperationalDays: 0 },
+    ])
+    assert.equal(plan.periodGoal, 0)
+    assert.equal(plan.periodOperationalDays, 0)
+    assert.equal(plan.dailyGoal, 0)
 })
 
 test('normalizes currency, code and dates from spreadsheet-shaped values', () => {
@@ -426,7 +436,7 @@ test('derives Gerencia Conversão doctor ranking from goals, cut line and score 
     ]
     const report = buildConversionReportFromRawRows(rawRows, new Date('2026-06-16T12:00:00'))
     assert.equal(report.doctorRanking.sections.length, 1)
-    assert.equal(report.doctorRanking.sections[0].metrics.weeklyGoal.weekValue, 20)
+    assert.equal(report.doctorRanking.sections[0].metrics.periodGoal.weekValue, 20)
     assert.equal(report.doctorRanking.sections[0].metrics.cutLine.weekValue, 12)
     assert.equal(report.doctorRanking.topDoctors[0].name, 'Dra. A')
     assert.equal(report.doctorRanking.topDoctors[0].score, 3)

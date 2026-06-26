@@ -475,10 +475,13 @@ async function fetchEscalaJson(target, actorKey, actor, restPath, params) {
     return json
 }
 
-async function readEscalaScheduleCoverage(selectedUnits, start, end, actor) {
+function normalizeEscalaScheduleDoctorName(row) {
+    const value = row?.professional ?? row?.doctor_name ?? row?.doctorName ?? row?.name
+    return String(value || '').trim()
+}
+
+async function readEscalaScheduleCoverage(pgPool, selectedUnits, start, end, actor) {
     const { target, actorKey } = getEscalaApiConfig()
-    if (!target || !actorKey || !selectedUnits.length) return { source: 'legacy-import', byUnit: new Map(), available: false }
-    const serviceActor = buildEscalaServiceActor(actor)
     const months = monthKeysBetween(start, end)
     const byUnit = new Map(selectedUnits.map((unit) => [unit.slug, {
         unit,
@@ -487,36 +490,81 @@ async function readEscalaScheduleCoverage(selectedUnits, start, end, actor) {
         holidayDates: new Set(),
         coveredMonths: new Set(),
     }]))
+    if (!target || !actorKey || !selectedUnits.length) return { source: 'crm', byUnit, available: false }
+    const serviceActor = buildEscalaServiceActor(actor)
+    const unitSlugs = selectedUnits.map((unit) => unit.slug)
+    const existingRows = await pgPool.query(
+        `select u.slug as unit_slug, s.service_date::text as service_date
+         from crm_atendimento.schedule_days s
+         join crm_atendimento.units u on u.id = s.unit_id
+         where u.slug = any($1)
+           and s.service_date >= $2::date
+           and s.service_date <= $3::date`,
+        [unitSlugs, start, end],
+    )
+    const existingByUnit = new Map()
+    for (const row of existingRows.rows) {
+        const dates = existingByUnit.get(row.unit_slug) || new Set()
+        dates.add(isoDateFromDb(row.service_date))
+        existingByUnit.set(row.unit_slug, dates)
+    }
     try {
         for (const unit of selectedUnits) {
             const coverage = byUnit.get(unit.slug)
+            const existingDates = existingByUnit.get(unit.slug) || new Set()
             for (const month of months) {
                 const json = await fetchEscalaJson(target, actorKey, serviceActor, '/schedule', { unit: unit.name, month })
                 const scheduleRows = Array.isArray(json.schedule) ? json.schedule : []
                 const closedRows = Array.isArray(json.closedDays) ? json.closedDays : []
                 const holidayRows = Array.isArray(json.holidays) ? json.holidays : []
-                if (scheduleRows.length || closedRows.length) coverage.coveredMonths.add(month)
+                if (scheduleRows.length || closedRows.length || holidayRows.length) coverage.coveredMonths.add(month)
+                const desiredByDate = new Map()
                 scheduleRows.forEach((row) => {
                     const date = isoDateFromDb(row.date)
-                    if (date) coverage.scheduledDates.add(date)
+                    const doctorName = normalizeEscalaScheduleDoctorName(row)
+                    if (!date || !doctorName) return
+                    coverage.scheduledDates.add(date)
+                    const entry = desiredByDate.get(date) || { doctors: new Set(), closed: false }
+                    entry.doctors.add(doctorName)
+                    desiredByDate.set(date, entry)
                 })
                 closedRows.forEach((row) => {
                     const date = isoDateFromDb(row.date)
                     if (date) {
                         coverage.closedDates.add(date)
                         coverage.coveredMonths.add(date.slice(0, 7))
+                        desiredByDate.set(date, { doctors: new Set(), closed: true })
                     }
                 })
                 holidayRows.forEach((row) => {
                     const date = isoDateFromDb(row.date)
-                    if (date) coverage.holidayDates.add(date)
+                    if (date) {
+                        coverage.holidayDates.add(date)
+                        coverage.coveredMonths.add(date.slice(0, 7))
+                        desiredByDate.set(date, { doctors: new Set(), closed: true })
+                    }
                 })
+                for (const [date, desired] of desiredByDate.entries()) {
+                    if (existingDates.has(date)) continue
+                    const doctorName = desired.closed
+                        ? GERENCIA_APPS_SCRIPT_CONFIG.noServiceLabel
+                        : Array.from(desired.doctors).join(', ')
+                    if (!doctorName) continue
+                    await upsertScheduleDay(pgPool, {
+                        unitSlug: unit.slug,
+                        unitName: unit.name,
+                        date,
+                        doctorName,
+                        year: Number(date.slice(0, 4)) || null,
+                    })
+                    existingDates.add(date)
+                }
             }
         }
-        return { source: 'escala-crm', byUnit, available: true }
+        return { source: 'crm', byUnit, available: true }
     } catch (error) {
-        console.warn('atendimento-clinica escala coverage fallback', error?.message || error)
-        return { source: 'legacy-import', byUnit: new Map(), available: false, error: String(error?.message || error || '') }
+        console.warn('atendimento-clinica escala coverage sync', error?.message || error)
+        return { source: 'crm', byUnit, available: false, error: String(error?.message || error || '') }
     }
 }
 
@@ -532,11 +580,7 @@ function countOperationalDaysWithEscala(unitSlug, scheduleByUnit, escalaCoverage
             continue
         }
         const legacySchedule = scheduleByUnit.get(unitSlug)
-        if (legacySchedule?.size) {
-            if (isOperationalScheduleValue(legacySchedule.get(date))) total += 1
-        } else if (defaultOperationalDay(unitSlug, date)) {
-            total += 1
-        }
+        if (legacySchedule?.size && isOperationalScheduleValue(legacySchedule.get(date))) total += 1
     }
     return total
 }
@@ -564,19 +608,27 @@ function moneyMetric(value, position = '', label = '', extra = {}) {
     }
 }
 
+function formatCurrencyDiagnostic(value) {
+    return Number(value || 0).toLocaleString('pt-BR', {
+        style: 'currency',
+        currency: 'BRL',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    })
+}
+
 function buildConversionMetricPayload(stats, unitName) {
     const levelCounts = stats.levelCounts || { level0: 0, level1: 0, level2: 0, level3: 0 }
-    const cutLineFormula = `${stats.formulas?.cutLine || 'linha_corte = (media * 0.30) + (mediana * 0.20) + (meta_diaria * 0.50)'}; valores = (${Number(stats.average || 0).toFixed(2)} * 0.30) + (${Number(stats.median || 0).toFixed(2)} * 0.20) + (${Number(stats.dailyGoal || 0).toFixed(2)} * 0.50)`
+    const cutLineFormula = `${stats.formulas?.cutLine || 'linha_corte = (media_periodo * 0.30) + (mediana_periodo * 0.20) + (meta_periodo * 0.50)'}; valores = (${Number(stats.average || 0).toFixed(2)} * 0.30) + (${Number(stats.median || 0).toFixed(2)} * 0.20) + (${Number(stats.periodGoal || stats.weeklyGoal || 0).toFixed(2)} * 0.50)`
     const intervalFormula = `${stats.formulas?.interval || 'intervalo = desvio_padrao(realizado_doutores) * multiplicador_intervalo'}; valores = ${Number(stats.standardDeviation || 0).toFixed(2)} * ${Number(stats.intervalMultiplier || 0).toFixed(2)}`
     const divisorFormula = `${stats.formulas?.ratioDivisor || 'divisor = (level0 * 0) + (level1 * 1) + (level2 * 2) + (level3 * 3)'}; valores = (${levelCounts.level0 || 0} * 0) + (${levelCounts.level1 || 0} * 1) + (${levelCounts.level2 || 0} * 2) + (${levelCounts.level3 || 0} * 3)`
     return {
         total: moneyMetric(stats.total, unitName, 'TOTAL'),
         rankedDoctorTotal: moneyMetric(stats.rankedDoctorTotal ?? stats.total, unitName, 'TOTAL RANQUEÁVEL'),
-        periodAttendanceTotal: moneyMetric(stats.periodAttendanceTotal ?? stats.total, unitName, 'TOTAL GERAL'),
+        periodAttendanceTotal: moneyMetric(stats.periodAttendanceTotal ?? stats.total, unitName, 'TOTAL DO PERÍODO'),
         eligibleDoctorCount: moneyMetric(stats.eligibleDoctorCount, unitName, 'Doutores elegíveis'),
-        monthlyGoal: moneyMetric(stats.monthlyGoal, unitName, 'Meta Mensal', { formula: 'meta_mensal = 1ª meta mensal da unidade/mês no CRM' }),
-        weeklyGoal: moneyMetric(stats.weeklyGoal, unitName, 'Meta Semanal', { formula: 'meta_semanal = meta_diaria * dias_trabalhados_periodo' }),
-        dailyGoal: moneyMetric(stats.dailyGoal, unitName, 'Meta Diária', { formula: 'meta_diaria = meta_mensal / dias_trabalhados_mes' }),
+        periodGoal: moneyMetric(stats.periodGoal ?? stats.weeklyGoal, unitName, 'Meta do período', { formula: 'meta_periodo = soma(meta_diaria_mes * dias_trabalhados_periodo_no_mes)' }),
+        dailyGoal: moneyMetric(stats.dailyGoal, unitName, 'Meta Diária', { formula: 'meta_diaria_media_periodo = meta_periodo / dias_trabalhados_periodo' }),
         monthOperationalDays: moneyMetric(stats.monthOperationalDays, unitName, 'Dias mês', { formula: 'dias_trabalhados_mes = dias operacionais do mês pela Escala CRM ou fallback' }),
         periodOperationalDays: moneyMetric(stats.periodOperationalDays, unitName, 'Dias período', { formula: 'dias_trabalhados_periodo = dias operacionais dentro do período selecionado' }),
         average: moneyMetric(stats.average, unitName, 'Média'),
@@ -597,6 +649,14 @@ function buildConversionMetricPayload(stats, unitName) {
         level2: moneyMetric(levelCounts.level2 || 0, unitName, 'Nível 2', { formula: 'nivel_2 = linha_corte <= realizado < limite_superior' }),
         level3: moneyMetric(levelCounts.level3 || 0, unitName, 'Nível 3', { formula: 'nivel_3 = realizado >= limite_superior' }),
     }
+}
+
+function normalizeAggregateCountValue(value) {
+    return Math.round(Number(value || 0) * 100) / 100
+}
+
+function buildAggregateConversionNotice() {
+    return 'As métricas de conversão usam meta, dias operacionais, linha de corte e intervalo por unidade. Selecione uma unidade para evitar consolidação estatística incorreta.'
 }
 
 async function buildInternalConversionMetrics(pgPool, period, query, actor) {
@@ -626,7 +686,7 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
     const goalMonthKeys = monthSegments.map((segment) => segment.monthKey)
     const scheduleStart = monthSegments[0]?.monthStart || bounds.monthStart
     const scheduleEnd = monthSegments[monthSegments.length - 1]?.monthEnd || bounds.monthEnd
-    const [professionals, weeklyTotals, doctorTotals, scheduleRows, goals, goalLevels] = await Promise.all([
+    const [professionals, weeklyTotals, doctorTotals, goals, goalLevels] = await Promise.all([
         pgPool.query(
             `select id, name, role, status, units, roles
              from crm_atendimento.professionals
@@ -656,15 +716,6 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
             [bounds.metricStart, bounds.metricEnd, unitSlugs],
         ),
         pgPool.query(
-            `select u.slug as unit_slug, s.service_date, s.doctor_name
-             from crm_atendimento.schedule_days s
-             join crm_atendimento.units u on u.id = s.unit_id
-             where s.service_date >= $1::date
-               and s.service_date <= $2::date
-               and u.slug = any($3)`,
-            [scheduleStart, scheduleEnd, unitSlugs],
-        ),
-        pgPool.query(
             `select u.slug as unit_slug, g.goal_month, g.value
              from crm_atendimento.monthly_unit_goals g
              join crm_atendimento.units u on u.id = g.unit_id
@@ -681,6 +732,16 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
             [goalMonthKeys, unitSlugs],
         ),
     ])
+    const escalaCoverage = await readEscalaScheduleCoverage(pgPool, selectedUnits, scheduleStart, scheduleEnd, actor)
+    const scheduleRows = await pgPool.query(
+        `select u.slug as unit_slug, s.service_date, s.doctor_name
+         from crm_atendimento.schedule_days s
+         join crm_atendimento.units u on u.id = s.unit_id
+         where s.service_date >= $1::date
+           and s.service_date <= $2::date
+           and u.slug = any($3)`,
+        [scheduleStart, scheduleEnd, unitSlugs],
+    )
 
     const weeklyTotalByUnit = new Map(weeklyTotals.rows.map((row) => [row.unit_slug, Number(row.total || 0)]))
     const doctorTotalByUnit = new Map()
@@ -697,8 +758,6 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
         unitMap.set(isoDateFromDb(row.service_date), row.doctor_name)
         scheduleByUnit.set(row.unit_slug, unitMap)
     }
-    const escalaCoverage = await readEscalaScheduleCoverage(selectedUnits, scheduleStart, scheduleEnd, actor)
-
     const baseGoalByUnitMonth = new Map()
     for (const row of goals.rows) {
         const monthKey = isoDateFromDb(row.goal_month || row.month || row.goalMonth)
@@ -722,12 +781,6 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
 
     const byUnit = new Map()
     const sections = []
-    const allDoctorInputs = []
-    const allDailyGoals = []
-    const allWeeklyGoals = []
-    let allMonthlyGoal = 0
-    let allMonthOperationalDays = 0
-    let allPeriodOperationalDays = 0
 
     for (const unit of selectedUnits) {
         const totals = doctorTotalByUnit.get(unit.slug) || new Map()
@@ -755,6 +808,7 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
             monthOperationalDays: goalPlan.monthOperationalDays,
             weekOperationalDays: goalPlan.periodOperationalDays,
             dailyGoal: goalPlan.dailyGoal,
+            periodGoal: goalPlan.periodGoal,
             weeklyGoal: goalPlan.weeklyGoal,
             intervalMultiplier,
         })
@@ -763,6 +817,19 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
             unitName: unit.name,
             unitSlug: unit.slug,
             metrics: byUnit.get(unit.slug),
+            goalPlan: {
+                periodOperationalDays: Number(goalPlan.periodOperationalDays || 0),
+                periodGoal: Number(goalPlan.periodGoal || 0),
+                dailyGoal: Number(goalPlan.dailyGoal || 0),
+                segments: (Array.isArray(goalPlan.segments) ? goalPlan.segments : []).map((segment) => ({
+                    monthKey: segment.monthKey,
+                    monthlyGoal: Number(segment.monthlyGoal || 0),
+                    monthOperationalDays: Number(segment.monthOperationalDays || 0),
+                    periodOperationalDays: Number(segment.periodOperationalDays || 0),
+                    dailyGoal: Number(segment.dailyGoal || 0),
+                    periodGoal: Number(segment.periodGoal || 0),
+                })),
+            },
             doctors: stats.ranking.map((doctor) => ({
                 id: doctor.id,
                 name: doctor.name,
@@ -779,26 +846,10 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
             isAggregate: false,
             period: bounds,
         })
-        allDoctorInputs.push(...doctors)
-        allDailyGoals.push(stats.dailyGoal)
-        allWeeklyGoals.push(stats.weeklyGoal)
-        allMonthlyGoal += goalPlan.monthlyGoal
-        allMonthOperationalDays += goalPlan.monthOperationalDays
-        allPeriodOperationalDays += goalPlan.periodOperationalDays
     }
 
-    const allStats = calculateDoctorConversionRanking({
-        doctors: allDoctorInputs,
-        monthlyGoal: allMonthlyGoal,
-        monthOperationalDays: allMonthOperationalDays,
-        weekOperationalDays: allPeriodOperationalDays,
-        dailyGoal: allDailyGoals.reduce((sum, value) => sum + value, 0),
-        weeklyGoal: allWeeklyGoals.reduce((sum, value) => sum + value, 0),
-        periodAttendanceTotal: Array.from(weeklyTotalByUnit.values()).reduce((sum, value) => sum + value, 0),
-        intervalMultiplier,
-    })
-    const allMetrics = buildConversionMetricPayload(allStats, 'Todas unidades')
-    byUnit.set('all', allMetrics)
+    const aggregateNotice = buildAggregateConversionNotice()
+    const warnings = []
     const allDoctors = sections
         .flatMap((section) => section.doctors)
         .sort((left, right) => Number(right.weekValue || 0) - Number(left.weekValue || 0)
@@ -809,11 +860,20 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
         sections.unshift({
             unitName: 'Todas unidades',
             unitSlug: 'all',
-            metrics: allMetrics,
+            metrics: {},
             doctors: allDoctors,
-            isAggregate: false,
+            isAggregate: true,
+            aggregateNotice,
             period: bounds,
         })
+    }
+    for (const section of sections) {
+        if (section.isAggregate) continue
+        const periodTotal = Number(section.metrics?.periodAttendanceTotal?.weekValue || 0)
+        const rankedTotal = Number(section.metrics?.rankedDoctorTotal?.weekValue || 0)
+        if (Math.abs(periodTotal - rankedTotal) > 0.009) {
+            warnings.push(`Conversão ${section.unitName}: total do período ${formatCurrencyDiagnostic(periodTotal)} difere do total ranqueável ${formatCurrencyDiagnostic(rankedTotal)}.`)
+        }
     }
     const scheduleCoverageRows = escalaCoverage.byUnit ? Array.from(escalaCoverage.byUnit.values()) : []
     return {
@@ -822,7 +882,8 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
         topDoctors: allDoctors.slice(0, 8),
         period: bounds,
         intervalMultiplier,
-        scheduleSource: escalaCoverage.source || 'legacy-import',
+        warnings,
+        scheduleSource: escalaCoverage.source || 'crm',
         scheduleCoverageMonths: scheduleCoverageRows
             .flatMap((coverage) => Array.from(coverage.coveredMonths || []).map((month) => ({ unitSlug: coverage.unit.slug, unitName: coverage.unit.name, month }))),
     }
@@ -839,9 +900,13 @@ function applyInternalConversionMetrics(report, internalMetrics) {
     report.summary = {
         ...(report.summary || {}),
         doctorRankingSource: 'crm',
-        scheduleSource: internalMetrics.scheduleSource || 'legacy-import',
+        scheduleSource: internalMetrics.scheduleSource || 'crm',
         scheduleCoverageMonths: internalMetrics.scheduleCoverageMonths || [],
     }
+    report.warnings = [
+        ...((report.warnings || []).filter(Boolean)),
+        ...((internalMetrics.warnings || []).filter(Boolean)),
+    ]
     return report
 }
 
@@ -1282,46 +1347,126 @@ export function createAtendimentoStore(options = {}) {
             await ensureReady()
             const { where, params } = buildAttendanceWhere(query, actor)
             const whereSql = where.length ? `where ${where.join(' and ')}` : ''
-            const summary = await pgPool.query(
-                `${ATTENDANCE_SELECT}
-                 ${whereSql}`,
-                params,
-            )
-            const rows = summary.rows.map(mapAttendance)
-            const totalValue = rows.reduce((acc, row) => acc + row.value, 0)
-            const byMonth = new Map()
-            const byProcedure = new Map()
-            const byInjector = new Map()
-            const byConsultant = new Map()
-            for (const row of rows) {
-                const month = row.date.slice(0, 7)
-                const monthItem = byMonth.get(month) || { month, count: 0, value: 0 }
-                monthItem.count += 1
-                monthItem.value += row.value
-                byMonth.set(month, monthItem)
-                for (const [map, key] of [[byProcedure, row.procedureName], [byInjector, row.injectorName || 'Sem injetor'], [byConsultant, row.consultantName || 'Sem consultor']]) {
-                    const item = map.get(key) || { label: key, count: 0, value: 0 }
-                    item.count += 1
-                    item.value += row.value
-                    map.set(key, item)
-                }
-            }
-            const rank = (map) => Array.from(map.values()).sort((a, b) => b.value - a.value).slice(0, 12)
+            const [summary, monthly, procedures, injectors, consultants] = await Promise.all([
+                pgPool.query(
+                    `select
+                        count(*)::int as total_attendances,
+                        coalesce(sum(a.quantity), 0)::numeric as quantity_total,
+                        coalesce(sum(a.value), 0)::numeric as total_value,
+                        count(distinct nullif(lower(trim(a.client_name)), ''))::int as distinct_clients
+                     from crm_atendimento.attendances a
+                     join crm_atendimento.units u on u.id = a.unit_id
+                     join crm_atendimento.procedures p on p.id = a.procedure_id
+                     left join crm_atendimento.professionals inj on inj.id = a.injector_id
+                     left join crm_atendimento.professionals con on con.id = a.consultant_id
+                     ${whereSql}`,
+                    params,
+                ),
+                pgPool.query(
+                    `select
+                        to_char(a.service_date, 'YYYY-MM') as month,
+                        count(*)::int as count,
+                        coalesce(sum(a.quantity), 0)::numeric as quantity_total,
+                        coalesce(sum(a.value), 0)::numeric as value
+                     from crm_atendimento.attendances a
+                     join crm_atendimento.units u on u.id = a.unit_id
+                     join crm_atendimento.procedures p on p.id = a.procedure_id
+                     left join crm_atendimento.professionals inj on inj.id = a.injector_id
+                     left join crm_atendimento.professionals con on con.id = a.consultant_id
+                     ${whereSql}
+                     group by 1
+                     order by 1`,
+                    params,
+                ),
+                pgPool.query(
+                    `select
+                        p.name as label,
+                        count(*)::int as count,
+                        coalesce(sum(a.quantity), 0)::numeric as quantity_total,
+                        coalesce(sum(a.value), 0)::numeric as value
+                     from crm_atendimento.attendances a
+                     join crm_atendimento.units u on u.id = a.unit_id
+                     join crm_atendimento.procedures p on p.id = a.procedure_id
+                     left join crm_atendimento.professionals inj on inj.id = a.injector_id
+                     left join crm_atendimento.professionals con on con.id = a.consultant_id
+                     ${whereSql}
+                     group by 1
+                     order by value desc, label
+                     limit 12`,
+                    params,
+                ),
+                pgPool.query(
+                    `select
+                        coalesce(nullif(inj.name, ''), 'Sem injetor') as label,
+                        count(*)::int as count,
+                        coalesce(sum(a.quantity), 0)::numeric as quantity_total,
+                        coalesce(sum(a.value), 0)::numeric as value
+                     from crm_atendimento.attendances a
+                     join crm_atendimento.units u on u.id = a.unit_id
+                     join crm_atendimento.procedures p on p.id = a.procedure_id
+                     left join crm_atendimento.professionals inj on inj.id = a.injector_id
+                     left join crm_atendimento.professionals con on con.id = a.consultant_id
+                     ${whereSql}
+                     group by 1
+                     order by value desc, label
+                     limit 12`,
+                    params,
+                ),
+                pgPool.query(
+                    `select
+                        coalesce(nullif(con.name, ''), 'Sem consultor') as label,
+                        count(*)::int as count,
+                        coalesce(sum(a.quantity), 0)::numeric as quantity_total,
+                        coalesce(sum(a.value), 0)::numeric as value
+                     from crm_atendimento.attendances a
+                     join crm_atendimento.units u on u.id = a.unit_id
+                     join crm_atendimento.procedures p on p.id = a.procedure_id
+                     left join crm_atendimento.professionals inj on inj.id = a.injector_id
+                     left join crm_atendimento.professionals con on con.id = a.consultant_id
+                     ${whereSql}
+                     group by 1
+                     order by value desc, label
+                     limit 12`,
+                    params,
+                ),
+            ])
+            const summaryRow = summary.rows[0] || {}
+            const totalAttendances = Number(summaryRow.total_attendances || 0)
+            const totalValue = normalizeAggregateCountValue(summaryRow.total_value)
             return {
                 summary: {
-                    totalAttendances: rows.length,
-                    totalValue: Math.round(totalValue * 100) / 100,
-                    averageTicket: rows.length ? Math.round((totalValue / rows.length) * 100) / 100 : 0,
-                    distinctClients: new Set(rows.map((row) => normalizeText(row.clientName))).size,
+                    totalAttendances,
+                    quantityTotal: normalizeAggregateCountValue(summaryRow.quantity_total),
+                    countMode: 'row',
+                    totalValue,
+                    averageTicket: totalAttendances ? Math.round((totalValue / totalAttendances) * 100) / 100 : 0,
+                    distinctClients: Number(summaryRow.distinct_clients || 0),
                 },
-                monthly: Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month)).map((item) => ({
-                    ...item,
-                    value: Math.round(item.value * 100) / 100,
+                monthly: monthly.rows.map((item) => ({
+                    month: item.month,
+                    count: Number(item.count || 0),
+                    quantityTotal: normalizeAggregateCountValue(item.quantity_total),
+                    value: normalizeAggregateCountValue(item.value),
                 })),
                 rankings: {
-                    procedures: rank(byProcedure),
-                    injectors: rank(byInjector),
-                    consultants: rank(byConsultant),
+                    procedures: procedures.rows.map((item) => ({
+                        label: item.label,
+                        count: Number(item.count || 0),
+                        quantityTotal: normalizeAggregateCountValue(item.quantity_total),
+                        value: normalizeAggregateCountValue(item.value),
+                    })),
+                    injectors: injectors.rows.map((item) => ({
+                        label: item.label,
+                        count: Number(item.count || 0),
+                        quantityTotal: normalizeAggregateCountValue(item.quantity_total),
+                        value: normalizeAggregateCountValue(item.value),
+                    })),
+                    consultants: consultants.rows.map((item) => ({
+                        label: item.label,
+                        count: Number(item.count || 0),
+                        quantityTotal: normalizeAggregateCountValue(item.quantity_total),
+                        value: normalizeAggregateCountValue(item.value),
+                    })),
                 },
             }
         },
@@ -1340,13 +1485,18 @@ export function createAtendimentoStore(options = {}) {
                 params,
             )
             const count = await pgPool.query(
-                `${ATTENDANCE_SELECT}
+                `select count(*)::int as total
+                 from crm_atendimento.attendances a
+                 join crm_atendimento.units u on u.id = a.unit_id
+                 join crm_atendimento.procedures p on p.id = a.procedure_id
+                 left join crm_atendimento.professionals inj on inj.id = a.injector_id
+                 left join crm_atendimento.professionals con on con.id = a.consultant_id
                  where ${where.join(' and ')}`,
                 params.slice(0, -2),
             )
             return {
                 data: out.rows.map(mapAttendance),
-                total: count.rowCount,
+                total: Number(count.rows[0]?.total || 0),
                 limit,
                 offset,
             }
@@ -1375,11 +1525,14 @@ export function createAtendimentoStore(options = {}) {
                  limit 1`,
                 [unit.slug, date],
             )
+            const doctorName = String(row.rows[0]?.doctor_name || '').trim()
+            const normalizedDoctorName = normalizeText(doctorName)
+            const noService = normalizeText(GERENCIA_APPS_SCRIPT_CONFIG.noServiceLabel)
             return {
                 unitSlug: unit.slug,
                 unitName: row.rows[0]?.unit_name || unit.name,
                 date,
-                doctorName: row.rows[0]?.doctor_name || '',
+                doctorName: doctorName && normalizedDoctorName !== noService ? doctorName : '',
             }
         },
 
@@ -1406,8 +1559,9 @@ export function createAtendimentoStore(options = {}) {
             const byDoctor = new Map()
             for (const row of result.rows.map(mapAttendance)) {
                 const doctor = row.injectorName || 'Sem injetor'
-                const item = byDoctor.get(doctor) || { doctorName: doctor, count: 0, totalValue: 0, remuneration: 0, rows: [] }
+                const item = byDoctor.get(doctor) || { doctorName: doctor, count: 0, quantityTotal: 0, totalValue: 0, remuneration: 0, rows: [] }
                 item.count += 1
+                item.quantityTotal += row.quantity
                 item.totalValue += row.value
                 item.rows.push({
                     date: row.date,
@@ -1424,6 +1578,7 @@ export function createAtendimentoStore(options = {}) {
                 const remuneration = totalValue > 0 ? Math.max(totalValue * 0.10, 212.50) : 0
                 return {
                     ...item,
+                    quantityTotal: normalizeAggregateCountValue(item.quantityTotal),
                     totalValue,
                     remuneration: Math.round(remuneration * 100) / 100,
                 }
@@ -1436,6 +1591,7 @@ export function createAtendimentoStore(options = {}) {
                 summary: {
                     doctors: doctors.length,
                     attendances: doctors.reduce((acc, item) => acc + item.count, 0),
+                    quantityTotal: normalizeAggregateCountValue(doctors.reduce((acc, item) => acc + Number(item.quantityTotal || 0), 0)),
                     totalValue: Math.round(doctors.reduce((acc, item) => acc + item.totalValue, 0) * 100) / 100,
                     remuneration: Math.round(doctors.reduce((acc, item) => acc + item.remuneration, 0) * 100) / 100,
                 },
@@ -1851,11 +2007,22 @@ export function createAtendimentoStore(options = {}) {
             const params = []
             applyActorUnitFilter(attendanceWhere, params, actor)
             const totals = await pgPool.query(
-                `${ATTENDANCE_SELECT}
-                 where ${attendanceWhere.join(' and ')}`,
+                `select
+                    u.slug as unit_slug,
+                    u.name as unit_name,
+                    count(*)::int as count,
+                    coalesce(sum(a.quantity), 0)::numeric as quantity_total,
+                    coalesce(sum(a.value), 0)::numeric as value
+                 from crm_atendimento.attendances a
+                 join crm_atendimento.units u on u.id = a.unit_id
+                 join crm_atendimento.procedures p on p.id = a.procedure_id
+                 left join crm_atendimento.professionals inj on inj.id = a.injector_id
+                 left join crm_atendimento.professionals con on con.id = a.consultant_id
+                 where ${attendanceWhere.join(' and ')}
+                 group by u.slug, u.name
+                 order by u.name`,
                 params,
             )
-            const mapped = totals.rows.map(mapAttendance)
             const monthlyGoalResult = await listMonthlyGoals(pgPool, {}, actor)
             return {
                 sourceTabs: Array.from(sourceTabs.values()),
@@ -1864,14 +2031,15 @@ export function createAtendimentoStore(options = {}) {
                 monthlyGoalLevels: monthlyGoalResult.goalLevels,
                 goalTables: (await listGoalTables(pgPool, {}, actor)).tables,
                 attendanceTotals: {
-                    units: Array.from(mapped.reduce((map, row) => {
-                        if (allowed.size && !allowed.has(row.unitSlug)) return map
-                        const item = map.get(row.unitSlug) || { unitSlug: row.unitSlug, unitName: row.unitName, count: 0, value: 0 }
-                        item.count += 1
-                        item.value += row.value
-                        map.set(row.unitSlug, item)
-                        return map
-                    }, new Map()).values()).map((item) => ({ ...item, value: Math.round(item.value * 100) / 100 })),
+                    units: totals.rows
+                        .filter((row) => !allowed.size || allowed.has(row.unit_slug))
+                        .map((item) => ({
+                            unitSlug: item.unit_slug,
+                            unitName: item.unit_name,
+                            count: Number(item.count || 0),
+                            quantityTotal: normalizeAggregateCountValue(item.quantity_total),
+                            value: normalizeAggregateCountValue(item.value),
+                        })),
                 },
             }
         },

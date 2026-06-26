@@ -159,7 +159,15 @@ export function EscalaTeamPanel({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="text-[11px] uppercase tracking-[0.22em] text-slate-300/60">Equipe</div>
-              <div className="mt-1 text-sm font-semibold text-white">Equipe</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-white">Equipe</div>
+                <span className="inline-flex items-center rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-100">
+                  Elegíveis ao ranking: {activeInjectors.length}
+                </span>
+              </div>
+              <div className="mt-1 text-[10px] leading-snug text-slate-400">
+                Injetores ativos da unidade usados na escala e no universo elegível do ranking.
+              </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <TooltipButton label="Adicionar">

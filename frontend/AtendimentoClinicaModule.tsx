@@ -30,7 +30,23 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react'
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts'
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ComposedChart,
+  Line,
+  LineChart,
+  ReferenceArea,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
@@ -120,7 +136,7 @@ function hasAtendimentoInlineDraft(form: AtendimentoClinicaForm) {
 
 const panelClass = 'border-slate-800/80 bg-slate-950/60 shadow-[0_20px_80px_rgba(2,6,23,0.35)] backdrop-blur-xl'
 const ATENDIMENTO_METRIC_LAYOUT_KEY = 'skincos.atendimentoClinica.layout.metrics.v2'
-const ATENDIMENTO_CHART_LAYOUT_KEY = 'skincos.atendimentoClinica.layout.charts.v2'
+const ATENDIMENTO_CHART_LAYOUT_KEY = 'skincos.atendimentoClinica.layout.charts.v3'
 const ATTENDANCE_PAGE_SIZE = 50
 const DEFAULT_UNIT_LEGEND = [
   { slug: 'novo-hamburgo', name: 'Novo Hamburgo' },
@@ -157,10 +173,13 @@ type MetricTooltipSpec = {
   calculation: string
   usage: string
 }
+type ConversionGoalPlan = NonNullable<NonNullable<AtendimentoManagementConversionReport['doctorRanking']>['sections'][number]['goalPlan']>
+type ConversionRankingSection = NonNullable<AtendimentoManagementConversionReport['doctorRanking']>['sections'][number]
+type ConversionDoctorMetric = ConversionRankingSection['doctors'][number]
 
 type AtendimentoSortKey = 'date' | 'clientName' | 'procedureName' | 'injectorName' | 'consultantName' | 'value'
 type AtendimentoSortDir = 'asc' | 'desc'
-type AtendimentoChartPreset = 'monthly' | 'procedures' | 'injectors' | 'consultants'
+type AtendimentoChartPreset = 'monthly' | 'ticket' | 'procedures' | 'injectors' | 'consultants'
 type AtendimentoChartMetric = 'value' | 'count'
 type AtendimentoChartView = 'area' | 'line' | 'bar'
 type AtendimentoChartSlot = {
@@ -213,6 +232,7 @@ const DEFAULT_ATENDIMENTO_METRIC_LAYOUT: AtendimentoMetricLayoutItem[] = [
 
 const DEFAULT_ATENDIMENTO_CHART_SLOTS: AtendimentoChartSlot[] = [
   { presetId: 'monthly', metric: 'value', view: 'area', topN: 8 },
+  { presetId: 'ticket', metric: 'value', view: 'line', topN: 8 },
   { presetId: 'procedures', metric: 'value', view: 'bar', topN: 5 },
   { presetId: 'injectors', metric: 'value', view: 'bar', topN: 5 },
   { presetId: 'consultants', metric: 'value', view: 'bar', topN: 5 },
@@ -220,6 +240,7 @@ const DEFAULT_ATENDIMENTO_CHART_SLOTS: AtendimentoChartSlot[] = [
 
 const ATENDIMENTO_CHART_PRESETS: Array<{ id: AtendimentoChartPreset; label: string; icon: LucideIcon }> = [
   { id: 'monthly', label: 'Série mensal', icon: TrendingUp },
+  { id: 'ticket', label: 'Ticket médio', icon: TrendingUp },
   { id: 'procedures', label: 'Procedimentos', icon: BarChart3 },
   { id: 'injectors', label: 'Injetores', icon: Stethoscope },
   { id: 'consultants', label: 'Consultores', icon: Users },
@@ -449,7 +470,6 @@ function MetricGroupContent({ rows }: { rows: AtendimentoMetricGroupRow[] }) {
                   {row.tooltip ? <Info className="h-2.5 w-2.5 shrink-0 text-slate-500" /> : null}
                 </span>
               </MetricTooltip>
-              {row.detail ? <div className="truncate text-[10px] leading-tight text-slate-500">{row.detail}</div> : null}
             </div>
             <div className="shrink-0 text-[11px] font-semibold text-white">{row.value}</div>
           </div>
@@ -572,6 +592,23 @@ function periodLabel(filters: AtendimentoClinicaFilters) {
   return 'Todos os períodos'
 }
 
+function formatLocalIsoDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function buildCurrentMonthFilters(): AtendimentoClinicaFilters {
+  const today = new Date()
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
+  return {
+    ...DEFAULT_ATENDIMENTO_FILTERS,
+    from: formatLocalIsoDate(monthStart),
+    to: formatLocalIsoDate(today),
+  }
+}
+
 function formatIsoDateBR(date?: string) {
   const [year, month, day] = String(date || '').slice(0, 10).split('-')
   if (!year || !month || !day) return ''
@@ -584,19 +621,18 @@ function inferGoalMonth(filters: AtendimentoClinicaFilters) {
 }
 
 const CONVERSION_METRIC_DEFINITIONS = [
-  { key: 'total', label: 'TOTAL', description: 'Resultado total dos doutores elegíveis no período de conversão.', calculation: 'Soma do realizado dos injetores ativos elegíveis no período.', usage: 'Base de média, mediana, corte, níveis e ranking.' },
-  { key: 'rankedDoctorTotal', label: 'Total ranqueável', description: 'Soma apenas dos atendimentos atribuídos aos doutores elegíveis.', calculation: 'Soma do valor realizado dos injetores ativos da unidade no período.', usage: 'Compara o volume usado no ranking contra o total geral do período.' },
-  { key: 'periodAttendanceTotal', label: 'Total geral', description: 'Faturamento total dos atendimentos no período filtrado.', calculation: 'Soma de todos os atendimentos da unidade/período, incluindo itens fora do ranking.', usage: 'Serve para conferência; não substitui o total ranqueável nas estatísticas dos doutores.' },
+  { key: 'total', label: 'TOTAL', description: 'Resultado total dos doutores elegíveis no período de conversão.', calculation: 'Soma do realizado dos injetores ativos elegíveis no período.', usage: 'Alias legado do total ranqueável; a leitura principal deve considerar os totais do período filtrado.' },
+  { key: 'rankedDoctorTotal', label: 'Total ranqueável', description: 'Subconjunto do período filtrado usado no ranking médico.', calculation: 'Soma do valor realizado dos injetores ativos elegíveis na unidade dentro do período.', usage: 'Permanece disponível internamente para auditoria de consistência do total do período.' },
+  { key: 'periodAttendanceTotal', label: 'Total do período', description: 'Faturamento total do período filtrado.', calculation: 'Soma de todos os atendimentos da unidade/período, incluindo itens fora do ranking.', usage: 'É o total principal exibido no dashboard; o CRM mantém o total ranqueável apenas como verificação interna.' },
   { key: 'eligibleDoctorCount', label: 'Doutores elegíveis', description: 'Quantidade de injetores ativos considerados no ranking.', calculation: 'Profissionais ativos com função Injetor na unidade selecionada.', usage: 'Define o universo usado em média, mediana, desvio, níveis e ranking.' },
-  { key: 'monthlyGoal', label: 'Meta mensal', description: 'Meta mensal da unidade usada como base comercial.', calculation: '1ª meta mensal cadastrada no CRM para unidade, mês e ano.', usage: 'Origina meta diária e meta do período.' },
-  { key: 'dailyGoal', label: 'Meta diária', description: 'Meta esperada por dia trabalhado.', calculation: 'meta_mensal / dias_trabalhados_mes.', usage: 'Compõe 50% da linha de corte.' },
-  { key: 'weeklyGoal', label: 'Meta período', description: 'Meta proporcional aos dias trabalhados no período selecionado.', calculation: 'meta_diaria * dias_trabalhados_periodo.', usage: 'Confere se a janela filtrada está acima ou abaixo do esperado.' },
-  { key: 'monthOperationalDays', label: 'Dias mês', description: 'Dias trabalhados usados para diluir a meta mensal.', calculation: 'Dias operacionais do mês pela Escala CRM ou fallback histórico.', usage: 'Define a meta diária.' },
+  { key: 'dailyGoal', label: 'Meta diária', description: 'Meta diária média do período selecionado.', calculation: 'meta_periodo / dias_trabalhados_periodo.', usage: 'Compõe 50% da linha de corte.' },
+  { key: 'periodGoal', label: 'Meta do período', description: 'Meta acumulada do período selecionado.', calculation: 'Soma das metas diárias dos dias trabalhados dentro do período.', usage: 'É a meta principal de comparação da janela filtrada.' },
+  { key: 'monthOperationalDays', label: 'Dias mês', description: 'Dias trabalhados usados para diluir a meta mensal.', calculation: 'Dias operacionais do mês consolidados na agenda do CRM.', usage: 'Define a meta diária.' },
   { key: 'periodOperationalDays', label: 'Dias período', description: 'Dias trabalhados dentro do filtro ativo.', calculation: 'Dias operacionais entre início e fim do período selecionado.', usage: 'Define a meta proporcional do período.' },
   { key: 'average', label: 'Média', description: 'Média do realizado dos doutores elegíveis.', calculation: 'total_ranqueável / doutores_elegíveis.', usage: 'Compõe 30% da linha de corte.' },
   { key: 'median', label: 'Mediana', description: 'Valor central do realizado dos doutores elegíveis.', calculation: 'Ordena os realizados e pega o centro; em par, média dos dois centrais.', usage: 'Compõe 20% da linha de corte e reduz distorção por extremos.' },
   { key: 'standardDeviation', label: 'Desvio padrão', description: 'Dispersão do realizado entre doutores elegíveis.', calculation: 'Desvio padrão amostral dos valores realizados.', usage: 'Multiplicado pelo fator de intervalo para definir a largura das faixas.' },
-  { key: 'cutLine', label: 'Linha Corte', description: 'Centro das faixas de classificação.', calculation: 'linha_corte = (média * 0,30) + (mediana * 0,20) + (meta_diária * 0,50).', usage: 'Separa níveis 1/2 e orienta os limites inferior e superior.' },
+  { key: 'cutLine', label: 'Linha Corte', description: 'Centro das faixas de classificação na escala do período selecionado.', calculation: 'linha_corte = (média_periodo * 0,30) + (mediana_periodo * 0,20) + (meta_periodo * 0,50).', usage: 'Separa níveis 1/2 e orienta os limites inferior e superior.' },
   { key: 'interval', label: 'Intervalo', description: 'Largura das faixas ao redor da linha de corte.', calculation: 'intervalo = desvio_padrao(realizado_doutores) * multiplicador_intervalo.', usage: 'Define limite inferior e superior.' },
   { key: 'intervalMultiplier', label: 'Multiplicador', description: 'Fator aplicado ao desvio padrão.', calculation: 'Configuração rankingDoctor.intervalMultiplier, com fallback 0,75.', usage: 'Ajusta a distribuição dos doutores entre os níveis.' },
   { key: 'lowerLimit', label: 'Limite inferior', description: 'Piso da faixa central.', calculation: 'linha_corte - intervalo.', usage: 'Abaixo dele o doutor entra no nível 0.' },
@@ -631,9 +667,8 @@ const CONVERSION_METRIC_ICON_BY_KEY: Record<ConversionMetricKey, LucideIcon> = {
   rankedDoctorTotal: Sigma,
   periodAttendanceTotal: Sigma,
   eligibleDoctorCount: Users,
-  monthlyGoal: Target,
   dailyGoal: CalendarRange,
-  weeklyGoal: CalendarRange,
+  periodGoal: Target,
   monthOperationalDays: CalendarRange,
   periodOperationalDays: CalendarRange,
   average: Gauge,
@@ -660,9 +695,8 @@ const CONVERSION_METRIC_TONE_BY_KEY: Record<ConversionMetricKey, AtendimentoMetr
   rankedDoctorTotal: 'sky',
   periodAttendanceTotal: 'sky',
   eligibleDoctorCount: 'emerald',
-  monthlyGoal: 'emerald',
   dailyGoal: 'emerald',
-  weeklyGoal: 'emerald',
+  periodGoal: 'emerald',
   monthOperationalDays: 'sky',
   periodOperationalDays: 'sky',
   average: 'violet',
@@ -693,62 +727,80 @@ const CONVERSION_METRIC_GROUPS: Array<{
   metricKeys: ConversionMetricKey[]
 }> = [
   {
-    key: 'conversion:stats',
-    label: 'Resumo',
-    icon: Sigma,
-    tone: 'sky',
-    description: 'Totais, doutores elegíveis e dispersão calculados pelo CRM para auditar a base do ranking.',
-    metricKeys: ['rankedDoctorTotal', 'periodAttendanceTotal', 'eligibleDoctorCount', 'average', 'median', 'standardDeviation'],
-  },
-  {
     key: 'conversion:goals',
     label: 'Metas',
     icon: Target,
     tone: 'emerald',
-    description: 'Metas e dias trabalhados usados para compor a linha de corte.',
-    metricKeys: ['monthlyGoal', 'dailyGoal', 'weeklyGoal', 'monthOperationalDays', 'periodOperationalDays'],
+    description: 'Metas e dias trabalhados do período filtrado usados para compor a linha de corte.',
+    metricKeys: ['dailyGoal', 'periodGoal', 'periodOperationalDays'],
+  },
+]
+
+const CONVERSION_DISTRIBUTION_DETAIL_GROUPS: Array<{
+  key: string
+  label: string
+  description: string
+  metricKeys: ConversionMetricKey[]
+}> = [
+  {
+    key: 'conversion:stats',
+    label: 'Resumo',
+    description: 'Total principal do período e dispersão calculada pelo CRM para auditar a base do ranking.',
+    metricKeys: ['periodAttendanceTotal', 'average', 'median', 'standardDeviation'],
   },
   {
     key: 'conversion:cut',
-    label: 'Corte e faixas',
-    icon: Ruler,
-    tone: 'violet',
+    label: 'Faixas',
     description: 'Linha de corte, intervalo e limites inferior/superior usados para separar faixas de desempenho.',
     metricKeys: ['cutLine', 'interval', 'intervalMultiplier', 'lowerLimit', 'upperLimit'],
   },
   {
     key: 'conversion:levels',
     label: 'Níveis',
-    icon: Trophy,
-    tone: 'amber',
     description: 'Quantidade de doutores classificados nos níveis 0, 1, 2 e 3.',
     metricKeys: ['level0', 'level1', 'level2', 'level3'],
   },
   {
     key: 'conversion:ratios',
     label: 'Razões',
-    icon: Percent,
-    tone: 'amber',
-    description: 'Razões superior, inferior, interior e exterior usadas na comparação das faixas.',
-    metricKeys: ['upperRatio', 'lowerRatio', 'innerRatio', 'outerRatio', 'ratioDivisor'],
+    description: 'Razões exterior, superior, interior e inferior usadas na comparação das faixas.',
+    metricKeys: ['outerRatio', 'upperRatio', 'innerRatio', 'lowerRatio', 'ratioDivisor'],
   },
 ]
 
 function buildMetricTooltip(
   definition: typeof CONVERSION_METRIC_DEFINITIONS[number],
-  formula?: string
+  formula?: string,
+  overrides?: Partial<MetricTooltipSpec>
 ): MetricTooltipSpec {
   return {
-    what: definition.description,
-    calculation: formula || definition.calculation,
-    usage: definition.usage,
+    what: overrides?.what || definition.description,
+    calculation: overrides?.calculation || formula || definition.calculation,
+    usage: overrides?.usage || definition.usage,
   }
 }
 
-function scheduleSourceLabel(source?: string) {
-  if (source === 'escala-crm') return 'Escala CRM'
-  if (source === 'legacy-import') return 'Fallback histórico'
-  return source || 'Não informado'
+function formatGoalPlanSegments(goalPlan?: ConversionGoalPlan) {
+  const segments = Array.isArray(goalPlan?.segments) ? goalPlan.segments : []
+  if (!segments.length) return ''
+  return segments
+    .map((segment) => {
+      const label = monthLabel(segment.monthKey)
+      return `${label}: meta mês ${formatCurrencyBRL(segment.monthlyGoal)}, dias mês ${formatNumberBR(segment.monthOperationalDays)}, dias período ${formatNumberBR(segment.periodOperationalDays)}, meta período ${formatCurrencyBRL(segment.periodGoal)}`
+    })
+    .join(' | ')
+}
+
+function buildGoalPlanTooltip(
+  definition: typeof CONVERSION_METRIC_DEFINITIONS[number],
+  formula: string | undefined,
+  goalPlan?: ConversionGoalPlan
+) {
+  const segmentSummary = formatGoalPlanSegments(goalPlan)
+  return buildMetricTooltip(definition, formula, {
+    calculation: segmentSummary ? `${formula || definition.calculation}; segmentos = ${segmentSummary}` : formula || definition.calculation,
+    usage: `${definition.usage} Todas as métricas visíveis deste bloco consideram somente o período filtrado; os dias do mês ficam apenas como insumo técnico da proporcionalização.`,
+  })
 }
 
 function formatConversionMetricValue(key: ConversionMetricKey, value: number) {
@@ -784,6 +836,315 @@ function PodiumBadge({ rank }: { rank: number }) {
   )
 }
 
+function getDoctorInitials(name: string) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (!parts.length) return '--'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase()
+}
+
+function resolveDoctorLevel(value: number, level: number | undefined, lowerLimit: number, cutLine: number, upperLimit: number) {
+  if (Number.isFinite(level)) return Number(level)
+  if (value >= upperLimit) return 3
+  if (value >= cutLine) return 2
+  if (value >= lowerLimit) return 1
+  return 0
+}
+
+function conversionLevelVisual(level: number) {
+  if (level >= 3) {
+    return {
+      label: 'Nível 3',
+      fill: '#34d399',
+      bandFill: 'rgba(52,211,153,0.09)',
+      ringClassName: 'ring-emerald-300/35',
+      badgeClassName: 'border-emerald-300/30 bg-emerald-400/12 text-emerald-100',
+    }
+  }
+  if (level === 2) {
+    return {
+      label: 'Nível 2',
+      fill: '#38bdf8',
+      bandFill: 'rgba(56,189,248,0.08)',
+      ringClassName: 'ring-sky-300/35',
+      badgeClassName: 'border-sky-300/30 bg-sky-400/12 text-sky-100',
+    }
+  }
+  if (level === 1) {
+    return {
+      label: 'Nível 1',
+      fill: '#fbbf24',
+      bandFill: 'rgba(251,191,36,0.08)',
+      ringClassName: 'ring-amber-300/35',
+      badgeClassName: 'border-amber-300/30 bg-amber-400/12 text-amber-100',
+    }
+  }
+  return {
+    label: 'Nível 0',
+    fill: '#f59e0b',
+    bandFill: 'rgba(245,158,11,0.08)',
+    ringClassName: 'ring-orange-300/35',
+    badgeClassName: 'border-orange-300/30 bg-orange-400/12 text-orange-100',
+  }
+}
+
+function ConversionDoctorBandsContent({
+  unitName,
+  doctors,
+  metrics,
+  detailGroups,
+}: {
+  unitName: string
+  doctors: ConversionDoctorMetric[]
+  metrics: ConversionRankingSection['metrics']
+  detailGroups: Array<{ key: string; label: string; description: string; rows: AtendimentoMetricGroupRow[] }>
+}) {
+  const cutLine = Number(metrics.cutLine?.weekValue || 0)
+  const interval = Number(metrics.interval?.weekValue || 0)
+  const lowerLimit = Number(metrics.lowerLimit?.weekValue ?? (cutLine - interval))
+  const upperLimit = Number(metrics.upperLimit?.weekValue ?? (cutLine + interval))
+  const chartDoctors = [...doctors]
+    .sort((left, right) => {
+      const rankDelta = Number(left.rank || 0) - Number(right.rank || 0)
+      if (rankDelta !== 0) return rankDelta
+      return String(left.name || '').localeCompare(String(right.name || ''), 'pt-BR', { sensitivity: 'base' })
+    })
+    .map((doctor) => {
+      const value = Number(doctor.weekValue || 0)
+      const level = resolveDoctorLevel(value, typeof doctor.level === 'number' ? doctor.level : undefined, lowerLimit, cutLine, upperLimit)
+      const visual = conversionLevelVisual(level)
+      return {
+        id: `${doctor.unitSlug || unitName}-${doctor.rank}-${doctor.name}`,
+        name: doctor.name,
+        unitName: doctor.unitName || unitName,
+        value,
+        score: Number(doctor.score || 0),
+        rank: Number(doctor.rank || 0),
+        level,
+        levelLabel: visual.label,
+        fill: visual.fill,
+        badgeClassName: visual.badgeClassName,
+        ringClassName: visual.ringClassName,
+        initials: getDoctorInitials(doctor.name),
+      }
+    })
+  const yValues = chartDoctors.map((doctor) => doctor.value)
+  const maxValue = Math.max(cutLine, upperLimit, ...yValues, 0)
+  const yMax = maxValue > 0 ? maxValue * 1.12 : 100
+  const hasBands = Number.isFinite(lowerLimit) && Number.isFinite(cutLine) && Number.isFinite(upperLimit) && upperLimit >= lowerLimit
+  const podiumDoctors = new Set(chartDoctors.filter((doctor) => doctor.rank >= 1 && doctor.rank <= 3).map((doctor) => doctor.id))
+  const chartHeightPx = 320
+  const chartMarginTop = 18
+  const chartMarginRight = 12
+  const chartMarginLeft = 6
+  const chartMarginBottom = 44
+  const yAxisWidth = 88
+  const plotInsetLeft = yAxisWidth + chartMarginLeft
+  const plotInsetRight = chartMarginRight
+  const plotHeight = chartHeightPx - chartMarginTop - chartMarginBottom
+  const chartMinWidthPx = plotInsetLeft + plotInsetRight + Math.max(chartDoctors.length, 1) * 72
+  const lineBadges = [
+    {
+      key: 'upper',
+      value: upperLimit,
+      label: `Limite superior ${formatCurrencyBRL(upperLimit)}`,
+      className: 'border-emerald-300/30 bg-emerald-400/12 text-emerald-100',
+      info: {
+        what: 'Maior limite operacional do período para a classificação.',
+        calculation: `Linha superior posicionada em ${formatCurrencyBRL(upperLimit)} no eixo Y do gráfico.`,
+        usage: 'Ajuda a identificar quem está acima da faixa de corte ampliada.',
+      } satisfies MetricTooltipSpec,
+    },
+    {
+      key: 'cut',
+      value: cutLine,
+      label: `Corte ${formatCurrencyBRL(cutLine)} · intervalo ${formatCurrencyBRL(interval)}`,
+      className: 'border-violet-300/30 bg-violet-400/12 text-violet-100',
+      info: {
+        what: 'Linha central de corte da distribuição do período.',
+        calculation: `Corte em ${formatCurrencyBRL(cutLine)} com intervalo operacional de ${formatCurrencyBRL(interval)}.`,
+        usage: 'É a referência principal para leitura de faixa e nível no gráfico.',
+      } satisfies MetricTooltipSpec,
+    },
+    {
+      key: 'lower',
+      value: lowerLimit,
+      label: `Limite inferior ${formatCurrencyBRL(lowerLimit)}`,
+      className: 'border-amber-300/30 bg-amber-400/12 text-amber-100',
+      info: {
+        what: 'Menor limite operacional do período para a classificação.',
+        calculation: `Linha inferior posicionada em ${formatCurrencyBRL(lowerLimit)} no eixo Y do gráfico.`,
+        usage: 'Mostra o piso da faixa usada para separar níveis inferiores.',
+      } satisfies MetricTooltipSpec,
+    },
+  ]
+  const lineBadgeTop = (value: number) => {
+    const normalized = yMax > 0 ? value / yMax : 0
+    const top = chartMarginTop + plotHeight * (1 - normalized)
+    return Math.max(chartMarginTop + 6, Math.min(chartHeightPx - chartMarginBottom - 6, top))
+  }
+
+  return (
+    <div className="space-y-3 pt-0.5" data-testid="atendimento-conversion-distribution">
+      <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-3">
+        <div className="space-y-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Leitura por doutor</div>
+          <p className="max-w-3xl text-[11px] leading-relaxed text-slate-300">
+            Cada coluna mostra o total do período por doutor. As faixas horizontais mantêm os níveis 0 a 3 visíveis na mesma escala para facilitar a leitura do corte.
+          </p>
+        </div>
+        <div className="mt-3 overflow-x-auto pb-1">
+          <div className="relative" style={{ minWidth: `${chartMinWidthPx}px`, height: `${chartHeightPx}px` }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartDoctors} margin={{ top: chartMarginTop, right: chartMarginRight, left: chartMarginLeft, bottom: chartMarginBottom }}>
+                <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.12)" />
+                {hasBands ? (
+                  <>
+                    <ReferenceArea y1={0} y2={lowerLimit} fill={conversionLevelVisual(0).bandFill} ifOverflow="extendDomain" />
+                    <ReferenceArea y1={lowerLimit} y2={cutLine} fill={conversionLevelVisual(1).bandFill} ifOverflow="extendDomain" />
+                    <ReferenceArea y1={cutLine} y2={upperLimit} fill={conversionLevelVisual(2).bandFill} ifOverflow="extendDomain" />
+                    <ReferenceArea y1={upperLimit} y2={yMax} fill={conversionLevelVisual(3).bandFill} ifOverflow="extendDomain" />
+                  </>
+                ) : null}
+                <XAxis
+                  dataKey="initials"
+                  interval={0}
+                  height={chartMarginBottom}
+                  tickLine={false}
+                  axisLine={false}
+                  tick={(tickProps: any) => {
+                    const doctor = chartDoctors.find((item) => item.id === tickProps.payload?.payload?.id) || chartDoctors[tickProps.index || 0]
+                    if (!doctor) return <g />
+                    return (
+                      <g transform={`translate(${tickProps.x},${tickProps.y})`}>
+                        <text textAnchor="middle" fill="#cbd5e1" fontSize="11" fontWeight="600">
+                          <tspan x="0" dy="12">{doctor.initials}</tspan>
+                          <tspan x="0" dy="14" fill="#94a3b8" fontSize="10" fontWeight="500">{formatNumberBR(doctor.score)} pts</tspan>
+                        </text>
+                      </g>
+                    )
+                  }}
+                />
+                <YAxis
+                  width={88}
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fill: '#94a3b8', fontSize: 10 }}
+                  tickFormatter={(value: number) => formatCurrencyBRL(Number(value || 0))}
+                  domain={[0, yMax]}
+                />
+                <RechartsTooltip
+                  cursor={{ fill: 'rgba(148,163,184,0.08)' }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null
+                    const doctor = payload[0]?.payload as (typeof chartDoctors)[number] | undefined
+                    if (!doctor) return null
+                    return (
+                      <div className="min-w-[13rem] rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl">
+                        <div className="font-semibold text-white">{doctor.name}</div>
+                        <div className="mt-2 space-y-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <span>Realizado</span>
+                            <span className="font-semibold text-white">{formatCurrencyBRL(doctor.value)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <span>Nível</span>
+                            <span className="font-semibold text-white">{doctor.levelLabel}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <span>Ranking</span>
+                            <span className="font-semibold text-white">#{doctor.rank || '-'}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <span>Pontuação</span>
+                            <span className="font-semibold text-white">{formatNumberBR(doctor.score)} pts</span>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }}
+                />
+                <ReferenceLine y={lowerLimit} stroke="#f59e0b" strokeDasharray="4 4" ifOverflow="extendDomain" />
+                <ReferenceLine y={cutLine} stroke="#a78bfa" strokeWidth={1.5} ifOverflow="extendDomain" />
+                <ReferenceLine y={upperLimit} stroke="#34d399" strokeDasharray="4 4" ifOverflow="extendDomain" />
+                <Bar
+                  dataKey="value"
+                  radius={[8, 8, 0, 0]}
+                  maxBarSize={44}
+                  shape={(shapeProps: any) => {
+                    const { x, y, width, height, fill, payload } = shapeProps
+                    const hasPodium = podiumDoctors.has(payload.id)
+                    const rankBadge = hasPodium ? Number(payload.rank || 0) : null
+                    const badgeFill = rankBadge === 1 ? '#fbbf24' : rankBadge === 2 ? '#cbd5e1' : '#fdba74'
+                    const badgeText = rankBadge ? `${rankBadge}` : ''
+                    const badgeY = Number(height) > 24 ? Number(y) + 6 : chartMarginTop + 8
+                    const badgeX = Number(x) + Number(width) - 10
+                    return (
+                      <g>
+                        <rect x={x} y={y} width={width} height={height} rx={8} ry={8} fill={fill} fillOpacity={0.9} stroke={fill} />
+                        {rankBadge ? (
+                          <g>
+                            <circle cx={badgeX} cy={badgeY} r={9} fill={badgeFill} stroke="rgba(15,23,42,0.65)" strokeWidth={1.5} />
+                            <text x={badgeX} y={badgeY + 3.5} textAnchor="middle" fontSize="9" fontWeight="700" fill="#0f172a">
+                              {badgeText}
+                            </text>
+                          </g>
+                        ) : null}
+                      </g>
+                    )
+                  }}
+                >
+                  {chartDoctors.map((doctor) => (
+                    <Cell key={doctor.id} fill={doctor.fill} fillOpacity={0.9} stroke={doctor.fill} />
+                  ))}
+                </Bar>
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0">
+              {lineBadges.map((badge) => (
+                <div
+                  key={badge.key}
+                  className="absolute flex"
+                  style={{
+                    top: `${lineBadgeTop(badge.value)}px`,
+                    left: '0px',
+                    width: `${Math.max(0, plotInsetLeft - 10)}px`,
+                    transform: 'translateY(-50%)',
+                    justifyContent: 'flex-end',
+                  }}
+                >
+                  <TooltipLabel
+                    label={badge.key === 'upper' ? 'Limite superior' : badge.key === 'lower' ? 'Limite inferior' : 'Linha de corte'}
+                    description={<MetricTooltipContent info={badge.info} />}
+                    contentClassName="max-w-[20rem]"
+                  >
+                    <span className={`inline-flex cursor-help items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-medium shadow-[0_8px_24px_rgba(2,6,23,0.2)] ${badge.className}`}>
+                      {badge.key === 'upper' ? <ArrowUpToLine className="h-3 w-3" /> : badge.key === 'lower' ? <ArrowDownToLine className="h-3 w-3" /> : <Ruler className="h-3 w-3" />}
+                      {badge.label}
+                    </span>
+                  </TooltipLabel>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-2 lg:grid-cols-4">
+        {detailGroups.map((group) => (
+          <div key={group.key} className="min-w-0 rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{group.label}</div>
+            <div className="mb-2 text-[11px] leading-relaxed text-slate-500">{group.description}</div>
+            <MetricGroupContent rows={group.rows} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function resolveAtendimentoChartPreset(id: AtendimentoChartPreset) {
   return ATENDIMENTO_CHART_PRESETS.find((preset) => preset.id === id) || ATENDIMENTO_CHART_PRESETS[0]
 }
@@ -795,6 +1156,17 @@ function getAtendimentoChartData(slot: AtendimentoChartSlot, overview: Atendimen
       value: Number(item.value || 0),
       count: Number(item.count || 0),
     }))
+  }
+  if (slot.presetId === 'ticket') {
+    return (overview?.monthly || []).slice(-Math.max(3, slot.topN)).map((item) => {
+      const count = Number(item.count || 0)
+      const totalValue = Number(item.value || 0)
+      return {
+        label: monthLabel(item.month),
+        value: count > 0 ? totalValue / count : 0,
+        count,
+      }
+    })
   }
   const rows = slot.presetId === 'injectors'
     ? overview?.rankings.injectors || []
@@ -824,13 +1196,16 @@ function AtendimentoChartCard({
   const preset = resolveAtendimentoChartPreset(slot.presetId)
   const PresetIcon = preset.icon
   const data = getAtendimentoChartData(slot, overview)
-  const dataKey = slot.metric === 'count' ? 'count' : 'value'
+  const metric = slot.presetId === 'ticket' ? 'value' : slot.metric
+  const dataKey = metric === 'count' ? 'count' : 'value'
   const labelFormatter = (value: unknown) => String(value || '')
-  const valueFormatter = (value: unknown) => slot.metric === 'count'
+  const valueFormatter = (value: unknown) => metric === 'count'
     ? formatNumberBR(Number(value || 0))
     : formatCurrencyBRL(Number(value || 0))
-  const view = slot.presetId === 'monthly' ? slot.view : slot.view === 'area' ? 'bar' : slot.view
-  const height = slot.presetId === 'monthly' ? 250 : 220
+  const view = slot.presetId === 'monthly' || slot.presetId === 'ticket'
+    ? slot.view
+    : slot.view === 'area' ? 'bar' : slot.view
+  const height = slot.presetId === 'monthly' || slot.presetId === 'ticket' ? 250 : 220
   return (
     <Card className={`${panelClass} min-w-0`}>
       <CardHeader className="flex flex-col gap-3 pb-2">
@@ -846,7 +1221,7 @@ function AtendimentoChartCard({
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={slot.presetId} onValueChange={(value) => onChange({ presetId: value as AtendimentoChartPreset, view: value === 'monthly' ? 'area' : 'bar' })}>
+          <Select value={slot.presetId} onValueChange={(value) => onChange({ presetId: value as AtendimentoChartPreset, view: value === 'monthly' ? 'area' : value === 'ticket' ? 'line' : 'bar', metric: value === 'ticket' ? 'value' : slot.metric })}>
             <SelectTrigger className="h-8 min-w-[9rem] border-slate-700 bg-slate-900/70 text-xs text-slate-100">
               <SelectValue />
             </SelectTrigger>
@@ -854,21 +1229,27 @@ function AtendimentoChartCard({
               {ATENDIMENTO_CHART_PRESETS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Select value={slot.metric} onValueChange={(value) => onChange({ metric: value as AtendimentoChartMetric })}>
-            <SelectTrigger className="h-8 w-24 border-slate-700 bg-slate-900/70 text-xs text-slate-100">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="value">R$</SelectItem>
-              <SelectItem value="count">Qtd</SelectItem>
-            </SelectContent>
-          </Select>
+          {slot.presetId === 'ticket' ? (
+            <span className="inline-flex h-8 items-center rounded-md border border-slate-700 bg-slate-900/70 px-2.5 text-xs text-slate-300">
+              Média por registro
+            </span>
+          ) : (
+            <Select value={slot.metric} onValueChange={(value) => onChange({ metric: value as AtendimentoChartMetric })}>
+              <SelectTrigger className="h-8 w-24 border-slate-700 bg-slate-900/70 text-xs text-slate-100">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="value">R$</SelectItem>
+                <SelectItem value="count">Qtd</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
           <Select value={view} onValueChange={(value) => onChange({ view: value as AtendimentoChartView })}>
             <SelectTrigger className="h-8 w-28 border-slate-700 bg-slate-900/70 text-xs text-slate-100">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {ATENDIMENTO_CHART_VIEWS.filter((item) => slot.presetId === 'monthly' || item.id !== 'area').map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
+              {ATENDIMENTO_CHART_VIEWS.filter((item) => slot.presetId === 'monthly' || slot.presetId === 'ticket' || item.id !== 'area').map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={String(slot.topN)} onValueChange={(value) => onChange({ topN: Number(value) })}>
@@ -889,7 +1270,7 @@ function AtendimentoChartCard({
                 <LineChart data={data} margin={{ left: 0, right: 8, top: 12, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.14)" />
                   <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => String(value).slice(0, 14)} />
-                  <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => slot.metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
+                  <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
                   <RechartsTooltip
                     contentStyle={{ background: 'rgba(2,6,23,0.94)', border: '1px solid rgba(51,65,85,0.8)', borderRadius: 14, color: '#e2e8f0' }}
                     formatter={(value) => valueFormatter(value)}
@@ -899,16 +1280,16 @@ function AtendimentoChartCard({
                   <Line type="monotone" dataKey={dataKey} stroke="#38bdf8" strokeWidth={2} dot={false} />
                 </LineChart>
               ) : view === 'bar' ? (
-                <BarChart data={data} layout={slot.presetId === 'monthly' ? 'horizontal' : 'vertical'} margin={{ left: 8, right: 12, top: 12, bottom: 0 }}>
+                <BarChart data={data} layout={slot.presetId === 'monthly' || slot.presetId === 'ticket' ? 'horizontal' : 'vertical'} margin={{ left: 8, right: 12, top: 12, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" />
-                  {slot.presetId === 'monthly' ? (
+                  {slot.presetId === 'monthly' || slot.presetId === 'ticket' ? (
                     <>
                       <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                      <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => slot.metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
+                      <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
                     </>
                   ) : (
                     <>
-                      <XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => slot.metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
+                      <XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
                       <YAxis type="category" dataKey="label" width={120} tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => String(value).slice(0, 18)} />
                     </>
                   )}
@@ -918,25 +1299,25 @@ function AtendimentoChartCard({
                     labelFormatter={labelFormatter}
                     labelStyle={{ color: '#bae6fd' }}
                   />
-                  <Bar dataKey={dataKey} fill="#38bdf8" radius={slot.presetId === 'monthly' ? [6, 6, 0, 0] : [0, 6, 6, 0]} />
+                  <Bar dataKey={dataKey} fill="#38bdf8" radius={slot.presetId === 'monthly' || slot.presetId === 'ticket' ? [6, 6, 0, 0] : [0, 6, 6, 0]} />
                 </BarChart>
               ) : (
                 <AreaChart data={data} margin={{ left: 0, right: 8, top: 12, bottom: 0 }}>
                   <defs>
-                    <linearGradient id={`atendimentoChartFill-${slot.presetId}-${slot.metric}`} x1="0" y1="0" x2="0" y2="1">
+                    <linearGradient id={`atendimentoChartFill-${slot.presetId}-${metric}`} x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.32} />
                       <stop offset="95%" stopColor="#38bdf8" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                  <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => slot.metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
+                  <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
                   <RechartsTooltip
                     contentStyle={{ background: 'rgba(2,6,23,0.94)', border: '1px solid rgba(51,65,85,0.8)', borderRadius: 14, color: '#e2e8f0' }}
                     formatter={(value) => valueFormatter(value)}
                     labelFormatter={labelFormatter}
                     labelStyle={{ color: '#bae6fd' }}
                   />
-                  <Area type="monotone" dataKey={dataKey} stroke="#38bdf8" strokeWidth={2} fill={`url(#atendimentoChartFill-${slot.presetId}-${slot.metric})`} />
+                  <Area type="monotone" dataKey={dataKey} stroke="#38bdf8" strokeWidth={2} fill={`url(#atendimentoChartFill-${slot.presetId}-${metric})`} />
                 </AreaChart>
               )}
             </ResponsiveContainer>
@@ -998,7 +1379,7 @@ function AtendimentoChartsPanel({
 }
 
 export function AtendimentoClinicaModule() {
-  const [filters, setFilters] = useState<AtendimentoClinicaFilters>(DEFAULT_ATENDIMENTO_FILTERS)
+  const [filters, setFilters] = useState<AtendimentoClinicaFilters>(() => buildCurrentMonthFilters())
   const [references, setReferences] = useState<AtendimentoClinicaReferences | null>(null)
   const [overview, setOverview] = useState<AtendimentoClinicaOverview | null>(null)
   const [rows, setRows] = useState<AtendimentoClinicaAttendance[]>([])
@@ -1211,26 +1592,13 @@ export function AtendimentoClinicaModule() {
       || sections.find((item) => Object.keys(item.metrics || {}).length)
       || sections[0]
     const conversionMetrics = conversionSection?.metrics || {}
+    const goalPlan = conversionSection?.goalPlan
     const period = doctorRanking?.period
     const conversionStart = period?.metricStart || period?.weekStart
     const conversionEnd = period?.metricEnd || period?.weekEnd
     const conversionPeriodDetail = conversionStart && conversionEnd
       ? `${formatIsoDateBR(conversionStart)} a ${formatIsoDateBR(conversionEnd)}`
       : conversionSection?.unitName || 'Conversão'
-    const scheduleSource = managementConversionReport?.summary?.scheduleSource
-    const scheduleSourceRow: AtendimentoMetricGroupRow = {
-      key: 'scheduleSource',
-      label: 'Fonte agenda',
-      value: scheduleSourceLabel(scheduleSource),
-      detail: managementConversionReport?.summary?.doctorRankingSource === 'crm' ? 'CRM' : 'Conversão',
-      icon: CalendarRange,
-      tone: scheduleSource === 'escala-crm' ? 'emerald' : 'amber',
-      tooltip: {
-        what: 'Origem dos dias trabalhados usados nas metas.',
-        calculation: 'O CRM prioriza a Escala; se não houver cobertura, usa o fallback histórico importado.',
-        usage: 'Afeta dias do mês, dias do período, meta diária e meta proporcional.',
-      },
-    }
     const aggregateNotice = conversionSection?.aggregateNotice || conversionMetrics.aggregateNotice?.position || ''
     if (aggregateNotice) {
       tiles.push({
@@ -1241,7 +1609,7 @@ export function AtendimentoClinicaModule() {
         icon: AlertTriangle,
         tone: 'amber',
         description: aggregateNotice,
-        wrapperClassName: 'sm:col-span-2',
+        wrapperClassName: 'col-span-full',
         content: (
           <div className="pt-0.5 text-[11px] leading-snug text-slate-400">
             {aggregateNotice}
@@ -1250,23 +1618,28 @@ export function AtendimentoClinicaModule() {
       })
     }
     const conversionDefinitions = new Map(CONVERSION_METRIC_DEFINITIONS.map((definition) => [definition.key, definition]))
+    const buildConversionRows = (metricKeys: ConversionMetricKey[]) => metricKeys
+      .flatMap((key): AtendimentoMetricGroupRow[] => {
+        const metric = conversionMetrics[key]
+        const definition = conversionDefinitions.get(key)
+        if (!metric || !definition) return []
+        const tooltip = key === 'dailyGoal' || key === 'periodGoal' || key === 'periodOperationalDays'
+          ? buildGoalPlanTooltip(definition, metric.formula, goalPlan)
+          : buildMetricTooltip(definition, metric.formula, {
+            usage: `${definition.usage} Todas as métricas exibidas aqui usam o período filtrado.`,
+          })
+        return [{
+          key,
+          label: definition.label,
+          value: formatConversionMetricValue(key, Number(metric.weekValue || 0)),
+          detail: metric.position || '',
+          tooltip,
+          icon: CONVERSION_METRIC_ICON_BY_KEY[key],
+          tone: CONVERSION_METRIC_TONE_BY_KEY[key],
+        }]
+      })
     for (const group of CONVERSION_METRIC_GROUPS) {
-      const rows = group.metricKeys
-        .flatMap((key): AtendimentoMetricGroupRow[] => {
-          const metric = conversionMetrics[key]
-          const definition = conversionDefinitions.get(key)
-          if (!metric || !definition) return []
-          return [{
-            key,
-            label: definition.label,
-            value: formatConversionMetricValue(key, Number(metric.weekValue || 0)),
-            detail: metric.position || conversionSection?.unitName || '',
-            tooltip: buildMetricTooltip(definition, metric.formula),
-            icon: CONVERSION_METRIC_ICON_BY_KEY[key],
-            tone: CONVERSION_METRIC_TONE_BY_KEY[key],
-          }]
-        })
-      if (group.key === 'conversion:goals') rows.push(scheduleSourceRow)
+      const rows = buildConversionRows(group.metricKeys)
       if (!rows.length) continue
       tiles.push({
         key: group.key,
@@ -1276,55 +1649,29 @@ export function AtendimentoClinicaModule() {
         icon: group.icon,
         tone: group.tone,
         description: group.description,
-        wrapperClassName: group.key === 'conversion:ratios' ? 'sm:col-span-2' : '',
         content: <MetricGroupContent rows={rows} />,
       })
     }
-
-    tiles.push({
-      key: 'ticket',
-      label: 'Ticket médio',
-      value: formatCurrencyBRL(overview?.summary.averageTicket || 0),
-      detail: 'Média por atendimento',
-      icon: TrendingUp,
-      tone: 'violet',
-      description: 'Faturamento filtrado dividido pela quantidade de atendimentos no período.',
-    })
-
-    const topDoctors = (managementConversionReport?.doctorRanking?.topDoctors || []).slice(0, 3)
-    if (topDoctors.length) {
+    const distributionGroups = CONVERSION_DISTRIBUTION_DETAIL_GROUPS
+      .map((group) => ({ ...group, rows: buildConversionRows(group.metricKeys) }))
+      .filter((group) => group.rows.length)
+    if (!aggregateNotice && conversionSection?.doctors?.length && distributionGroups.length) {
       tiles.push({
-        key: 'doctor-ranking',
-        label: 'Ranking',
-        value: `${topDoctors.length} doutores`,
-        detail: 'Top 3 do período',
-        icon: Trophy,
-        tone: 'amber',
-        description: 'Ranking interno do CRM para o período selecionado. Exibe os três doutores com maior pontuação calculada para conversão.',
-        wrapperClassName: 'sm:col-span-2',
+        key: 'conversion:distribution',
+        label: 'Faixas por doutor',
+        value: `${formatNumberBR(conversionSection.doctors.length)} doutores`,
+        detail: conversionPeriodDetail,
+        icon: Gauge,
+        tone: 'violet',
+        description: 'Visualização única das faixas de corte por doutor no período filtrado, mantendo o detalhamento técnico logo abaixo do gráfico.',
+        wrapperClassName: 'col-span-full',
         content: (
-          <div className="space-y-1.5 pt-0.5">
-            {topDoctors.map((doctor) => {
-              const score = Number(doctor.score || 0)
-              const doctorTooltip: MetricTooltipSpec = {
-                what: 'Posição do doutor no ranking de conversão do período.',
-                calculation: `Realizado: ${formatCurrencyBRL(Number(doctor.weekValue || 0))}. Nível: ${Number(doctor.level ?? 0)}. Pontuação: ${formatNumberBR(score)} pts.`,
-                usage: 'O ranking ordena por realizado, depois nível/pontuação, e usa nome como desempate estável.',
-              }
-              return (
-                <div key={`${doctor.unitSlug}-${doctor.rank}-${doctor.name}`} className="flex min-w-0 items-center gap-2">
-                  <PodiumBadge rank={doctor.rank} />
-                  <div className="min-w-0 flex-1">
-                    <MetricTooltip label={doctor.name} info={doctorTooltip}>
-                      <span className="block truncate text-[11px] font-semibold leading-tight text-white">{doctor.name}</span>
-                    </MetricTooltip>
-                    <div className="truncate text-[10px] leading-tight text-slate-500">{doctor.unitName}</div>
-                  </div>
-                  <div className="shrink-0 text-[11px] font-semibold text-slate-200">{formatNumberBR(score)} pts</div>
-                </div>
-              )
-            })}
-          </div>
+          <ConversionDoctorBandsContent
+            unitName={conversionSection.unitName}
+            doctors={conversionSection.doctors}
+            metrics={conversionMetrics}
+            detailGroups={distributionGroups}
+          />
         ),
       })
     }
@@ -1333,7 +1680,6 @@ export function AtendimentoClinicaModule() {
   }, [
     filters.unit,
     managementConversionReport,
-    overview?.summary.averageTicket,
   ])
 
   const metricDisplayLayout = useMemo(() => {
@@ -1744,7 +2090,7 @@ export function AtendimentoClinicaModule() {
             <div className="mx-3 mt-3 grid gap-2 lg:grid-cols-2">
               {reportPreview ? (
                 <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-50">
-                  Prévia: {formatNumberBR(reportPreview.summary.attendances)} atendimentos, {formatCurrencyBRL(reportPreview.summary.totalValue)} total, {formatCurrencyBRL(reportPreview.summary.remuneration)} remuneração.
+                  Prévia: {formatNumberBR(reportPreview.summary.attendances)} registros, {formatNumberBR(reportPreview.summary.quantityTotal || 0)} em quantidade, {formatCurrencyBRL(reportPreview.summary.totalValue)} total, {formatCurrencyBRL(reportPreview.summary.remuneration)} remuneração.
                 </div>
               ) : null}
             </div>
