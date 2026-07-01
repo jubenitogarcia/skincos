@@ -9497,7 +9497,7 @@
         "references": [
           "https://ozguralp.medium.com/unauthorized-google-maps-api-key-usage-cases-and-why-you-need-to-care-1ccb28bf21e"
         ],
-        "severity": "MEDIUM",
+        "severity": "WARNING",
         "subcategory": [
           "audit"
         ],
