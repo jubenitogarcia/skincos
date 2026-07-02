@@ -1,5 +1,19 @@
 # Skincos Workspace Agent Rules
 
+## Multi-Account Continuity
+
+- This shared clone is the cross-account source of truth for project context, not
+  for secrets or Codex authentication state.
+- Before changing anything, read `AGENTS.md`, `CODEX_CONTEXT.md`, `TASKS.md`,
+  and `DECISIONS.md`, then inspect `git status`.
+- Use branches in the format `codex/<windows-user-or-alias>/<task-slug>`.
+- Prefer worktrees under `C:\CodexShared\Worktrees\skincos\<actor>\<task-slug>`
+  when more than one account or user may work in parallel.
+- Never store `.env`, `.dev.vars`, `.cloudflared` credentials, `.codex`,
+  cookies, or API keys inside `C:\CodexShared`.
+- If local execution needs secrets, use a private overlay or a private clone
+  outside the shared area and document only variable names here.
+
 ## Default Codex App Startup
 
 - For non-trivial work in this repo, start by running or mentally applying
