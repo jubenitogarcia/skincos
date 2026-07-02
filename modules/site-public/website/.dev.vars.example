@@ -1,6 +1,12 @@
+# Shared-workspace note:
+# - Copy to a private `.dev.vars` outside the shared area when possible.
+# - Never commit or store real values under `C:\CodexShared`.
+# - Keep only variable names and safe acquisition notes in this repository.
+#
 # Copie para .dev.vars (não commitar) para usar em preview local via Wrangler/OpenNext
 
 # Opcional: links assinados para confirmar/recusar via WhatsApp/webhook (recomendado)
+# Obtenha com o responsável operacional do website / booking.
 BOOKING_DECISION_SECRET=
 # Opcional: token assinado para polling de status do agendamento (fallback: BOOKING_DECISION_SECRET)
 BOOKING_STATUS_SECRET=
@@ -24,6 +30,7 @@ TITAN_SMTP_PASS_BARRA=
 TITAN_SMTP_USER_NH=
 TITAN_SMTP_PASS_NH=
 # 2) Resend
+# Obtenha no provedor de e-mail aprovado para este ambiente.
 RESEND_API_KEY=
 # 3) Webhook próprio
 BOOKING_EMAIL_WEBHOOK_URL=

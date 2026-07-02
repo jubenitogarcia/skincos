@@ -1,3 +1,9 @@
+# Shared-workspace note:
+# - Copy to a private `.dev.vars` outside the shared area when possible.
+# - Do not store real HMAC keys in `C:\CodexShared`.
+# - Obtain production-equivalent values from the secure owner-managed source for
+#   this environment, never from another user's profile.
+
 INSUMOS_API_TARGET=https://api.skincos.com.br
 ESCALA_API_TARGET=https://escala-api.skincos.com.br
 AUTH_PATH_PREFIX=/insumos/auth
