@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  _runtime_paths_source="${BASH_SOURCE[0]}"
+else
+  _runtime_paths_source="$0"
+fi
+
+_runtime_paths_lib_dir="$(cd "$(dirname "$_runtime_paths_source")" && pwd)"
+_runtime_paths_script_dir="$(cd "$_runtime_paths_lib_dir/.." && pwd)"
+_runtime_paths_repo_root="$(cd "$_runtime_paths_script_dir/.." && pwd)"
+
+N8N_ROOT="${N8N_ROOT:-$_runtime_paths_repo_root}"
+N8N_RUNTIME_HOME="${N8N_RUNTIME_HOME:-/mnt/c/CodexRuntime/n8n}"
+CLOUDFLARED_HOME="${CLOUDFLARED_HOME:-$N8N_RUNTIME_HOME/cloudflared}"
+N8N_ENV_FILE="${N8N_ENV_FILE:-$N8N_RUNTIME_HOME/env/n8n.env}"
+N8N_BUSINESS_ENV_FILE="${N8N_BUSINESS_ENV_FILE:-$N8N_RUNTIME_HOME/env/n8n-business.env}"
+N8N_HEALTH_DIR="${N8N_HEALTH_DIR:-$N8N_RUNTIME_HOME/health}"
+N8N_LOG_DIR="${N8N_LOG_DIR:-$N8N_RUNTIME_HOME/logs}"
+N8N_TMP_DIR="${N8N_TMP_DIR:-$N8N_RUNTIME_HOME/tmp}"
+N8N_BINARY_DATA_DIR="${N8N_BINARY_DATA_DIR:-$N8N_RUNTIME_HOME/binary-data}"
+N8N_DATA_HOME="${N8N_DATA_HOME:-$N8N_RUNTIME_HOME/n8n-home}"
+N8N_DB_PATH="${N8N_DB_PATH:-$N8N_DATA_HOME/database.sqlite}"
+N8N_CONFIG_PATH="${N8N_CONFIG_PATH:-$N8N_DATA_HOME/config}"
+EVOLUTION_ENV_FILE="${EVOLUTION_ENV_FILE:-$N8N_RUNTIME_HOME/env/evolution-api.env}"
+EVOLUTION_INSTANCES_DIR="${EVOLUTION_INSTANCES_DIR:-$N8N_RUNTIME_HOME/evolution-api/instances}"
+EVOLUTION_STORE_DIR="${EVOLUTION_STORE_DIR:-$N8N_RUNTIME_HOME/evolution-api/store}"
+SKINCOS_N8N_SERVICE="${SKINCOS_N8N_SERVICE:-skincos-n8n.service}"
+SKINCOS_ORB_PROXY_SERVICE="${SKINCOS_ORB_PROXY_SERVICE:-skincos-orb-proxy.service}"
+SKINCOS_CLOUDFLARED_ORB_SERVICE="${SKINCOS_CLOUDFLARED_ORB_SERVICE:-skincos-cloudflared-orb.service}"
+SKINCOS_EVOLUTION_SERVICE="${SKINCOS_EVOLUTION_SERVICE:-skincos-evolution.service}"
+SKINCOS_WATCHDOG_SERVICE="${SKINCOS_WATCHDOG_SERVICE:-skincos-mini-pc-watchdog.service}"
+SKINCOS_WATCHDOG_TIMER="${SKINCOS_WATCHDOG_TIMER:-skincos-mini-pc-watchdog.timer}"
+
+export N8N_ROOT
+export N8N_RUNTIME_HOME
+export CLOUDFLARED_HOME
+export N8N_ENV_FILE
+export N8N_BUSINESS_ENV_FILE
+export N8N_HEALTH_DIR
+export N8N_LOG_DIR
+export N8N_TMP_DIR
+export N8N_BINARY_DATA_DIR
+export N8N_DATA_HOME
+export N8N_DB_PATH
+export N8N_CONFIG_PATH
+export EVOLUTION_ENV_FILE
+export EVOLUTION_INSTANCES_DIR
+export EVOLUTION_STORE_DIR
+export SKINCOS_N8N_SERVICE
+export SKINCOS_ORB_PROXY_SERVICE
+export SKINCOS_CLOUDFLARED_ORB_SERVICE
+export SKINCOS_EVOLUTION_SERVICE
+export SKINCOS_WATCHDOG_SERVICE
+export SKINCOS_WATCHDOG_TIMER

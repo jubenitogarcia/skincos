@@ -1,0 +1,233 @@
+# Workspace compartilhado no Codex App
+
+Este repositório pode ser usado como base compartilhada no Codex App em:
+
+- `C:\CodexShared\Projetos\skincos`
+
+O objetivo desta pasta é servir como clone comum para contexto, revisão,
+planejamento e início limpo de implementação. Para evitar conflito entre
+operadores, o trabalho concorrente deve seguir estas regras.
+
+## Regras de operação
+
+- Não guardar segredos, cookies, `.env`, `.dev.vars`, `.codex` ou perfis de
+  browser dentro de `C:\CodexShared`.
+- Exceção única permitida: `.codex/environments/environment.toml`, porque ele
+  versiona os botões do topo do Codex App para o clone compartilhado e para os
+  worktrees. Nenhum outro arquivo de `.codex` deve ser salvo aqui.
+- Cada operador deve usar branch no formato
+  `codex/<windows-user-ou-alias>/<task-slug>`.
+- Se houver chance de trabalho concorrente, usar worktree dedicado em
+  `C:\CodexShared\Worktrees\skincos\<ator>\<task-slug>`.
+- O clone compartilhado deve ficar reservado para contexto, revisão, bootstrap
+  e tarefas curtas; mudanças longas ou paralelas devem migrar para worktree.
+- Estado local do Codex deve ficar fora do repositório compartilhado, em
+  `%LOCALAPPDATA%\Codex\skincos\`.
+
+## Fluxo de primeira execução por usuário
+
+1. Rodar o bootstrap do workspace compartilhado:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\setup-shared-codex-workspace.ps1
+   ```
+
+2. Rodar a validação do workspace:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\validate-shared-codex-workspace.ps1
+   ```
+
+3. Preparar o runtime compartilhado do orb/n8n:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\setup-shared-runtime.ps1
+   powershell -ExecutionPolicy Bypass -File .\scripts\validate-shared-runtime.ps1
+   ```
+
+4. Instalar os atalhos compartilhados:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\install-shared-codex-shortcuts.ps1
+   ```
+
+5. Dentro do WSL da conta, rodar o bootstrap da conta humana:
+
+   ```bash
+   cd /mnt/c/CodexShared/Projetos/skincos/modules/automations/n8n
+   bash scripts/bootstrap-imported-wsl-account.sh
+   ```
+
+6. Se a conta também for fazer operações Git pelo WSL, autenticar o GitHub CLI:
+
+   ```bash
+   gh auth login --web --git-protocol https --hostname github.com
+   ```
+
+7. Abrir manualmente o clone compartilhado ou o worktree no Codex App da
+   própria conta para carregar os botões do topo definidos em
+   `.codex/environments/environment.toml`.
+
+## Atalhos compartilhados
+
+Os atalhos ficam no Menu Iniciar compartilhado:
+
+- `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Skincos Codex`
+
+Eles são agrupados em quatro pastas.
+
+### Setup
+
+- `Shared Setup`
+- `Shared Validate`
+- `Runtime Setup`
+- `Runtime Validate`
+- `WSL Account Bootstrap`
+
+### Contexto
+
+- `Shared Status`
+- `Codex Context`
+- `Thread Bootstrap`
+- `New Worktree`
+
+### Local
+
+- `Website Local Start`
+- `Website Local Stop`
+- `CRM Local`
+- `CRM Site EF`
+- `CRM Meta Ads`
+- `CRM Atendimento Clínica`
+- `CRM Local Stop`
+
+### Runtime
+
+- `Orb Status`
+- `Orb Restart`
+- `Orb Repair`
+- `Orb Logs`
+- `Orb Validate`
+- `Orb Audit`
+
+Esses atalhos convivem com um instalador complementar de serviços de suporte:
+
+- `bash ./scripts/install-shared-support-system-services.sh --apply`
+
+Ele reaplica o contrato compartilhado de `crm-api`, `booking-api` e
+`cloudflared-cs` sem depender de paths legados em `/srv/skincos` ou
+`/etc/skincos`.
+
+## Botões do topo no Codex App
+
+O projeto agora versiona o arquivo:
+
+- `.codex/environments/environment.toml`
+
+Esse arquivo define os botões do topo da janela do projeto no Codex App.
+Como ele é parte do repositório, o mesmo conjunto de ações aparece para qualquer
+usuário local que abra:
+
+- `C:\CodexShared\Projetos\skincos`; ou
+- um worktree criado a partir desse repositório.
+
+Limites importantes:
+
+- o Codex App não centraliza a lista de projetos recentes entre contas;
+- cada conta ainda precisa abrir manualmente o clone ou o worktree no app;
+- `safe.directory`, bootstrap WSL, login do `gh` e autenticação do Codex App
+  continuam por usuário;
+- os atalhos do Menu Iniciar e os botões do topo são complementares: o primeiro
+  é compartilhamento no Windows, o segundo é compartilhamento por projeto.
+
+## Local vs runtime live
+
+Os atalhos seguem dois modelos operacionais diferentes.
+
+### Ambiente local
+
+Usado para edição, QA e iteração dos projetos locais como website e CRM.
+
+- roda a partir do código em `C:\CodexShared\Projetos\skincos`;
+- guarda PID, logs e estado temporário em `%LOCALAPPDATA%\Codex\skincos\`;
+- não deve gravar artefatos operacionais novos no clone compartilhado nem no
+  worktree por padrão.
+
+### Runtime live
+
+Usado para status, restart, logs e validação do stack live do orb/n8n/Evolution.
+
+- resolve código a partir de `modules\automations\n8n`;
+- usa o runtime compartilhado em `C:\CodexRuntime\n8n`;
+- executa via WSL e `systemd` de sistema com os units `skincos-*`;
+- não deve depender de `systemctl --user` na conta humana para o orb;
+- espera um PostgreSQL local com o role/database `n8n_runtime` compatível com
+  o contrato de `C:\CodexRuntime\n8n\env\n8n.env`.
+- quando esse contrato estiver desalinhado, o fluxo suportado é `Orb Repair`,
+  não uma intervenção manual dependente de uma conta específica.
+
+Além do orb, o mini-PC agora mantém estes serviços de suporte no mesmo modelo
+compartilhado:
+
+- `skincos-crm-api.service`, com env em `C:\CodexRuntime\crm-api\env\crm-api.env`
+  e estado mutável em `C:\CodexRuntime\crm-api\var`;
+- `skincos-booking-api.service`, com env em
+  `C:\CodexRuntime\booking-api\env\booking-api.env`, venv em
+  `C:\CodexRuntime\booking-api\venv` e estado mutável em
+  `C:\CodexRuntime\booking-api\var`;
+- `skincos-cloudflared-cs.service`, com config e credenciais em
+  `C:\CodexRuntime\cloudflared\cs`.
+
+## Status rápido e worktrees
+
+Para ver em um único comando se o clone compartilhado está sujo, qual branch
+está ativa e quais worktrees já existem:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\show-shared-codex-status.ps1
+```
+
+Para iniciar uma tarefa nova sem trabalhar direto no clone compartilhado:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\new-shared-worktree.ps1 -TaskSlug corrigir-site-ef -Fetch
+```
+
+Exemplo de saída esperada:
+
+- branch `codex/<usuario>/corrigir-site-ef`
+- worktree `C:\CodexShared\Worktrees\skincos\<usuario>\corrigir-site-ef`
+
+## Fluxo recomendado para múltiplos usuários no Codex
+
+1. Rodar bootstrap, validação e instalação dos atalhos uma vez por usuário.
+2. Abrir `C:\CodexShared\Projetos\skincos` no Codex App para entender o contexto.
+3. Usar `Codex Context` ou rodar `bash ./scripts/codex-context.sh` via WSL.
+4. Para qualquer tarefa paralela ou mais longa, criar um worktree por usuário/tarefa.
+5. Abrir o worktree no Codex App e trabalhar só nele.
+6. Rodar apps locais, logs, perfis e overrides apenas a partir do estado privado
+   em `%LOCALAPPDATA%\Codex\skincos\`.
+7. Antes de handoff, atualizar `CODEX_CONTEXT.md`, `TASKS.md` e `DECISIONS.md`.
+
+Quando o worktree é aberto no Codex App, os botões do topo passam a chamar os
+scripts relativos daquele próprio worktree, sem cair de volta no clone
+compartilhado por hardcode de path.
+
+## Sobre a integração com o Codex App
+
+Os atalhos desta pasta são operacionais: eles chamam scripts PowerShell e WSL do
+próprio workspace. Eles não dependem de um executável interno estável do Codex
+App instalado no mini-PC, porque não foi encontrada uma instalação local
+canônica do aplicativo para usar como alvo suportado.
+
+`Orb Validate` faz retry curto nos health checks do orb para evitar falso
+negativo logo após um restart saudável do stack.
+
+`Orb Repair` lê somente as chaves `DB_POSTGRESDB_*` de
+`C:\CodexRuntime\n8n\env\n8n.env`, reconcilia role/database/schema do
+PostgreSQL local, reinicia o stack live e grava evidência redigida em
+`C:\CodexRuntime\n8n\exports\repair-<timestamp>\`.
+
+Na máquina validada em `2026-07-06`, o `gh` do Windows já foi autenticado como
+`jubenitogarcia`; o `gh` do WSL ainda exige login interativo por conta quando
+essa paridade for necessária.

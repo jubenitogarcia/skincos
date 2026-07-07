@@ -1,0 +1,116 @@
+# Shared Codex App actions for Skincos. Keep in sync with scripts/install-shared-codex-shortcuts.ps1.
+version = 1
+name = "skincos"
+
+[setup]
+script = ""
+
+[[actions]]
+name = "Shared Setup"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action SharedSetup"
+
+[[actions]]
+name = "Shared Validate"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action SharedValidate"
+
+[[actions]]
+name = "Runtime Setup"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action RuntimeSetup"
+
+[[actions]]
+name = "Runtime Validate"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action RuntimeValidate"
+
+[[actions]]
+name = "WSL Account Bootstrap"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action WslAccountBootstrap"
+
+[[actions]]
+name = "Shared Status"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action SharedStatus"
+
+[[actions]]
+name = "Codex Context"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CodexContext"
+
+[[actions]]
+name = "Thread Bootstrap"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action ThreadBootstrap"
+
+[[actions]]
+name = "New Worktree"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action NewWorktree"
+
+[[actions]]
+name = "Website Local Start"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action WebsiteLocalStart"
+
+[[actions]]
+name = "Website Local Stop"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action WebsiteLocalStop"
+
+[[actions]]
+name = "CRM Local"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmLocal"
+
+[[actions]]
+name = "CRM Site EF"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmSiteEf"
+
+[[actions]]
+name = "CRM Meta Ads"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmMetaAds"
+
+[[actions]]
+name = "CRM Atendimento Clínica"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmAtendimentoClinica"
+
+[[actions]]
+name = "CRM Local Stop"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmLocalStop"
+
+[[actions]]
+name = "Orb Status"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action OrbStatus"
+
+[[actions]]
+name = "Orb Restart"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action OrbRestart"
+
+[[actions]]
+name = "Orb Repair"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action OrbRepair"
+
+[[actions]]
+name = "Orb Logs"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action OrbLogs"
+
+[[actions]]
+name = "Orb Validate"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action OrbValidate"
+
+[[actions]]
+name = "Orb Audit"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action OrbAudit"
