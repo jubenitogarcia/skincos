@@ -172,7 +172,7 @@ Ele testa imports, export CSV/XLSX e se o Chrome abre a tela de login (sem logar
 
 - `./scripts/rotate_agenda_sync_token.sh`
 
-O script gera um token novo, atualiza `~/.config/espacofacial/agenda_sync.env`, atualiza `AGENDA_SYNC_TOKEN` em `website/.env.local`, publica a secret no Worker Cloudflare (`espacofacial-site`) e valida o endpoint de sync.
+O script gera um token novo, atualiza `~/.config/espacofacial/agenda_sync.env`, atualiza `AGENDA_SYNC_TOKEN` em `modules/site-public/website/.env.local`, publica a secret no Worker Cloudflare (`espacofacial-site`) e valida o endpoint de sync.
 
 ## Backfill completo da agenda sincronizada
 

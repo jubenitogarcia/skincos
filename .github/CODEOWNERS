@@ -5,7 +5,7 @@
 /.github/ @jubenitogarcia
 
 # Public website
-/website/ @jubenitogarcia
+/modules/site-public/website/ @jubenitogarcia
 
 # CRM / Pages frontend
 /frontend/ @jubenitogarcia

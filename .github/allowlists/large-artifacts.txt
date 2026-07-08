@@ -1,3 +1,3 @@
 # Tracked files above 5MB that are temporarily allowed.
 # Keep this list minimal and review periodically.
-website/public/images/hero/mobile/banner-01.png
+modules/site-public/website/public/images/hero/mobile/banner-01.png

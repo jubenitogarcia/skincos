@@ -57,7 +57,7 @@ jobs:
         with:
           node-version: 22.12.0
           cache: npm
-          cache-dependency-path: website/package-lock.json
+          cache-dependency-path: modules/site-public/website/package-lock.json
 
       - name: Setup Python
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -67,7 +67,7 @@ jobs:
 
       - name: Install website dependencies
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: website
+        working-directory: modules/site-public/website
         run: npm ci
 
       - name: Install instagrapi runtime
@@ -87,7 +87,7 @@ jobs:
           mkdir -p "$SESSION_DIR"
 
           if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            cd website
+            cd modules/site-public/website
             npx wrangler r2 bucket create "${INSTAGRAPI_SESSION_BUCKET}" >/dev/null 2>&1 || true
             npx wrangler r2 object get "${INSTAGRAPI_SESSION_BUCKET}/${INSTAGRAPI_SESSION_OBJECT}" --remote --file "$SESSION_FILE" >/dev/null 2>&1 || true
             cd ..
@@ -137,7 +137,7 @@ jobs:
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
             exit 0
           fi
-          cd website
+          cd modules/site-public/website
           npx wrangler r2 bucket create "${INSTAGRAPI_SESSION_BUCKET}" >/dev/null 2>&1 || true
           npx wrangler r2 object put "${INSTAGRAPI_SESSION_BUCKET}/${INSTAGRAPI_SESSION_OBJECT}" --remote --file "$SESSION_FILE" --content-type "application/json"
 

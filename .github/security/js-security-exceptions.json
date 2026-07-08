@@ -13,19 +13,19 @@
         "count": 1,
         "reason": "Static SVG/markup injection generated locally for chart export."
       },
-      "website/src/app/[unit]/page.tsx": {
+      "modules/site-public/website/src/app/[unit]/page.tsx": {
         "count": 1,
         "reason": "Static LocalBusiness JSON-LD serialization."
       },
-      "website/src/app/layout.tsx": {
+      "modules/site-public/website/src/app/layout.tsx": {
         "count": 1,
         "reason": "Static organization JSON-LD serialization."
       },
-      "website/src/components/Analytics.tsx": {
+      "modules/site-public/website/src/components/Analytics.tsx": {
         "count": 3,
         "reason": "Inline analytics scripts required by third-party vendors."
       },
-      "website/src/components/MarketingPixels.tsx": {
+      "modules/site-public/website/src/components/MarketingPixels.tsx": {
         "count": 2,
         "reason": "Inline marketing pixel bootstrap scripts."
       }

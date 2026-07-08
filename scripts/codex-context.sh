@@ -55,7 +55,7 @@ fi
 
 section "Source Of Truth"
 cat <<'EOF'
-website=website/ (espacofacial.com, booking, tracking, WhatsApp, CAPI)
+site_public=modules/site-public/website/ (espacofacial.com, booking, tracking, WhatsApp, CAPI)
 crm=frontend/ + backend/apps/crm-api/ (crm.skincos.com.br)
 meta_ads=frontend/ + backend/apps/meta-ads/
 cloudflare=.github/workflows/ + wrangler configs + scripts/cloudflare-token-health.sh
@@ -68,7 +68,7 @@ Browser: local/prod UI QA, screenshots, interaction checks
 Build Web Apps: React/frontend refactors, dashboard UX, Playwright flows
 Cloudflare: Workers, Pages, D1, routes, deploy verification
 GitHub: PRs, checks, automerge, workflow/deploy evidence
-Sites: prototypes/demos only; production site stays in website/ unless explicitly migrated
+Sites: prototypes/demos only; production site stays in modules/site-public/website/ unless explicitly migrated
 Security: auth/session/tracking/secrets threat review
 EOF
 

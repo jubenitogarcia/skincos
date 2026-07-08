@@ -21,7 +21,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             frontend/package-lock.json
-            website/package-lock.json
+            modules/site-public/website/package-lock.json
 
       - name: Frontend install
         if: ${{ hashFiles('frontend/package-lock.json') != '' }}
@@ -38,24 +38,24 @@ jobs:
           npm run test:coverage
 
       - name: Website install
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm ci
 
       - name: Website tests
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm run test
 
       - name: Website typecheck
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm run typecheck
 
   python-coverage:

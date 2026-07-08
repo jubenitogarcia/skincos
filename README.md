@@ -6,7 +6,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Backend: `backend/` (apps, automations, libs, tools, scripts)
 - Frontend (CRM/UI): `frontend/`
   - Meta Ads (migrado): API em `backend/apps/meta-ads` e modulo UI no CRM
-- Website público (Next.js): `website/`
+- Website público (Next.js): `modules/site-public/website/`
   - Fluxo de agendamento, APIs de booking e deploy Cloudflare/OpenNext
 
 ## Como rodar (local)
@@ -24,7 +24,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Rodar typecheck: `npm run website:typecheck`
 - Build de produção: `npm run website:build`
 - Deploy Cloudflare/OpenNext: `npm run website:deploy`
-- O código legado do site agora está sob `website/` e deve ser mantido aqui para evoluções futuras.
+- O código legado do site agora está sob `modules/site-public/website/` e deve ser mantido aqui para evoluções futuras.
 
 ### Auth local (sem login manual)
 - Em `localhost`, o bypass de auth **só é ativado com flag explícita** (`LOCAL_AUTH_BYPASS=true` ou `VITE_LOCAL_AUTH_BYPASS=true`).

@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             frontend/package-lock.json
-            website/package-lock.json
+            modules/site-public/website/package-lock.json
 
       - name: Frontend install
         if: ${{ hashFiles('frontend/package-lock.json') != '' }}
@@ -68,24 +68,24 @@ jobs:
           npm run build
 
       - name: Website install
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm ci
 
       - name: Website lint
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm run lint
 
       - name: Website build
-        if: ${{ hashFiles('website/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm run build
 
       - name: Setup pnpm (for backend workspace)

@@ -8,8 +8,8 @@ Esta política define qual domínio pertence a qual stack e como cada host deve 
 
 | Domínio | Papel | Stack | Regra operacional |
 |---|---|---|---|
-| `espacofacial.com` | Site público + agendamento | Este projeto `website/` | Host canônico para navegação, SEO deste app e campanhas com objetivo de booking |
-| `www.espacofacial.com` | Alias de entrada | Este projeto `website/` | Deve redirecionar com `308` para `https://espacofacial.com` |
+| `espacofacial.com` | Site público + agendamento | Este projeto `modules/site-public/website/` | Host canônico para navegação, SEO deste app e campanhas com objetivo de booking |
+| `www.espacofacial.com` | Alias de entrada | Este projeto `modules/site-public/website/` | Deve redirecionar com `308` para `https://espacofacial.com` |
 | `espacofacial.com.br` | Domínio oficial da franquia | Stack separada | Não deve ser tratado como continuação automática do tracking/cookies deste app |
 | `app.espacofacial.com.br` | App oficial da franquia | Stack separada | Pode existir como integração operacional, mas não como host do funil público deste site |
 | `skincos.com.br` | Hub jurídico/institucional | SKINCOS | Páginas legais e institucionais da SKINCOS |

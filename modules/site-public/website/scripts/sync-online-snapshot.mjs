@@ -600,7 +600,7 @@ async function main() {
     console.log("Snapshot online sincronizado com sucesso.");
     console.log(`Dados locais: ${path.relative(ROOT_DIR, DEV_SNAPSHOT_DIR)}`);
     console.log(`Assets públicos do snapshot: ${path.relative(ROOT_DIR, PUBLIC_SNAPSHOT_DIR)}`);
-    console.log("Use `npm --prefix website run preview:snapshot` para testar o espelho local com D1 e Places snapshotados.");
+    console.log("Use `npm --prefix modules/site-public/website run preview:snapshot` para testar o espelho local com D1 e Places snapshotados.");
 }
 
 main().catch((error) => {

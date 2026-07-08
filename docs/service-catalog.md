@@ -4,13 +4,13 @@ Este catálogo define os serviços críticos do repositório, suas dependências
 
 ## Website público
 
-- Caminho: `website/`
+- Caminho: `modules/site-public/website/`
 - Dono primário: `@jubenitogarcia`
 - Backup operacional: `TBD (criar time GitHub antes de exigir review de code owner por domínio)`
 - Propósito: site público, agenda, APIs de booking e integrações de marketing.
 - Dependências críticas: Cloudflare Workers/Pages, D1 do booking, Turnstile, provedores de e-mail/notificação, analytics/pixels.
 - SLO alvo: disponibilidade 99,9%; p95 de `/api/booking/status` <= 800 ms.
-- Gates mínimos: `npm --prefix website run lint`, `typecheck`, `test`, `build`.
+- Gates mínimos: `npm --prefix modules/site-public/website run lint`, `typecheck`, `test`, `build`.
 - Runbooks: `docs/observability.md`, `docs/staging.md`.
 
 ## CRM / Escala / Ponto
