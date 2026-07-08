@@ -1,0 +1,26 @@
+# Shared Codex App actions for the shared skincos clone and its worktrees.
+version = 1
+name = "skincos"
+
+[setup]
+script = ""
+
+[[actions]]
+name = "Shared Status"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action SharedStatus"
+
+[[actions]]
+name = "Codex Context"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CodexContext"
+
+[[actions]]
+name = "Thread Bootstrap"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action ThreadBootstrap"
+
+[[actions]]
+name = "New Worktree"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action NewWorktree"

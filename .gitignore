@@ -198,3 +198,6 @@ output/
 
 # Codex local state
 .codex/
+!.codex/
+!.codex/environments/
+!.codex/environments/environment.toml
