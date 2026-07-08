@@ -8,6 +8,8 @@ const LOCAL_DOCTOR_AVATARS_BY_NAME: Record<string, string> = {
     "marina lima": "/images/doctors/marina-lima.jpeg",
     "raul junior": "/images/doctors/raul-junior.jpeg",
     "raul rosario junior": "/images/doctors/raul-junior.jpeg",
+    "luize baum": "/images/doctors/luize-baum.png",
+    "rafaela ferreira": "/images/doctors/rafaela-ferreira.png",
     "viviane mondin": "/images/doctors/viviane-mondin.jpeg",
 };
 
@@ -26,6 +28,12 @@ const LOCAL_DOCTOR_AVATARS_BY_HANDLE: Record<string, string> = {
     drrauljuniior: "/images/doctors/raul-junior.jpeg",
     drraulrosariojunior: "/images/doctors/raul-junior.jpeg",
     raulrosariojunior: "/images/doctors/raul-junior.jpeg",
+    "dra.luizebaum": "/images/doctors/luize-baum.png",
+    dralu: "/images/doctors/luize-baum.png",
+    draluizebaum: "/images/doctors/luize-baum.png",
+    "dra.rafaelaferreira": "/images/doctors/rafaela-ferreira.png",
+    drarafa: "/images/doctors/rafaela-ferreira.png",
+    drarafaelaferreira: "/images/doctors/rafaela-ferreira.png",
 };
 
 type DoctorAvatarPresentation = {
@@ -51,6 +59,8 @@ const DOCTOR_AVATAR_PRESENTATION_BY_NORMALIZED_NAME: Record<string, DoctorAvatar
     "josiele de souza": { objectPosition: "50% 36%", scale: 1.08 },
     "viviane mondin": { objectPosition: "50% 41%", scale: 1.02 },
     "gabriela menegat": { objectPosition: "50% 29%", scale: 1.06 },
+    "luize baum": { objectPosition: "50% 26%", scale: 1.08 },
+    "rafaela ferreira": { objectPosition: "50% 24%", scale: 1.08 },
     "raul rosario junior": { objectPosition: "50% 36%", scale: 1.14 },
     "raul junior": { objectPosition: "50% 36%", scale: 1.14 },
 };
