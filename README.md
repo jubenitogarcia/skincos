@@ -134,6 +134,9 @@ Plataforma interna (local) para automações e operações da clínica.
 - Segredos e rotação: `docs/secrets-rotation.md`
 - Autonomia Codex/deploy: `docs/codex-autonomy.md`
 - Codex App nativo: `docs/codex-app-native.md`
+- Workspace compartilhado Codex: `docs/codex-shared-workspace.md`
+- Bootstrap de threads compartilhadas: `docs/codex-thread-bootstrap.md`
+- Runbook de autonomia multiusuário: `docs/runbooks/mini-pc-autonomia-multiusuario.md`
 - Observabilidade/SLOs: `docs/observability.md`
 - Catálogo de serviços: `docs/service-catalog.md`
 - Ownership e operação: `docs/ownership-model.md`
