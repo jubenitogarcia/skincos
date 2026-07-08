@@ -41,21 +41,21 @@ jobs:
         if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm ci
 
       - name: Website tests
         if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm run test
 
       - name: Website typecheck
         if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm run typecheck
 
   python-coverage:

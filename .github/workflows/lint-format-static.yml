@@ -71,21 +71,21 @@ jobs:
         if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm ci
 
       - name: Website lint
         if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm run lint
 
       - name: Website build
         if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd website
+          cd modules/site-public/website
           npm run build
 
       - name: Setup pnpm (for backend workspace)
