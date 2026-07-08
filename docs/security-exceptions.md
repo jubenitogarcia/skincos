@@ -28,10 +28,10 @@ Last review: 2026-04-14
 
 - **Status**: Active with explicit allowlist.
 - **Scope**:
-  - `website/src/components/Analytics.tsx`
-  - `website/src/components/MarketingPixels.tsx`
-  - `website/src/app/layout.tsx`
-  - `website/src/app/[unit]/page.tsx`
+  - `modules/site-public/website/src/components/Analytics.tsx`
+  - `modules/site-public/website/src/components/MarketingPixels.tsx`
+  - `modules/site-public/website/src/app/layout.tsx`
+  - `modules/site-public/website/src/app/[unit]/page.tsx`
   - `frontend/EmailTemplatesManager.tsx`
   - `frontend/RichTaskManager.tsx`
   - `frontend/chart.tsx`

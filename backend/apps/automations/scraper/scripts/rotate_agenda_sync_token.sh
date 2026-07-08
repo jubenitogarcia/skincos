@@ -14,7 +14,7 @@ Defaults:
 Behavior:
   1) Generate a strong random token.
   2) Update ~/.config/espacofacial/agenda_sync.env as EF_AGENDA_SYNC_TOKEN.
-  3) Update website/.env.local as AGENDA_SYNC_TOKEN.
+  3) Update modules/site-public/website/.env.local as AGENDA_SYNC_TOKEN.
   4) Push secret AGENDA_SYNC_TOKEN to Cloudflare Worker via wrangler.
   5) Validate auth by calling /api/agenda/sync (expects non-401).
 EOF

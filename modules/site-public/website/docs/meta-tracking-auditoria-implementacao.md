@@ -2,7 +2,7 @@
 
 ## 1. Diagnóstico atual
 
-- Stack real do site público: `website/` em `Next.js 15 App Router`, deploy via `OpenNext + Cloudflare Workers`, persistência de agendamento em `Cloudflare D1`.
+- Stack real do site público: `modules/site-public/website/` em `Next.js 15 App Router`, deploy via `OpenNext + Cloudflare Workers`, persistência de agendamento em `Cloudflare D1`.
 - O ponto real de conversão confirmada no site é `POST /api/booking/request`. O backend grava o booking e responde com `status = "confirmed"`.
 - Havia consentimento, GTM/GA4 e Meta Pixel no browser, mas o tracking Meta estava incompleto:
   - sem `Conversions API`;
@@ -120,40 +120,40 @@
 
 ### Website
 
-- `website/src/lib/attribution.ts`
-- `website/src/lib/campaign.ts`
-- `website/src/lib/metaBrowser.ts`
-- `website/src/lib/metaConversionsApi.ts`
-- `website/src/lib/whatsappTracking.ts`
-- `website/src/lib/analytics.ts`
-- `website/src/lib/conversions.ts`
-- `website/src/lib/bookingDb.ts`
-- `website/src/components/CampaignAttribution.tsx`
-- `website/src/components/MarketingPixels.tsx`
-- `website/src/components/MetaPageTracker.tsx`
-- `website/src/components/MetaMountEvent.tsx`
-- `website/src/components/TrackedWhatsappLink.tsx`
-- `website/src/components/BookingFlow.tsx`
-- `website/src/components/BookingConfirmationCard.tsx`
-- `website/src/components/BookingHeroExperience.tsx`
-- `website/src/components/UnitMapsModal.tsx`
-- `website/src/components/CadastroWheelExperience.tsx`
-- `website/src/components/HeaderMobileMenu.tsx`
-- `website/src/components/AboutUsSection.tsx`
-- `website/src/components/UnitDoctorsGrid.tsx`
-- `website/src/app/api/booking/request/route.ts`
-- `website/src/app/api/whatsapp/redirect/route.ts`
-- `website/src/app/[unit]/faleconosco/route.ts`
-- `website/src/app/faleconosco/[sigla]/route.ts`
-- `website/src/app/[unit]/page.tsx`
-- `website/src/app/unidades/[slug]/page.tsx`
-- `website/src/app/doutores/[slug]/page.tsx`
-- `website/src/data/doctors.ts`
+- `modules/site-public/website/src/lib/attribution.ts`
+- `modules/site-public/website/src/lib/campaign.ts`
+- `modules/site-public/website/src/lib/metaBrowser.ts`
+- `modules/site-public/website/src/lib/metaConversionsApi.ts`
+- `modules/site-public/website/src/lib/whatsappTracking.ts`
+- `modules/site-public/website/src/lib/analytics.ts`
+- `modules/site-public/website/src/lib/conversions.ts`
+- `modules/site-public/website/src/lib/bookingDb.ts`
+- `modules/site-public/website/src/components/CampaignAttribution.tsx`
+- `modules/site-public/website/src/components/MarketingPixels.tsx`
+- `modules/site-public/website/src/components/MetaPageTracker.tsx`
+- `modules/site-public/website/src/components/MetaMountEvent.tsx`
+- `modules/site-public/website/src/components/TrackedWhatsappLink.tsx`
+- `modules/site-public/website/src/components/BookingFlow.tsx`
+- `modules/site-public/website/src/components/BookingConfirmationCard.tsx`
+- `modules/site-public/website/src/components/BookingHeroExperience.tsx`
+- `modules/site-public/website/src/components/UnitMapsModal.tsx`
+- `modules/site-public/website/src/components/CadastroWheelExperience.tsx`
+- `modules/site-public/website/src/components/HeaderMobileMenu.tsx`
+- `modules/site-public/website/src/components/AboutUsSection.tsx`
+- `modules/site-public/website/src/components/UnitDoctorsGrid.tsx`
+- `modules/site-public/website/src/app/api/booking/request/route.ts`
+- `modules/site-public/website/src/app/api/whatsapp/redirect/route.ts`
+- `modules/site-public/website/src/app/[unit]/faleconosco/route.ts`
+- `modules/site-public/website/src/app/faleconosco/[sigla]/route.ts`
+- `modules/site-public/website/src/app/[unit]/page.tsx`
+- `modules/site-public/website/src/app/unidades/[slug]/page.tsx`
+- `modules/site-public/website/src/app/doutores/[slug]/page.tsx`
+- `modules/site-public/website/src/data/doctors.ts`
 
 ### Testes
 
-- `website/tests/attribution.test.ts`
-- `website/tests/whatsappTracking.test.ts`
+- `modules/site-public/website/tests/attribution.test.ts`
+- `modules/site-public/website/tests/whatsappTracking.test.ts`
 
 ### CRM / n8n
 
@@ -215,7 +215,7 @@
 3. Reimportar/publicar os workflows n8n alterados:
    - `WORKFLOW_01_INBOUND_TRIAGEM.json`
    - `WORKFLOW_02_AGENDAMENTO.json`
-4. Fazer deploy do `website/`.
+4. Fazer deploy do `modules/site-public/website/`.
 5. Validar com `META_CAPI_TEST_EVENT_CODE` ativo antes de remover o modo de teste.
 
 ## 8. Como validar no Meta Events Manager

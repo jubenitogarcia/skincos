@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/Users/jubenitogarcia/Automation/skincos"
-WEBSITE_DIR="$ROOT_DIR/website"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WEBSITE_DIR="$ROOT_DIR/modules/site-public/website"
 
 SYNC_ONLY="${SYNC_ONLY:-0}"
 RUN_TYPECHECK="${RUN_TYPECHECK:-0}"

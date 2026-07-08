@@ -88,7 +88,7 @@
 
 ## Interpretation Defaults
 
-- "site" usually means `website/` and production `https://espacofacial.com`.
+- "site" usually means `modules/site-public/website/` and production `https://espacofacial.com`.
 - "CRM" usually means `frontend/` plus `backend/apps/crm-api/` and
   `https://crm.skincos.com.br`.
 - "Site EF" means the CRM module `?module=site-tracking`.

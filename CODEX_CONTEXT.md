@@ -7,7 +7,7 @@
 - Dedicated worktrees should live under
   `C:\CodexShared\Worktrees\skincos\<user>\<task-slug>`.
 - This repository still uses the current canonical roots in `backend/`,
-  `frontend/`, `website/`, `n8n/`, `ops/`, `docs/`, and `scripts/`.
+  `frontend/`, `modules/site-public/website/`, `n8n/`, `ops/`, `docs/`, and `scripts/`.
 - Operators may use different Codex/OpenAI accounts while remaining inside the
   same OpenAI Business or Enterprise workspace.
 - Private Codex thread history is not assumed to be shared automatically across

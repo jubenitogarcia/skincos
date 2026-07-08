@@ -63,7 +63,7 @@ Este app Next atende **dois sites públicos distintos** com branding e propósit
 Importante:
 - `orb.skincos.com.br` continua sendo um subdomínio técnico separado, via Cloudflare Tunnel, e **não** é servido por este worker.
 - Não reaproveite `skincos.com.br` para páginas de agendamento/unidades da Espaço Facial.
-- Não altere `website/wrangler.toml` para SKINCOS; use `website/wrangler-skincos.toml`.
+- Não altere `modules/site-public/website/wrangler.toml` para SKINCOS; use `modules/site-public/website/wrangler-skincos.toml`.
 
 ## Colocar online (Cloudflare Workers via OpenNext)
 

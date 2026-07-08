@@ -57,7 +57,7 @@ jobs:
         with:
           node-version: 22.12.0
           cache: npm
-          cache-dependency-path: website/package-lock.json
+          cache-dependency-path: modules/site-public/website/package-lock.json
 
       - name: Setup Python
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -67,7 +67,7 @@ jobs:
 
       - name: Install website dependencies
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: website
+        working-directory: modules/site-public/website
         run: npm ci
 
       - name: Install instagrapi runtime
