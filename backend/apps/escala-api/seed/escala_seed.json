@@ -256,6 +256,19 @@
       "instagram": ""
     },
     {
+      "name": "Luize Baum",
+      "status": "Ativo",
+      "units": [
+        "BarraShoppingSul"
+      ],
+      "role": "Injetor",
+      "shift": "Manhã, Tarde",
+      "nickname": "Dra. Lu",
+      "phone": "5551996978180",
+      "email": "luize00@hotmail.com",
+      "instagram": "dra.luizebaum"
+    },
+    {
       "name": "Lissana Campana",
       "status": "Inativo",
       "units": [
@@ -399,6 +412,19 @@
       "phone": "",
       "email": "",
       "instagram": ""
+    },
+    {
+      "name": "Rafaela Ferreira",
+      "status": "Ativo",
+      "units": [
+        "Novo Hamburgo"
+      ],
+      "role": "Injetor",
+      "shift": "Manhã, Tarde",
+      "nickname": "Dra. Rafa",
+      "phone": "5551991472649",
+      "email": "rmachadoferreira@icloud.com",
+      "instagram": "dra.rafaelaferreira"
     },
     {
       "name": "Rita Cardoso",
