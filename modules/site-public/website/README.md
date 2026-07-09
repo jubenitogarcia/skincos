@@ -117,6 +117,25 @@ Deploy do worker de redirects (domínio `esfa.co`):
 npm run deploy:esfa
 ```
 
+Observação operacional:
+- Em produção, o Worker `esfa.co` consulta primeiro o D1 `site_custom_urls` e só usa `ESFA_REDIRECTS` como fallback.
+- Quando mudar short links já migrados, rode/siga o workflow oficial de deploy do site para aplicar `npm run custom-urls:migrate:esfa -- --apply --remote`.
+- Validar só `espacofacial.com` não cobre `esfa.co`; cheque os dois domínios.
+
+## Checklist de release
+
+Antes do PR:
+- Confirme que a mudança está em `modules/site-public/website/` ou no workflow `.github/workflows/deploy-website-cloudflare.yml`.
+- Rode `npm run quality:website` a partir da raiz do repo.
+- Para PRs, confirme que existe `refs/pull/<n>/merge` e que a base é o `main` atual.
+
+Depois do deploy:
+```bash
+npm run codex:site:live-check
+```
+
+O live-check valida `x-app-build`, campanha hero desktop/mobile, ausência de profissional removido em `/api/equipe` e redirects longos/curtos críticos.
+
 ## Ver logs (produção)
 
 Tail do Worker principal:
