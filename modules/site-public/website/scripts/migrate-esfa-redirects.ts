@@ -4,7 +4,12 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { listEsfaManagedRedirectSeeds, ESFA_SITE_HOST, type EsfaManagedUrlSeed } from "../src/lib/esfaManagedRedirects";
+import {
+    ESFA_MIGRATED_SOURCE,
+    ESFA_SITE_HOST,
+    listEsfaManagedRedirectSeeds,
+    type EsfaManagedUrlSeed,
+} from "../src/lib/esfaManagedRedirects";
 
 const execFileAsync = promisify(execFile);
 const DATABASE_NAME = "espacofacial-booking";
@@ -142,6 +147,10 @@ function buildPlan(existingRows: ExistingRedirectRow[], seeds: EsfaManagedUrlSee
             continue;
         }
         if (canonicalUrl(existing.destination_url) !== canonicalUrl(seed.destinationUrl)) {
+            if (existing.source === ESFA_MIGRATED_SOURCE) {
+                plan.updates.push({ existing, seed });
+                continue;
+            }
             plan.conflicts.push({ existing, seed });
             continue;
         }
