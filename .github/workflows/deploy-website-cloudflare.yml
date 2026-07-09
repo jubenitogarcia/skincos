@@ -184,6 +184,14 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Sync esfa.co managed redirects (D1)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: modules/site-public/website
+        run: npm run custom-urls:migrate:esfa -- --apply --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Smoke test production
         if: ${{ steps.guard.outputs.skip != 'true' }}
         working-directory: modules/site-public/website
