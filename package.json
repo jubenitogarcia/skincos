@@ -21,6 +21,7 @@
     "codex:crm:meta-ads-smoke": "CRM_MODULE=meta-ads bash ./scripts/run-local-crm.sh --skip-build --exit-after-smoke",
     "codex:crm:atendimento-clinica-smoke": "bash ./scripts/run-local-atendimento-clinica.sh --skip-build --exit-after-smoke",
     "codex:site:check": "npm --prefix modules/site-public/website run test && npm --prefix modules/site-public/website run typecheck",
+    "codex:site:live-check": "node ./scripts/site-live-check.mjs",
     "codex:site:release-check": "npm run codex:preflight && npm run quality:website && npm run codex:crm:site-smoke",
     "website:install": "npm --prefix modules/site-public/website ci",
     "website:dev": "npm --prefix modules/site-public/website run dev",

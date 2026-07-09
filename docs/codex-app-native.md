@@ -105,6 +105,22 @@ Use este quando o objetivo for pré-release do funil de site:
 npm run codex:site:release-check
 ```
 
+Use este depois de deploys do `espacofacial.com` para evitar redescobrir estado de produção:
+
+```bash
+npm run codex:site:live-check
+```
+
+## Checklist De Release Do Site
+
+- Trabalhe apenas na fonte de deploy `modules/site-public/website/`; a raiz antiga `website/` não dispara `.github/workflows/deploy-website-cloudflare.yml`.
+- Antes de confiar no PR, confirme branch/base, `refs/pull/<n>/merge` e checks/automerge no GitHub.
+- Rode `npm run quality:website` antes de publicar mudanças do site.
+- Depois do merge, valide `x-app-build`, `/api/hero-media?variant=desktop`, `/api/hero-media?variant=mobile` e `/api/equipe` em produção.
+- Para redirects, valide tanto URLs longas em `espacofacial.com` quanto short links `esfa.co`.
+- Lembre que `esfa.co` lê primeiro o D1 `site_custom_urls`; alterar `ESFA_REDIRECTS` ou publicar o Worker não basta quando já existe linha migrada no D1.
+- Prefira GitHub Actions para sincronização auditável de Worker/D1; Wrangler local pode não estar autenticado no mini-PC.
+
 ## Regras de segurança
 
 - Não imprimir secrets em logs.
