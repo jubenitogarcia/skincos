@@ -32,12 +32,6 @@ export const doctors: Doctor[] = [
     "bookingUrl": "https://espacofacial.com/drajosielesouza"
   },
   {
-    "slug": "dramarinalima",
-    "name": "Dra. Marina Lima",
-    "days": "Quinta-feira",
-    "bookingUrl": "https://espacofacial.com/dramarinalima"
-  },
-  {
     "slug": "drviniciusvieira",
     "name": "Dr. Vinícius Vieira",
     "days": "Terça-feira, Quarta-feira",

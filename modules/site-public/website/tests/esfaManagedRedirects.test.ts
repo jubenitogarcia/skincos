@@ -6,6 +6,7 @@ import {
     listEsfaFallbackRedirects,
     listEsfaManagedRedirectSeeds,
 } from "../src/lib/esfaManagedRedirects";
+import { ESFA_REDIRECTS } from "../src/lib/esfaRedirects";
 
 test("buildEsfaManagedRedirectSeed infers metadata for migrated esfa redirects", () => {
     const seed = buildEsfaManagedRedirectSeed({
@@ -39,4 +40,9 @@ test("listEsfaFallbackRedirects excludes redirects already migrated to D1", () =
 
     assert.equal(fallbacks.some((entry) => entry.slugPath === "/bss/comochegar"), false);
     assert.equal(fallbacks.some((entry) => entry.slugPath === "/nh/comochegar"), true);
+});
+
+test("retired Marina esfa redirects land on unit pages instead of legacy WhatsApp links", () => {
+    assert.equal(ESFA_REDIRECTS["/bss/dramarinalima"], "https://espacofacial.com/barrashoppingsul");
+    assert.equal(ESFA_REDIRECTS["/nh/dramarinalima"], "https://espacofacial.com/novohamburgo");
 });
