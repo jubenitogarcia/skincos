@@ -46,7 +46,7 @@ export const ESFA_REDIRECTS: Record<string, string> = {
 
   // Doutores - BSS
   "/bss/dragabrielamenegat": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Gabriela%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
-  "/bss/dramarinalima": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Marina%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
+  "/bss/dramarinalima": "https://espacofacial.com/barrashoppingsul",
   "/bss/drasamarassilva": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Samara%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
   "/bss/dravivianemondin": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Viviane%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
   "/bss/drmarcelogsoares": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20o%20%2ADr.%20Marcelo%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
@@ -55,7 +55,7 @@ export const ESFA_REDIRECTS: Record<string, string> = {
   // Doutores - NH
   "/nh/dragabrielamenegat": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Gabriela%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
   "/nh/drajosielesouza": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Josiele%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
-  "/nh/dramarinalima": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Marina%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
+  "/nh/dramarinalima": "https://espacofacial.com/novohamburgo",
   "/nh/drasamarassilva": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Samara%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
   "/nh/dravivianemondin": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Viviane%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
   "/nh/drmarcelogsoares": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20o%20%2ADr.%20Marcelo%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",

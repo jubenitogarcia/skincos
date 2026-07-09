@@ -122,7 +122,7 @@ export function middleware(req: NextRequest) {
 
             // LONG URLs (doutores)
             "/barrashoppingsul/dragabrielamenegat": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Gabriela%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
-            "/barrashoppingsul/dramarinalima": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Marina%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
+            "/barrashoppingsul/dramarinalima": "https://espacofacial.com/barrashoppingsul",
             "/barrashoppingsul/drasamarassilva": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Samara%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
             "/barrashoppingsul/dravivianemondin": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Viviane%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
             "/barrashoppingsul/drmarcelogsoares": "https://api.whatsapp.com/send?phone=5551980882293&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20o%20%2ADr.%20Marcelo%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
@@ -130,7 +130,7 @@ export function middleware(req: NextRequest) {
 
             "/novohamburgo/dragabrielamenegat": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Gabriela%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
             "/novohamburgo/drajosielesouza": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Josiele%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
-            "/novohamburgo/dramarinalima": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Marina%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
+            "/novohamburgo/dramarinalima": "https://espacofacial.com/novohamburgo",
             "/novohamburgo/drasamarassilva": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Samara%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
             "/novohamburgo/dravivianemondin": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20a%20%2ADra.%20Viviane%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
             "/novohamburgo/drmarcelogsoares": "https://api.whatsapp.com/send?phone=5551995811008&text=Quero%20agendar%20um%20hor%C3%A1rio%20com%20o%20%2ADr.%20Marcelo%2A%20na%20Espa%C3%A7o%20Facial%21%20%F0%9F%93%85",
