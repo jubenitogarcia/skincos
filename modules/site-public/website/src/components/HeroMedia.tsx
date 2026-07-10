@@ -2,13 +2,14 @@
 
 import TrackedBookingLink from "@/components/TrackedBookingLink";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
-import { getLocalHeroItems, normalizeHeroUnitSlug, type HeroMediaItem, type HeroMediaVariant } from "@/lib/heroMediaShared";
+import { getHeroMediaAspectRatio, getLocalHeroItems, normalizeHeroUnitSlug, type HeroMediaItem, type HeroMediaVariant } from "@/lib/heroMediaShared";
 import { getStoredUnitSlug } from "@/lib/unitSelection";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 type HeroMediaProps = {
     initialItems?: HeroMediaItem[];
+    initialItemsByVariant?: Partial<Record<HeroMediaVariant, HeroMediaItem[]>>;
     initialVariant?: HeroMediaVariant;
     initialUnitSlug?: string | null;
 };
@@ -71,6 +72,11 @@ function pickBandTextColor(backgroundHex: string): string {
 function campaignKey(variant: HeroMediaVariant, unitSlug: string | null | undefined): string {
     const normalizedUnit = normalizeHeroUnitSlug(unitSlug);
     return `${variant}:${normalizedUnit || "default"}`;
+}
+
+function resolveFirstAspectRatio(items: HeroMediaItem[] | undefined): string {
+    const firstItem = items?.[0] ?? null;
+    return getHeroMediaAspectRatio(firstItem) ?? "16 / 9";
 }
 
 function extractTopBottomEdgeColorsFromImage(src: string): Promise<HeroFrameColors | null> {
@@ -152,20 +158,29 @@ function extractTopBottomEdgeColorsFromImage(src: string): Promise<HeroFrameColo
     });
 }
 
-export default function HeroMedia({ initialItems, initialVariant, initialUnitSlug = null }: HeroMediaProps) {
+export default function HeroMedia({ initialItems, initialItemsByVariant, initialVariant, initialUnitSlug = null }: HeroMediaProps) {
     const unit = useCurrentUnit();
+    const startupVariant = initialVariant ?? "desktop";
+    const resolveInitialItemsForVariant = useCallback(
+        (targetVariant: HeroMediaVariant): HeroMediaItem[] | undefined => {
+            const variantItems = initialItemsByVariant?.[targetVariant];
+            if (Array.isArray(variantItems) && variantItems.length > 0) return variantItems;
+            if (targetVariant === startupVariant && Array.isArray(initialItems) && initialItems.length > 0) return initialItems;
+            return undefined;
+        },
+        [initialItems, initialItemsByVariant, startupVariant],
+    );
     const [index, setIndex] = useState(0);
     const [prevIndex, setPrevIndex] = useState<number | null>(null);
     const [prevFrameColors, setPrevFrameColors] = useState<HeroFrameColors>(HERO_DEFAULT_FRAME_COLORS);
-    const [aspectRatio, setAspectRatio] = useState<string>("16 / 9");
+    const [aspectRatio, setAspectRatio] = useState<string>(() => resolveFirstAspectRatio(resolveInitialItemsForVariant(startupVariant)));
     const [frameColors, setFrameColors] = useState<HeroFrameColors>(HERO_DEFAULT_FRAME_COLORS);
     const [bandColors, setBandColors] = useState<HeroFrameColors>(HERO_DEFAULT_FRAME_COLORS);
     const [readyImageSrcs, setReadyImageSrcs] = useState<Record<string, true>>({});
-    const [variant, setVariant] = useState<HeroMediaVariant>(initialVariant ?? "desktop");
+    const [variant, setVariant] = useState<HeroMediaVariant>(startupVariant);
     const frameColorCacheRef = useRef<Record<string, HeroFrameColors>>({});
     const aspectRatioCacheRef = useRef<Record<string, string>>({});
     const bandLeadTimeoutRef = useRef<number | null>(null);
-    const hasInitialItems = Array.isArray(initialItems) && initialItems.length > 0;
     const topBandTextColor = useMemo(() => pickBandTextColor(bandColors.top), [bandColors.top]);
     const bottomBandTextColor = useMemo(() => pickBandTextColor(bandColors.bottom), [bandColors.bottom]);
 
@@ -193,22 +208,23 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     const [items, setItems] = useState<HeroMediaItem[]>(() => {
         const startupStoredUnitSlug = typeof window === "undefined" ? null : getStoredUnitSlug();
         const startupTargetUnitSlug = startupStoredUnitSlug ?? initialUnitSlug ?? null;
-        const startupCampaignKey = campaignKey(variant, startupTargetUnitSlug);
-        const initialCampaignKey = campaignKey(variant, initialUnitSlug ?? null);
-        const canHydrateInitialItems = hasInitialItems && startupCampaignKey === initialCampaignKey;
-        if (canHydrateInitialItems) return initialItems;
-        return getLocalHeroItems(variant, { unitSlug: startupTargetUnitSlug });
+        const startupCampaignKey = campaignKey(startupVariant, startupTargetUnitSlug);
+        const initialCampaignKey = campaignKey(startupVariant, initialUnitSlug ?? null);
+        const startupInitialItems = resolveInitialItemsForVariant(startupVariant);
+        const canHydrateInitialItems = Boolean(startupInitialItems?.length) && startupCampaignKey === initialCampaignKey;
+        if (canHydrateInitialItems) return startupInitialItems ?? [];
+        return getLocalHeroItems(startupVariant, { unitSlug: startupTargetUnitSlug });
     });
     const [loadedCampaignKey, setLoadedCampaignKey] = useState<string>(() => {
         const startupStoredUnitSlug = typeof window === "undefined" ? null : getStoredUnitSlug();
         const startupTargetUnitSlug = startupStoredUnitSlug ?? initialUnitSlug ?? null;
-        return campaignKey(variant, startupTargetUnitSlug);
+        return campaignKey(startupVariant, startupTargetUnitSlug);
     });
 
     const storedUnitSlug = typeof window === "undefined" ? null : getStoredUnitSlug();
     const targetUnitSlug = unit?.slug ?? storedUnitSlug ?? initialUnitSlug ?? null;
     const targetCampaignKey = campaignKey(variant, targetUnitSlug);
-    const initialCampaignKey = campaignKey(initialVariant ?? variant, initialUnitSlug ?? null);
+    const initialCampaignKey = campaignKey(variant, initialUnitSlug ?? null);
     const visibleItems = loadedCampaignKey === targetCampaignKey ? items : EMPTY_HERO_ITEMS;
 
     const markImageReady = useCallback((src: string) => {
@@ -259,20 +275,21 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
 
     useEffect(() => {
         let cancelled = false;
+        const initialItemsForVariant = resolveInitialItemsForVariant(variant);
 
-        const shouldUseInitialItems = hasInitialItems && targetCampaignKey === initialCampaignKey;
+        const shouldUseInitialItems = Boolean(initialItemsForVariant?.length) && targetCampaignKey === initialCampaignKey;
 
         if (shouldUseInitialItems) {
-            setItems(initialItems);
+            setItems(initialItemsForVariant ?? []);
             setLoadedCampaignKey(targetCampaignKey);
             return;
         }
 
         const fallbackItems = getLocalHeroItems(variant, { unitSlug: targetUnitSlug });
 
-        // Avoid flashing stale campaign while the new one is loading.
-        setItems([]);
-        setLoadedCampaignKey("");
+        // Keep a correctly-sized local campaign visible while remote media refreshes.
+        setItems(fallbackItems);
+        setLoadedCampaignKey(targetCampaignKey);
 
         async function loadItemsByUnit() {
             try {
@@ -300,7 +317,7 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
         return () => {
             cancelled = true;
         };
-    }, [hasInitialItems, initialCampaignKey, initialItems, targetCampaignKey, targetUnitSlug, variant]);
+    }, [initialCampaignKey, resolveInitialItemsForVariant, targetCampaignKey, targetUnitSlug, variant]);
 
     const effectiveVariant = variant;
 
@@ -312,6 +329,8 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     useEffect(() => {
         visibleItems.forEach((heroItem) => {
             if (heroItem.type !== "image") return;
+            const staticAspectRatio = getHeroMediaAspectRatio(heroItem);
+            if (staticAspectRatio) aspectRatioCacheRef.current[heroItem.src] = staticAspectRatio;
             preloadImage(heroItem.src);
             void resolveFrameColorsForItem(heroItem);
         });
@@ -327,8 +346,8 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
 
     useEffect(() => {
         if (!item || item.type !== "image") return;
-        const cachedAspectRatio = aspectRatioCacheRef.current[item.src];
-        if (cachedAspectRatio) setAspectRatio(cachedAspectRatio);
+        const nextAspectRatio = getHeroMediaAspectRatio(item) ?? aspectRatioCacheRef.current[item.src];
+        if (nextAspectRatio) setAspectRatio(nextAspectRatio);
     }, [item, readyImageSrcs]);
 
     const goTo = useCallback(
@@ -345,7 +364,7 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
                 setBandColors(nextColors);
                 if (nextItem.type === "image") {
                     preloadImage(nextItem.src);
-                    const nextAspectRatio = aspectRatioCacheRef.current[nextItem.src];
+                    const nextAspectRatio = getHeroMediaAspectRatio(nextItem) ?? aspectRatioCacheRef.current[nextItem.src];
                     if (bandLeadTimeoutRef.current) window.clearTimeout(bandLeadTimeoutRef.current);
                     bandLeadTimeoutRef.current = window.setTimeout(() => {
                         bandLeadTimeoutRef.current = null;
@@ -465,6 +484,61 @@ export default function HeroMedia({ initialItems, initialVariant, initialUnitSlu
     const renderLayer = (layerItem: HeroMediaItem, opts?: { kind?: "active" | "prev"; colors?: HeroFrameColors }) => {
         const kind = opts?.kind ?? "active";
         const layerColors = opts?.colors ?? frameColors;
+        const desktopInitialItem = resolveInitialItemsForVariant("desktop")?.[0] ?? null;
+        const mobileInitialItem = resolveInitialItemsForVariant("mobile")?.[0] ?? null;
+        const canRenderResponsiveInitialLayer =
+            kind === "active" &&
+            index === 0 &&
+            prevIndex === null &&
+            layerItem.type === "image" &&
+            desktopInitialItem?.type === "image" &&
+            mobileInitialItem?.type === "image";
+
+        if (canRenderResponsiveInitialLayer) {
+            return (
+                <div key={`${kind}:responsive-initial:${desktopInitialItem.src}:${mobileInitialItem.src}`} className={`heroMediaLayer heroMediaLayer--${kind}`}>
+                    <div className="heroMediaResponsiveLayer heroMediaResponsiveLayer--desktop">
+                        <Image
+                            className="heroMediaEl"
+                            src={desktopInitialItem.src}
+                            alt={desktopInitialItem.alt ?? "Espaço Facial"}
+                            fill
+                            priority={kind === "active"}
+                            sizes="(max-width: 900px) 0px, 100vw"
+                            onError={() => {
+                                if (visibleItems.length <= 1) return;
+                                if (kind !== "active") return;
+                                goNext();
+                            }}
+                            onLoad={() => {
+                                markImageReady(desktopInitialItem.src);
+                            }}
+                            style={{ objectFit: "contain", background: `linear-gradient(180deg, ${layerColors.top}, ${layerColors.bottom})` }}
+                        />
+                    </div>
+                    <div className="heroMediaResponsiveLayer heroMediaResponsiveLayer--mobile">
+                        <Image
+                            className="heroMediaEl"
+                            src={mobileInitialItem.src}
+                            alt={mobileInitialItem.alt ?? "Espaço Facial"}
+                            fill
+                            priority={kind === "active"}
+                            sizes="(max-width: 900px) 100vw, 0px"
+                            onError={() => {
+                                if (visibleItems.length <= 1) return;
+                                if (kind !== "active") return;
+                                goNext();
+                            }}
+                            onLoad={() => {
+                                markImageReady(mobileInitialItem.src);
+                            }}
+                            style={{ objectFit: "cover", background: `linear-gradient(180deg, ${layerColors.top}, ${layerColors.bottom})` }}
+                        />
+                    </div>
+                </div>
+            );
+        }
+
         return (
             <div key={`${kind}:${layerItem.src}`} className={`heroMediaLayer heroMediaLayer--${kind}`}>
                 {layerItem.type === "video" ? (

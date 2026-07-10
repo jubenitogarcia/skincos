@@ -12,6 +12,9 @@ export type HeroMediaItem = {
     type: "image" | "video";
     src: string;
     alt?: string;
+    width?: number;
+    height?: number;
+    aspectRatio?: string;
     scope?: HeroMediaScope;
     enabled?: boolean;
     order?: number;
@@ -52,39 +55,67 @@ const HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_CAMPAIGN_ITEMS = [
     {
         id: "mobile-01-botox-modelo",
         file: "mobile-01.png",
+        width: 941,
+        height: 1672,
         alt: "Campanha mobile de 7 anos com oferta de Botox 35 UI por R$ 399",
     },
     {
         id: "mobile-02-bioestimulador-modelo",
         file: "mobile-02.png",
+        width: 1080,
+        height: 1920,
         alt: "Campanha mobile de 7 anos com bioestimulador de colágeno a partir de R$ 799",
     },
     {
         id: "mobile-03-botox-antes-depois",
         file: "mobile-03.png",
+        width: 1080,
+        height: 1920,
         alt: "Campanha mobile de Botox com resultado antes e depois",
     },
     {
         id: "mobile-04-botox-antes-depois-masculino",
         file: "mobile-04.png",
+        width: 1080,
+        height: 1920,
         alt: "Campanha mobile de Botox com resultado antes e depois masculino",
     },
     {
         id: "mobile-05-bioestimulador-antes-depois",
         file: "mobile-05.png",
+        width: 1080,
+        height: 1920,
         alt: "Campanha mobile de bioestimulador de colágeno com resultado antes e depois",
     },
 ] as const;
+
+function formatHeroAspectRatio(width: number | undefined, height: number | undefined): string | undefined {
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return undefined;
+    if (!width || !height || width <= 0 || height <= 0) return undefined;
+    return `${width} / ${height}`;
+}
+
+export function getHeroMediaAspectRatio(item: HeroMediaItem | null | undefined): string | null {
+    if (!item) return null;
+    const explicit = (item.aspectRatio ?? "").trim();
+    if (explicit) return explicit;
+    return formatHeroAspectRatio(item.width, item.height) ?? null;
+}
 
 function heroAniversario7Anos2026DesktopItem(
     item: (typeof HERO_ANIVERSARIO_7_ANOS_2026_CAMPAIGN_ITEMS)[number],
     index: number,
 ): HeroMediaItem {
+    const width = 1280;
+    const height = 504;
     return {
         id: `aniversario-7-anos-2026-desktop-${item.id}`,
         type: "image",
         src: `/images/hero/campaigns/aniversario-7-anos-2026/desktop/${item.desktopFile}`,
         alt: item.alt,
+        width,
+        height,
+        aspectRatio: formatHeroAspectRatio(width, height),
         order: index + 1,
     };
 }
@@ -98,6 +129,9 @@ function heroAniversario7Anos2026MobileItem(
         type: "image",
         src: `/images/hero/campaigns/aniversario-7-anos-2026/mobile/${item.file}`,
         alt: item.alt,
+        width: item.width,
+        height: item.height,
+        aspectRatio: formatHeroAspectRatio(item.width, item.height),
         order: index + 1,
     };
 }

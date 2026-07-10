@@ -4,6 +4,7 @@ import {
     HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS,
     HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS,
     composeHeroMediaItems,
+    getHeroMediaAspectRatio,
     getLocalHeroItems,
     resolveScopedHeroMediaItems,
 } from "../src/lib/heroMediaShared";
@@ -123,6 +124,36 @@ test("Aniversario 7 anos local hero campaign keeps separate desktop and mobile a
             "aniversario-7-anos-2026-mobile-mobile-03-botox-antes-depois",
             "aniversario-7-anos-2026-mobile-mobile-04-botox-antes-depois-masculino",
             "aniversario-7-anos-2026-mobile-mobile-05-bioestimulador-antes-depois",
+        ],
+    );
+});
+
+test("Aniversario 7 anos local hero campaign exposes dimensions before image load", () => {
+    assert.deepEqual(
+        HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS.map((item) => ({
+            width: item.width,
+            height: item.height,
+            aspectRatio: getHeroMediaAspectRatio(item),
+        })),
+        [
+            { width: 1280, height: 504, aspectRatio: "1280 / 504" },
+            { width: 1280, height: 504, aspectRatio: "1280 / 504" },
+            { width: 1280, height: 504, aspectRatio: "1280 / 504" },
+        ],
+    );
+
+    assert.deepEqual(
+        HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS.map((item) => ({
+            width: item.width,
+            height: item.height,
+            aspectRatio: getHeroMediaAspectRatio(item),
+        })),
+        [
+            { width: 941, height: 1672, aspectRatio: "941 / 1672" },
+            { width: 1080, height: 1920, aspectRatio: "1080 / 1920" },
+            { width: 1080, height: 1920, aspectRatio: "1080 / 1920" },
+            { width: 1080, height: 1920, aspectRatio: "1080 / 1920" },
+            { width: 1080, height: 1920, aspectRatio: "1080 / 1920" },
         ],
     );
 });
