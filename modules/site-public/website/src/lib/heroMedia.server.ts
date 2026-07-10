@@ -76,6 +76,11 @@ function normalizeOrder(value: unknown): number | undefined {
     return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function normalizePositiveNumber(value: unknown): number | undefined {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function normalizeId(value: unknown): string | undefined {
     if (typeof value !== "string") return undefined;
     const trimmed = value.trim();
@@ -119,6 +124,9 @@ function parseManifestItem(raw: unknown, defaultScope: HeroMediaScope): HeroMedi
         src: src.trim(),
         id: normalizeId(obj.id),
         alt: typeof obj.alt === "string" ? obj.alt : undefined,
+        width: normalizePositiveNumber(obj.width),
+        height: normalizePositiveNumber(obj.height),
+        aspectRatio: typeof obj.aspectRatio === "string" ? obj.aspectRatio.trim() || undefined : undefined,
         scope: normalizedScope,
         enabled,
         order: normalizeOrder(obj.order),

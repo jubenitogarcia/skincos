@@ -114,7 +114,15 @@ export default async function UnitHomePage({
     const email = unit.email ? unit.email.replace(/^mailto:/, "").split("?")[0] : null;
     const ua = (await headers()).get("user-agent");
     const variant = heroVariantFromUserAgent(ua);
-    const { items: heroItems } = await getHeroMediaItems({ variant, unitSlug: unit.slug });
+    const [desktopHeroMedia, mobileHeroMedia] = await Promise.all([
+        getHeroMediaItems({ variant: "desktop", unitSlug: unit.slug }),
+        getHeroMediaItems({ variant: "mobile", unitSlug: unit.slug }),
+    ]);
+    const heroItemsByVariant = {
+        desktop: desktopHeroMedia.items,
+        mobile: mobileHeroMedia.items,
+    };
+    const heroItems = heroItemsByVariant[variant];
 
     const localBusinessJsonLd =
         isIndexable && locality && unit.addressLine
@@ -172,7 +180,7 @@ export default async function UnitHomePage({
             <PageTitleBand title="Harmonização facial com naturalidade" ariaLabel="Título da página da unidade" />
 
             <section className="hero" aria-label="Destaque">
-                <HeroMedia initialItems={heroItems} initialVariant={variant} initialUnitSlug={unit.slug} />
+                <HeroMedia initialItems={heroItems} initialItemsByVariant={heroItemsByVariant} initialVariant={variant} initialUnitSlug={unit.slug} />
                 <div className="heroOverlay" />
             </section>
 

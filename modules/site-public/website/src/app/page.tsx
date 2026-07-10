@@ -86,13 +86,27 @@ export default async function HomePage({
         : "";
   const cookieUnitParam = requestCookies.get(UNIT_SELECTION_COOKIE_KEY)?.value ?? "";
   const resolvedUnit = resolveUnitFromSlug(unitParam || cookieUnitParam);
-  const { items: heroItems } = await getHeroMediaItems({ variant, unitSlug: resolvedUnit?.slug ?? null });
+  const heroUnitSlug = resolvedUnit?.slug ?? null;
+  const [desktopHeroMedia, mobileHeroMedia] = await Promise.all([
+    getHeroMediaItems({ variant: "desktop", unitSlug: heroUnitSlug }),
+    getHeroMediaItems({ variant: "mobile", unitSlug: heroUnitSlug }),
+  ]);
+  const heroItemsByVariant = {
+    desktop: desktopHeroMedia.items,
+    mobile: mobileHeroMedia.items,
+  };
+  const heroItems = heroItemsByVariant[variant];
 
   return (
     <>
       <Header />
       <main>
-        <HomeHeroExperience heroItems={heroItems} initialMediaVariant={variant} initialUnitSlug={resolvedUnit?.slug ?? null} />
+        <HomeHeroExperience
+          heroItems={heroItems}
+          heroItemsByVariant={heroItemsByVariant}
+          initialMediaVariant={variant}
+          initialUnitSlug={heroUnitSlug}
+        />
         <TrustEvidenceSection context="home" />
         <HomePageSections />
       </main>

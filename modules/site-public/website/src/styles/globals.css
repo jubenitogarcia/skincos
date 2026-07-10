@@ -3239,6 +3239,25 @@ button:focus-visible {
   animation: heroFadeOut 360ms ease forwards;
 }
 
+.heroMediaResponsiveLayer {
+  position: absolute;
+  inset: 0;
+}
+
+.heroMediaResponsiveLayer--mobile {
+  display: none;
+}
+
+@media (max-width:900px) {
+  .heroMediaResponsiveLayer--desktop {
+    display: none;
+  }
+
+  .heroMediaResponsiveLayer--mobile {
+    display: block;
+  }
+}
+
 @keyframes heroFadeOut {
   from {
     opacity: 1;
