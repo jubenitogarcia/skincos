@@ -3,7 +3,6 @@
 import TrackedBookingLink from "@/components/TrackedBookingLink";
 import { useCurrentUnit } from "@/hooks/useCurrentUnit";
 import { getHeroMediaAspectRatio, getLocalHeroItems, normalizeHeroUnitSlug, type HeroMediaItem, type HeroMediaVariant } from "@/lib/heroMediaShared";
-import { getStoredUnitSlug } from "@/lib/unitSelection";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
@@ -170,6 +169,8 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
         },
         [initialItems, initialItemsByVariant, startupVariant],
     );
+    const desktopInitialAspectRatio = resolveFirstAspectRatio(resolveInitialItemsForVariant("desktop"));
+    const mobileInitialAspectRatio = resolveFirstAspectRatio(resolveInitialItemsForVariant("mobile"));
     const [index, setIndex] = useState(0);
     const [prevIndex, setPrevIndex] = useState<number | null>(null);
     const [prevFrameColors, setPrevFrameColors] = useState<HeroFrameColors>(HERO_DEFAULT_FRAME_COLORS);
@@ -186,7 +187,7 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
 
     type HeroStyle = CSSProperties &
         Record<
-            "--hero-ar" | "--hero-band-bg" | "--hero-band-bg-top" | "--hero-band-bg-bottom" | "--hero-cta-left" | "--hero-cta-top" | "--hero-cta-width" | "--hero-cta-height",
+            "--hero-ar" | "--hero-ar-desktop" | "--hero-ar-mobile" | "--hero-band-bg" | "--hero-band-bg-top" | "--hero-band-bg-bottom" | "--hero-cta-left" | "--hero-cta-top" | "--hero-cta-width" | "--hero-cta-height",
             string
         >;
     useEffect(() => {
@@ -206,8 +207,7 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
     }, []);
 
     const [items, setItems] = useState<HeroMediaItem[]>(() => {
-        const startupStoredUnitSlug = typeof window === "undefined" ? null : getStoredUnitSlug();
-        const startupTargetUnitSlug = startupStoredUnitSlug ?? initialUnitSlug ?? null;
+        const startupTargetUnitSlug = initialUnitSlug ?? null;
         const startupCampaignKey = campaignKey(startupVariant, startupTargetUnitSlug);
         const initialCampaignKey = campaignKey(startupVariant, initialUnitSlug ?? null);
         const startupInitialItems = resolveInitialItemsForVariant(startupVariant);
@@ -216,13 +216,11 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
         return getLocalHeroItems(startupVariant, { unitSlug: startupTargetUnitSlug });
     });
     const [loadedCampaignKey, setLoadedCampaignKey] = useState<string>(() => {
-        const startupStoredUnitSlug = typeof window === "undefined" ? null : getStoredUnitSlug();
-        const startupTargetUnitSlug = startupStoredUnitSlug ?? initialUnitSlug ?? null;
+        const startupTargetUnitSlug = initialUnitSlug ?? null;
         return campaignKey(startupVariant, startupTargetUnitSlug);
     });
 
-    const storedUnitSlug = typeof window === "undefined" ? null : getStoredUnitSlug();
-    const targetUnitSlug = unit?.slug ?? storedUnitSlug ?? initialUnitSlug ?? null;
+    const targetUnitSlug = unit?.slug ?? initialUnitSlug ?? null;
     const targetCampaignKey = campaignKey(variant, targetUnitSlug);
     const initialCampaignKey = campaignKey(variant, initialUnitSlug ?? null);
     const visibleItems = loadedCampaignKey === targetCampaignKey ? items : EMPTY_HERO_ITEMS;
@@ -471,6 +469,8 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
         const hotspot = item?.bookingHotspot;
         return {
             "--hero-ar": aspectRatio,
+            "--hero-ar-desktop": desktopInitialAspectRatio,
+            "--hero-ar-mobile": mobileInitialAspectRatio,
             "--hero-band-bg": frameColors.top,
             "--hero-band-bg-top": frameColors.top,
             "--hero-band-bg-bottom": frameColors.bottom,
@@ -479,7 +479,7 @@ export default function HeroMedia({ initialItems, initialItemsByVariant, initial
             "--hero-cta-width": hotspot ? `${hotspot.widthPct}%` : "0%",
             "--hero-cta-height": hotspot ? `${hotspot.heightPct}%` : "0%",
         };
-    }, [aspectRatio, frameColors.bottom, frameColors.top, item?.bookingHotspot]);
+    }, [aspectRatio, desktopInitialAspectRatio, frameColors.bottom, frameColors.top, item?.bookingHotspot, mobileInitialAspectRatio]);
 
     const renderLayer = (layerItem: HeroMediaItem, opts?: { kind?: "active" | "prev"; colors?: HeroFrameColors }) => {
         const kind = opts?.kind ?? "active";

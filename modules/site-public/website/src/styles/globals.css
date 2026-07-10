@@ -3209,7 +3209,7 @@ button:focus-visible {
 
 .heroMedia {
   width: 100%;
-  aspect-ratio: var(--hero-ar, 16 / 9);
+  aspect-ratio: var(--hero-ar-desktop, var(--hero-ar, 16 / 9));
   min-height: 320px;
   position: relative;
   z-index: 1;
@@ -3249,6 +3249,10 @@ button:focus-visible {
 }
 
 @media (max-width:900px) {
+  .heroMedia {
+    aspect-ratio: var(--hero-ar-mobile, var(--hero-ar, 9 / 16));
+  }
+
   .heroMediaResponsiveLayer--desktop {
     display: none;
   }
@@ -8640,8 +8644,6 @@ video.heroMediaEl {
   }
 
   .heroMedia {
-    height: clamp(560px, calc(100vw * 16 / 9), 720px);
-    max-height: none;
     min-height: 0;
   }
 
@@ -8663,10 +8665,6 @@ video.heroMediaEl {
 }
 
 @media (max-width:900px) {
-  .heroMedia {
-    max-height: 440px;
-  }
-
   .heroMediaEl {
     object-fit: cover;
   }
@@ -8773,8 +8771,6 @@ video.heroMediaEl {
   }
 
   .heroMedia {
-    height: clamp(560px, calc(100vw * 16 / 9), 720px);
-    max-height: none;
     min-height: 0;
   }
 

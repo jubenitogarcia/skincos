@@ -36,7 +36,9 @@ export function useCurrentUnit(): Unit | null {
     const slugFromQuery = useMemo(() => searchParams?.get("unit") ?? null, [searchParams]);
     const unitFromQuery = useMemo(() => findUnitBySlugOrAlias(slugFromQuery), [slugFromQuery]);
 
-    const [storedSlug, setStoredSlug] = useState<string | null>(() => getStoredUnitSlug());
+    // Storage is unavailable on the server. Reading it during the first client
+    // render makes the hydrated tree differ from the HTML already on screen.
+    const [storedSlug, setStoredSlug] = useState<string | null>(null);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
