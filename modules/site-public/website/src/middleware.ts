@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { isPathAllowedForSite } from "@/lib/site-config";
 import { buildWhatsappRedirectHrefFromRequest, isSupportedWhatsappUrl } from "@/lib/whatsappTracking";
 import { mergeCampaignParamsIntoUrl } from "@/lib/mergeCampaignParams";
+import { ANIVERSARIO_7_LEGACY_REDIRECTS } from "@/lib/aniversario7Redirects";
 
 function isPublicAsset(pathname: string): boolean {
     return (
@@ -84,6 +85,7 @@ export function middleware(req: NextRequest) {
         const normalizedPath = normalizeRedirectPath(pathname);
 
         const legacyRedirects: Record<string, string> = {
+            ...ANIVERSARIO_7_LEGACY_REDIRECTS,
             // LONG URLs (export)
             "/barrashoppingsul/comochegar": "https://www.google.com/maps/place/Espaço+Facial/@-30.0846697,-51.2458384,17z/data=!3m1!4b1!4m6!3m5!1s0x9519795c306ed865:0xb5f05aac9b865daa!8m2!3d-30.0846697!4d-51.2458384!16s%2Fg%2F11vywknzbf?entry=ttu&g_ep=EgoyMDI1MDMxMS4wIKXMDSoASAFQAw%3D%3D",
             "/barrashoppingsul/fb": "https://www.facebook.com/espacofacial.barrashoppingsul",

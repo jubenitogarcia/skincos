@@ -1,3 +1,5 @@
+import { ANIVERSARIO_7_ESFA_REDIRECTS } from "@/lib/aniversario7Redirects";
+
 export const ESFA_PRESERVE_QUERYSTRING = true;
 
 export const ESFA_REDIRECTS: Record<string, string> = {
@@ -38,6 +40,7 @@ export const ESFA_REDIRECTS: Record<string, string> = {
   "/nh/vip": "https://chat.whatsapp.com/EldkIVerELzESZKW8Iephz",
 
   // Campanhas
+  ...ANIVERSARIO_7_ESFA_REDIRECTS,
   "/bebadessafonte": "https://api.whatsapp.com/send?phone=5551995811008&text=Ganhei+um+%2Adesconto+exclusivo%2A+da+HealthBodyRun+para+o+meu+momento+de+%2Aauto-cuidado+e+bem-estar%2A+na+Espa%C3%A7o+Facial.+Quero+saber+mais%21+%F0%9F%92%A5",
 
   // Interno
