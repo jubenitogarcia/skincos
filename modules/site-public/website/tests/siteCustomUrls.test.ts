@@ -54,3 +54,23 @@ test("normalizeSiteCustomUrlInput preserves unicode slugs and accepts approved e
     assert.equal(input.slugPath, "/bss/avalienossoespaço");
     assert.equal(input.destinationHost, "www.google.com");
 });
+
+test("normalizeSiteCustomUrlInput allows esfa aliases but prevents redirect loops", () => {
+    const alias = normalizeSiteCustomUrlInput({
+        siteHost: "esfa.co",
+        name: "Aniversario 6 anos BSS",
+        slugPath: "/bss/aniver6anos",
+        destinationUrl: "https://esfa.co/bss/aniver7anos",
+    });
+
+    assert.equal(alias.destinationHost, "esfa.co");
+    assert.throws(
+        () => normalizeSiteCustomUrlInput({
+            siteHost: "esfa.co",
+            name: "Loop",
+            slugPath: "/bss/aniver7anos",
+            destinationUrl: "https://www.esfa.co/bss/aniver7anos",
+        }),
+        /destination_url_must_not_reference_self/,
+    );
+});

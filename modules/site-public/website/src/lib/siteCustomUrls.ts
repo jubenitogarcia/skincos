@@ -53,6 +53,8 @@ const ALLOWED_DESTINATION_HOSTS = new Set([
     "app.espacofacial.com.br",
     "espacofacial.com.br",
     "www.espacofacial.com.br",
+    "esfa.co",
+    "www.esfa.co",
     "api.whatsapp.com",
     "wa.me",
     "wa.skincos.com.br",
@@ -108,6 +110,15 @@ function normalizeDestinationUrl(value: unknown): { url: string; host: string | 
     };
 }
 
+function normalizeComparablePath(pathname: string): string {
+    const normalized = pathname.replace(/\/+$/, "").toLowerCase();
+    return normalized || "/";
+}
+
+function isEsfaHost(host: string | null): boolean {
+    return host === "esfa.co" || host === "www.esfa.co";
+}
+
 function readUtm(body: Record<string, unknown>, camelKey: string, snakeKey: string): string | null {
     return textOrNull(body[camelKey] ?? body[snakeKey], 160);
 }
@@ -155,6 +166,9 @@ export function normalizeSiteCustomUrlInput(raw: unknown): NormalizedSiteCustomU
     };
     input.destinationUrl = mergeUtmIntoDestination(input.destinationUrl, input);
     const merged = normalizeDestinationUrl(input.destinationUrl);
+    if (input.siteHost === "esfa.co" && isEsfaHost(merged.host) && normalizeComparablePath(new URL(input.destinationUrl).pathname) === input.slugPath) {
+        throw new Error("destination_url_must_not_reference_self");
+    }
     input.destinationHost = merged.host;
     input.destinationPath = merged.path;
     return input;
