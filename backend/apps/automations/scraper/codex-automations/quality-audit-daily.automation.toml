@@ -5,6 +5,6 @@ prompt = "Executar npm run audit:360:ci no projeto skincos/website, consolidar s
 status = "ACTIVE"
 rrule = "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR=9;BYMINUTE=0"
 execution_environment = "local"
-cwds = ["/Users/jubenitogarcia/Automation/skincos/website"]
+cwds = ["C:/CodexShared/Projetos/skincos/website"]
 created_at = 1772655197233
 updated_at = 1772988034619

@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "next build >/dev/null && tsc -p tsconfig.json --noEmit --incremental false",
+    "typecheck": "npm run build --silent && tsc -p tsconfig.json --noEmit --incremental false",
     "lint": "eslint .",
     "test": "tsx --test tests/*.test.ts",
     "smoke": "node scripts/smoke.mjs",

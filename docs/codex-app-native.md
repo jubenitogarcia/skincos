@@ -7,7 +7,7 @@ Este repositório deve continuar usando o código local como fonte da verdade e 
 | Superfície | Fonte de verdade | Plugin/capacidade preferida | Comando local recomendado |
 | --- | --- | --- | --- |
 | Site público `espacofacial.com` | `modules/site-public/website/` | Cloudflare, Browser, Build Web Apps | `npm run codex:site:check` |
-| CRM `crm.skincos.com.br` | `frontend/` + `backend/apps/crm-api/` | Browser, GitHub, Cloudflare | `npm run codex:crm:site-smoke` |
+| CRM `crm.skincos.com.br` | `frontend/` + `modules/crm/api/` | Browser, GitHub, Cloudflare | `npm run codex:crm:site-smoke` |
 | Site EF no CRM | `frontend/SiteTrackingModule.tsx` e APIs de tracking | Browser, Build Web Apps | `npm run codex:crm:site-smoke` |
 | Meta Ads no CRM | `frontend/` + `backend/apps/meta-ads/` | Browser, GitHub, Cloudflare | `npm run codex:crm:meta-ads-smoke` |
 | Deploy e secrets | `.github/workflows/`, `scripts/codex-preflight.sh` | GitHub, Cloudflare | `npm run codex:preflight` |
@@ -104,22 +104,6 @@ Use este quando o objetivo for pré-release do funil de site:
 ```bash
 npm run codex:site:release-check
 ```
-
-Use este depois de deploys do `espacofacial.com` para evitar redescobrir estado de produção:
-
-```bash
-npm run codex:site:live-check
-```
-
-## Checklist De Release Do Site
-
-- Trabalhe apenas na fonte de deploy `modules/site-public/website/`; a raiz antiga `website/` não dispara `.github/workflows/deploy-website-cloudflare.yml`.
-- Antes de confiar no PR, confirme branch/base, `refs/pull/<n>/merge` e checks/automerge no GitHub.
-- Rode `npm run quality:website` antes de publicar mudanças do site.
-- Depois do merge, valide `x-app-build`, `/api/hero-media?variant=desktop`, `/api/hero-media?variant=mobile` e `/api/equipe` em produção.
-- Para redirects, valide tanto URLs longas em `espacofacial.com` quanto short links `esfa.co`.
-- Lembre que `esfa.co` lê primeiro o D1 `site_custom_urls`; alterar `ESFA_REDIRECTS` ou publicar o Worker não basta quando já existe linha migrada no D1.
-- Prefira GitHub Actions para sincronização auditável de Worker/D1; Wrangler local pode não estar autenticado no mini-PC.
 
 ## Regras de segurança
 

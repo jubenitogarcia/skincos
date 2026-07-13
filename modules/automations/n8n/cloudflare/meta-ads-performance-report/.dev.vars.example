@@ -1,0 +1,5 @@
+# Shared-workspace note:
+# - Copy to a private `.dev.vars` outside the shared area for local runs.
+# - Do not store real worker tokens under `C:\CodexShared`.
+
+WORKER_API_TOKEN=replace-with-local-dev-token

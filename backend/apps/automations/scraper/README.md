@@ -30,7 +30,7 @@ Runner único via ações do Codex (sem menu).
 - `EF_LOG_DIR` (default: `./debug`)
 - `EF_CHROME_USER_DATA_DIR` (default: `./chrome_profile` quando sessão persistente estiver ativa)
 - `HEADLESS` (`1`/`0`)
-- `EF_MODE` (`agenda`, `caixa`, `procedures`, `client_registration`, `recorder`, `selftest`, `booking_api`)
+- `EF_MODE` (`agenda`, `caixa`, `procedures`, `recorder`, `selftest`, `booking_api`)
 - `EF_DRY_RUN` (`1`/`0`)
 - `EF_DEBUG_RETENTION_DAYS` (default: `7`)
 - `EF_DATE_RANGE_MODE` (`prev_month`)
@@ -138,6 +138,11 @@ Observações:
 - Erros pontuais por cliente são registrados no JSON de resumo em `client_errors`, sem interromper o restante do lote.
 
 ## Export de cadastro dos clientes
+
+> Status atual: esta secao permaneceu documentada, mas o modo
+> `client_registration` nao esta ligado no `run_scraper.py` atual. Antes de
+> republicar um atalho funcional para esse fluxo, o runner precisa voltar a
+> expor a implementacao correspondente.
 
 - Export completo: `EF_MODE=client_registration HEADLESS=1 ./.venv/bin/python run_scraper.py`
 - Smoke test curto: `EF_MODE=client_registration HEADLESS=1 EF_CLIENT_REGISTRATION_MAX_PAGES=1 EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT=2 ./.venv/bin/python run_scraper.py`

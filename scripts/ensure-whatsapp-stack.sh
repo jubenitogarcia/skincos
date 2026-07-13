@@ -4,11 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-LEGACY_SCRIPT="${LEGACY_WHATSAPP_STACK_SCRIPT:-$HOME/Automation/n8n/scripts/ensure-whatsapp-stack.sh}"
-if [[ -x "$LEGACY_SCRIPT" && "$LEGACY_SCRIPT" != "$SCRIPT_DIR/ensure-whatsapp-stack.sh" ]]; then
-  exec "$LEGACY_SCRIPT" "$@"
-fi
-
 UID_VALUE="$(id -u)"
 KICKSTART_LABELS=(
   "com.skincos.evolution-api"

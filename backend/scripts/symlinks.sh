@@ -28,8 +28,8 @@ declare -a EXPECTED=(
   "backend/apps/automations/sprinta/legacy/.env.example|../../../../config/templates/modules/sprinta/.env.example"
   "backend/apps/agent-zero/.env.example|../../config/templates/modules/a0/.env.example"
   "backend/apps/instagram/module/config/config.example.json|../../../../config/templates/modules/instagram-module/config.example.json"
-  "backend/apps/whatsapp/official/.env.example|../../../config/templates/modules/whatsapp-official/.env.example"
-  "backend/apps/whatsapp/gateway/.env.chat-module.example|../../../config/templates/modules/whatsapp-gateway/.env.chat-module.example"
+  "modules/whatsapp/whatsapp/official/.env.example|../../../backend/config/templates/modules/whatsapp-official/.env.example"
+  "modules/whatsapp/whatsapp/gateway/.env.chat-module.example|../../../backend/config/templates/modules/whatsapp-gateway/.env.chat-module.example"
 )
 
 apply_one() {

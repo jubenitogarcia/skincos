@@ -13,7 +13,7 @@ usage() {
 Usage: scripts/codex-preflight.sh [--strict] [--ci] [--skip-http] [--skip-cloudflare]
 
 Checks the operational autonomy prerequisites for Codex:
-- GitHub CLI auth and required repo secrets/vars.
+- WSL GitHub CLI auth and required repo secrets/vars.
 - Cloudflare local auth or CLOUDFLARE_API_TOKEN.
 - Security exception expiry dates.
 - Critical workflow files.
@@ -74,10 +74,10 @@ check_github() {
   [[ $failures -gt 0 ]] && return
 
   if gh auth status >/tmp/codex-gh-auth.log 2>&1; then
-    ok "GitHub CLI authenticated"
+    ok "WSL GitHub CLI authenticated"
   else
     cat /tmp/codex-gh-auth.log >&2 || true
-    fail "GitHub CLI is not authenticated"
+    fail "WSL GitHub CLI is not authenticated. Run: gh auth login --web --git-protocol https --hostname github.com"
     return
   fi
 

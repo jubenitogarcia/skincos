@@ -86,6 +86,8 @@ sdist/
 # Cloudflare Workers source (keep committed even though "lib/" is ignored globally)
 !backend/apps/insumos/src/lib/
 !backend/apps/insumos/src/lib/**
+!website/src/lib/
+!website/src/lib/**
 !modules/site-public/website/src/lib/
 !modules/site-public/website/src/lib/**
 # Local runtime state (do not commit)
@@ -197,7 +199,7 @@ frontend/test-results/
 output/
 
 # Codex local state
-.codex/
-!.codex/
+.codex/*
 !.codex/environments/
+.codex/environments/*
 !.codex/environments/environment.toml

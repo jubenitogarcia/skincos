@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT_DIR/backend/scripts/env.sh"
+CRM_API_DIR="$ROOT_DIR/modules/crm/api"
 
 CRM_PORT="${CRM_PORT:-5173}"
 CRM_API_PORT="${CRM_API_PORT:-8099}"
@@ -102,17 +103,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 start_api_watch() {
-  (cd "$ROOT_DIR/backend/apps/crm-api" && CRM_API_PORT="$CRM_API_PORT" PORT="$CRM_API_PORT" ./scripts/run.sh watch) &
+  (cd "$CRM_API_DIR" && CRM_API_PORT="$CRM_API_PORT" PORT="$CRM_API_PORT" ./scripts/run.sh watch) &
   echo $!
 }
 
 start_api() {
-  (cd "$ROOT_DIR/backend/apps/crm-api" && CRM_API_PORT="$CRM_API_PORT" PORT="$CRM_API_PORT" SKINCOS_GATEWAY=1 ./scripts/run.sh start) &
+  (cd "$CRM_API_DIR" && CRM_API_PORT="$CRM_API_PORT" PORT="$CRM_API_PORT" SKINCOS_GATEWAY=1 ./scripts/run.sh start) &
   echo $!
 }
 
 start_fe() {
-  (cd "$ROOT_DIR/frontend" && npm -s run dev -- --port "$CRM_PORT") &
+  (cd "$ROOT_DIR/modules/crm/web" && npm -s run dev -- --port "$CRM_PORT") &
   echo $!
 }
 
@@ -158,11 +159,11 @@ case "$cmd" in
     ;;
   api)
     echo "[unit-monitor] Starting CRM API on :$CRM_API_PORT"
-    exec "$ROOT_DIR/backend/apps/crm-api/scripts/run.sh" start --port "$CRM_API_PORT"
+    exec "$CRM_API_DIR/scripts/run.sh" start --port "$CRM_API_PORT"
     ;;
   fe)
     echo "[unit-monitor] Starting CRM frontend on :$CRM_PORT"
-    exec npm -s --prefix "$ROOT_DIR/frontend" run dev -- --port "$CRM_PORT"
+    exec npm -s --prefix "$ROOT_DIR/modules/crm/web" run dev -- --port "$CRM_PORT"
     ;;
   diagnostics)
     um_curl_headers

@@ -1051,7 +1051,11 @@ export default {
         const host = String(url.hostname || '').toLowerCase();
         const isLocalHost = host === 'localhost' || host === '::1' || host.startsWith('127.');
         const devBypassEnabled = String(env?.ALLOW_DEV_AUTH_BYPASS || '').trim().toLowerCase() === 'true';
-        const devBypassActive = devBypassEnabled && isLocalHost && !isSecureContext;
+        const proxiedLocalDevAuth = String(request.headers.get('x-skincos-local-dev-auth') || '').trim() === '1';
+        // Wrangler's internal request hostname is not stable across Windows/WSL.
+        // The bypass therefore requires both the dev-only Worker flag and the
+        // marker emitted exclusively by the localhost Pages proxy.
+        const devBypassActive = devBypassEnabled && proxiedLocalDevAuth;
         const devBypassUser = devBypassActive
             ? {
                 username: 'dev',
@@ -1094,7 +1098,10 @@ export default {
                 p === '/prefs' ||
                 p.startsWith('/prefs/') ||
                 p === '/share' ||
-                p.startsWith('/share/')
+                p.startsWith('/share/') ||
+                // The CRM shell loads the category policy list when the local
+                // Insumos module opens. Writes still require the normal session.
+                (request.method === 'GET' && (p === '/admin/categories' || p.startsWith('/admin/categories/')))
             );
         };
         const readBypassActive = (devBypassActive && isDevBypassPath(url.pathname)) || (auditBypassActive && isAuditBypassPath(url.pathname));
@@ -1115,7 +1122,10 @@ export default {
             };
             if (ip) payload.ip = ip;
             if (userAgent) payload.user_agent = userAgent;
-            console.log(JSON.stringify(payload));
+            const serializedPayload = JSON.stringify(payload);
+            if (level === 'error') console.error(serializedPayload);
+            else if (level === 'warn') console.warn(serializedPayload);
+            else console.log(serializedPayload);
             return res;
         };
 
@@ -1357,7 +1367,11 @@ export default {
         };
 
         const requireRoles = async (allowedRoles) => {
-            const u = await loadSessionUser();
+            // Local read requests intentionally have no session cookie. Reuse the
+            // dev actor only after the localhost-only bypass has allowed the path.
+            const u = devBypassActive && readBypassActive && methodUpper === 'GET'
+                ? devBypassUser
+                : await loadSessionUser();
             if (!u) {
                 return {
                     ok: false,

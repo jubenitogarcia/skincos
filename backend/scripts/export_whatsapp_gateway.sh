@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: ./scripts/export_whatsapp_gateway.sh /path/to/chat-module/packages/whatsapp-core/src
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SRC_ROOT="$ROOT_DIR/backend/apps/whatsapp/gateway/apps/whatsapp-api/src"
+SRC_ROOT="$ROOT_DIR/modules/whatsapp/whatsapp/gateway/apps/whatsapp-api/src"
 TARGET_DIR="${1:-}"
 
 if [ -z "$TARGET_DIR" ]; then
@@ -37,7 +37,7 @@ DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$(dirname "$TARGET_DIR")/UPSTREAM_WHATSAPP_CORE.json" <<EOF
 {
   "source_repo": "https://github.com/jubenitogarcia/SKINCOS-AI",
-  "submodule_path": "backend/apps/whatsapp/gateway/apps/whatsapp-api/src",
+  "submodule_path": "modules/whatsapp/whatsapp/gateway/apps/whatsapp-api/src",
   "export_commit": "$COMMIT_SHA",
   "exported_at": "$DATE"
 }

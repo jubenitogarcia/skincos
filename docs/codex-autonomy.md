@@ -6,7 +6,7 @@ For Codex App plugin routing, local Browser QA, Sites prototyping, and headless 
 
 ## What must stay valid
 
-- Local GitHub CLI auth: `gh auth status`
+- WSL GitHub CLI auth for this repo: `gh auth status`
 - Local Cloudflare auth: `cd frontend && npx wrangler whoami`
 - GitHub deploy secrets:
   - `CLOUDFLARE_API_TOKEN`
@@ -68,6 +68,7 @@ Manual deploys through local Wrangler are allowed when needed, but GitHub Action
 Rotate deploy credentials if:
 
 - `scripts/codex-preflight.sh` reports missing or invalid Cloudflare/GitHub auth.
+- `GitHub Auth Status` shows WSL auth is not ready for `jubenitogarcia/skincos`.
 - GitHub deploy workflows fail with missing or unauthorized Cloudflare credentials.
 - Cloudflare token scope changes are required.
 - The normal 90-day rotation window from `docs/secrets-rotation.md` is reached.

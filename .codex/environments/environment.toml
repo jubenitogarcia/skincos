@@ -1,4 +1,4 @@
-# Shared Codex App actions for the shared skincos clone and its worktrees.
+# Shared Codex App actions for Skincos. Keep in sync with scripts/install-shared-codex-shortcuts.ps1.
 version = 1
 name = "skincos"
 
@@ -6,21 +6,26 @@ name = "skincos"
 script = ""
 
 [[actions]]
-name = "Shared Status"
+name = "Workspace"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action SharedStatus"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action WorkspaceMenu"
 
 [[actions]]
-name = "Codex Context"
+name = "Contexto"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CodexContext"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action ContextMenu"
 
 [[actions]]
-name = "Thread Bootstrap"
+name = "Local"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action ThreadBootstrap"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action LocalMenu"
 
 [[actions]]
-name = "New Worktree"
+name = "EF App"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action NewWorktree"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action EfAppMenu"
+
+[[actions]]
+name = "Orb"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action OrbMenu"

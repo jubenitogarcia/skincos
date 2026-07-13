@@ -36,7 +36,7 @@ done
 
 targets=(
   "$ROOT_DIR/.vite"
-  "$ROOT_DIR/frontend/.vite"
+  "$ROOT_DIR/modules/crm/web/.vite"
 )
 
 patterns=(

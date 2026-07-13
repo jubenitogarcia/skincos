@@ -1,0 +1,31 @@
+[Unit]
+Description=Skincos Evolution API shared runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+WorkingDirectory=__N8N_ROOT__/evolution-api
+Environment=N8N_ROOT=__N8N_ROOT__
+Environment=N8N_RUNTIME_HOME=__N8N_RUNTIME_HOME__
+Environment=EVOLUTION_API_ENV_FILE=__EVOLUTION_ENV_FILE__
+Environment=EVOLUTION_API_INSTANCES_DIR=__EVOLUTION_INSTANCES_DIR__
+Environment=EVOLUTION_API_STORE_DIR=__EVOLUTION_STORE_DIR__
+Environment=N8N_LOG_DIR=__N8N_LOG_DIR__
+Environment=NODE20_BIN=/usr/bin
+ExecStart=/bin/bash -lc 'exec ./start-evolution-api.sh'
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__N8N_RUNTIME_HOME__
+UMask=0027
+StandardOutput=append:__N8N_LOG_DIR__/system-evolution-api.out.log
+StandardError=append:__N8N_LOG_DIR__/system-evolution-api.err.log
+
+[Install]
+WantedBy=multi-user.target

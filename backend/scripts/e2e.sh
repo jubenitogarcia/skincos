@@ -11,8 +11,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT_DIR/backend/scripts/env.sh"
 . "$ROOT_DIR/backend/scripts/node_pkg.sh"
-OFFICIAL_DIR="$ROOT_DIR/backend/apps/whatsapp/official-module"
-MOCK_DIR="$ROOT_DIR/backend/apps/whatsapp/gateway"
+CRM_API_DIR="$ROOT_DIR/modules/crm/api"
+OFFICIAL_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/official-module"
+MOCK_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/gateway"
 MOCK="$MOCK_DIR/simple-mock-api.js"
 
 cmd=${1:-help}
@@ -60,7 +61,7 @@ start_instance() {
   else
     # Fallback stub
     (
-      cd "$ROOT_DIR/backend/apps/whatsapp/stub"
+      cd "$ROOT_DIR/modules/whatsapp/whatsapp/stub"
       PORT="$port" ACCOUNT_ID="$port" node bot_com_api.js >/dev/null 2>&1 &
       echo $! > "$PID_DIR/wa_stub_${inst}.pid"
     )
@@ -109,7 +110,7 @@ start_crm_api_gateway() {
     CRM_API_PORT="$port" \
     SKINCOS_GATEWAY=1 \
     CRM_UNIT_MONITOR_PROXY_TOKEN="$token" \
-    node backend/apps/crm-api/server.js >"$out" 2>&1 &
+    node "$CRM_API_DIR/server.js" >"$out" 2>&1 &
     echo $! >"$pidfile"
   )
 

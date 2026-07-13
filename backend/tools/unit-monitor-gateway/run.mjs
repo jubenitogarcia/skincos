@@ -98,7 +98,7 @@ async function main() {
   }
 
   console.log(`[gateway] Starting crm-api on :${port}`)
-  const apiProc = spawn(process.execPath, [resolve(repoRoot, 'backend/apps/crm-api/server.js')], {
+  const apiProc = spawn(process.execPath, [resolve(repoRoot, 'modules/crm/api/server.js')], {
     stdio: 'inherit',
     cwd: repoRoot,
     env: {

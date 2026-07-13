@@ -1,0 +1,22 @@
+[Unit]
+Description=Skincos n8n PostgreSQL and storage backup
+After=postgresql.service postgresql@16-main.service
+Wants=postgresql.service postgresql@16-main.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=__N8N_ROOT__
+Environment=N8N_ROOT=__N8N_ROOT__
+Environment=N8N_RUNTIME_HOME=__N8N_RUNTIME_HOME__
+Environment=N8N_ENV_FILE=__N8N_ENV_FILE__
+Environment=N8N_STORAGE_PATH=__N8N_STORAGE_PATH__
+Environment=N8N_HEALTH_DIR=__N8N_HEALTH_DIR__
+ExecStart=__N8N_ROOT__/scripts/backup-n8n.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

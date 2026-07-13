@@ -24,9 +24,9 @@ done
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKINCOS_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
-GATEWAY_DIR="$SKINCOS_ROOT/backend/apps/whatsapp/gateway"
+GATEWAY_DIR="$SKINCOS_ROOT/modules/whatsapp/whatsapp/gateway"
 LOG_DIR="$ROOT_DIR"
-CRM_DIR="$SKINCOS_ROOT/frontend"
+CRM_DIR="$SKINCOS_ROOT/modules/crm/web"
 CRM_LOCAL_SCRIPT="$CRM_DIR/restart_crm.sh"
 CRM_LOG_DIR="$CRM_DIR/logs"
 mkdir -p "$CRM_LOG_DIR"

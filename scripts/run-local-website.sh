@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-WEBSITE_DIR="$ROOT_DIR/modules/site-public/website"
+WEBSITE_SOURCE_ROOT="${WEBSITE_SOURCE_ROOT:-$ROOT_DIR}"
+WEBSITE_DIR="$WEBSITE_SOURCE_ROOT/modules/site-public/website"
 WEBSITE_HOST="${WEBSITE_HOST:-0.0.0.0}"
 if [[ -n "${WEBSITE_PORT+x}" ]]; then
   WEBSITE_PORT_EXPLICIT=1
@@ -19,6 +20,7 @@ WEBSITE_ROUTE="${WEBSITE_ROUTE:-/}"
 WEBSITE_DETACH="${WEBSITE_DETACH:-0}"
 WEBSITE_SUPERVISOR_MODE="${WEBSITE_SUPERVISOR_MODE:-0}"
 WEBSITE_START_TIMEOUT="${WEBSITE_START_TIMEOUT:-90}"
+WEBSITE_SKIP_WORKERD_CHECK="${WEBSITE_SKIP_WORKERD_CHECK:-0}"
 
 if [[ -n "${OPEN_BROWSER+x}" ]]; then
   OPEN_BROWSER_EXPLICIT=1
@@ -147,7 +149,7 @@ is_owned_website_listener() {
 
   [[ -n "$args" ]] || return 1
   [[ "$args" == *"next dev"* || "$args" == *"npm run dev"* || "$args" == *"/next/dist/bin/next"* ]] || return 1
-  [[ "$cwd" == "$WEBSITE_DIR" || "$cwd" == "$ROOT_DIR" ]] || return 1
+  [[ "$cwd" == "$WEBSITE_DIR" || "$cwd" == "$WEBSITE_SOURCE_ROOT" ]] || return 1
 }
 
 stop_owned_port_listener() {
@@ -325,7 +327,7 @@ ensure_website_dependencies() {
     return 0
   fi
 
-  if ! website_workerd_ready; then
+  if [[ "$WEBSITE_SKIP_WORKERD_CHECK" != "1" ]] && ! website_workerd_ready; then
     echo "Dependências do website foram instaladas para outra plataforma. Reinstalando o workerd no WSL..."
     rm -rf "$WEBSITE_DIR/node_modules/workerd" "$WEBSITE_DIR/node_modules"/@cloudflare/workerd-*
     npm --prefix "$WEBSITE_DIR" install --no-save workerd
@@ -352,7 +354,12 @@ fi
 mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")" "$(dirname "$PORT_FILE")"
 touch "$LOG_FILE"
 
-cd "$ROOT_DIR"
+if [[ ! -d "$WEBSITE_DIR" ]]; then
+  echo "Diretório do website não encontrado em $WEBSITE_DIR." >&2
+  exit 1
+fi
+
+cd "$WEBSITE_SOURCE_ROOT"
 
 ensure_website_dependencies
 

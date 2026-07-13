@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/shared-paths.sh"
+
 UID_VALUE="$(id -u)"
 LABEL="com.skincos.network-fallback"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
-LOG_DIR="/Users/jubenitogarcia/Automation/n8n/health"
+LOG_DIR="$N8N_HEALTH_DIR"
 OUT_LOG="$LOG_DIR/network-fallback.out.log"
 ERR_LOG="$LOG_DIR/network-fallback.err.log"
-DAEMON_SCRIPT="/Users/jubenitogarcia/Automation/skincos/scripts/network-fallback-daemon.sh"
-N8N_ENV="/Users/jubenitogarcia/Automation/n8n/.env"
+DAEMON_SCRIPT="$SKINCOS_SCRIPTS_DIR/network-fallback-daemon.sh"
 
 if [[ -f "$N8N_ENV" ]]; then
   set -a
