@@ -18,6 +18,12 @@ const DEFAULT_INSTANCES_FILE = process.env.VAR_DIR
   : path.join(BACKEND_ROOT, 'var', 'core', 'whatsapp_instances.json')
 const INSTANCES_FILE = process.env.WA_INSTANCES_FILE || DEFAULT_INSTANCES_FILE
 const PORTS_RANGE = { min: 3001, max: 3009 } // 9 available channels
+const LOCAL_WHATSAPP_PATHS = new Set([
+  '/api/status',
+  '/api/qr',
+  '/whatsapp/1/status',
+  '/start-client'
+])
 const DEFAULT_OFFICIAL_MODULE_PATH = path.join(SKINCOS_ROOT, 'modules', 'whatsapp', 'whatsapp', 'official-module')
 const LEGACY_OFFICIAL_MODULE_PATH = path.join(SKINCOS_ROOT, 'whatsapp', 'official-module')
 const WHATSAPP_MODULE_PATH = process.env.WHATSAPP_MODULE_PATH ||
@@ -25,9 +31,20 @@ const WHATSAPP_MODULE_PATH = process.env.WHATSAPP_MODULE_PATH ||
 
 // Authentication configuration for Unified System communication
 const CRM_UNIFIED_API_KEY = process.env.CRM_UNIFIED_API_KEY || 'unified-dev-key'
-const UNIFIED_SYSTEM_URL = process.env.UNIFIED_SYSTEM_URL || 'http://localhost:3001'
 // Lazy-init enforcement: do NOT auto-start client on readiness unless explicitly enabled
 const UNIFIED_AUTOSTART_ON_READY = process.env.UNIFIED_AUTOSTART_ON_READY === 'true'
+
+export function buildLocalWhatsAppUrl(port, pathname) {
+  if (!Number.isInteger(port) || port < PORTS_RANGE.min || port > PORTS_RANGE.max) {
+    throw new Error('INVALID_WHATSAPP_LOCAL_PORT')
+  }
+
+  if (!LOCAL_WHATSAPP_PATHS.has(pathname)) {
+    throw new Error('INVALID_WHATSAPP_LOCAL_PATH')
+  }
+
+  return `http://localhost:${port}${pathname}`
+}
 
 class WhatsAppOrchestrator {
   constructor() {
@@ -45,7 +62,8 @@ class WhatsAppOrchestrator {
   }
 
   // Helper method to create authenticated fetch requests to Unified System
-  async fetchUnifiedSystem(url, options = {}) {
+  async fetchUnifiedSystem(pathname, options = {}) {
+    const url = buildLocalWhatsAppUrl(3001, pathname)
     const headers = {
       'Content-Type': 'application/json',
       'X-API-Key': CRM_UNIFIED_API_KEY,
@@ -63,11 +81,10 @@ class WhatsAppOrchestrator {
 
   // Smart fetch method that automatically chooses authentication based on port
   async smartFetch(port, endpoint, options = {}) {
-    const url = `http://localhost:${port}${endpoint}`
-
     if (this.shouldUseAuthentication(port)) {
-      return this.fetchUnifiedSystem(url, options)
+      return this.fetchUnifiedSystem(endpoint, options)
     } else {
+      const url = buildLocalWhatsAppUrl(port, endpoint)
       return fetch(url, options)
     }
   }
@@ -490,7 +507,7 @@ class WhatsAppOrchestrator {
       if (targetChannel === 1 && process.env.UNIFIED_MODE === 'true') {
         console.log(`[WhatsApp Orchestrator] Forwarding Channel 1 start request to unified system`)
         try {
-          const response = await this.fetchUnifiedSystem(`${UNIFIED_SYSTEM_URL}/whatsapp/1/status`, {
+          const response = await this.fetchUnifiedSystem('/whatsapp/1/status', {
             method: 'GET'
           })
 
@@ -668,7 +685,7 @@ class WhatsAppOrchestrator {
         if (targetPort === 3001) {
           if (UNIFIED_AUTOSTART_ON_READY) {
             try {
-              const startResp = await this.fetchUnifiedSystem(`${UNIFIED_SYSTEM_URL}/start-client`, { method: 'POST' })
+              const startResp = await this.fetchUnifiedSystem('/start-client', { method: 'POST' })
               if (!startResp.ok) {
                 const errText = await startResp.text().catch(() => '')
                 console.warn(`[WhatsApp Orchestrator] start-client returned ${startResp.status}: ${errText}`)
@@ -875,7 +892,7 @@ class WhatsAppOrchestrator {
 
       // Use fetchUnifiedSystem directly for port 3001 to ensure authentication
       const response = port === 3001
-        ? await this.fetchUnifiedSystem(`${UNIFIED_SYSTEM_URL}/api/qr`, {
+        ? await this.fetchUnifiedSystem('/api/qr', {
           signal: controller.signal,
           headers: {
             'Accept': 'application/json',
