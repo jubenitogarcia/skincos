@@ -112,6 +112,7 @@ jobs:
         if: ${{ hashFiles('modules/crm/api/package.json') != '' }}
         run: |
           set -euxo pipefail
+          npm --prefix modules/crm/api ci
           npm --prefix modules/crm/api test
 
   python-lint:
