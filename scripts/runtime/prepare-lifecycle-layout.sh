@@ -10,6 +10,7 @@ APPLY=0
 FINAL_SYNC=0
 SKIP_ORB_STATE=0
 SKIP_MESSAGING_STATE=0
+SYNC_TRANSPORT="${LIFECYCLE_SYNC_TRANSPORT:-auto}"
 
 usage() {
   cat <<'EOF'
@@ -23,6 +24,10 @@ the old services have stopped.
 --skip-orb-state is only for an already-completed independent pre-copy. It
 cannot be combined with --final-sync.
 --skip-messaging-state has the same restriction for the WhatsApp channel.
+
+LIFECYCLE_SYNC_TRANSPORT chooses the directory-copy transport: auto (default)
+uses Windows robocopy for paths on /mnt/c and rsync otherwise; robocopy and
+rsync force a specific transport.
 EOF
 }
 
@@ -46,6 +51,10 @@ if [[ "$FINAL_SYNC" == "1" && ( "$SKIP_ORB_STATE" == "1" || "$SKIP_MESSAGING_STA
   echo "State skip options cannot be used during the final sync." >&2
   exit 1
 fi
+case "$SYNC_TRANSPORT" in
+  auto|robocopy|rsync) ;;
+  *) echo "LIFECYCLE_SYNC_TRANSPORT must be auto, robocopy or rsync." >&2; exit 1 ;;
+esac
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }
@@ -105,10 +114,51 @@ sync_path() {
   fi
   echo "COPY $source -> $destination"
   if [[ "$APPLY" == "1" ]]; then
-    mkdir -p "$destination"
-    local -a args=(-a)
-    [[ "$FINAL_SYNC" == "0" ]] && args+=(--ignore-existing)
-    rsync "${args[@]}" "$source" "$destination/"
+    if should_use_robocopy "$source" "$destination"; then
+      sync_path_robocopy "$source" "$destination"
+    else
+      mkdir -p "$destination"
+      local -a args=(-a)
+      [[ "$FINAL_SYNC" == "0" ]] && args+=(--ignore-existing)
+      rsync "${args[@]}" "$source" "$destination/"
+    fi
+  fi
+}
+
+should_use_robocopy() {
+  local source="$1"
+  local destination="$2"
+  if [[ "$SYNC_TRANSPORT" == "rsync" ]]; then
+    return 1
+  fi
+  if [[ "$SYNC_TRANSPORT" == "robocopy" ]]; then
+    command -v robocopy.exe >/dev/null 2>&1 || { echo "robocopy.exe is required by LIFECYCLE_SYNC_TRANSPORT=robocopy." >&2; exit 1; }
+    return 0
+  fi
+  command -v robocopy.exe >/dev/null 2>&1 && [[ "$source" == /mnt/c/* && "$destination" == /mnt/c/* ]]
+}
+
+sync_path_robocopy() {
+  local source="$1"
+  local destination="$2"
+  local normalized_source="${source%/.}"
+  local target="$destination"
+  if [[ "$source" != */. ]]; then
+    target="$destination/$(basename "$normalized_source")"
+  fi
+  mkdir -p "$target"
+
+  local source_windows target_windows status=0
+  source_windows="$(wslpath -w "$normalized_source")"
+  target_windows="$(wslpath -w "$target")"
+  local -a args=(/E /COPY:DAT /DCOPY:T /R:2 /W:1 /NFL /NDL /NJH /NJS /NP)
+  if [[ "$FINAL_SYNC" == "0" ]]; then
+    args+=(/XC /XN /XO)
+  fi
+  robocopy.exe "$source_windows" "$target_windows" "${args[@]}" >/dev/null || status=$?
+  if (( status > 7 )); then
+    echo "robocopy failed with exit code $status for $source -> $target." >&2
+    return "$status"
   fi
 }
 
