@@ -3,7 +3,7 @@
   "core": {
     "crm": {
       "id": "crm",
-      "path": "modules/crm/web",
+      "path": "crm/console",
       "kind": "core",
       "ports": {
         "frontend": 5173,
@@ -15,7 +15,7 @@
     {
       "id": "insumos",
       "label": "Insumos (Cloudflare Worker)",
-      "path": "backend/apps/insumos",
+      "path": "inventory",
       "kind": "service",
       "health": {
         "path": "/health"
@@ -25,7 +25,7 @@
     {
       "id": "whatsapp-official",
       "label": "WhatsApp (Official Module)",
-      "path": "modules/whatsapp/whatsapp/official-module",
+      "path": "messaging/channels/whatsapp/official-module",
       "kind": "service",
       "ports": {
         "base": 3001,
@@ -39,7 +39,7 @@
     {
       "id": "whatsapp-gateway",
       "label": "WhatsApp (Gateway Legacy)",
-      "path": "modules/whatsapp/whatsapp/gateway",
+      "path": "messaging/channels/whatsapp/gateway",
       "kind": "service",
       "ports": {
         "base": 3001,
@@ -54,7 +54,7 @@
     {
       "id": "harmonia",
       "label": "Harmonia (WhatsApp Leads)",
-      "path": "modules/crm/api",
+      "path": "crm/api",
       "kind": "service",
       "health": {
         "path": "/api/harmonia/health"
@@ -64,7 +64,7 @@
     {
       "id": "scraper",
       "label": "Scraper (Espaço Facial)",
-      "path": "backend/apps/automations/scraper",
+      "path": "integration/ef",
       "kind": "automation",
       "notes": "Usa config.local.json (ignorado). Entrypoint: backend/scripts/dev.sh scraper"
     },
@@ -118,14 +118,14 @@
     {
       "id": "chat-module",
       "label": "Chat Module",
-      "path": "modules/whatsapp/whatsapp/chat-module",
+      "path": "messaging/channels/whatsapp/chat-module",
       "kind": "service",
       "notes": "Pacotes (opc.): backend/apps/whatsapp/chat-module/{whatsapp-core,whatsapp-api,whatsapp-ui}"
     },
     {
       "id": "instagram-module",
       "label": "Instagram Module",
-      "path": "backend/apps/instagram/module",
+      "path": "social/instagram/module",
       "kind": "service",
       "ports": {
         "default": 3103

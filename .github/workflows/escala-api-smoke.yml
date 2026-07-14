@@ -59,4 +59,4 @@ jobs:
         run: |
           set -euo pipefail
           echo "Running Escala smoke for environment=${ESCALA_SMOKE_ENVIRONMENT}"
-          node backend/apps/escala-api/scripts/smoke.mjs
+          node workforce/schedule/scripts/smoke.mjs

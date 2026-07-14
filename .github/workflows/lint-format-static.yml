@@ -29,63 +29,63 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
-            modules/crm/web/package-lock.json
-            modules/site-public/website/package-lock.json
+            crm/console/package-lock.json
+            website/package-lock.json
 
       - name: Frontend install
-        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
+        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/crm/web
+          cd crm/console
           npm ci
 
       - name: Frontend lint
-        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
+        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/crm/web
+          cd crm/console
           npm run lint
 
       - name: Frontend typecheck
-        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
+        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/crm/web
+          cd crm/console
           npm run typecheck
 
       - name: Frontend unit tests
-        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
+        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/crm/web
+          cd crm/console
           npm run test
 
       - name: Frontend build
-        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
+        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/crm/web
+          cd crm/console
           npm run build
 
       - name: Website install
-        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
+        if: ${{ hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/site-public/website
+          cd website
           npm ci
 
       - name: Website lint
-        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
+        if: ${{ hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/site-public/website
+          cd website
           npm run lint
 
       - name: Website build
-        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
+        if: ${{ hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/site-public/website
+          cd website
           npm run build
 
       - name: Setup pnpm (for backend workspace)
@@ -109,11 +109,11 @@ jobs:
           pnpm -C backend -r run typecheck --if-present
 
       - name: CRM API tests
-        if: ${{ hashFiles('modules/crm/api/package.json') != '' }}
+        if: ${{ hashFiles('crm/api/package.json') != '' }}
         run: |
           set -euxo pipefail
-          npm --prefix modules/crm/api ci
-          npm --prefix modules/crm/api test
+          npm --prefix crm/api ci
+          npm --prefix crm/api test
 
   python-lint:
     name: Python Lint & Static Analysis

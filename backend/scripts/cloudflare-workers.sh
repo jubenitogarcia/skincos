@@ -22,7 +22,7 @@ Commands:
 
 Notes:
   - skincos-api shares implementation with apps/insumos/src, so changes under
-    backend/apps/insumos/** will deploy BOTH workers.
+    inventory/** will deploy BOTH workers.
   - Requires CLOUDFLARE_API_TOKEN (+ optional CLOUDFLARE_ACCOUNT_ID) in env.
 
 Examples:
@@ -133,10 +133,10 @@ deploy_by_changes() {
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
     case "$f" in
-      backend/apps/api/*)
+      api/*)
         do_api="true"
         ;;
-      backend/apps/insumos/*)
+      inventory/*)
         do_insumos="true"
         do_api="true" # shared implementation
         ;;

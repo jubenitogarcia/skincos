@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-FRONTEND_DIR="$ROOT_DIR/modules/crm/web"
+FRONTEND_DIR="$ROOT_DIR/crm/console"
 BACKEND_DIR="$ROOT_DIR/backend"
 INSUMOS_HELPER="$ROOT_DIR/backend/scripts/insumos.sh"
 INSUMOS_EXPORTER="$ROOT_DIR/backend/scripts/insumos-d1-export.cjs"
@@ -356,9 +356,9 @@ ensure_frontend_dist_ready() {
 }
 
 ensure_insumos_seed_config() {
-  local insumos_dev_vars="$ROOT_DIR/backend/apps/insumos/.dev.vars"
-  if [[ ! -f "$insumos_dev_vars" && -f "$ROOT_DIR/backend/apps/insumos/.dev.vars.example" ]]; then
-    cp "$ROOT_DIR/backend/apps/insumos/.dev.vars.example" "$insumos_dev_vars"
+  local insumos_dev_vars="$ROOT_DIR/inventory/.dev.vars"
+  if [[ ! -f "$insumos_dev_vars" && -f "$ROOT_DIR/inventory/.dev.vars.example" ]]; then
+    cp "$ROOT_DIR/inventory/.dev.vars.example" "$insumos_dev_vars"
   fi
   touch "$insumos_dev_vars"
   if ! grep -qE '^ALLOW_DEV_SEED=' "$insumos_dev_vars"; then
@@ -664,7 +664,7 @@ fi
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   echo "  - Insumos está apontando para o worker local, sem risco de gravar na produção."
 else
-  echo "  - Insumos continua usando o target definido em modules/crm/web/.dev.vars ou modules/crm/web/wrangler.toml."
+  echo "  - Insumos continua usando o target definido em crm/console/.dev.vars ou crm/console/wrangler.toml."
 fi
 if [[ -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
   echo "  - Meta Ads/tracking está em cenário local controlado; o fluxo é simulado só em localhost."

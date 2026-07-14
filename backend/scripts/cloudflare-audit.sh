@@ -8,7 +8,7 @@ Cloudflare audit (skincos)
 Checks (best-effort):
   - Workers scripts exist: skincos-api, skincos-insumos
   - Zone routes point to those scripts
-  - Pages project build filters: path_includes=["modules/crm/web/**"]
+  - Pages project build filters: path_includes=["crm/console/**"]
 
 Required env:
   CLOUDFLARE_API_TOKEN
@@ -75,11 +75,11 @@ fi
 
 echo "[cloudflare-audit] Checking Pages build filters..."
 pi_all="$(cf_get_json "https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${pages_project}" | jq -r '.result.source.config.path_includes[]?' || true)"
-if ! echo "$pi_all" | grep -Eq '^modules/crm/web/\*\*$'; then
-  echo "[cloudflare-audit] FAIL: Pages path_includes missing modules/crm/web/** (got: ${pi_all:-<empty>})" >&2
+if ! echo "$pi_all" | grep -Eq '^crm/console/\*\*$'; then
+  echo "[cloudflare-audit] FAIL: Pages path_includes missing crm/console/** (got: ${pi_all:-<empty>})" >&2
   fail=1
 else
-  echo "[cloudflare-audit] OK: Pages path_includes=modules/crm/web/**"
+  echo "[cloudflare-audit] OK: Pages path_includes=crm/console/**"
 fi
 
 if [[ "$fail" -ne 0 ]]; then

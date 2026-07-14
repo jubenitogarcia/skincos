@@ -20,42 +20,42 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
-            modules/crm/web/package-lock.json
-            modules/site-public/website/package-lock.json
+            crm/console/package-lock.json
+            website/package-lock.json
 
       - name: Frontend install
-        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
+        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/crm/web
+          cd crm/console
           npm ci
 
       - name: Frontend coverage
-        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
+        if: ${{ hashFiles('crm/console/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/crm/web
+          cd crm/console
           npm run test:coverage
 
       - name: Website install
-        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
+        if: ${{ hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/site-public/website
+          cd website
           npm ci
 
       - name: Website tests
-        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
+        if: ${{ hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/site-public/website
+          cd website
           npm run test
 
       - name: Website typecheck
-        if: ${{ hashFiles('modules/site-public/website/package-lock.json') != '' }}
+        if: ${{ hashFiles('website/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd modules/site-public/website
+          cd website
           npm run typecheck
 
   python-coverage:

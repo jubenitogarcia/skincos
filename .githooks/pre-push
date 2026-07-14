@@ -37,10 +37,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   changed="$(git diff --name-only "$remote_sha..$local_sha" 2>/dev/null || true)"
-  if echo "$changed" | grep -qE '^(backend/apps/insumos/|backend/pnpm-lock\.yaml)'; then
+  if echo "$changed" | grep -qE '^(inventory/|backend/pnpm-lock\.yaml)'; then
     should_deploy=1
   fi
-  if [[ "${SKINCOS_AUTO_MIGRATE:-0}" == "1" ]] && echo "$changed" | grep -qE '^backend/apps/insumos/migrations/'; then
+  if [[ "${SKINCOS_AUTO_MIGRATE:-0}" == "1" ]] && echo "$changed" | grep -qE '^inventory/migrations/'; then
     should_migrate=1
   fi
 done

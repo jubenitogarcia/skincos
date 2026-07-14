@@ -20,16 +20,16 @@ backend-unit:
 	@bash ./backend/scripts/test.sh unit
 
 website-install:
-	@npm --prefix modules/site-public/website ci
+	@npm --prefix website ci
 
 website-dev:
-	@npm --prefix modules/site-public/website run dev
+	@npm --prefix website run dev
 
 website-build:
-	@npm --prefix modules/site-public/website run build
+	@npm --prefix website run build
 
 website-typecheck:
-	@npm --prefix modules/site-public/website run build && npm --prefix modules/site-public/website run typecheck
+	@npm --prefix website run build && npm --prefix website run typecheck
 
 website-deploy:
-	@npm --prefix modules/site-public/website run deploy
+	@npm --prefix website run deploy

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PATTERN='Codex|Chrome|Chromium|playwright|xcodebuildmcp|SkyComputerUse|vite|wrangler|crm-api|modules/crm/api|npm run crm:local'
+PATTERN='Codex|Chrome|Chromium|playwright|xcodebuildmcp|SkyComputerUse|vite|wrangler|crm-api|crm/api|npm run crm:local'
 PORTS=(${CODEX_CRM_MEMORY_PORTS:-5173 5174 8100 8791 8787})
 
 echo "Skincos Codex/CRM memory diagnostics"

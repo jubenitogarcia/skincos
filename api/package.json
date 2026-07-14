@@ -1,0 +1,19 @@
+{
+  "name": "@skincos/api-worker",
+  "private": true,
+  "type": "module",
+  "description": "Skincos public API gateway",
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.toml",
+    "deploy": "wrangler deploy --config wrangler.toml --keep-vars",
+    "test": "node --test test/gateway.test.mjs",
+    "lint": "echo \"(todo)\""
+  },
+  "devDependencies": {
+    "wrangler": "^4.60.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "qrcode-generator": "^1.4.4"
+  }
+}

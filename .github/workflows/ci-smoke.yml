@@ -50,26 +50,26 @@ jobs:
         with:
           node-version: "22.12.0"
           cache: npm
-          cache-dependency-path: modules/site-public/website/package-lock.json
+          cache-dependency-path: website/package-lock.json
 
       - name: Install website dependencies
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm ci
 
       - name: Website lint
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run lint
 
       - name: Website tests
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run test
 
       - name: Website build
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run build
 
       - name: Install CRM API dependencies
-        working-directory: modules/crm/api
+        working-directory: crm/api
         run: npm ci
 
       - name: Install backend workspace deps (pnpm)

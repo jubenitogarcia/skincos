@@ -107,8 +107,8 @@ start_whatsapp_official() {
   local instance="$1"
   local quiet="${2:-0}"
 
-  local OFFICIAL_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/official-module"
-  local WEBJS_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/official"
+  local OFFICIAL_DIR="$ROOT_DIR/messaging/channels/whatsapp/official-module"
+  local WEBJS_DIR="$ROOT_DIR/messaging/channels/whatsapp/official"
 
   if [[ ! -d "$OFFICIAL_DIR" ]]; then
     echo "[official] Official module not found at $OFFICIAL_DIR" >&2
@@ -210,8 +210,8 @@ start_whatsapp_gateway() {
   local instance="$1"
   local quiet="${2:-0}"
 
-  local GW_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/gateway"
-  local STUB_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/stub"
+  local GW_DIR="$ROOT_DIR/messaging/channels/whatsapp/gateway"
+  local STUB_DIR="$ROOT_DIR/messaging/channels/whatsapp/stub"
 
   if ! [[ "$instance" =~ ^[1-9]$ ]]; then
     echo "[gateway] Invalid instance: $instance (must be 1..9)" >&2
@@ -326,7 +326,7 @@ start_whatsapp_gateway() {
 }
 
 cmd_watch() {
-  local crm_dir="$ROOT_DIR/modules/crm/web"
+  local crm_dir="$ROOT_DIR/crm/console"
   local crm_port="${CRM_PORT:-5173}"
   local crm_api_port="${CRM_API_PORT:-8099}"
   local instances="${INSTANCES:-${GW_INSTANCE:-1}}"
@@ -335,7 +335,7 @@ cmd_watch() {
   local instagram_port="${INSTAGRAM_PORT:-3103}"
 
   local use_official="${USE_OFFICIAL:-}"
-  local official_dir="$ROOT_DIR/modules/whatsapp/whatsapp/official-module"
+  local official_dir="$ROOT_DIR/messaging/channels/whatsapp/official-module"
   if [[ -z "${use_official}" ]]; then
     [[ -d "$official_dir" ]] && use_official=1 || use_official=0
   fi
@@ -347,7 +347,7 @@ cmd_watch() {
   kill_port "$agent_port"
   kill_port "$instagram_port"
   for p in 3001 3002 3003 3004 3005 3006 3007 3008 3009; do kill_port "$p"; done
-  pkill -f "modules/crm/api/server.js" 2>/dev/null || true
+  pkill -f "crm/api/server.js" 2>/dev/null || true
   pkill -f "vite --port $crm_port" 2>/dev/null || true
 
   echo "[dev] Starting CRM (API+FE) in watch-full mode..."
@@ -446,7 +446,7 @@ cmd_watch() {
   fi
 
   # Start Instagram Module API in background (active module)
-  local ig_dir="$ROOT_DIR/backend/apps/instagram/module"
+  local ig_dir="$ROOT_DIR/social/instagram/module"
   if [[ -d "$ig_dir" && -f "$ig_dir/instagram_api_server.js" ]]; then
     local pid_file="$VAR_DIR/pids/instagram-module.pid"
     local log_dir="$VAR_DIR/logs/instagram-module"
@@ -510,7 +510,7 @@ case "$cmd" in
   watch)
     cmd_watch "$@" ;;
   crm)
-    exec "$ROOT_DIR/modules/crm/web/restart_crm.sh" "$@" ;;
+    exec "$ROOT_DIR/crm/console/restart_crm.sh" "$@" ;;
   insumos)
     exec "$ROOT_DIR/backend/scripts/insumos.sh" "$@" ;;
   cloudflare-workers|workers)
@@ -611,7 +611,7 @@ EOF
         exit 1 ;;
     esac ;;
   instagram-module)
-    IG_DIR="$ROOT_DIR/backend/apps/instagram/module"
+    IG_DIR="$ROOT_DIR/social/instagram/module"
     [[ -d "$IG_DIR" ]] || { echo "[instagram] Not found at $IG_DIR" >&2; exit 1; }
     [[ -f "$IG_DIR/instagram_api_server.js" ]] || { echo "[instagram] instagram_api_server.js not found at $IG_DIR" >&2; exit 1; }
     [[ -f "$IG_DIR/package.json" ]] || { echo "[instagram] package.json not found at $IG_DIR" >&2; exit 1; }
@@ -752,7 +752,7 @@ server.listen(port, '127.0.0.1', () => console.log(\`Sales Chart Messenger serve
     echo "[sales-chart-messenger-stub] Health: http://localhost:$SALES_CHART_MESSENGER_PORT/health"
     ;;
   scraper)
-    SCRAPER_DIR="$ROOT_DIR/backend/apps/automations/scraper"
+    SCRAPER_DIR="$ROOT_DIR/integration/ef"
     [[ -d "$SCRAPER_DIR" ]] || { echo "[scraper] Module not found at $SCRAPER_DIR" >&2; exit 1; }
     cd "$SCRAPER_DIR"
     if [[ -x "./run.sh" ]]; then exec bash "./run.sh" "$@"; fi

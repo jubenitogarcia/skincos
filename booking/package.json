@@ -1,0 +1,8 @@
+{
+  "name": "@skincos/booking",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/ledger.test.mjs"
+  }
+}

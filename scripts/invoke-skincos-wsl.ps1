@@ -85,7 +85,7 @@ if (-not $SkipNpmCheck) {
 }
 if (-not $SkipBootstrapCheck) {
     $safeRepoLiteral = Convert-ToBashLiteral -Value $repoMountPath
-    $bashLines.Add("if ! git config --global --get-all safe.directory 2>/dev/null | grep -Fxq $safeRepoLiteral; then echo 'WSL bootstrap for this user is not ready. Run: bash $repoMountPath/modules/automations/n8n/scripts/bootstrap-imported-wsl-account.sh'; exit 1; fi")
+    $bashLines.Add("if ! git config --global --get-all safe.directory 2>/dev/null | grep -Fxq $safeRepoLiteral; then echo 'WSL bootstrap for this user is not ready. Run: bash $repoMountPath/orb/engine/scripts/bootstrap-imported-wsl-account.sh'; exit 1; fi")
 }
 
 foreach ($entry in $EnvVar) {

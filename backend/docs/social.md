@@ -6,7 +6,7 @@ Este documento cobre o módulo “Redes Sociais” (Instagram/Facebook/Threads) 
 - **UI (CRM)**: `frontend/SocialNetworksStudio.tsx`
 - **API (Pages Functions)**: `frontend/functions/api/social/*`
 - **Storage**: R2 (`SHARE_BUCKET`) com fila, assets, resultados e auditoria
-- **Worker cron**: `backend/apps/social-publisher` (publica via Meta Graph e grava resultados)
+- **Worker cron**: `social/publisher` (publica via Meta Graph e grava resultados)
 
 ## Fluxos principais
 1) **Enfileirar mídia**

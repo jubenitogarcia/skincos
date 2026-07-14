@@ -1,0 +1,24 @@
+[Unit]
+Description=Skincos Cloudflare tunnel for Orb
+After=orb-proxy.service network-online.target
+Wants=orb-proxy.service network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+Environment=CLOUDFLARED_HOME=__RUNTIME_ROOT__/config/cloudflare/orb
+ExecStart=/usr/bin/cloudflared tunnel --protocol http2 --config __RUNTIME_ROOT__/config/cloudflare/orb/config.yml run
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__RUNTIME_ROOT__/config/cloudflare/orb __RUNTIME_ROOT__/logs/cloudflare-orb
+UMask=0027
+StandardOutput=append:__RUNTIME_ROOT__/logs/cloudflare-orb/tunnel.out.log
+StandardError=append:__RUNTIME_ROOT__/logs/cloudflare-orb/tunnel.err.log
+
+[Install]
+WantedBy=multi-user.target

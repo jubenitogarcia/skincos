@@ -11,9 +11,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT_DIR/backend/scripts/env.sh"
 . "$ROOT_DIR/backend/scripts/node_pkg.sh"
-CRM_API_DIR="$ROOT_DIR/modules/crm/api"
-OFFICIAL_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/official-module"
-MOCK_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/gateway"
+CRM_API_DIR="$ROOT_DIR/crm/api"
+OFFICIAL_DIR="$ROOT_DIR/messaging/channels/whatsapp/official-module"
+MOCK_DIR="$ROOT_DIR/messaging/channels/whatsapp/gateway"
 MOCK="$MOCK_DIR/simple-mock-api.js"
 
 cmd=${1:-help}
@@ -61,7 +61,7 @@ start_instance() {
   else
     # Fallback stub
     (
-      cd "$ROOT_DIR/modules/whatsapp/whatsapp/stub"
+      cd "$ROOT_DIR/messaging/channels/whatsapp/stub"
       PORT="$port" ACCOUNT_ID="$port" node bot_com_api.js >/dev/null 2>&1 &
       echo $! > "$PID_DIR/wa_stub_${inst}.pid"
     )

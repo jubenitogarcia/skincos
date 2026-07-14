@@ -68,14 +68,14 @@ Este documento é um “mapa rápido” do que existe hoje dentro de `skincos/` 
 - `backend/apps/whatsapp/chat-module/` — Chat Module (pacotes `@chat-module/*`, opcional).
 
 **Automações / agentes:**
-- `backend/apps/automations/scraper/` — automação (Python) com `config.local.json` ignorado.
+- `integration/ef/` — automação (Python) com `config.local.json` ignorado.
 - `backend/apps/automations/sprinta/` — `legacy/` e `v2/` (Python).
 - `backend/apps/agent-zero/` — Agent Zero (Python + Node; múltiplas portas conforme README).
 - Sales Chart Messenger — automação Python em `backend/apps/automations/sales_chart_messenger/` (runner: `backend/apps/automations/sales_chart_messenger/scripts/run.sh`).
 
 **Instagram:**
-- `backend/apps/instagram/instagrapi/` — lib + compose (mkdocs em `8000`).
-- `backend/apps/instagram/module/` — API Node + módulo Python; config local em `backend/apps/instagram/module/config/config.local.json` (ignorado).
+- `social/instagram/instagrapi/` — lib + compose (mkdocs em `8000`).
+- `social/instagram/module/` — API Node + módulo Python; config local em `social/instagram/module/config/config.local.json` (ignorado).
 
 **Conteúdo histórico / backups:**
 - `backend/tools/scripts/xiaomi/` — utilitário (histórico).
@@ -98,8 +98,8 @@ Portas que aparecem como padrão no código/scripts:
 ### 3) Configs locais e segredos (pontos de atenção)
 
 Arquivos sensíveis/locais que existem no workspace (não devem ser commitados):
-- `backend/apps/automations/scraper/config.local.json` (já ignorado)
-- `backend/apps/instagram/module/config/config.local.json` (ignorado)
+- `integration/ef/config.local.json` (já ignorado)
+- `social/instagram/module/config/config.local.json` (ignorado)
 - Vários `.env*` espalhados (`backend/apps/whatsapp/gateway/.env.dev`, `.env.prod`, `sprinta/**/.env`, etc.)
 
 Recomendação: padronizar para **`*.example` no repo** e **`*.local` ignorado**.
@@ -145,16 +145,16 @@ Maiores diretórios (aprox.):
 - `backend/apps/actual-server/` (~343M) — inclui `node_modules/` e dados locais.
 - `backend/apps/agent-zero/` (~271M) — inclui `node_modules/` e artefatos locais.
 - Sales Chart Messenger (~250M, quando presente) — automação Python + runtime local em `backend/var/` (não deve criar `.venv/` dentro do repo).
-- `backend/apps/automations/scraper/` (histórico) — incluir `.venv/` é anti-pattern; preferir `backend/var/` para estado local.
+- `integration/ef/` (histórico) — incluir `.venv/` é anti-pattern; preferir `backend/var/` para estado local.
 
 Observação: a maior parte do peso atual é *artefato local* (venv, node_modules, perfis Chrome, sessões).
 
 ### 2) Achados críticos (o que precisa ser tratado primeiro)
 
 #### 2.1 Segurança (credenciais em arquivos)
-- Existe arquivo de configuração sensível em `backend/apps/automations/scraper/config.json` (contém credenciais). Ele precisa virar configuração local (ex.: `config.local.json`) e as credenciais devem ser rotacionadas/revogadas.
+- Existe arquivo de configuração sensível em `integration/ef/config.json` (contém credenciais). Ele precisa virar configuração local (ex.: `config.local.json`) e as credenciais devem ser rotacionadas/revogadas.
 - Há múltiplos `.env` e exemplos espalhados; padronizar: somente `*.example` no repo; arquivos reais sempre ignorados.
-- O `backend/apps/instagram/module/` também usa arquivo de config JSON (contém contas/opções). Padronizar para `backend/apps/instagram/module/config/config.local.json` (ignorado) + `config/templates/modules/instagram-module/config.example.json` (template).
+- O `social/instagram/module/` também usa arquivo de config JSON (contém contas/opções). Padronizar para `social/instagram/module/config/config.local.json` (ignorado) + `config/templates/modules/instagram-module/config.example.json` (template).
 
 #### 2.2 Repositórios aninhados (`.git` dentro do monorepo)
 Foram encontrados vários `.git` internos (ex.: `apps/automations/scraper/.git`, `apps/actual-server/.git`, `apps/automations/sprinta/.../.git` e snapshots históricos).
@@ -218,7 +218,7 @@ Manter os caminhos atuais, mas:
 Status atual (monorepo escolhido):
 - `.git` internos removidos (há somente `skincos/.git`).
 - `skincos/.gitmodules` removido (sem submodules).
-- Config sensível do Scraper migrada para `backend/apps/automations/scraper/config.local.json` (ignorado) e criado template em `backend/config/templates/modules/scraper/config.example.json`.
+- Config sensível do Scraper migrada para `integration/ef/config.local.json` (ignorado) e criado template em `backend/config/templates/modules/scraper/config.example.json`.
 
 #### Fase 0 — Congelar e proteger (1–2h)
 1. Criar `backend/docs/MODULES.md` com catálogo de módulos (propósito, como rodar, portas, envs).
@@ -284,7 +284,7 @@ Checklist (dependendo da opção escolhida em 5.3):
 Escolha 1 (rápido e seguro, sem grandes mudanças):
 - criar `skincos/backend/docs/MODULES.md` + `skincos/backend/docs/HANDBOOK.md`;
 - adicionar `backend/scripts/status.sh` e `backend/scripts/clean-local-artifacts.sh` (não destrutivo, com `--dry-run`);
-- mover `backend/apps/automations/scraper/config.json` para `backend/apps/automations/scraper/config.local.json` e ajustar scripts para ler do `.local`.
+- mover `integration/ef/config.json` para `integration/ef/config.local.json` e ajustar scripts para ler do `.local`.
 
 Escolha 2 (reorganização completa):
 - definir se será monorepo ou submodules;
@@ -308,9 +308,9 @@ Principais diretórios (aprox.):
 - `backend/docs/` (~7.6M)
 - `backend/apps/whatsapp/` (~4.4M)
 - `backend/apps/agent-zero/` (~6.2M)
-- `backend/apps/instagram/` (~4.8M)
+- `social/instagram/` (~4.8M)
 - `frontend/` (~4.3M)
-- `backend/apps/automations/scraper/` (~2.9M)
+- `integration/ef/` (~2.9M)
 - `backend/apps/whatsapp/chat-module/` (~1.3M)
 
 Observação: os maiores “vilões” normalmente são `node_modules/`, `.venv/` e sessões/perfis. Hoje grande parte já foi reduzida (o restante é código/docs).

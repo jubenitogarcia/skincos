@@ -64,7 +64,7 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKINCOS_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
-CRM_DIR="$SKINCOS_ROOT/modules/crm/web"
+CRM_DIR="$SKINCOS_ROOT/crm/console"
 CRM_LOCAL_SCRIPT="$CRM_DIR/restart_crm.sh"
 LOG_DIR="$ROOT_DIR"
 API_LOG="$LOG_DIR/crm_api.out"
@@ -87,7 +87,7 @@ fi
 
 kill_procs() {
   echo "[restart_crm] Matando processos antigos..."
-  pkill -f "modules/crm/api/server.js" 2>/dev/null || true
+  pkill -f "crm/api/server.js" 2>/dev/null || true
   # restringir pkill do vite para o diretório do CRM
   pkill -f "vite --port $CRM_PORT" 2>/dev/null || true
   # Fallback: se ainda existir processo node com server.js

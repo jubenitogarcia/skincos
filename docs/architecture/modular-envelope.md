@@ -4,12 +4,12 @@ Skincos is moving from top-level technical buckets to a domain-first envelope.
 
 ## Canonical module roots
 
-- `modules/site-public/website/`
-- `modules/crm/web/`
-- `modules/crm/api/`
-- `modules/automations/n8n/`
-- `modules/meta-ads/meta-ads/`
-- `modules/whatsapp/whatsapp/`
+- `website/`
+- `crm/console/`
+- `crm/api/`
+- `orb/engine/`
+- `ads/meta/`
+- `messaging/channels/whatsapp/`
 
 ## Transitional roots
 

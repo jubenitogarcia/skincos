@@ -95,7 +95,7 @@ jobs:
           set -euo pipefail
           npm install --no-package-lock --no-audit --no-fund
           (cd ../api && npm install --no-package-lock --no-audit --no-fund)
-        working-directory: backend/apps/insumos
+        working-directory: inventory
 
       - name: Deploy Workers (wrangler)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') }}
@@ -104,8 +104,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@3 deploy --config backend/apps/insumos/wrangler.toml --keep-vars
-          npx --yes wrangler@3 deploy --config backend/apps/api/wrangler.toml --keep-vars
+          npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars
+          npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars
 
       - name: Smoke check (basic)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') }}

@@ -61,7 +61,7 @@ jobs:
           PROJECT: ${{ steps.guard.outputs.project }}
         run: |
           set -euo pipefail
-          # ESCALA_API_TARGET is defined in modules/crm/web/wrangler.toml for production.
+          # ESCALA_API_TARGET is defined in crm/console/wrangler.toml for production.
           # Keep dashboard free of duplicate secret bindings for this key.
           npx --yes wrangler@4 pages secret delete ESCALA_API_TARGET --project-name "$PROJECT" --env production >/dev/null || true
           echo "Ensured no duplicate secret binding for ESCALA_API_TARGET in production."
@@ -74,9 +74,9 @@ jobs:
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
         run: |
           set -euo pipefail
-          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config backend/apps/escala-api/wrangler.toml >/dev/null
+          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml >/dev/null
           echo "Synced ESCALA_ACTOR_HMAC_KEY for worker env=production"
-          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config backend/apps/escala-api/wrangler.toml --env staging >/dev/null
+          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml --env staging >/dev/null
           echo "Synced ESCALA_ACTOR_HMAC_KEY for worker env=staging"
 
       - name: Verify Pages env var presence (Escala)

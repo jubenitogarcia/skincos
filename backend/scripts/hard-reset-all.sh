@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Unified orchestrator: stop everything cleanly, then start everything again
 # Modules: Agent Zero (a0), CRM (crm), WhatsApp (official preferred; legacy gateway/stub fallback),
-# Actual Server, Sales Chart Messenger, (optional) instagrapi (vendorizado em backend/apps/instagram)
+# Actual Server, Sales Chart Messenger, (optional) instagrapi (vendorizado em social/instagram)
 #
 # Usage examples:
 #   scripts/hard-reset-all.sh                 # default: restart all with sane defaults
@@ -18,14 +18,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT_DIR/backend/scripts/env.sh"
-CRM_DIR="$ROOT_DIR/modules/crm/web"
+CRM_DIR="$ROOT_DIR/crm/console"
 A0_DIR="$ROOT_DIR/backend/apps/agent-zero"
-IG_DIR="$ROOT_DIR/backend/apps/instagram/instagrapi"
-IG_MODULE_DIR="$ROOT_DIR/backend/apps/instagram/module"
+IG_DIR="$ROOT_DIR/social/instagram/instagrapi"
+IG_MODULE_DIR="$ROOT_DIR/social/instagram/module"
 
-WA_OFFICIAL_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/official-module"
-WA_LEGACY_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/gateway"
-WA_STUB_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/stub"
+WA_OFFICIAL_DIR="$ROOT_DIR/messaging/channels/whatsapp/official-module"
+WA_LEGACY_DIR="$ROOT_DIR/messaging/channels/whatsapp/gateway"
+WA_STUB_DIR="$ROOT_DIR/messaging/channels/whatsapp/stub"
 ACTUAL_DIR="$ROOT_DIR/backend/apps/actual-server"
 
 # Config via env or defaults

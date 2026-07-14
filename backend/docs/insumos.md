@@ -6,10 +6,10 @@ O objetivo é manter o CRM `crm.skincos.com.br` consumindo a API por `same-origi
 
 ## Entrypoint
 
-- Worker: [backend/apps/insumos/workers/index.js](../apps/insumos/workers/index.js)
-- Config (Wrangler): [backend/apps/insumos/wrangler.toml](../apps/insumos/wrangler.toml)
-- Migrações D1: [backend/apps/insumos/migrations](../apps/insumos/migrations)
-- Store D1 (lógica): [backend/apps/insumos/src/d1Store.js](../apps/insumos/src/d1Store.js)
+- Worker: [inventory/workers/index.js](../apps/insumos/workers/index.js)
+- Config (Wrangler): [inventory/wrangler.toml](../apps/insumos/wrangler.toml)
+- Migrações D1: [inventory/migrations](../apps/insumos/migrations)
+- Store D1 (lógica): [inventory/src/d1Store.js](../apps/insumos/src/d1Store.js)
 
 ## Rotas públicas
 
@@ -149,7 +149,7 @@ Objetivo: popular o D1 local sem tocar o banco online.
 ./backend/scripts/insumos-d1-export.cjs /caminho/para/backup.json
 ```
 
-1) No Worker local, habilite seed (somente dev) via `backend/apps/insumos/.dev.vars`:
+1) No Worker local, habilite seed (somente dev) via `inventory/.dev.vars`:
 
 ```
 ALLOW_DEV_SEED=true
@@ -186,7 +186,7 @@ O projeto roda em D1 (ver `INSUMOS_STORAGE=d1` em `wrangler.toml`). Sheets é **
 
 Para habilitar integração com Google Sheets localmente:
 
-- Copie o arquivo [backend/apps/insumos/.dev.vars.example](../apps/insumos/.dev.vars.example) para `backend/apps/insumos/.dev.vars`
+- Copie o arquivo [inventory/.dev.vars.example](../apps/insumos/.dev.vars.example) para `inventory/.dev.vars`
 - Preencha `SPREADSHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL` e `GOOGLE_PRIVATE_KEY`
 
 Depois reinicie:

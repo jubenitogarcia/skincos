@@ -37,7 +37,7 @@ Objetivo: validar mudanças em um ambiente isolado antes de produção.
 
 ## Escala API
 
-1. Manter `staging` habilitado em `backend/apps/escala-api/wrangler.toml`.
+1. Manter `staging` habilitado em `workforce/schedule/wrangler.toml`.
 2. Sincronizar `ESCALA_ACTOR_HMAC_KEY` para staging apenas pelo workflow de deploy correspondente.
 3. Validar `/api/escala/health` e leitura de profissionais antes de promover o CRM que depende dessa API.
 

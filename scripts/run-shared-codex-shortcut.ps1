@@ -280,7 +280,7 @@ function Invoke-EfAppPythonMode {
         -EnvVar ($efAppEnvVars + @("EF_MODE=$Mode", $headlessValue) + $ExtraEnvVar) `
         -SkipNodeCheck `
         -SkipNpmCheck `
-        -Command "cd backend/apps/automations/scraper && if [[ ! -x ./.venv/bin/python ]]; then echo 'Scraper venv is missing. Run EF App Setup first.'; exit 1; fi && ./.venv/bin/python run_scraper.py"
+        -Command "cd integration/ef && if [[ ! -x ./.venv/bin/python ]]; then echo 'Scraper venv is missing. Run EF App Setup first.'; exit 1; fi && ./.venv/bin/python run_scraper.py"
 }
 
 function Invoke-ShortcutActionInternal {
@@ -292,7 +292,7 @@ function Invoke-ShortcutActionInternal {
         "RuntimeSetup" { & (Join-Path $scriptRoot "setup-shared-runtime.ps1") }
         "RuntimeValidate" { & (Join-Path $scriptRoot "validate-shared-runtime.ps1") }
         "WslAccountBootstrap" {
-            Invoke-ShortcutWsl -SkipBootstrapCheck -Command "cd modules/automations/n8n && bash scripts/bootstrap-imported-wsl-account.sh"
+            Invoke-ShortcutWsl -SkipBootstrapCheck -Command "cd orb/engine && bash scripts/bootstrap-imported-wsl-account.sh"
         }
         "GitHubAuthLoginWsl" {
             Invoke-ShortcutWsl `
@@ -312,7 +312,7 @@ function Invoke-ShortcutActionInternal {
         "NewWorktree" { & (Join-Path $scriptRoot "new-shared-worktree.ps1") -Fetch }
         "WebsiteLocalStart" {
             $websiteSourceWsl = Convert-ToBashLiteral -Value (Convert-WindowsPathToWsl -Path $websiteSourceRoot)
-            $websiteLocalCommand = 'mkdir -p "$HOME/.cache/skincos-local-root/modules/site-public/website" && rsync -a --delete --exclude node_modules --exclude .next {0}/modules/site-public/website/ "$HOME/.cache/skincos-local-root/modules/site-public/website/" && WEBSITE_SOURCE_ROOT="$HOME/.cache/skincos-local-root" WEBSITE_SKIP_WORKERD_CHECK=0 WEBSITE_STATE_DIR={1} WEBSITE_PID_FILE={2} WEBSITE_LOG_FILE={3} WEBSITE_PORT_FILE={4} WEBSITE_DETACH=1 OPEN_BROWSER=0 bash ./scripts/run-local-website.sh' -f `
+            $websiteLocalCommand = 'mkdir -p "$HOME/.cache/skincos-local-root/website" && rsync -a --delete --exclude node_modules --exclude .next {0}/website/ "$HOME/.cache/skincos-local-root/website/" && WEBSITE_SOURCE_ROOT="$HOME/.cache/skincos-local-root" WEBSITE_SKIP_WORKERD_CHECK=0 WEBSITE_STATE_DIR={1} WEBSITE_PID_FILE={2} WEBSITE_LOG_FILE={3} WEBSITE_PORT_FILE={4} WEBSITE_DETACH=1 OPEN_BROWSER=0 bash ./scripts/run-local-website.sh' -f `
                 $websiteSourceWsl, `
                 (Convert-ToBashLiteral -Value $tmpRootWsl), `
                 (Convert-ToBashLiteral -Value $websitePidWsl), `
@@ -368,14 +368,14 @@ function Invoke-ShortcutActionInternal {
                 -EnvVar $efAppEnvVars `
                 -SkipNodeCheck `
                 -SkipNpmCheck `
-                -Command "cd backend/apps/automations/scraper && if ! command -v python3 >/dev/null 2>&1; then echo 'python3 is not available in WSL. Install Python 3 before using the Espaço Facial app automations.'; exit 1; fi && if [[ ! -d .venv ]]; then python3 -m venv .venv; fi && ./.venv/bin/python -m pip install --upgrade pip && ./.venv/bin/pip install -r requirements.lock"
+                -Command "cd integration/ef && if ! command -v python3 >/dev/null 2>&1; then echo 'python3 is not available in WSL. Install Python 3 before using the Espaço Facial app automations.'; exit 1; fi && if [[ ! -d .venv ]]; then python3 -m venv .venv; fi && ./.venv/bin/python -m pip install --upgrade pip && ./.venv/bin/pip install -r requirements.lock"
         }
         "EfAppSelftest" {
             Invoke-ShortcutWsl `
                 -EnvVar ($efAppEnvVars + @("HEADLESS=1")) `
                 -SkipNodeCheck `
                 -SkipNpmCheck `
-                -Command "cd backend/apps/automations/scraper && if [[ ! -x ./.venv/bin/python ]]; then echo 'Scraper venv is missing. Run EF App Setup first.'; exit 1; fi && ./.venv/bin/python selftest.py"
+                -Command "cd integration/ef && if [[ ! -x ./.venv/bin/python ]]; then echo 'Scraper venv is missing. Run EF App Setup first.'; exit 1; fi && ./.venv/bin/python selftest.py"
         }
         "EfAppCaixa" { Invoke-EfAppPythonMode -Mode "caixa" }
         "EfAppAgendaDelta" { Invoke-EfAppPythonMode -Mode "agenda_delta" }
@@ -384,42 +384,42 @@ function Invoke-ShortcutActionInternal {
                 -EnvVar ($efAppEnvVars + @("HEADLESS=1", "EF_OUTPUT_BASE_DIR=$efAppOutputRoot")) `
                 -SkipNodeCheck `
                 -SkipNpmCheck `
-                -Command "cd backend/apps/automations/scraper && if [[ ! -x ./.venv/bin/python ]]; then echo 'Scraper venv is missing. Run EF App Setup first.'; exit 1; fi && bash ./run_agenda_full_sync_all_units.sh"
+                -Command "cd integration/ef && if [[ ! -x ./.venv/bin/python ]]; then echo 'Scraper venv is missing. Run EF App Setup first.'; exit 1; fi && bash ./run_agenda_full_sync_all_units.sh"
         }
         "EfAppBookingApi" { Invoke-EfAppPythonMode -Mode "booking_api" }
         "EfAppProcedures" { Invoke-EfAppPythonMode -Mode "procedures" }
         "EfAppClientRegistration" {
-            throw "The client registration export is still documented in backend/apps/automations/scraper/README.md, but no runnable implementation is wired in run_scraper.py yet."
+            throw "The client registration export is still documented in integration/ef/README.md, but no runnable implementation is wired in run_scraper.py yet."
         }
         "EfAppRecorder" { Invoke-EfAppPythonMode -Mode "recorder" -Headed }
         "EfAppRotateAgendaSyncToken" {
             Invoke-ShortcutWsl `
                 -EnvVar $efAppEnvVars `
-                -Command "cd backend/apps/automations/scraper && bash ./scripts/rotate_agenda_sync_token.sh --website-dir ../../../../modules/site-public/website"
+                -Command "cd integration/ef && bash ./scripts/rotate_agenda_sync_token.sh --website-dir ../../../../website"
         }
         "OrbStatus" {
-            Invoke-ShortcutWsl -Command "cd modules/automations/n8n && bash scripts/manage-mini-pc-system-services.sh status"
+            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/manage-mini-pc-system-services.sh status"
         }
         "OrbRestart" {
-            Invoke-ShortcutWsl -Command "cd modules/automations/n8n && bash scripts/manage-mini-pc-system-services.sh restart"
+            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/manage-mini-pc-system-services.sh restart"
         }
         "OrbRepair" {
-            Invoke-ShortcutWsl -Command "cd modules/automations/n8n && bash scripts/reconcile-mini-pc-runtime-postgres.sh"
+            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/reconcile-mini-pc-runtime-postgres.sh"
         }
         "OrbLogs" {
-            Invoke-ShortcutWsl -Command "cd modules/automations/n8n && bash scripts/manage-mini-pc-system-services.sh logs 200"
+            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/manage-mini-pc-system-services.sh logs 200"
         }
         "MetaAdsPublishPreflight" {
-            Invoke-ShortcutWsl -Command "cd modules/automations/n8n && bash scripts/validate-meta-ads-publish-preflight.sh"
+            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/validate-meta-ads-publish-preflight.sh"
         }
         "OrbValidate" {
-            Invoke-ShortcutWsl -Command "cd modules/automations/n8n && bash scripts/validate-mini-pc-system-runtime.sh"
+            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/validate-mini-pc-system-runtime.sh"
         }
         "OrbBusinessValidate" {
-            Invoke-ShortcutWsl -Command "cd modules/automations/n8n && bash scripts/validate-mini-pc-business-readiness.sh"
+            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/validate-mini-pc-business-readiness.sh"
         }
         "OrbAudit" {
-            Invoke-ShortcutWsl -Command "cd modules/automations/n8n && bash scripts/audit-mini-pc-service-footprint.sh"
+            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/audit-mini-pc-service-footprint.sh"
         }
         "OrbSupportServicesApply" {
             Invoke-ShortcutWsl -Command "bash ./scripts/install-shared-support-system-services.sh --apply"
@@ -445,7 +445,7 @@ function Invoke-ShortcutActionInternal {
                 " --project-id " + (Convert-ToBashLiteral -Value $projectId)
             }
 
-            Invoke-ShortcutWsl -Command ("cd modules/automations/n8n && bash scripts/import-clinic-workflows-live.sh{0}{1}" -f $applyFlag, $projectArg)
+            Invoke-ShortcutWsl -Command ("cd orb/engine && bash scripts/import-clinic-workflows-live.sh{0}{1}" -f $applyFlag, $projectArg)
         }
         "WorkspaceMenu" { Show-WorkspaceMenu }
         "ContextMenu" { Show-ContextMenu }

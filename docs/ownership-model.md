@@ -7,10 +7,10 @@
 
 ## Modelo recomendado
 
-- `modules/site-public/website/`: owner de produto público + backup operacional.
+- `website/`: owner de produto público + backup operacional.
 - `frontend/`: owner do CRM + backup operacional.
-- `modules/crm/api/`: owner de backend transacional + backup operacional.
-- `backend/apps/escala-api/`: owner da agenda/escala + backup operacional.
+- `crm/api/`: owner de backend transacional + backup operacional.
+- `workforce/schedule/`: owner da agenda/escala + backup operacional.
 - `backend/config` e `backend/libs`: owner de plataforma/automação + backup operacional.
 - `.github/` e `docs/`: owner de plataforma/entrega.
 

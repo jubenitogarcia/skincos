@@ -16,7 +16,7 @@ Política de lockfiles: `backend/docs/LOCKFILES.md`.
 ## Opção B (opt-in): pnpm workspace do backend
 Existe um workspace pnpm em `backend/` para unificar apenas os projetos simples (sem workspaces aninhados):
 - `backend/apps/crm-api/`
-- `backend/apps/instagram/module/`
+- `social/instagram/module/`
 - `backend/apps/whatsapp/official-module/`
 - `backend/apps/whatsapp/official/`
 

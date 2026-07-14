@@ -59,8 +59,8 @@ jobs:
                 prNumber: '${{ steps.pr.outputs.pr_number }}',
                 outputName: 'workers_changed',
                 prefixes: [
-                  'backend/apps/api/',
-                  'backend/apps/insumos/',
+                  'api/',
+                  'inventory/',
                 ],
                 exact: [
                   'backend/scripts/cloudflare-workers.sh',

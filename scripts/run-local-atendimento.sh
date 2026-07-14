@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-FRONTEND_DIR="$ROOT_DIR/modules/crm/web"
-CRM_API_DIR="$ROOT_DIR/modules/crm/api"
+FRONTEND_DIR="$ROOT_DIR/crm/console"
+CRM_API_DIR="$ROOT_DIR/crm/api"
 
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
 if [[ -n "${CRM_API_PORT+x}" ]]; then
@@ -203,8 +203,8 @@ stop_owned_port_listener() {
   for pid in $pids; do
     local args
     args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
-    if [[ "$args" == *"$ROOT_DIR"* || "$args" == *"modules/crm/api/server.js"* ]]; then
-      if [[ "$args" == *"vite"* || "$args" == *"modules/crm/api/server.js"* || "$args" == *"npm run dev"* ]]; then
+    if [[ "$args" == *"$ROOT_DIR"* || "$args" == *"crm/api/server.js"* ]]; then
+      if [[ "$args" == *"vite"* || "$args" == *"crm/api/server.js"* || "$args" == *"npm run dev"* ]]; then
         echo "[atendimento-local] Encerrando $label preso na porta $port (pid: $pid)"
         terminate_tree "$pid"
       fi

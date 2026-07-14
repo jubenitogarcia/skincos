@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "modules/site-public/website/**"
+      - "website/**"
       - ".github/workflows/deploy-website-cloudflare.yml"
   workflow_dispatch:
 
@@ -65,7 +65,7 @@ jobs:
         with:
           node-version: 22.12.0
           cache: npm
-          cache-dependency-path: modules/site-public/website/package-lock.json
+          cache-dependency-path: website/package-lock.json
 
       - name: Upgrade npm
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -76,23 +76,23 @@ jobs:
 
       - name: Install dependencies
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm ci
 
       - name: Typecheck
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run typecheck
 
       - name: Lint
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run lint
 
       - name: Sync worker secrets (optional)
         if: ${{ steps.guard.outputs.skip != 'true' && (env.NEXT_PUBLIC_META_PIXEL_ID != '' || env.META_PIXEL_ID != '' || env.META_ACCESS_TOKEN != '' || env.AGENDA_SYNC_TOKEN != '' || env.TURNSTILE_SECRET_KEY != '' || env.CADASTRO_WHEEL_SECRET != '' || env.TITAN_SMTP_HOST != '' || env.TITAN_SMTP_PORT != '' || env.TITAN_SMTP_USER_BARRA != '' || env.TITAN_SMTP_PASS_BARRA != '' || env.TITAN_SMTP_USER_NH != '' || env.TITAN_SMTP_PASS_NH != '' || env.BOOKING_EMAIL_FROM != '' || env.RESEND_API_KEY != '' || env.BOOKING_EMAIL_WEBHOOK_URL != '' || env.BOOKING_EMAIL_WEBHOOK_SECRET != '' || env.BOOKING_WHATSAPP_WEBHOOK_URL != '' || env.BOOKING_WHATSAPP_WEBHOOK_SECRET != '' || env.BOOKING_WEBHOOK_URL != '' || env.BOOKING_WEBHOOK_SECRET != '' || env.TRACKING_DASHBOARD_TOKEN != '' || env.BOOKING_EMAIL_LOGO_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL != '' || env.INSTAGRAM_SYNC_TOKEN != '') }}
         continue-on-error: true
-        working-directory: modules/site-public/website
+        working-directory: website
         run: |
           is_placeholder() {
             local value="$1"
@@ -138,7 +138,7 @@ jobs:
 
       - name: Deploy website (OpenNext -> Workers)
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -150,7 +150,7 @@ jobs:
 
       - name: Deploy SKINCOS legal hub (OpenNext -> Workers)
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run deploy:skincos
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -162,7 +162,7 @@ jobs:
 
       - name: Sync Cloudflare security settings (optional)
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run cf:security
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SECURITY_API_TOKEN != '' && secrets.CLOUDFLARE_SECURITY_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
@@ -170,7 +170,7 @@ jobs:
 
       - name: Verify Cloudflare security settings
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run cf:security:check
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SECURITY_API_TOKEN != '' && secrets.CLOUDFLARE_SECURITY_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
@@ -178,7 +178,7 @@ jobs:
 
       - name: Deploy redirects worker (esfa.co)
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run deploy:esfa
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -186,7 +186,7 @@ jobs:
 
       - name: Sync esfa.co managed redirects (D1)
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run custom-urls:migrate:esfa -- --apply --remote
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -194,7 +194,7 @@ jobs:
 
       - name: Smoke test production
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run smoke
         env:
           SMOKE_AGENDA_TOKEN: ${{ secrets.AGENDA_SYNC_TOKEN }}

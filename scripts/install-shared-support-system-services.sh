@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-UNIT_SRC="$ROOT_DIR/ops/runtime/systemd/system"
+UNIT_SRC="$ROOT_DIR/ops/runtime/units"
 UNIT_DEST="${UNIT_DEST:-/etc/systemd/system}"
 REPO_ROOT="${REPO_ROOT:-$ROOT_DIR}"
 CRM_RUNTIME_HOME="${CRM_RUNTIME_HOME:-/mnt/c/CodexRuntime/crm-api}"

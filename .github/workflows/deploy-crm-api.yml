@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "modules/crm/api/**"
+      - "crm/api/**"
       - "backend/pnpm-lock.yaml"
       - "backend/pnpm-workspace.yaml"
       - ".github/workflows/deploy-crm-api.yml"

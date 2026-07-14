@@ -6,7 +6,7 @@ const repoRoot = process.cwd()
 const policyPath = path.join(repoRoot, '.github/security/js-security-exceptions.json')
 
 const policy = JSON.parse(readFileSync(policyPath, 'utf8'))
-const trackedFiles = execFileSync('git', ['ls-files', '-z', 'modules/crm/web', 'modules/site-public/website'], {
+const trackedFiles = execFileSync('git', ['ls-files', '-z', 'crm/console', 'website'], {
   cwd: repoRoot,
   encoding: 'utf8',
 })

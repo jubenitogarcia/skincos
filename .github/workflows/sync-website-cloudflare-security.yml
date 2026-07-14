@@ -36,16 +36,16 @@ jobs:
         with:
           node-version: 22.12.0
           cache: npm
-          cache-dependency-path: modules/site-public/website/package-lock.json
+          cache-dependency-path: website/package-lock.json
 
       - name: Install dependencies
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm ci
 
       - name: Sync Cloudflare security settings
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run cf:security
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SECURITY_API_TOKEN != '' && secrets.CLOUDFLARE_SECURITY_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
@@ -53,7 +53,7 @@ jobs:
 
       - name: Verify Cloudflare security settings
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        working-directory: modules/site-public/website
+        working-directory: website
         run: npm run cf:security:check
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SECURITY_API_TOKEN != '' && secrets.CLOUDFLARE_SECURITY_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
