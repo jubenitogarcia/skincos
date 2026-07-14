@@ -1,5 +1,20 @@
 # DECISIONS
 
+## 2026-07-14 - Enforce a compact shared-code and runtime-state footprint
+
+- Decision: keep shared code and tracked documentation under
+  `C:\CodexShared`, live runtime and durable operator artifacts under
+  `C:\CodexRuntime`, and only mandatory Windows/Codex session state in the
+  user profile. Retire the top-level n8n rollback clone and the atendimento
+  recovery only after validating current runtime backup, active state, secrets,
+  services, and health endpoints.
+- Why: rollback copies outside the active runtime duplicated sensitive state,
+  obscured the canonical source, and consumed substantial local storage.
+- Impact: a worktree may be removed only after it is clean and integrated.
+  `npm run codex:footprint:audit` is the recurring read-only audit surface;
+  CI blocks new operational references to the retired roots. Codex-managed
+  worktrees and active App caches remain out of cleanup scope until closed.
+
 ## 2026-07-13 - Split durable operator artifacts from local authentication state
 
 - Keep Codex authentication, browser profiles, private environment overlays,
@@ -82,18 +97,17 @@
   units, docs, bootstrap scripts, and operator workflows should resolve n8n
   code from `skincos\n8n`.
 
-## 2026-07-03 - Keep the retired top-level n8n clone only as rollback archive
+## 2026-07-14 - Decommission the retired top-level n8n rollback clone
 
-- Decision: archive the former top-level `C:\CodexShared\Projetos\n8n` clone at
-  `C:\CodexShared\Projetos\_bootstrap\n8n-top-level-legacy-20260703T181656`
-  instead of keeping it side-by-side with the active monorepo.
+- Decision: remove the former top-level `C:\CodexShared\Projetos\n8n` rollback
+  clone after confirming a fresh runtime backup, active state and secret
+  equivalence, and healthy services/endpoints.
 - Why: the live services already run from
-  `C:\CodexShared\Projetos\skincos\modules\automations\n8n`
-  and leaving a second `n8n` root in `Projetos\` would keep operational
-  ambiguity alive.
-- Impact: active automation work must happen from
-  `skincos\modules\automations\n8n`; the archived copy is rollback-only and
-  should not receive new edits.
+  `C:\CodexShared\Projetos\skincos\modules\automations\n8n`; a second source
+  tree duplicated sensitive state and kept operational ambiguity alive.
+- Impact: active automation work happens only from
+  `skincos\modules\automations\n8n`; rollback is provided by Git history and
+  the managed runtime backup contract, not a second local clone.
 
 ## 2026-07-03 - Adopt a modular envelope rooted at modules/platform/ops/archive
 

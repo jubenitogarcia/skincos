@@ -33,6 +33,8 @@
     "codex:runtime:setup": "powershell -ExecutionPolicy Bypass -File .\\scripts\\setup-shared-runtime.ps1",
     "codex:runtime:validate": "powershell -ExecutionPolicy Bypass -File .\\scripts\\validate-shared-runtime.ps1",
     "codex:shared:status": "powershell -ExecutionPolicy Bypass -File .\\scripts\\show-shared-codex-status.ps1",
+    "codex:footprint:audit": "powershell -ExecutionPolicy Bypass -File .\\scripts\\audit-skincos-footprint.ps1",
+    "codex:footprint:validate": "powershell -ExecutionPolicy Bypass -File .\\scripts\\audit-skincos-footprint.ps1 -FailOnDrift",
     "codex:shared:new-worktree": "powershell -ExecutionPolicy Bypass -File .\\scripts\\new-shared-worktree.ps1",
     "codex:thread:bootstrap": "powershell -ExecutionPolicy Bypass -File .\\scripts\\print-codex-thread-bootstrap.ps1",
     "module:automations:n8n:service:status": "npm --prefix modules/automations/n8n run service:status --",

@@ -18,9 +18,8 @@
   `C:\CodexShared\Projetos\skincos\modules\meta-ads\meta-ads`.
 - The WhatsApp workspace now lives at
   `C:\CodexShared\Projetos\skincos\modules\whatsapp\whatsapp`.
-- The former top-level `C:\CodexShared\Projetos\n8n` clone is no longer active
-  and now lives only as a rollback archive at
-  `C:\CodexShared\Projetos\_bootstrap\n8n-top-level-legacy-20260703T181656`.
+- The former top-level `C:\CodexShared\Projetos\n8n` clone was retired after
+  the embedded runtime handoff was validated; it is not a rollback source.
 - Shared worktree root standardized at `C:\CodexShared\Worktrees\skincos`.
 - The shared clone `origin` now points to
   `https://github.com/jubenitogarcia/skincos.git`, not to a legacy local path.
@@ -59,6 +58,10 @@
 - The live orb stack now runs from `skincos-*` system services under
   `User=skincos`, with code in `modules/automations/n8n` and machine-scoped
   runtime state in `C:\CodexRuntime\n8n`.
+- `modules/automations/n8n/scripts/lib/runtime-paths.{sh,js}` are tracked,
+  secret-free runtime path contracts. The full system validator currently runs
+  from the canonical clone because the ignored live Livia export still carries
+  transient secret/state data; it must not be copied into a worktree or Git.
 - The canonical live orb env contract is now split into
   `C:\CodexRuntime\n8n\env\n8n.env`,
   `C:\CodexRuntime\n8n\env\n8n-business.env`, and
@@ -103,17 +106,16 @@
 - The local CRM launcher now repairs the shared-clone first boot by generating
   `modules/crm/web/dist/` when absent and syncing only non-secret local auth
   toggles into `modules/crm/web/.dev.vars` for Pages local.
-- Strict preflight now passes all live/Cloudflare checks in Windows after
-  authenticating `gh` as `jubenitogarcia`, and WSL `gh` now also resolves to
-  the same GitHub account via `/home/julia/.config/gh/hosts.yml`.
+- Strict preflight passes the live/Cloudflare checks after authenticating `gh`
+  as `jubenitogarcia`; the supported GitHub CLI session is the WSL `admin`
+  operator session.
 - The `admin` Windows account now runs the imported `Ubuntu-24.04` WSL distro
   from `C:\Users\admin\AppData\Local\wsl\{aa973afc-c57c-49d3-810d-ff364865ce84}`
   after the original registry entry pointed to a missing path and the original
   `C:\WSL\Ubuntu-24.04\ext4.vhdx` mount was blocked by access control for this
   session.
-- The shared clone is currently on branch `codex/julia/shared-bootstrap` at
-  `5aad9549`; `origin/main` is `aeacbab2`, so the shared baseline is not yet a
-  clean `main` checkout.
+- The shared clone tracks a clean, synchronized `main`; implementation work
+  starts from a dedicated `codex/admin/<task>` worktree.
 - The live `n8n` runtime is healthy and uses the local PostgreSQL database
   `n8n_runtime` as its active metadata store, not the legacy
   `C:\CodexRuntime\n8n\n8n-home\database.sqlite`.
@@ -176,8 +178,6 @@
 
 ## Next Recommended Steps
 
-- Reconcile `codex/julia/shared-bootstrap` against `origin/main` so the shared
-  repo can return to a clean baseline before destructive cleanup.
 - Review and, if needed, reauthorize the imported `Google Calendar (Skincos)`
   credential against the real calendar scopes required by
   `WORKFLOW_02_AGENDAMENTO.json`.
@@ -189,6 +189,9 @@
   now that the runtime itself is healthy again.
 - Run the live functional smoke only after that final binding step:
   webhook inbound, Evolution inbound, and Google Calendar creation.
+- Migrate the ignored, sensitive live Livia workflow snapshot into a managed
+  runtime export and refactor its maintenance scripts to read it there; until
+  then, run `service:validate` from the canonical clone only.
 - Keep `scripts/install-shared-support-system-services.sh` as the canonical way
   to reapply `crm-api`, `booking-api`, and `cloudflared-cs` support services on
   the shared runtime model.
@@ -206,3 +209,9 @@
   document only the variable names and expected source.
 - Treat `C:\CodexShared\Projetos\skincos` as the only supported local code base
   for shared work on this machine.
+- Worktree lifecycle is mandatory: create one per task, publish and integrate
+  its branch, then remove it only when clean and confirmed integrated. Preserve
+  dirty, active, unmerged, or Codex-managed worktrees.
+- Run `npm run codex:footprint:audit` periodically. It reports worktree drift,
+  retired paths, the retired scheduled task, n8n backup freshness, disk space,
+  Git integrity, and local/public Orb and CRM health without reading secrets.
