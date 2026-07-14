@@ -32,6 +32,7 @@ import { startHarmoniaWorker } from './server/harmonia/worker.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
 import { parseUnifiedChannelId, unifiedChannelUrl, unifiedSystemUrl } from './server/unifiedSystemUrl.js'
+import { configuredCorsOrigins, isAllowedCrmCorsOrigin } from './server/corsPolicy.js'
 
 // Axios for facade requests to Unified System
 import axios from 'axios'
@@ -497,9 +498,22 @@ app.get('/api/core/status', async (req, res) => {
     }
 })
 
-// Critical: Enhanced CORS configuration to prevent API access issues
+const CRM_CORS_ORIGINS = configuredCorsOrigins()
+const isAllowedCorsOrigin = (origin) => isAllowedCrmCorsOrigin(origin, { allowedOrigins: CRM_CORS_ORIGINS })
+const setAllowedCorsHeaders = (req, res) => {
+    const origin = req.headers.origin
+    if (!origin || !isAllowedCorsOrigin(origin)) return false
+    res.header('Access-Control-Allow-Origin', origin)
+    res.header('Access-Control-Allow-Credentials', 'true')
+    res.header('Vary', 'Origin')
+    return true
+}
+
+// Credentialed CORS is restricted to explicit product origins.
 app.use(cors({
-    origin: true, // Allow all origins in development
+    origin(origin, callback) {
+        callback(null, isAllowedCorsOrigin(origin))
+    },
     credentials: true, // Essential for SSE/EventSource and auth cookies
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With', 'Accept', 'X-CSRF-Token', 'X-Tenant-Key', 'X-User-Role', 'X-CRM-Role', 'X-Role'],
@@ -510,10 +524,11 @@ app.use(cors({
 // Handle preflight OPTIONS requests early to prevent middleware conflicts
 app.use((req, res, next) => {
     if (req.method === 'OPTIONS') {
-        res.header('Access-Control-Allow-Origin', req.headers.origin || '*')
+        if (req.headers.origin && !setAllowedCorsHeaders(req, res)) {
+            return res.sendStatus(403)
+        }
         res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH')
         res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With, Accept, X-CSRF-Token, X-Tenant-Key, X-User-Role, X-CRM-Role, X-Role')
-        res.header('Access-Control-Allow-Credentials', 'true')
         return res.sendStatus(200)
     }
     next()
@@ -3428,8 +3443,7 @@ app.get('/api/ai-suppression/events', (req, res) => {
     res.setHeader('Pragma', 'no-cache')
     res.setHeader('Expires', '0')
     res.setHeader('Connection', 'keep-alive')
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
-    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    setAllowedCorsHeaders(req, res)
     res.setHeader('X-Accel-Buffering', 'no') // Disable nginx buffering
 
     // Flush headers immediately
@@ -3518,8 +3532,7 @@ app.get('/api/conversations/events', (req, res) => {
     res.setHeader('Pragma', 'no-cache')
     res.setHeader('Expires', '0')
     res.setHeader('Connection', 'keep-alive')
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
-    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    setAllowedCorsHeaders(req, res)
     res.setHeader('X-Accel-Buffering', 'no') // Disable proxy buffering
 
     // Flush headers and set status immediately
