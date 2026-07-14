@@ -32,6 +32,7 @@ import { startHarmoniaWorker } from './server/harmonia/worker.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
 import { parseUnifiedChannelId, unifiedChannelUrl, unifiedSystemUrl } from './server/unifiedSystemUrl.js'
+import { resolveEvolutionMediaUrl } from './server/whatsappMediaUrl.js'
 
 // Axios for facade requests to Unified System
 import axios from 'axios'
@@ -4848,18 +4849,7 @@ function extractEvolutionMessageMeta(message) {
             msg?.ptvMessage?.directPath ||
             msg?.stickerMessage?.directPath
         )
-        const buildFromDirectPath = (value) => {
-            const path = String(value || '').trim()
-            if (!path) return undefined
-            if (path.startsWith('http://') || path.startsWith('https://')) return path
-            if (path.startsWith('/')) return `https://mmg.whatsapp.net${path}`
-            return `https://mmg.whatsapp.net/${path}`
-        }
-        const rawCandidate = typeof candidate === 'string' ? candidate.trim() : ''
-        const directUrl = buildFromDirectPath(directPath)
-        if (rawCandidate && !rawCandidate.startsWith('https://web.whatsapp.net')) return rawCandidate
-        if (directUrl) return directUrl
-        return rawCandidate || undefined
+        return resolveEvolutionMediaUrl(candidate, directPath)
     }
     const resolveMimeType = (msg) => {
         const candidate = (
