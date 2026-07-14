@@ -11,6 +11,7 @@ try {
 const crypto = require('crypto');
 const qrcode = require('qrcode-terminal');
 const express = require('express');
+const { normalizeWhatsappContactId } = require('./inputValidation');
 const axios = require('axios');
 const cors = require('cors');
 const path = require('path');
@@ -388,7 +389,11 @@ async function listCommonGroups(contactIdRaw) {
         const e = new Error('Parâmetro contactId/phone é obrigatório');
         e.statusCode = 400; throw e;
     }
-    const contactId = contactIdRaw.includes('@') ? contactIdRaw : `${String(contactIdRaw).replace(/\D/g, '')}@c.us`;
+    const contactId = normalizeWhatsappContactId(contactIdRaw);
+    if (!contactId) {
+        const e = new Error('Parâmetro contactId/phone inválido');
+        e.statusCode = 400; throw e;
+    }
     const chats = await client.getChats();
     const groups = chats.filter(c => c.isGroup === true);
     const result = [];
@@ -1605,7 +1610,8 @@ app.get('/v1/messages', (req, res) => {
     let results = messagesStore;
     if (type) results = results.filter(m => m.type === type);
     if (to) {
-        const target = to.includes('@c.us') ? to : `${to.replace(/\D/g, '')}@c.us`;
+        const target = normalizeWhatsappContactId(to);
+        if (!target) return res.status(400).json({ success: false, message: 'Parâmetro to inválido' });
         results = results.filter(m => m.to === target);
     }
     const limited = results.slice(-Number(limit)).reverse();
