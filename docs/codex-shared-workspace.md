@@ -262,6 +262,23 @@ Exemplo de saída esperada:
    `%LOCALAPPDATA%\Codex\skincos\`; os artefatos duráveis vão para o runtime
    privado em `C:\CodexRuntime\operator\admin\skincos\`.
 7. Antes de handoff, atualizar `CODEX_CONTEXT.md`, `TASKS.md` e `DECISIONS.md`.
+8. Após PR integrado e worktree limpo, remover o worktree com
+   `git -C C:\CodexShared\Projetos\skincos worktree remove <caminho>` e
+   `git -C C:\CodexShared\Projetos\skincos worktree prune`. Nunca remover
+   worktrees sujos, sem integração confirmada ou gerenciados pelo Codex App.
+
+## Auditoria contínua de footprint
+
+Rode periodicamente, ou antes de uma limpeza, a auditoria somente-leitura:
+
+```powershell
+npm run codex:footprint:audit
+```
+
+Ela confere worktrees limpos/mesclados, caminhos aposentados, a tarefa
+agendada antiga, backup n8n, espaço em disco, `git fsck` e health local/público
+de Orb e CRM. Use `npm run codex:footprint:validate` em uma sessão elevada
+somente quando todos os legados reportados tiverem sido removidos.
 
 Quando o worktree é aberto no Codex App, os botões do topo passam a chamar os
 scripts relativos daquele próprio worktree, sem cair de volta no clone

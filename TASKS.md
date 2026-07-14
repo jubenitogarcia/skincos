@@ -2,8 +2,6 @@
 
 ## Priority Backlog
 
-- [ ] Reconcile the shared `codex/julia/shared-bootstrap` branch with
-  `origin/main` and return the shared repo to a trusted baseline.
 - [ ] Review and, if needed, reauthorize the imported live `n8n` credential
   `Google Calendar (Skincos)` for the calendar scopes required by the clinic
   workflows.
@@ -16,6 +14,11 @@
 - [ ] Drain remaining legacy path references from docs and low-priority helpers
   that still mention `frontend/`, `backend/apps/meta-ads`, or
   `backend/apps/whatsapp`.
+- [ ] Complete the two administrator-protected `ProgramData` removals recorded
+  by `npm run codex:footprint:audit` in an elevated Windows session.
+- [ ] Move the ignored, sensitive live Livia workflow snapshot out of the
+  canonical clone into `C:\CodexRuntime`, then update its maintenance scripts
+  to read the managed runtime export without exposing state or secrets in Git.
 
 ## In Progress
 
@@ -58,10 +61,16 @@
 - [x] Legacy Windows checkout content under `C:\Users\julia\skincos` was
   removed; the empty root is pending handle release from the current Codex
   session.
-- [x] The old top-level `C:\CodexShared\Projetos\n8n` clone was retired from
-  active use and archived at
-  `C:\CodexShared\Projetos\_bootstrap\n8n-top-level-legacy-20260703T181656`
-  after the embedded `skincos\n8n` runtime handoff was validated.
+- [x] The old top-level `C:\CodexShared\Projetos\n8n` clone was retired after
+  the embedded `skincos\n8n` runtime handoff was validated, then its rollback
+  archive was removed after a fresh runtime backup and secret/state validation.
+- [x] The legacy atendimento recovery was removed after a current n8n backup
+  and equivalent active runtime secret/state validation.
+- [x] Clean integrated worktrees are now removed after publish/integration;
+  dirty, active, unmerged, and Codex-managed worktrees are preserved.
+- [x] `npm run codex:footprint:audit` now reports footprint, retired paths,
+  task drift, backup freshness, disk, Git, worktree, and endpoint health; CI
+  rejects retired operational-path references outside historical documentation.
 - [x] First modular-envelope wave created `modules/`, `platform/`, `ops/`, and
   `archive/`, and moved `website/`, `n8n/`, and `backend/apps/crm-api/` into
   their new canonical module paths.
@@ -126,10 +135,8 @@
   unit definitions, `scripts/install-shared-support-system-services.sh --apply`
   was rerun, the legacy `systemctl --user` orb units were disabled again, and
   `Orb Audit` plus `Orb Validate` returned to green.
-- [x] Windows `gh auth login` was completed for the current `julia` profile as
-  `jubenitogarcia`.
-- [x] WSL `gh auth status` now resolves to `jubenitogarcia` via
-  `/home/julia/.config/gh/hosts.yml`.
+- [x] WSL `gh auth status` resolves to `jubenitogarcia` for the supported
+  `admin` operator session.
 - [x] The four clinic orb workflows `WORKFLOW_01..04` were imported into the
   live `n8n_runtime` project in inactive mode.
 - [x] The live `n8n` DB now contains the expected credentials

@@ -34,6 +34,17 @@ jobs:
           set -euo pipefail
           bash backend/scripts/ci-no-demo-guard.sh
 
+      - name: Block retired operational paths
+        run: |
+          set -euo pipefail
+          if rg -n -i \
+            -g '!scripts/audit-skincos-footprint.ps1' \
+            'CodexProfileRename|SkincosMiniPc|n8n-top-level-legacy-20260703T181656|atendimento-legacy|Orb Stack WSL Supervisor' \
+            .codex backend modules platform ops scripts; then
+            echo 'Retired operational path reference found.' >&2
+            exit 1
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
