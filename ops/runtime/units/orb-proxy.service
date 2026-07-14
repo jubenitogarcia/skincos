@@ -9,6 +9,10 @@ User=skincos
 Group=skincos
 WorkingDirectory=__REPO_ROOT__/orb/engine
 Environment=ORB_RUNTIME_HOME=__RUNTIME_ROOT__/state/orb
+Environment=N8N_ROOT=__REPO_ROOT__/orb/engine
+Environment=N8N_RUNTIME_HOME=__RUNTIME_ROOT__/state/orb
+Environment=N8N_ENV_FILE=__RUNTIME_ROOT__/secrets/orb.env
+Environment=N8N_BUSINESS_ENV_FILE=__RUNTIME_ROOT__/secrets/orb-business.env
 Environment=ORB_LOG_DIR=__RUNTIME_ROOT__/logs/orb
 Environment=META_REVIEW_STORE_PATH=__RUNTIME_ROOT__/state/orb/meta-review-store.json
 EnvironmentFile=-__RUNTIME_ROOT__/secrets/orb.env
