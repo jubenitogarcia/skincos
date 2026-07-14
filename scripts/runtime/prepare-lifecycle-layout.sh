@@ -201,7 +201,7 @@ done
 if [[ "$SKIP_ORB_STATE" == "1" ]]; then
   echo "SKIP orb state: completed by the independently recorded pre-copy."
 else
-sync_path "$legacy_orb/n8n-home" "$RUNTIME_ROOT/state/orb"
+  sync_path "$legacy_orb/n8n-home" "$RUNTIME_ROOT/state/orb"
 fi
 if [[ "$SKIP_MESSAGING_STATE" == "1" ]]; then
   echo "SKIP messaging state: completed by the independently recorded pre-copy."
