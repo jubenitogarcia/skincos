@@ -213,7 +213,7 @@ sync_path "$legacy_crm/var" "$RUNTIME_ROOT/state/crm"
 sync_path "$legacy_booking/report" "$RUNTIME_ROOT/artifacts/booking"
 sync_path "$legacy_booking/debug" "$RUNTIME_ROOT/artifacts/booking"
 sync_path "$legacy_booking/chrome-profile" "$RUNTIME_ROOT/state/booking"
-sync_path "$legacy_booking/venv" "$RUNTIME_ROOT/state/booking"
+echo "REBUILD $RUNTIME_ROOT/state/booking/venv from the locked booking requirements during cutover"
 
 sync_secret "$legacy_orb/env/n8n.env" "$secrets_dir/orb.env"
 sync_secret "$legacy_orb/env/n8n-business.env" "$secrets_dir/orb-business.env"

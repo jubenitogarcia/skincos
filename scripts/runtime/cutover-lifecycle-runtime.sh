@@ -145,6 +145,7 @@ CUTOVER_STARTED=1
 echo "Stopping legacy ingress and runtimes."
 sudo -n systemctl stop "${legacy_units[@]}"
 "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply --final-sync
+BOOKING_API_RUNTIME_HOME="$RUNTIME_ROOT/state/booking" EF_SCRAPER_VENV_DIR="$RUNTIME_ROOT/state/booking/venv" "$ROOT_DIR/scripts/booking/bootstrap-venv.sh"
 "$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh" --apply
 
 echo "Starting lifecycle runtimes and ingress."
