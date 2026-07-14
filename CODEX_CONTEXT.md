@@ -20,8 +20,9 @@
   smoke-tested.
 - The next runtime target is
   `C:\CodexRuntime\{state,config,logs,backups,artifacts,cache,tmp}\<domain>`
-  with a flat, ACL-restricted `C:\CodexRuntime\secrets\` directory. No live
-  runtime data has been moved yet.
+  with a flat, ACL-restricted `C:\CodexRuntime\secrets\` directory. A
+  non-disruptive pre-copy and rollback-artifact stage have been validated; no
+  lifecycle unit has been installed or cut over yet.
 - `orb/engine` is the isolated implementation boundary for the current
   workflow engine. Vendor names must not appear in new public paths, service
   names or user-facing runbooks.

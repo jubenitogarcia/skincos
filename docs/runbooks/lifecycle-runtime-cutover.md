@@ -5,6 +5,20 @@ deleting the legacy tree during the change window. It is intentionally separate
 from the source-layout pull request: a merged path move is never proof that a
 service is safe to rename.
 
+## Current validated checkpoint (2026-07-14)
+
+- Pre-copy completed with the Windows-native transport and the runtime Livia
+  workflow matches the retained legacy source by SHA-256.
+- Rollback artifacts are staged at
+  `C:\CodexRuntime\artifacts\runtime-cutover\20260714T170200Z` and linked
+  only into the retained rollback worktree.
+- `C:\CodexRuntime\n8n\backups\daily\20260714T172136Z` has a successful
+  PostgreSQL restore verification. Incomplete `.partial-*` backup attempts
+  were removed after this checkpoint was validated.
+- The cutover dry-run, rendered lifecycle units, local health and public Orb/
+  CRM health passed. The legacy units remain authoritative until the final
+  security-alert triage and scheduled cut window are complete.
+
 ## Preconditions
 
 1. The source PR is merged, the canonical checkout is fast-forwarded, and all
