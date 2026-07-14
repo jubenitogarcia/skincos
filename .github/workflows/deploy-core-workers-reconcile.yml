@@ -107,12 +107,14 @@ jobs:
           npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars
           npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars
 
-      - name: Smoke check (basic)
+      - name: Smoke check API + Inventory Workers (production)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true') }}
         run: |
           set -euo pipefail
-          curl -fsS -H 'User-Agent: CoreWorkerSmoke/1.0' https://api.skincos.com.br/insumos/health >/dev/null
-          curl -fsS -H 'User-Agent: CoreWorkerSmoke/1.0' https://api.skincos.com.br/api/ponto/health >/dev/null
+          python3 .github/scripts/workers_smoke.py \
+            --attempts 5 \
+            --sleep-seconds 6 \
+            --user-agent "Mozilla/5.0 (compatible; CoreWorkerReconcileSmoke/1.0)"
 
       - name: Mark deployed SHA
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
