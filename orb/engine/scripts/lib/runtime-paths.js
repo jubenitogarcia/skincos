@@ -24,7 +24,7 @@ module.exports = {
   runtimeHome,
   dataHome,
   cloudflaredHome,
-  workflowsDir: resolveFromRoot('workflows'),
+  workflowsDir: process.env.N8N_WORKFLOWS_DIR || resolveFromRoot('workflows'),
   workflowSrcDir: resolveFromRoot('workflow-src'),
   envFile: process.env.N8N_ENV_FILE || path.join(runtimeHome, 'env', 'n8n.env'),
   tmpDir: process.env.N8N_TMP_DIR || path.join(runtimeHome, 'tmp'),

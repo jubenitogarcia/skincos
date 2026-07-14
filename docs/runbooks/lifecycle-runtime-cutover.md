@@ -30,6 +30,11 @@ Run the pre-copy before the window; it does not stop services or remove data:
 scripts/runtime/prepare-lifecycle-layout.sh --apply
 ```
 
+The pre-copy also transfers the active Livia workflow from the retained legacy
+source into `C:\CodexRuntime\state\orb\workflows`. The lifecycle Orb unit and
+the official validator read this runtime location; no workflow state is copied
+into the new checkout.
+
 At the window, first stage and verify the non-Git rollback artifacts while
 legacy services are still healthy. This is non-disruptive and creates only
 runtime artifacts plus symlinks in the retained rollback worktree:
