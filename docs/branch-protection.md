@@ -6,7 +6,7 @@ Objetivo: bloquear push direto em `main` e exigir PR com checks verdes.
 
 - Branch name pattern: `main`
 - Require a pull request before merging
-  - Require approvals: `0` (desligado) — para permitir auto-merge sem intervenção humana
+  - Require approvals: `0` (desligado) — o operador Codex confirma o gate de merge com evidência no PR
   - Dismiss stale approvals: `true` (se aprovações forem habilitadas no futuro)
 - Require status checks to pass before merging
   - `CI Smoke (Assert)` (obrigatório)
@@ -24,4 +24,4 @@ Objetivo: bloquear push direto em `main` e exigir PR com checks verdes.
 
 - Se precisar de aprovações no futuro: usar `CODEOWNERS` + “Require review from Code Owners” e um usuário humano/bot dedicado para reviews.
 - Para deploy automático: manter os workflows de deploy disparando apenas após merge em `main` (nunca em PR).
-- Para reduzir atrito: habilitar “Auto-merge” e “Automatically delete head branches”.
+- Auto-merge fica desabilitado. O merge é uma ação controlada após confirmar checks obrigatórios, ausência de vulnerabilidade crítica/alta alcançável, rollback e superfícies afetadas.

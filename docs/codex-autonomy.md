@@ -57,7 +57,7 @@ Preferred flow:
 2. Codex implements changes and validates locally.
 3. Codex pushes and opens a PR.
 4. GitHub checks and security gates run.
-5. Automerge merges only after required checks pass.
+5. Codex só faz merge após os checks obrigatórios, a revisão de vulnerabilidades críticas/altas alcançáveis, o rollback e as superfícies afetadas estarem confirmados.
 6. After-automerge deploy workflows reconcile CRM Pages, Workers, and CRM API.
 7. Codex verifies production health endpoints.
 

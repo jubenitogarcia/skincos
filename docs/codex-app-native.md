@@ -68,13 +68,13 @@ scripts/cloudflare-token-health.sh --strict
 
 ### GitHub
 
-Use GitHub para PR, checks, automerge e auditoria de deploy. O fluxo preferido continua:
+Use GitHub para PR, checks, merge controlado e auditoria de deploy. O fluxo preferido continua:
 
 1. branch `codex/*`;
 2. commit pequeno e verificável;
 3. PR;
 4. checks verdes;
-5. merge/automerge;
+5. merge controlado após checar segurança, rollback e superfícies afetadas;
 6. deploy por GitHub Actions;
 7. smoke live.
 
