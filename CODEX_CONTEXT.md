@@ -43,9 +43,10 @@
   `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Skincos Codex`,
   condensed to the top-level launchers `Workspace`, `Contexto`, `Local`,
   `EF App`, and `Orb`.
-- Codex App and Start Menu actions now also expose the `app.espacofacial.com.br`
-  scraper in a hardened local-user mode, with report/debug/profile state routed
-  to `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\`.
+- Codex App and Start Menu actions now expose the `app.espacofacial.com.br`
+  scraper in a hardened operator mode: report/debug/log artifacts route to
+  `C:\CodexRuntime\operator\admin\skincos\scraper\`, while the authenticated
+  Chrome profile and private env files remain in `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\`.
 - The hardened scraper action set now includes `EF App Caixa` for guided cash
   and payments exports without writing outputs back into the repo, plus menu
   coverage for full sync, procedures, recorder, and token rotation.
@@ -198,8 +199,9 @@
   still mention `frontend/`, `backend/apps/meta-ads`, or
   `backend/apps/whatsapp`.
 - Create per-task worktrees under `C:\CodexShared\Worktrees\skincos\...`.
-- Keep Codex local state, logs, temp files, browser profiles, and env overrides
-  in `%LOCALAPPDATA%\Codex\skincos\` for each operator.
+- Keep Codex authentication, temp files, browser profiles, env overrides and
+  WSL keepalive state in `%LOCALAPPDATA%\Codex\skincos\`. Keep durable local
+  artifacts in `C:\CodexRuntime\operator\admin\skincos\`.
 - If a task needs local runtime secrets, keep them outside the shared tree and
   document only the variable names and expected source.
 - Treat `C:\CodexShared\Projetos\skincos` as the only supported local code base

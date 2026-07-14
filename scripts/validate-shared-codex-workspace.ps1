@@ -1,7 +1,8 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
     [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
-    [string]$RuntimeRoot = "C:\CodexRuntime\n8n"
+    [string]$RuntimeRoot = "C:\CodexRuntime\n8n",
+    [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +52,28 @@ function Test-ModifyAccess {
     }
 }
 
+function Test-PrivateOperatorRuntime {
+    param([string]$TargetPath)
+
+    if (-not (Test-Path -LiteralPath $TargetPath)) {
+        return [pscustomobject]@{ path = $TargetPath; exists = $false; hasUsersAccess = $false; hasCurrentUserFullControl = $false; owner = $null }
+    }
+
+    $acl = Get-Acl -LiteralPath $TargetPath
+    $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $currentRules = @(Get-AccessEntry -Acl $acl -Identity $currentIdentity)
+    $hasCurrentUserFullControl = @($currentRules | Where-Object { $_.FileSystemRights.ToString().Contains("FullControl") }).Count -gt 0
+    $hasUsersAccess = @(Get-AccessEntry -Acl $acl -Identity "BUILTIN\Users").Count -gt 0
+
+    return [pscustomobject]@{
+        path = $TargetPath
+        exists = $true
+        hasUsersAccess = $hasUsersAccess
+        hasCurrentUserFullControl = $hasCurrentUserFullControl
+        owner = $acl.Owner
+    }
+}
+
 function Get-EnabledUserCoverage {
     $enabledUsers = @(Get-LocalUser | Where-Object Enabled)
     $usersMembers = @((Get-LocalGroupMember -Group "Users").Name)
@@ -95,6 +118,7 @@ function Get-CodexEnvironmentStatus {
 $projectCheck = Test-ModifyAccess -TargetPath $ProjectRoot
 $worktreeCheck = Test-ModifyAccess -TargetPath $WorktreeRoot
 $runtimeCheck = Test-ModifyAccess -TargetPath $RuntimeRoot
+$operatorRuntimeCheck = Test-PrivateOperatorRuntime -TargetPath $OperatorRuntimeRoot
 $childChecks = @()
 $runtimeChildChecks = @()
 
@@ -113,7 +137,6 @@ if (Test-Path -LiteralPath $RuntimeRoot) {
 $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
 $localStateDirs = @(
     $localStateRoot,
-    (Join-Path $localStateRoot "logs"),
     (Join-Path $localStateRoot "tmp"),
     (Join-Path $localStateRoot "profiles"),
     (Join-Path $localStateRoot "env-overrides")
@@ -128,6 +151,7 @@ $result = [pscustomobject]@{
     project = $projectCheck
     worktrees = $worktreeCheck
     runtime = $runtimeCheck
+    operatorRuntime = $operatorRuntimeCheck
     projectChildren = $childChecks
     runtimeChildren = $runtimeChildChecks
     enabledUserCoverage = @(Get-EnabledUserCoverage)

@@ -1,7 +1,8 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
     [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
-    [string]$RuntimeRoot = "C:\CodexRuntime\n8n"
+    [string]$RuntimeRoot = "C:\CodexRuntime\n8n",
+    [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 )
 
 $ErrorActionPreference = "Stop"
@@ -117,6 +118,8 @@ $normalizedSafeDirectories = @($safeDirectories | ForEach-Object { Normalize-Pat
 
 $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
 $runtimeEnvRoot = Join-Path $RuntimeRoot "env"
+$operatorRuntimeExists = Test-Path -LiteralPath $OperatorRuntimeRoot
+$operatorRuntimeAcl = if ($operatorRuntimeExists) { Get-Acl -LiteralPath $OperatorRuntimeRoot } else { $null }
 $status = [pscustomobject]@{
     currentUser = $env:USERNAME
     computerName = $env:COMPUTERNAME
@@ -130,6 +133,9 @@ $status = [pscustomobject]@{
     localStateExists = Test-Path -LiteralPath $localStateRoot
     runtimeRoot = $RuntimeRoot
     runtimeExists = Test-Path -LiteralPath $RuntimeRoot
+    operatorRuntimeRoot = $OperatorRuntimeRoot
+    operatorRuntimeExists = $operatorRuntimeExists
+    operatorRuntimeOwner = if ($operatorRuntimeAcl) { $operatorRuntimeAcl.Owner } else { $null }
     runtimeEnvRoot = $runtimeEnvRoot
     runtimeEnvFiles = @(
         "n8n.env",

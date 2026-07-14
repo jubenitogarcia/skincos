@@ -20,8 +20,10 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
   `C:\CodexShared\Worktrees\skincos\<ator>\<task-slug>`.
 - O clone compartilhado deve ficar reservado para contexto, revisão, bootstrap
   e tarefas curtas; mudanças longas ou paralelas devem migrar para worktree.
-- Estado local do Codex deve ficar fora do repositório compartilhado, em
-  `%LOCALAPPDATA%\Codex\skincos\`.
+- Autenticação, perfis de browser, envs privados, PID e temporários do Codex
+  ficam fora do repositório compartilhado, em `%LOCALAPPDATA%\Codex\skincos\`.
+  Logs, relatórios, checkpoints, evidências e backups locais ficam no runtime
+  privado `C:\CodexRuntime\operator\admin\skincos\`.
 
 ## Fluxo de primeira execução do operador
 
@@ -184,22 +186,24 @@ Os atalhos seguem dois modelos operacionais diferentes.
 Usado para edição, QA e iteração dos projetos locais como website e CRM.
 
 - roda a partir do código em `C:\CodexShared\Projetos\skincos`;
-- guarda PID, logs e estado temporário em `%LOCALAPPDATA%\Codex\skincos\`;
+- guarda PID e estado temporário em `%LOCALAPPDATA%\Codex\skincos\`, e logs
+  persistentes em `C:\CodexRuntime\operator\admin\skincos\logs\`;
 - não deve gravar artefatos operacionais novos no clone compartilhado nem no
   worktree por padrão.
 
 Os launchers do scraper do `app.espacofacial.com.br` também seguem esse modelo:
 
 - código em `backend/apps/automations/scraper`;
-- `report/`, `debug/`, `logs`, `chrome-profile` e envs privados resolvidos em
-  `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\`;
+- `report/`, `debug/` e `logs` em
+  `C:\CodexRuntime\operator\admin\skincos\scraper\`; `chrome-profile` e envs
+  privados em `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\`;
 - uso por um operador principal, sem depender de manter sessão, outputs ou
   credenciais dentro do repositório.
 
 O botão `EF App Caixa` roda em modo interativo guiado no terminal do Codex App:
 
 - fixa o scraper em `EF_MODE=caixa`;
-- mantém os artefatos em `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\`;
+- mantém os artefatos em `C:\CodexRuntime\operator\admin\skincos\scraper\`;
 - ainda pergunta unidade e intervalo de datas antes da exportação.
 
 ### Runtime live
@@ -254,8 +258,9 @@ Exemplo de saída esperada:
 3. Usar `Codex Context` ou rodar `bash ./scripts/codex-context.sh` via WSL.
 4. Para qualquer tarefa paralela ou mais longa, criar um worktree por usuário/tarefa.
 5. Abrir o worktree no Codex App e trabalhar só nele.
-6. Rodar apps locais, logs, perfis e overrides apenas a partir do estado privado
-   em `%LOCALAPPDATA%\Codex\skincos\`.
+6. Rodar apps locais com perfil, autenticação, temporários e overrides em
+   `%LOCALAPPDATA%\Codex\skincos\`; os artefatos duráveis vão para o runtime
+   privado em `C:\CodexRuntime\operator\admin\skincos\`.
 7. Antes de handoff, atualizar `CODEX_CONTEXT.md`, `TASKS.md` e `DECISIONS.md`.
 
 Quando o worktree é aberto no Codex App, os botões do topo passam a chamar os
