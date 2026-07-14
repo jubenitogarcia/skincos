@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
 // The Insumos Worker is JavaScript and intentionally shared with the CRM test suite.
-// @ts-expect-error JavaScript worker module has no TypeScript declarations.
 import { handleShareRoutes } from '../../../../backend/apps/insumos/src/routes/share.js'
 
 type QueryCall = { sql: string; bindings: unknown[] }
