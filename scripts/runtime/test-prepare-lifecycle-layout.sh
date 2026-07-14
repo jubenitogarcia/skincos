@@ -13,9 +13,9 @@ mkdir -p \
   "$runtime_root/n8n/n8n-home" \
   "$runtime_root/n8n/evolution-api/instances" \
   "$runtime_root/n8n/evolution-api/store" \
-  "$legacy_root/modules/automations/n8n/workflows"
+  "$legacy_root/orb/engine/workflows"
 printf 'source-v1\n' >"$runtime_root/n8n/n8n-home/payload.txt"
-printf '{"name":"Livia"}\n' >"$legacy_root/modules/automations/n8n/workflows/livia.active.json"
+printf '{"name":"Livia"}\n' >"$legacy_root/orb/engine/workflows/livia.active.json"
 
 RUNTIME_ROOT="$runtime_root" LEGACY_REPO_ROOT="$legacy_root" LIFECYCLE_SYNC_TRANSPORT=robocopy \
   "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply >/dev/null

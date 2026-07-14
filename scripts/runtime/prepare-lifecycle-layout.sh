@@ -125,6 +125,17 @@ sync_path() {
   fi
 }
 
+resolve_workflows_dir() {
+  local root="$1"
+  local candidate
+  # Domain-first layout is authoritative. The second candidate exists only so
+  # a retained pre-cutover rollback worktree remains usable during the window.
+  for candidate in "$root/orb/engine/workflows" "$root/modules/automations/n8n/workflows"; do
+    [[ -d "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
 should_use_robocopy() {
   local source="$1"
   local destination="$2"
@@ -259,7 +270,12 @@ else
   sync_path "$legacy_orb/evolution-api/instances" "$RUNTIME_ROOT/state/messaging-whatsapp"
   sync_path "$legacy_orb/evolution-api/store" "$RUNTIME_ROOT/state/messaging-whatsapp"
 fi
-sync_path "$LEGACY_REPO_ROOT/modules/automations/n8n/workflows" "$RUNTIME_ROOT/state/orb"
+workflows_source="$(resolve_workflows_dir "$LEGACY_REPO_ROOT" || true)"
+if [[ -n "$workflows_source" ]]; then
+  sync_path "$workflows_source" "$RUNTIME_ROOT/state/orb"
+else
+  echo "SKIP missing Orb workflows under $LEGACY_REPO_ROOT"
+fi
 sync_path "$legacy_orb/logs/." "$RUNTIME_ROOT/logs/orb"
 sync_path "$legacy_crm/var" "$RUNTIME_ROOT/state/crm"
 sync_path "$legacy_booking/report" "$RUNTIME_ROOT/artifacts/booking"

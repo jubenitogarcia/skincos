@@ -76,8 +76,30 @@ if [[ -e "$ARTIFACT_ROOT" ]] && find "$ARTIFACT_ROOT" -mindepth 1 -maxdepth 1 -p
   exit 1
 fi
 
-SOURCE_LIVIA_WORKFLOW="${SOURCE_LIVIA_WORKFLOW:-$LEGACY_REPO_ROOT/modules/automations/n8n/workflows/livia.active.json}"
-SOURCE_CRM_NODE_MODULES="${SOURCE_CRM_NODE_MODULES:-$LEGACY_REPO_ROOT/modules/crm/api/node_modules}"
+resolve_workflows_dir() {
+  local root="$1"
+  local candidate
+  for candidate in "$root/orb/engine/workflows" "$root/modules/automations/n8n/workflows"; do
+    [[ -d "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
+resolve_crm_dir() {
+  local root="$1"
+  local candidate
+  for candidate in "$root/crm/api" "$root/modules/crm/api"; do
+    [[ -d "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
+if [[ -z "$SOURCE_LIVIA_WORKFLOW" ]]; then
+  SOURCE_LIVIA_WORKFLOW="$(resolve_workflows_dir "$LEGACY_REPO_ROOT")/livia.active.json"
+fi
+if [[ -z "$SOURCE_CRM_NODE_MODULES" ]]; then
+  SOURCE_CRM_NODE_MODULES="$(resolve_crm_dir "$LEGACY_REPO_ROOT")/node_modules"
+fi
 [[ -f "$SOURCE_LIVIA_WORKFLOW" ]] || { echo "Missing source Livia workflow: $SOURCE_LIVIA_WORKFLOW" >&2; exit 1; }
 [[ -d "$SOURCE_CRM_NODE_MODULES/express" ]] || { echo "Missing source CRM dependencies: $SOURCE_CRM_NODE_MODULES/express" >&2; exit 1; }
 
@@ -138,8 +160,10 @@ link_artifact() {
   ln -s "$target" "$link"
 }
 
-link_artifact "$workflow_target" "$ROLLBACK_ROOT/modules/automations/n8n/workflows/livia.active.json"
-link_artifact "$dependencies_target" "$ROLLBACK_ROOT/modules/crm/api/node_modules"
+rollback_workflows_dir="$(resolve_workflows_dir "$ROLLBACK_ROOT")"
+rollback_crm_dir="$(resolve_crm_dir "$ROLLBACK_ROOT")"
+link_artifact "$workflow_target" "$rollback_workflows_dir/livia.active.json"
+link_artifact "$dependencies_target" "$rollback_crm_dir/node_modules"
 
 cat <<EOF
 Rollback artifacts staged.
