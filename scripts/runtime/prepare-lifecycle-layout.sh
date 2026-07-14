@@ -7,16 +7,21 @@ set -euo pipefail
 RUNTIME_ROOT="${RUNTIME_ROOT:-/mnt/c/CodexRuntime}"
 APPLY=0
 FINAL_SYNC=0
+SKIP_ORB_STATE=0
+SKIP_MESSAGING_STATE=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/runtime/prepare-lifecycle-layout.sh [--apply] [--final-sync]
+Usage: scripts/runtime/prepare-lifecycle-layout.sh [--apply] [--final-sync] [--skip-orb-state] [--skip-messaging-state]
 
 Creates the lifecycle layout under C:\CodexRuntime and copies mutable runtime
 state from the legacy layout. Without --apply it reports the planned copies.
 --final-sync updates existing destination files but never deletes a legacy
 source or an existing destination. It is reserved for the short window after
 the old services have stopped.
+--skip-orb-state is only for an already-completed independent pre-copy. It
+cannot be combined with --final-sync.
+--skip-messaging-state has the same restriction for the WhatsApp channel.
 EOF
 }
 
@@ -24,6 +29,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=1 ;;
     --final-sync) FINAL_SYNC=1 ;;
+    --skip-orb-state) SKIP_ORB_STATE=1 ;;
+    --skip-messaging-state) SKIP_MESSAGING_STATE=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -32,6 +39,10 @@ done
 
 if [[ "$FINAL_SYNC" == "1" && "$APPLY" != "1" ]]; then
   echo "--final-sync requires --apply." >&2
+  exit 1
+fi
+if [[ "$FINAL_SYNC" == "1" && ( "$SKIP_ORB_STATE" == "1" || "$SKIP_MESSAGING_STATE" == "1" ) ]]; then
+  echo "State skip options cannot be used during the final sync." >&2
   exit 1
 fi
 
@@ -186,9 +197,17 @@ for directory in "${directories[@]}"; do
   [[ "$APPLY" == "1" ]] && mkdir -p "$directory"
 done
 
-sync_path "$legacy_orb/n8n-home" "$RUNTIME_ROOT/state/orb"
-sync_path "$legacy_orb/evolution-api/instances" "$RUNTIME_ROOT/state/messaging-whatsapp"
-sync_path "$legacy_orb/evolution-api/store" "$RUNTIME_ROOT/state/messaging-whatsapp"
+if [[ "$SKIP_ORB_STATE" == "1" ]]; then
+  echo "SKIP orb state: completed by the independently recorded pre-copy."
+else
+  sync_path "$legacy_orb/n8n-home" "$RUNTIME_ROOT/state/orb"
+fi
+if [[ "$SKIP_MESSAGING_STATE" == "1" ]]; then
+  echo "SKIP messaging state: completed by the independently recorded pre-copy."
+else
+  sync_path "$legacy_orb/evolution-api/instances" "$RUNTIME_ROOT/state/messaging-whatsapp"
+  sync_path "$legacy_orb/evolution-api/store" "$RUNTIME_ROOT/state/messaging-whatsapp"
+fi
 sync_path "$legacy_orb/logs/." "$RUNTIME_ROOT/logs/orb"
 sync_path "$legacy_crm/var" "$RUNTIME_ROOT/state/crm"
 sync_path "$legacy_booking/report" "$RUNTIME_ROOT/artifacts/booking"
