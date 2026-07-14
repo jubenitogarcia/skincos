@@ -492,7 +492,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
       // Special handling for "conflict type=replaced" errors - pause longer
       const isConflictError = lastDisconnect?.error?.message?.includes?.('conflict') ||
-        lastDisconnect?.error?.output?.payload?.error?.message?.includes?.('conflict');
+        String((lastDisconnect?.error as Boom)?.output?.payload?.error || '').includes('conflict');
 
       if (shouldReconnect) {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
@@ -672,8 +672,7 @@ export class BaileysStartupService extends ChannelStartupService {
     if (this.client) {
       try {
         // Close existing WebSocket connection first
-        this.client.ws?.terminate?.();
-        this.client.ws?.close?.();
+        await this.client.ws?.close?.();
 
         // Wait for proper cleanup before proceeding (increased delay)
         await delay(3000);
@@ -1953,7 +1952,10 @@ export class BaileysStartupService extends ChannelStartupService {
 
           if (events['group-participants.update']) {
             const payload = events['group-participants.update'];
-            this.groupHandler['group-participants.update'](payload);
+            this.groupHandler['group-participants.update']({
+              ...payload,
+              participants: payload.participants.map((participant) => participant.id),
+            });
           }
         }
 
@@ -2311,7 +2313,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
       const linkPreview = options?.linkPreview != false ? undefined : false;
 
-      let quoted: WAMessage;
+      let quoted: proto.IWebMessageInfo;
 
       if (options?.quoted) {
         const m = options?.quoted;
@@ -3569,12 +3571,7 @@ export class BaileysStartupService extends ChannelStartupService {
           }
 
           const numberJid = numberVerified?.jid || user.jid;
-          const lid =
-            typeof numberVerified?.lid === 'string'
-              ? numberVerified.lid
-              : numberJid.includes('@lid')
-                ? numberJid.split('@')[1]
-                : undefined;
+          const lid = numberJid.includes('@lid') ? numberJid.split('@')[1] : undefined;
           return new OnWhatsAppDto(
             numberJid,
             !!numberVerified?.exists,
