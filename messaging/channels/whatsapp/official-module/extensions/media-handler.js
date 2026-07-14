@@ -1,6 +1,7 @@
 const { MessageMedia, Location } = require('../../official');
 const axios = require('axios');
 const MediaConverter = require('./media-converter');
+const { assertPublicHttpsUrl } = require('../../security/publicUrl');
 
 class MediaHandler {
     constructor(client) {
@@ -92,29 +93,8 @@ class MediaHandler {
     }
 
     // Validação de segurança para URLs
-    validateUrl(url) {
-        try {
-            const parsedUrl = new URL(url);
-
-            // Só aceita HTTP/HTTPS
-            if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-                throw new Error('Only HTTP/HTTPS URLs are allowed');
-            }
-
-            // Bloqueia IPs privados básicos
-            const hostname = parsedUrl.hostname.toLowerCase();
-            if (hostname === 'localhost' ||
-                hostname.startsWith('127.') ||
-                hostname.startsWith('192.168.') ||
-                hostname.startsWith('10.') ||
-                hostname.startsWith('172.')) {
-                throw new Error('Private IP addresses are not allowed');
-            }
-
-            return true;
-        } catch (error) {
-            throw new Error(`Invalid URL: ${error.message}`);
-        }
+    async validateUrl(url) {
+        return assertPublicHttpsUrl(url);
     }
 
     async sendImage(number, imageUrl, caption = '') {
@@ -125,7 +105,7 @@ class MediaHandler {
 
     async _sendImageInternal(number, imageUrl, caption = '') {
         try {
-            this.validateUrl(imageUrl);
+            imageUrl = await this.validateUrl(imageUrl);
             const media = await MessageMedia.fromUrl(imageUrl, { unsafeMime: true });
             const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
 
@@ -151,14 +131,14 @@ class MediaHandler {
 
     async _sendVideoInternal(number, videoUrl, caption = '') {
         try {
-            this.validateUrl(videoUrl);
+            videoUrl = await this.validateUrl(videoUrl);
             const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
 
             console.log(`🎬 Iniciando envio de vídeo com otimização automática: ${videoUrl}`);
 
             // 1. VERIFICAR TAMANHO ANTES DO DOWNLOAD (HEAD request para economizar largura de banda)
             try {
-                const headResponse = await axios.head(videoUrl, { timeout: 30000 });
+                const headResponse = await axios.head(videoUrl, { timeout: 30000, maxRedirects: 0 });
                 const contentLength = parseInt(headResponse.headers['content-length'] || '0');
                 const estimatedSizeMB = contentLength / (1024 * 1024);
 
@@ -175,7 +155,8 @@ class MediaHandler {
             const response = await axios.get(videoUrl, {
                 responseType: 'arraybuffer',
                 timeout: 180000, // 3 minutos para download de vídeos grandes
-                maxContentLength: 210 * 1024 * 1024 // Limite de 210MB
+                maxContentLength: 210 * 1024 * 1024, // Limite de 210MB
+                maxRedirects: 0
             });
             const originalBuffer = Buffer.from(response.data);
             const originalMimetype = response.headers['content-type'] || 'video/mp4';
@@ -250,7 +231,7 @@ class MediaHandler {
 
     async _sendDocumentInternal(number, documentUrl, caption = '', filename = null) {
         try {
-            this.validateUrl(documentUrl);
+            documentUrl = await this.validateUrl(documentUrl);
             const media = await MessageMedia.fromUrl(documentUrl, { unsafeMime: true });
             if (filename) {
                 media.filename = filename;
@@ -280,7 +261,7 @@ class MediaHandler {
 
     async _sendAudioInternal(number, audioUrl) {
         try {
-            this.validateUrl(audioUrl);
+            audioUrl = await this.validateUrl(audioUrl);
             const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
 
             console.log(`🎵 Iniciando envio de áudio com conversão automática: ${audioUrl}`);
@@ -288,7 +269,8 @@ class MediaHandler {
             // 1. BAIXAR ARQUIVO ORIGINAL
             const response = await axios.get(audioUrl, {
                 responseType: 'arraybuffer',
-                timeout: 30000
+                timeout: 30000,
+                maxRedirects: 0
             });
             const originalBuffer = Buffer.from(response.data);
             const originalMimetype = response.headers['content-type'] || 'audio/wav';
@@ -357,7 +339,7 @@ class MediaHandler {
 
     async sendSticker(number, stickerUrl) {
         try {
-            this.validateUrl(stickerUrl);
+            stickerUrl = await this.validateUrl(stickerUrl);
             const media = await MessageMedia.fromUrl(stickerUrl, { unsafeMime: true });
             const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
 

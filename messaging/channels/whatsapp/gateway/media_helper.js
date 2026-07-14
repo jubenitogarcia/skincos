@@ -2,14 +2,17 @@
 const axios = require('axios');
 const { MessageMedia } = require('./index');
 const VideoOptimizer = require('./video_optimizer');
+const { assertPublicHttpsUrl } = require('../security/publicUrl');
 
 async function createMediaFromUrl(url) {
     try {
-        console.log('🔄 Baixando mídia via axios:', url);
+        const safeUrl = await assertPublicHttpsUrl(url);
+        console.log('🔄 Baixando mídia via axios:', safeUrl);
 
-        const response = await axios.get(url, {
+        const response = await axios.get(safeUrl, {
             responseType: 'arraybuffer',
             timeout: 30000,
+            maxRedirects: 0,
             headers: {
                 'User-Agent': 'WhatsApp Bot/1.0'
             },
@@ -32,7 +35,7 @@ async function createMediaFromUrl(url) {
         const base64Data = buffer.toString('base64');
 
         const mimetype = response.headers['content-type'] || 'application/octet-stream';
-        const filename = url.split('/').pop().split('?')[0] || 'media';
+        const filename = new URL(safeUrl).pathname.split('/').pop() || 'media';
         const filesize = buffer.length;
 
         console.log('✅ Mídia processada:');
@@ -52,10 +55,12 @@ async function createMediaFromUrl(url) {
 // Função para validar URL antes de baixar
 async function validateMediaUrl(url) {
     try {
-        console.log('🔍 Validando URL:', url);
+        const safeUrl = await assertPublicHttpsUrl(url);
+        console.log('🔍 Validando URL:', safeUrl);
 
-        const response = await axios.head(url, {
+        const response = await axios.head(safeUrl, {
             timeout: 10000,
+            maxRedirects: 0,
             headers: {
                 'User-Agent': 'WhatsApp Bot/1.0'
             }
@@ -78,7 +83,7 @@ async function validateMediaUrl(url) {
         // WhatsApp Web tem limitações com arquivos muito grandes
         if (contentLength) {
             const sizeMB = parseInt(contentLength) / 1024 / 1024;
-            const isVideo = url.toLowerCase().includes('.mp4') || url.toLowerCase().includes('video') || contentType.includes('video');
+            const isVideo = safeUrl.toLowerCase().includes('.mp4') || safeUrl.toLowerCase().includes('video') || contentType.includes('video');
             const maxSize = isVideo ? 25 : 5;
 
             if (sizeMB > maxSize) {
