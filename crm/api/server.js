@@ -1,5 +1,6 @@
 import express from 'express'
 import cors from 'cors'
+import { rateLimit } from 'express-rate-limit'
 import { randomUUID, createHmac, timingSafeEqual, randomBytes, createHash, createCipheriv, createDecipheriv } from 'crypto'
 import nodeUtil from 'node:util'
 import { promises as fs } from 'fs'
@@ -500,6 +501,7 @@ app.get('/api/core/status', async (req, res) => {
 
 const CRM_CORS_ORIGINS = configuredCorsOrigins()
 const isAllowedCorsOrigin = (origin) => isAllowedCrmCorsOrigin(origin, { allowedOrigins: CRM_CORS_ORIGINS })
+const CRM_API_RATE_LIMIT_PER_MIN = Math.max(30, Math.min(10_000, Number(process.env.CRM_API_RATE_LIMIT_PER_MIN || 300) || 300))
 const setAllowedCorsHeaders = (req, res) => {
     const origin = req.headers.origin
     if (!origin || !isAllowedCorsOrigin(origin)) return false
@@ -519,6 +521,14 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With', 'Accept', 'X-CSRF-Token', 'X-Tenant-Key', 'X-User-Role', 'X-CRM-Role', 'X-Role'],
     exposedHeaders: ['Content-Length', 'X-Total-Count'],
     optionsSuccessStatus: 200 // Legacy browser support
+}))
+
+app.use('/api', rateLimit({
+    windowMs: 60_000,
+    limit: CRM_API_RATE_LIMIT_PER_MIN,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { success: false, error: 'RATE_LIMITED', hint: 'Too many requests. Try again soon.' }
 }))
 
 // Handle preflight OPTIONS requests early to prevent middleware conflicts
