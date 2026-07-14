@@ -11,9 +11,10 @@
 - [ ] **Wave 4 — Booking + EF integration:** introduce the D1 outbox/ledger,
   idempotency, lease and `provisional`/`confirmed`/`failed`/`manual_review`
   state model; use a simulated EF executor before any external reservation.
-- [ ] **Wave 5 — runtime cutover:** pre-copy to the lifecycle layout, create a
-  verified fresh backup, rename units in a short window, and retain rollback
-  evidence. The executable contract is
+- [ ] **Wave 5 — runtime cutover:** pre-copy, rollback artifacts and a fresh
+  restore-verified backup are complete. The remaining work is the short unit
+  cut window after security-alert triage, followed by local/public smoke and
+  rollback retention. The executable contract is
   `docs/runbooks/lifecycle-runtime-cutover.md`; do not change the WSL VHD,
   Codex authentication or mandatory Windows state.
 - [ ] **Wave 6 — retirement:** remove old source paths, direct public routes,
