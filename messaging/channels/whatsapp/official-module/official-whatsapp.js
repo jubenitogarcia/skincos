@@ -7,7 +7,7 @@ const os = require('os');
 const fs = require('fs');
 const helmet = require('helmet');
 const session = require('express-session');
-const { assertPublicHttpsUrl } = require('../security/publicUrl');
+const { assertPublicHttpsUrl, createSafeHttpsRequest } = require('../security/publicUrl');
 
 // Import security middleware
 const {
@@ -231,9 +231,10 @@ async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
     const bodyString = JSON.stringify(fullPayload);
 
     try {
-        const safeUrl = await assertPublicHttpsUrl(webhook.url);
+        const { url: safeUrl, ...webhookRequest } = await createSafeHttpsRequest(webhook.url);
         const signature = crypto.createHmac('sha256', webhook.secret || 'default_secret').update(bodyString).digest('hex');
         await axios.post(safeUrl, bodyString, {
+            ...webhookRequest,
             headers: {
                 'Content-Type': 'application/json',
                 'X-Webhook-Id': webhook.id,
@@ -242,8 +243,7 @@ async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
                 'X-Event-Type': fullPayload.event,
                 'X-Event-Version': '1'
             },
-            timeout: 10000,
-            maxRedirects: 0
+            timeout: 10000
         });
     } catch (e) {
         status = 'error';

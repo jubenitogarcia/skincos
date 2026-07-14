@@ -5,7 +5,7 @@ const path = require('path');
 const mime = require('mime');
 const fetch = require('node-fetch');
 const { URL } = require('url');
-const { assertPublicHttpsUrl } = require('../../../security/publicUrl');
+const { createSafeHttpsRequest } = require('../../../security/publicUrl');
 
 /**
  * Media attached to a message
@@ -66,7 +66,7 @@ class MessageMedia {
      * @returns {Promise<MessageMedia>}
      */
     static async fromUrl(url, options = {}) {
-        const safeUrl = await assertPublicHttpsUrl(url);
+        const { url: safeUrl, ...requestPolicy } = await createSafeHttpsRequest(url);
         const pUrl = new URL(safeUrl);
         let mimetype = mime.getType(pUrl.pathname);
 
@@ -96,9 +96,15 @@ class MessageMedia {
             return { data, mime, name, size };
         }
 
-        const res = options.client
-            ? (await options.client.pupPage.evaluate(fetchData, safeUrl, options.reqOptions))
-            : (await fetchData(safeUrl, options.reqOptions));
+        if (options.client) {
+            throw new Error('Browser-mediated remote media fetches are disabled by the outbound URL policy');
+        }
+
+        const res = await fetchData(safeUrl, {
+            ...options.reqOptions,
+            agent: requestPolicy.httpsAgent,
+            redirect: 'error'
+        });
 
         const filename = options.filename ||
             (res.name ? res.name[0] : (pUrl.pathname.split('/').pop() || 'file'));

@@ -2,17 +2,17 @@
 const axios = require('axios');
 const { MessageMedia } = require('./index');
 const VideoOptimizer = require('./video_optimizer');
-const { assertPublicHttpsUrl } = require('../security/publicUrl');
+const { createSafeHttpsRequest } = require('../security/publicUrl');
 
 async function createMediaFromUrl(url) {
     try {
-        const safeUrl = await assertPublicHttpsUrl(url);
+        const { url: safeUrl, ...requestPolicy } = await createSafeHttpsRequest(url);
         console.log('🔄 Baixando mídia via axios:', safeUrl);
 
         const response = await axios.get(safeUrl, {
+            ...requestPolicy,
             responseType: 'arraybuffer',
             timeout: 30000,
-            maxRedirects: 0,
             headers: {
                 'User-Agent': 'WhatsApp Bot/1.0'
             },
@@ -55,12 +55,12 @@ async function createMediaFromUrl(url) {
 // Função para validar URL antes de baixar
 async function validateMediaUrl(url) {
     try {
-        const safeUrl = await assertPublicHttpsUrl(url);
+        const { url: safeUrl, ...requestPolicy } = await createSafeHttpsRequest(url);
         console.log('🔍 Validando URL:', safeUrl);
 
         const response = await axios.head(safeUrl, {
+            ...requestPolicy,
             timeout: 10000,
-            maxRedirects: 0,
             headers: {
                 'User-Agent': 'WhatsApp Bot/1.0'
             }

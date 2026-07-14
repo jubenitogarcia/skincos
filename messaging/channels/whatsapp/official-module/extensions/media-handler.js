@@ -1,7 +1,7 @@
 const { MessageMedia, Location } = require('../../official');
 const axios = require('axios');
 const MediaConverter = require('./media-converter');
-const { assertPublicHttpsUrl } = require('../../security/publicUrl');
+const { createSafeHttpsRequest } = require('../../security/publicUrl');
 
 class MediaHandler {
     constructor(client) {
@@ -94,7 +94,7 @@ class MediaHandler {
 
     // Validação de segurança para URLs
     async validateUrl(url) {
-        return assertPublicHttpsUrl(url);
+        return createSafeHttpsRequest(url);
     }
 
     async sendImage(number, imageUrl, caption = '') {
@@ -131,14 +131,15 @@ class MediaHandler {
 
     async _sendVideoInternal(number, videoUrl, caption = '') {
         try {
-            videoUrl = await this.validateUrl(videoUrl);
+            const { url: safeVideoUrl, ...videoRequest } = await this.validateUrl(videoUrl);
+            videoUrl = safeVideoUrl;
             const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
 
             console.log(`🎬 Iniciando envio de vídeo com otimização automática: ${videoUrl}`);
 
             // 1. VERIFICAR TAMANHO ANTES DO DOWNLOAD (HEAD request para economizar largura de banda)
             try {
-                const headResponse = await axios.head(videoUrl, { timeout: 30000, maxRedirects: 0 });
+                const headResponse = await axios.head(videoUrl, { ...videoRequest, timeout: 30000 });
                 const contentLength = parseInt(headResponse.headers['content-length'] || '0');
                 const estimatedSizeMB = contentLength / (1024 * 1024);
 
@@ -153,10 +154,10 @@ class MediaHandler {
 
             // 2. BAIXAR ARQUIVO ORIGINAL (com timeout estendido para vídeos grandes)
             const response = await axios.get(videoUrl, {
+                ...videoRequest,
                 responseType: 'arraybuffer',
                 timeout: 180000, // 3 minutos para download de vídeos grandes
-                maxContentLength: 210 * 1024 * 1024, // Limite de 210MB
-                maxRedirects: 0
+                maxContentLength: 210 * 1024 * 1024 // Limite de 210MB
             });
             const originalBuffer = Buffer.from(response.data);
             const originalMimetype = response.headers['content-type'] || 'video/mp4';
@@ -261,16 +262,17 @@ class MediaHandler {
 
     async _sendAudioInternal(number, audioUrl) {
         try {
-            audioUrl = await this.validateUrl(audioUrl);
+            const { url: safeAudioUrl, ...audioRequest } = await this.validateUrl(audioUrl);
+            audioUrl = safeAudioUrl;
             const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
 
             console.log(`🎵 Iniciando envio de áudio com conversão automática: ${audioUrl}`);
 
             // 1. BAIXAR ARQUIVO ORIGINAL
             const response = await axios.get(audioUrl, {
+                ...audioRequest,
                 responseType: 'arraybuffer',
-                timeout: 30000,
-                maxRedirects: 0
+                timeout: 30000
             });
             const originalBuffer = Buffer.from(response.data);
             const originalMimetype = response.headers['content-type'] || 'audio/wav';
