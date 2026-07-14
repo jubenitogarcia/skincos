@@ -15,11 +15,17 @@ LOCK_FILE="${LOCK_FILE:-$N8N_RUNTIME_HOME/locks/n8n-backup.lock}"
 MANAGE_N8N_SERVICE="${MANAGE_N8N_SERVICE:-1}"
 RUNTIME_SERVICE="${RUNTIME_SERVICE:-$SKINCOS_N8N_SERVICE}"
 VERIFY_RESTORE="${VERIFY_RESTORE:-auto}"
+BACKUP_STORAGE_COPY_TRANSPORT="${BACKUP_STORAGE_COPY_TRANSPORT:-auto}"
 timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
 partial="$BACKUP_ROOT/.partial-$timestamp"
 dest="$BACKUP_ROOT/$timestamp"
 
-for command in pg_dump pg_restore psql createdb dropdb rsync flock sha256sum; do
+case "$BACKUP_STORAGE_COPY_TRANSPORT" in
+  auto|robocopy|rsync) ;;
+  *) echo "BACKUP_STORAGE_COPY_TRANSPORT must be auto, robocopy or rsync." >&2; exit 1 ;;
+esac
+
+for command in pg_dump pg_restore psql createdb dropdb flock sha256sum; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing required command: $command" >&2; exit 1; }
 done
 if [[ -n "$RETENTION_COUNT" ]]; then
@@ -50,6 +56,45 @@ if [[ "$MANAGE_N8N_SERVICE" == "1" ]] && systemctl is-active --quiet "$RUNTIME_S
   systemctl stop "$RUNTIME_SERVICE"
 fi
 
+should_use_robocopy() {
+  if [[ "$BACKUP_STORAGE_COPY_TRANSPORT" == "rsync" ]]; then
+    return 1
+  fi
+  if [[ "$BACKUP_STORAGE_COPY_TRANSPORT" == "robocopy" ]]; then
+    command -v robocopy.exe >/dev/null 2>&1 || { echo "robocopy.exe is required by BACKUP_STORAGE_COPY_TRANSPORT=robocopy." >&2; exit 1; }
+    return 0
+  fi
+  command -v robocopy.exe >/dev/null 2>&1 \
+    && [[ "$N8N_STORAGE_PATH" == /mnt/c/* ]] \
+    && [[ "$partial" == /mnt/c/* ]]
+}
+
+sync_storage() {
+  if should_use_robocopy; then
+    local source_windows destination_windows status=0
+    source_windows="$(wslpath -w "$N8N_STORAGE_PATH")"
+    destination_windows="$(wslpath -w "$partial/storage")"
+    # /MIR provides the same complete snapshot semantics as rsync --delete.
+    # Unlike rsync on DrvFS, robocopy does not block the WSL service process in
+    # p9_client_rpc while walking large Windows-hosted binary storage.
+    robocopy.exe "$source_windows" "$destination_windows" /MIR /COPY:DAT /DCOPY:T /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >/dev/null || status=$?
+    if (( status > 7 )); then
+      echo "robocopy failed with exit code $status while backing up n8n storage." >&2
+      return "$status"
+    fi
+    return
+  fi
+
+  command -v rsync >/dev/null 2>&1 || { echo "rsync is required by BACKUP_STORAGE_COPY_TRANSPORT=rsync." >&2; exit 1; }
+  local previous rsync_args
+  previous="$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.partial-*' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1 {print $2}')"
+  rsync_args=(-a --delete)
+  if [[ -n "$previous" && -d "$previous/storage" ]]; then
+    rsync_args+=(--link-dest="$previous/storage")
+  fi
+  rsync "${rsync_args[@]}" "$N8N_STORAGE_PATH/" "$partial/storage/"
+}
+
 mkdir -p "$partial/runtime" "$partial/storage"
 
 sudo -n -u postgres pg_dump --format=custom --no-owner --no-acl \
@@ -60,17 +105,17 @@ install -m 0600 "$N8N_CONFIG_PATH" "$partial/runtime/config"
 cp -a "$N8N_RUNTIME_HOME/env" "$partial/runtime/env"
 chmod -R go-rwx "$partial/runtime"
 
-previous="$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.partial-*' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1 {print $2}')"
-rsync_args=(-a --delete)
-if [[ -n "$previous" && -d "$previous/storage" ]]; then
-  rsync_args+=(--link-dest="$previous/storage")
-fi
-rsync "${rsync_args[@]}" "$N8N_STORAGE_PATH/" "$partial/storage/"
+sync_storage
 
 db_sha="$(sha256sum "$partial/n8n_runtime.dump" | awk '{print $1}')"
 execution_count="$(sudo -n -u postgres psql -d n8n_runtime -Atqc 'select count(*) from n8n_runtime.execution_entity;')"
 workflow_count="$(sudo -n -u postgres psql -d n8n_runtime -Atqc 'select count(*) from n8n_runtime.workflow_entity;')"
-storage_bytes="$(du -sb "$N8N_STORAGE_PATH" | awk '{print $1}')"
+storage_bytes="unavailable"
+storage_bytes_json="null"
+if ! should_use_robocopy; then
+  storage_bytes="$(du -sb "$N8N_STORAGE_PATH" | awk '{print $1}')"
+  storage_bytes_json="$storage_bytes"
+fi
 
 run_restore=0
 if [[ "$VERIFY_RESTORE" == "1" ]]; then
@@ -102,7 +147,7 @@ cat > "$partial/manifest.json" <<EOF
   "executionCount": $execution_count,
   "workflowCount": $workflow_count,
   "storagePath": "$N8N_STORAGE_PATH",
-  "storageBytes": $storage_bytes,
+  "storageBytes": $storage_bytes_json,
   "restoreVerified": $restore_verified,
   "retentionDays": $RETENTION_DAYS,
   "retentionCount": ${RETENTION_COUNT:-null}
@@ -122,4 +167,4 @@ fi
 
 echo "Backup completed: $dest"
 echo "database_sha256=$db_sha"
-echo "executions=$execution_count workflows=$workflow_count storage_bytes=$storage_bytes"
+echo "executions=$execution_count workflows=$workflow_count storage_bytes=$storage_bytes transport=$BACKUP_STORAGE_COPY_TRANSPORT"
