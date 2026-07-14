@@ -78,15 +78,11 @@ jobs:
             bash backend/scripts/cloudflare-workers.sh deploy --before "$GITHUB_BEFORE_SHA" --after "$GITHUB_SHA"
           fi
 
-      - name: Smoke check Ponto (production)
+      - name: Smoke check API + Inventory Workers (production)
         if: ${{ steps.guard.outputs.skip != 'true' && github.ref_name == 'main' }}
-        env:
-          BASE_URL: https://crm.skincos.com.br
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          .github/scripts/ponto_smoke.py \
+          python3 .github/scripts/workers_smoke.py \
             --attempts 5 \
             --sleep-seconds 6 \
-            --user-agent "Mozilla/5.0 (compatible; PontoDeploySmoke/1.0)"
+            --user-agent "Mozilla/5.0 (compatible; WorkersDeploySmoke/1.0)"
