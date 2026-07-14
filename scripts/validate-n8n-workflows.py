@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-WORKFLOWS_DIR = Path("modules/automations/n8n/workflows")
+WORKFLOWS_DIR = Path("orb/engine/workflows")
 
 
 def node_names_and_ids(nodes: list[dict]) -> tuple[set[str], set[str], list[str]]:

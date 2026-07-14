@@ -13,7 +13,7 @@
       "routes": ["/booking/*"],
       "bindings": ["BOOKING_DB"],
       "stores": ["D1:espacofacial-booking"],
-      "legacySources": ["modules/site-public/website/src/app/api/booking", "modules/site-public/website/src/app/api/agenda"]
+      "sourceRoots": ["booking", "website"]
     },
     {
       "id": "inventory",
@@ -21,7 +21,7 @@
       "routes": ["/inventory/*"],
       "bindings": ["DB", "BACKUP_BUCKET", "RATE_LIMITER", "JOB_QUEUE"],
       "stores": ["D1:skincos-db", "R2:skincos-backups"],
-      "legacySources": ["backend/apps/insumos"]
+      "sourceRoots": ["inventory"]
     },
     {
       "id": "workforce-schedule",
@@ -29,7 +29,7 @@
       "routes": ["/workforce/schedule/*"],
       "bindings": ["SCHEDULE_DB"],
       "stores": ["D1:skincos-escala"],
-      "legacySources": ["backend/apps/escala-api"]
+      "sourceRoots": ["workforce/schedule"]
     },
     {
       "id": "ads-reporting",
@@ -37,7 +37,7 @@
       "routes": ["/ads/*"],
       "bindings": ["META_ADS_DB", "META_ADS_RAW"],
       "stores": ["D1:skincos-meta-ads-performance-report", "R2:skincos-meta-ads-performance-report-raw"],
-      "legacySources": ["modules/meta-ads/meta-ads/apps/report-ingest-worker", "modules/automations/n8n/cloudflare/meta-ads-performance-report"]
+      "sourceRoots": ["ads/meta", "orb/engine"]
     },
     {
       "id": "token-vault",
@@ -45,7 +45,7 @@
       "routes": ["/internal/token-vault/*"],
       "bindings": ["TOKEN_VAULT_DB"],
       "stores": ["D1:skincos-token-vault"],
-      "legacySources": ["backend/apps/token-vault"]
+      "sourceRoots": ["platform/security/token-vault"]
     },
     {
       "id": "observability-alerts",
@@ -53,7 +53,7 @@
       "routes": ["/internal/observability/*"],
       "bindings": [],
       "stores": [],
-      "legacySources": ["ops/obs-alert-webhook"]
+      "sourceRoots": ["platform/observability"]
     },
     {
       "id": "social-publishing",
@@ -61,7 +61,7 @@
       "routes": ["/social/*"],
       "bindings": ["PUBLISHER_LOCK", "SHARE_BUCKET"],
       "stores": ["DurableObject:PublisherLock", "R2:skincos-share"],
-      "legacySources": ["backend/apps/social-publisher", "backend/apps/instagram"]
+      "sourceRoots": ["social"]
     }
   ]
 }

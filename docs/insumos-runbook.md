@@ -5,7 +5,7 @@ Este documento descreve como validar, diagnosticar e operar o módulo **Insumos*
 ## 1) Arquitetura (camadas)
 1. **Frontend CRM**: `frontend/InsumosModule.tsx`
 2. **Proxy Pages Functions**: `frontend/functions/api/insumos/[[path]].ts`
-3. **Worker API (Insumos)**: `backend/apps/insumos/src/worker.js`
+3. **Worker API (Insumos)**: `inventory/src/worker.js`
 4. **Persistência**: Cloudflare **D1** (sem Google Sheets)
 
 ## 2) Invariantes obrigatórios

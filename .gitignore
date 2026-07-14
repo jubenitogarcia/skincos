@@ -79,22 +79,22 @@ dist/
 eggs/
 .eggs/
 lib/
-!modules/automations/n8n/scripts/lib/
-modules/automations/n8n/scripts/lib/*
-!modules/automations/n8n/scripts/lib/runtime-paths.sh
-!modules/automations/n8n/scripts/lib/runtime-paths.js
-!modules/automations/n8n/scripts/lib/meta-ads-publish-execution-semantics.js
+!orb/engine/scripts/lib/
+orb/engine/scripts/lib/*
+!orb/engine/scripts/lib/runtime-paths.sh
+!orb/engine/scripts/lib/runtime-paths.js
+!orb/engine/scripts/lib/meta-ads-publish-execution-semantics.js
 lib64/
 parts/
 sdist/
 
 # Cloudflare Workers source (keep committed even though "lib/" is ignored globally)
-!backend/apps/insumos/src/lib/
-!backend/apps/insumos/src/lib/**
+!inventory/src/lib/
+!inventory/src/lib/**
 !website/src/lib/
 !website/src/lib/**
-!modules/site-public/website/src/lib/
-!modules/site-public/website/src/lib/**
+!website/src/lib/
+!website/src/lib/**
 # Local runtime state (do not commit)
 backend/var/
 # Legacy/compat (avoid using; prefer backend/var/)
@@ -123,15 +123,15 @@ temp/
 frontend/public/face-models/*
 !frontend/public/face-models/.gitkeep
 
-backend/apps/automations/scraper/config.json
-backend/apps/automations/scraper/config.*.json
-backend/apps/automations/scraper/config.local.json
-backend/apps/instagram/module/config/config.json
-backend/apps/instagram/module/config/config.*.json
-backend/apps/instagram/module/config/config.local.json
-backend/apps/instagram/module/sessions/
-backend/apps/instagram/module/downloads/
-backend/apps/instagram/module/background_results/
+integration/ef/config.json
+integration/ef/config.*.json
+integration/ef/config.local.json
+social/instagram/module/config/config.json
+social/instagram/module/config/config.*.json
+social/instagram/module/config/config.local.json
+social/instagram/module/sessions/
+social/instagram/module/downloads/
+social/instagram/module/background_results/
 
 # WhatsApp (official module)
 backend/apps/whatsapp/official-module/.master-key

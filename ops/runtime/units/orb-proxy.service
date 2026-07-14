@@ -1,0 +1,33 @@
+[Unit]
+Description=Skincos Orb proxy
+After=orb.service
+Wants=orb.service
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+WorkingDirectory=__REPO_ROOT__/orb/engine
+Environment=ORB_RUNTIME_HOME=__RUNTIME_ROOT__/state/orb
+Environment=N8N_ROOT=__REPO_ROOT__/orb/engine
+Environment=N8N_RUNTIME_HOME=__RUNTIME_ROOT__/state/orb
+Environment=N8N_ENV_FILE=__RUNTIME_ROOT__/secrets/orb.env
+Environment=N8N_BUSINESS_ENV_FILE=__RUNTIME_ROOT__/secrets/orb-business.env
+Environment=ORB_LOG_DIR=__RUNTIME_ROOT__/logs/orb
+Environment=META_REVIEW_STORE_PATH=__RUNTIME_ROOT__/state/orb/meta-review-store.json
+EnvironmentFile=-__RUNTIME_ROOT__/secrets/orb.env
+EnvironmentFile=-__RUNTIME_ROOT__/secrets/orb-business.env
+ExecStart=/usr/bin/node orb-proxy/server.js
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__RUNTIME_ROOT__/state/orb __RUNTIME_ROOT__/logs/orb __RUNTIME_ROOT__/tmp/orb
+UMask=0027
+StandardOutput=append:__RUNTIME_ROOT__/logs/orb/orb-proxy.out.log
+StandardError=append:__RUNTIME_ROOT__/logs/orb/orb-proxy.err.log
+
+[Install]
+WantedBy=multi-user.target

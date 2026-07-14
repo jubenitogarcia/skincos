@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT_DIR/backend/scripts/env.sh"
-CRM_API_DIR="$ROOT_DIR/modules/crm/api"
+CRM_API_DIR="$ROOT_DIR/crm/api"
 
 CRM_PORT="${CRM_PORT:-5173}"
 CRM_API_PORT="${CRM_API_PORT:-8099}"
@@ -113,7 +113,7 @@ start_api() {
 }
 
 start_fe() {
-  (cd "$ROOT_DIR/modules/crm/web" && npm -s run dev -- --port "$CRM_PORT") &
+  (cd "$ROOT_DIR/crm/console" && npm -s run dev -- --port "$CRM_PORT") &
   echo $!
 }
 
@@ -163,7 +163,7 @@ case "$cmd" in
     ;;
   fe)
     echo "[unit-monitor] Starting CRM frontend on :$CRM_PORT"
-    exec npm -s --prefix "$ROOT_DIR/modules/crm/web" run dev -- --port "$CRM_PORT"
+    exec npm -s --prefix "$ROOT_DIR/crm/console" run dev -- --port "$CRM_PORT"
     ;;
   diagnostics)
     um_curl_headers

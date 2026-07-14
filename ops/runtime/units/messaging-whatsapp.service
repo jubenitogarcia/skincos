@@ -1,0 +1,30 @@
+[Unit]
+Description=Skincos WhatsApp channel runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+WorkingDirectory=__REPO_ROOT__/messaging/channels/whatsapp/engine
+Environment=WHATSAPP_RUNTIME_HOME=__RUNTIME_ROOT__/state/messaging-whatsapp
+Environment=EVOLUTION_API_ENV_FILE=__RUNTIME_ROOT__/secrets/messaging-whatsapp.env
+Environment=EVOLUTION_API_INSTANCES_DIR=__RUNTIME_ROOT__/state/messaging-whatsapp/instances
+Environment=EVOLUTION_API_STORE_DIR=__RUNTIME_ROOT__/state/messaging-whatsapp/store
+Environment=NODE20_BIN=/usr/bin
+EnvironmentFile=-__RUNTIME_ROOT__/secrets/messaging-whatsapp.env
+ExecStart=/bin/bash -lc 'exec ./start-evolution-api.sh'
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__RUNTIME_ROOT__/state/messaging-whatsapp __RUNTIME_ROOT__/logs/messaging-whatsapp __RUNTIME_ROOT__/tmp/messaging-whatsapp
+UMask=0027
+StandardOutput=append:__RUNTIME_ROOT__/logs/messaging-whatsapp/runtime.out.log
+StandardError=append:__RUNTIME_ROOT__/logs/messaging-whatsapp/runtime.err.log
+
+[Install]
+WantedBy=multi-user.target

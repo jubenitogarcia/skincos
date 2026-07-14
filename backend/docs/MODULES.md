@@ -31,9 +31,9 @@ Ferramentas do workspace:
 
 ## Automations
 
-- `backend/apps/automations/scraper/` — Automação Espaço Facial (Python).
+- `integration/ef/` — Automação Espaço Facial (Python).
   - Start: `./backend/scripts/dev.sh scraper all`
-  - Config: `backend/apps/automations/scraper/config.local.json` (ignorado) a partir de `backend/config/templates/modules/scraper/config.example.json`
+  - Config: `integration/ef/config.local.json` (ignorado) a partir de `backend/config/templates/modules/scraper/config.example.json`
 
 - `backend/apps/automations/sprinta/legacy/` — Sprinta (Selenium + Webhook/Wix).
   - Start: `./backend/scripts/dev.sh sprinta legacy <csv> [args]`
@@ -53,12 +53,12 @@ Ferramentas do workspace:
 
 ## Instagram
 
-- `backend/apps/instagram/instagrapi/` — biblioteca e ambiente docker (mkdocs via compose na porta 8000).
-  - Compose: `docker compose up mkdocs` (dentro de `backend/apps/instagram/instagrapi/`)
+- `social/instagram/instagrapi/` — biblioteca e ambiente docker (mkdocs via compose na porta 8000).
+  - Compose: `docker compose up mkdocs` (dentro de `social/instagram/instagrapi/`)
 
-- `backend/apps/instagram/module/` — API Node + módulo Python (OSINT/automação/download).
+- `social/instagram/module/` — API Node + módulo Python (OSINT/automação/download).
   - API Node: `./backend/scripts/dev.sh instagram-module start` (porta env `INSTAGRAM_PORT`, default 3103)
-  - Config: `backend/apps/instagram/module/config/config.local.json` (ignorado) a partir de `backend/config/templates/modules/instagram-module/config.example.json` ou via `INSTAGRAM_CONFIG=/caminho/arquivo.json`
+  - Config: `social/instagram/module/config/config.local.json` (ignorado) a partir de `backend/config/templates/modules/instagram-module/config.example.json` ou via `INSTAGRAM_CONFIG=/caminho/arquivo.json`
   - Também sobe automaticamente no `./backend/scripts/dev.sh restart` / `watch` (quando presente).
 
 ## Archive / Backup

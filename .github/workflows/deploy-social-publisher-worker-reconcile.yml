@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Reconciling social-publisher worker sha=${{ steps.sha.outputs.sha }}"
-          npx --yes wrangler@3 deploy --config backend/apps/social-publisher/wrangler.toml --keep-vars
+          npx --yes wrangler@3 deploy --config social/publisher/wrangler.toml --keep-vars
 
       - name: Mark deployed SHA
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}

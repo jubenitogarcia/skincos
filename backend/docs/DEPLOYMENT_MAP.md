@@ -15,19 +15,19 @@ Este documento é um “mapa operacional” do que está rodando em produção h
 #### `skincos-api`
 - Produto: **Cloudflare Worker**
 - Route: `api.skincos.com.br/*`
-- Código: `backend/apps/api`
-- Nota importante: hoje ele compartilha implementação com `backend/apps/insumos/src` (qualquer mudança em `apps/insumos` afeta o `skincos-api`).
+- Código: `api`
+- Nota importante: hoje ele compartilha implementação com `inventory/src` (qualquer mudança em `apps/insumos` afeta o `skincos-api`).
 
 #### `skincos-insumos`
 - Produto: **Cloudflare Worker**
 - Route: `api.skincos.com.br/insumos/*` (mais específico, ganha precedência)
-- Código: `backend/apps/insumos`
+- Código: `inventory`
 
 ## Auto-deploy (GitHub → Cloudflare)
 
 ### Workers
 - Workflow: `.github/workflows/deploy-insumos-worker.yml`
-- Dispara em `push` na `main` para mudanças em `backend/apps/api/**`, `backend/apps/insumos/**` e lockfiles do backend.
+- Dispara em `push` na `main` para mudanças em `api/**`, `inventory/**` e lockfiles do backend.
 - Deploy “inteligente”: `backend/scripts/cloudflare-workers.sh` (deploy só do que mudou, considerando dependências).
 
 ### Pages

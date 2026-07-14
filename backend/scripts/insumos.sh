@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT_DIR/backend/scripts/env.sh"
 . "$ROOT_DIR/backend/scripts/node_pkg.sh"
 
-INSUMOS_DIR="$ROOT_DIR/backend/apps/insumos"
+INSUMOS_DIR="$ROOT_DIR/inventory"
 INSUMOS_PKG="@skincos/insumos-worker"
 
 usage() {

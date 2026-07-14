@@ -89,7 +89,7 @@ em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Skincos Codex`.
 Dentro do WSL da conta:
 
 ```bash
-cd /mnt/c/CodexShared/Projetos/skincos/modules/automations/n8n
+cd /mnt/c/CodexShared/Projetos/skincos/orb/engine
 bash scripts/bootstrap-imported-wsl-account.sh
 ```
 
@@ -295,8 +295,8 @@ cd /mnt/c/CodexShared/Projetos/skincos
 bash ./scripts/install-shared-support-system-services.sh --apply
 ```
 
-Esse instalador usa os launchers do repositório em `scripts/migration/` e os
-templates em `ops/runtime/systemd/system/`.
+Esse instalador usa os launchers do repositório em `scripts/crm/` e `scripts/booking/` e os
+templates em `ops/runtime/units/`.
 
 ## Importação controlada dos workflows clínicos do orb
 
@@ -306,14 +306,14 @@ import como `active=false`:
 
 ```bash
 cd /mnt/c/CodexShared/Projetos/skincos
-bash modules/automations/n8n/scripts/import-clinic-workflows-live.sh --project-id <project_id>
+bash orb/engine/scripts/import-clinic-workflows-live.sh --project-id <project_id>
 ```
 
 Para aplicar de fato no projeto escolhido:
 
 ```bash
 cd /mnt/c/CodexShared/Projetos/skincos
-bash modules/automations/n8n/scripts/import-clinic-workflows-live.sh --apply --project-id <project_id>
+bash orb/engine/scripts/import-clinic-workflows-live.sh --apply --project-id <project_id>
 ```
 
 Observações:

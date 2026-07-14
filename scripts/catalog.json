@@ -17,7 +17,7 @@
     "platform"
   ],
   "migration": {
-    "legacyRoots": ["backend/scripts", "modules/*/*/scripts", "scripts/migration"],
+    "legacyRoots": ["backend/scripts", "modules/*/*/scripts"],
     "cutoverRule": "A command is moved only after its package scripts, CI callers, Codex actions and runbook references resolve through the catalog."
   }
 }

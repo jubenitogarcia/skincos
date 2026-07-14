@@ -46,7 +46,7 @@ if [[ "$MODE" == "--status" ]]; then
   exec sudo -n -u skincos env \
     DATABASE_URL="$DATABASE_URL" \
     CRM_RUNTIME_HOME="$RUNTIME_HOME" \
-    node "$ROOT_DIR/modules/crm/api/scripts/sync-atendimento-local-mirror.mjs" --status
+    node "$ROOT_DIR/crm/api/scripts/sync-atendimento-local-mirror.mjs" --status
 fi
 
 if [[ ! -f "$SOURCE_ENV_FILE" ]]; then
@@ -99,7 +99,7 @@ if [[ "$MODE" == "--apply" ]]; then
   fi
 fi
 
-node_args=("$ROOT_DIR/modules/crm/api/scripts/sync-atendimento-local-mirror.mjs" "$MODE")
+node_args=("$ROOT_DIR/crm/api/scripts/sync-atendimento-local-mirror.mjs" "$MODE")
 env_args=(
   DATABASE_URL="$DATABASE_URL"
   CRM_RUNTIME_HOME="$RUNTIME_HOME"

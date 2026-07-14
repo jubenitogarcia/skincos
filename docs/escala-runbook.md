@@ -35,7 +35,7 @@ title: Runbook Escala
 
 ## D1: checagens rápidas
 ```bash
-cd backend/apps/escala-api
+cd workforce/schedule
 npx wrangler d1 execute skincos-escala --remote \
   --command "select count(*) as total from schedule_entries"
 ```

@@ -3,7 +3,7 @@ set -euo pipefail
 
 DOMAIN="${DOMAIN:-skincos.com.br}"
 ALIAS_ROUTES="${ALIAS_ROUTES:-compras@skincos.com.br=financeiro@skincos.com.br}"
-WRANGLER_CWD="${WRANGLER_CWD:-modules/site-public/website}"
+WRANGLER_CWD="${WRANGLER_CWD:-website}"
 
 fail=0
 

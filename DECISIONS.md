@@ -1,5 +1,24 @@
 # DECISIONS
 
+## 2026-07-14 - Adopt direct domain roots and a single public API gateway
+
+- Decision: use direct English product roots as defined in
+  `docs/architecture/target-domain-map.md`; retain `shared`, `platform`,
+  `ops`, `scripts`, `tools`, `docs` and `.github` as cross-cutting roots.
+  `archive/` is not a destination for active or retired code.
+- Decision: expose programmatic public routes only through
+  `api.skincos.com.br/<domain>`. The gateway owns HTTP transport, request
+  tracing and authorization envelopes, while each product owns its D1/R2 data,
+  migrations and domain rules.
+- Decision: migrate in independently reviewable waves. A path move does not
+  authorize a service rename, runtime move, D1 migration, public route change
+  or deletion. Each of those requires a checkpoint, CI and direct health
+  evidence.
+- Decision: Booking owns reservation state; `integration/ef` owns external
+  browser/session execution; Orb orchestrates authenticated dispatch and
+  recovery. The durable booking outbox is the recovery source, not a browser
+  process or a best-effort webhook.
+
 ## 2026-07-14 - Enforce a compact shared-code and runtime-state footprint
 
 - Decision: keep shared code and tracked documentation under
@@ -122,9 +141,9 @@
 
 ## 2026-07-03 - Move the first self-contained modules into the new envelope
 
-- Decision: move the public website to `modules/site-public/website`, the CRM
-  API to `modules/crm/api`, and the n8n automation workspace to
-  `modules/automations/n8n` in the first migration wave.
+- Decision: move the public website to `website`, the CRM
+  API to `crm/api`, and the n8n automation workspace to
+  `orb/engine` in the first migration wave.
 - Why: these three blocks have clearer operational boundaries and reduce path
   ambiguity immediately without forcing a same-day rewrite of every remaining
   module.
@@ -134,9 +153,9 @@
 
 ## 2026-07-03 - Complete the second envelope wave for CRM, Meta Ads, and WhatsApp
 
-- Decision: move the CRM web app to `modules/crm/web`, Meta Ads to
-  `modules/meta-ads/meta-ads`, and WhatsApp services to
-  `modules/whatsapp/whatsapp`.
+- Decision: move the CRM web app to `crm/console`, Meta Ads to
+  `ads/meta`, and WhatsApp services to
+  `messaging/channels/whatsapp`.
 - Why: leaving those surfaces under `frontend/` and `backend/apps/*` preserved
   the same ambiguity the envelope was supposed to remove.
 - Impact: root scripts, local launchers, health checks, capability maps, and
@@ -196,7 +215,7 @@
 
 - Decision: expose `Orb Repair` as the canonical shared entrypoint for
   PostgreSQL/runtime reconciliation, backed by
-  `modules/automations/n8n/scripts/reconcile-mini-pc-runtime-postgres.sh`.
+  `orb/engine/scripts/reconcile-mini-pc-runtime-postgres.sh`.
 - Why: the multi-account mini-PC model breaks when Postgres repair knowledge
   exists only in one operator account or one “principal” Codex session.
 - Impact: Start Menu shortcuts, Codex App project actions, and runbooks now
@@ -230,7 +249,7 @@
 ## 2026-07-06 - Run crm-api and booking-api from shared repo launchers
 
 - Decision: `skincos-crm-api.service` and `skincos-booking-api.service` should
-  run from shared repo launchers under `scripts/migration/`, with env and
+  run from shared repo launchers under `scripts/crm/` and `scripts/booking/`, with env and
   writable runtime state moved to `C:\CodexRuntime\crm-api` and
   `C:\CodexRuntime\booking-api`.
 - Why: leaving those support services on `/srv/skincos` and `/etc/skincos`

@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "backend/apps/social-publisher/**"
+      - "social/publisher/**"
       - ".github/workflows/deploy-social-publisher-worker.yml"
   workflow_dispatch: {}
 
@@ -46,5 +46,5 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@3 deploy --config backend/apps/social-publisher/wrangler.toml --keep-vars
+          npx --yes wrangler@3 deploy --config social/publisher/wrangler.toml --keep-vars
 

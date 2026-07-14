@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "modules/meta-ads/meta-ads/apps/report-ingest-worker/**"
+      - "ads/meta/apps/report-ingest-worker/**"
       - ".github/workflows/deploy-meta-ads-report-worker.yml"
   workflow_dispatch: {}
 
@@ -46,4 +46,4 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@3 deploy --config modules/meta-ads/meta-ads/apps/report-ingest-worker/wrangler.toml --keep-vars
+          npx --yes wrangler@3 deploy --config ads/meta/apps/report-ingest-worker/wrangler.toml --keep-vars

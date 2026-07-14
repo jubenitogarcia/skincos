@@ -81,10 +81,10 @@ repos:
         files: ^frontend/.*\.(ts|tsx)$
       - id: website-lint-changed
         name: Website lint (changed files)
-        entry: bash -lc 'if printf "%s\n" "$@" | grep -q "^modules/site-public/website/"; then cd modules/site-public/website && npm run lint; else echo "website lint skipped"; fi' --
+        entry: bash -lc 'if printf "%s\n" "$@" | grep -q "^website/"; then cd website && npm run lint; else echo "website lint skipped"; fi' --
         language: system
         pass_filenames: true
-        files: ^modules/site-public/website/.*\.(ts|tsx|js|jsx)$
+        files: ^website/.*\.(ts|tsx|js|jsx)$
       - id: frontend-tests-pre-push
         name: Frontend tests (pre-push)
         entry: bash -lc 'cd frontend && npm run test && npm run typecheck'
@@ -93,7 +93,7 @@ repos:
         stages: [pre-push]
       - id: website-tests-pre-push
         name: Website tests (pre-push)
-        entry: bash -lc 'cd modules/site-public/website && npm run test && npm run typecheck'
+        entry: bash -lc 'cd website && npm run test && npm run typecheck'
         language: system
         pass_filenames: false
         stages: [pre-push]

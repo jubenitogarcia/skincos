@@ -4,13 +4,13 @@ Este catálogo define os serviços críticos do repositório, suas dependências
 
 ## Website público
 
-- Caminho: `modules/site-public/website/`
+- Caminho: `website/`
 - Dono primário: `@jubenitogarcia`
 - Backup operacional: `TBD (criar time GitHub antes de exigir review de code owner por domínio)`
 - Propósito: site público, agenda, APIs de booking e integrações de marketing.
 - Dependências críticas: Cloudflare Workers/Pages, D1 do booking, Turnstile, provedores de e-mail/notificação, analytics/pixels.
 - SLO alvo: disponibilidade 99,9%; p95 de `/api/booking/status` <= 800 ms.
-- Gates mínimos: `npm --prefix modules/site-public/website run lint`, `typecheck`, `test`, `build`.
+- Gates mínimos: `npm --prefix website run lint`, `typecheck`, `test`, `build`.
 - Runbooks: `docs/observability.md`, `docs/staging.md`.
 
 ## CRM / Escala / Ponto
@@ -26,18 +26,18 @@ Este catálogo define os serviços críticos do repositório, suas dependências
 
 ## CRM API
 
-- Caminho: `modules/crm/api/`
+- Caminho: `crm/api/`
 - Dono primário: `@jubenitogarcia`
 - Backup operacional: `TBD`
 - Propósito: backend operacional do CRM, autenticação, módulos de apoio e integrações.
 - Dependências críticas: PostgreSQL/serviços externos, OAuth, páginas do CRM, segredos locais controlados.
 - SLO alvo: disponibilidade 99,5%; endpoints críticos com erro < 1% em janelas de 5 minutos.
-- Gates mínimos: `npm --prefix modules/crm/api test`.
+- Gates mínimos: `npm --prefix crm/api test`.
 - Runbooks: `docs/observability.md`, `docs/auth.md`.
 
 ## Escala API
 
-- Caminho: `backend/apps/escala-api/`
+- Caminho: `workforce/schedule/`
 - Dono primário: `@jubenitogarcia`
 - Backup operacional: `TBD`
 - Propósito: persistência e consulta da agenda/equipe da Escala.

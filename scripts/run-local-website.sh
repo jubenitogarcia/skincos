@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 WEBSITE_SOURCE_ROOT="${WEBSITE_SOURCE_ROOT:-$ROOT_DIR}"
-WEBSITE_DIR="$WEBSITE_SOURCE_ROOT/modules/site-public/website"
+WEBSITE_DIR="$WEBSITE_SOURCE_ROOT/website"
 WEBSITE_HOST="${WEBSITE_HOST:-0.0.0.0}"
 if [[ -n "${WEBSITE_PORT+x}" ]]; then
   WEBSITE_PORT_EXPLICIT=1

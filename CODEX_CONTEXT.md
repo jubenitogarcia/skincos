@@ -1,5 +1,31 @@
 # CODEX_CONTEXT
 
+> **Architecture migration status — 2026-07-14.** The domain-first target is
+> defined in [docs/architecture/target-domain-map.md](docs/architecture/target-domain-map.md).
+> The physical source migration is being validated in a dedicated worktree and
+> has **not** changed the live checkout, Cloudflare routes, installed units or
+> runtime directories. Until a wave is merged and explicitly cut over, the
+> active runtime remains authoritative. Do not infer a deployment from a source
+> path move.
+
+## Target model
+
+- Product roots are `ads`, `api`, `booking`, `crm`, `finance`, `integration`,
+  `inventory`, `messaging`, `orb`, `service`, `social`, `website` and
+  `workforce`; neutral code belongs in `shared`, platform concerns in
+  `platform`, and unit definitions in `ops/runtime/units`.
+- `api.skincos.com.br/<domain>` is the sole programmatic public boundary. The
+  Website and CRM remain interface deployments; their existing direct API
+  routes stay live only until each domain gateway contract is deployed and
+  smoke-tested.
+- The next runtime target is
+  `C:\CodexRuntime\{state,config,logs,backups,artifacts,cache,tmp}\<domain>`
+  with a flat, ACL-restricted `C:\CodexRuntime\secrets\` directory. No live
+  runtime data has been moved yet.
+- `orb/engine` is the isolated implementation boundary for the current
+  workflow engine. Vendor names must not appear in new public paths, service
+  names or user-facing runbooks.
+
 ## Current State
 
 - Canonical single-operator clone is `C:\CodexShared\Projetos\skincos`; the
@@ -56,9 +82,9 @@
   realigned to the same five launcher entrypoints, with interactive menus
   behind `Workspace`, `Contexto`, `Local`, `EF App`, and `Orb`.
 - The live orb stack now runs from `skincos-*` system services under
-  `User=skincos`, with code in `modules/automations/n8n` and machine-scoped
+  `User=skincos`, with code in `orb/engine` and machine-scoped
   runtime state in `C:\CodexRuntime\n8n`.
-- `modules/automations/n8n/scripts/lib/runtime-paths.{sh,js}` are tracked,
+- `orb/engine/scripts/lib/runtime-paths.{sh,js}` are tracked,
   secret-free runtime path contracts. The full system validator currently runs
   from the canonical clone because the ignored live Livia export still carries
   transient secret/state data; it must not be copied into a worktree or Git.
@@ -82,7 +108,7 @@
 - The local PostgreSQL role/database `n8n_runtime` were provisioned to match
   the shared `n8n.env` contract, which restored `skincos-n8n.service`.
 - The canonical shared repair path for future Postgres/runtime drift is now
-  `modules/automations/n8n/scripts/reconcile-mini-pc-runtime-postgres.sh`,
+  `orb/engine/scripts/reconcile-mini-pc-runtime-postgres.sh`,
   exposed publicly as `Orb Repair` through both the Start Menu and Codex App
   project actions.
 - `skincos-cloudflared-cs.service` now reads its config from
@@ -92,7 +118,7 @@
   `C:\CodexRuntime\booking-api\env\booking-api.env`.
 - The machine-scoped support services `skincos-crm-api.service` and
   `skincos-booking-api.service` now run from shared repo entrypoints in
-  `scripts/migration/` and persist runtime state in `C:\CodexRuntime\crm-api`
+  `scripts/crm/` and `scripts/booking/` and persist runtime state in `C:\CodexRuntime\crm-api`
   and `C:\CodexRuntime\booking-api`.
 - `skincos-cloudflared-cs.service` now uses the shared runtime home
   `C:\CodexRuntime\cloudflared\cs`, so no installed `skincos-*` unit still
@@ -104,8 +130,8 @@
 - Shell entrypoints were normalized for WSL/Bash and `.gitattributes` now
   enforces `LF` for `*.sh` and `*.command`.
 - The local CRM launcher now repairs the shared-clone first boot by generating
-  `modules/crm/web/dist/` when absent and syncing only non-secret local auth
-  toggles into `modules/crm/web/.dev.vars` for Pages local.
+  `crm/console/dist/` when absent and syncing only non-secret local auth
+  toggles into `crm/console/.dev.vars` for Pages local.
 - Strict preflight passes the live/Cloudflare checks after authenticating `gh`
   as `jubenitogarcia`; the supported GitHub CLI session is the WSL `admin`
   operator session.
@@ -170,7 +196,7 @@
 - The current live `n8n` DB still contains unrelated workflows such as
   `Livia`, `Meta Ads – Report`, and `Harmonia`, alongside the newly imported
   clinic automation flows documented in
-  `modules/automations/n8n/README.md`.
+  `orb/engine/README.md`.
 - A full orb business smoke still cannot be executed end-to-end on the live
   runtime because `GOOGLE_CALENDAR_ID` and `N8N_DEFAULT_TEST_PHONE` are still
   blank in `n8n-business.env`, and the imported Google credential has not yet

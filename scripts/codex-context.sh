@@ -55,10 +55,10 @@ fi
 
 section "Source Of Truth"
 cat <<'EOF'
-site_public=modules/site-public/website/ (espacofacial.com, booking, tracking, WhatsApp, CAPI)
-crm=modules/crm/web/ + modules/crm/api/ (crm.skincos.com.br)
-automations=modules/automations/n8n/ (orb.skincos.com.br)
-meta_ads=modules/crm/web/ + modules/meta-ads/meta-ads/ (crm module + dedicated meta-ads module)
+site_public=website/ (espacofacial.com, booking, tracking, WhatsApp, CAPI)
+crm=crm/console/ + crm/api/ (crm.skincos.com.br)
+automations=orb/engine/ (orb.skincos.com.br)
+meta_ads=crm/console/ + ads/meta/ (crm module + dedicated meta-ads module)
 cloudflare=.github/workflows/ + wrangler configs + scripts/cloudflare-token-health.sh
 codex_docs=AGENTS.md, docs/codex-app-native.md, docs/codex-autonomy.md
 EOF
@@ -69,7 +69,7 @@ Browser: local/prod UI QA, screenshots, interaction checks
 Build Web Apps: React/frontend refactors, dashboard UX, Playwright flows
 Cloudflare: Workers, Pages, D1, routes, deploy verification
 GitHub: PRs, checks, automerge, workflow/deploy evidence
-Sites: prototypes/demos only; production site stays in modules/site-public/website/ unless explicitly migrated
+Sites: prototypes/demos only; production site stays in website/ unless explicitly migrated
 Security: auth/session/tracking/secrets threat review
 EOF
 

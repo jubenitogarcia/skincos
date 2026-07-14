@@ -7,8 +7,8 @@ on:
       - main
       - develop
     paths:
-      - "modules/crm/web/**"
-      - "modules/site-public/website/**"
+      - "crm/console/**"
+      - "website/**"
       - "backend/**"
       - ".github/workflows/crm-codeql.yml"
       - ".github/codeql/**"
@@ -17,8 +17,8 @@ on:
       - main
       - develop
     paths:
-      - "modules/crm/web/**"
-      - "modules/site-public/website/**"
+      - "crm/console/**"
+      - "website/**"
       - "backend/**"
       - ".github/workflows/crm-codeql.yml"
       - ".github/codeql/**"
@@ -51,8 +51,8 @@ jobs:
           node-version: "22.12.0"
           cache: "npm"
           cache-dependency-path: |
-            modules/crm/web/package-lock.json
-            modules/site-public/website/package-lock.json
+            crm/console/package-lock.json
+            website/package-lock.json
       - name: Setup Python
         if: ${{ matrix.language == 'python' }}
         uses: actions/setup-python@v6
@@ -69,22 +69,22 @@ jobs:
         if: ${{ matrix.language == 'javascript' }}
         run: |
           set -euxo pipefail
-          if [ -f modules/crm/web/package-lock.json ]; then
-              (cd modules/crm/web && npm ci)
+          if [ -f crm/console/package-lock.json ]; then
+              (cd crm/console && npm ci)
           fi
-          if [ -f modules/site-public/website/package-lock.json ]; then
-            (cd modules/site-public/website && npm ci)
+          if [ -f website/package-lock.json ]; then
+            (cd website && npm ci)
           fi
 
       - name: Build (CRM + Website)
         if: ${{ matrix.language == 'javascript' }}
         run: |
           set -euxo pipefail
-          if [ -f modules/crm/web/package-lock.json ]; then
-              (cd modules/crm/web && npm run build)
+          if [ -f crm/console/package-lock.json ]; then
+              (cd crm/console && npm run build)
           fi
-          if [ -f modules/site-public/website/package-lock.json ]; then
-            (cd modules/site-public/website && npm run build)
+          if [ -f website/package-lock.json ]; then
+            (cd website && npm run build)
           fi
 
       - name: Perform CodeQL Analysis

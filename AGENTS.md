@@ -122,14 +122,14 @@
 
 ## Interpretation Defaults
 
-- "site" usually means `modules/site-public/website/` and production
+- "site" usually means `website/` and production
   `https://espacofacial.com`.
-- "CRM" usually means `modules/crm/web/` plus `modules/crm/api/` and
+- "CRM" usually means `crm/console/` plus `crm/api/` and
   `https://crm.skincos.com.br`.
-- "n8n" usually means `modules/automations/n8n/` and production
+- "n8n" usually means `orb/engine/` and production
   `https://orb.skincos.com.br`.
 - "Site EF" means the CRM module `?module=site-tracking`.
-- "Meta Ads" means the CRM module plus related `modules/meta-ads/meta-ads/`
+- "Meta Ads" means the CRM module plus related `ads/meta/`
   services.
 - "publicar", "deploy", "commit/push/pr/merge" means use branch `codex/*`,
   PR, GitHub checks, automerge/merge, deploy workflows, and live smoke evidence.

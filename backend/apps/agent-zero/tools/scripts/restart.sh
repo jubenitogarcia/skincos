@@ -190,7 +190,7 @@ kill_processes() {
     pkill -f "az_daemon.py" 2>/dev/null || true
 
     # Kill CRM processes
-    pkill -f "modules/crm/api/server.js" 2>/dev/null || true
+    pkill -f "crm/api/server.js" 2>/dev/null || true
     pkill -f "vite --port $CRM_PORT" 2>/dev/null || true
 
     # Kill WhatsApp gateway processes (best-effort)
@@ -222,7 +222,7 @@ start_webui() {
 start_crm() {
     if [[ $START_CRM -eq 1 ]]; then
         echo "[restart] Starting CRM (port $CRM_PORT, API port $CRM_API_PORT)..."
-        local CRM_DIR="$SKINCOS_ROOT/modules/crm/web"
+        local CRM_DIR="$SKINCOS_ROOT/crm/console"
         local CRM_SCRIPT="$CRM_DIR/restart_crm.sh"
         if [[ -x "$CRM_SCRIPT" ]]; then
             "$CRM_SCRIPT" --crm-port "$CRM_PORT" --crm-api-port "$CRM_API_PORT" --tail || true

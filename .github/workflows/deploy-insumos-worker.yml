@@ -4,8 +4,8 @@ on:
   push:
     branches: [ main, staging ]
     paths:
-      - "backend/apps/api/**"
-      - "backend/apps/insumos/**"
+      - "api/**"
+      - "inventory/**"
       - "backend/scripts/cloudflare-workers.sh"
       - "backend/pnpm-lock.yaml"
       - "backend/pnpm-workspace.yaml"

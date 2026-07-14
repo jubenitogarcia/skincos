@@ -1,5 +1,29 @@
 # TASKS
 
+## Architecture reorganization — active program
+
+- [ ] **Wave 2 — source layout:** validate the moved product roots, remove
+  direct `api` reexport coupling, and publish a reviewable source-only PR. No
+  runtime/service/deploy action belongs to this wave.
+- [ ] **Wave 3 — gateway contracts:** move one domain at a time behind
+  `api.skincos.com.br/<domain>`, with staging D1/binding tests and explicit
+  authorization tests for CRM humans and private services.
+- [ ] **Wave 4 — Booking + EF integration:** introduce the D1 outbox/ledger,
+  idempotency, lease and `provisional`/`confirmed`/`failed`/`manual_review`
+  state model; use a simulated EF executor before any external reservation.
+- [ ] **Wave 5 — runtime cutover:** pre-copy to the lifecycle layout, create a
+  verified fresh backup, rename units in a short window, and retain rollback
+  evidence. The executable contract is
+  `docs/runbooks/lifecycle-runtime-cutover.md`; do not change the WSL VHD,
+  Codex authentication or mandatory Windows state.
+- [ ] **Wave 6 — retirement:** remove old source paths, direct public routes,
+  scripts and backups only after merged CI plus local/public health proof.
+
+- [ ] **Security baseline remediation:** address the externally reclassified
+  CodeQL/Semgrep findings by owner and trust boundary; see
+  `docs/architecture/code-scanning-baseline-triage.md`. Do not bulk-dismiss
+  findings created by the domain move.
+
 ## Priority Backlog
 
 - [ ] Review and, if needed, reauthorize the imported live `n8n` credential
@@ -74,9 +98,9 @@
 - [x] First modular-envelope wave created `modules/`, `platform/`, `ops/`, and
   `archive/`, and moved `website/`, `n8n/`, and `backend/apps/crm-api/` into
   their new canonical module paths.
-- [x] Second modular-envelope wave moved `frontend/` to `modules/crm/web`,
-  `backend/apps/meta-ads/` to `modules/meta-ads/meta-ads`, and
-  `backend/apps/whatsapp/` to `modules/whatsapp/whatsapp`.
+- [x] Second modular-envelope wave moved `frontend/` to `crm/console`,
+  `backend/apps/meta-ads/` to `ads/meta`, and
+  `backend/apps/whatsapp/` to `messaging/channels/whatsapp`.
 - [x] The live orb stack converged to system services under `User=skincos`,
   with machine-scoped env/runtime state in `C:\CodexRuntime\n8n`.
 - [x] Shared runtime validation now checks both the runtime contract and the

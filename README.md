@@ -4,25 +4,25 @@ Plataforma interna (local) para automações e operações da clínica.
 
 ## Estrutura (source of truth)
 - Envelope modular:
-  - `modules/site-public/website/` para o site público e seu deploy Cloudflare/OpenNext
-  - `modules/crm/web/` para a UI operacional do CRM
-  - `modules/crm/api/` para o backend operacional do CRM
-  - `modules/automations/n8n/` para automações, `orb-proxy` e `evolution-api`
-- `modules/meta-ads/meta-ads/` para o workspace do Meta Ads
-- `modules/whatsapp/whatsapp/` para gateway, official module, Evolution API e afins
+  - `website/` para o site público e seu deploy Cloudflare/OpenNext
+  - `crm/console/` para a UI operacional do CRM
+  - `crm/api/` para o backend operacional do CRM
+  - `orb/engine/` para automações, `orb-proxy` e `evolution-api`
+- `ads/meta/` para o workspace do Meta Ads
+- `messaging/channels/whatsapp/` para gateway, official module, Evolution API e afins
 - `backend/` continua hospedando infraestrutura compartilhada e blocos ainda não redistribuídos para `modules/` e `platform/`
 - Estado de máquina do n8n continua fora do repositório em `C:\CodexRuntime\n8n`.
 
 ## Como rodar (local)
 - Stack principal (recomendado): `./backend/scripts/dev.sh watch`
-- CRM (frontend + API): `./modules/crm/web/restart_crm.sh --watch-full`
+- CRM (frontend + API): `./crm/console/restart_crm.sh --watch-full`
 - CRM local production-like: `npm run crm:local`
 - Preflight de autonomia Codex/deploy: `npm run codex:preflight`
 - Operação nativa no Codex App: `docs/codex-app-native.md`
 - Workspace compartilhado no Codex App: `docs/codex-shared-workspace.md`
 - Prompt inicial para novas threads: `docs/codex-thread-bootstrap.md`
 - Status rápido do workspace compartilhado: `powershell -ExecutionPolicy Bypass -File .\scripts\show-shared-codex-status.ps1`
-- Website público: `npm run website:dev` (módulo `modules/site-public/website`, porta padrão do Next: `http://localhost:3000`)
+- Website público: `npm run website:dev` (módulo `website`, porta padrão do Next: `http://localhost:3000`)
 - macOS (sem terminal): dê duplo clique em `start-platform.command`
  - Meta Ads (API + worker): `./backend/scripts/meta-ads.sh start`
 
@@ -31,19 +31,19 @@ Plataforma interna (local) para automações e operações da clínica.
 - Rodar typecheck: `npm run website:typecheck`
 - Build de produção: `npm run website:build`
 - Deploy Cloudflare/OpenNext: `npm run website:deploy`
-- O código ativo do site agora está sob `modules/site-public/website/`.
+- O código ativo do site agora está sob `website/`.
 
 ### Auth local (sem login manual)
 - Em `localhost`, o bypass de auth **só é ativado com flag explícita** (`LOCAL_AUTH_BYPASS=true` ou `VITE_LOCAL_AUTH_BYPASS=true`).
 - Para habilitar bypass no frontend local: `VITE_LOCAL_AUTH_BYPASS=true npm run dev`.
 - Overrides úteis (frontend local): `VITE_LOCAL_AUTH_ROLE`, `VITE_LOCAL_AUTH_EMAIL`, `VITE_LOCAL_AUTH_NAME`.
 - Em Pages Functions local (`npm run dev:pages`), `requireCrmUser` só faz bypass em `localhost` quando a flag acima estiver ativa.
-- No CRM API local (`modules/crm/api/server.js`), o stub de sessão dev exige `NO_AUTH=true` (não é mais default).
+- No CRM API local (`crm/api/server.js`), o stub de sessão dev exige `NO_AUTH=true` (não é mais default).
 - O bypass de Basic Auth local no CRM API exige `CRM_LOCAL_NO_AUTH=true` (somente localhost).
-- Escala em local (`npm run dev`, `./modules/crm/web/restart_crm.sh` e `npm run dev:pages`): padrão em `modules/crm/web/.dev.vars` é leitura de dados reais (`LOCAL_ESCALA_MOCK=false`, `ESCALA_API_TARGET=https://escala-api.skincos.com.br`) com escrita sombra local (`LOCAL_ESCALA_SHADOW_WRITES=true`).
+- Escala em local (`npm run dev`, `./crm/console/restart_crm.sh` e `npm run dev:pages`): padrão em `crm/console/.dev.vars` é leitura de dados reais (`LOCAL_ESCALA_MOCK=false`, `ESCALA_API_TARGET=https://escala-api.skincos.com.br`) com escrita sombra local (`LOCAL_ESCALA_SHADOW_WRITES=true`).
 - Efeito da escrita sombra: o CRM local confirma CRUD e reflete as mudanças localmente, mas **não grava no banco online**.
-- Para isso, configure `ESCALA_ACTOR_HMAC_KEY` real em `modules/crm/web/.dev.vars`; sem essa chave, as leituras reais da Escala retornam erro de autenticação.
-- A sombra local da Escala agora persiste entre reinícios em `modules/crm/web/.local/escala-shadow.json` (ignorado pelo git). Para desligar isso: `LOCAL_ESCALA_SHADOW_PERSIST=false`.
+- Para isso, configure `ESCALA_ACTOR_HMAC_KEY` real em `crm/console/.dev.vars`; sem essa chave, as leituras reais da Escala retornam erro de autenticação.
+- A sombra local da Escala agora persiste entre reinícios em `crm/console/.local/escala-shadow.json` (ignorado pelo git). Para desligar isso: `LOCAL_ESCALA_SHADOW_PERSIST=false`.
 - Diagnóstico local da Escala:
   - `GET /api/escala/_proxy-status` mostra se o modo ativo é `local-mock`, `upstream` ou `upstream+local-shadow`.
   - `GET /api/escala/_local-shadow` lista as operações locais persistidas.
@@ -53,7 +53,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Backend (CRM API): expõe endpoints em `/api/ponto/*` e persiste em `backend/var/core/` (ignorado do git).
 - Config (env): `PONTO_ADMIN_TOKEN` (rotas admin) e `PONTO_ACTOR_HMAC_KEY` (assinatura do actor para rotas `/me/*` via Pages proxy).
 - Config (env, opcional): `PONTO_TEMPLATES_KEY` (AES-256-GCM p/ templates faciais em repouso), `PONTO_AUDIT_HMAC_KEY` (HMAC da trilha de auditoria), `PONTO_FACE_THRESHOLD`, `PONTO_PUNCH_COOLDOWN_SECONDS`.
-- Frontend: baixe os modelos faciais para `modules/crm/web/public/face-models/` com `cd modules/crm/web && npm run fetch-face-models`.
+- Frontend: baixe os modelos faciais para `crm/console/public/face-models/` com `cd crm/console && npm run fetch-face-models`.
 - Fluxo recomendado: Admin cadastra funcionário (email + PIN + unidade) e opcional biometria → Funcionário bate ponto direto no CRM (Face → PIN) → Admin exporta e audita. Dispositivos são opcionais via “Gerenciar Dispositivo”.
 
 ## Redes Sociais (Instagram/Facebook/Threads)
@@ -67,9 +67,9 @@ Plataforma interna (local) para automações e operações da clínica.
 - Endpoint de status de job: `GET /api/social/job-status?jobId=...` (retorna `pending|done|unknown`).
 
 ### Dev local (Social via Pages Functions)
-- Recomendado: `cd modules/crm/web && npm run dev:pages` (sobe Vite + Pages Functions com bindings locais).
+- Recomendado: `cd crm/console && npm run dev:pages` (sobe Vite + Pages Functions com bindings locais).
 - Acesse `http://localhost:8788` (Pages) — a UI usa Functions reais (`/api/social/*`, `/social-media/*`).
-- Se precisar de variáveis locais, crie `modules/crm/web/.dev.vars` (ignorado) com, por exemplo:
+- Se precisar de variáveis locais, crie `crm/console/.dev.vars` (ignorado) com, por exemplo:
   - `SOCIAL_ADMIN_TOKEN=...`
   - `INTEGRATIONS_ENCRYPTION_SECRET=...`
   - `REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET=true`
@@ -88,7 +88,7 @@ Plataforma interna (local) para automações e operações da clínica.
 - Atalho macOS para Site EF: `./start-crm-site-tracking-local.command`
 - Atalho macOS para Atendimento: `./start-crm-atendimento-local.command`
 - Perfil default: `realistic`
-  - sobe o CRM via `Pages Functions` local (`modules/crm/web/scripts/dev_pages.sh`)
+  - sobe o CRM via `Pages Functions` local (`crm/console/scripts/dev_pages.sh`)
   - ativa bypass local de auth apenas em `localhost`
   - preserva os módulos que já suportam leitura real com segurança, como `Escala`
 - Para testar a sessão real sem bypass: `CRM_PROFILE=session npm run crm:local`

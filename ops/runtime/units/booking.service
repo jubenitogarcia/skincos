@@ -1,0 +1,32 @@
+[Unit]
+Description=Skincos Booking integration runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+WorkingDirectory=__REPO_ROOT__/integration/ef
+Environment=BOOKING_API_RUNTIME_HOME=__RUNTIME_ROOT__/state/booking
+Environment=SKINCOS_BOOKING_API_ENV_FILE=__RUNTIME_ROOT__/secrets/booking.env
+Environment=EF_SCRAPER_VENV_DIR=__RUNTIME_ROOT__/state/booking/venv
+Environment=EF_OUTPUT_DIR=__RUNTIME_ROOT__/artifacts/booking/report
+Environment=EF_DEBUG_DIR=__RUNTIME_ROOT__/artifacts/booking/debug
+Environment=EF_LOG_DIR=__RUNTIME_ROOT__/logs/booking
+Environment=EF_CHROME_USER_DATA_DIR=__RUNTIME_ROOT__/state/booking/chrome-profile
+EnvironmentFile=-__RUNTIME_ROOT__/secrets/booking.env
+ExecStart=__REPO_ROOT__/scripts/booking/run-api-linux.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__RUNTIME_ROOT__/state/booking __RUNTIME_ROOT__/logs/booking __RUNTIME_ROOT__/artifacts/booking __RUNTIME_ROOT__/tmp/booking
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

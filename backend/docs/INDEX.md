@@ -30,11 +30,11 @@ Este é o “mapa rápido” do `backend/`: o que existe, onde está e como exec
 - Sales Chart Messenger (Python): `backend/apps/automations/sales_chart_messenger/`
   - Runner: `./backend/apps/automations/sales_chart_messenger/scripts/run.sh`
   - CLI: `python3 -m apps.automations.sales_chart_messenger`
-- Scraper (Python): `backend/apps/automations/scraper/`
+- Scraper (Python): `integration/ef/`
   - Runner: `./backend/scripts/dev.sh scraper all`
 - Sprinta (Python): `backend/apps/automations/sprinta/`
   - Runner: `./backend/scripts/dev.sh sprinta legacy|v2 ...`
-- Cloudflare Workers (produção): `backend/apps/api` e `backend/apps/insumos`
+- Cloudflare Workers (produção): `api` e `inventory`
   - Deploy: `./backend/scripts/cloudflare-workers.sh deploy-all`
 
 ## Configuração (sem segredos no git)

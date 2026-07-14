@@ -1,31 +1,31 @@
 {
   "patterns": {
     "dangerouslySetInnerHTML": {
-      "modules/crm/web/EmailTemplatesManager.tsx": {
+      "crm/console/EmailTemplatesManager.tsx": {
         "count": 1,
         "reason": "Admin preview of curated email HTML templates."
       },
-      "modules/crm/web/RichTaskManager.tsx": {
+      "crm/console/RichTaskManager.tsx": {
         "count": 4,
         "reason": "Rich task descriptions rendered from controlled markdown paths; future work should sanitize explicitly."
       },
-      "modules/crm/web/chart.tsx": {
+      "crm/console/chart.tsx": {
         "count": 1,
         "reason": "Static SVG/markup injection generated locally for chart export."
       },
-      "modules/site-public/website/src/app/[unit]/page.tsx": {
+      "website/src/app/[unit]/page.tsx": {
         "count": 1,
         "reason": "Static LocalBusiness JSON-LD serialization."
       },
-      "modules/site-public/website/src/app/layout.tsx": {
+      "website/src/app/layout.tsx": {
         "count": 1,
         "reason": "Static organization JSON-LD serialization."
       },
-      "modules/site-public/website/src/components/Analytics.tsx": {
+      "website/src/components/Analytics.tsx": {
         "count": 3,
         "reason": "Inline analytics scripts required by third-party vendors."
       },
-      "modules/site-public/website/src/components/MarketingPixels.tsx": {
+      "website/src/components/MarketingPixels.tsx": {
         "count": 2,
         "reason": "Inline marketing pixel bootstrap scripts."
       }

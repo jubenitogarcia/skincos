@@ -126,24 +126,24 @@ jobs:
         with:
           node-version: "22.12.0"
           cache: "npm"
-          cache-dependency-path: modules/crm/web/package-lock.json
+          cache-dependency-path: crm/console/package-lock.json
 
       - name: Install frontend deps
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
         run: npm ci
-        working-directory: modules/crm/web
+        working-directory: crm/console
 
       - name: Fetch face models
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
         run: npm run fetch-face-models
-        working-directory: modules/crm/web
+        working-directory: crm/console
 
       - name: Build frontend
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
         env:
           VITE_BUILD_SHA: ${{ steps.sha.outputs.sha }}
         run: npm run build
-        working-directory: modules/crm/web
+        working-directory: crm/console
 
       - name: Deploy to Cloudflare Pages (wrangler)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
@@ -159,7 +159,7 @@ jobs:
           PROJECT="${PAGES_PROJECT:-skincos}"
           echo "Reconciling Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME sha=$GIT_SHA"
           npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
-        working-directory: modules/crm/web
+        working-directory: crm/console
 
       - name: Smoke check Ponto (production)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') }}
@@ -187,7 +187,7 @@ jobs:
       - name: Install Playwright Chromium (UI smoke)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
         run: npx --yes playwright install --with-deps chromium
-        working-directory: modules/crm/web
+        working-directory: crm/console
 
       - name: Ponto UI smoke (production)
         if: ${{ steps.guard.outputs.skip != 'true' && (steps.cache.outputs.cache-hit != 'true' || steps.flags.outputs.force == 'true' || steps.redeploy.outputs.need == 'true') && vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
@@ -200,14 +200,14 @@ jobs:
           SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
           LOGIN_WAIT_MS: "120000"
           NO_SCREENSHOTS: "1"
-          NODE_PATH: modules/crm/web/node_modules
+          NODE_PATH: crm/console/node_modules
         run: |
           set -euo pipefail
           if [[ -z "${SMOKE_EMAIL:-}" || -z "${SMOKE_PASSWORD:-}" ]]; then
             echo "Missing GitHub Actions secrets: PONTO_SMOKE_EMAIL / PONTO_SMOKE_PASSWORD"
             exit 1
           fi
-          node modules/crm/web/scripts/ponto-ui-smoke.cjs
+          node crm/console/scripts/ponto-ui-smoke.cjs
 
       - name: Mark deployed SHA
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}

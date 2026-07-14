@@ -28,11 +28,11 @@ Obs:
 
 ## Backend (Insumos) → `api.skincos.com.br/insumos/*`
 
-É um **Cloudflare Worker** em `backend/apps/insumos`.
+É um **Cloudflare Worker** em `inventory`.
 
 ## Backend (API) → `api.skincos.com.br/*`
 
-É um **Cloudflare Worker** em `backend/apps/api` (implementação compartilhada com `apps/insumos`).
+É um **Cloudflare Worker** em `api` (implementação compartilhada com `apps/insumos`).
 
 Workflow de deploy:
 - `.github/workflows/deploy-insumos-worker.yml`

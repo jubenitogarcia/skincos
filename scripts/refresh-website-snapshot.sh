@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/shared-paths.sh"
 
 ROOT_DIR="$SKINCOS_ROOT"
-WEBSITE_DIR="$ROOT_DIR/modules/site-public/website"
+WEBSITE_DIR="$ROOT_DIR/website"
 
 SYNC_ONLY="${SYNC_ONLY:-0}"
 RUN_TYPECHECK="${RUN_TYPECHECK:-0}"

@@ -59,7 +59,7 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
 5. Dentro do WSL da conta, rodar o bootstrap da conta humana:
 
    ```bash
-   cd /mnt/c/CodexShared/Projetos/skincos/modules/automations/n8n
+   cd /mnt/c/CodexShared/Projetos/skincos/orb/engine
    bash scripts/bootstrap-imported-wsl-account.sh
    ```
 
@@ -193,7 +193,7 @@ Usado para edição, QA e iteração dos projetos locais como website e CRM.
 
 Os launchers do scraper do `app.espacofacial.com.br` também seguem esse modelo:
 
-- código em `backend/apps/automations/scraper`;
+- código em `integration/ef`;
 - `report/`, `debug/` e `logs` em
   `C:\CodexRuntime\operator\admin\skincos\scraper\`; `chrome-profile` e envs
   privados em `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\`;

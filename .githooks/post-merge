@@ -24,13 +24,13 @@ fi
 [[ -n "${base:-}" ]] || exit 0
 
 changed="$(git diff --name-only "$base..HEAD" 2>/dev/null || true)"
-if ! echo "$changed" | grep -qE '^(backend/apps/insumos/|backend/pnpm-lock\.yaml)'; then
+if ! echo "$changed" | grep -qE '^(inventory/|backend/pnpm-lock\.yaml)'; then
   exit 0
 fi
 
 echo "[skincos] Pull updated Insumos; deploying worker..."
 
-if [[ "${SKINCOS_AUTO_MIGRATE:-0}" == "1" ]] && echo "$changed" | grep -qE '^backend/apps/insumos/migrations/'; then
+if [[ "${SKINCOS_AUTO_MIGRATE:-0}" == "1" ]] && echo "$changed" | grep -qE '^inventory/migrations/'; then
   echo "[skincos] Applying D1 migrations (best effort)..."
   ./backend/scripts/dev.sh insumos migrate || true
 fi

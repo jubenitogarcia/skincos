@@ -22,14 +22,14 @@ cmd="${1:-check}"
 shift || true
 
 declare -a EXPECTED=(
-  "backend/apps/automations/scraper/config.example.json|../../../config/templates/modules/scraper/config.example.json"
-  "backend/apps/automations/scraper/config.local.json|../../../var/scraper/config.local.json"
+  "integration/ef/config.example.json|../../../config/templates/modules/scraper/config.example.json"
+  "integration/ef/config.local.json|../../../var/scraper/config.local.json"
   "backend/apps/automations/sprinta/legacy/participants.example.csv|../../../../config/templates/examples/sprinta/participants.example.csv"
   "backend/apps/automations/sprinta/legacy/.env.example|../../../../config/templates/modules/sprinta/.env.example"
   "backend/apps/agent-zero/.env.example|../../config/templates/modules/a0/.env.example"
-  "backend/apps/instagram/module/config/config.example.json|../../../../config/templates/modules/instagram-module/config.example.json"
-  "modules/whatsapp/whatsapp/official/.env.example|../../../backend/config/templates/modules/whatsapp-official/.env.example"
-  "modules/whatsapp/whatsapp/gateway/.env.chat-module.example|../../../backend/config/templates/modules/whatsapp-gateway/.env.chat-module.example"
+  "social/instagram/module/config/config.example.json|../../../../config/templates/modules/instagram-module/config.example.json"
+  "messaging/channels/whatsapp/official/.env.example|../../../backend/config/templates/modules/whatsapp-official/.env.example"
+  "messaging/channels/whatsapp/gateway/.env.chat-module.example|../../../backend/config/templates/modules/whatsapp-gateway/.env.chat-module.example"
 )
 
 apply_one() {

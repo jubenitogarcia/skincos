@@ -26,7 +26,7 @@ Este documento define os SLOs mínimos, a rota de alerta e a disciplina operacio
 
 ## Owners de alerta
 
-- Website / booking: owner `modules/site-public/website/`
+- Website / booking: owner `website/`
 - CRM / Escala / Ponto: owner `frontend/`
 - CRM API: owner `backend/apps/crm-api/`
 - Infra Cloudflare / segredos: owner `.github/` + backend de domínio afetado

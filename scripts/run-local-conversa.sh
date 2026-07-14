@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/shared-paths.sh"
 
 ROOT_DIR="$SKINCOS_ROOT"
-CRM_API_DIR="$ROOT_DIR/modules/crm/api"
+CRM_API_DIR="$ROOT_DIR/crm/api"
 CRM_API_PORT="${CRM_API_PORT:-8099}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 DEV_AUTH_EMAIL_DEFAULT="${DEV_AUTH_EMAIL:-jubenitogarcia@local.test}"
@@ -77,7 +77,7 @@ free_port "$FRONTEND_PORT"
 CRM_API_PID=$!
 
 echo "[local-conversa] Starting Frontend on :$FRONTEND_PORT"
-cd "$ROOT_DIR/modules/crm/web"
+cd "$ROOT_DIR/crm/console"
 export LOCAL_AUTH_BYPASS="$LOCAL_AUTH_BYPASS_DEFAULT"
 export VITE_LOCAL_AUTH_BYPASS="$LOCAL_AUTH_BYPASS_DEFAULT"
 npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT"

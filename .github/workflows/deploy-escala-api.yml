@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "backend/apps/escala-api/**"
+      - "workforce/schedule/**"
       - ".github/workflows/deploy-escala-api.yml"
   workflow_dispatch: {}
 
@@ -63,7 +63,7 @@ jobs:
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
         run: |
           set -euo pipefail
-          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config backend/apps/escala-api/wrangler.toml >/dev/null
+          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml >/dev/null
           echo "Synced ESCALA_ACTOR_HMAC_KEY for production."
 
       - name: Apply Escala D1 migrations (production)
@@ -73,7 +73,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config backend/apps/escala-api/wrangler.toml
+          npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config workforce/schedule/wrangler.toml
 
       - name: Deploy Escala worker (production)
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -82,7 +82,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@4 deploy --config backend/apps/escala-api/wrangler.toml --keep-vars
+          npx --yes wrangler@4 deploy --config workforce/schedule/wrangler.toml --keep-vars
 
       - name: Sync Escala worker secret (staging)
         if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.deploy_staging == 'true' }}
@@ -92,7 +92,7 @@ jobs:
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
         run: |
           set -euo pipefail
-          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config backend/apps/escala-api/wrangler.toml --env staging >/dev/null
+          printf "%s" "$ESCALA_ACTOR_HMAC_KEY" | npx --yes wrangler@4 secret put ESCALA_ACTOR_HMAC_KEY --config workforce/schedule/wrangler.toml --env staging >/dev/null
           echo "Synced ESCALA_ACTOR_HMAC_KEY for staging."
 
       - name: Apply Escala D1 migrations (staging)
@@ -102,7 +102,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config backend/apps/escala-api/wrangler.toml --env staging
+          npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config workforce/schedule/wrangler.toml --env staging
 
       - name: Deploy Escala worker (staging)
         if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.deploy_staging == 'true' }}
@@ -111,7 +111,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@4 deploy --config backend/apps/escala-api/wrangler.toml --env staging --keep-vars
+          npx --yes wrangler@4 deploy --config workforce/schedule/wrangler.toml --env staging --keep-vars
 
       - name: Smoke check Escala API (production)
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -120,7 +120,7 @@ jobs:
           ESCALA_SMOKE_BASE_URL: https://escala-api.skincos.com.br
         run: |
           set -euo pipefail
-          node backend/apps/escala-api/scripts/smoke.mjs
+          node workforce/schedule/scripts/smoke.mjs
 
       - name: Smoke check Escala API (staging)
         if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.deploy_staging == 'true' }}
@@ -129,4 +129,4 @@ jobs:
           ESCALA_SMOKE_BASE_URL: https://escala-api-staging.skincos.com.br
         run: |
           set -euo pipefail
-          node backend/apps/escala-api/scripts/smoke.mjs
+          node workforce/schedule/scripts/smoke.mjs
