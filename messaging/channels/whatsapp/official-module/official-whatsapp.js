@@ -7,6 +7,7 @@ const os = require('os');
 const fs = require('fs');
 const helmet = require('helmet');
 const session = require('express-session');
+const { assertPublicHttpsUrl } = require('../security/publicUrl');
 
 // Import security middleware
 const {
@@ -230,8 +231,9 @@ async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
     const bodyString = JSON.stringify(fullPayload);
 
     try {
+        const safeUrl = await assertPublicHttpsUrl(webhook.url);
         const signature = crypto.createHmac('sha256', webhook.secret || 'default_secret').update(bodyString).digest('hex');
-        await axios.post(webhook.url, bodyString, {
+        await axios.post(safeUrl, bodyString, {
             headers: {
                 'Content-Type': 'application/json',
                 'X-Webhook-Id': webhook.id,
@@ -240,7 +242,8 @@ async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
                 'X-Event-Type': fullPayload.event,
                 'X-Event-Version': '1'
             },
-            timeout: 10000
+            timeout: 10000,
+            maxRedirects: 0
         });
     } catch (e) {
         status = 'error';
@@ -1540,7 +1543,7 @@ app.post('/start-client', async (req, res) => {
 // ========== WEBHOOK APIs ==========
 
 // Create webhook
-app.post('/v1/webhooks', (req, res) => {
+app.post('/v1/webhooks', authenticate({ required: true }), async (req, res) => {
     try {
         const { url, secret, events = [] } = req.body;
 
@@ -1548,9 +1551,10 @@ app.post('/v1/webhooks', (req, res) => {
             return res.status(400).json({ success: false, error: 'URL is required' });
         }
 
+        const safeUrl = await assertPublicHttpsUrl(url);
         const webhook = {
             id: crypto.randomUUID(),
-            url: url,
+            url: safeUrl,
             secret: secret || crypto.randomUUID(),
             events: Array.isArray(events) ? events : [],
             active: true,
@@ -1571,7 +1575,7 @@ app.post('/v1/webhooks', (req, res) => {
 });
 
 // List webhooks
-app.get('/v1/webhooks', (req, res) => {
+app.get('/v1/webhooks', authenticate({ required: true }), (req, res) => {
     try {
         res.json({
             success: true,
@@ -1585,7 +1589,7 @@ app.get('/v1/webhooks', (req, res) => {
 });
 
 // Delete webhook
-app.delete('/v1/webhooks/:id', (req, res) => {
+app.delete('/v1/webhooks/:id', authenticate({ required: true }), (req, res) => {
     try {
         const webhookId = req.params.id;
         const index = webhooksStore.findIndex(w => w.id === webhookId);
@@ -1607,7 +1611,7 @@ app.delete('/v1/webhooks/:id', (req, res) => {
 });
 
 // Test webhook
-app.post('/v1/webhooks/test', (req, res) => {
+app.post('/v1/webhooks/test', authenticate({ required: true }), (req, res) => {
     try {
         const { webhookId, eventType = 'test' } = req.body;
 
@@ -1630,7 +1634,7 @@ app.post('/v1/webhooks/test', (req, res) => {
 });
 
 // Get webhook deliveries
-app.get('/v1/webhooks/:id/deliveries', (req, res) => {
+app.get('/v1/webhooks/:id/deliveries', authenticate({ required: true }), (req, res) => {
     try {
         const webhookId = req.params.id;
         const limit = parseInt(req.query.limit) || 50;

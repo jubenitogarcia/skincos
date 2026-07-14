@@ -5,6 +5,7 @@ const path = require('path');
 const mime = require('mime');
 const fetch = require('node-fetch');
 const { URL } = require('url');
+const { assertPublicHttpsUrl } = require('../../../security/publicUrl');
 
 /**
  * Media attached to a message
@@ -65,7 +66,8 @@ class MessageMedia {
      * @returns {Promise<MessageMedia>}
      */
     static async fromUrl(url, options = {}) {
-        const pUrl = new URL(url);
+        const safeUrl = await assertPublicHttpsUrl(url);
+        const pUrl = new URL(safeUrl);
         let mimetype = mime.getType(pUrl.pathname);
 
         if (!mimetype && !options.unsafeMime)
@@ -73,7 +75,7 @@ class MessageMedia {
 
         async function fetchData (url, options) {
             const reqOptions = Object.assign({ headers: { accept: 'image/* video/* text/* audio/*' } }, options);
-            const response = await fetch(url, reqOptions);
+            const response = await fetch(url, { ...reqOptions, redirect: 'error' });
             const mime = response.headers.get('Content-Type');
             const size = response.headers.get('Content-Length');
 
@@ -95,8 +97,8 @@ class MessageMedia {
         }
 
         const res = options.client
-            ? (await options.client.pupPage.evaluate(fetchData, url, options.reqOptions))
-            : (await fetchData(url, options.reqOptions));
+            ? (await options.client.pupPage.evaluate(fetchData, safeUrl, options.reqOptions))
+            : (await fetchData(safeUrl, options.reqOptions));
 
         const filename = options.filename ||
             (res.name ? res.name[0] : (pUrl.pathname.split('/').pop() || 'file'));
