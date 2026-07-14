@@ -16,6 +16,7 @@ MANAGE_N8N_SERVICE="${MANAGE_N8N_SERVICE:-1}"
 RUNTIME_SERVICE="${RUNTIME_SERVICE:-$SKINCOS_N8N_SERVICE}"
 VERIFY_RESTORE="${VERIFY_RESTORE:-auto}"
 BACKUP_STORAGE_COPY_TRANSPORT="${BACKUP_STORAGE_COPY_TRANSPORT:-auto}"
+ROBOCOPY_BIN="${ROBOCOPY_BIN:-}"
 timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
 partial="$BACKUP_ROOT/.partial-$timestamp"
 dest="$BACKUP_ROOT/$timestamp"
@@ -56,15 +57,36 @@ if [[ "$MANAGE_N8N_SERVICE" == "1" ]] && systemctl is-active --quiet "$RUNTIME_S
   systemctl stop "$RUNTIME_SERVICE"
 fi
 
+resolve_robocopy() {
+  local candidate
+  if [[ -n "$ROBOCOPY_BIN" && -x "$ROBOCOPY_BIN" ]]; then
+    return 0
+  fi
+  candidate="$(command -v robocopy.exe 2>/dev/null || true)"
+  if [[ -n "$candidate" ]]; then
+    ROBOCOPY_BIN="$candidate"
+    return 0
+  fi
+  # systemd/root commonly uses a secure PATH that omits Windows interop
+  # entries. The mounted Windows binary remains executable from WSL.
+  for candidate in /mnt/c/Windows/System32/robocopy.exe /mnt/c/WINDOWS/system32/robocopy.exe; do
+    if [[ -x "$candidate" ]]; then
+      ROBOCOPY_BIN="$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 should_use_robocopy() {
   if [[ "$BACKUP_STORAGE_COPY_TRANSPORT" == "rsync" ]]; then
     return 1
   fi
   if [[ "$BACKUP_STORAGE_COPY_TRANSPORT" == "robocopy" ]]; then
-    command -v robocopy.exe >/dev/null 2>&1 || { echo "robocopy.exe is required by BACKUP_STORAGE_COPY_TRANSPORT=robocopy." >&2; exit 1; }
+    resolve_robocopy || { echo "robocopy.exe is required by BACKUP_STORAGE_COPY_TRANSPORT=robocopy." >&2; exit 1; }
     return 0
   fi
-  command -v robocopy.exe >/dev/null 2>&1 \
+  resolve_robocopy \
     && [[ "$N8N_STORAGE_PATH" == /mnt/c/* ]] \
     && [[ "$partial" == /mnt/c/* ]]
 }
@@ -77,7 +99,7 @@ sync_storage() {
     # /MIR provides the same complete snapshot semantics as rsync --delete.
     # Unlike rsync on DrvFS, robocopy does not block the WSL service process in
     # p9_client_rpc while walking large Windows-hosted binary storage.
-    robocopy.exe "$source_windows" "$destination_windows" /MIR /COPY:DAT /DCOPY:T /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >/dev/null || status=$?
+    "$ROBOCOPY_BIN" "$source_windows" "$destination_windows" /MIR /COPY:DAT /DCOPY:T /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >/dev/null || status=$?
     if (( status > 7 )); then
       echo "robocopy failed with exit code $status while backing up n8n storage." >&2
       return "$status"

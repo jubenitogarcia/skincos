@@ -5,7 +5,16 @@ set -euo pipefail
 # service. The fake database commands keep the test focused on the snapshot,
 # manifest and restore-verification control flow.
 
-command -v robocopy.exe >/dev/null 2>&1 || { echo "backup robocopy test skipped: unavailable"; exit 0; }
+robocopy_bin="$(command -v robocopy.exe 2>/dev/null || true)"
+if [[ -z "$robocopy_bin" ]]; then
+  for candidate in /mnt/c/Windows/System32/robocopy.exe /mnt/c/WINDOWS/system32/robocopy.exe; do
+    if [[ -x "$candidate" ]]; then
+      robocopy_bin="$candidate"
+      break
+    fi
+  done
+fi
+[[ -n "$robocopy_bin" ]] || { echo "backup robocopy test skipped: unavailable"; exit 0; }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_root="/mnt/c/CodexRuntime/tmp/backup-storage-copy-test.$$"
@@ -77,6 +86,7 @@ PATH="$fake_bin:$PATH" \
   N8N_HEALTH_DIR="$runtime_root/health" \
   BACKUP_ROOT="$backup_root" \
   BACKUP_STORAGE_COPY_TRANSPORT=robocopy \
+  ROBOCOPY_BIN="$robocopy_bin" \
   MANAGE_N8N_SERVICE=0 \
   VERIFY_RESTORE=1 \
   RETENTION_COUNT=1 \
