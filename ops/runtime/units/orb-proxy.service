@@ -15,6 +15,9 @@ Environment=N8N_ENV_FILE=__RUNTIME_ROOT__/secrets/orb.env
 Environment=N8N_BUSINESS_ENV_FILE=__RUNTIME_ROOT__/secrets/orb-business.env
 Environment=ORB_LOG_DIR=__RUNTIME_ROOT__/logs/orb
 Environment=META_REVIEW_STORE_PATH=__RUNTIME_ROOT__/state/orb/meta-review-store.json
+# The proxy is intentionally source-only; http-proxy is supplied by the
+# pinned n8n runtime installation rather than an untracked node_modules tree.
+Environment=NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules
 EnvironmentFile=-__RUNTIME_ROOT__/secrets/orb.env
 EnvironmentFile=-__RUNTIME_ROOT__/secrets/orb-business.env
 ExecStart=/usr/bin/node orb-proxy/server.js
