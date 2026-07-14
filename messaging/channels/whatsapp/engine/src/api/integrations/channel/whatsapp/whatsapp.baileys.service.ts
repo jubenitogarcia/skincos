@@ -80,7 +80,7 @@ import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import { Boom } from '@hapi/boom';
 import { createId as cuid } from '@paralleldrive/cuid2';
 import { Instance, Message } from '@prisma/client';
-import { createJid } from '@utils/createJid';
+import { createJid, getLidFromJid } from '@utils/createJid';
 import { fetchLatestWaWebVersion } from '@utils/fetchLatestWaWebVersion';
 import { makeProxyAgent } from '@utils/makeProxyAgent';
 import { getOnWhatsappCache, saveOnWhatsappCache } from '@utils/onWhatsappCache';
@@ -3525,7 +3525,7 @@ export class BaileysStartupService extends ChannelStartupService {
               true,
               user.number,
               contacts.find((c) => c.remoteJid === cached.remoteJid)?.pushName,
-              cached.lid || (cached.remoteJid.includes('@lid') ? cached.remoteJid.split('@')[1] : undefined),
+              cached.lid || getLidFromJid(cached.remoteJid),
             );
           }
 
@@ -3571,7 +3571,7 @@ export class BaileysStartupService extends ChannelStartupService {
           }
 
           const numberJid = numberVerified?.jid || user.jid;
-          const lid = numberJid.includes('@lid') ? numberJid.split('@')[1] : undefined;
+          const lid = getLidFromJid(numberJid);
           return new OnWhatsAppDto(
             numberJid,
             !!numberVerified?.exists,
@@ -3590,7 +3590,7 @@ export class BaileysStartupService extends ChannelStartupService {
         true,
         user.number,
         contacts.find((c) => c.remoteJid === user.jid)?.pushName,
-        user.jid.split('@')[1],
+        getLidFromJid(user.jid),
       );
     });
 
