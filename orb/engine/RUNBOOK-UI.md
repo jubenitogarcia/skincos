@@ -47,7 +47,9 @@ No WSL com o runtime em `C:\CodexRuntime`, deixe
 `BACKUP_STORAGE_COPY_TRANSPORT=auto` (o padrão): ele usa `robocopy` para o
 snapshot de storage e evita travamento de I/O do `rsync` no volume Windows. O
 backup continua exigindo o manifesto, checksum do dump e a verificação de
-restore antes de poder ser usado como checkpoint.
+restore antes de poder ser usado como checkpoint. Em unidades `root`/systemd,
+o resolvedor usa o binário montado em `C:\Windows\System32` quando o
+`secure_path` do `sudo` não expõe `robocopy.exe`.
 
 ## Restore (manual)
 1. Pare o n8n.
