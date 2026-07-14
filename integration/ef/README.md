@@ -51,6 +51,7 @@ Runner único via ações do Codex (sem menu).
 - `EF_CLIENT_REGISTRATION_TARGETS_WORKSHEET_GID` (opcional; `gid` da aba no Google Sheets; útil quando você só tem a URL)
 - `EF_CLIENT_REGISTRATION_SYNC_SHEETS` (default: `1`; quando a origem é Google Sheets, preenche as colunas C:K da própria aba com os dados extraídos)
 - `EF_AGENDA_SYNC_URL` (endpoint de sync, ex.: `https://espacofacial.com/api/agenda/sync`)
+- `EF_AGENDA_SYNC_ALLOWED_HOSTS` (opcional; hosts de staging explicitamente aprovados, separados por vírgula, sem esquema, porta ou caminho)
 - `EF_AGENDA_SYNC_TOKEN` (Bearer token do endpoint de sync)
 - `EF_BOOKING_API_HOST` (default: `127.0.0.1`)
 - `EF_BOOKING_API_PORT` (default: `8765`)

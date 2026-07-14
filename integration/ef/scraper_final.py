@@ -21,6 +21,7 @@ from typing import Callable
 
 from selenium.webdriver.common.by import By
 
+from agenda_sync_endpoint import AgendaSyncEndpointError, normalize_agenda_sync_endpoint
 from espacofacial.auth import (
     Credentials,
     configure_file_logging,
@@ -352,7 +353,10 @@ def _post_agenda_sync(
 
 
 def _post_agenda_sync_payload(*, payload: dict[str, object], endpoint: str, token: str) -> bool:
-    if not endpoint:
+    try:
+        endpoint = normalize_agenda_sync_endpoint(endpoint)
+    except AgendaSyncEndpointError:
+        log("ERROR: agenda sync endpoint rejected by outbound policy.")
         return False
 
     def _retry_after_seconds(err: urllib.error.HTTPError) -> int | None:
@@ -514,11 +518,12 @@ def _date_key_from_row_date(value: str) -> str:
 
 
 def _fetch_agenda_api_rows(*, unit_slug: str, date_from: str, date_to: str, endpoint: str, token: str) -> list[dict[str, object]]:
-    agenda_endpoint = endpoint.rstrip("/")
-    if agenda_endpoint.endswith("/sync"):
-        agenda_endpoint = agenda_endpoint[:-5]
-    if not agenda_endpoint.endswith("/agenda"):
-        agenda_endpoint = f"{agenda_endpoint}/agenda"
+    try:
+        sync_endpoint = normalize_agenda_sync_endpoint(endpoint)
+    except AgendaSyncEndpointError:
+        log("ERROR: agenda audit endpoint rejected by outbound policy.")
+        return []
+    agenda_endpoint = sync_endpoint.removesuffix("/sync")
 
     rows: list[dict[str, object]] = []
     page = 1

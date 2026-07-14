@@ -47,11 +47,12 @@ proof that the underlying code is safe.
 4. **Deprecated/duplicate channel implementations:** inventory which process
    can load each copy before retirement. Only unreachable copies may be removed
    after the active WhatsApp service and public tunnel are smoke-tested.
-5. **EF agenda sync:** `EF_AGENDA_SYNC_URL` is a private runtime setting that
-   transmits appointment data. Before adding a host allowlist, record the
-   production and staging owners in `EF_AGENDA_SYNC_ALLOWED_HOSTS`; guessing
-   that policy could silently stop the clinical sync. Until then, this finding
-   is `blocked`, not suppressed.
+5. **EF agenda sync:** the client reconstructs outbound URLs only for the
+   canonical `https://espacofacial.com/api/agenda/sync` endpoint. A staging
+   host is blocked unless it is explicitly configured in the private
+   `EF_AGENDA_SYNC_ALLOWED_HOSTS` setting; the policy rejects IP literals,
+   credentials, query/fragment, non-HTTPS schemes, non-standard ports and
+   alternate paths. Regression coverage lives beside the EF client.
 
 ## Fixed in this branch
 
