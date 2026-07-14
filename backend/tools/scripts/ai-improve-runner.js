@@ -9,7 +9,7 @@
     - Creates branch, commits, pushes, opens PR, and enables auto-merge
 */
 
-const { execSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 const { writeFileSync, mkdirSync, existsSync, readFileSync } = require('node:fs');
 const { join, dirname, resolve } = require('node:path');
 
@@ -105,24 +105,28 @@ async function readIssue(nr) {
     return ghFetch(`/repos/${owner}/${repo}/issues/${nr}`);
 }
 
-function run(cmd, opts = {}) {
-    console.log(`$ ${cmd}`);
-    return execSync(cmd, { stdio: 'inherit', ...opts });
+function printableArg(arg) {
+    return String(arg).replace(/(https:\/\/x-access-token:)[^@/]+@/g, '$1***@');
 }
 
-function tryRun(cmd, opts = {}) {
+function run(command, args = [], opts = {}) {
+    console.log(`$ ${[command, ...args].map(printableArg).join(' ')}`);
+    return execFileSync(command, args, { stdio: 'inherit', ...opts });
+}
+
+function tryRun(command, args = [], opts = {}) {
     try {
-        run(cmd, opts);
+        run(command, args, opts);
         return true;
     } catch (e) {
-        console.warn(`Command failed: ${cmd}`);
+        console.warn(`Command failed: ${command}`);
         return false;
     }
 }
 
 function tokenizeSubmodules() {
     try {
-        run(`git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"`);
+        run('git', ['config', '--global', `url.https://x-access-token:${token}@github.com/.insteadOf`, 'https://github.com/']);
         console.log('Configured git url.insteadOf for submodules');
     } catch (e) {
         console.warn('Could not configure git for submodules:', e.message);
@@ -131,8 +135,8 @@ function tokenizeSubmodules() {
 
 function ensureSubmodules() {
     tokenizeSubmodules();
-    tryRun('git submodule sync --recursive');
-    tryRun('git submodule update --init --recursive');
+    tryRun('git', ['submodule', 'sync', '--recursive']);
+    tryRun('git', ['submodule', 'update', '--init', '--recursive']);
 }
 
 async function mentionAndAssignCopilot(issue, reason) {
@@ -293,8 +297,8 @@ function applyAiPlanEdits(edits) {
 }
 
 function configureGitUser() {
-    tryRun('git config user.name "github-actions[bot]"');
-    tryRun('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"');
+    tryRun('git', ['config', 'user.name', 'github-actions[bot]']);
+    tryRun('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com']);
 }
 
 function branchName(issue) {
@@ -318,7 +322,7 @@ async function findExistingPr(head) {
 
 function enableAutoMerge(prNumber) {
     const repoRef = `${owner}/${repo}`;
-    const r = tryRun(`gh pr merge ${prNumber} --auto --squash --delete-branch -R ${repoRef}`);
+    const r = tryRun('gh', ['pr', 'merge', String(prNumber), '--auto', '--squash', '--delete-branch', '-R', repoRef]);
     if (!r) console.warn('Auto-merge not enabled (gh pr merge failed or unsupported).');
     return r;
 }
@@ -352,7 +356,7 @@ async function tryDirectMergeIfGreen(prNumber) {
     const green = await areChecksGreenForPr(prNumber);
     if (!green) return false;
     const repoRef = `${owner}/${repo}`;
-    const ok = tryRun(`gh pr merge ${prNumber} --squash --delete-branch -R ${repoRef}`);
+    const ok = tryRun('gh', ['pr', 'merge', String(prNumber), '--squash', '--delete-branch', '-R', repoRef]);
     if (!ok) console.warn('Direct merge attempt failed.');
     return ok;
 }
@@ -370,10 +374,10 @@ function runSmoke() {
         : (existsSync(join(REPO_ROOT, 'scripts', 'ci-repo-health.sh')) ? join(REPO_ROOT, 'scripts', 'ci-repo-health.sh') : null);
 
     if (e2e) {
-        ok = tryRun(`bash ${JSON.stringify(e2e)} ci-smoke`);
-        tryRun(`bash ${JSON.stringify(e2e)} health`);
+        ok = tryRun('bash', [e2e, 'ci-smoke']);
+        tryRun('bash', [e2e, 'health']);
     } else if (repoHealth) {
-        tryRun(`bash ${JSON.stringify(repoHealth)}`);
+        tryRun('bash', [repoHealth]);
     } else {
         console.log('Smoke script not found; treating smoke as PASS');
     }
@@ -441,8 +445,8 @@ function appendKnowledge(entry) {
         }
 
         // Clean state
-        tryRun('git checkout -f');
-        tryRun('git reset --hard');
+        tryRun('git', ['checkout', '-f']);
+        tryRun('git', ['reset', '--hard']);
 
         // Apply AI edits only
         const applied = applyAiPlanEdits(plan.edits);
@@ -461,23 +465,23 @@ function appendKnowledge(entry) {
         configureGitUser();
         const b = branchName(issue);
         const baseBranch = 'main';
-        tryRun('git fetch origin');
-        tryRun(`git checkout -B ${b} origin/${baseBranch}`) || tryRun(`git checkout -b ${b}`);
-        tryRun('git add -A');
-        tryRun(`git commit -m "AI (${modelUsed}): aplicar mudanças para #${issue.number}"`) || console.log('Nothing to commit');
+        tryRun('git', ['fetch', 'origin']);
+        tryRun('git', ['checkout', '-B', b, `origin/${baseBranch}`]) || tryRun('git', ['checkout', '-b', b]);
+        tryRun('git', ['add', '-A']);
+        tryRun('git', ['commit', '-m', `AI (${modelUsed}): aplicar mudanças para #${issue.number}`]) || console.log('Nothing to commit');
 
         const remoteUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
-        let pushed = tryRun(`git push -u ${remoteUrl} ${b}`);
+        let pushed = tryRun('git', ['push', '-u', remoteUrl, b]);
         if (!pushed) {
-            const rebaseOk = tryRun(`git pull --rebase ${remoteUrl} ${b}`);
+            const rebaseOk = tryRun('git', ['pull', '--rebase', remoteUrl, b]);
             if (!rebaseOk) {
-                tryRun('git rebase --abort');
-                tryRun('git reset --hard');
+                tryRun('git', ['rebase', '--abort']);
+                tryRun('git', ['reset', '--hard']);
             }
-            pushed = tryRun(`git push -u ${remoteUrl} ${b}`);
+            pushed = tryRun('git', ['push', '-u', remoteUrl, b]);
         }
         if (!pushed) {
-            tryRun(`git push -u --force-with-lease ${remoteUrl} ${b}`);
+            tryRun('git', ['push', '-u', '--force-with-lease', remoteUrl, b]);
         }
 
         const title = `AI (${modelUsed}): mudanças do issue #${issue.number}`;
