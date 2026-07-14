@@ -1,8 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $DistroName = "Ubuntu-24.04"
-$PreferredTargetDir = "C:\CodexShared\Backups\wsl"
-$FallbackTargetDir = "C:\CodexShared\Projetos\_bootstrap\wsl"
+$TargetDir = "C:\CodexShared\Projetos\_bootstrap\wsl"
 
 function Initialize-TargetDir {
   param([string]$Path)
@@ -14,12 +13,8 @@ function Initialize-TargetDir {
   }
 }
 
-if (Initialize-TargetDir $PreferredTargetDir) {
-  $TargetDir = $PreferredTargetDir
-} elseif (Initialize-TargetDir $FallbackTargetDir) {
-  $TargetDir = $FallbackTargetDir
-} else {
-  throw "Unable to create export directory in either '$PreferredTargetDir' or '$FallbackTargetDir'."
+if (-not (Initialize-TargetDir $TargetDir)) {
+  throw "Unable to create WSL export directory '$TargetDir'."
 }
 
 $TargetTar = Join-Path $TargetDir "ubuntu-24.04-codex-base.tar"
