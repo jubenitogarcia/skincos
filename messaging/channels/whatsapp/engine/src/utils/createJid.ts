@@ -69,3 +69,14 @@ export function createJid(number: string): string {
 
   return `${number}@s.whatsapp.net`;
 }
+
+/**
+ * Returns the opaque WhatsApp LID component for a LID JID.
+ *
+ * A JID such as `12345@lid` stores the identifier before `@`; the suffix is
+ * only the JID domain and must never be persisted as a contact LID.
+ */
+export function getLidFromJid(jid: string): string | undefined {
+  const match = /^([^@]+)@lid$/.exec(jid);
+  return match?.[1];
+}
