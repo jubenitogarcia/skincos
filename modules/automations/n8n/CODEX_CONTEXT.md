@@ -63,9 +63,10 @@
 - WSL distributions are installed per Windows user, so a new local account may
   still need its own `Ubuntu-24.04` bootstrap before it can operate the live
   runtime directly.
-- The exported distro tar currently lives under `C:\CodexShared\Projetos`
-  rather than `C:\CodexShared\Backups` because the current ACL on `Backups` is
-  read-only for `Users`.
+- The exported distro tar lives at
+  `C:\CodexShared\Projetos\_bootstrap\wsl\ubuntu-24.04-codex-base.tar`.
+  This is the single supported export location; the retired empty
+  `C:\CodexShared\Backups` folder is no longer part of the workflow.
 - The shared repo still carries local multi-account migration changes that have
   not yet been reconciled back to `main`.
 
