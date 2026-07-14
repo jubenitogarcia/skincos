@@ -30,6 +30,13 @@ Run the pre-copy before the window; it does not stop services or remove data:
 scripts/runtime/prepare-lifecycle-layout.sh --apply
 ```
 
+On this Windows host, lifecycle copies under `C:\CodexRuntime` use native
+`robocopy` by default. It prevents WSL/DrvFS copy stalls while preserving the
+pre-copy rule (copy only missing files); final sync copies changed files but
+never deletes a legacy source or destination-only artifact. Set
+`LIFECYCLE_SYNC_TRANSPORT=rsync` only for a non-Windows runtime or an explicit
+diagnostic.
+
 The pre-copy also transfers the active Livia workflow from the retained legacy
 source into `C:\CodexRuntime\state\orb\workflows`. The lifecycle Orb unit and
 the official validator read this runtime location; no workflow state is copied
