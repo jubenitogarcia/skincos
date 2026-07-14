@@ -19,6 +19,11 @@
 - [ ] **Wave 6 — retirement:** remove old source paths, direct public routes,
   scripts and backups only after merged CI plus local/public health proof.
 
+- [ ] **Security baseline remediation:** address the externally reclassified
+  CodeQL/Semgrep findings by owner and trust boundary; see
+  `docs/architecture/code-scanning-baseline-triage.md`. Do not bulk-dismiss
+  findings created by the domain move.
+
 ## Priority Backlog
 
 - [ ] Review and, if needed, reauthorize the imported live `n8n` credential
