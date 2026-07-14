@@ -98,16 +98,12 @@ jobs:
           key: workers-deploy-${{ steps.sha.outputs.sha }}
           path: deploy-state/deployed_sha.txt
 
-      - name: Smoke check Ponto (production)
+      - name: Smoke check API + Inventory Workers (production)
         if: ${{ steps.guard.outputs.skip != 'true' }}
         continue-on-error: true
-        env:
-          BASE_URL: https://crm.skincos.com.br
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          .github/scripts/ponto_smoke.py \
+          python3 .github/scripts/workers_smoke.py \
             --attempts 5 \
             --sleep-seconds 6 \
-            --user-agent "Mozilla/5.0 (compatible; PontoWorkersReconcile/1.0)"
+            --user-agent "Mozilla/5.0 (compatible; WorkersReconcileSmoke/1.0)"
