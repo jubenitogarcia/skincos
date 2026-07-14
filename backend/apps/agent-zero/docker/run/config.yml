@@ -1,5 +1,7 @@
 tunnel: 905c9281-870e-4f2b-a6e6-7918879c81d5
-credentials-file: C:\Users\julia\.cloudflared\68c26678-d372-439d-b9ca-5357a867b3a5.json
+# Set this to the local operator path outside the shared workspace, for example:
+# %USERPROFILE%\.cloudflared\<TUNNEL_UUID>.json
+credentials-file: REPLACE_WITH_LOCAL_CLOUDFLARED_CREDENTIALS_PATH
 
 ingress:
   - hostname: a0.skincos.com.br

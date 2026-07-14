@@ -130,7 +130,7 @@ async function createOrUpdateIssue(title, body) {
 
 (async function main() {
     try {
-        const cwd = 'frontend';
+        const cwd = 'modules/crm/web';
         if (!existsSync(cwd)) {
             console.log('CRM module not present; nothing to test.');
             return;

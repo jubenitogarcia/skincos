@@ -1,0 +1,31 @@
+{
+  "name": "crm-api",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "CRM API (isolated deps for faster installs)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test server/harmonia/__tests__/*.test.js server/atendimento/__tests__/*.test.js",
+    "import-atendimento-sheet": "node scripts/import-atendimento-sheet.mjs",
+    "import-gerencia-sheet": "node scripts/import-gerencia-sheet.mjs"
+  },
+  "dependencies": {
+    "axios": "1.18.0",
+    "cors": "^2.8.5",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "googleapis": "^173.0.0",
+    "http-proxy-middleware": "^3.0.5",
+    "luxon": "^3.7.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  },
+  "overrides": {
+    "glob": "^13.0.6",
+    "rimraf": "^6.0.1"
+  }
+}

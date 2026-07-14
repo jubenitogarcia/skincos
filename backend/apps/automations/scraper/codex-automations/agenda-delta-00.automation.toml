@@ -5,6 +5,6 @@ prompt = "Rodar delta de agendamentos para a semana atual e as próximas 3 seman
 status = "ACTIVE"
 rrule = "FREQ=HOURLY;INTERVAL=1;BYMINUTE=0;BYDAY=SU,MO,TU,WE,TH,FR,SA"
 execution_environment = "local"
-cwds = ["/Users/jubenitogarcia/Automation/skincos/backend/apps/automations/scraper"]
+cwds = ["C:/CodexShared/Projetos/skincos/backend/apps/automations/scraper"]
 created_at = 1772486581968
 updated_at = 1772988040475

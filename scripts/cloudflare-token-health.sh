@@ -5,7 +5,7 @@ ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}"
 TOKEN="${CLOUDFLARE_API_TOKEN:-}"
 PROJECT="${CLOUDFLARE_PAGES_PROJECT:-skincos}"
 WEBSITE_DB="${CLOUDFLARE_WEBSITE_D1_NAME:-espacofacial-booking}"
-WRANGLER_CWD="${WRANGLER_CWD:-website}"
+WRANGLER_CWD="${WRANGLER_CWD:-modules/site-public/website}"
 STRICT="${STRICT:-0}"
 
 usage() {
@@ -26,7 +26,7 @@ Required for CI/automation:
 Optional:
   CLOUDFLARE_PAGES_PROJECT       default: skincos
   CLOUDFLARE_WEBSITE_D1_NAME     default: espacofacial-booking
-  WRANGLER_CWD                   default: website
+  WRANGLER_CWD                   default: modules/site-public/website
 EOF
 }
 

@@ -35,11 +35,11 @@ jobs:
         with:
           node-version: "22.12.0"
           cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: modules/crm/web/package-lock.json
 
       - name: Install frontend deps
         run: npm ci
-        working-directory: frontend
+        working-directory: modules/crm/web
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4
@@ -49,7 +49,7 @@ jobs:
 
       - name: Install Playwright Chromium (with deps)
         run: npx --yes playwright install --with-deps chromium
-        working-directory: frontend
+        working-directory: modules/crm/web
 
       - name: Run UI smoke (unauth)
         id: smoke
@@ -57,10 +57,10 @@ jobs:
         env:
           CRM_URL: https://crm.skincos.com.br
           NO_SCREENSHOTS: "1"
-          NODE_PATH: frontend/node_modules
+          NODE_PATH: modules/crm/web/node_modules
         run: |
           set -euo pipefail
-          node frontend/scripts/insumos-ui-smoke.cjs
+          node modules/crm/web/scripts/insumos-ui-smoke.cjs
 
       - name: Run UI smoke (auto-login, optional)
         if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.auto_login == true || github.event.inputs.auto_login == 'true') }}
@@ -71,14 +71,14 @@ jobs:
           SMOKE_EMAIL: ${{ secrets.INSUMOS_SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.INSUMOS_SMOKE_PASSWORD }}
           NO_SCREENSHOTS: "1"
-          NODE_PATH: frontend/node_modules
+          NODE_PATH: modules/crm/web/node_modules
         run: |
           set -euo pipefail
           if [[ -z "${SMOKE_EMAIL:-}" || -z "${SMOKE_PASSWORD:-}" ]]; then
             echo "Missing GitHub Actions secrets: INSUMOS_SMOKE_EMAIL / INSUMOS_SMOKE_PASSWORD"
             exit 1
           fi
-          node frontend/scripts/insumos-ui-smoke.cjs
+          node modules/crm/web/scripts/insumos-ui-smoke.cjs
 
       - name: Upload artifacts
         if: ${{ always() }}
@@ -90,4 +90,3 @@ jobs:
       - name: Fail if unauth smoke failed
         if: ${{ steps.smoke.outcome != 'success' }}
         run: exit 1
-

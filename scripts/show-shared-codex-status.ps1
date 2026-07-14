@@ -1,30 +1,148 @@
 param(
-    [string]$ProjectRoot
+    [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
+    [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
+    [string]$RuntimeRoot = "C:\CodexRuntime\n8n"
 )
 
 $ErrorActionPreference = "Stop"
 
-function Resolve-ProjectRoot {
-    param([string]$RequestedPath)
-
-    if (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
-        return (Resolve-Path -LiteralPath $RequestedPath).Path
+function Normalize-PathString {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
     }
 
-    return (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
+    return $Path.Replace('\', '/').TrimEnd('/').ToLowerInvariant()
 }
 
-$ProjectRoot = Resolve-ProjectRoot -RequestedPath $ProjectRoot
-$branch = (& git -C $ProjectRoot branch --show-current).Trim()
-$status = @(git -C $ProjectRoot status --short)
-$worktrees = @(git -C $ProjectRoot worktree list --porcelain)
-$safeDirectories = @(git config --global --get-all safe.directory 2>$null)
+function Invoke-GitSafe {
+    param(
+        [string]$RepoPath,
+        [string[]]$Arguments
+    )
 
-[pscustomobject]@{
+    $argumentList = @("-C", $RepoPath) + $Arguments
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = "git.exe"
+    $startInfo.Arguments = (($argumentList | ForEach-Object {
+        '"' + $_.Replace('"', '\"') + '"'
+    }) -join ' ')
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+
+    try {
+        [void]$process.Start()
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+
+        if ($process.ExitCode -ne 0) {
+            return $null
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+
+    if ([string]::IsNullOrEmpty($stdout)) {
+        return @()
+    }
+
+    return @($stdout -split "`r?`n" | Where-Object { $_ -ne "" })
+}
+
+function Get-GitStatusSummary {
+    param([string]$RepoPath)
+
+    $branchLines = @(Invoke-GitSafe -RepoPath $RepoPath -Arguments @("rev-parse", "--abbrev-ref", "HEAD") | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    })
+    $statusLines = @(Invoke-GitSafe -RepoPath $RepoPath -Arguments @("status", "--short") | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    })
+    $branch = if ($branchLines.Count -gt 0) { ([string]$branchLines[0]).Trim() } else { "untrusted-or-unavailable" }
+
+    [pscustomobject]@{
+        branch = $branch
+        dirtyCount = $statusLines.Count
+        isDirty = $statusLines.Count -gt 0
+        sample = @($statusLines | Select-Object -First 10)
+    }
+}
+
+function Get-WorktreeSummary {
+    param([string]$Root)
+
+    if (-not (Test-Path -LiteralPath $Root)) {
+        return @()
+    }
+
+    $items = @()
+    foreach ($actorDir in Get-ChildItem -LiteralPath $Root -Directory -Force | Sort-Object Name) {
+        foreach ($taskDir in Get-ChildItem -LiteralPath $actorDir.FullName -Directory -Force | Sort-Object Name) {
+            $branch = $null
+            $gitTrusted = $false
+            if (Test-Path -LiteralPath (Join-Path $taskDir.FullName '.git')) {
+                $branchLines = @(Invoke-GitSafe -RepoPath $taskDir.FullName -Arguments @("rev-parse", "--abbrev-ref", "HEAD") | Where-Object {
+                    -not [string]::IsNullOrWhiteSpace($_)
+                })
+                if ($branchLines.Count -gt 0) {
+                    $branch = ([string]$branchLines[0]).Trim()
+                    $gitTrusted = $true
+                } else {
+                    $branch = "untrusted-or-unavailable"
+                }
+            }
+
+            $items += [pscustomobject]@{
+                actor = $actorDir.Name
+                task = $taskDir.Name
+                path = $taskDir.FullName
+                branch = $branch
+                gitTrusted = $gitTrusted
+            }
+        }
+    }
+
+    return $items
+}
+
+$safeDirectories = @(git config --global --get-all safe.directory 2>$null)
+$normalizedProjectRoot = Normalize-PathString -Path $ProjectRoot
+$normalizedSafeDirectories = @($safeDirectories | ForEach-Object { Normalize-PathString -Path $_ })
+
+$localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
+$runtimeEnvRoot = Join-Path $RuntimeRoot "env"
+$status = [pscustomobject]@{
+    currentUser = $env:USERNAME
+    computerName = $env:COMPUTERNAME
     projectRoot = $ProjectRoot
-    branch = $branch
-    hasLocalChanges = ($status.Count -gt 0)
-    status = $status
-    worktrees = $worktrees
+    projectStatus = Get-GitStatusSummary -RepoPath $ProjectRoot
+    worktreeRoot = $WorktreeRoot
+    worktrees = @(Get-WorktreeSummary -Root $WorktreeRoot)
+    safeDirectoryRegistered = $normalizedSafeDirectories -contains $normalizedProjectRoot
     safeDirectories = $safeDirectories
-} | ConvertTo-Json -Depth 4
+    localStateRoot = $localStateRoot
+    localStateExists = Test-Path -LiteralPath $localStateRoot
+    runtimeRoot = $RuntimeRoot
+    runtimeExists = Test-Path -LiteralPath $RuntimeRoot
+    runtimeEnvRoot = $runtimeEnvRoot
+    runtimeEnvFiles = @(
+        "n8n.env",
+        "n8n-business.env",
+        "evolution-api.env"
+    ) | ForEach-Object {
+        $path = Join-Path $runtimeEnvRoot $_
+        [pscustomobject]@{
+            name = $_
+            exists = Test-Path -LiteralPath $path
+            path = $path
+        }
+    }
+}
+
+$status | ConvertTo-Json -Depth 5

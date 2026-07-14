@@ -26,13 +26,13 @@ Este catálogo define os serviços críticos do repositório, suas dependências
 
 ## CRM API
 
-- Caminho: `backend/apps/crm-api/`
+- Caminho: `modules/crm/api/`
 - Dono primário: `@jubenitogarcia`
 - Backup operacional: `TBD`
 - Propósito: backend operacional do CRM, autenticação, módulos de apoio e integrações.
 - Dependências críticas: PostgreSQL/serviços externos, OAuth, páginas do CRM, segredos locais controlados.
 - SLO alvo: disponibilidade 99,5%; endpoints críticos com erro < 1% em janelas de 5 minutos.
-- Gates mínimos: `npm --prefix backend/apps/crm-api test`.
+- Gates mínimos: `npm --prefix modules/crm/api test`.
 - Runbooks: `docs/observability.md`, `docs/auth.md`.
 
 ## Escala API

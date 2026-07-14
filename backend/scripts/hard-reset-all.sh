@@ -18,14 +18,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT_DIR/backend/scripts/env.sh"
-CRM_DIR="$ROOT_DIR/frontend"
+CRM_DIR="$ROOT_DIR/modules/crm/web"
 A0_DIR="$ROOT_DIR/backend/apps/agent-zero"
 IG_DIR="$ROOT_DIR/backend/apps/instagram/instagrapi"
 IG_MODULE_DIR="$ROOT_DIR/backend/apps/instagram/module"
 
-WA_OFFICIAL_DIR="$ROOT_DIR/backend/apps/whatsapp/official-module"
-WA_LEGACY_DIR="$ROOT_DIR/backend/apps/whatsapp/gateway"
-WA_STUB_DIR="$ROOT_DIR/backend/apps/whatsapp/stub"
+WA_OFFICIAL_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/official-module"
+WA_LEGACY_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/gateway"
+WA_STUB_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/stub"
 ACTUAL_DIR="$ROOT_DIR/backend/apps/actual-server"
 
 # Config via env or defaults

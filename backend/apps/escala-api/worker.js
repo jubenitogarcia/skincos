@@ -847,7 +847,7 @@ function buildCoverageSummary(scheduleRows, closedRows, holidayRows) {
   return Array.from(coverage.values()).sort((a, b) => `${a.month}:${a.unit}`.localeCompare(`${b.month}:${b.unit}`))
 }
 
-async function handleAtendimentoClinicaImport(env, actor, body) {
+async function handleAtendimentoImport(env, actor, body) {
   const input = body?.feed && typeof body.feed === 'object' ? body.feed : body || {}
   const commit = Boolean(body?.commit)
   const force = Boolean(body?.force)
@@ -1203,7 +1203,7 @@ export default {
         return jsonResponse(result.body, { status: result.status, headers: { ...corsHeaders, 'x-request-id': requestId } })
       }
 
-      if (path === '/api/escala/admin/import/atendimento-clinica') {
+      if (path === '/api/escala/admin/import/atendimento') {
         if (request.method !== 'POST') {
           return jsonResponse({ ok: false, error: 'METHOD_NOT_ALLOWED' }, { status: 405, headers: { ...corsHeaders, 'x-request-id': requestId } })
         }
@@ -1211,9 +1211,9 @@ export default {
         if (!body) {
           return jsonResponse({ ok: false, error: 'INVALID_JSON' }, { status: 400, headers: { ...corsHeaders, 'x-request-id': requestId } })
         }
-        const result = await handleAtendimentoClinicaImport(env, actor, body)
+        const result = await handleAtendimentoImport(env, actor, body)
         console.log(JSON.stringify({
-          event: 'escala.import.atendimento_clinica',
+          event: 'escala.import.atendimento',
           requestId,
           actor: actor.id,
           committed: result.body.committed,

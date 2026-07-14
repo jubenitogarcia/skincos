@@ -789,7 +789,7 @@ test('Escala prefill enforces allowed unit scope', async () => {
   assert.deepEqual(await response.json(), { ok: false, error: 'FORBIDDEN_UNIT' })
 })
 
-test('Escala imports Atendimento Clinica feed with dry-run and idempotent commit', async () => {
+test('Escala imports Atendimento feed with dry-run and idempotent commit', async () => {
   const db = new FakeD1()
   const env = {
     DB: db,
@@ -818,7 +818,7 @@ test('Escala imports Atendimento Clinica feed with dry-run and idempotent commit
   }
 
   const dryRunResponse = await worker.fetch(
-    await signedRequest('https://escala.local/api/escala/admin/import/atendimento-clinica', {
+    await signedRequest('https://escala.local/api/escala/admin/import/atendimento', {
       method: 'POST',
       secret: env.ESCALA_ACTOR_HMAC_KEY,
       actor,
@@ -840,7 +840,7 @@ test('Escala imports Atendimento Clinica feed with dry-run and idempotent commit
   assert.deepEqual(db.holidays, [])
 
   const commitResponse = await worker.fetch(
-    await signedRequest('https://escala.local/api/escala/admin/import/atendimento-clinica', {
+    await signedRequest('https://escala.local/api/escala/admin/import/atendimento', {
       method: 'POST',
       secret: env.ESCALA_ACTOR_HMAC_KEY,
       actor,
@@ -858,7 +858,7 @@ test('Escala imports Atendimento Clinica feed with dry-run and idempotent commit
   assert.equal(db.holidays.length, 1)
 
   const secondCommitResponse = await worker.fetch(
-    await signedRequest('https://escala.local/api/escala/admin/import/atendimento-clinica', {
+    await signedRequest('https://escala.local/api/escala/admin/import/atendimento', {
       method: 'POST',
       secret: env.ESCALA_ACTOR_HMAC_KEY,
       actor,
@@ -910,7 +910,7 @@ test('Escala import preserves manual schedule and closed-day conflicts', async (
   }
 
   const response = await worker.fetch(
-    await signedRequest('https://escala.local/api/escala/admin/import/atendimento-clinica', {
+    await signedRequest('https://escala.local/api/escala/admin/import/atendimento', {
       method: 'POST',
       secret: env.ESCALA_ACTOR_HMAC_KEY,
       actor,

@@ -1,0 +1,67 @@
+# n8n Binary Data
+binary-data/
+
+# Evolution API backups (sensitive/large)
+evolution-api/backup/
+
+# n8n Database
+*.db
+*.sqlite
+
+# Logs
+logs/
+*.log
+backups/
+*.tar.gz
+migration-bundles/
+log-archive/
+
+# Environment
+.env.local
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+.venv/
+__pycache__/
+
+# Editor
+.vscode/
+
+# PIDs
+*.pid
+
+# macOS
+.DS_Store
+
+# Backup from nested repo
+.evolution-api.git.bak/
+
+# Temp files
+*.tmp
+temp/
+tmp/
+output/
+
+# Workflow exports and runtime snapshots
+workflows/*.current-export.json
+workflows/*.live-current.json
+workflows/*.post-import-check.json
+workflows/*.before-standard-enhancements-fix.json
+workflows/*.exec-payload.json
+workflows/token-manager.export.json
+workflows/executions/
+workflows/checkpoints/
+workflows/*.before-*.json
+workflows/*.current*.json
+workflows/*.live*.json
+# Snapshots are temporary; only the four tracked clinic workflow baselines are versioned.
+workflows/*.json

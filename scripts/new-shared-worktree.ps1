@@ -1,7 +1,7 @@
 param(
     [string]$TaskSlug,
     [string]$Actor = $env:USERNAME,
-    [string]$ProjectRoot,
+    [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
     [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
     [string]$BaseRef = "origin/main",
     [string]$BranchName,
@@ -10,17 +10,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Resolve-ProjectRoot {
-    param([string]$RequestedPath)
-
-    if (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
-        return (Resolve-Path -LiteralPath $RequestedPath).Path
-    }
-
-    return (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
+if ([string]::IsNullOrWhiteSpace($TaskSlug)) {
+    $TaskSlug = Read-Host "TaskSlug"
 }
 
-function Normalize-Value {
+if ([string]::IsNullOrWhiteSpace($TaskSlug)) {
+    throw "TaskSlug is required."
+}
+
+function Normalize-Actor {
+    param([string]$Value)
+    return ($Value.Trim().ToLowerInvariant() -replace '[^a-z0-9._-]', '-')
+}
+
+function Normalize-Slug {
     param([string]$Value)
     return ($Value.Trim().ToLowerInvariant() -replace '[^a-z0-9._-]', '-')
 }
@@ -34,7 +37,6 @@ function Ensure-Directory {
 
 function Ensure-SafeDirectory {
     param([string]$RepoPath)
-
     $existing = @(git config --global --get-all safe.directory 2>$null)
     $variants = @($RepoPath, $RepoPath.Replace('\', '/'))
     foreach ($variant in $variants) {
@@ -44,17 +46,8 @@ function Ensure-SafeDirectory {
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($TaskSlug)) {
-    $TaskSlug = Read-Host "TaskSlug"
-}
-
-if ([string]::IsNullOrWhiteSpace($TaskSlug)) {
-    throw "TaskSlug is required."
-}
-
-$ProjectRoot = Resolve-ProjectRoot -RequestedPath $ProjectRoot
-$normalizedActor = Normalize-Value -Value $Actor
-$normalizedTask = Normalize-Value -Value $TaskSlug
+$normalizedActor = Normalize-Actor -Value $Actor
+$normalizedTask = Normalize-Slug -Value $TaskSlug
 
 if (-not $BranchName) {
     $BranchName = "codex/$normalizedActor/$normalizedTask"
@@ -82,11 +75,13 @@ if ($branchExists) {
 git -C $ProjectRoot worktree add $worktreePath -b $BranchName $BaseRef
 Ensure-SafeDirectory -RepoPath $worktreePath
 
-[pscustomobject]@{
+$result = [pscustomobject]@{
     actor = $normalizedActor
     taskSlug = $normalizedTask
     branchName = $BranchName
     baseRef = $BaseRef
     projectRoot = $ProjectRoot
     worktreePath = $worktreePath
-} | ConvertTo-Json -Depth 4
+}
+
+$result | ConvertTo-Json -Depth 4

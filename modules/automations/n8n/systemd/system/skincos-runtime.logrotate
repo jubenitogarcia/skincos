@@ -1,0 +1,11 @@
+__N8N_LOG_DIR__/system-*.log __N8N_LOG_DIR__/mini-pc-watchdog.log __CLOUDFLARED_HOME__/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    dateext
+    su root root
+}

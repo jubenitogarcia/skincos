@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HEALTH_DIR="/Users/jubenitogarcia/Automation/n8n/health"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/shared-paths.sh"
+
+HEALTH_DIR="$N8N_HEALTH_DIR"
 STATE_FILE="$HEALTH_DIR/network-fallback.state"
 
 NETWORK_FALLBACK_ENABLED="${NETWORK_FALLBACK_ENABLED:-true}"
@@ -211,7 +215,7 @@ while true; do
   CANDIDATE_COUNT="${#CANDIDATE_SSIDS[@]}"
   if (( CANDIDATE_COUNT == 0 )); then
     if [[ "$NO_CANDIDATE_NOTIFIED" != "true" ]]; then
-      log_error "Sem SSID candidato para fallback. Defina NETWORK_FALLBACK_SSIDS no /Users/jubenitogarcia/Automation/n8n/.env."
+      log_error "Sem SSID candidato para fallback. Defina NETWORK_FALLBACK_SSIDS no $N8N_ENV."
       NO_CANDIDATE_NOTIFIED=true
     fi
     persist_state "offline_no_candidate" "$WIFI_IFACE" "${ACTIVE_SSID:-none}" "$CANDIDATE_COUNT" "no_candidate_ssids"

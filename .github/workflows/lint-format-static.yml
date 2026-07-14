@@ -29,42 +29,42 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
-            frontend/package-lock.json
+            modules/crm/web/package-lock.json
             modules/site-public/website/package-lock.json
 
       - name: Frontend install
-        if: ${{ hashFiles('frontend/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd frontend
+          cd modules/crm/web
           npm ci
 
       - name: Frontend lint
-        if: ${{ hashFiles('frontend/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd frontend
+          cd modules/crm/web
           npm run lint
 
       - name: Frontend typecheck
-        if: ${{ hashFiles('frontend/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd frontend
+          cd modules/crm/web
           npm run typecheck
 
       - name: Frontend unit tests
-        if: ${{ hashFiles('frontend/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd frontend
+          cd modules/crm/web
           npm run test
 
       - name: Frontend build
-        if: ${{ hashFiles('frontend/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd frontend
+          cd modules/crm/web
           npm run build
 
       - name: Website install
@@ -109,10 +109,11 @@ jobs:
           pnpm -C backend -r run typecheck --if-present
 
       - name: CRM API tests
-        if: ${{ hashFiles('backend/apps/crm-api/package.json') != '' }}
+        if: ${{ hashFiles('modules/crm/api/package.json') != '' }}
         run: |
           set -euxo pipefail
-          pnpm -C backend --filter crm-api test
+          npm --prefix modules/crm/api ci
+          npm --prefix modules/crm/api test
 
   python-lint:
     name: Python Lint & Static Analysis

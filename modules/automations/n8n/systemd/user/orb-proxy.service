@@ -1,0 +1,21 @@
+[Unit]
+Description=Skincos orb proxy for n8n
+After=n8n.service
+Wants=n8n.service
+
+[Service]
+Type=simple
+WorkingDirectory=__N8N_ROOT__
+Environment=N8N_ROOT=__N8N_ROOT__
+Environment=N8N_RUNTIME_HOME=__N8N_RUNTIME_HOME__
+Environment=N8N_ENV_FILE=__N8N_ENV_FILE__
+Environment=N8N_LOG_DIR=__N8N_LOG_DIR__
+EnvironmentFile=-__N8N_ENV_FILE__
+ExecStart=/bin/bash -lc 'source "$HOME/.nvm/nvm.sh"; nvm use 24 >/dev/null; exec node orb-proxy/server.js'
+Restart=always
+RestartSec=10
+StandardOutput=append:__N8N_LOG_DIR__/orb-proxy.launchd.out.log
+StandardError=append:__N8N_LOG_DIR__/orb-proxy.launchd.err.log
+
+[Install]
+WantedBy=default.target

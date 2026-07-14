@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-META_DIR="$ROOT_DIR/backend/apps/meta-ads"
+META_DIR="$ROOT_DIR/modules/meta-ads/meta-ads"
 
 usage() {
   cat <<'USAGE'

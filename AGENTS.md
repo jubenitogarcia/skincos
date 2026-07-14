@@ -1,5 +1,27 @@
 # Skincos Workspace Agent Rules
 
+## Single-Operator Continuity
+
+- `admin` is the only human Windows and WSL operator. The `skincos` Linux account
+  is reserved for system services and must not be used interactively.
+- This clone remains the source of truth for project context, not for secrets or
+  Codex authentication state.
+- Before changing anything, read `AGENTS.md`, `CODEX_CONTEXT.md`, `TASKS.md`,
+  and `DECISIONS.md`, then inspect `git status`.
+- Use branches in the format `codex/admin/<task-slug>`.
+- Prefer worktrees under `C:\CodexShared\Worktrees\skincos\admin\<task-slug>`
+  when more than one Codex task may work in parallel.
+- Keep Codex operator state in `%LOCALAPPDATA%\Codex\skincos\` and not inside
+  the shared repo or shared worktree paths.
+- Register the shared repo as Git `safe.directory` for the WSL `admin` operator.
+- Never store `.env`, `.dev.vars`, `.cloudflared` credentials, `.codex`,
+  cookies, or API keys inside `C:\CodexShared`.
+- Exception: `.codex/environments/environment.toml` may be committed so Codex
+  App project actions are shared across the common clone and per-user
+  worktrees. No other `.codex` content should live in `C:\CodexShared`.
+- If local execution needs secrets, use a private overlay or a private clone
+  outside the shared area and document only variable names here.
+
 ## Default Codex App Startup
 
 - For non-trivial work in this repo, start by running or mentally applying
@@ -57,6 +79,10 @@
 - Prefer small, scoped changes over broad rewrites.
 - If the user says a bug came back, investigate the recurrence mechanism before
   applying another patch.
+- For `Meta Ads - Publish` incidents, inspect the real execution or runtime
+  evidence first. Run `Orb > Meta Ads Publish Preflight`; manual executions may
+  not be retained, so do not claim a fix without a reproducing test and a green
+  live preflight. Never publish to Meta merely to diagnose an error.
 - Report the exact files, deployments, endpoints, or logs used as evidence.
 
 ## Native Codex App Routing
@@ -80,6 +106,11 @@
 
 - Context snapshot: `npm run codex:context`
 - Online context snapshot: `npm run codex:context:online`
+- Shared workspace bootstrap: `npm run codex:shared:setup`
+- Shared workspace validation: `npm run codex:shared:validate`
+- Shared workspace status: `npm run codex:shared:status`
+- Shared worktree creation: `powershell -ExecutionPolicy Bypass -File .\scripts\new-shared-worktree.ps1 -TaskSlug <slug>`
+- New thread bootstrap prompt: `powershell -ExecutionPolicy Bypass -File .\scripts\print-codex-thread-bootstrap.ps1 -TaskSlug <slug> -TaskBrief "<tarefa>"`
 - Autonomy/deploy preflight: `npm run codex:preflight`
 - Site fast check: `npm run codex:site:check`
 - Site release check: `npm run codex:site:release-check`
@@ -88,11 +119,15 @@
 
 ## Interpretation Defaults
 
-- "site" usually means `modules/site-public/website/` and production `https://espacofacial.com`.
-- "CRM" usually means `frontend/` plus `backend/apps/crm-api/` and
+- "site" usually means `modules/site-public/website/` and production
+  `https://espacofacial.com`.
+- "CRM" usually means `modules/crm/web/` plus `modules/crm/api/` and
   `https://crm.skincos.com.br`.
+- "n8n" usually means `modules/automations/n8n/` and production
+  `https://orb.skincos.com.br`.
 - "Site EF" means the CRM module `?module=site-tracking`.
-- "Meta Ads" means the CRM module plus related `backend/apps/meta-ads` services.
+- "Meta Ads" means the CRM module plus related `modules/meta-ads/meta-ads/`
+  services.
 - "publicar", "deploy", "commit/push/pr/merge" means use branch `codex/*`,
   PR, GitHub checks, automerge/merge, deploy workflows, and live smoke evidence.
 - "verifique se está funcionando" means inspect both local/source-of-truth and

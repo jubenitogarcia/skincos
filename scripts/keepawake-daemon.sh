@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HEALTH_DIR="/Users/jubenitogarcia/Automation/n8n/health"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/shared-paths.sh"
+
+HEALTH_DIR="$N8N_HEALTH_DIR"
 PID_FILE="$HEALTH_DIR/keepawake-caffeinate.pid"
 STATE_FILE="$HEALTH_DIR/keepawake.state"
 

@@ -107,8 +107,8 @@ start_whatsapp_official() {
   local instance="$1"
   local quiet="${2:-0}"
 
-  local OFFICIAL_DIR="$ROOT_DIR/backend/apps/whatsapp/official-module"
-  local WEBJS_DIR="$ROOT_DIR/backend/apps/whatsapp/official"
+  local OFFICIAL_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/official-module"
+  local WEBJS_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/official"
 
   if [[ ! -d "$OFFICIAL_DIR" ]]; then
     echo "[official] Official module not found at $OFFICIAL_DIR" >&2
@@ -210,8 +210,8 @@ start_whatsapp_gateway() {
   local instance="$1"
   local quiet="${2:-0}"
 
-  local GW_DIR="$ROOT_DIR/backend/apps/whatsapp/gateway"
-  local STUB_DIR="$ROOT_DIR/backend/apps/whatsapp/stub"
+  local GW_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/gateway"
+  local STUB_DIR="$ROOT_DIR/modules/whatsapp/whatsapp/stub"
 
   if ! [[ "$instance" =~ ^[1-9]$ ]]; then
     echo "[gateway] Invalid instance: $instance (must be 1..9)" >&2
@@ -326,7 +326,7 @@ start_whatsapp_gateway() {
 }
 
 cmd_watch() {
-  local crm_dir="$ROOT_DIR/frontend"
+  local crm_dir="$ROOT_DIR/modules/crm/web"
   local crm_port="${CRM_PORT:-5173}"
   local crm_api_port="${CRM_API_PORT:-8099}"
   local instances="${INSTANCES:-${GW_INSTANCE:-1}}"
@@ -335,7 +335,7 @@ cmd_watch() {
   local instagram_port="${INSTAGRAM_PORT:-3103}"
 
   local use_official="${USE_OFFICIAL:-}"
-  local official_dir="$ROOT_DIR/backend/apps/whatsapp/official-module"
+  local official_dir="$ROOT_DIR/modules/whatsapp/whatsapp/official-module"
   if [[ -z "${use_official}" ]]; then
     [[ -d "$official_dir" ]] && use_official=1 || use_official=0
   fi
@@ -347,7 +347,7 @@ cmd_watch() {
   kill_port "$agent_port"
   kill_port "$instagram_port"
   for p in 3001 3002 3003 3004 3005 3006 3007 3008 3009; do kill_port "$p"; done
-  pkill -f "backend/apps/crm-api/server.js" 2>/dev/null || true
+  pkill -f "modules/crm/api/server.js" 2>/dev/null || true
   pkill -f "vite --port $crm_port" 2>/dev/null || true
 
   echo "[dev] Starting CRM (API+FE) in watch-full mode..."
@@ -510,7 +510,7 @@ case "$cmd" in
   watch)
     cmd_watch "$@" ;;
   crm)
-    exec "$ROOT_DIR/frontend/restart_crm.sh" "$@" ;;
+    exec "$ROOT_DIR/modules/crm/web/restart_crm.sh" "$@" ;;
   insumos)
     exec "$ROOT_DIR/backend/scripts/insumos.sh" "$@" ;;
   cloudflare-workers|workers)

@@ -1,39 +1,39 @@
-# Codex thread bootstrap for shared operators
+# Prompt inicial para novas threads no Codex App
 
-When an operator opens a new Codex thread against the shared clone or one of
-its worktrees, the first prompt should come from:
+Quando você abrir uma nova thread apontando para o projeto compartilhado
+`C:\CodexShared\Projetos\skincos`, use a mensagem abaixo como primeira
+mensagem para reduzir ruído e fazer o agente cair no fluxo certo.
+
+## Mensagem base
+
+```text
+Use este projeto compartilhado em `C:\CodexShared\Projetos\skincos` apenas como base de contexto e coordenação.
+Antes de editar qualquer arquivo:
+1. Leia `AGENTS.md`, `CODEX_CONTEXT.md`, `TASKS.md` e `DECISIONS.md`.
+2. Verifique o estado compartilhado com `powershell -ExecutionPolicy Bypass -File .\scripts\show-shared-codex-status.ps1`.
+3. Se a tarefa não for estritamente de leitura, crie um worktree dedicado com `powershell -ExecutionPolicy Bypass -File .\scripts\new-shared-worktree.ps1 -TaskSlug <task-slug> -Fetch`.
+4. Depois de criar o worktree, trabalhe apenas nele e trate o clone compartilhado como somente leitura para contexto.
+5. Mantenha estado local, logs, perfis e overrides fora do repositório compartilhado, em `%LOCALAPPDATA%\Codex\skincos\`.
+6. Preserve alterações não relacionadas já existentes no projeto compartilhado ou em worktrees de outros usuários.
+7. Antes de concluir, valide o que mudar e registre contexto relevante em `CODEX_CONTEXT.md`, `TASKS.md` e `DECISIONS.md` quando fizer sentido.
+
+Tarefa desta thread: <descreva aqui a tarefa>
+```
+
+## Gerar automaticamente
+
+Se preferir gerar a mensagem já com o `task-slug` e a descrição:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\print-codex-thread-bootstrap.ps1 `
-  -TaskSlug <task-slug> `
-  -TaskBrief "<describe the task>"
+  -TaskSlug corrigir-site-ef `
+  -TaskBrief "Investigar e corrigir o fluxo do Site EF sem trabalhar direto no clone compartilhado."
 ```
 
-## What the bootstrap must include
+## Quando usar
 
-Every bootstrap prompt must carry:
-
-- the task objective,
-- the normalized task slug,
-- the expected `codex/<actor>/<task-slug>` branch,
-- the expected worktree path,
-- the instruction to treat the shared clone as read-only when edits are needed,
-- the instruction to read `AGENTS.md`, `CODEX_CONTEXT.md`, `TASKS.md`, and
-  `DECISIONS.md`,
-- the expected validation commands for the task,
-- the reminder that each operator has a private Codex thread history.
-
-## Why this is required
-
-Operators in the same OpenAI organization still keep separate private Codex
-threads. The bootstrap prompt is how the repo supplies consistent operating
-context without relying on a prior private thread being visible.
-
-## Example flow
-
-1. Open `C:\CodexShared\Projetos\skincos` in Codex App.
-2. Run `Thread Bootstrap`.
-3. If the task may edit files, create the suggested worktree.
-4. Continue work only inside that worktree.
-5. Before handoff, update `CODEX_CONTEXT.md`, `TASKS.md`, and `DECISIONS.md`
-   when current state, next steps, or decisions changed.
+- Sempre que a thread for aberta a partir do clone compartilhado.
+- Principalmente quando a tarefa puder virar edição de código, deploy, QA ou
+  investigação mais longa.
+- Em tarefas puramente de leitura, a thread pode ficar no clone compartilhado,
+  mas ainda vale usar a mesma mensagem para manter o agente alinhado.

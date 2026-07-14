@@ -1,0 +1,27 @@
+{
+    "version": 1,
+    "include": [
+        "/api/health",
+        "/api/auth/*",
+        "/api/crm/*",
+        "/api/tracking/*",
+        "/api/meta-ads/*",
+        "/api/insumos/*",
+        "/api/atendimento/*",
+        "/api/placeholder/*",
+        "/api/share/*",
+        "/api/instagram/*",
+        "/api/facebook-review/*",
+        "/api/instagram-module/*",
+        "/api/wa-orchestrator/*",
+        "/api/social/*",
+        "/api/ponto/*",
+        "/api/escala/*",
+        "/api/unit-monitor/*",
+        "/share",
+        "/share/*",
+        "/social-media",
+        "/social-media/*"
+    ],
+    "exclude": []
+}

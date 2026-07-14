@@ -2,11 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-N8N_ROOT="${N8N_ROOT:-$REPO_ROOT/n8n}"
-if [[ ! -d "$N8N_ROOT" && -d "$HOME/Automation/n8n" ]]; then
-  N8N_ROOT="$HOME/Automation/n8n"
-fi
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/shared-paths.sh"
 
 UID_VALUE="$(id -u)"
 WATCHDOG_LABEL="com.skincos.whatsapp-watchdog"

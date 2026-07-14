@@ -20,21 +20,21 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
-            frontend/package-lock.json
+            modules/crm/web/package-lock.json
             modules/site-public/website/package-lock.json
 
       - name: Frontend install
-        if: ${{ hashFiles('frontend/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd frontend
+          cd modules/crm/web
           npm ci
 
       - name: Frontend coverage
-        if: ${{ hashFiles('frontend/package-lock.json') != '' }}
+        if: ${{ hashFiles('modules/crm/web/package-lock.json') != '' }}
         run: |
           set -euxo pipefail
-          cd frontend
+          cd modules/crm/web
           npm run test:coverage
 
       - name: Website install

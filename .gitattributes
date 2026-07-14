@@ -3,3 +3,7 @@
 
 docs/ai-improvement-logs/*.md merge=union
 scripts/ai-runner-ci-notes/*.txt merge=union
+
+# Keep shell entrypoints LF-only so WSL/bash does not break on shared Windows checkouts
+*.sh text eol=lf
+*.command text eol=lf

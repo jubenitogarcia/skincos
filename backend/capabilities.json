@@ -3,7 +3,7 @@
   "core": {
     "crm": {
       "id": "crm",
-      "path": "frontend",
+      "path": "modules/crm/web",
       "kind": "core",
       "ports": {
         "frontend": 5173,
@@ -25,7 +25,7 @@
     {
       "id": "whatsapp-official",
       "label": "WhatsApp (Official Module)",
-      "path": "backend/apps/whatsapp/official-module",
+      "path": "modules/whatsapp/whatsapp/official-module",
       "kind": "service",
       "ports": {
         "base": 3001,
@@ -39,7 +39,7 @@
     {
       "id": "whatsapp-gateway",
       "label": "WhatsApp (Gateway Legacy)",
-      "path": "backend/apps/whatsapp/gateway",
+      "path": "modules/whatsapp/whatsapp/gateway",
       "kind": "service",
       "ports": {
         "base": 3001,
@@ -54,7 +54,7 @@
     {
       "id": "harmonia",
       "label": "Harmonia (WhatsApp Leads)",
-      "path": "backend/apps/crm-api",
+      "path": "modules/crm/api",
       "kind": "service",
       "health": {
         "path": "/api/harmonia/health"
@@ -118,7 +118,7 @@
     {
       "id": "chat-module",
       "label": "Chat Module",
-      "path": "backend/apps/whatsapp/chat-module",
+      "path": "modules/whatsapp/whatsapp/chat-module",
       "kind": "service",
       "notes": "Pacotes (opc.): backend/apps/whatsapp/chat-module/{whatsapp-core,whatsapp-api,whatsapp-ui}"
     },

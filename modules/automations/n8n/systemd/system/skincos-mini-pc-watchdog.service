@@ -1,0 +1,15 @@
+[Unit]
+Description=Skincos shared runtime watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__N8N_ROOT__
+Environment=N8N_ROOT=__N8N_ROOT__
+Environment=N8N_RUNTIME_HOME=__N8N_RUNTIME_HOME__
+Environment=N8N_ENV_FILE=__N8N_ENV_FILE__
+Environment=N8N_BUSINESS_ENV_FILE=__N8N_BUSINESS_ENV_FILE__
+Environment=N8N_LOG_DIR=__N8N_LOG_DIR__
+ExecStart=__N8N_ROOT__/scripts/ensure-mini-pc-stack.sh
+

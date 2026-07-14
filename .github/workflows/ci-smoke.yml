@@ -57,6 +57,10 @@ jobs:
         working-directory: modules/site-public/website
         run: npm run build
 
+      - name: Install CRM API dependencies
+        working-directory: modules/crm/api
+        run: npm ci
+
       - name: Install backend workspace deps (pnpm)
         if: ${{ hashFiles('backend/pnpm-lock.yaml') != '' }}
         run: |

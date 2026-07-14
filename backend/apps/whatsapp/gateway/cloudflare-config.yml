@@ -1,7 +1,0 @@
-﻿tunnel: d111123b-da44-45f1-adf1-35303be34865
-credentials-file: C:\Users\julia\.cloudflared\d111123b-da44-45f1-adf1-35303be34865.json
-
-ingress:
-  - hostname: wa.skincos.com.br
-    service: http://localhost:3001
-  - service: http_status:404

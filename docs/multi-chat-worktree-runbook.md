@@ -21,19 +21,21 @@ Permitir trabalho paralelo em varios chats/agents sem perder alteracoes e sem co
 ## Comandos padrao
 ```bash
 # 1) Base atualizada
-git -C /Users/jubenitogarcia/Automation/skincos fetch origin
+git -C C:/CodexShared/Projetos/skincos fetch origin
 
 # 2) Novo worktree para um chat
-git -C /Users/jubenitogarcia/Automation/skincos worktree add \
-  /Users/jubenitogarcia/Automation/skincos-<modulo>-<chat> \
-  -b codex/<modulo>-<chat> origin/main
+powershell -ExecutionPolicy Bypass -File \
+  C:/CodexShared/Projetos/skincos/scripts/new-shared-worktree.ps1 \
+  -Actor <actor> \
+  -TaskSlug <modulo>-<chat> \
+  -Fetch
 
 # 3) Publicar checkpoint
-cd /Users/jubenitogarcia/Automation/skincos-<modulo>-<chat>
+cd C:/CodexShared/Worktrees/skincos/<actor>/<modulo>-<chat>
 git add -A
 git commit -m "wip(<modulo>): checkpoint"
-git push -u origin codex/<modulo>-<chat>
-gh pr create --draft --base main --head codex/<modulo>-<chat> --title "WIP <modulo>"
+git push -u origin codex/<actor>/<modulo>-<chat>
+gh pr create --draft --base main --head codex/<actor>/<modulo>-<chat> --title "WIP <modulo>"
 
 # 4) Se PR ficar BEHIND
 git fetch origin
@@ -42,7 +44,7 @@ git push
 ```
 
 ## Convencoes de escopo
-- Nome do branch deve refletir modulo e objetivo.
+- Nome do branch deve refletir operador, modulo e objetivo.
 - Evitar dois chats alterando o mesmo arquivo ao mesmo tempo.
 - Se precisar do mesmo arquivo, encadear PR (B parte da branch de A) ou serializar.
 

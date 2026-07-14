@@ -9,7 +9,7 @@
 
 - `modules/site-public/website/`: owner de produto público + backup operacional.
 - `frontend/`: owner do CRM + backup operacional.
-- `backend/apps/crm-api/`: owner de backend transacional + backup operacional.
+- `modules/crm/api/`: owner de backend transacional + backup operacional.
 - `backend/apps/escala-api/`: owner da agenda/escala + backup operacional.
 - `backend/config` e `backend/libs`: owner de plataforma/automação + backup operacional.
 - `.github/` e `docs/`: owner de plataforma/entrega.

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-N8N_ENV="/Users/jubenitogarcia/Automation/n8n/.env"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/shared-paths.sh"
+
 DEFAULT_EMAIL="julianbenitogarcia@gmail.com"
 DEFAULT_HOST="smtp.gmail.com"
 DEFAULT_PORT="587"
@@ -62,11 +65,11 @@ upsert_env "ALERT_MAX_REMINDERS_PER_DAY" "${ALERT_MAX_REMINDERS_PER_DAY:-6}"
 
 echo "[smtp-config] SMTP salvo no .env e senha armazenada no Keychain."
 echo "[smtp-config] Recarregando serviços..."
-/Users/jubenitogarcia/Automation/skincos/scripts/setup-whatsapp-autostart.sh >/dev/null
+"$SKINCOS_SCRIPTS_DIR/setup-whatsapp-autostart.sh" >/dev/null
 
 echo "[smtp-config] Testando envio..."
 set -a
 source "$N8N_ENV"
 set +a
-python3 /Users/jubenitogarcia/Automation/n8n/scripts/send-alert.py "[SKINCOS][TESTE] SMTP" "Teste SMTP configurado com sucesso."
+python3 "$N8N_SCRIPTS_DIR/send-alert.py" "[SKINCOS][TESTE] SMTP" "Teste SMTP configurado com sucesso."
 echo "[smtp-config] Concluído."

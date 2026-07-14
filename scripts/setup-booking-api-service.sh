@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/shared-paths.sh"
+
 UID_VALUE="$(id -u)"
 LABEL="com.skincos.booking-api"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
-SCRAPER_DIR="/Users/jubenitogarcia/Automation/skincos/backend/apps/automations/scraper"
+SCRAPER_DIR="$SKINCOS_ROOT/backend/apps/automations/scraper"
 RUN_SCRIPT="$SCRAPER_DIR/run_booking_api.sh"
 ENV_FILE="$SCRAPER_DIR/secrets/booking_api.env"
 LOG_DIR="$SCRAPER_DIR/debug"

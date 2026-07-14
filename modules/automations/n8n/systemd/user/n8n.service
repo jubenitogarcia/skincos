@@ -1,0 +1,28 @@
+[Unit]
+Description=Skincos n8n local
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__N8N_ROOT__
+Environment=N8N_ROOT=__N8N_ROOT__
+Environment=N8N_RUNTIME_HOME=__N8N_RUNTIME_HOME__
+Environment=N8N_ENV_FILE=__N8N_ENV_FILE__
+Environment=N8N_DATA_HOME=__N8N_DATA_HOME__
+Environment=N8N_USER_FOLDER=__N8N_DATA_HOME__
+Environment=N8N_LOG_DIR=__N8N_LOG_DIR__
+Environment=N8N_HEALTH_DIR=__N8N_HEALTH_DIR__
+Environment=N8N_TMP_DIR=__N8N_TMP_DIR__
+Environment=N8N_BINARY_DATA_DIR=__N8N_BINARY_DATA_DIR__
+EnvironmentFile=-__N8N_ENV_FILE__
+Environment=N8N_MANAGE_EVOLUTION=0
+Environment=NODE_FUNCTION_ALLOW_BUILTIN=*
+ExecStart=/bin/bash -lc 'source "$HOME/.nvm/nvm.sh"; nvm use 24 >/dev/null; exec n8n start'
+Restart=always
+RestartSec=10
+StandardOutput=append:__N8N_LOG_DIR__/launchd-n8n-evolution.out.log
+StandardError=append:__N8N_LOG_DIR__/launchd-n8n-evolution.err.log
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare tunnel for orb.skincos.com.br
+After=orb-proxy.service network-online.target
+Wants=orb-proxy.service network-online.target
+
+[Service]
+Type=simple
+Environment=CLOUDFLARED_HOME=__CLOUDFLARED_HOME__
+ExecStart=/usr/bin/cloudflared tunnel --protocol http2 --config __CLOUDFLARED_HOME__/orb-config.yml run
+Restart=always
+RestartSec=10
+StandardOutput=append:__CLOUDFLARED_HOME__/orb.launchd.log
+StandardError=append:__CLOUDFLARED_HOME__/orb.launchd.err.log
+
+[Install]
+WantedBy=default.target

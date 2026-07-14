@@ -1,0 +1,48 @@
+{
+  "name": "skincos-meta-ads-performance-report",
+  "main": "../meta-ads-performance-report-worker.js",
+  "compatibility_date": "2026-04-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "ENVIRONMENT": "production",
+    "LOG_LEVEL": "info",
+    "REQUIRE_AUTH": "true"
+  },
+  "d1_databases": [
+    {
+      "binding": "META_ADS_DB",
+      "database_name": "skincos-meta-ads-performance-report",
+      "database_id": "85b9a580-dd26-4a57-9121-b23b253296e0"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "META_ADS_RAW_PAYLOADS",
+      "bucket_name": "skincos-meta-ads-performance-report-raw"
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "skincos-meta-ads-performance-report-staging",
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "LOG_LEVEL": "info",
+        "REQUIRE_AUTH": "true"
+      },
+      "d1_databases": [
+        {
+          "binding": "META_ADS_DB",
+          "database_name": "skincos-meta-ads-performance-report-staging",
+          "database_id": "53f07b42-33c3-4abf-96ea-9a2842c92801"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "META_ADS_RAW_PAYLOADS",
+          "bucket_name": "skincos-meta-ads-performance-report-raw-staging"
+        }
+      ]
+    }
+  }
+}

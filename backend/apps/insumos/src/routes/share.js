@@ -33,6 +33,8 @@ export async function handleShareRoutes({
 }) {
     const historyBasePath = '/share/history';
     const shareBasePath = '/share/';
+    const isHistoryPath =
+        url.pathname === historyBasePath || url.pathname.startsWith(`${historyBasePath}/`);
     if (!url.pathname.startsWith(historyBasePath) && !url.pathname.startsWith(shareBasePath)) return null;
 
     const auth = await requireRoles(ROLE_ANY);
@@ -51,7 +53,7 @@ export async function handleShareRoutes({
     }
 
     // GET /share/:id (read a single share payload, per-user)
-    if (url.pathname.startsWith(shareBasePath) && request.method === 'GET') {
+    if (url.pathname.startsWith(shareBasePath) && !isHistoryPath && request.method === 'GET') {
         try {
             const id = decodeURIComponent(url.pathname.slice(shareBasePath.length)).trim();
             if (!id) {
