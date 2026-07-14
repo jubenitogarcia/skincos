@@ -43,7 +43,11 @@ do operador fora do checkout compartilhado.
 ```bash
 $N8N_ROOT/scripts/backup-n8n.sh
 ```
-Obs: o backup automático diário via `launchd` foi desativado. Use apenas manualmente quando necessário.
+No WSL com o runtime em `C:\CodexRuntime`, deixe
+`BACKUP_STORAGE_COPY_TRANSPORT=auto` (o padrão): ele usa `robocopy` para o
+snapshot de storage e evita travamento de I/O do `rsync` no volume Windows. O
+backup continua exigindo o manifesto, checksum do dump e a verificação de
+restore antes de poder ser usado como checkpoint.
 
 ## Restore (manual)
 1. Pare o n8n.

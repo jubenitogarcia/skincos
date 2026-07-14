@@ -6,6 +6,7 @@
     "runtime:lifecycle:prepare": "bash ./scripts/runtime/prepare-lifecycle-layout.sh",
     "runtime:lifecycle:preflight": "bash ./scripts/runtime/cutover-lifecycle-runtime.sh",
     "runtime:lifecycle:cutover": "bash ./scripts/runtime/cutover-lifecycle-runtime.sh --apply",
+    "runtime:backup:storage-copy:test": "bash ./orb/engine/scripts/test-backup-n8n-storage-copy.sh",
     "crm:console:dev": "npm --prefix crm/console run dev",
     "crm:api:test": "npm --prefix crm/api test",
     "orb:service:status": "npm --prefix orb/engine run service:status --",
