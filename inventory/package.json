@@ -2,6 +2,7 @@
     "name": "@skincos/insumos-worker",
     "private": true,
     "type": "module",
+    "packageManager": "pnpm@9.15.4",
     "description": "Insumos API (Cloudflare Worker) - incorporated into skincos",
     "scripts": {
         "dev": "wrangler dev --config wrangler.toml",
@@ -15,5 +16,12 @@
     "dependencies": {
         "bcryptjs": "^2.4.3",
         "qrcode-generator": "^1.4.4"
+    },
+    "pnpm": {
+        "overrides": {
+            "esbuild": "0.28.1",
+            "undici": "7.24.4",
+            "ws": "8.21.0"
+        }
     }
 }

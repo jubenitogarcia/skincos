@@ -6,7 +6,6 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT_DIR/backend/scripts/node_pkg.sh"
 
 INSUMOS_DIR="$ROOT_DIR/inventory"
-INSUMOS_PKG="@skincos/insumos-worker"
 
 usage() {
   cat <<EOF
@@ -39,10 +38,13 @@ ensure_insumos_exists() {
   [[ -f "$INSUMOS_DIR/wrangler.toml" ]] || { echo "[insumos] wrangler.toml not found at $INSUMOS_DIR/wrangler.toml" >&2; exit 1; }
 }
 
-ensure_backend_deps() {
-  if [[ ! -d "$BACKEND_DIR/node_modules" ]]; then
-    echo "[insumos] Installing backend workspace deps (pnpm)..."
-    install_node_deps "$BACKEND_DIR" install >/dev/null 2>&1 || true
+ensure_insumos_deps() {
+  if [[ ! -d "$INSUMOS_DIR/node_modules" ]]; then
+    echo "[insumos] Installing inventory Worker dependencies from the locked graph (pnpm)..."
+    if ! install_node_deps "$INSUMOS_DIR" ci; then
+      echo "[insumos] Inventory Worker dependency installation failed; refusing to continue with an incomplete workspace." >&2
+      exit 1
+    fi
   fi
 }
 
@@ -50,19 +52,19 @@ cmd=${1:-help}
 shift || true
 
 ensure_insumos_exists
-ensure_backend_deps
+ensure_insumos_deps
 
 case "$cmd" in
   dev)
     (
-      cd "$BACKEND_DIR"
-      run_pnpm -F "$INSUMOS_PKG" run dev "$@"
+      cd "$INSUMOS_DIR"
+      run_pnpm run dev "$@"
     )
     ;;
   deploy)
     (
-      cd "$BACKEND_DIR"
-      run_pnpm -F "$INSUMOS_PKG" run deploy "$@"
+      cd "$INSUMOS_DIR"
+      run_pnpm run deploy "$@"
     )
     ;;
   migrate)
