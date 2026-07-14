@@ -131,6 +131,7 @@ jobs:
           if ! decision="$(jq -r '
             if (.success == true) then "DEPLOYED"
             elif ((.error // "") == "RECOVERY_SYNC_REPO_DIRTY") then "SKIP_DIRTY"
+            elif ((.error // "") == "LOCAL_RECOVERY_DISABLED") then "SKIP_DISABLED"
             else "FAIL:\((.error // "UNKNOWN_ERROR"))"
             end
           ' <<<"${response}" 2>/dev/null)"; then
@@ -142,6 +143,10 @@ jobs:
               ;;
             SKIP_DIRTY)
               echo "::warning::CRM API reconcile skipped repo sync because workspace is dirty (http=${http_code}); retry will continue automatically."
+              echo "deployed=false" >> "$GITHUB_OUTPUT"
+              ;;
+            SKIP_DISABLED)
+              echo "::warning::CRM API reconcile skipped because local recovery is disabled (http=${http_code}); no remote recovery was enabled."
               echo "deployed=false" >> "$GITHUB_OUTPUT"
               ;;
             FAIL:*)
