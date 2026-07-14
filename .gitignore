@@ -78,8 +78,9 @@ dist/
 /downloads/
 eggs/
 .eggs/
-lib/*
+lib/
 !modules/automations/n8n/scripts/lib/
+modules/automations/n8n/scripts/lib/*
 !modules/automations/n8n/scripts/lib/runtime-paths.sh
 !modules/automations/n8n/scripts/lib/runtime-paths.js
 !modules/automations/n8n/scripts/lib/meta-ads-publish-execution-semantics.js
