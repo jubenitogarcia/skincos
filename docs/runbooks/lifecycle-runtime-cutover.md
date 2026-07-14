@@ -19,6 +19,31 @@ service is safe to rename.
   CRM health passed. The legacy units remain authoritative until the final
   security-alert triage and scheduled cut window are complete.
 
+## Legacy proxy bridge before the cut
+
+The retained `skincos-orb-proxy.service` runs source-only code and deliberately
+does not retain an untracked `node_modules` tree. Until the lifecycle
+`orb-proxy.service` replaces it, it needs the pinned n8n runtime modules after
+every WSL boot. Keep this narrow, reversible systemd drop-in on the **legacy**
+unit:
+
+```bash
+sudo install -d -m 0755 /etc/systemd/system/skincos-orb-proxy.service.d
+printf '%s\n' '[Service]' \
+  'Environment=NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules' \
+  | sudo tee /etc/systemd/system/skincos-orb-proxy.service.d/10-runtime-dependencies.conf >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl restart skincos-orb-proxy.service
+curl --fail --max-time 10 http://127.0.0.1:8788/healthz
+```
+
+This is a compatibility bridge, not a second runtime contract: the rendered
+lifecycle `orb-proxy.service` already owns the same `NODE_PATH` setting. Capture
+the legacy unit before changing it in
+`C:\CodexRuntime\artifacts\runtime-recovery\<timestamp>`. After a successful
+cut, the old unit and this drop-in are retired together; do not copy the
+drop-in to the lifecycle unit.
+
 ## Preconditions
 
 1. The source PR is merged, the canonical checkout is fast-forwarded, and all
