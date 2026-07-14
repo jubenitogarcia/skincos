@@ -1,5 +1,6 @@
 import express from 'express'
 import cors from 'cors'
+import { rateLimit } from 'express-rate-limit'
 import { randomUUID, createHmac, timingSafeEqual, randomBytes, createHash, createCipheriv, createDecipheriv } from 'crypto'
 import nodeUtil from 'node:util'
 import { promises as fs } from 'fs'
@@ -32,6 +33,7 @@ import { startHarmoniaWorker } from './server/harmonia/worker.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
 import { parseUnifiedChannelId, unifiedChannelUrl, unifiedSystemUrl } from './server/unifiedSystemUrl.js'
+import { configuredCorsOrigins, isAllowedCrmCorsOrigin } from './server/corsPolicy.js'
 import { resolveEvolutionMediaUrl } from './server/whatsappMediaUrl.js'
 
 // Axios for facade requests to Unified System
@@ -498,9 +500,23 @@ app.get('/api/core/status', async (req, res) => {
     }
 })
 
-// Critical: Enhanced CORS configuration to prevent API access issues
+const CRM_CORS_ORIGINS = configuredCorsOrigins()
+const isAllowedCorsOrigin = (origin) => isAllowedCrmCorsOrigin(origin, { allowedOrigins: CRM_CORS_ORIGINS })
+const CRM_API_RATE_LIMIT_PER_MIN = Math.max(30, Math.min(10_000, Number(process.env.CRM_API_RATE_LIMIT_PER_MIN || 300) || 300))
+const setAllowedCorsHeaders = (req, res) => {
+    const origin = req.headers.origin
+    if (!origin || !isAllowedCorsOrigin(origin)) return false
+    res.header('Access-Control-Allow-Origin', origin)
+    res.header('Access-Control-Allow-Credentials', 'true')
+    res.header('Vary', 'Origin')
+    return true
+}
+
+// Credentialed CORS is restricted to explicit product origins.
 app.use(cors({
-    origin: true, // Allow all origins in development
+    origin(origin, callback) {
+        callback(null, isAllowedCorsOrigin(origin))
+    },
     credentials: true, // Essential for SSE/EventSource and auth cookies
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With', 'Accept', 'X-CSRF-Token', 'X-Tenant-Key', 'X-User-Role', 'X-CRM-Role', 'X-Role'],
@@ -508,13 +524,22 @@ app.use(cors({
     optionsSuccessStatus: 200 // Legacy browser support
 }))
 
+app.use('/api', rateLimit({
+    windowMs: 60_000,
+    limit: CRM_API_RATE_LIMIT_PER_MIN,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { success: false, error: 'RATE_LIMITED', hint: 'Too many requests. Try again soon.' }
+}))
+
 // Handle preflight OPTIONS requests early to prevent middleware conflicts
 app.use((req, res, next) => {
     if (req.method === 'OPTIONS') {
-        res.header('Access-Control-Allow-Origin', req.headers.origin || '*')
+        if (req.headers.origin && !setAllowedCorsHeaders(req, res)) {
+            return res.sendStatus(403)
+        }
         res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH')
         res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With, Accept, X-CSRF-Token, X-Tenant-Key, X-User-Role, X-CRM-Role, X-Role')
-        res.header('Access-Control-Allow-Credentials', 'true')
         return res.sendStatus(200)
     }
     next()
@@ -3429,8 +3454,7 @@ app.get('/api/ai-suppression/events', (req, res) => {
     res.setHeader('Pragma', 'no-cache')
     res.setHeader('Expires', '0')
     res.setHeader('Connection', 'keep-alive')
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
-    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    setAllowedCorsHeaders(req, res)
     res.setHeader('X-Accel-Buffering', 'no') // Disable nginx buffering
 
     // Flush headers immediately
@@ -3519,8 +3543,7 @@ app.get('/api/conversations/events', (req, res) => {
     res.setHeader('Pragma', 'no-cache')
     res.setHeader('Expires', '0')
     res.setHeader('Connection', 'keep-alive')
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
-    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    setAllowedCorsHeaders(req, res)
     res.setHeader('X-Accel-Buffering', 'no') // Disable proxy buffering
 
     // Flush headers and set status immediately
