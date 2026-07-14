@@ -16,6 +16,7 @@ Environment=N8N_ENV_FILE=__RUNTIME_ROOT__/secrets/orb.env
 Environment=N8N_BUSINESS_ENV_FILE=__RUNTIME_ROOT__/secrets/orb-business.env
 Environment=N8N_DATA_HOME=__RUNTIME_ROOT__/state/orb/n8n-home
 Environment=N8N_USER_FOLDER=__RUNTIME_ROOT__/state/orb/n8n-home
+Environment=N8N_WORKFLOWS_DIR=__RUNTIME_ROOT__/state/orb/workflows
 Environment=N8N_LOG_DIR=__RUNTIME_ROOT__/logs/orb
 Environment=N8N_HEALTH_DIR=__RUNTIME_ROOT__/state/orb/health
 Environment=N8N_TMP_DIR=__RUNTIME_ROOT__/tmp/orb

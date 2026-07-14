@@ -5,6 +5,7 @@ set -euo pipefail
 # the legacy runtime intact. The coordinated cutover script owns stop/start.
 
 RUNTIME_ROOT="${RUNTIME_ROOT:-/mnt/c/CodexRuntime}"
+LEGACY_REPO_ROOT="${LEGACY_REPO_ROOT:-/mnt/c/CodexShared/Projetos/skincos}"
 APPLY=0
 FINAL_SYNC=0
 SKIP_ORB_STATE=0
@@ -208,6 +209,7 @@ else
   sync_path "$legacy_orb/evolution-api/instances" "$RUNTIME_ROOT/state/messaging-whatsapp"
   sync_path "$legacy_orb/evolution-api/store" "$RUNTIME_ROOT/state/messaging-whatsapp"
 fi
+sync_path "$LEGACY_REPO_ROOT/modules/automations/n8n/workflows" "$RUNTIME_ROOT/state/orb"
 sync_path "$legacy_orb/logs/." "$RUNTIME_ROOT/logs/orb"
 sync_path "$legacy_crm/var" "$RUNTIME_ROOT/state/crm"
 sync_path "$legacy_booking/report" "$RUNTIME_ROOT/artifacts/booking"

@@ -35,4 +35,16 @@ if RUNTIME_ROOT="$runtime_root" LEGACY_REPO_ROOT="$legacy_root" \
   echo "staging unexpectedly overwrote an existing rollback bundle" >&2
   exit 1
 fi
+
+replacement_root="$tmp_dir/replacement"
+replacement_artifact_root="$runtime_root/artifacts/runtime-cutover/replacement"
+mkdir -p "$replacement_root/modules/automations/n8n/workflows" "$replacement_root/modules/crm/api" "$tmp_dir/old-dependencies"
+touch "$replacement_root/.git"
+ln -s "$tmp_dir/old-dependencies" "$replacement_root/modules/crm/api/node_modules"
+RUNTIME_ROOT="$runtime_root" LEGACY_REPO_ROOT="$legacy_root" \
+  bash "$ROOT_DIR/scripts/runtime/stage-rollback-artifacts.sh" \
+    --rollback-root "$replacement_root" \
+    --artifact-root "$replacement_artifact_root" \
+    --replace-rollback-links >/dev/null
+[[ "$(readlink -f "$replacement_root/modules/crm/api/node_modules")" == "$(readlink -f "$replacement_artifact_root/crm/node_modules")" ]]
 echo "stage-rollback-artifacts test passed"

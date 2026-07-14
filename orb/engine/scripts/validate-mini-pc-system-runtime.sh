@@ -5,6 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib/runtime-paths.sh"
 
+N8N_WORKFLOWS_DIR="${N8N_WORKFLOWS_DIR:-/mnt/c/CodexRuntime/state/orb/workflows}"
+export N8N_WORKFLOWS_DIR
+
 N8N_HEALTH_URL="${N8N_HEALTH_URL:-http://127.0.0.1:5678/healthz}"
 N8N_AUTH_SURFACE_URL="${N8N_AUTH_SURFACE_URL:-http://127.0.0.1:5678/rest/login}"
 ORB_PROXY_HEALTH_URL="${ORB_PROXY_HEALTH_URL:-http://127.0.0.1:8788/meta-review/healthz}"
@@ -132,6 +135,7 @@ for path in \
   "$EVOLUTION_ENV_FILE" \
   "$N8N_CONFIG_PATH" \
   "$N8N_NODES_DIR/package.json" \
+  "$N8N_WORKFLOWS_DIR/livia.active.json" \
   "$CLOUDFLARED_HOME/orb-config.yml"; do
   if [[ ! -f "$path" ]]; then
     echo "Missing runtime file: $path"
