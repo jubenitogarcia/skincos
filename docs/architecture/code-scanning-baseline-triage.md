@@ -62,6 +62,34 @@ proof that the underlying code is safe.
 - Orb Graph API helpers accept only resource paths, rejecting absolute URLs,
   query injection, and dot segments before constructing a request URL.
 
+## Remediation wave: 2026-07-14
+
+The following alerts were handled from their individual GitHub instances. The
+private evidence bundle records the alert number, path, ref and exact sink;
+this table records the source-control outcome without copying credentials,
+clinical data or request payloads into Git.
+
+| Alert IDs | Classification | Outcome |
+| --- | --- | --- |
+| CodeQL `#4285`–`#4289` | First-party reachable CRM Unified System facade | Fixed by constraining channels, ports and paths; regression tests are part of `crm/api` test. |
+| CodeQL `#4290`–`#4295` | First-party reachable WhatsApp media and webhook requests | Fixed with HTTPS-only public destination validation, DNS private-address rejection, no redirects and authenticated webhook management. |
+| CodeQL `#4344`–`#4345` | First-party gateway query input | Fixed by accepting only scalar, normalized WhatsApp IDs. |
+| CodeQL `#2542`–`#2543` | First-party GBP diagnostics resource path | Fixed by accepting only numeric account/location identifiers after diagnostics authentication. |
+| CodeQL `#4341`–`#4343` | First-party credentialed CRM CORS | Fixed with explicit origins; origin reflection is removed. |
+| CodeQL `#4239` | First-party CRM WhatsApp media URL | Fixed by accepting only parsed HTTPS `mmg.whatsapp.net` URLs or fixed-origin direct paths. |
+| CodeQL `#4255`–`#4267` | First-party CRM API exhaustion surface | Fixed with an API-wide `express-rate-limit` middleware; no sensitive route is skipped. |
+| CodeQL `#108` | First-party command injection | Source fix is integrated; an analysis from the current `main` revision is required before the historic instance is considered closed. |
+| CodeQL `#164`–`#177`, `#124`–`#125` | Historical moved paths | The recorded `backend/apps/**` paths are absent from the canonical tree. They remain open only until a current scan replaces historical instances; no path exclusion was added. |
+
+### Current-analysis requirement
+
+The CodeQL workflow formerly did not trigger on `crm/api`, `messaging`, `orb`
+or the other root domains. It now does, and it supports `workflow_dispatch`.
+After the coverage change reaches `main`, trigger the workflow against `main`,
+then inspect each remaining alert instance at that ref. A finding may be marked
+historical only when its recorded path is absent and no current-ref instance is
+open; a finding in a current active path remains a remediation task.
+
 ## Merge boundary
 
 The domain move may proceed only after the required repository CI checks pass,
