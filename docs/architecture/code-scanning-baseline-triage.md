@@ -32,9 +32,12 @@ proof that the underlying code is safe.
 
 ## Remediation tracks
 
-1. **Vendored WhatsApp channel code:** establish provenance, update cadence and
-   supported patch boundary before changing or excluding it. Do not suppress
-   active production paths merely to make a scan pass.
+1. **WhatsApp channel code:** `backend/pnpm-workspace.yaml`, bootstrap scripts,
+   capabilities and the CRM orchestrator still reference the `official`,
+   `official-module`, `gateway`, `stub` and `chat-module` variants. Establish
+   which variant is actually reachable in production and its supported update
+   cadence before changing or excluding it. Do not suppress active paths merely
+   to make a scan pass.
 2. **Orb and Website first-party paths:** reproduce each URL, regex, HTML and
    credential finding through its real public or service boundary; add a narrow
    regression test before changing it.
