@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, staging ]
     paths:
-      - "frontend/**"
+      - "modules/crm/web/**"
       - ".github/workflows/deploy-crm-pages.yml"
   workflow_dispatch: {}
 
@@ -65,24 +65,24 @@ jobs:
         with:
           node-version: "22.12.0"
           cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: modules/crm/web/package-lock.json
 
       - name: Install frontend deps
         if: ${{ steps.guard.outputs.skip != 'true' }}
         run: npm ci
-        working-directory: frontend
+        working-directory: modules/crm/web
 
       - name: Fetch face models
         if: ${{ steps.guard.outputs.skip != 'true' }}
         run: npm run fetch-face-models
-        working-directory: frontend
+        working-directory: modules/crm/web
 
       - name: Build frontend
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
           VITE_BUILD_SHA: ${{ github.sha }}
         run: npm run build
-        working-directory: frontend
+        working-directory: modules/crm/web
 
       - name: Deploy to Cloudflare Pages (wrangler)
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -104,7 +104,7 @@ jobs:
             echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
             npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
           fi
-        working-directory: frontend
+        working-directory: modules/crm/web
 
       - name: Smoke check Ponto (production)
         if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' }}

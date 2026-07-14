@@ -7,7 +7,7 @@ on:
       - main
       - develop
     paths:
-      - "frontend/**"
+      - "modules/crm/web/**"
       - "modules/site-public/website/**"
       - "backend/**"
       - ".github/workflows/crm-codeql.yml"
@@ -17,7 +17,7 @@ on:
       - main
       - develop
     paths:
-      - "frontend/**"
+      - "modules/crm/web/**"
       - "modules/site-public/website/**"
       - "backend/**"
       - ".github/workflows/crm-codeql.yml"
@@ -51,7 +51,7 @@ jobs:
           node-version: "22.12.0"
           cache: "npm"
           cache-dependency-path: |
-            frontend/package-lock.json
+            modules/crm/web/package-lock.json
             modules/site-public/website/package-lock.json
       - name: Setup Python
         if: ${{ matrix.language == 'python' }}
@@ -69,8 +69,8 @@ jobs:
         if: ${{ matrix.language == 'javascript' }}
         run: |
           set -euxo pipefail
-          if [ -f frontend/package-lock.json ]; then
-            (cd frontend && npm ci)
+          if [ -f modules/crm/web/package-lock.json ]; then
+              (cd modules/crm/web && npm ci)
           fi
           if [ -f modules/site-public/website/package-lock.json ]; then
             (cd modules/site-public/website && npm ci)
@@ -80,8 +80,8 @@ jobs:
         if: ${{ matrix.language == 'javascript' }}
         run: |
           set -euxo pipefail
-          if [ -f frontend/package-lock.json ]; then
-            (cd frontend && npm run build)
+          if [ -f modules/crm/web/package-lock.json ]; then
+              (cd modules/crm/web && npm run build)
           fi
           if [ -f modules/site-public/website/package-lock.json ]; then
             (cd modules/site-public/website && npm run build)

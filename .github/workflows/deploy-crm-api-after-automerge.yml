@@ -58,7 +58,7 @@ jobs:
               options: {
                 prNumber: '${{ steps.pr.outputs.pr_number }}',
                 outputName: 'crm_api_changed',
-                prefixes: ['backend/apps/crm-api/'],
+                prefixes: ['modules/crm/api/'],
                 exact: [
                   'backend/pnpm-lock.yaml',
                   'backend/pnpm-workspace.yaml',
