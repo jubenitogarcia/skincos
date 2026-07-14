@@ -8,8 +8,16 @@ on:
       - develop
     paths:
       - "crm/console/**"
+      - "crm/api/**"
       - "website/**"
       - "backend/**"
+      - "messaging/**"
+      - "orb/**"
+      - "api/**"
+      - "booking/**"
+      - "integration/**"
+      - "service/**"
+      - "social/**"
       - ".github/workflows/crm-codeql.yml"
       - ".github/codeql/**"
   pull_request:
@@ -18,13 +26,22 @@ on:
       - develop
     paths:
       - "crm/console/**"
+      - "crm/api/**"
       - "website/**"
       - "backend/**"
+      - "messaging/**"
+      - "orb/**"
+      - "api/**"
+      - "booking/**"
+      - "integration/**"
+      - "service/**"
+      - "social/**"
       - ".github/workflows/crm-codeql.yml"
       - ".github/codeql/**"
   schedule:
     # Executa semanalmente às quartas-feiras às 02:00 UTC
     - cron: "0 2 * * 3"
+  workflow_dispatch:
 
 jobs:
   analyze:
