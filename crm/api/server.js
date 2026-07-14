@@ -31,6 +31,7 @@ import { createHarmoniaRouter } from './server/harmonia/routes.js'
 import { startHarmoniaWorker } from './server/harmonia/worker.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
+import { parseUnifiedChannelId, unifiedChannelUrl, unifiedSystemUrl } from './server/unifiedSystemUrl.js'
 
 // Axios for facade requests to Unified System
 import axios from 'axios'
@@ -4388,7 +4389,6 @@ app.post('/api/email/templates/:id/send-test', async (req, res) => {
 // UNIFIED SYSTEM FACADE ROUTES - Proxy WhatsAppPanel calls with X-API-Key
 // =================================================================
 
-const UNIFIED_SYSTEM_URL = 'http://localhost:3001'
 const CRM_UNIFIED_API_KEY = process.env.CRM_UNIFIED_API_KEY
 
 // Facade: GET /api/unified/status → Unified System /whatsapp/1/status (Legacy)
@@ -4396,7 +4396,7 @@ app.get('/api/unified/status', async (req, res) => {
     try {
         console.log(`[FACADE] Proxying legacy status request to Unified System`)
 
-        const response = await axios.get(`${UNIFIED_SYSTEM_URL}/whatsapp/1/status`, {
+        const response = await axios.get(unifiedChannelUrl('1', 'status'), {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
@@ -4423,7 +4423,7 @@ app.get('/api/unified/qr', async (req, res) => {
     try {
         console.log(`[FACADE] Proxying legacy QR request to Unified System`)
 
-        const response = await axios.get(`${UNIFIED_SYSTEM_URL}/whatsapp/1/qr`, {
+        const response = await axios.get(unifiedChannelUrl('1', 'qr'), {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
@@ -4450,7 +4450,7 @@ app.get('/api/qr', async (req, res) => {
     try {
         console.log(`[FACADE] Proxying direct QR request to Unified System`)
 
-        const response = await axios.get(`${UNIFIED_SYSTEM_URL}/api/qr`, {
+        const response = await axios.get(unifiedSystemUrl('/api/qr'), {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
@@ -4475,10 +4475,13 @@ app.get('/api/qr', async (req, res) => {
 // Facade: GET /api/unified/whatsapp/:channelId/status → Unified System
 app.get('/api/unified/whatsapp/:channelId/status', async (req, res) => {
     try {
-        const { channelId } = req.params
+        const channelId = parseUnifiedChannelId(req.params.channelId)
+        if (!channelId) {
+            return res.status(400).json({ success: false, error: 'Invalid WhatsApp channel' })
+        }
         console.log(`[FACADE] Proxying status request for channel ${channelId} to Unified System`)
 
-        const response = await axios.get(`${UNIFIED_SYSTEM_URL}/whatsapp/${channelId}/status`, {
+        const response = await axios.get(unifiedChannelUrl(channelId, 'status'), {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
@@ -4503,10 +4506,13 @@ app.get('/api/unified/whatsapp/:channelId/status', async (req, res) => {
 // Facade: GET /api/unified/whatsapp/:channelId/qr → Unified System
 app.get('/api/unified/whatsapp/:channelId/qr', async (req, res) => {
     try {
-        const { channelId } = req.params
+        const channelId = parseUnifiedChannelId(req.params.channelId)
+        if (!channelId) {
+            return res.status(400).json({ success: false, error: 'Invalid WhatsApp channel' })
+        }
         console.log(`[FACADE] Proxying QR request for channel ${channelId} to Unified System`)
 
-        const response = await axios.get(`${UNIFIED_SYSTEM_URL}/whatsapp/${channelId}/qr`, {
+        const response = await axios.get(unifiedChannelUrl(channelId, 'qr'), {
             headers: {
                 'X-API-Key': CRM_UNIFIED_API_KEY,
                 'Content-Type': 'application/json'
@@ -4531,7 +4537,10 @@ app.get('/api/unified/whatsapp/:channelId/qr', async (req, res) => {
 // 🆕 Facade: SSE Stream /api/unified/whatsapp/:channelId/qr/stream → Unified System
 app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
     try {
-        const { channelId } = req.params
+        const channelId = parseUnifiedChannelId(req.params.channelId)
+        if (!channelId) {
+            return res.status(400).json({ success: false, error: 'Invalid WhatsApp channel' })
+        }
         console.log(`[FACADE] Setting up SSE proxy for channel ${channelId} QR stream`)
 
         // Configure SSE headers
@@ -4544,7 +4553,7 @@ app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
         })
 
         // Create proxy to Unified System
-        const proxyUrl = `${UNIFIED_SYSTEM_URL}/whatsapp/${channelId}/qr/stream`
+        const proxyUrl = unifiedChannelUrl(channelId, 'qrStream')
 
         // Use axios with stream to proxy SSE
         const forwardHeaders = {
