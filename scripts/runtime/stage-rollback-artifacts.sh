@@ -12,13 +12,14 @@ ROLLBACK_ROOT=""
 ARTIFACT_ROOT=""
 SOURCE_LIVIA_WORKFLOW=""
 SOURCE_CRM_NODE_MODULES=""
+REPLACE_ROLLBACK_LINKS=0
 
 usage() {
   cat <<'EOF'
 Usage:
   scripts/runtime/stage-rollback-artifacts.sh \
     --rollback-root <legacy-worktree> \
-    --artifact-root <CodexRuntime-artifact-directory>
+    --artifact-root <CodexRuntime-artifact-directory> [--replace-rollback-links]
 
 The artifact directory must be under C:\CodexRuntime. The helper copies the
 runtime Livia workflow and CRM production dependencies there, then creates
@@ -26,6 +27,10 @@ verified symlinks in the retained rollback worktree. It requires a new, empty
 artifact directory so an existing rollback bundle is never overwritten. Run it
 before the dry-run and retain the artifacts until the post-cut backup and smoke
 checks complete.
+
+--replace-rollback-links is required only when a rollback worktree already has
+a symbolic link to an older staged bundle. It may replace symbolic links only;
+it never removes regular files or directories.
 EOF
 }
 
@@ -35,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --artifact-root) ARTIFACT_ROOT="${2:-}"; shift ;;
     --source-livia-workflow) SOURCE_LIVIA_WORKFLOW="${2:-}"; shift ;;
     --source-crm-node-modules) SOURCE_CRM_NODE_MODULES="${2:-}"; shift ;;
+    --replace-rollback-links) REPLACE_ROLLBACK_LINKS=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -79,8 +85,13 @@ link_artifact() {
   mkdir -p "$(dirname "$link")"
   if [[ -L "$link" ]]; then
     [[ "$(readlink -f "$link")" == "$(readlink -f "$target")" ]] || {
-      echo "Existing rollback link points elsewhere: $link" >&2
-      return 1
+      if [[ "$REPLACE_ROLLBACK_LINKS" != "1" ]]; then
+        echo "Existing rollback link points elsewhere: $link (use --replace-rollback-links after verifying the new bundle)." >&2
+        return 1
+      fi
+      rm "$link"
+      ln -s "$target" "$link"
+      return 0
     }
     return 0
   fi

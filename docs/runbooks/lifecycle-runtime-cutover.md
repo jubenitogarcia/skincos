@@ -42,8 +42,10 @@ scripts/runtime/stage-rollback-artifacts.sh \
 
 Use a new timestamped artifact directory for every attempted cut. The staging
 helper refuses to overwrite a prior rollback bundle or an existing worktree
-link that points elsewhere; resolve either condition deliberately before a
-window rather than replacing an active rollback path implicitly.
+link that points elsewhere. If a prior recovery left an older symbolic link in
+the worktree, verify the new timestamped bundle and add
+`--replace-rollback-links`; this can replace symbolic links only, never a
+regular file or directory.
 
 Then use the real backup directory, retained worktree and the exact staged
 artifact directory:
