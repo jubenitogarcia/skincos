@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 // The Insumos Worker is JavaScript and intentionally shared with the CRM test suite.
-import { handleShareRoutes } from '../../../../inventory/src/routes/share.js'
+import { handleShareRoutes } from '../../../inventory/src/routes/share.js'
 
 type QueryCall = { sql: string; bindings: unknown[] }
 
