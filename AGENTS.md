@@ -11,8 +11,11 @@
 - Use branches in the format `codex/admin/<task-slug>`.
 - Prefer worktrees under `C:\CodexShared\Worktrees\skincos\admin\<task-slug>`
   when more than one Codex task may work in parallel.
-- Keep Codex operator state in `%LOCALAPPDATA%\Codex\skincos\` and not inside
-  the shared repo or shared worktree paths.
+- Keep Codex authentication, browser profiles, temporary files and PID state in
+  `%LOCALAPPDATA%\Codex\skincos\`. Keep durable operator artifacts (logs,
+  reports, checkpoints, evidence and local backups) in the private runtime at
+  `C:\CodexRuntime\operator\admin\skincos\`, never in the shared repo or a
+  shared worktree.
 - Register the shared repo as Git `safe.directory` for the WSL `admin` operator.
 - Never store `.env`, `.dev.vars`, `.cloudflared` credentials, `.codex`,
   cookies, or API keys inside `C:\CodexShared`.

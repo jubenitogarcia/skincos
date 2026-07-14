@@ -10,7 +10,9 @@ Modelo oficial atual do mini-PC para `skincos`:
   desacoplado e o rearma a cada minuto, sem armazenar senha ou exigir UAC
 - operador humano Windows e WSL: `admin`
 - conta Linux de serviço, sem uso interativo: `skincos`
-- estado privado do Codex: `%LOCALAPPDATA%\Codex\skincos\`
+- estado sensível/temporário do Codex: `%LOCALAPPDATA%\Codex\skincos\`
+- artefatos privados persistentes do operador:
+  `C:\CodexRuntime\operator\admin\skincos\`
 - atalhos compartilhados: `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Skincos Codex`
 
 ## Disponibilidade do WSL
@@ -221,14 +223,15 @@ Regras:
 Usado para iterar em website, CRM e módulos locais.
 
 - executa pelo código do workspace compartilhado ou do worktree;
-- usa o estado privado do operador em `%LOCALAPPDATA%\Codex\skincos\`;
+- usa estado sensível/temporário em `%LOCALAPPDATA%\Codex\skincos\` e artefatos
+  persistentes em `C:\CodexRuntime\operator\admin\skincos\`;
 - não deve deixar PID, logs ou artefatos temporários em `C:\CodexShared`.
 
 Para o scraper do `app.espacofacial.com.br`, o estado privado adicional fica em:
 
-- `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\report`
-- `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\debug`
-- `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\logs`
+- `C:\CodexRuntime\operator\admin\skincos\scraper\report`
+- `C:\CodexRuntime\operator\admin\skincos\scraper\debug`
+- `C:\CodexRuntime\operator\admin\skincos\scraper\logs`
 - `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\chrome-profile`
 
 O launcher `EF App Caixa` permanece interativo por desenho: ele abre o modo

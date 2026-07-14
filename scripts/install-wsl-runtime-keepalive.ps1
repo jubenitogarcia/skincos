@@ -78,14 +78,11 @@ Register-ScheduledTask `
 if (Test-Path -LiteralPath $legacyStartupPath) {
     $legacyContent = Get-Content -LiteralPath $legacyStartupPath -Raw
     if ($legacyContent -match '(?i)orb-stack-supervisor\.ps1') {
-        $legacyDirectory = Join-Path $stateDirectory "legacy-disabled"
-        New-Item -ItemType Directory -Force -Path $legacyDirectory | Out-Null
-        $legacyArchivePath = Join-Path $legacyDirectory ("start-orb-stack-wsl.{0}.cmd" -f (Get-Date -Format "yyyyMMddHHmmss"))
-        Move-Item -LiteralPath $legacyStartupPath -Destination $legacyArchivePath
-        Write-Host "Archived legacy OrbStack Startup launcher to $legacyArchivePath."
+        Remove-Item -LiteralPath $legacyStartupPath -Force
+        Write-Host "Removed legacy OrbStack Startup launcher: $legacyStartupPath"
     }
     else {
-        Write-Warning "Startup launcher was not archived because it no longer matches the known OrbStack supervisor signature: $legacyStartupPath"
+        Write-Warning "Startup launcher was not removed because it no longer matches the known OrbStack supervisor signature: $legacyStartupPath"
     }
 }
 

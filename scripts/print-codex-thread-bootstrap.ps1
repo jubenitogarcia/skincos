@@ -24,7 +24,7 @@ $lines = @(
     "2. Verifique o estado compartilhado com `powershell -ExecutionPolicy Bypass -File .\scripts\show-shared-codex-status.ps1`.",
     "3. Se a tarefa não for estritamente de leitura, crie um worktree dedicado com `powershell -ExecutionPolicy Bypass -File .\scripts\new-shared-worktree.ps1 -TaskSlug $TaskSlug -Fetch`.",
     "4. Depois de criar o worktree, trabalhe apenas nele e trate o clone compartilhado como somente leitura para contexto.",
-    "5. Mantenha estado local, logs, perfis e overrides fora do repositório compartilhado, em `%LOCALAPPDATA%\Codex\skincos\`.",
+    "5. Mantenha autenticação, perfis e overrides fora do repositório compartilhado, em `%LOCALAPPDATA%\Codex\skincos\`; logs e artefatos persistentes ficam em C:\CodexRuntime\operator\admin\skincos\.",
     "6. Preserve alterações não relacionadas já existentes no projeto compartilhado ou em worktrees de outros usuários.",
     "7. Antes de concluir, valide o que mudar e registre contexto relevante em `CODEX_CONTEXT.md`, `TASKS.md` e `DECISIONS.md` quando fizer sentido.",
     "",

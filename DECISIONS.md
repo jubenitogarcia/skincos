@@ -1,5 +1,15 @@
 # DECISIONS
 
+## 2026-07-13 - Split durable operator artifacts from local authentication state
+
+- Keep Codex authentication, browser profiles, private environment overlays,
+  temporary files and WSL keepalive state under `%LOCALAPPDATA%\Codex\skincos\`.
+- Store durable project artifacts for the sole human operator under the private
+  `C:\CodexRuntime\operator\admin\skincos\` runtime tree. This includes local
+  logs, reports, debug exports, checkpoints, evidence and local backups.
+- The transition keeps directory junctions only as compatibility pointers; they
+  do not duplicate data and must not become an alternate source of truth.
+
 ## 2026-07-02 - Shared base lives outside user profiles
 
 - Decision: use `C:\CodexShared` as the shared Codex workspace root.

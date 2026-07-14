@@ -90,12 +90,21 @@ function Resolve-ProjectRoot {
 
 $ProjectRoot = Resolve-ProjectRoot -RequestedPath $ProjectRoot -ScriptDirectory $scriptRoot
 $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
+$operatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 $tmpRoot = Join-Path $localStateRoot "tmp"
-$logRoot = Join-Path $localStateRoot "logs"
+$logRoot = Join-Path $operatorRuntimeRoot "logs"
 $wslInvoker = Join-Path $scriptRoot "invoke-skincos-wsl.ps1"
 
 function Ensure-LocalState {
-    foreach ($path in @($localStateRoot, $tmpRoot, $logRoot)) {
+    foreach ($path in @(
+        $localStateRoot,
+        $tmpRoot,
+        $logRoot,
+        (Join-Path $operatorRuntimeRoot "scraper"),
+        (Join-Path $operatorRuntimeRoot "scraper\report"),
+        (Join-Path $operatorRuntimeRoot "scraper\debug"),
+        (Join-Path $operatorRuntimeRoot "scraper\logs")
+    )) {
         if (-not (Test-Path -LiteralPath $path)) {
             New-Item -ItemType Directory -Path $path -Force | Out-Null
         }
@@ -218,9 +227,10 @@ $crmLog = Join-Path $logRoot "crm-local-dev.log"
 $atendimentoPid = Join-Path $tmpRoot "crm-atendimento-local.pid"
 $atendimentoLog = Join-Path $logRoot "crm-atendimento-local.log"
 $efAppStateRoot = Join-Path $localStateRoot "espacofacial-app"
-$efAppOutputRoot = Join-Path $efAppStateRoot "report"
-$efAppDebugRoot = Join-Path $efAppStateRoot "debug"
-$efAppLogRoot = Join-Path $efAppStateRoot "logs"
+$efAppArtifactRoot = Join-Path $operatorRuntimeRoot "scraper"
+$efAppOutputRoot = Join-Path $efAppArtifactRoot "report"
+$efAppDebugRoot = Join-Path $efAppArtifactRoot "debug"
+$efAppLogRoot = Join-Path $efAppArtifactRoot "logs"
 $efAppChromeProfileRoot = Join-Path $efAppStateRoot "chrome-profile"
 $efAppBookingEnvFile = Join-Path $efAppStateRoot "booking_api.env"
 $efAppAgendaSyncEnvFile = Join-Path $efAppStateRoot "agenda_sync.env"

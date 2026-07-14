@@ -2,6 +2,7 @@ param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
     [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
     [string]$RuntimeRoot = "C:\CodexRuntime\n8n",
+    [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos",
     [switch]$SkipAclRefresh,
     [switch]$DeepAclRefresh
 )
@@ -76,10 +77,21 @@ function Grant-SharedAcl {
     icacls @args | Out-Null
 }
 
+function Grant-PrivateOperatorAcl {
+    param([string]$TargetPath)
+
+    $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    & icacls.exe $TargetPath /inheritance:r /remove:g "Users" /grant:r "${currentIdentity}:(OI)(CI)F" "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to apply private operator ACLs to $TargetPath."
+    }
+}
+
 Ensure-Directory -Path $ProjectRoot
 Ensure-Directory -Path $WorktreeRoot
 Ensure-Directory -Path (Join-Path $WorktreeRoot $env:USERNAME)
 Ensure-Directory -Path $RuntimeRoot
+Ensure-Directory -Path $OperatorRuntimeRoot
 
 $runtimeDirs = @(
     $RuntimeRoot,
@@ -101,10 +113,28 @@ foreach ($dir in $runtimeDirs) {
     Ensure-Directory -Path $dir
 }
 
+$operatorRuntimeDirs = @(
+    $OperatorRuntimeRoot,
+    (Join-Path $OperatorRuntimeRoot "artifacts"),
+    (Join-Path $OperatorRuntimeRoot "artifacts\backup"),
+    (Join-Path $OperatorRuntimeRoot "artifacts\checkpoints"),
+    (Join-Path $OperatorRuntimeRoot "artifacts\evidence"),
+    (Join-Path $OperatorRuntimeRoot "logs"),
+    (Join-Path $OperatorRuntimeRoot "scraper"),
+    (Join-Path $OperatorRuntimeRoot "scraper\report"),
+    (Join-Path $OperatorRuntimeRoot "scraper\debug"),
+    (Join-Path $OperatorRuntimeRoot "scraper\logs")
+)
+
+foreach ($dir in $operatorRuntimeDirs) {
+    Ensure-Directory -Path $dir
+}
+
+Grant-PrivateOperatorAcl -TargetPath $OperatorRuntimeRoot
+
 $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
 $localStateDirs = @(
     $localStateRoot,
-    (Join-Path $localStateRoot "logs"),
     (Join-Path $localStateRoot "tmp"),
     (Join-Path $localStateRoot "profiles"),
     (Join-Path $localStateRoot "env-overrides")
@@ -130,6 +160,8 @@ $result = [pscustomobject]@{
     actorWorktreeRoot = (Join-Path $WorktreeRoot $env:USERNAME)
     runtimeRoot = $RuntimeRoot
     runtimeDirs = $runtimeDirs
+    operatorRuntimeRoot = $OperatorRuntimeRoot
+    operatorRuntimeDirs = $operatorRuntimeDirs
     localStateRoot = $localStateRoot
     localStateDirs = $localStateDirs
     codexEnvironment = $codexEnvironment
