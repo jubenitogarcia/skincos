@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { buildGbpLocationResource, parseGbpLocationId } from "@/lib/gbpDiagnostics";
 
 export const dynamic = "force-dynamic";
 
@@ -96,18 +97,6 @@ async function getAccessToken(): Promise<string> {
     return accessToken;
 }
 
-function parseLocationId(input: string): string | null {
-    const raw = (input ?? "").trim();
-    if (!raw) return null;
-    if (raw.startsWith("accounts/")) return null;
-    if (raw.startsWith("locations/")) {
-        const id = raw.slice("locations/".length).trim();
-        return id || null;
-    }
-    if (/^\d+$/.test(raw)) return raw;
-    return null;
-}
-
 async function listAccountIds(accessToken: string): Promise<string[]> {
     const res = await fetch("https://mybusiness.googleapis.com/v4/accounts", {
         headers: { authorization: `Bearer ${accessToken}` },
@@ -119,14 +108,14 @@ async function listAccountIds(accessToken: string): Promise<string[]> {
         .filter((name) => name.startsWith("accounts/"))
         .map((name) => name.slice("accounts/".length))
         .map((id) => id.trim())
-        .filter(Boolean);
+        .filter((id) => /^\d+$/.test(id));
     return Array.from(new Set(ids)).slice(0, 20);
 }
 
 async function discoverLocationResourceName(accessToken: string, locationId: string): Promise<string> {
     const accountIds = await listAccountIds(accessToken);
     for (const accountId of accountIds) {
-        const candidate = `accounts/${accountId}/locations/${locationId}`;
+        const candidate = buildGbpLocationResource(accountId, locationId);
         const probe = await fetch(`https://mybusiness.googleapis.com/v4/${candidate}`, {
             headers: { authorization: `Bearer ${accessToken}` },
         });
@@ -154,7 +143,7 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const locationParam = (searchParams.get("location") ?? "").trim();
-    const locationId = parseLocationId(locationParam);
+    const locationId = parseGbpLocationId(locationParam);
 
     const status: HealthStatus = {
         ok: false,
