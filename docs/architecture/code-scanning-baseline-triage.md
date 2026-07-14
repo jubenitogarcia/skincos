@@ -44,6 +44,19 @@ proof that the underlying code is safe.
 4. **Deprecated/duplicate channel implementations:** inventory which process
    can load each copy before retirement. Only unreachable copies may be removed
    after the active WhatsApp service and public tunnel are smoke-tested.
+5. **EF agenda sync:** `EF_AGENDA_SYNC_URL` is a private runtime setting that
+   transmits appointment data. Before adding a host allowlist, record the
+   production and staging owners in `EF_AGENDA_SYNC_ALLOWED_HOSTS`; guessing
+   that policy could silently stop the clinical sync. Until then, this finding
+   is `blocked`, not suppressed.
+
+## Fixed in this branch
+
+- The Instagram simulator now rejects traversal-like handles before using them
+  in filenames, requires an explicit constant-time administrative token, binds
+  locally by default, and does not enable browser CORS without an allowlist.
+- Orb Graph API helpers accept only resource paths, rejecting absolute URLs,
+  query injection, and dot segments before constructing a request URL.
 
 ## Merge boundary
 

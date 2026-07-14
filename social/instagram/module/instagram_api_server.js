@@ -10,16 +10,19 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
+const { isAuthorizedToken, normalizeInstagramHandle } = require('./security');
 
 const app = express();
 const PORT = process.env.INSTAGRAM_PORT || 3103;
 
 // Middleware
-app.use(helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false
-}));
-app.use(cors());
+const corsOrigins = String(process.env.INSTAGRAM_CORS_ORIGIN || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+app.use(helmet());
+app.use(cors({ origin: corsOrigins.length ? corsOrigins : false }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -77,7 +80,7 @@ async function loadConfig() {
             enable_smart_delays: true
         },
         api: {
-            host: "0.0.0.0",
+            host: "127.0.0.1",
             port: 3003,
             development_mode: true
         }
@@ -98,12 +101,13 @@ class InstagramModuleSimulator {
     }
 
     async addAccount(username, password, accountId = null) {
-        const id = accountId || username;
+        const normalizedUsername = normalizeInstagramHandle(username);
+        const id = accountId ? normalizeInstagramHandle(accountId) : normalizedUsername;
         
         // Simulate account addition
         const account = {
             account_id: id,
-            username: username,
+            username: normalizedUsername,
             session_file: `sessions/${id}_session.json`,
             added_at: new Date().toISOString(),
             status: 'simulated',
@@ -117,7 +121,7 @@ class InstagramModuleSimulator {
         config.accounts.push(account);
         await this.saveConfig();
 
-        console.log(`✅ Account ${username} added successfully (simulated)`);
+        console.log(`✅ Account ${normalizedUsername} added successfully (simulated)`);
         return id;
     }
 
@@ -126,11 +130,12 @@ class InstagramModuleSimulator {
     }
 
     async osintInvestigate(username, deepAnalysis = true) {
+        const normalizedUsername = normalizeInstagramHandle(username);
         // Simulate OSINT investigation
         const result = {
-            username: username,
-            user_id: 'simulated_' + Math.random().toString(36).substr(2, 9),
-            full_name: `Simulated User ${username}`,
+            username: normalizedUsername,
+            user_id: `simulated_${crypto.randomUUID()}`,
+            full_name: `Simulated User ${normalizedUsername}`,
             bio: 'This is a simulated OSINT result for development',
             followers_count: Math.floor(Math.random() * 10000),
             following_count: Math.floor(Math.random() * 1000),
@@ -146,7 +151,7 @@ class InstagramModuleSimulator {
         const resultsDir = path.join(__dirname, 'background_results');
         await fs.mkdir(resultsDir, { recursive: true });
         
-        const resultFile = path.join(resultsDir, `osint_${username}_${Date.now()}.json`);
+        const resultFile = path.join(resultsDir, `osint_${normalizedUsername}_${Date.now()}.json`);
         await fs.writeFile(resultFile, JSON.stringify(result, null, 2));
 
         return result;
@@ -176,6 +181,7 @@ class InstagramModuleSimulator {
     }
 
     async downloadContent(username, contentTypes = ['posts'], maxItems = 50) {
+        const normalizedUsername = normalizeInstagramHandle(username);
         // Simulate content download
         const downloaded = {
             posts: [],
@@ -186,7 +192,7 @@ class InstagramModuleSimulator {
         for (const type of contentTypes) {
             const count = Math.min(maxItems, Math.floor(Math.random() * 20) + 1);
             for (let i = 0; i < count; i++) {
-                downloaded[type].push(`${username}_${type}_${i + 1}_simulated.jpg`);
+                downloaded[type].push(`${normalizedUsername}_${type}_${i + 1}_simulated.jpg`);
             }
         }
 
@@ -239,10 +245,14 @@ class InstagramModuleSimulator {
 // Initialize Instagram module
 const instagram = new InstagramModuleSimulator();
 
-// Authentication middleware (development mode)
+// Administrative endpoints never fall back to unauthenticated development access.
 function authMiddleware(req, res, next) {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token && !config.api?.development_mode) {
+    const configuredToken = String(process.env.INSTAGRAM_API_TOKEN || '').trim();
+    if (!configuredToken) {
+        return res.status(503).json({ error: 'Instagram API token is not configured' });
+    }
+    if (!isAuthorizedToken(token, configuredToken)) {
         return res.status(401).json({ error: 'Authentication required' });
     }
     next();
@@ -418,9 +428,10 @@ async function startServer() {
         await loadConfig();
         await instagram.initialize();
         
-        app.listen(PORT, '0.0.0.0', () => {
-            console.log(`🚀 Instagram API Server running on http://0.0.0.0:${PORT}`);
-            console.log(`📊 Health check: http://0.0.0.0:${PORT}/health`);
+        const listenAddress = String(process.env.INSTAGRAM_LISTEN_ADDRESS || config.api?.host || '127.0.0.1').trim();
+        app.listen(PORT, listenAddress, () => {
+            console.log(`🚀 Instagram API Server running on http://${listenAddress}:${PORT}`);
+            console.log(`📊 Health check: http://${listenAddress}:${PORT}/health`);
             console.log(`🎯 Admin interface: http://0.0.0.0:${PORT}/admin`);
             console.log(`⚙️  Mode: ${config.api?.development_mode ? 'Development' : 'Production'}`);
         });
@@ -442,4 +453,6 @@ process.on('SIGTERM', () => {
 });
 
 // Start the server
-startServer();
+if (require.main === module) {
+    startServer();
+}

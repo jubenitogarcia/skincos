@@ -3,6 +3,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const httpProxy = require('http-proxy');
+const { normalizeGraphPath } = require('./graph-path');
 
 const LISTEN_ADDRESS = process.env.ORB_PROXY_LISTEN_ADDRESS || '127.0.0.1';
 const PORT = Number(process.env.ORB_PROXY_PORT || 8788);
@@ -991,7 +992,7 @@ function sleep(ms) {
 }
 
 async function graphGet(pathname, params, accessToken) {
-  const url = buildUrl(`${GRAPH_BASE}/${pathname}`, { ...params, access_token: accessToken });
+  const url = buildUrl(`${GRAPH_BASE}/${normalizeGraphPath(pathname)}`, { ...params, access_token: accessToken });
   const res = await fetch(url);
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(json?.error?.message || `Graph API error (${res.status})`);
@@ -999,20 +1000,21 @@ async function graphGet(pathname, params, accessToken) {
 }
 
 async function graphPost(pathname, params, accessToken) {
+  const url = `${GRAPH_BASE}/${normalizeGraphPath(pathname)}`;
   const body = new URLSearchParams();
   for (const [key, value] of Object.entries(params || {})) {
     if (value === undefined || value === null || value === '') continue;
     body.set(key, String(value));
   }
   body.set('access_token', accessToken);
-  const res = await fetch(`${GRAPH_BASE}/${pathname}`, { method: 'POST', body });
+  const res = await fetch(url, { method: 'POST', body });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(json?.error?.message || `Graph API error (${res.status})`);
   return json;
 }
 
 async function graphDelete(pathname, accessToken) {
-  const url = buildUrl(`${GRAPH_BASE}/${pathname}`, { access_token: accessToken });
+  const url = buildUrl(`${GRAPH_BASE}/${normalizeGraphPath(pathname)}`, { access_token: accessToken });
   const res = await fetch(url, { method: 'DELETE' });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(json?.error?.message || `Graph API error (${res.status})`);
