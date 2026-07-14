@@ -13,8 +13,9 @@
   state model; use a simulated EF executor before any external reservation.
 - [ ] **Wave 5 — runtime cutover:** pre-copy to the lifecycle layout, create a
   verified fresh backup, rename units in a short window, and retain rollback
-  evidence. Do not change the WSL VHD, Codex authentication or mandatory
-  Windows state.
+  evidence. The executable contract is
+  `docs/runbooks/lifecycle-runtime-cutover.md`; do not change the WSL VHD,
+  Codex authentication or mandatory Windows state.
 - [ ] **Wave 6 — retirement:** remove old source paths, direct public routes,
   scripts and backups only after merged CI plus local/public health proof.
 

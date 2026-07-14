@@ -47,6 +47,7 @@ units=(
   booking.service
   cloudflare-orb.service
   cloudflare-runtime.service
+  orb-backup.service
 )
 
 render_dir="$(mktemp -d)"
@@ -64,7 +65,13 @@ for unit in "${units[@]}"; do
   rendered+=("$output")
 done
 
-systemd-analyze verify "${rendered[@]}"
+rendered_timer="$render_dir/orb-backup.timer"
+sed \
+  -e "s|__REPO_ROOT__|$repo_escaped|g" \
+  -e "s|__RUNTIME_ROOT__|$runtime_escaped|g" \
+  "$UNIT_SRC/orb-backup.timer" >"$rendered_timer"
+chmod 0644 "$rendered_timer"
+systemd-analyze verify "${rendered[@]}" "$rendered_timer"
 echo "Lifecycle unit templates verify successfully."
 printf '  %s\n' "${units[@]}"
 
@@ -75,5 +82,7 @@ if [[ "$APPLY" == "1" ]]; then
   done
   sudo -n systemctl daemon-reload
   sudo -n systemctl enable "${units[@]}" >/dev/null
+  sudo -n install -m 0644 "$rendered_timer" "$UNIT_DEST/orb-backup.timer"
+  sudo -n systemctl enable orb-backup.timer >/dev/null
   echo "Lifecycle units installed and enabled. Old units remain untouched until cutover."
 fi
