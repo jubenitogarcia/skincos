@@ -13,6 +13,7 @@ ARTIFACT_ROOT=""
 SOURCE_LIVIA_WORKFLOW=""
 SOURCE_CRM_NODE_MODULES=""
 REPLACE_ROLLBACK_LINKS=0
+SYNC_TRANSPORT="${ROLLBACK_ARTIFACT_SYNC_TRANSPORT:-auto}"
 
 usage() {
   cat <<'EOF'
@@ -31,6 +32,9 @@ checks complete.
 --replace-rollback-links is required only when a rollback worktree already has
 a symbolic link to an older staged bundle. It may replace symbolic links only;
 it never removes regular files or directories.
+
+ROLLBACK_ARTIFACT_SYNC_TRANSPORT chooses the dependency-copy transport: auto
+(default) uses Windows robocopy for paths on /mnt/c and rsync otherwise.
 EOF
 }
 
@@ -56,6 +60,10 @@ require_cmd readlink
 require_cmd sha256sum
 [[ -n "$ROLLBACK_ROOT" && -e "$ROLLBACK_ROOT/.git" ]] || { echo "--rollback-root must name a retained Git worktree." >&2; exit 1; }
 [[ -n "$ARTIFACT_ROOT" ]] || { echo "--artifact-root is required." >&2; exit 1; }
+case "$SYNC_TRANSPORT" in
+  auto|robocopy|rsync) ;;
+  *) echo "ROLLBACK_ARTIFACT_SYNC_TRANSPORT must be auto, robocopy or rsync." >&2; exit 1 ;;
+esac
 
 runtime_root_real="$(readlink -f "$RUNTIME_ROOT")"
 artifact_root_real="$(readlink -m "$ARTIFACT_ROOT")"
@@ -73,11 +81,42 @@ SOURCE_CRM_NODE_MODULES="${SOURCE_CRM_NODE_MODULES:-$LEGACY_REPO_ROOT/modules/cr
 [[ -f "$SOURCE_LIVIA_WORKFLOW" ]] || { echo "Missing source Livia workflow: $SOURCE_LIVIA_WORKFLOW" >&2; exit 1; }
 [[ -d "$SOURCE_CRM_NODE_MODULES/express" ]] || { echo "Missing source CRM dependencies: $SOURCE_CRM_NODE_MODULES/express" >&2; exit 1; }
 
+should_use_robocopy() {
+  local source="$1"
+  local destination="$2"
+  if [[ "$SYNC_TRANSPORT" == "rsync" ]]; then
+    return 1
+  fi
+  if [[ "$SYNC_TRANSPORT" == "robocopy" ]]; then
+    command -v robocopy.exe >/dev/null 2>&1 || { echo "robocopy.exe is required by ROLLBACK_ARTIFACT_SYNC_TRANSPORT=robocopy." >&2; exit 1; }
+    return 0
+  fi
+  command -v robocopy.exe >/dev/null 2>&1 && [[ "$source" == /mnt/c/* && "$destination" == /mnt/c/* ]]
+}
+
+sync_dependencies() {
+  local source="$1"
+  local destination="$2"
+  if ! should_use_robocopy "$source" "$destination"; then
+    rsync -a "$source/" "$destination/"
+    return
+  fi
+
+  local source_windows destination_windows status=0
+  source_windows="$(wslpath -w "$source")"
+  destination_windows="$(wslpath -w "$destination")"
+  robocopy.exe "$source_windows" "$destination_windows" /E /COPY:DAT /DCOPY:T /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >/dev/null || status=$?
+  if (( status > 7 )); then
+    echo "robocopy failed with exit code $status for CRM rollback dependencies." >&2
+    return "$status"
+  fi
+}
+
 workflow_target="$ARTIFACT_ROOT/orb/workflows/livia.active.json"
 dependencies_target="$ARTIFACT_ROOT/crm/node_modules"
 mkdir -p "$(dirname "$workflow_target")" "$(dirname "$dependencies_target")"
 install -m 0640 "$SOURCE_LIVIA_WORKFLOW" "$workflow_target"
-rsync -a "$SOURCE_CRM_NODE_MODULES/" "$dependencies_target/"
+sync_dependencies "$SOURCE_CRM_NODE_MODULES" "$dependencies_target"
 
 link_artifact() {
   local target="$1"

@@ -59,6 +59,10 @@ the worktree, verify the new timestamped bundle and add
 `--replace-rollback-links`; this can replace symbolic links only, never a
 regular file or directory.
 
+On this Windows host, rollback artifact staging uses native `robocopy` for CRM
+dependencies under `C:\`; use `ROLLBACK_ARTIFACT_SYNC_TRANSPORT=rsync` only for
+a non-Windows runtime or an explicit diagnostic.
+
 Then use the real backup directory, retained worktree and the exact staged
 artifact directory:
 
