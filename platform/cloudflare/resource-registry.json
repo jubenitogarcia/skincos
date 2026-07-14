@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "gateway": {
+    "sourceRoot": "api",
+    "productionHostname": "api.skincos.com.br",
+    "stagingHostname": "api-staging.skincos.com.br",
+    "rule": "The gateway owns HTTP transport; resource owners retain domain rules and migrations."
+  },
+  "resources": [
+    {
+      "id": "booking",
+      "owner": "booking",
+      "routes": ["/booking/*"],
+      "bindings": ["BOOKING_DB"],
+      "stores": ["D1:espacofacial-booking"],
+      "legacySources": ["modules/site-public/website/src/app/api/booking", "modules/site-public/website/src/app/api/agenda"]
+    },
+    {
+      "id": "inventory",
+      "owner": "inventory",
+      "routes": ["/inventory/*"],
+      "bindings": ["DB", "BACKUP_BUCKET", "RATE_LIMITER", "JOB_QUEUE"],
+      "stores": ["D1:skincos-db", "R2:skincos-backups"],
+      "legacySources": ["backend/apps/insumos"]
+    },
+    {
+      "id": "workforce-schedule",
+      "owner": "workforce/schedule",
+      "routes": ["/workforce/schedule/*"],
+      "bindings": ["SCHEDULE_DB"],
+      "stores": ["D1:skincos-escala"],
+      "legacySources": ["backend/apps/escala-api"]
+    },
+    {
+      "id": "ads-reporting",
+      "owner": "ads/meta",
+      "routes": ["/ads/*"],
+      "bindings": ["META_ADS_DB", "META_ADS_RAW"],
+      "stores": ["D1:skincos-meta-ads-performance-report", "R2:skincos-meta-ads-performance-report-raw"],
+      "legacySources": ["modules/meta-ads/meta-ads/apps/report-ingest-worker", "modules/automations/n8n/cloudflare/meta-ads-performance-report"]
+    },
+    {
+      "id": "token-vault",
+      "owner": "platform/security/token-vault",
+      "routes": ["/internal/token-vault/*"],
+      "bindings": ["TOKEN_VAULT_DB"],
+      "stores": ["D1:skincos-token-vault"],
+      "legacySources": ["backend/apps/token-vault"]
+    },
+    {
+      "id": "observability-alerts",
+      "owner": "platform/observability",
+      "routes": ["/internal/observability/*"],
+      "bindings": [],
+      "stores": [],
+      "legacySources": ["ops/obs-alert-webhook"]
+    },
+    {
+      "id": "social-publishing",
+      "owner": "social",
+      "routes": ["/social/*"],
+      "bindings": ["PUBLISHER_LOCK", "SHARE_BUCKET"],
+      "stores": ["DurableObject:PublisherLock", "R2:skincos-share"],
+      "legacySources": ["backend/apps/social-publisher", "backend/apps/instagram"]
+    }
+  ]
+}

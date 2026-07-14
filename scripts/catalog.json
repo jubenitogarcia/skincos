@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "policy": "All executable entrypoints are centralized by owner under scripts/<owner>. Product code may expose package commands but must not add a second operational scripts tree.",
+  "owners": [
+    "workspace",
+    "runtime",
+    "api",
+    "booking",
+    "integration",
+    "website",
+    "crm",
+    "orb",
+    "ads",
+    "social",
+    "messaging",
+    "workforce",
+    "platform"
+  ],
+  "migration": {
+    "legacyRoots": ["backend/scripts", "modules/*/*/scripts", "scripts/migration"],
+    "cutoverRule": "A command is moved only after its package scripts, CI callers, Codex actions and runbook references resolve through the catalog."
+  }
+}

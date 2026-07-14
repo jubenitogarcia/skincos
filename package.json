@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "architecture:validate": "node ./.github/scripts/validate-architecture.mjs",
     "module:automations:n8n:run": "node -e \"console.error('Deprecated: use npm --prefix modules/automations/n8n run local:legacy:run explicitly for local snapshot workflows, or the service:* commands for the shared runtime.'); process.exit(1)\"",
     "module:automations:n8n:legacy:local:run": "npm --prefix modules/automations/n8n run local:legacy:run --",
     "module:automations:n8n:mini-pc:validate": "node -e \"console.error('Deprecated: use module:automations:n8n:service:validate for the shared runtime, or the explicit legacy:user-service:validate command for historical checks.'); process.exit(1)\"",
