@@ -69,10 +69,8 @@
     "js-yaml": "4.2.0",
     "postcss": "8.5.15",
     "qs": "6.15.2",
+    "undici": "7.28.0",
     "ws": "8.21.0",
-    "wrangler": {
-      "undici": "7.24.8"
-    },
     "encoding-sniffer": "1.0.2",
     "formdata-node": "6.0.3"
   }

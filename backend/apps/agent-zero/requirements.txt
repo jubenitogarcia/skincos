@@ -24,7 +24,7 @@ langchain-community==0.4.2
 langchain-text-splitters==1.1.2
 langchain-unstructured[all-docs]==1.0.1
 openai-whisper==20240930
-lxml_html_clean==0.4.4
+lxml_html_clean==0.4.5
 markdown==3.10.2
 mcp==1.26.0
 newspaper3k==0.2.8
