@@ -194,19 +194,24 @@ scripts/runtime/cutover-lifecycle-runtime.sh \
   --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
   --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp> \
   --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home \
-  --windows-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-lifecycle-state.ps1
+  --windows-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-lifecycle-state.ps1 \
+  --windows-orb-export-script C:\CodexShared\Projetos\skincos\scripts\runtime\export-orb-state-archive.ps1 \
+  --windows-orb-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-orb-state-archive.ps1
 
 scripts/runtime/cutover-lifecycle-runtime.sh --apply \
   --backup-dir /mnt/c/CodexRuntime/backups/orb/manual/<timestamp> \
   --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
   --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp> \
   --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home \
-  --windows-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-lifecycle-state.ps1
+  --windows-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-lifecycle-state.ps1 \
+  --windows-orb-export-script C:\CodexShared\Projetos\skincos\scripts\runtime\export-orb-state-archive.ps1 \
+  --windows-orb-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-orb-state-archive.ps1
 ```
 
 The apply command captures all old unit files, stops only the seven legacy
-units, has Windows create and transfer the final non-Orb delta, atomically
-promotes the checksum-verified native Orb state, installs and starts `orb`,
+units, has Windows create and transfer the final non-Orb delta, creates a new
+authoritative Orb archive only after the legacy n8n service is stopped, then
+atomically promotes that checksum-verified native state and starts `orb`,
 `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`, `cloudflare-orb` and
 `cloudflare-runtime`. It requires local Orb health plus public Orb and CRM
 health. Legacy stop/start operations are asynchronous but bounded; a timeout
