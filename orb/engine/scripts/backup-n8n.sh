@@ -53,6 +53,14 @@ if [[ -n "$BACKUP_PUBLISH_OWNER" ]]; then
 fi
 
 mkdir -p "$(dirname "$LOCK_FILE")" "$N8N_HEALTH_DIR" "$BACKUP_ROOT"
+if [[ -n "$BACKUP_PUBLISH_OWNER" && "$BACKUP_ROOT" == /var/backups/* ]]; then
+  publish_path="$BACKUP_ROOT"
+  while [[ "$publish_path" != "/var/backups" ]]; do
+    chown "$BACKUP_PUBLISH_OWNER:$BACKUP_PUBLISH_OWNER" "$publish_path"
+    chmod 0700 "$publish_path"
+    publish_path="$(dirname "$publish_path")"
+  done
+fi
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "Another Orb backup is already running." >&2; exit 1; }
 

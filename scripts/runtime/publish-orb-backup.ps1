@@ -115,9 +115,13 @@ if (Test-Path -LiteralPath $destination -PathType Container) {
 }
 
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-& icacls.exe $DestinationRoot /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' "*$($currentSid):(OI)(CI)F" /T /C /Q | Out-Null
+& icacls.exe $DestinationRoot /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' "*$($currentSid):(OI)(CI)F" /Q | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    throw "Failed to restrict backup ACLs with exit code $LASTEXITCODE."
+    throw "Failed to restrict backup root ACLs with exit code $LASTEXITCODE."
+}
+& icacls.exe $DestinationRoot /grant '*S-1-5-18:F' "*$($currentSid):F" /T /C /Q | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to apply explicit backup payload ACLs with exit code $LASTEXITCODE."
 }
 
 $retained = @(Get-ChildItem -LiteralPath $DestinationRoot -Directory |

@@ -23,9 +23,13 @@ New-Item -ItemType Directory -Force -Path $runtimeDirectory | Out-Null
 Copy-Item -LiteralPath $source -Destination $RuntimeScript -Force
 
 $currentSid = $identity.User.Value
-& icacls.exe $runtimeDirectory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' "*$($currentSid):(OI)(CI)F" /T /C /Q | Out-Null
+& icacls.exe $runtimeDirectory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' "*$($currentSid):(OI)(CI)F" /Q | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    throw "Failed to restrict runtime script ACLs with exit code $LASTEXITCODE."
+    throw "Failed to restrict runtime directory ACLs with exit code $LASTEXITCODE."
+}
+& icacls.exe $runtimeDirectory /grant '*S-1-5-18:F' "*$($currentSid):F" /T /C /Q | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to apply explicit runtime script ACLs with exit code $LASTEXITCODE."
 }
 
 $powerShell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
