@@ -32,7 +32,6 @@ import { createHarmoniaRouter } from './server/harmonia/routes.js'
 import { startHarmoniaWorker } from './server/harmonia/worker.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
-import { parseUnifiedChannelId, unifiedChannelUrl, unifiedSystemUrl } from './server/unifiedSystemUrl.js'
 import { configuredCorsOrigins, isAllowedCrmCorsOrigin } from './server/corsPolicy.js'
 import { resolveEvolutionMediaUrl } from './server/whatsappMediaUrl.js'
 
@@ -78,28 +77,6 @@ function resolveCrmUiDir() {
 const CRM_UI_DIR = resolveCrmUiDir()
 const VAR_DIR = process.env.VAR_DIR || path.join(BACKEND_ROOT, 'var')
 const CORE_STATE_DIR = path.join(VAR_DIR, 'core')
-const WA_LOCAL_RECOVERY_ENABLED = String(
-    process.env.WA_LOCAL_RECOVERY_ENABLED || (process.platform === 'darwin' ? 'true' : 'false')
-).toLowerCase() === 'true'
-const WA_LOCAL_RECOVERY_SCRIPT = String(
-    process.env.WA_LOCAL_RECOVERY_SCRIPT || path.join(REPO_ROOT, 'scripts', 'ensure-whatsapp-stack.sh')
-).trim()
-const WA_LOCAL_RECOVERY_TIMEOUT_MS = Math.max(
-    15_000,
-    Number.parseInt(String(process.env.WA_LOCAL_RECOVERY_TIMEOUT_MS || '90000'), 10) || 90_000
-)
-const WA_LOCAL_RECOVERY_SYNC_REMOTE = String(process.env.WA_LOCAL_RECOVERY_SYNC_REMOTE || 'origin').trim() || 'origin'
-const WA_LOCAL_RECOVERY_SYNC_BRANCH = String(process.env.WA_LOCAL_RECOVERY_SYNC_BRANCH || 'main').trim() || 'main'
-const WA_LOCAL_RECOVERY_SYNC_TIMEOUT_MS = Math.max(
-    15_000,
-    Number.parseInt(String(process.env.WA_LOCAL_RECOVERY_SYNC_TIMEOUT_MS || '120000'), 10) || 120_000
-)
-const WA_LOCAL_RECOVERY_SYNC_ALLOW_AUTOSTASH = String(
-    process.env.WA_LOCAL_RECOVERY_SYNC_ALLOW_AUTOSTASH || 'false'
-).toLowerCase() === 'true'
-const LOCAL_EVOLUTION_LAUNCHD_LABEL = String(
-    process.env.LOCAL_EVOLUTION_LAUNCHD_LABEL || 'com.skincos.evolution-api'
-).trim()
 const WA_BOOTSTRAP_SYNC_ENABLED = String(process.env.WA_BOOTSTRAP_SYNC_ENABLED || 'true').toLowerCase() !== 'false'
 const WA_BOOTSTRAP_SYNC_AUTO_ON_CONNECTED = String(process.env.WA_BOOTSTRAP_SYNC_AUTO_ON_CONNECTED || 'true').toLowerCase() !== 'false'
 const WA_BOOTSTRAP_CONTACT_PAGE_SIZE = Math.min(500, Math.max(25, Number.parseInt(String(process.env.WA_BOOTSTRAP_CONTACT_PAGE_SIZE || '200'), 10) || 200))
@@ -122,23 +99,6 @@ const shouldLog = (level) => {
     return current <= min
 }
 
-function isLoopbackIp(ipRaw) {
-    const ip = String(ipRaw || '').trim().toLowerCase()
-    if (!ip) return false
-    if (ip === '::1') return true
-    if (ip === '127.0.0.1') return true
-    if (ip.startsWith('127.')) return true
-    if (ip === '::ffff:127.0.0.1') return true
-    if (ip.startsWith('::ffff:127.')) return true
-    return false
-}
-
-function truncateText(value, max = 3000) {
-    const text = String(value || '')
-    if (text.length <= max) return text
-    return `${text.slice(0, max)}\n...[truncated]`
-}
-
 function normalizeBoolean(value, defaultValue = false) {
     if (value === undefined || value === null) return Boolean(defaultValue)
     const normalized = String(value).trim().toLowerCase()
@@ -146,169 +106,6 @@ function normalizeBoolean(value, defaultValue = false) {
     if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
     if (['0', 'false', 'no', 'off'].includes(normalized)) return false
     return Boolean(defaultValue)
-}
-
-function parseRecoverySyncSha(value) {
-    const text = String(value || '').trim()
-    if (!text) return { sha: '', invalid: false }
-    if (!/^[0-9a-f]{7,40}$/i.test(text)) return { sha: '', invalid: true }
-    return { sha: text.toLowerCase(), invalid: false }
-}
-
-function isStepSuccessful(step) {
-    if (!step) return false
-    if (step.timedOut) return false
-    if (typeof step.code === 'number' && step.code !== 0) return false
-    return true
-}
-
-async function runLocalRecoveryRepoSync({ sha = '', autoStash = true } = {}) {
-    const repoDir = REPO_ROOT
-    const remote = WA_LOCAL_RECOVERY_SYNC_REMOTE
-    const branch = WA_LOCAL_RECOVERY_SYNC_BRANCH
-    const timeoutMs = WA_LOCAL_RECOVERY_SYNC_TIMEOUT_MS
-    const steps = []
-
-    const pushStep = async (name, command, args, stepTimeoutMs = timeoutMs) => {
-        const step = await runCommandWithTimeout(command, args, { timeoutMs: stepTimeoutMs })
-        steps.push({ name, ...step })
-        return step
-    }
-
-    const insideRepo = await pushStep('repo-check', 'git', ['-C', repoDir, 'rev-parse', '--is-inside-work-tree'], 12_000)
-    if (!isStepSuccessful(insideRepo)) {
-        return { success: false, error: 'RECOVERY_SYNC_REPO_INVALID', steps }
-    }
-
-    const statusStep = await pushStep('status', 'git', ['-C', repoDir, 'status', '--porcelain'], 15_000)
-    if (!isStepSuccessful(statusStep)) {
-        return { success: false, error: 'RECOVERY_SYNC_STATUS_FAILED', steps }
-    }
-
-    const repoDirty = String(statusStep.stdout || '').trim().length > 0
-    if (repoDirty) {
-        if (!autoStash) {
-            return { success: false, error: 'RECOVERY_SYNC_REPO_DIRTY', repoDirty, steps }
-        }
-        const stashLabel = `wa-recovery-autostash-${new Date().toISOString()}`
-        const stashStep = await pushStep('stash', 'git', ['-C', repoDir, 'stash', 'push', '--include-untracked', '--message', stashLabel], 45_000)
-        if (!isStepSuccessful(stashStep)) {
-            return { success: false, error: 'RECOVERY_SYNC_STASH_FAILED', repoDirty, steps }
-        }
-    }
-
-    const fetchStep = await pushStep('fetch', 'git', ['-C', repoDir, 'fetch', remote, '--prune'], timeoutMs)
-    if (!isStepSuccessful(fetchStep)) {
-        return { success: false, error: 'RECOVERY_SYNC_FETCH_FAILED', repoDirty, steps }
-    }
-
-    let checkoutStep = await pushStep('checkout', 'git', ['-C', repoDir, 'checkout', branch], 30_000)
-    if (!isStepSuccessful(checkoutStep)) {
-        checkoutStep = await pushStep('checkout-create', 'git', ['-C', repoDir, 'checkout', '-B', branch, `${remote}/${branch}`], 30_000)
-        if (!isStepSuccessful(checkoutStep)) {
-            return { success: false, error: 'RECOVERY_SYNC_CHECKOUT_FAILED', repoDirty, steps }
-        }
-    }
-
-    let targetRef = `${remote}/${branch}`
-    if (sha) {
-        const verifyShaStep = await pushStep('verify-sha', 'git', ['-C', repoDir, 'cat-file', '-e', `${sha}^{commit}`], 15_000)
-        if (!isStepSuccessful(verifyShaStep)) {
-            return { success: false, error: 'RECOVERY_SYNC_SHA_NOT_FOUND', repoDirty, steps }
-        }
-        const verifyOnBranchStep = await pushStep(
-            'verify-sha-on-branch',
-            'git',
-            ['-C', repoDir, 'merge-base', '--is-ancestor', sha, `${remote}/${branch}`],
-            15_000
-        )
-        if (!isStepSuccessful(verifyOnBranchStep)) {
-            return { success: false, error: 'RECOVERY_SYNC_SHA_NOT_IN_TARGET_BRANCH', repoDirty, steps }
-        }
-        targetRef = sha
-    }
-
-    const resetStep = await pushStep('reset', 'git', ['-C', repoDir, 'reset', '--hard', targetRef], timeoutMs)
-    if (!isStepSuccessful(resetStep)) {
-        return { success: false, error: 'RECOVERY_SYNC_RESET_FAILED', repoDirty, steps }
-    }
-
-    const headStep = await pushStep('head', 'git', ['-C', repoDir, 'rev-parse', 'HEAD'], 10_000)
-    const appliedSha = isStepSuccessful(headStep) ? String(headStep.stdout || '').trim() : ''
-    return {
-        success: true,
-        repoDirty,
-        targetRef,
-        appliedSha,
-        steps
-    }
-}
-
-function runCommandWithTimeout(command, args = [], options = {}) {
-    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 30_000))
-    const cwd = options.cwd || REPO_ROOT
-    const env = options.env || process.env
-    return new Promise((resolve) => {
-        let stdout = ''
-        let stderr = ''
-        let timedOut = false
-        let settled = false
-        let exitCode = null
-        let exitSignal = null
-        const child = spawn(command, args, {
-            cwd,
-            env,
-            stdio: ['ignore', 'pipe', 'pipe']
-        })
-
-        const finalize = () => {
-            if (settled) return
-            settled = true
-            clearTimeout(timer)
-            resolve({
-                command,
-                args,
-                cwd,
-                code: typeof exitCode === 'number' ? exitCode : (timedOut ? 124 : null),
-                signal: exitSignal || null,
-                timedOut,
-                stdout: truncateText(stdout),
-                stderr: truncateText(stderr)
-            })
-        }
-
-        child.stdout.on('data', (chunk) => {
-            stdout += String(chunk || '')
-        })
-        child.stderr.on('data', (chunk) => {
-            stderr += String(chunk || '')
-        })
-        child.on('error', (error) => {
-            stderr += `${error?.message || String(error)}\n`
-            exitCode = 1
-            finalize()
-        })
-        child.on('close', (code, signal) => {
-            exitCode = code
-            exitSignal = signal
-            finalize()
-        })
-
-        const timer = setTimeout(() => {
-            if (settled) return
-            timedOut = true
-            try {
-                child.kill('SIGTERM')
-            } catch { /* ignore */ }
-            setTimeout(() => {
-                if (settled) return
-                try {
-                    child.kill('SIGKILL')
-                } catch { /* ignore */ }
-            }, 1000).unref?.()
-        }, timeoutMs)
-        timer.unref?.()
-    })
 }
 
 // -------------------------------------------------------------
@@ -3248,7 +3045,6 @@ const SUPPRESSION_FILE = process.env.CRM_SUPPRESSION_FILE || path.join(CORE_STAT
 let aiSuppression = {}
 let suppressionMetrics = { totalSuppressions: 0, totalResumes: 0 }
 // In-memory diagnostics: last start attempts per instance
-const lastStartDiag = {}
 
 // Enhanced SSE client management with race condition prevention
 const sseClients = new Set()
@@ -3791,72 +3587,13 @@ app.delete('/api/conversations/:id/human-intervention', async (req, res) => {
     res.json({ success: true, conversationId: id, removed: existed })
 })
 
-// -------------------------------------------------------------
-// WhatsApp Orchestration - CHANNEL-BASED IMPLEMENTATION
-// - Single channel (1) maps to official module port (3001)
-// - Channel 1 = Port 3001 (official module)
-// - No automatic instance creation - all instances are user-requested
-// - Orchestrator manages lifecycle and provides channel-based API
-// -------------------------------------------------------------
-const CHANNELS_RANGE = Array.from({ length: 9 }, (_, i) => i + 1) // Channels 1-9
-const PORTS_RANGE_GATEWAY = { min: 3001, max: 3001 } // Single official module port 3001
-
-// Persisted metadata for gateway instances (friendly names, last-contact, etc.)
-const WA_INSTANCES_META_FILE =
-    process.env.CRM_WA_INSTANCES_META ||
-    process.env.WA_INSTANCES_META_FILE ||
-    path.join(VAR_DIR, 'core', 'wa_instances_meta.json')
-// Workspace path for the legacy gateway scripts/assets (now lives under whatsapp/gateway/)
-const WA_GATEWAY_DIR = process.env.CRM_WA_GATEWAY_DIR ||
-    process.env.WA_GATEWAY_DIR ||
-    path.join(BACKEND_ROOT, 'apps', 'whatsapp', 'gateway')
-// Schema: { instances: { [inst:number]: { name?: string, createdAt?: string, lastContactName?: string, lastContactPhone?: string, lastContactAt?: string } } }
-let waInstancesMeta = { instances: {} }
-async function loadWaInstancesMeta() {
-    try {
-        const raw = await fs.readFile(WA_INSTANCES_META_FILE, 'utf-8')
-        const json = JSON.parse(raw)
-        if (json && typeof json === 'object' && json.instances) waInstancesMeta = json
-    } catch { /* ignore */ }
-}
-async function persistWaInstancesMeta() {
-    try { await fs.writeFile(WA_INSTANCES_META_FILE, JSON.stringify(waInstancesMeta, null, 2)) } catch (e) { console.error('[WA_INSTANCES_META] Persist failed', e) }
-}
-await loadWaInstancesMeta()
-
-async function fileExists(p) {
-    try { await fs.access(p); return true } catch { return false }
-}
-
-async function readPid(inst) {
-    const pidPath = path.join(WA_GATEWAY_DIR, `.local_instance_${inst}.pid`)
-    if (!(await fileExists(pidPath))) return null
-    try { const raw = await fs.readFile(pidPath, 'utf-8'); const n = parseInt(String(raw).trim(), 10); return isNaN(n) ? null : n } catch { return null }
-}
-
-function isPidAlive(pid) {
-    try { process.kill(pid, 0); return true } catch { return false }
-}
-
 // Channel-to-port mapping utility (unified multi-channel system)
 function portForChannel(channel) {
-    // All channels now use the unified multi-channel system on port 3001
-    // with REST routes /whatsapp/{account}/
     const channelNum = parseInt(channel, 10)
     if (isNaN(channelNum) || channelNum < 1 || channelNum > 9) {
-        throw new Error(`Invalid channel: ${channel}. Must be between 1-9 for multi-channel system.`)
+        throw new Error(`Invalid channel: ${channel}. Must be between 1-9.`)
     }
-    return 3001 // Unified multi-channel system port
-}
-
-function channelForPort(port) {
-    // Port 3001 handles all channels via REST routes
-    if (port !== 3001) {
-        throw new Error(`Invalid port: ${port}. Must be 3001 for unified multi-channel system.`)
-    }
-    // Since all channels use the same port, we can't determine channel from port alone
-    // Channel is determined by the REST route /whatsapp/{account}/
-    return null // Channel determined by REST route, not port
+    return 3000 + channelNum
 }
 
 const WA_ORCHESTRATOR_PROVIDER = String(process.env.WA_ORCHESTRATOR_PROVIDER || 'evolution').toLowerCase()
@@ -3874,444 +3611,6 @@ let waContactDirectoryPersistTimer = null
 let waChannelOwnersPersistTimer = null
 const waBootstrapSyncTasks = new Map()
 
-// Legacy compatibility - remove port 3002 reservation
-function portFor(inst) {
-    // Single instance always uses official module port
-    return 3001 // Instance 1 = 3001 (official module)
-}
-
-async function stopWaInstanceViaScript(inst) {
-    return await new Promise((resolve) => {
-        const child = spawn('./manage-instances.sh', ['stop', String(inst)], { cwd: WA_GATEWAY_DIR, stdio: ['ignore', 'pipe', 'pipe'], shell: true })
-        let out = '', err = ''
-        child.stdout.on('data', d => { out += d.toString() })
-        child.stderr.on('data', d => { err += d.toString() })
-        child.on('close', code => resolve({ code, out, err }))
-    })
-}
-
-async function killPortPids(port) {
-    try {
-        const out = await new Promise((resolve) => {
-            const child = spawn('lsof', ['-ti', `tcp:${port}`], { cwd: WA_GATEWAY_DIR, stdio: ['ignore', 'pipe', 'pipe'] })
-            let data = ''
-            child.stdout.on('data', d => { data += d.toString() })
-            child.on('close', () => resolve(data))
-        })
-        const pids = String(out || '').split(/\s+/).map(s => parseInt(s, 10)).filter(n => Number.isFinite(n) && n > 0)
-        let killed = 0
-        for (const pid of pids) {
-            try { if (pid !== process.pid) { process.kill(pid, 'SIGKILL'); killed++ } } catch { /* ignore */ }
-        }
-        return killed
-    } catch { return 0 }
-}
-
-async function removePidFile(inst) {
-    try { await fs.unlink(path.join(WA_GATEWAY_DIR, `.local_instance_${inst}.pid`)) } catch { /* ignore */ }
-}
-
-
-async function listWaInstances() {
-    const list = []
-    for (const inst of INSTANCES_RANGE) {
-        let pid, alive, ready, status, message
-
-        {
-            // Regular whatsapp-gateway instances
-            pid = await readPid(inst)
-            alive = pid ? isPidAlive(pid) : false
-            ready = false
-            status = 'stopped'
-            message = null
-
-            if (alive) {
-                const ctrl = new AbortController()
-                const t = setTimeout(() => ctrl.abort(), 1200)
-                try {
-                    const r = await fetch(`http://localhost:${portFor(inst)}/status`, { signal: ctrl.signal })
-                    if (r.ok) {
-                        const js = await r.json()
-                        ready = !!js.ready
-                        status = js.status || (ready ? 'ready' : 'connecting')
-                        message = js.message || null
-                    } else {
-                        status = 'unknown'
-                    }
-                } catch { status = 'unknown' } finally { clearTimeout(t) }
-            }
-        }
-
-        const meta = (waInstancesMeta.instances && waInstancesMeta.instances[String(inst)]) || {}
-        list.push({
-            instance: inst,
-            port: portFor(inst),
-            pid,
-            alive,
-            ready,
-            status,
-            message,
-            name: meta.name || (inst === 1 ? 'WhatsApp Official Module' : null),
-            lastContactName: meta.lastContactName || null,
-            lastContactPhone: meta.lastContactPhone || null,
-            lastContactAt: meta.lastContactAt || null,
-        })
-    }
-    return list
-}
-
-async function findNextAvailableInstance() {
-    const list = await listWaInstances()
-    const free = list.find(i => !i.alive)
-    return free ? free.instance : null
-}
-
-async function startWaInstance(inst) {
-    // Spawn: ./manage-instances.sh start <inst>
-    return await new Promise((resolve) => {
-        const child = spawn('./manage-instances.sh', ['start', String(inst)], {
-            cwd: WA_GATEWAY_DIR,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            shell: true
-        })
-        let out = '', err = ''
-        child.stdout.on('data', (d) => { out += d.toString() })
-        child.stderr.on('data', (d) => { err += d.toString() })
-        child.on('close', (code) => {
-            try {
-                if (code !== 0) {
-                    const logFile = path.join(WA_GATEWAY_DIR, `local_${inst}.out`)
-                    const hdr = `\n=== [${new Date().toISOString()}] script start failed (inst ${inst}) ===\n`
-                    fsSync.appendFileSync(logFile, hdr + (out ? `stdout:\n${out}\n` : '') + (err ? `stderr:\n${err}\n` : ''))
-                }
-            } catch { /* ignore */ }
-            resolve({ code, out, err, phase: 'script' })
-        })
-    })
-}
-
-async function startWaInstanceWithFallback(inst) {
-    const first = await startWaInstance(inst)
-    if (first.code === 0) return first
-    lastStartDiag[String(inst)] = { ts: new Date().toISOString(), ...first }
-    // Ensure script is executable
-    try { await fs.chmod(path.join(WA_GATEWAY_DIR, 'manage-instances.sh'), 0o755) } catch { /* ignore */ }
-    // Retry via explicit bash invocation (permissions or shell quirks)
-    const second = await new Promise((resolve) => {
-        const child = spawn('bash', ['manage-instances.sh', 'start', String(inst)], {
-            cwd: WA_GATEWAY_DIR,
-            stdio: ['ignore', 'pipe', 'pipe']
-        })
-        let out = first.out || '', err = first.err || ''
-        child.stdout.on('data', (d) => { out += d.toString() })
-        child.stderr.on('data', (d) => { err += d.toString() })
-        child.on('close', (code) => {
-            try {
-                if (code !== 0) {
-                    const logFile = path.join(WA_GATEWAY_DIR, `local_${inst}.out`)
-                    const hdr = `\n=== [${new Date().toISOString()}] bash start failed (inst ${inst}) ===\n`
-                    fsSync.appendFileSync(logFile, hdr + (out ? `stdout:\n${out}\n` : '') + (err ? `stderr:\n${err}\n` : ''))
-                }
-            } catch { /* ignore */ }
-            resolve({ code, out, err, phase: 'bash' })
-        })
-    })
-    if (second.code === 0) return second
-    lastStartDiag[String(inst)] = { ts: new Date().toISOString(), ...second }
-    // Final fallback: start bot directly without script
-    const direct = await startWaInstanceDirect(inst)
-    lastStartDiag[String(inst)] = { ts: new Date().toISOString(), ...direct }
-    return direct
-}
-
-async function waitGatewayReady(port, waitMs = 6000) {
-    const started = Date.now()
-    while ((Date.now() - started) < waitMs) {
-        try {
-            const ctrl = new AbortController()
-            const t = setTimeout(() => ctrl.abort(), 800)
-            const r = await fetch(`http://localhost:${port}/status`, { signal: ctrl.signal })
-            clearTimeout(t)
-            if (r.ok) { const js = await r.json(); if (js) return { ok: true, body: js } }
-        } catch { /* retry */ }
-        await new Promise(res => setTimeout(res, 500))
-    }
-    return { ok: false }
-}
-
-async function startWaInstanceDirect(inst) {
-    try {
-        const port = portFor(inst)
-        const pidPath = path.join(WA_GATEWAY_DIR, `.local_instance_${inst}.pid`)
-        const authPath = path.join(WA_GATEWAY_DIR, `.wwebjs_auth_local_${inst}`)
-        const logFile = path.join(WA_GATEWAY_DIR, `local_${inst}.out`)
-        const env = { ...process.env, PORT: String(port), ACCOUNT_ID: `local${inst}`, WWJS_AUTH_PATH: authPath }
-        try { fsSync.appendFileSync(logFile, `\n=== [${new Date().toISOString()}] direct start attempt (inst ${inst}, port ${port}) ===\n`) } catch { /* ignore */ }
-        const child = spawn(process.execPath, ['bot_com_api.js', '--authPath', authPath], {
-            cwd: WA_GATEWAY_DIR,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            detached: true,
-            env
-        })
-        try {
-            const outStream = fsSync.createWriteStream(logFile, { flags: 'a' })
-            const errStream = fsSync.createWriteStream(logFile, { flags: 'a' })
-            child.stdout?.pipe(outStream)
-            child.stderr?.pipe(errStream)
-        } catch (e) {
-            // If piping fails, ignore; logs endpoint may be empty for direct spawn
-        }
-        child.unref()
-        try { await fs.writeFile(pidPath, String(child.pid)) } catch { /* ignore */ }
-        const ready = await waitGatewayReady(port, 7000)
-        if (ready.ok) return { code: 0, out: 'direct start ok', err: '', phase: 'direct' }
-        try { fsSync.appendFileSync(logFile, `direct start failed: gateway not ready on :${port}\n`) } catch { /* ignore */ }
-        return { code: 1, out: '', err: 'direct start failed: gateway not ready', phase: 'direct' }
-    } catch (e) {
-        try {
-            const logFile = path.join(WA_GATEWAY_DIR, `local_${inst}.out`)
-            fsSync.appendFileSync(logFile, `direct start exception: ${e?.message || e}\n`)
-        } catch { /* ignore */ }
-        return { code: 1, out: '', err: `direct start exception: ${e?.message || e}`, phase: 'direct' }
-    }
-}
-
-app.get('/api/wa/instances', async (req, res) => {
-    try {
-        const list = await listWaInstances()
-        res.json({ success: true, instances: list })
-    } catch (e) {
-        res.status(500).json({ success: false, error: String(e?.message || e) })
-    }
-})
-
-app.post('/api/wa/start', async (req, res) => {
-    try {
-        const tried = []
-
-        // Basic guard: submodule must exist
-        if (!(await fileExists(path.join(WA_GATEWAY_DIR, 'manage-instances.sh')))) {
-            return res.status(500).json({ success: false, error: 'whatsapp gateway not available' })
-        }
-
-        for (const inst of INSTANCES_RANGE) {
-            const pid = await readPid(inst)
-            const alive = pid ? isPidAlive(pid) : false
-            if (alive) { tried.push({ inst, status: 'busy' }); continue }
-            let result = await startWaInstanceWithFallback(inst)
-            if (result.code === 0) {
-                const assigned = { instance: inst, port: portFor(inst), baseUrl: `http://localhost:${portFor(inst)}` }
-                return res.json({ success: true, ...assigned, log: result.out })
-            }
-            // auto cleanup + one retry
-            const port = portFor(inst)
-            await stopWaInstanceViaScript(inst)
-            const killed = await killPortPids(port)
-            await removePidFile(inst)
-            result = await startWaInstanceWithFallback(inst)
-            if (result.code === 0) {
-                const assigned = { instance: inst, port, baseUrl: `http://localhost:${port}` }
-                return res.json({ success: true, ...assigned, log: result.out, recovered: true })
-            }
-            tried.push({ inst, status: 'failed', detail: (result.err || result.out || '').trim() })
-            // try next instance on failure (e.g., port in use)
-        }
-        res.status(409).json({ success: false, error: 'no available instances started', tried })
-    } catch (e) {
-        res.status(500).json({ success: false, error: String(e?.message || e) })
-    }
-})
-
-// Start a specific instance (1..9)
-app.post('/api/wa/start/:instance', async (req, res) => {
-    try {
-        const inst = parseInt(String(req.params.instance), 10)
-        if (!inst || inst < 1 || inst > 9) return res.status(400).json({ success: false, error: 'invalid instance (1..9)' })
-
-        // Use the gateway management for all instances
-        if (!(await fileExists(path.join(WA_GATEWAY_DIR, 'manage-instances.sh')))) {
-            return res.status(500).json({ success: false, error: 'whatsapp gateway not available' })
-        }
-
-        const pid = await readPid(inst)
-        const alive = pid ? isPidAlive(pid) : false
-        if (alive) {
-            const assigned = { instance: inst, port: portFor(inst), baseUrl: `http://localhost:${portFor(inst)}` }
-            return res.json({ success: true, ...assigned, message: 'already running' })
-        }
-        let result = await startWaInstanceWithFallback(inst)
-        if (result.code === 0) {
-            const assigned = { instance: inst, port: portFor(inst), baseUrl: `http://localhost:${portFor(inst)}` }
-            return res.json({ success: true, ...assigned, log: result.out })
-        }
-        // auto cleanup + retry once
-        const port = portFor(inst)
-        await stopWaInstanceViaScript(inst)
-        const killed = await killPortPids(port)
-        await removePidFile(inst)
-        result = await startWaInstanceWithFallback(inst)
-        if (result.code === 0) {
-            const assigned = { instance: inst, port, baseUrl: `http://localhost:${port}` }
-            return res.json({ success: true, ...assigned, log: result.out, recovered: true, cleaned: true, killedPids: killed })
-        }
-        const detail = (result.err || result.out || '').trim()
-        return res.status(500).json({ success: false, error: 'failed to start instance', detail, cleaned: true, killedPids: killed })
-    } catch (e) {
-        res.status(500).json({ success: false, error: String(e?.message || e) })
-    }
-})
-
-// Force clean (stop + kill processes on reserved port + remove pid file)
-app.post('/api/wa/instances/:instance/force-clean', async (req, res) => {
-    try {
-        const inst = parseInt(String(req.params.instance), 10)
-        if (!inst || inst < 1 || inst > 9) return res.status(400).json({ success: false, error: 'invalid instance (1..9)' })
-        await stopWaInstanceViaScript(inst)
-        const port = portFor(inst)
-        const killed = await killPortPids(port)
-        await removePidFile(inst)
-        // Remove stored authentication so next start requires scanning QR again
-        try {
-            const authPath = path.join(WA_GATEWAY_DIR, `.wwebjs_auth_local_${inst}`)
-            await fs.rm(authPath, { recursive: true, force: true })
-        } catch { /* ignore */ }
-        res.json({ success: true, instance: inst, port, killedPids: killed })
-    } catch (e) {
-        res.status(500).json({ success: false, error: String(e?.message || e) })
-    }
-})
-
-// Logs tail endpoint for instances
-app.get('/api/wa/instances/:instance/logs', async (req, res) => {
-    try {
-        const inst = parseInt(String(req.params.instance), 10)
-        if (!inst || inst < 1 || inst > 9) return res.status(400).json({ success: false, error: 'invalid instance (1..9)' })
-        const lines = Math.max(1, Math.min(2000, parseInt(String(req.query.lines || '400'), 10) || 400))
-        const logFile = path.join(WA_GATEWAY_DIR, `local_${inst}.out`)
-        let content = ''
-        try { content = await fs.readFile(logFile, 'utf-8') } catch { /* ignore */ }
-        const arr = content ? content.split(/\r?\n/) : []
-        const tail = arr.slice(-lines).join('\n')
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-        if (tail && tail.trim()) { res.send(tail); return }
-        const diag = lastStartDiag[String(inst)]
-        if (diag) {
-            const diagText = [
-                `# Última tentativa de inicialização (instância ${inst})`,
-                `timestamp: ${diag.ts || ''}`,
-                `fase: ${diag.phase || 'desconhecida'}`,
-                '',
-                (diag.out ? `stdout:\n${diag.out}` : ''),
-                (diag.err ? `stderr:\n${diag.err}` : '')
-            ].filter(Boolean).join('\n')
-            res.send(diagText)
-            return
-        }
-        // As a last resort, auto-detect the most recent local_*.out and return its tail
-        try {
-            const files = await fs.readdir(WA_GATEWAY_DIR)
-            const candidates = files.filter(f => /^local_\d+\.out$/.test(f))
-            if (candidates.length) {
-                let latest = { file: candidates[0], mtime: 0 }
-                for (const f of candidates) {
-                    try {
-                        const st = await fs.stat(path.join(WA_GATEWAY_DIR, f))
-                        const mt = st.mtimeMs || st.mtime?.getTime?.() || 0
-                        if (mt > latest.mtime) latest = { file: f, mtime: mt }
-                    } catch { /* ignore */ }
-                }
-                const altContent = await fs.readFile(path.join(WA_GATEWAY_DIR, latest.file), 'utf-8').catch(() => '')
-                if (altContent) {
-                    const arr2 = altContent.split(/\r?\n/)
-                    const tail2 = arr2.slice(-lines).join('\n')
-                    res.send(`# Logs mais recentes detectados automaticamente (${latest.file})\n` + tail2)
-                    return
-                }
-            }
-        } catch { /* ignore */ }
-        res.send('')
-    } catch (e) {
-        res.status(500).json({ success: false, error: String(e?.message || e) })
-    }
-})
-
-app.post('/api/wa/stop/:instance', async (req, res) => {
-    try {
-        const inst = parseInt(String(req.params.instance), 10)
-        if (!inst || inst < 1 || inst > 9) return res.status(400).json({ success: false, error: 'invalid instance (1..9)' })
-        if (!(await fileExists(path.join(WA_GATEWAY_DIR, 'manage-instances.sh')))) {
-            return res.status(500).json({ success: false, error: 'whatsapp gateway not available' })
-        }
-        const result = await new Promise((resolve) => {
-            const child = spawn('./manage-instances.sh', ['stop', String(inst)], { cwd: WA_GATEWAY_DIR, stdio: ['ignore', 'pipe', 'pipe'], shell: true })
-            let out = '', err = ''
-            child.stdout.on('data', d => { out += d.toString() })
-            child.stderr.on('data', d => { err += d.toString() })
-            child.on('close', code => resolve({ code, out, err }))
-        })
-        if (result.code !== 0) return res.status(500).json({ success: false, error: 'failed to stop instance', detail: result.err || result.out })
-        res.json({ success: true, instance: inst, message: 'stopped' })
-    } catch (e) {
-        res.status(500).json({ success: false, error: String(e?.message || e) })
-    }
-})
-
-// Set or update a friendly name for an instance
-app.post('/api/wa/instances/:instance/name', async (req, res) => {
-    try {
-        const inst = parseInt(String(req.params.instance), 10)
-        if (!inst || inst < 1 || inst > 9) return res.status(400).json({ success: false, error: 'invalid instance (1..9)' })
-        const name = (req.body && typeof req.body.name === 'string') ? req.body.name.trim() : ''
-        if (!name) return res.status(400).json({ success: false, error: 'name is required' })
-        if (!waInstancesMeta.instances) waInstancesMeta.instances = {}
-        const now = new Date().toISOString()
-        waInstancesMeta.instances[String(inst)] = { ...(waInstancesMeta.instances[String(inst)] || {}), name, createdAt: (waInstancesMeta.instances[String(inst)]?.createdAt || now) }
-        await persistWaInstancesMeta()
-        res.json({ success: true, instance: inst, name })
-    } catch (e) {
-        res.status(500).json({ success: false, error: String(e?.message || e) })
-    }
-})
-
-// Clear/remove the friendly name for an instance (revert to default display)
-app.delete('/api/wa/instances/:instance/name', async (req, res) => {
-    try {
-        const inst = parseInt(String(req.params.instance), 10)
-        if (!inst || inst < 1 || inst > 9) return res.status(400).json({ success: false, error: 'invalid instance (1..9)' })
-        if (!waInstancesMeta.instances) waInstancesMeta.instances = {}
-        const entry = waInstancesMeta.instances[String(inst)] || {}
-        if (entry && 'name' in entry) {
-            try { delete entry.name } catch { /* ignore */ }
-            waInstancesMeta.instances[String(inst)] = entry
-            await persistWaInstancesMeta()
-        }
-        res.json({ success: true, instance: inst, name: null })
-    } catch (e) {
-        res.status(500).json({ success: false, error: String(e?.message || e) })
-    }
-})
-
-// Update arbitrary simple metadata for an instance (e.g., lastContactName/Phone/At)
-app.post('/api/wa/instances/:instance/meta', async (req, res) => {
-    try {
-        const inst = parseInt(String(req.params.instance), 10)
-        if (!inst || inst < 1 || inst > 9) return res.status(400).json({ success: false, error: 'invalid instance (1..9)' })
-        const allowedKeys = ['lastContactName', 'lastContactPhone', 'lastContactAt']
-        const body = (req.body && typeof req.body === 'object') ? req.body : {}
-        if (!waInstancesMeta.instances) waInstancesMeta.instances = {}
-        const existing = waInstancesMeta.instances[String(inst)] || {}
-        for (const k of allowedKeys) {
-            if (typeof body[k] === 'string') existing[k] = body[k]
-        }
-        waInstancesMeta.instances[String(inst)] = existing
-        await persistWaInstancesMeta()
-        res.json({ success: true, instance: inst, meta: existing })
-    } catch (e) {
-        res.status(500).json({ success: false, error: String(e?.message || e) })
-    }
-})
-
-// -------------------------------------------------------------
 // Email Templates CRUD (file-based persistence)
 // -------------------------------------------------------------
 const EMAIL_TEMPLATES_FILE = process.env.CRM_EMAIL_TEMPLATES_FILE || path.join(process.cwd(), 'email_templates.json')
@@ -4426,231 +3725,7 @@ app.post('/api/email/templates/:id/send-test', async (req, res) => {
 })
 
 // =================================================================
-// UNIFIED SYSTEM FACADE ROUTES - Proxy WhatsAppPanel calls with X-API-Key
-// =================================================================
-
-const CRM_UNIFIED_API_KEY = process.env.CRM_UNIFIED_API_KEY
-
-// Facade: GET /api/unified/status → Unified System /whatsapp/1/status (Legacy)
-app.get('/api/unified/status', async (req, res) => {
-    try {
-        console.log(`[FACADE] Proxying legacy status request to Unified System`)
-
-        const response = await axios.get(unifiedChannelUrl('1', 'status'), {
-            headers: {
-                'X-API-Key': CRM_UNIFIED_API_KEY,
-                'Content-Type': 'application/json'
-            }
-        })
-
-        res.json(response.data)
-    } catch (error) {
-        console.error(`[FACADE] Error proxying legacy status:`, error.message)
-        if (error.response) {
-            res.status(error.response.status).json(error.response.data)
-        } else {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to communicate with Unified System',
-                details: error.message
-            })
-        }
-    }
-})
-
-// Facade: GET /api/unified/qr → Unified System /whatsapp/1/qr (Legacy)
-app.get('/api/unified/qr', async (req, res) => {
-    try {
-        console.log(`[FACADE] Proxying legacy QR request to Unified System`)
-
-        const response = await axios.get(unifiedChannelUrl('1', 'qr'), {
-            headers: {
-                'X-API-Key': CRM_UNIFIED_API_KEY,
-                'Content-Type': 'application/json'
-            }
-        })
-
-        res.json(response.data)
-    } catch (error) {
-        console.error(`[FACADE] Error proxying legacy QR:`, error.message)
-        if (error.response) {
-            res.status(error.response.status).json(error.response.data)
-        } else {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to communicate with Unified System',
-                details: error.message
-            })
-        }
-    }
-})
-
-// Facade: GET /api/qr → Unified System /api/qr (Direct legacy support)
-app.get('/api/qr', async (req, res) => {
-    try {
-        console.log(`[FACADE] Proxying direct QR request to Unified System`)
-
-        const response = await axios.get(unifiedSystemUrl('/api/qr'), {
-            headers: {
-                'X-API-Key': CRM_UNIFIED_API_KEY,
-                'Content-Type': 'application/json'
-            }
-        })
-
-        res.json(response.data)
-    } catch (error) {
-        console.error(`[FACADE] Error proxying direct QR:`, error.message)
-        if (error.response) {
-            res.status(error.response.status).json(error.response.data)
-        } else {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to communicate with Unified System',
-                details: error.message
-            })
-        }
-    }
-})
-
-// Facade: GET /api/unified/whatsapp/:channelId/status → Unified System
-app.get('/api/unified/whatsapp/:channelId/status', async (req, res) => {
-    try {
-        const channelId = parseUnifiedChannelId(req.params.channelId)
-        if (!channelId) {
-            return res.status(400).json({ success: false, error: 'Invalid WhatsApp channel' })
-        }
-        console.log(`[FACADE] Proxying status request for channel ${channelId} to Unified System`)
-
-        const response = await axios.get(unifiedChannelUrl(channelId, 'status'), {
-            headers: {
-                'X-API-Key': CRM_UNIFIED_API_KEY,
-                'Content-Type': 'application/json'
-            }
-        })
-
-        res.json(response.data)
-    } catch (error) {
-        console.error('[FACADE] Error proxying status:', error.message)
-        if (error.response) {
-            res.status(error.response.status).json(error.response.data)
-        } else {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to communicate with Unified System',
-                details: error.message
-            })
-        }
-    }
-})
-
-// Facade: GET /api/unified/whatsapp/:channelId/qr → Unified System
-app.get('/api/unified/whatsapp/:channelId/qr', async (req, res) => {
-    try {
-        const channelId = parseUnifiedChannelId(req.params.channelId)
-        if (!channelId) {
-            return res.status(400).json({ success: false, error: 'Invalid WhatsApp channel' })
-        }
-        console.log(`[FACADE] Proxying QR request for channel ${channelId} to Unified System`)
-
-        const response = await axios.get(unifiedChannelUrl(channelId, 'qr'), {
-            headers: {
-                'X-API-Key': CRM_UNIFIED_API_KEY,
-                'Content-Type': 'application/json'
-            }
-        })
-
-        res.json(response.data)
-    } catch (error) {
-        console.error('[FACADE] Error proxying QR:', error.message)
-        if (error.response) {
-            res.status(error.response.status).json(error.response.data)
-        } else {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to communicate with Unified System',
-                details: error.message
-            })
-        }
-    }
-})
-
-// 🆕 Facade: SSE Stream /api/unified/whatsapp/:channelId/qr/stream → Unified System
-app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
-    try {
-        const channelId = parseUnifiedChannelId(req.params.channelId)
-        if (!channelId) {
-            return res.status(400).json({ success: false, error: 'Invalid WhatsApp channel' })
-        }
-        console.log(`[FACADE] Setting up SSE proxy for channel ${channelId} QR stream`)
-
-        // Configure SSE headers
-        res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': 'Cache-Control, Authorization, X-Requested-With',
-        })
-
-        // Create proxy to Unified System
-        const proxyUrl = unifiedChannelUrl(channelId, 'qrStream')
-
-        // Use axios with stream to proxy SSE
-        const forwardHeaders = {
-            'X-API-Key': CRM_UNIFIED_API_KEY,
-            'Accept': 'text/event-stream',
-            'Cache-Control': 'no-cache'
-        }
-
-        // 🔧 PRODUCTION HARDENING: Forward client auth headers for SSE
-        if (req.headers.authorization) {
-            forwardHeaders['Authorization'] = req.headers.authorization
-        }
-        if (req.headers.cookie) {
-            forwardHeaders['Cookie'] = req.headers.cookie
-        }
-
-        const source = axios.get(proxyUrl, {
-            headers: forwardHeaders,
-            responseType: 'stream',
-            timeout: 0 // No timeout for SSE
-        })
-
-        source.then(response => {
-            // Pipe the SSE stream directly to client
-            response.data.pipe(res)
-
-            console.log(`📡 [FACADE] SSE proxy established for channel ${channelId}`)
-
-            // Handle client disconnect
-            req.on('close', () => {
-                console.log(`🔌 [FACADE] SSE client disconnected from channel ${channelId} stream`)
-                response.data.destroy()
-            })
-
-            req.on('error', (err) => {
-                console.error(`❌ [FACADE] SSE client error for channel ${channelId}:`, err.message)
-                response.data.destroy()
-            })
-
-        }).catch(error => {
-            console.error(`[FACADE] Error setting up SSE proxy for channel ${channelId}:`, error.message)
-            res.write(`event: error\ndata: ${JSON.stringify({ error: 'SSE proxy failed', details: error.message })}\n\n`)
-            res.end()
-        })
-
-    } catch (error) {
-        console.error('[FACADE] Critical error in SSE proxy:', error.message)
-        res.status(500).json({
-            success: false,
-            error: 'Failed to setup SSE proxy',
-            details: error.message
-        })
-    }
-})
-
-// =================================================================
-// WhatsApp Orchestrator API Endpoints (Official Module Port 3001)
+// WhatsApp Orchestrator API endpoints (native messaging engine)
 // =================================================================
 const waEventClients = new Set()
 const waWebhookMetrics = {
@@ -5951,7 +5026,7 @@ function ensureWaChannelOwnership(req, res, channel) {
 
 function isWaOrchestratorPublicPath(pathname) {
     const path = String(pathname || '').trim().toLowerCase()
-    return path === '/webhook' || path.startsWith('/webhook/') || path === '/local/recovery/restart' || path.startsWith('/local/recovery/restart/')
+    return path === '/webhook' || path.startsWith('/webhook/')
 }
 
 app.use('/api/wa-orchestrator', async (req, res, next) => {
@@ -6018,13 +5093,12 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
                     getChannelQR: '/api/wa-orchestrator/channels/{channel}/qr',
                     stopChannel: '/api/wa-orchestrator/channels/{channel}/stop',
                     restartChannel: '/api/wa-orchestrator/channels/{channel}/restart',
-                    bootstrapSync: '/api/wa-orchestrator/channels/{channel}/bootstrap-sync',
-                    restartLocalRecovery: '/api/wa-orchestrator/local/recovery/restart'
+                    bootstrapSync: '/api/wa-orchestrator/channels/{channel}/bootstrap-sync'
                 }
             })
         }
 
-        const status = whatsappOrchestrator.getStatus()
+        const status = await whatsappOrchestrator.getStatus()
         const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
         const connectedInstances = scopedChannels.filter((item) => String(item?.status || '').toLowerCase() === 'connected').length
         const freeInstances = scopedChannels.filter((item) => isWaChannelIdleStatus(item?.status)).length
@@ -6064,145 +5138,6 @@ app.get('/api/wa-orchestrator/status', async (req, res) => {
         })
     } catch (error) {
         res.status(500).json({ success: false, error: error.message })
-    }
-})
-
-app.post('/api/wa-orchestrator/local/recovery/restart', async (req, res) => {
-    try {
-        if (!WA_LOCAL_RECOVERY_ENABLED) {
-            return res.status(403).json({
-                success: false,
-                error: 'LOCAL_RECOVERY_DISABLED'
-            })
-        }
-
-        const requestIp = String(req.ip || '').trim()
-        if (!isLoopbackIp(requestIp)) {
-            return res.status(403).json({
-                success: false,
-                error: 'LOCAL_RECOVERY_FORBIDDEN_REMOTE_IP',
-                ip: requestIp || null
-            })
-        }
-
-        const mode = String(req.body?.mode || req.body?.scope || 'evolution').trim().toLowerCase()
-        if (!['evolution', 'stack'].includes(mode)) {
-            return res.status(400).json({
-                success: false,
-                error: 'INVALID_RECOVERY_MODE',
-                allowed: ['evolution', 'stack']
-            })
-        }
-        const syncRepo = mode === 'stack' && normalizeBoolean(req.body?.syncRepo, false)
-        const requestedSyncAutoStash = normalizeBoolean(req.body?.syncAutoStash, false)
-        const syncAutoStash = Boolean(syncRepo && requestedSyncAutoStash && WA_LOCAL_RECOVERY_SYNC_ALLOW_AUTOSTASH)
-        const parsedSyncSha = parseRecoverySyncSha(req.body?.syncSha || req.body?.sha)
-        if (syncRepo && parsedSyncSha.invalid) {
-            return res.status(400).json({
-                success: false,
-                error: 'INVALID_RECOVERY_SYNC_SHA',
-                hint: 'Provide a valid git commit SHA (7-40 hex chars).'
-            })
-        }
-
-        const uid = Number(process.getuid?.() || os.userInfo().uid || 0)
-        const launchdTarget = `gui/${uid}/${LOCAL_EVOLUTION_LAUNCHD_LABEL}`
-
-        const steps = []
-        let syncSummary = null
-        let coreStep = null
-        if (mode === 'stack') {
-            if (syncRepo) {
-                const syncResult = await runLocalRecoveryRepoSync({
-                    sha: parsedSyncSha.sha,
-                    autoStash: syncAutoStash
-                })
-                syncSummary = {
-                    success: Boolean(syncResult.success),
-                    repoDirty: Boolean(syncResult.repoDirty),
-                    targetRef: syncResult.targetRef || null,
-                    appliedSha: syncResult.appliedSha || null,
-                    autoStashRequested: requestedSyncAutoStash,
-                    autoStashApplied: syncAutoStash,
-                    error: syncResult.error || null
-                }
-                for (const syncStep of Array.isArray(syncResult.steps) ? syncResult.steps : []) {
-                    steps.push({ phase: 'repo-sync', ...syncStep })
-                }
-                if (!syncResult.success) {
-                    const syncError = syncResult.error || 'RECOVERY_SYNC_FAILED'
-                    const syncStatus = syncError === 'RECOVERY_SYNC_REPO_DIRTY' ? 409 : 500
-                    return res.status(syncStatus).json({
-                        success: false,
-                        mode,
-                        error: syncError,
-                        hint: syncError === 'RECOVERY_SYNC_REPO_DIRTY'
-                            ? 'Workspace has uncommitted changes; retry after workspace is clean or allow auto-stash explicitly.'
-                            : undefined,
-                        sync: syncSummary,
-                        steps
-                    })
-                }
-            }
-            const exists = fsSync.existsSync(WA_LOCAL_RECOVERY_SCRIPT)
-            if (!exists) {
-                return res.status(500).json({
-                    success: false,
-                    error: 'RECOVERY_SCRIPT_NOT_FOUND',
-                    script: WA_LOCAL_RECOVERY_SCRIPT
-                })
-            }
-            coreStep = await runCommandWithTimeout('bash', [WA_LOCAL_RECOVERY_SCRIPT], {
-                cwd: path.join(REPO_ROOT, 'n8n'),
-                timeoutMs: WA_LOCAL_RECOVERY_TIMEOUT_MS
-            })
-            steps.push({ phase: 'stack-restart', ...coreStep })
-        } else {
-            steps.push({ phase: 'evolution-restart', ...(await runCommandWithTimeout('launchctl', ['stop', launchdTarget], {
-                timeoutMs: 8_000
-            })) })
-            coreStep = await runCommandWithTimeout('launchctl', ['kickstart', '-k', launchdTarget], {
-                timeoutMs: 20_000
-            })
-            steps.push({ phase: 'evolution-restart', ...coreStep })
-        }
-
-        let status = null
-        for (let attempt = 0; attempt < 12; attempt++) {
-            try {
-                status = await evolutionOrchestrator.runWithoutAutoRecovery(() => evolutionOrchestrator.getStatus())
-            } catch {
-                status = null
-            }
-            if (status?.providerOnline) break
-            if (attempt < 11) {
-                await new Promise((resolve) => setTimeout(resolve, 1000))
-            }
-        }
-
-        const hasFailure = Boolean(
-            coreStep?.timedOut ||
-            (typeof coreStep?.code === 'number' && coreStep.code !== 0)
-        )
-        const responseStatus = hasFailure ? 500 : 200
-        return res.status(responseStatus).json({
-            success: !hasFailure,
-            mode,
-            sync: syncSummary,
-            steps,
-            status: status ? {
-                providerOnline: Boolean(status.providerOnline),
-                connectedInstances: Number(status.connectedInstances || 0),
-                startingInstances: Number(status.startingInstances || 0),
-                errorInstances: Number(status.errorInstances || 0),
-                totalChannels: Number(status.totalChannels || 0)
-            } : null
-        })
-    } catch (error) {
-        return res.status(500).json({
-            success: false,
-            error: error?.message || 'LOCAL_RECOVERY_RESTART_FAILED'
-        })
     }
 })
 
@@ -7143,7 +6078,7 @@ app.get('/api/wa-orchestrator/instances', async (req, res) => {
             const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
             return res.json({ success: true, instances: scopedChannels })
         }
-        const status = whatsappOrchestrator.getStatus()
+        const status = await whatsappOrchestrator.getStatus()
         const scopedInstances = scopeWaChannelsForActor(status.instances, req.waActor)
         res.json({ success: true, instances: scopedInstances })
     } catch (error) {
@@ -7428,7 +6363,7 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
             })
         }
 
-        const status = whatsappOrchestrator.getStatus()
+        const status = await whatsappOrchestrator.getStatus()
         const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
         const free = scopedChannels.find((item) => isWaChannelIdleStatus(item?.status))
         if (free) {
@@ -7462,7 +6397,7 @@ app.get('/api/wa-orchestrator/free-port', async (req, res) => {
 // Get all channels status
 app.get('/api/wa-orchestrator/channels', async (req, res) => {
     try {
-        const status = USE_EVOLUTION_ORCHESTRATOR ? await evolutionOrchestrator.getStatus() : whatsappOrchestrator.getStatus()
+        const status = USE_EVOLUTION_ORCHESTRATOR ? await evolutionOrchestrator.getStatus() : await whatsappOrchestrator.getStatus()
         if (USE_EVOLUTION_ORCHESTRATOR) {
             maybeAutoBootstrapSync(status)
         }
@@ -7933,7 +6868,7 @@ app.get('/api/wa-orchestrator/next-channel', async (req, res) => {
                 message: `Channel ${channel} (port ${port}) is available`
             })
         } else {
-            const status = whatsappOrchestrator.getStatus()
+            const status = await whatsappOrchestrator.getStatus()
             const scopedChannels = scopeWaChannelsForActor(status.channels, req.waActor)
             res.status(409).json({
                 success: false,
@@ -7972,103 +6907,6 @@ app.get('/api/health', (req, res) => {
         timestamp: new Date().toISOString()
     })
 })
-
-// =================================================================
-// WhatsApp Channel Proxy Routes (Channel 1 → Port 3001)
-// =================================================================
-
-// Helper function to map channel to port (only channel 1 supported for official module)
-const channelToPort = (channel) => channel === 1 ? 3001 : null
-
-// Helper function to check if channel instance is running and ready
-const isChannelRunning = async (channel) => {
-    try {
-        const status = whatsappOrchestrator.getStatus()
-
-        // Ensure channels array exists
-        if (!status || !Array.isArray(status.channels)) {
-            console.warn(`[Proxy] Invalid status response for channel ${channel}:`, status)
-            return false
-        }
-
-        const instance = status.channels.find(inst => inst.channel === channel)
-
-        // Channel is ready if it has an instance with active server status
-        const isReady = instance && (
-            instance.status === 'connected' ||
-            instance.status === 'qr_pending' ||
-            instance.status === 'starting'
-        )
-
-        console.log(`[Proxy] Channel ${channel} check: status=${instance?.status}, ready=${isReady}`)
-        return isReady
-    } catch (error) {
-        console.error(`[Proxy] Error checking channel ${channel}:`, error.message)
-        return false
-    }
-}
-
-// Dynamic proxy route for official WhatsApp module (channel 1 only)
-for (let channel = 1; channel <= 1; channel++) {
-    const port = channelToPort(channel) // Always 3001 for official module
-    const channelRoute = `/canal${channel}` // Only /canal1 for official module
-
-    // Create proxy middleware for each channel
-    const channelProxy = createProxyMiddleware({
-        target: `http://localhost:${port}`,
-        changeOrigin: true,
-        pathRewrite: {
-            [`^/canal${channel}`]: '', // Remove /canal{N} prefix
-        },
-        onError: (err, req, res) => {
-            console.error(`[Proxy Error] Canal ${channel} (Port ${port}):`, err.message)
-            res.status(503).json({
-                success: false,
-                error: `Canal ${channel} não está disponível`,
-                hint: `Certifique-se de que o canal ${channel} esteja conectado e funcionando`,
-                redirect: '/'
-            })
-        },
-        onProxyReq: (proxyReq, req, res) => {
-            console.log(`[Proxy] Redirecting ${req.path} → localhost:${port}`)
-        },
-        onProxyRes: (proxyRes, req, res) => {
-            // Add custom headers to identify the proxied channel
-            proxyRes.headers['x-whatsapp-channel'] = channel.toString()
-            proxyRes.headers['x-whatsapp-port'] = port.toString()
-        },
-        // Only proxy if channel is actually running
-        router: async (req) => {
-            const isRunning = await isChannelRunning(channel)
-            if (!isRunning) {
-                return null // This will trigger onError
-            }
-            return `http://localhost:${port}`
-        }
-    })
-
-    // Register the proxy route
-    app.use(channelRoute, async (req, res, next) => {
-        // First check if channel is running
-        const isRunning = await isChannelRunning(channel)
-
-        if (!isRunning) {
-            return res.status(503).json({
-                success: false,
-                error: `Canal ${channel} não está conectado`,
-                hint: `Inicie o Canal ${channel} antes de tentar acessar seu dashboard`,
-                channel: channel,
-                port: port,
-                redirect: '/'
-            })
-        }
-
-        // If running, proceed with proxy
-        channelProxy(req, res, next)
-    })
-
-    console.log(`📡 Proxy route registered: ${channelRoute} → localhost:${port}`)
-}
 
 // Serve the React app for all non-API/non-channel routes (MUST BE LAST)
 app.use((req, res, next) => {

@@ -47,7 +47,7 @@ agent-zero/
 │   ├── agent-zero-core/           # Core Agent Zero application
 │   ├── webui/                     # Web UI components
 │   ├── crm/                       # CRM system
-│   ├── whatsapp/gateway/          # WhatsApp integration
+│   ├── messaging/                 # adapters to the native messaging service
 │   └── [Sales Chart Messenger]    # automação incorporada ao domínio WhatsApp (ex.: whatsapp/automations/sales_chart_messenger/)
 ├── packages/                       # Shared packages
 │   ├── shared-configs/            # Shared configurations (ESLint, Prettier, etc.)

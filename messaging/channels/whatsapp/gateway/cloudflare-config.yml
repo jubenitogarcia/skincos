@@ -1,9 +1,0 @@
-﻿tunnel: d111123b-da44-45f1-adf1-35303be34865
-# Set this to the local operator path outside the shared workspace, for example:
-# %USERPROFILE%\.cloudflared\<TUNNEL_UUID>.json
-credentials-file: REPLACE_WITH_LOCAL_CLOUDFLARED_CREDENTIALS_PATH
-
-ingress:
-  - hostname: wa.skincos.com.br
-    service: http://localhost:3001
-  - service: http_status:404

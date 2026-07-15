@@ -3172,22 +3172,6 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const refreshConnectedChannel = useCallback(async (channel: number, opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent)
     const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
-    const requestRecovery = async () => {
-      try {
-        await fetch('/api/wa-orchestrator/local/recovery/restart', {
-          method: 'POST',
-          headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            mode: 'evolution',
-            trigger: 'manual-refresh-button',
-            reason: `channel-${channel}`
-          })
-        })
-      } catch {
-        /* ignore recovery errors */
-      }
-    }
-
     markConnectedChannelAction(channel, 'refresh')
     try {
       const response = await fetch(`/api/wa-orchestrator/channels/${channel}/restart`, {
@@ -3244,17 +3228,12 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         await loadMessages(selectedConversation, { silent: true })
       }
 
-      if (channelStatus === 'error') {
-        await requestRecovery()
-      }
-
       if (!silent) {
         const syncSuffix = bootstrapQueued ? ' • sync forçado' : ''
         toast.success(`Canal ${channel} refrescado${syncSuffix}.`)
       }
       return true
     } catch (error: any) {
-      await requestRecovery()
       await loadStatus()
       await loadConversations({ disableCache: true })
       if (!silent) {

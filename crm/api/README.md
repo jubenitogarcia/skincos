@@ -23,7 +23,7 @@ Rotas: `/api/harmonia/*`
 
 - Health: `GET /api/harmonia/health`
 - Ingest (payload normalizado): `POST /api/harmonia/ingest`
-- Webhook (WhatsApp Official Module): `POST /api/harmonia/webhook/official`
+- Webhook de compatibilidade do WhatsApp nativo: `POST /api/harmonia/webhook/official`
 - Webhook (Evolution/Gateway): `POST /api/harmonia/webhook/evolution`
 - Delivery callback (executor/worker → Harmonia): `POST /api/harmonia/delivery`
 - Tasks (cron/executor):

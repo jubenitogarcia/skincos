@@ -18,11 +18,10 @@ observed on `main` before this change.
 | One-off credential patch | 4317–4319 | Obsolete operational script, no consumer in runtime or repository | Removed instead of suppressing findings | Architecture and security-contract validation |
 
 The remaining critical/high findings observed before this change were confined
-to retired WhatsApp variants (`official-module`, `evolution-api`, `chat-module`,
-`gateway`, and `stub`). The active unit runs `messaging/channels/whatsapp/engine`.
-Those variants must be removed only after the hardened engine and CRM overlay are
-deployed and the production smoke checks pass; their directory removal is tracked
-as the next cleanup change, not as an ignore or scanner exclusion.
+to retired, unconsumed WhatsApp variants. After the hardened native engine and
+CRM overlay passed production smokes, those source trees and their launch paths
+were removed. The only supported implementation is now
+`messaging/channels/whatsapp/engine`.
 
 No scanner suppression, path exclusion, global ignore or alert dismissal is part
 of this remediation.

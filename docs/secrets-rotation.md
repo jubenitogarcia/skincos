@@ -15,7 +15,6 @@ Garantir que segredos críticos (GitHub, Cloudflare, backend) tenham **escopo m�
 - `CRM_API_SSH_USER`
 - `CRM_API_SSH_KEY`
 - `CRM_API_SSH_PORT` (opcional)
-- `CRM_API_BASIC_AUTH` (modo `http_restart`)
 - `GITLEAKS_LICENSE` (opcional)
 - `SEMGREP_APP_TOKEN` (opcional)
 
@@ -57,12 +56,6 @@ NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
 1. Gerar nova chave SSH.
 2. Atualizar `authorized_keys` no servidor.
 3. Atualizar `CRM_API_SSH_KEY` (GitHub).
-4. Executar workflow `deploy-crm-api`.
-
-### Backend / CRM API (HTTP restart)
-1. Atualizar credencial de Basic Auth do CRM API.
-2. Atualizar `CRM_API_BASIC_AUTH` (GitHub).
-3. Validar `vars.CRM_API_RESTART_URL`.
 4. Executar workflow `deploy-crm-api`.
 
 ## Medidas de segurança recomendadas
