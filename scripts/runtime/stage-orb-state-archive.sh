@@ -93,13 +93,13 @@ home="$stage_dir/n8n-home"
 
 validate_staged_home() {
   local candidate="$1"
-  [[ -f "$candidate/.n8n/config" ]] || { echo "Missing n8n config in staged state." >&2; return 1; }
-  [[ -f "$candidate/database.sqlite" ]] || { echo "Missing n8n runtime database in staged state." >&2; return 1; }
-  [[ -d "$candidate/storage" ]] || { echo "Missing n8n storage in staged state." >&2; return 1; }
-  [[ -f "$candidate/nodes/package.json" && -f "$candidate/nodes/package-lock.json" ]] || {
+  sudo -n test -f "$candidate/.n8n/config" || { echo "Missing n8n config in staged state." >&2; return 1; }
+  sudo -n test -f "$candidate/database.sqlite" || { echo "Missing n8n runtime database in staged state." >&2; return 1; }
+  sudo -n test -d "$candidate/storage" || { echo "Missing n8n storage in staged state." >&2; return 1; }
+  sudo -n test -f "$candidate/nodes/package.json" && sudo -n test -f "$candidate/nodes/package-lock.json" || {
     echo "Missing custom-node package manifests in staged state." >&2; return 1;
   }
-  [[ ! -e "$candidate/nodes/node_modules" && ! -e "$candidate/.n8n/nodes/node_modules" ]] || {
+  ! sudo -n test -e "$candidate/nodes/node_modules" && ! sudo -n test -e "$candidate/.n8n/nodes/node_modules" || {
     echo "State archive must not contain Windows custom-node dependencies." >&2; return 1;
   }
 }
@@ -120,6 +120,7 @@ if sudo -n test -e "$stage_dir"; then
 fi
 
 temporary_dir="$(sudo -n mktemp -d "$staging_root/.${stage_id}.XXXXXX")"
+sudo -n chown "$RUNTIME_USER:$RUNTIME_USER" "$temporary_dir"
 preserve_temporary=0
 cleanup() {
   if [[ "$preserve_temporary" == "1" ]]; then
@@ -136,20 +137,20 @@ else
   sudo -n mv "$EXTRACTED_HOME" "$temporary_dir/n8n-home"
   preserve_temporary=1
 fi
-sudo -n chown -R "$RUNTIME_USER:$RUNTIME_USER" "$temporary_dir"
 validate_staged_home "$temporary_dir/n8n-home"
+sudo -n chown -R "$RUNTIME_USER:$RUNTIME_USER" "$temporary_dir"
 
 # The legacy runtime can contain a stale root lock entry even though its
 # package.json pins the version in use. npm install --package-lock-only changes
 # only the lock representation; npm ci then gives the native runtime a fully
 # deterministic dependency tree without executing package lifecycle scripts.
 nodes_dir="$temporary_dir/n8n-home/nodes"
-before_lock="$(sha256sum "$nodes_dir/package-lock.json" | awk '{print $1}')"
+before_lock="$(sudo -n sha256sum "$nodes_dir/package-lock.json" | awk '{print $1}')"
 sudo -n install -d -o "$RUNTIME_USER" -g "$RUNTIME_USER" -m 0750 "$NPM_CACHE"
 sudo -n -u "$RUNTIME_USER" env \
   npm_config_cache="$NPM_CACHE" npm_config_audit=false npm_config_fund=false npm_config_ignore_scripts=true \
   npm install --package-lock-only --ignore-scripts --prefix "$nodes_dir" >/dev/null
-after_lock="$(sha256sum "$nodes_dir/package-lock.json" | awk '{print $1}')"
+after_lock="$(sudo -n sha256sum "$nodes_dir/package-lock.json" | awk '{print $1}')"
 sudo -n -u "$RUNTIME_USER" env \
   npm_config_cache="$NPM_CACHE" npm_config_audit=false npm_config_fund=false npm_config_ignore_scripts=true \
   npm ci --omit=dev --ignore-scripts --prefix "$nodes_dir" >/dev/null
