@@ -1,7 +1,7 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
     [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
-    [string]$RuntimeRoot = "C:\CodexRuntime\n8n",
+    [string]$RuntimeRoot = "C:\CodexRuntime",
     [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 )
 
@@ -117,7 +117,6 @@ $normalizedProjectRoot = Normalize-PathString -Path $ProjectRoot
 $normalizedSafeDirectories = @($safeDirectories | ForEach-Object { Normalize-PathString -Path $_ })
 
 $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
-$runtimeEnvRoot = Join-Path $RuntimeRoot "env"
 $operatorRuntimeExists = Test-Path -LiteralPath $OperatorRuntimeRoot
 $operatorRuntimeAcl = if ($operatorRuntimeExists) { Get-Acl -LiteralPath $OperatorRuntimeRoot } else { $null }
 $status = [pscustomobject]@{
@@ -136,19 +135,9 @@ $status = [pscustomobject]@{
     operatorRuntimeRoot = $OperatorRuntimeRoot
     operatorRuntimeExists = $operatorRuntimeExists
     operatorRuntimeOwner = if ($operatorRuntimeAcl) { $operatorRuntimeAcl.Owner } else { $null }
-    runtimeEnvRoot = $runtimeEnvRoot
-    runtimeEnvFiles = @(
-        "n8n.env",
-        "n8n-business.env",
-        "evolution-api.env"
-    ) | ForEach-Object {
-        $path = Join-Path $runtimeEnvRoot $_
-        [pscustomobject]@{
-            name = $_
-            exists = Test-Path -LiteralPath $path
-            path = $path
-        }
-    }
+    nativeStateRoot = "/var/lib/skincos-runtime"
+    nativeConfigRoot = "/etc/skincos"
+    backupRoot = (Join-Path $RuntimeRoot "backups\orb\daily")
 }
 
 $status | ConvertTo-Json -Depth 5

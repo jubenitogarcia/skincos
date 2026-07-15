@@ -112,9 +112,8 @@
 - Why: the `skincos` repo is becoming the umbrella workspace for the clinic's
   subprojects and tools, and keeping n8n as a sibling clone preserves
   ambiguity about where the live automation code belongs.
-- Impact: runtime state still stays in `C:\CodexRuntime\n8n`, but systemd
-  units, docs, bootstrap scripts, and operator workflows should resolve n8n
-  code from `skincos\n8n`.
+- Impact: this historical intermediate layout was later superseded by the
+  native release/state contract recorded on 2026-07-15.
 
 ## 2026-07-14 - Decommission the retired top-level n8n rollback clone
 
@@ -163,17 +162,14 @@
 
 ## 2026-07-06 - Run the live orb stack as machine-scoped system services
 
-- Decision: the live orb stack must run only from `skincos-*` system units
-  under `/etc/systemd/system`, with `User=skincos`, code in
-  `C:\CodexShared\Projetos\skincos\modules\automations\n8n`, and runtime state
-  in `C:\CodexRuntime\n8n`.
+- Decision: the live Orb stack must run only from machine-scoped system units
+  under `/etc/systemd/system`, with `User=skincos`.
 - Why: the previous hybrid model mixed `systemctl --user`, operator-specific
   homes, and legacy `/etc/skincos` or `/srv/skincos` state, which blocked true
   multi-account autonomy.
-- Impact: `n8n.env`, `n8n-business.env`, and `evolution-api.env` in
-  `C:\CodexRuntime\n8n\env\` are now the canonical live env contract for the
-  orb stack, and validators should fail if orb services reintroduce
-  `/home/julia`, `/srv/skincos`, `/etc/skincos`, or `systemctl --user`.
+- Impact: validators must reject operator-home, checkout and user-service
+  execution. The later native lifecycle decision supersedes the intermediate
+  Windows-mounted state/config locations.
 
 ## 2026-07-06 - Publish shared operational shortcuts in the common Start Menu
 
@@ -214,62 +210,51 @@
 ## 2026-07-07 - Publish one shared runtime repair path instead of relying on a principal account
 
 - Decision: expose `Orb Repair` as the canonical shared entrypoint for
-  PostgreSQL/runtime reconciliation, backed by
-  `orb/engine/scripts/reconcile-mini-pc-runtime-postgres.sh`.
+  idempotent native layout, unit and health reconciliation.
 - Why: the multi-account mini-PC model breaks when Postgres repair knowledge
   exists only in one operator account or one “principal” Codex session.
-- Impact: Start Menu shortcuts, Codex App project actions, and runbooks now
-  point to the same repair flow, which reads only the `DB_POSTGRESDB_*`
-  contract from `C:\CodexRuntime\n8n\env\n8n.env`, realigns the local
-  PostgreSQL role/database/schema, restarts the orb stack, validates health,
-  and stores redacted evidence under `C:\CodexRuntime\n8n\exports\repair-*`.
+- Impact: Start Menu shortcuts, Codex App project actions and runbooks point to
+  the same native repair flow, which reapplies the final units, restarts the
+  runtime and runs local/public health validation.
 
-## 2026-07-06 - Drain the last orb user services from the human WSL account
+## 2026-07-06 - Drain the last Orb user services from the human WSL account
 
-- Decision: keep the `julia` WSL user manager free of live orb services and
-  treat any residual `n8n.service`, `orb-proxy.service`,
-  `cloudflared-orb.service`, `evolution-api.service`, or
-  `mini-pc-watchdog.timer` there as legacy-only artifacts.
+- Decision: keep the human WSL user manager free of live Orb services and
+  remove all residual user-scoped runtime units after machine-unit validation.
 - Why: the shared mini-PC autonomy model breaks when the orb can still boot
   from `systemctl --user` instead of the machine-scoped `skincos-*` units.
-- Impact: the live orb path is now singular, `Orb Validate` can enforce the
-  absence of active user services, and rollback for the old unit files lives in
-  `C:\CodexRuntime\n8n\rollback\`.
+- Impact: the live path is singular and rollback is an immutable prior release
+  plus the private cutover checkpoint.
 
-## 2026-07-06 - Move the cs Cloudflare tunnel config into CodexRuntime
+## 2026-07-06 - Move the runtime Cloudflare tunnel out of the checkout
 
-- Decision: `skincos-cloudflared-cs.service` should read its config and
-  credentials from `C:\CodexRuntime\cloudflared\cs`.
+- Decision: the runtime tunnel must read private config and credentials outside
+  the repository.
 - Why: the `cs` tunnel is a machine-scoped live service, so keeping its
   supported config under `/etc/skincos` preserved an unnecessary legacy root.
 - Impact: the remaining legacy service convergence now focuses on
   `crm-api` and `booking-api`, while the `cs` tunnel already follows the shared
   runtime model.
 
-## 2026-07-06 - Run crm-api and booking-api from shared repo launchers
+## 2026-07-06 - Run CRM and Booking from controlled launchers
 
-- Decision: `skincos-crm-api.service` and `skincos-booking-api.service` should
-  run from shared repo launchers under `scripts/crm/` and `scripts/booking/`, with env and
-  writable runtime state moved to `C:\CodexRuntime\crm-api` and
-  `C:\CodexRuntime\booking-api`.
+- Decision: CRM and Booking should use controlled launchers with config and
+  writable state outside the repository.
 - Why: leaving those support services on `/srv/skincos` and `/etc/skincos`
   preserved the same single-account coupling that the shared orb convergence
   was meant to remove.
-- Impact: all installed `skincos-*` system units now resolve code from
-  `C:\CodexShared\Projetos\skincos` and machine-scoped state from
-  `C:\CodexRuntime\...`, while legacy unit files remain only as rollback
-  backups under `C:\CodexRuntime\n8n\rollback\`.
+- Impact: this intermediate shared-checkout model was later superseded by
+  immutable native releases and native state roots.
 
 ## 2026-07-06 - Reapply support services with a shared installer
 
-- Decision: the canonical maintenance entrypoint for the non-orb support
-  services is `scripts/install-shared-support-system-services.sh`.
+- Decision: the canonical maintenance entrypoint is the final lifecycle unit
+  installer under `scripts/runtime`.
 - Why: the shared mini-PC model needs one repeatable installer for
   `crm-api`, `booking-api`, and `cloudflared-cs` instead of ad hoc manual
   edits under `/etc/systemd/system`.
-- Impact: future convergence, repair, or reprovisioning of those units should
-  happen from the repo, while service-specific env/config/state stays under
-  `C:\CodexRuntime`.
+- Impact: future convergence renders units from reviewed source while active
+  config/state stays on native Linux and durable evidence stays private.
 
 ## 2026-07-08 - Recover orb owner access in place instead of replacing the live instance
 
@@ -280,9 +265,8 @@
 - Why: the live runtime already contained the correct owner account
   `julianbenitogarcia@gmail.com`; the failure mode was access recovery, not a
   missing owner or a need to replace the instance.
-- Impact: owner access is restored without destroying workflows, credentials,
-  projects, or shared runtime state, and the recovery evidence now lives under
-  `C:\CodexRuntime\n8n\exports\owner-recovery-pre-*`.
+- Impact: owner access was restored without destroying workflows, credentials
+  or projects; its private recovery evidence remains outside Git.
 
 ## 2026-07-08 - Keep the admin WSL runtime on a recovered per-user BasePath until elevated normalization is worth it
 
@@ -303,7 +287,7 @@
 - Decision: import `WORKFLOW_01..04` and the expected `n8n` credentials into
   the live `n8n_runtime` PostgreSQL metadata store, but keep all four clinic
   workflows inactive until the Google Calendar binding is manually verified.
-- Why: the live `skincos-n8n.service` uses PostgreSQL rather than the legacy
+- Why: the live Orb service uses PostgreSQL rather than the legacy
   SQLite file, and the recoverable Google OAuth export did not prove Calendar
   scope or provide the missing `GOOGLE_CALENDAR_ID`.
 - Impact: the machine now has the clinic workflows, `wa_n8n` tables, and
@@ -398,3 +382,15 @@
   both database and storage hashes are revalidated after the Windows copy, ACLs
   remain limited to SYSTEM and the operator, and only a restore-verified backup
   is eligible for retention.
+
+## 2026-07-15 - Retire migration launchers and make the native contract singular
+
+- Decision: remove user units, one-time cutover transfer helpers, applied
+  workflow patchers and old platform launchers after native restart, public
+  smoke and restore proof succeeded.
+- Why: preserving runnable historical paths made it possible to reintroduce
+  checkout execution, DrvFS state, conflicting service names or a second backup
+  scheduler.
+- Impact: Git history and the private cutover checkpoint preserve audit and
+  rollback evidence; current operations use only the lifecycle installer,
+  native runtime manager, release builders and Windows-owned backup publisher.

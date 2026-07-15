@@ -19,7 +19,7 @@ arquivos em `workflow-src/meta-ads-publish/`.
 2. Para código, trate `workflow-src/meta-ads-publish/` como fonte editável e
    compare-o com o workflow live usando o preflight. Não conclua a correção por
    nomes de nodes ou por uma aba antiga do navegador.
-3. Para runtime, valide `C:\CodexRuntime\n8n` e os serviços `skincos-*`; o
+3. Para runtime, valide `/var/lib/skincos-runtime/orb` e os serviços finais; o
    `Orb Validate` é a verificação ampla após alterações de infraestrutura.
 
 ## Regras que evitam recorrência

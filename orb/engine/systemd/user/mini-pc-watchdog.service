@@ -1,9 +1,0 @@
-[Unit]
-Description=Skincos mini-PC n8n stack watchdog
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=__N8N_ROOT__
-ExecStart=__N8N_ROOT__/scripts/ensure-mini-pc-stack.sh

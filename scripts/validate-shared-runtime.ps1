@@ -1,87 +1,40 @@
 param(
-    [string]$RuntimeRoot = "C:\CodexRuntime\n8n"
+    [string]$RuntimeRoot = "C:\CodexRuntime"
 )
 
 $ErrorActionPreference = "Stop"
-
-function Get-AccessEntry {
-    param(
-        [System.Security.AccessControl.DirectorySecurity]$Acl,
-        [string]$Identity
-    )
-
-    return $Acl.Access | Where-Object {
-        $_.IdentityReference.Value -eq $Identity -and
-        $_.AccessControlType -eq "Allow"
-    }
+$resolved = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd('\')
+if ($resolved -ne 'C:\CodexRuntime') {
+    throw "RuntimeRoot must remain C:\CodexRuntime. Received: $resolved"
 }
 
-function Test-ModifyAccess {
-    param([string]$TargetPath)
-
-    $exists = Test-Path -LiteralPath $TargetPath
-    if (-not $exists) {
-        return [pscustomobject]@{
-            path = $TargetPath
-            exists = $false
-            hasUsersModify = $false
-            owner = $null
-        }
-    }
-
-    $acl = Get-Acl -LiteralPath $TargetPath
-    $entry = Get-AccessEntry -Acl $acl -Identity "BUILTIN\Users"
-    $hasModify = $false
-
-    if ($entry) {
-        foreach ($rule in @($entry)) {
-            if ($rule.FileSystemRights.ToString().Contains("Modify")) {
-                $hasModify = $true
-                break
-            }
-        }
-    }
-
-    [pscustomobject]@{
-        path = $TargetPath
-        exists = $true
-        hasUsersModify = $hasModify
-        owner = $acl.Owner
+$backupRoot = Join-Path $resolved 'backups\orb\daily'
+$latest = Get-ChildItem -LiteralPath $backupRoot -Directory -ErrorAction SilentlyContinue |
+    Sort-Object Name -Descending | Select-Object -First 1
+$manifest = $null
+if ($latest) {
+    $manifestPath = Join-Path $latest.FullName 'manifest.json'
+    if (Test-Path -LiteralPath $manifestPath) {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     }
 }
+$task = Get-ScheduledTask -TaskName 'SkincosOrbBackup' -ErrorAction SilentlyContinue
+$taskInfo = if ($task) { Get-ScheduledTaskInfo -TaskName 'SkincosOrbBackup' } else { $null }
 
-$requiredDirs = @(
-    $RuntimeRoot,
-    (Join-Path $RuntimeRoot "env"),
-    (Join-Path $RuntimeRoot "logs"),
-    (Join-Path $RuntimeRoot "health"),
-    (Join-Path $RuntimeRoot "tmp"),
-    (Join-Path $RuntimeRoot "binary-data"),
-    (Join-Path $RuntimeRoot "exports"),
-    (Join-Path $RuntimeRoot "n8n-home"),
-    (Join-Path $RuntimeRoot "cloudflared"),
-    (Join-Path $RuntimeRoot "evolution-api")
-)
+$native = & wsl.exe -d Ubuntu-24.04 -u admin -- systemctl --quiet is-active orb orb-proxy messaging-whatsapp crm booking cloudflare-orb cloudflare-runtime 2>&1
+$nativeOk = $LASTEXITCODE -eq 0
 
-$requiredFiles = @(
-    (Join-Path $RuntimeRoot "env\n8n.env"),
-    (Join-Path $RuntimeRoot "env\n8n-business.env"),
-    (Join-Path $RuntimeRoot "env\evolution-api.env")
-)
-
-[pscustomobject]@{
-    runtime = (Test-ModifyAccess -TargetPath $RuntimeRoot)
-    requiredDirs = @(
-        foreach ($dir in $requiredDirs) {
-            Test-ModifyAccess -TargetPath $dir
-        }
-    )
-    requiredFiles = @(
-        foreach ($file in $requiredFiles) {
-            [pscustomobject]@{
-                path = $file
-                exists = (Test-Path -LiteralPath $file)
-            }
-        }
-    )
-} | ConvertTo-Json -Depth 5
+$result = [pscustomobject]@{
+    runtimeRoot = $resolved
+    nativeRuntimeActive = $nativeOk
+    backupTaskPresent = $null -ne $task
+    backupTaskLastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { $null }
+    latestBackup = if ($latest) { $latest.FullName } else { $null }
+    restoreVerified = [bool]($manifest -and $manifest.restoreVerified)
+    workflowCount = if ($manifest) { $manifest.workflowCount } else { $null }
+    executionCount = if ($manifest) { $manifest.executionCount } else { $null }
+}
+$result | ConvertTo-Json -Depth 4
+if (-not $result.nativeRuntimeActive -or -not $result.backupTaskPresent -or $result.backupTaskLastResult -ne 0 -or -not $result.restoreVerified) {
+    exit 1
+}

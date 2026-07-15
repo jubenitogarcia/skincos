@@ -6,7 +6,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const APPLY = process.argv.includes('--apply');
-const RUNTIME_HOME = process.env.N8N_RUNTIME_HOME || '/mnt/c/CodexRuntime/n8n';
+const RUNTIME_HOME = process.env.N8N_RUNTIME_HOME || '/var/lib/skincos-runtime/orb';
 
 function psql(sql) {
   return execFileSync('psql', ['-d', 'n8n_runtime', '-Atqc', sql], {

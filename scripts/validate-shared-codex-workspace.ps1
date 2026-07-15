@@ -1,7 +1,7 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
     [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
-    [string]$RuntimeRoot = "C:\CodexRuntime\n8n",
+    [string]$RuntimeRoot = "C:\CodexRuntime",
     [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 )
 
@@ -117,7 +117,7 @@ function Get-CodexEnvironmentStatus {
 
 $projectCheck = Test-ModifyAccess -TargetPath $ProjectRoot
 $worktreeCheck = Test-ModifyAccess -TargetPath $WorktreeRoot
-$runtimeCheck = Test-ModifyAccess -TargetPath $RuntimeRoot
+$runtimeCheck = Test-PrivateOperatorRuntime -TargetPath $RuntimeRoot
 $operatorRuntimeCheck = Test-PrivateOperatorRuntime -TargetPath $OperatorRuntimeRoot
 $childChecks = @()
 $runtimeChildChecks = @()
@@ -131,7 +131,7 @@ if (Test-Path -LiteralPath $ProjectRoot) {
 if (Test-Path -LiteralPath $RuntimeRoot) {
     $runtimeChildChecks = Get-ChildItem -LiteralPath $RuntimeRoot -Directory -Force |
         Sort-Object Name |
-        ForEach-Object { Test-ModifyAccess -TargetPath $_.FullName }
+        ForEach-Object { Test-PrivateOperatorRuntime -TargetPath $_.FullName }
 }
 
 $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"

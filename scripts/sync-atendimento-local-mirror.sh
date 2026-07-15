@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-RUNTIME_HOME="${CRM_RUNTIME_HOME:-/mnt/c/CodexRuntime/crm-api}"
-RUNTIME_ENV_FILE="${SKINCOS_CRM_API_ENV_FILE:-$RUNTIME_HOME/env/crm-api.env}"
-SOURCE_ENV_FILE="${ATENDIMENTO_SOURCE_ENV_FILE:-$RUNTIME_HOME/env/atendimento-source.env}"
+RUNTIME_HOME="${CRM_RUNTIME_HOME:-/var/lib/skincos-runtime/crm}"
+RUNTIME_ENV_FILE="${SKINCOS_CRM_API_ENV_FILE:-/etc/skincos/crm.env}"
+SOURCE_ENV_FILE="${ATENDIMENTO_SOURCE_ENV_FILE:-/etc/skincos/atendimento-source.env}"
 MODE="${1:---dry-run}"
 
 usage() {
@@ -121,7 +121,7 @@ if [[ "$MODE" != "--apply" ]]; then
   exit 0
 fi
 
-sudo -n systemctl restart skincos-crm-api.service
+sudo -n systemctl restart crm.service
 for _ in $(seq 1 120); do
   if curl -fsS http://127.0.0.1:8099/health >/dev/null 2>&1; then
     break
