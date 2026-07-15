@@ -11,11 +11,12 @@ RUNTIME_USER="${SKINCOS_RUNTIME_USER:-skincos}"
 NPM_CACHE="${N8N_NPM_CACHE:-$STATE_ROOT/cache/orb/npm}"
 ARCHIVE=""
 ARCHIVE_SHA256=""
+EXTRACTED_HOME=""
 APPLY=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/runtime/stage-orb-state-archive.sh --archive <state.tar> --sha256 <sha256> [--apply]
+Usage: scripts/runtime/stage-orb-state-archive.sh (--archive <state.tar> | --extracted-home <native-n8n-home>) --sha256 <sha256> [--apply]
 
 Validates and extracts a state-only n8n-home archive into
 /var/lib/skincos-runtime/staging. The archive must contain a top-level
@@ -23,6 +24,10 @@ n8n-home directory and must exclude nodes/node_modules. The helper normalizes
 the custom-node lockfile only when npm proves it is inconsistent with the
 declared exact dependencies, then performs npm ci with lifecycle scripts
 disabled. It never changes the legacy runtime or starts/stops services.
+
+On this Windows host, prefer --extracted-home after the Windows-native
+transfer helper writes the archive through \\wsl$ into a Linux home directory.
+That path avoids WSL reading the multi-gigabyte archive over /mnt/c.
 EOF
 }
 
@@ -31,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --apply) APPLY=1 ;;
     --archive) ARCHIVE="${2:-}"; shift ;;
     --sha256) ARCHIVE_SHA256="${2:-}"; shift ;;
+    --extracted-home) EXTRACTED_HOME="${2:-}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -41,26 +47,43 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }
 }
 
-[[ -n "$ARCHIVE" && -f "$ARCHIVE" ]] || { echo "--archive must name an existing file." >&2; exit 1; }
+if [[ -n "$ARCHIVE" && -n "$EXTRACTED_HOME" ]]; then
+  echo "Use either --archive or --extracted-home, not both." >&2
+  exit 1
+fi
+if [[ -z "$ARCHIVE" && -z "$EXTRACTED_HOME" ]]; then
+  echo "One of --archive or --extracted-home is required." >&2
+  exit 1
+fi
+if [[ -n "$ARCHIVE" && ! -f "$ARCHIVE" ]]; then
+  echo "--archive must name an existing file." >&2
+  exit 1
+fi
 [[ "$ARCHIVE_SHA256" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "--sha256 must be a SHA-256 digest." >&2; exit 1; }
-require_cmd sha256sum
-require_cmd tar
 require_cmd npm
 require_cmd sudo
-require_cmd awk
+require_cmd sha256sum
+if [[ -n "$ARCHIVE" ]]; then
+  require_cmd tar
+  require_cmd awk
+  actual_sha="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+  [[ "${actual_sha,,}" == "${ARCHIVE_SHA256,,}" ]] || { echo "Orb state archive checksum mismatch." >&2; exit 1; }
 
-actual_sha="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
-[[ "${actual_sha,,}" == "${ARCHIVE_SHA256,,}" ]] || { echo "Orb state archive checksum mismatch." >&2; exit 1; }
-
-# Refuse archives that could escape the staging root or smuggle unrelated
-# paths. Listing is intentionally performed before extraction.
-if ! tar -tf "$ARCHIVE" | awk '
-  $0 !~ /^n8n-home(\/|$)/ { invalid=1 }
-  $0 ~ /(^|\/)\.\.($|\/)/ { invalid=1 }
-  END { exit invalid ? 1 : 0 }
-'; then
-  echo "Orb state archive has an invalid entry path." >&2
-  exit 1
+  # Refuse archives that could escape the staging root or smuggle unrelated
+  # paths. Listing is intentionally performed before extraction.
+  if ! tar -tf "$ARCHIVE" | awk '
+    $0 !~ /^n8n-home(\/|$)/ { invalid=1 }
+    $0 ~ /(^|\/)\.\.($|\/)/ { invalid=1 }
+    END { exit invalid ? 1 : 0 }
+  '; then
+    echo "Orb state archive has an invalid entry path." >&2
+    exit 1
+  fi
+else
+  actual_sha="${ARCHIVE_SHA256,,}"
+  extracted_real="$(realpath "$EXTRACTED_HOME")"
+  [[ "$extracted_real" != /mnt/* ]] || { echo "--extracted-home must be on the native Linux filesystem." >&2; exit 1; }
+  EXTRACTED_HOME="$extracted_real"
 fi
 
 staging_root="$STATE_ROOT/staging"
@@ -82,7 +105,8 @@ validate_staged_home() {
 }
 
 if [[ "$APPLY" != "1" ]]; then
-  echo "Verified archive checksum: $actual_sha"
+  [[ -n "$ARCHIVE" ]] && echo "Verified archive checksum: $actual_sha"
+  [[ -n "$EXTRACTED_HOME" ]] && echo "Verified Windows transfer checksum: $actual_sha"
   echo "Would stage native Orb state at: $stage_dir"
   exit 0
 fi
@@ -96,9 +120,22 @@ if sudo -n test -e "$stage_dir"; then
 fi
 
 temporary_dir="$(sudo -n mktemp -d "$staging_root/.${stage_id}.XXXXXX")"
-cleanup() { sudo -n rm -rf "$temporary_dir"; }
+preserve_temporary=0
+cleanup() {
+  if [[ "$preserve_temporary" == "1" ]]; then
+    echo "Preserved failed native staging at $temporary_dir" >&2
+  else
+    sudo -n rm -rf "$temporary_dir"
+  fi
+}
 trap cleanup EXIT
-sudo -n tar -xf "$ARCHIVE" -C "$temporary_dir"
+if [[ -n "$ARCHIVE" ]]; then
+  sudo -n tar -xf "$ARCHIVE" -C "$temporary_dir"
+else
+  validate_staged_home "$EXTRACTED_HOME"
+  sudo -n mv "$EXTRACTED_HOME" "$temporary_dir/n8n-home"
+  preserve_temporary=1
+fi
 sudo -n chown -R "$RUNTIME_USER:$RUNTIME_USER" "$temporary_dir"
 validate_staged_home "$temporary_dir/n8n-home"
 
@@ -127,5 +164,6 @@ package_lock_after_sha256=$after_lock
 EOF
 sudo -n chown "$RUNTIME_USER:$RUNTIME_USER" "$temporary_dir/n8n-home/state-archive.manifest"
 sudo -n mv "$temporary_dir" "$stage_dir"
+preserve_temporary=0
 trap - EXIT
 echo "STAGED_ORB_STATE_HOME=$home"
