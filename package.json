@@ -4,6 +4,7 @@
     "api:test": "npm --prefix api test",
     "booking:test": "npm --prefix booking test",
     "runtime:lifecycle:prepare": "bash ./scripts/runtime/prepare-lifecycle-layout.sh",
+    "runtime:orb-state:test": "bash ./scripts/runtime/test-stage-orb-state-archive.sh",
     "runtime:lifecycle:preflight": "bash ./scripts/runtime/cutover-lifecycle-runtime.sh",
     "runtime:lifecycle:cutover": "bash ./scripts/runtime/cutover-lifecycle-runtime.sh --apply",
     "runtime:backup:storage-copy:test": "bash ./orb/engine/scripts/test-backup-n8n-storage-copy.sh",
