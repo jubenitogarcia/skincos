@@ -21,6 +21,10 @@ required=(
   'restore_legacy_watchdog()'
   'Quiescing the legacy watchdog.'
   'systemctl disable --now "$LEGACY_WATCHDOG_TIMER"'
+  "LIFECYCLE_TRANSFER_ROOT=/{print \$2; exit}' | tr -d '\\r'"
+  "ORB_STATE_ARCHIVE=/{print \$2; exit}' | tr -d '\\r'"
+  "ORB_STATE_SHA256=/{print \$2; exit}' | tr -d '\\r'"
+  "EXTRACTED_ORB_STATE_HOME=/{print \$2; exit}' | tr -d '\\r'"
 )
 
 for pattern in "${required[@]}"; do
@@ -29,6 +33,13 @@ for pattern in "${required[@]}"; do
     exit 1
   }
 done
+
+transfer_line=$'LIFECYCLE_TRANSFER_ROOT=/home/admin/skincos-lifecycle-transfer/example\r'
+transfer_root="$(printf '%s\n' "$transfer_line" | awk -F= '/^LIFECYCLE_TRANSFER_ROOT=/{print $2; exit}' | tr -d '\r')"
+[[ "$transfer_root" == '/home/admin/skincos-lifecycle-transfer/example' ]] || {
+  echo 'Windows CRLF transfer root was not normalized.' >&2
+  exit 1
+}
 
 function_file="$(mktemp)"
 trap 'rm -f "$function_file"' EXIT
