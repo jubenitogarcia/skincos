@@ -1,5 +1,16 @@
 # DECISIONS
 
+## 2026-07-15 - Keep the Windows WSL anchor on a native Linux working directory
+
+- Decision: launch the single WSL keepalive client with `--cd /` and only reuse
+  a process whose command line proves that native working directory.
+- Why: inheriting `C:\Windows\System32` made the otherwise idle anchor report a
+  DrvFS current directory, violating the final runtime contract even though no
+  application state was read there.
+- Impact: application services, the keepalive anchor and mutable runtime state
+  have no working-directory dependency on `/mnt/c`; the Windows task remains
+  the supported invisible lifecycle anchor.
+
 ## 2026-07-14 - Adopt direct domain roots and a single public API gateway
 
 - Decision: use direct English product roots as defined in

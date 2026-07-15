@@ -24,6 +24,7 @@ function Test-SkincosWslKeepaliveProcess {
     $distroPattern = [regex]::Escape($ExpectedDistro)
     return $commandLine -match ('(?i)(?:^|\s)-d\s+"?{0}(?:"?|\s)' -f $distroPattern) -and
         $commandLine -match "(?i)(?:^|\s)-u\s+root(?:\s|$)" -and
+        $commandLine -match "(?i)(?:^|\s)--cd\s+/(?:\s|$)" -and
         $commandLine -match "(?i)/bin/sleep\s+infinity(?:\s|$)"
 }
 
@@ -53,7 +54,7 @@ if ($existingKeepalive) {
 # Detach from Task Scheduler so the WSL client survives after this launcher exits.
 $process = Start-Process `
     -FilePath $wslPath `
-    -ArgumentList @("-d", $Distro, "-u", "root", "--", "/bin/sleep", "infinity") `
+    -ArgumentList @("-d", $Distro, "-u", "root", "--cd", "/", "--", "/bin/sleep", "infinity") `
     -WindowStyle Hidden `
     -PassThru
 
