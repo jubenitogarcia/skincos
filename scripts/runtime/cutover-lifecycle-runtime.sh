@@ -20,6 +20,7 @@ ORB_STATE_HOME=""
 WINDOWS_TRANSFER_SCRIPT=""
 WINDOWS_ORB_EXPORT_SCRIPT=""
 WINDOWS_ORB_TRANSFER_SCRIPT=""
+WINDOWS_POWERSHELL="${WINDOWS_POWERSHELL:-}"
 CHECKPOINT_DIR=""
 CUTOVER_STARTED=0
 CUTOVER_COMPLETE=0
@@ -83,6 +84,39 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }
 }
 
+resolve_windows_powershell() {
+  if [[ -n "$WINDOWS_POWERSHELL" ]]; then
+    [[ -x "$WINDOWS_POWERSHELL" ]] || { echo "WINDOWS_POWERSHELL is not executable: $WINDOWS_POWERSHELL" >&2; exit 1; }
+    return
+  fi
+
+  if command -v powershell.exe >/dev/null 2>&1; then
+    WINDOWS_POWERSHELL="$(command -v powershell.exe)"
+    return
+  fi
+
+  # WSL interop does not guarantee that Windows' System32 is in PATH. The
+  # final delta must still be initiated by Windows, so use its canonical path
+  # rather than falling back to a recursive DrvFS read.
+  local mounted_path="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+  [[ -x "$mounted_path" ]] || { echo "Windows PowerShell is required for the Windows-native final transfer." >&2; exit 1; }
+  WINDOWS_POWERSHELL="$mounted_path"
+}
+
+to_windows_path() {
+  local path="$1"
+  if [[ "$path" == /mnt/* ]]; then
+    wslpath -w "$path"
+    return
+  fi
+
+  [[ "$path" =~ ^[A-Za-z]:\\ ]] || {
+    echo "Expected a Windows path or a mounted /mnt path, got: $path" >&2
+    exit 1
+  }
+  printf '%s\n' "$path"
+}
+
 for command in curl readlink sha256sum python3 systemctl wslpath awk; do require_cmd "$command"; done
 require_cmd sudo
 sudo -n true
@@ -96,7 +130,10 @@ sudo -n test -f "$ORB_STATE_HOME/state-archive.manifest" && sudo -n test -f "$OR
 [[ "$START_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "CUTOVER_START_TIMEOUT_SECONDS must be a positive integer." >&2; exit 1; }
 [[ -n "$WINDOWS_TRANSFER_SCRIPT" ]] || { echo "--windows-transfer-script is required: final state must be copied by Windows, not read recursively through /mnt/c." >&2; exit 1; }
 [[ -n "$WINDOWS_ORB_EXPORT_SCRIPT" && -n "$WINDOWS_ORB_TRANSFER_SCRIPT" ]] || { echo "Windows Orb export and transfer scripts are required: a stale Orb staging directory cannot be promoted." >&2; exit 1; }
-command -v powershell.exe >/dev/null 2>&1 || { echo "powershell.exe is required for the Windows-native final transfer." >&2; exit 1; }
+resolve_windows_powershell
+WINDOWS_TRANSFER_SCRIPT="$(to_windows_path "$WINDOWS_TRANSFER_SCRIPT")"
+WINDOWS_ORB_EXPORT_SCRIPT="$(to_windows_path "$WINDOWS_ORB_EXPORT_SCRIPT")"
+WINDOWS_ORB_TRANSFER_SCRIPT="$(to_windows_path "$WINDOWS_ORB_TRANSFER_SCRIPT")"
 
 expected_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["databaseSha256"])' "$BACKUP_DIR/manifest.json")"
 actual_sha="$(sha256sum "$BACKUP_DIR/n8n_runtime.dump" | awk '{print $1}')"
@@ -227,7 +264,7 @@ restore_legacy_services() {
 run_final_windows_transfer() {
   local output transfer_root
   echo "Capturing final non-Orb delta through Windows into native Linux storage."
-  output="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_TRANSFER_SCRIPT" -FinalSync)" || {
+  output="$("$WINDOWS_POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_TRANSFER_SCRIPT" -FinalSync)" || {
     echo "Windows final transfer failed; legacy services will be restored." >&2
     return 1
   }
@@ -242,12 +279,12 @@ run_final_orb_transfer() {
   local export_output archive archive_sha transfer_output extracted_home staged_output staged_home windows_artifact_root
   windows_artifact_root="$(wslpath -w "$RUNTIME_ROOT/artifacts/runtime-cutover/$timestamp")"
   echo "Creating authoritative Orb state archive through Windows after legacy services stopped."
-  export_output="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_ORB_EXPORT_SCRIPT" -ArtifactRoot "$windows_artifact_root" -RequireLegacyOrbStopped)" || return 1
+  export_output="$("$WINDOWS_POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_ORB_EXPORT_SCRIPT" -ArtifactRoot "$windows_artifact_root" -RequireLegacyOrbStopped)" || return 1
   printf '%s\n' "$export_output"
   archive="$(printf '%s\n' "$export_output" | awk -F= '/^ORB_STATE_ARCHIVE=/{print $2; exit}')"
   archive_sha="$(printf '%s\n' "$export_output" | awk -F= '/^ORB_STATE_SHA256=/{print $2; exit}')"
   [[ -n "$archive" && "$archive_sha" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "Windows Orb export did not return an archive and SHA-256." >&2; return 1; }
-  transfer_output="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_ORB_TRANSFER_SCRIPT" -Archive "$archive" -Sha256 "$archive_sha")" || return 1
+  transfer_output="$("$WINDOWS_POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_ORB_TRANSFER_SCRIPT" -Archive "$archive" -Sha256 "$archive_sha")" || return 1
   printf '%s\n' "$transfer_output"
   extracted_home="$(printf '%s\n' "$transfer_output" | awk -F= '/^EXTRACTED_ORB_STATE_HOME=/{print $2; exit}')"
   [[ -n "$extracted_home" && "$extracted_home" != /mnt/* ]] || { echo "Windows Orb transfer did not return native extracted state." >&2; return 1; }

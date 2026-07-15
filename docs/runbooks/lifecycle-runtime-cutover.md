@@ -140,14 +140,20 @@ source into `/var/lib/skincos-runtime/orb/workflows`. The lifecycle Orb unit and
 the official validator read this runtime location; no workflow state is copied
 into the new checkout.
 
-Before the window, stage the reviewed tracked source and locked CRM production
-dependencies on Linux. This creates `/opt/skincos/current/source` from `git
-archive`; it excludes worktree metadata, ignored files and private overlays.
-All lifecycle units use this path rather than a DrvFS checkout:
+Before the window, use Windows to create a tracked-source archive for the
+reviewed SHA and copy it into a native Linux ingress directory. Record its
+SHA-256. Do not run `git archive` from WSL against `/mnt/c`: the release helper
+accepts only the already-transferred native archive. It creates
+`/opt/skincos/current/source`, normalizes executable launchers and installs the
+locked CRM production dependencies. All lifecycle units use this path rather
+than a DrvFS checkout:
 
 ```bash
 SKINCOS_RELEASE_ID=<reviewed-main-sha> \
-  scripts/runtime/prepare-native-source-release.sh --apply
+  scripts/runtime/prepare-native-source-release.sh \
+    --archive /home/admin/skincos-native-release/<reviewed-main-sha>/source.tar \
+    --sha256 <windows-recorded-sha256> \
+    --apply
 ```
 
 Before stopping the legacy WhatsApp service, stage the reviewed release on the
