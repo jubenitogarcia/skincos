@@ -297,7 +297,7 @@ run_final_windows_transfer() {
     return 1
   }
   printf '%s\n' "$output"
-  transfer_root="$(printf '%s\n' "$output" | awk -F= '/^LIFECYCLE_TRANSFER_ROOT=/{print $2; exit}')"
+  transfer_root="$(printf '%s\n' "$output" | awk -F= '/^LIFECYCLE_TRANSFER_ROOT=/{print $2; exit}' | tr -d '\r')"
   [[ -n "$transfer_root" ]] || { echo "Windows transfer did not report LIFECYCLE_TRANSFER_ROOT." >&2; return 1; }
   [[ "$transfer_root" != /mnt/c/* ]] || { echo "Windows transfer incorrectly returned a DrvFS path." >&2; return 1; }
   "$ROOT_DIR/scripts/runtime/apply-lifecycle-state-transfer.sh" --transfer-root "$transfer_root" --apply --final-sync
@@ -309,12 +309,12 @@ run_final_orb_transfer() {
   echo "Creating authoritative Orb state archive through Windows after legacy services stopped."
   export_output="$("$WINDOWS_POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_ORB_EXPORT_SCRIPT" -ArtifactRoot "$windows_artifact_root" -RequireLegacyOrbStopped)" || return 1
   printf '%s\n' "$export_output"
-  archive="$(printf '%s\n' "$export_output" | awk -F= '/^ORB_STATE_ARCHIVE=/{print $2; exit}')"
-  archive_sha="$(printf '%s\n' "$export_output" | awk -F= '/^ORB_STATE_SHA256=/{print $2; exit}')"
+  archive="$(printf '%s\n' "$export_output" | awk -F= '/^ORB_STATE_ARCHIVE=/{print $2; exit}' | tr -d '\r')"
+  archive_sha="$(printf '%s\n' "$export_output" | awk -F= '/^ORB_STATE_SHA256=/{print $2; exit}' | tr -d '\r')"
   [[ -n "$archive" && "$archive_sha" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "Windows Orb export did not return an archive and SHA-256." >&2; return 1; }
   transfer_output="$("$WINDOWS_POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_ORB_TRANSFER_SCRIPT" -Archive "$archive" -Sha256 "$archive_sha")" || return 1
   printf '%s\n' "$transfer_output"
-  extracted_home="$(printf '%s\n' "$transfer_output" | awk -F= '/^EXTRACTED_ORB_STATE_HOME=/{print $2; exit}')"
+  extracted_home="$(printf '%s\n' "$transfer_output" | awk -F= '/^EXTRACTED_ORB_STATE_HOME=/{print $2; exit}' | tr -d '\r')"
   [[ -n "$extracted_home" && "$extracted_home" != /mnt/* ]] || { echo "Windows Orb transfer did not return native extracted state." >&2; return 1; }
   staged_output="$("$ROOT_DIR/scripts/runtime/stage-orb-state-archive.sh" --extracted-home "$extracted_home" --sha256 "$archive_sha" --apply)" || return 1
   printf '%s\n' "$staged_output"
