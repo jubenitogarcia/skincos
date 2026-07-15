@@ -335,7 +335,12 @@ save_legacy_units
 CUTOVER_STARTED=1
 
 echo "Stopping legacy ingress and runtimes."
-stop_units_bounded "${legacy_units[@]}"
+if ! stop_units_bounded "${legacy_units[@]}"; then
+  echo "Legacy services did not reach a stopped state; restoring the retained stack before exit." >&2
+  restore_legacy_services
+  CUTOVER_STARTED=0
+  exit 1
+fi
 run_final_windows_transfer
 run_final_orb_transfer
 "$ROOT_DIR/scripts/runtime/promote-orb-state-staging.sh" --apply --staged-home "$ORB_STATE_HOME"

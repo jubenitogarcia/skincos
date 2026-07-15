@@ -14,6 +14,8 @@ required=(
   'wslpath -w "$path"'
   '"$WINDOWS_POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_TRANSFER_SCRIPT" -FinalSync'
   '"$expected" == "inactive" && "$state" == "failed"'
+  'Legacy services did not reach a stopped state; restoring the retained stack before exit.'
+  'if ! stop_units_bounded "${legacy_units[@]}"; then'
 )
 
 for pattern in "${required[@]}"; do
