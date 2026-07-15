@@ -223,7 +223,7 @@ continue unless its runtime artifact links resolve to the staged bundle.
 ## After the cut
 
 - Confirm each lifecycle unit is active and the old unit names are disabled.
-- Install the Windows-owned backup schedule from an elevated PowerShell:
+- Install the Windows-owned backup schedule from the `admin` operator session:
 
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\scripts\runtime\install-orb-backup-task.ps1 -RunNow
