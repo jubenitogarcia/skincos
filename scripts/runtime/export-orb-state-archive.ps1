@@ -31,7 +31,7 @@ $resolvedArtifactRoot = [System.IO.Path]::GetFullPath($ArtifactRoot)
 New-Item -ItemType Directory -Path $resolvedArtifactRoot -Force | Out-Null
 $archive = Join-Path $resolvedArtifactRoot 'n8n-home-state.tar'
 $manifest = Join-Path $resolvedArtifactRoot 'n8n-home-state.manifest.json'
-if (Test-Path -LiteralPath $archive -or Test-Path -LiteralPath $manifest) {
+if ((Test-Path -LiteralPath $archive) -or (Test-Path -LiteralPath $manifest)) {
     throw "Refusing to overwrite an existing Orb state archive in: $resolvedArtifactRoot"
 }
 
@@ -70,6 +70,11 @@ $record = [ordered]@{
     nodesDependencies = 'excluded-and-rebuilt-natively'
     legacyOrbStoppedRequired = [bool]$RequireLegacyOrbStopped
 }
-$record | ConvertTo-Json | Set-Content -LiteralPath $manifest -Encoding utf8NoBOM
+$manifestJson = $record | ConvertTo-Json
+[System.IO.File]::WriteAllText(
+    $manifest,
+    $manifestJson,
+    (New-Object System.Text.UTF8Encoding($false))
+)
 Write-Output "ORB_STATE_ARCHIVE=$archive"
 Write-Output "ORB_STATE_SHA256=$sha256"
