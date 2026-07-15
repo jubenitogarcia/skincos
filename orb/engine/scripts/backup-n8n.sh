@@ -17,8 +17,7 @@ RUNTIME_SERVICE="${RUNTIME_SERVICE:-$SKINCOS_N8N_SERVICE}"
 VERIFY_RESTORE="${VERIFY_RESTORE:-auto}"
 BACKUP_STORAGE_COPY_TRANSPORT="${BACKUP_STORAGE_COPY_TRANSPORT:-auto}"
 ROBOCOPY_BIN="${ROBOCOPY_BIN:-}"
-CERTUTIL_BIN="${CERTUTIL_BIN:-}"
-WINDOWS_TAR_BIN="${WINDOWS_TAR_BIN:-}"
+POWERSHELL_BIN="${POWERSHELL_BIN:-}"
 WINDOWS_TRANSFER_LINUX_USER="${WINDOWS_TRANSFER_LINUX_USER:-admin}"
 BACKUP_NATIVE_TRANSFER_ROOT="${BACKUP_NATIVE_TRANSFER_ROOT:-/home/$WINDOWS_TRANSFER_LINUX_USER/skincos-orb-backup-transfer}"
 timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
@@ -88,20 +87,17 @@ resolve_robocopy() {
   return 1
 }
 
-resolve_windows_validator() {
+resolve_windows_powershell() {
   local candidate
-  if [[ -z "$CERTUTIL_BIN" ]]; then
-    for candidate in /mnt/c/Windows/System32/certutil.exe /mnt/c/WINDOWS/system32/certutil.exe; do
-      if [[ -x "$candidate" ]]; then CERTUTIL_BIN="$candidate"; break; fi
+  if [[ -z "$POWERSHELL_BIN" ]]; then
+    for candidate in \
+      /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
+      /mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe; do
+      if [[ -x "$candidate" ]]; then POWERSHELL_BIN="$candidate"; break; fi
     done
   fi
-  if [[ -z "$WINDOWS_TAR_BIN" ]]; then
-    for candidate in /mnt/c/Windows/System32/tar.exe /mnt/c/WINDOWS/system32/tar.exe; do
-      if [[ -x "$candidate" ]]; then WINDOWS_TAR_BIN="$candidate"; break; fi
-    done
-  fi
-  [[ -n "$CERTUTIL_BIN" && -n "$WINDOWS_TAR_BIN" ]] || {
-    echo "Windows certutil.exe and tar.exe are required for native storage backup transfer." >&2
+  [[ -n "$POWERSHELL_BIN" ]] || {
+    echo "Windows PowerShell is required for native storage backup transfer." >&2
     return 1
   }
 }
@@ -123,8 +119,7 @@ ensure_windows_interop() {
 
 sync_native_storage_via_windows() {
   ensure_windows_interop
-  resolve_robocopy || { echo "robocopy.exe is required for native storage backup transfer." >&2; return 1; }
-  resolve_windows_validator
+  resolve_windows_powershell
   command -v tar >/dev/null 2>&1 || { echo "tar is required for native storage backup transfer." >&2; return 1; }
   id "$WINDOWS_TRANSFER_LINUX_USER" >/dev/null 2>&1 || {
     echo "Windows transfer Linux user is unavailable: $WINDOWS_TRANSFER_LINUX_USER" >&2
@@ -146,7 +141,7 @@ sync_native_storage_via_windows() {
   fi
   chmod 0600 "$archive"
 
-  local source_sha source_windows destination_windows destination_file_windows destination_sha status=0
+  local source_sha source_windows destination_windows destination_file_windows destination_sha powershell_script
   source_sha="$(sha256sum "$archive" | awk '{print $1}')"
   # The common backup scaffold creates this directory for directory-format
   # copies. Native Linux state is stored as a tar archive instead, so do not
@@ -155,13 +150,19 @@ sync_native_storage_via_windows() {
   source_windows="$(wslpath -w "$native_transfer_dir")"
   destination_windows="$(wslpath -w "$partial")"
   destination_file_windows="${destination_windows}\\storage.tar"
-  "$ROBOCOPY_BIN" "$source_windows" "$destination_windows" storage.tar /COPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >/dev/null || status=$?
-  if (( status > 7 )); then
-    echo "Windows-native storage archive transfer failed with robocopy exit code $status." >&2
-    return "$status"
-  fi
-  "$WINDOWS_TAR_BIN" -tf "$destination_file_windows" >/dev/null
-  destination_sha="$("$CERTUTIL_BIN" -hashfile "$destination_file_windows" SHA256 | tr -d '\r ' | grep -E '^[0-9A-Fa-f]{64}$' | head -n1 | tr 'A-F' 'a-f')"
+  # Passing a WSL UNC path directly as a Linux argv to a Windows executable is
+  # rewritten by WSL path translation. Send the command over stdin instead, so
+  # Windows PowerShell owns both UNC traversal and NTFS validation end to end.
+  source_windows="${source_windows//\'/\'\'}"
+  destination_windows="${destination_windows//\'/\'\'}"
+  destination_file_windows="${destination_file_windows//\'/\'\'}"
+  powershell_script="\$ErrorActionPreference = 'Stop'
+& robocopy.exe '$source_windows' '$destination_windows' storage.tar /COPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+if (\$LASTEXITCODE -gt 7) { throw \"robocopy failed with exit code \$LASTEXITCODE\" }
+& tar.exe -tf '$destination_file_windows' | Out-Null
+if (\$LASTEXITCODE -ne 0) { throw \"tar validation failed with exit code \$LASTEXITCODE\" }
+(Get-FileHash -LiteralPath '$destination_file_windows' -Algorithm SHA256).Hash.ToLowerInvariant()"
+  destination_sha="$(printf '%s' "$powershell_script" | "$POWERSHELL_BIN" -NoProfile -NonInteractive -Command - | tr -d '\r' | grep -E '^[0-9a-f]{64}$' | tail -n1)"
   [[ -n "$destination_sha" && "$destination_sha" == "$source_sha" ]] || {
     echo "Windows-native storage archive checksum mismatch." >&2
     return 1
