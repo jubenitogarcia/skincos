@@ -5,10 +5,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const RUNTIME_HOME = process.env.N8N_RUNTIME_HOME || '/mnt/c/CodexRuntime/n8n';
-const ENV_FILE = process.env.N8N_ENV_FILE || path.join(RUNTIME_HOME, 'env', 'n8n.env');
+const RUNTIME_HOME = process.env.N8N_RUNTIME_HOME || '/var/lib/skincos-runtime/orb';
+const ENV_FILE = process.env.N8N_ENV_FILE || '/etc/skincos/orb.env';
 const STORAGE_PATH = process.env.N8N_STORAGE_PATH || path.join(RUNTIME_HOME, 'n8n-home', '.n8n', 'storage');
-const BACKUP_ROOT = path.join(RUNTIME_HOME, 'backups', 'daily');
+const BACKUP_ROOT = process.env.BACKUP_ROOT || '/var/backups/skincos/orb/daily';
 const QUICK = process.argv.includes('--quick');
 
 function parseEnv(file) {

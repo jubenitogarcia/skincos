@@ -8,13 +8,12 @@ UNIT_DEST="${UNIT_DEST:-/etc/systemd/system}"
 # active state, private configuration, logs, caches and temporary files must
 # never depend on DrvFS. These roots intentionally mirror the final runtime
 # lifecycle contract.
-RUNTIME_ROOT="${RUNTIME_ROOT:-/mnt/c/CodexRuntime}"
 SOURCE_ROOT="${SOURCE_ROOT:-}"
 STATE_ROOT="${STATE_ROOT:-/var/lib/skincos-runtime}"
 CONFIG_ROOT="${CONFIG_ROOT:-/etc/skincos}"
 LOG_ROOT="${LOG_ROOT:-/var/log/skincos}"
 TMP_ROOT="${TMP_ROOT:-/var/tmp/skincos}"
-ARTIFACT_ROOT="${ARTIFACT_ROOT:-$RUNTIME_ROOT/artifacts}"
+ARTIFACT_ROOT="${ARTIFACT_ROOT:-$STATE_ROOT/artifacts}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/skincos}"
 APPLY=0
 
@@ -24,13 +23,13 @@ Usage: scripts/runtime/install-lifecycle-units.sh [--apply]
 
 Renders and verifies the final lifecycle units. Without --apply it only writes
 temporary rendered units and runs systemd-analyze verify. With --apply it
-installs, enables and daemon-reloads the final units; it deliberately does not
-stop or disable the old units. The coordinated cutover script owns that step.
+installs, enables and daemon-reloads the final units.
 
 Default native roots are /var/lib/skincos-runtime, /etc/skincos,
 /var/log/skincos, /var/tmp/skincos and /var/backups/skincos. Runtime source is
 read from /opt/skincos/current/source. A Windows Scheduled Task publishes each
 verified native backup to C:\CodexRuntime; the WSL service never traverses C:.
+The Windows task is the only backup scheduler; no WSL backup timer is installed.
 EOF
 }
 
@@ -68,7 +67,6 @@ fi
 
 sed_escape() { printf '%s' "$1" | sed 's/[&|]/\\&/g'; }
 source_escaped="$(sed_escape "$SOURCE_ROOT")"
-runtime_escaped="$(sed_escape "$RUNTIME_ROOT")"
 state_escaped="$(sed_escape "$STATE_ROOT")"
 config_escaped="$(sed_escape "$CONFIG_ROOT")"
 log_escaped="$(sed_escape "$LOG_ROOT")"
@@ -96,7 +94,6 @@ for unit in "${units[@]}"; do
   output="$render_dir/$unit"
   sed \
     -e "s|__REPO_ROOT__|$source_escaped|g" \
-    -e "s|__RUNTIME_ROOT__|$runtime_escaped|g" \
     -e "s|__STATE_ROOT__|$state_escaped|g" \
     -e "s|__CONFIG_ROOT__|$config_escaped|g" \
     -e "s|__LOG_ROOT__|$log_escaped|g" \
@@ -108,22 +105,10 @@ for unit in "${units[@]}"; do
   rendered+=("$output")
 done
 
-rendered_timer="$render_dir/orb-backup.timer"
-sed \
-  -e "s|__REPO_ROOT__|$source_escaped|g" \
-  -e "s|__RUNTIME_ROOT__|$runtime_escaped|g" \
-  -e "s|__STATE_ROOT__|$state_escaped|g" \
-  -e "s|__CONFIG_ROOT__|$config_escaped|g" \
-  -e "s|__LOG_ROOT__|$log_escaped|g" \
-  -e "s|__TMP_ROOT__|$tmp_escaped|g" \
-  -e "s|__ARTIFACT_ROOT__|$artifact_escaped|g" \
-  -e "s|__BACKUP_ROOT__|$backup_escaped|g" \
-  "$UNIT_SRC/orb-backup.timer" >"$rendered_timer"
-chmod 0644 "$rendered_timer"
 if [[ "$VERIFY_WITH_SUDO" == "1" ]]; then
-  sudo -n systemd-analyze verify "${rendered[@]}" "$rendered_timer"
+  sudo -n systemd-analyze verify "${rendered[@]}"
 else
-  systemd-analyze verify "${rendered[@]}" "$rendered_timer"
+  systemd-analyze verify "${rendered[@]}"
 fi
 echo "Lifecycle unit templates verify successfully."
 printf '  %s\n' "${units[@]}"
@@ -136,7 +121,5 @@ if [[ "$APPLY" == "1" ]]; then
   done
   sudo -n systemctl daemon-reload
   sudo -n systemctl enable "${units[@]}" >/dev/null
-  sudo -n install -m 0644 "$rendered_timer" "$UNIT_DEST/orb-backup.timer"
-  sudo -n systemctl disable --now orb-backup.timer >/dev/null 2>&1 || true
-  echo "Lifecycle units installed. Windows Task Scheduler owns the Orb backup schedule; the WSL timer remains disabled."
+  echo "Lifecycle units installed. Windows Task Scheduler exclusively owns the Orb backup schedule."
 fi

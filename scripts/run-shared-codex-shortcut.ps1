@@ -398,22 +398,22 @@ function Invoke-ShortcutActionInternal {
                 -Command "cd integration/ef && bash ./scripts/rotate_agenda_sync_token.sh --website-dir ../../../../website"
         }
         "OrbStatus" {
-            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/manage-mini-pc-system-services.sh status"
+            Invoke-ShortcutWsl -Command "bash scripts/runtime/manage-native-runtime.sh status"
         }
         "OrbRestart" {
-            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/manage-mini-pc-system-services.sh restart"
+            Invoke-ShortcutWsl -Command "bash scripts/runtime/manage-native-runtime.sh restart"
         }
         "OrbRepair" {
-            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/reconcile-mini-pc-runtime-postgres.sh"
+            Invoke-ShortcutWsl -Command "bash scripts/runtime/prepare-lifecycle-layout.sh --apply && bash scripts/runtime/install-lifecycle-units.sh --apply && bash scripts/runtime/manage-native-runtime.sh restart && bash scripts/runtime/manage-native-runtime.sh validate"
         }
         "OrbLogs" {
-            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/manage-mini-pc-system-services.sh logs 200"
+            Invoke-ShortcutWsl -Command "bash scripts/runtime/manage-native-runtime.sh logs 200"
         }
         "MetaAdsPublishPreflight" {
             Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/validate-meta-ads-publish-preflight.sh"
         }
         "OrbValidate" {
-            Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/validate-mini-pc-system-runtime.sh"
+            Invoke-ShortcutWsl -Command "bash scripts/runtime/manage-native-runtime.sh validate"
         }
         "OrbBusinessValidate" {
             Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/validate-mini-pc-business-readiness.sh"
@@ -422,7 +422,7 @@ function Invoke-ShortcutActionInternal {
             Invoke-ShortcutWsl -Command "cd orb/engine && bash scripts/audit-mini-pc-service-footprint.sh"
         }
         "OrbSupportServicesApply" {
-            Invoke-ShortcutWsl -Command "bash ./scripts/install-shared-support-system-services.sh --apply"
+            Invoke-ShortcutWsl -Command "bash ./scripts/runtime/install-lifecycle-units.sh --apply"
         }
         "OrbImportClinicWorkflowsLive" {
             $importChoice = Read-MenuSelection `

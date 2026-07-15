@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RUNTIME_HOME="${CRM_RUNTIME_HOME:-/mnt/c/CodexRuntime/crm-api}"
-ENV_FILE="${SKINCOS_CRM_API_ENV_FILE:-$RUNTIME_HOME/env/crm-api.env}"
+RUNTIME_HOME="${CRM_RUNTIME_HOME:-/var/lib/skincos-runtime/crm}"
+ENV_FILE="${SKINCOS_CRM_API_ENV_FILE:-/etc/skincos/crm.env}"
 
 mkdir -p "$RUNTIME_HOME/var" "$RUNTIME_HOME/var/logs" "$RUNTIME_HOME/var/pids"
 

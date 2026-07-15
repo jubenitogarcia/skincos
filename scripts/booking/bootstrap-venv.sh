@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRAPER_DIR="$ROOT_DIR/integration/ef"
-RUNTIME_HOME="${BOOKING_API_RUNTIME_HOME:-/mnt/c/CodexRuntime/booking-api}"
+RUNTIME_HOME="${BOOKING_API_RUNTIME_HOME:-/var/lib/skincos-runtime/booking}"
 VENV_DIR="${EF_SCRAPER_VENV_DIR:-$RUNTIME_HOME/venv}"
 REQUIREMENTS_FILE="${BOOKING_API_REQUIREMENTS_FILE:-$SCRAPER_DIR/requirements.lock}"
 

@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRAPER_DIR="$ROOT_DIR/integration/ef"
-RUNTIME_HOME="${BOOKING_API_RUNTIME_HOME:-/mnt/c/CodexRuntime/booking-api}"
-ENV_FILE="${SKINCOS_BOOKING_API_ENV_FILE:-$RUNTIME_HOME/env/booking-api.env}"
+RUNTIME_HOME="${BOOKING_API_RUNTIME_HOME:-/var/lib/skincos-runtime/booking}"
+ENV_FILE="${SKINCOS_BOOKING_API_ENV_FILE:-/etc/skincos/booking.env}"
 VENV_DIR="${EF_SCRAPER_VENV_DIR:-$RUNTIME_HOME/venv}"
 
 mkdir -p \
@@ -22,8 +22,8 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-  echo "[migration] Missing booking-api virtualenv at $VENV_DIR" >&2
-  echo "[migration] Run scripts/booking/bootstrap-venv.sh first." >&2
+  echo "Missing booking virtualenv at $VENV_DIR" >&2
+  echo "Run scripts/booking/bootstrap-venv.sh first." >&2
   exit 1
 fi
 

@@ -1,7 +1,7 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
     [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
-    [string]$RuntimeRoot = "C:\CodexRuntime\n8n",
+    [string]$RuntimeRoot = "C:\CodexRuntime",
     [switch]$FailOnDrift
 )
 
@@ -85,7 +85,7 @@ $retiredPaths = @(
     "C:\CodexRuntime\recovery\atendimento-legacy"
 )
 
-$backupRoot = Join-Path $RuntimeRoot "backups"
+$backupRoot = Join-Path $RuntimeRoot "backups\orb\daily"
 $backupFiles = if (Test-Path -LiteralPath $backupRoot) {
     @(Get-ChildItem -LiteralPath $backupRoot -File -Recurse -Force -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
 } else { @() }
@@ -111,7 +111,7 @@ $result = [pscustomobject]@{
     worktrees = @(Get-WorktreeAudit)
     retiredPaths = @($retiredPaths | ForEach-Object { [pscustomobject]@{ path = $_; exists = Test-Path -LiteralPath $_ } })
     orphanScheduledTaskPresent = $null -ne $orphanTask
-    latestN8nBackup = if ($latestBackup) {
+    latestOrbBackup = if ($latestBackup) {
         [pscustomobject]@{ path = $latestBackup.FullName; bytes = [int64]$latestBackup.Length; ageHours = [math]::Round(((Get-Date).ToUniversalTime() - $latestBackup.LastWriteTimeUtc).TotalHours, 2) }
     } else { $null }
     cDrive = [pscustomobject]@{ freeBytes = [int64]$drive.Free; usedBytes = [int64]$drive.Used }
