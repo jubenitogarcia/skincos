@@ -1,0 +1,14 @@
+name: Codex GitHub Autonomy Probe
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Emit a trusted no-checkout completion event
+        run: echo 'codex autonomy probe complete'

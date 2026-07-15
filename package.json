@@ -45,6 +45,8 @@
     "crm:local:meta-ads": "bash ./scripts/run-local-crm.sh --module meta-ads",
     "crm:local:site-tracking": "bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready",
     "crm:local:atendimento": "bash ./scripts/run-local-atendimento.sh",
+    "github:autonomy": "powershell -ExecutionPolicy Bypass -File .\\ops\\github-autonomy\\github-autonomy.ps1",
+    "github:autonomy:test": "powershell -ExecutionPolicy Bypass -File .\\ops\\github-autonomy\\github-autonomy.ps1 -Command test",
     "codex:shared:setup": "powershell -ExecutionPolicy Bypass -File .\\scripts\\setup-shared-codex-workspace.ps1",
     "codex:shared:validate": "powershell -ExecutionPolicy Bypass -File .\\scripts\\validate-shared-codex-workspace.ps1",
     "codex:runtime:setup": "powershell -ExecutionPolicy Bypass -File .\\scripts\\setup-shared-runtime.ps1",
