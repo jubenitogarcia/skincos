@@ -1,12 +1,12 @@
-# Backend docs
+# Backend documentation
 
-Entrada recomendada:
-- `backend/docs/INDEX.md`
+This directory contains narrow documentation for compatibility applications still under `backend/`. Current cross-domain architecture and operations documentation lives in the repository-level `docs/` directory.
 
-Docs principais:
-- `backend/docs/HANDBOOK.md`
-- `backend/docs/MODULES.md`
-- `backend/docs/NODE_PACKAGE_MANAGEMENT.md`
-- `backend/docs/SALES_CHART_MESSENGER.md`
+Start with:
 
-Nota: alguns arquivos aqui podem ter sido gerados por automações internas (ex.: “AI runner”) e podem ser arquivados depois em `backend/archive/` se não forem úteis.
+- `docs/service-catalog.md`
+- `docs/ownership-model.md`
+- `docs/runtime-native-cutover-runbook.md`
+- `backend/docs/deploy.md`
+
+Historical inventories and migration proposals were removed after the native runtime cutover; Git preserves their history.

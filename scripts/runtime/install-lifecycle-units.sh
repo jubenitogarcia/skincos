@@ -15,7 +15,7 @@ CONFIG_ROOT="${CONFIG_ROOT:-/etc/skincos}"
 LOG_ROOT="${LOG_ROOT:-/var/log/skincos}"
 TMP_ROOT="${TMP_ROOT:-/var/tmp/skincos}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-$RUNTIME_ROOT/artifacts}"
-BACKUP_ROOT="${BACKUP_ROOT:-$RUNTIME_ROOT/backups}"
+BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/skincos}"
 APPLY=0
 
 usage() {
@@ -28,9 +28,9 @@ installs, enables and daemon-reloads the final units; it deliberately does not
 stop or disable the old units. The coordinated cutover script owns that step.
 
 Default native roots are /var/lib/skincos-runtime, /etc/skincos,
-/var/log/skincos and /var/tmp/skincos. Runtime source is read from
-/opt/skincos/current/source. C:\CodexRuntime is retained only for durable
-backups and artifacts unless explicit root overrides are supplied.
+/var/log/skincos, /var/tmp/skincos and /var/backups/skincos. Runtime source is
+read from /opt/skincos/current/source. A Windows Scheduled Task publishes each
+verified native backup to C:\CodexRuntime; the WSL service never traverses C:.
 EOF
 }
 
@@ -137,6 +137,6 @@ if [[ "$APPLY" == "1" ]]; then
   sudo -n systemctl daemon-reload
   sudo -n systemctl enable "${units[@]}" >/dev/null
   sudo -n install -m 0644 "$rendered_timer" "$UNIT_DEST/orb-backup.timer"
-  sudo -n systemctl enable orb-backup.timer >/dev/null
-  echo "Lifecycle units installed and enabled. Old units remain untouched until cutover."
+  sudo -n systemctl disable --now orb-backup.timer >/dev/null 2>&1 || true
+  echo "Lifecycle units installed. Windows Task Scheduler owns the Orb backup schedule; the WSL timer remains disabled."
 fi

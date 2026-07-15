@@ -23,9 +23,9 @@
       "notes": "API Cloudflare em https://api.skincos.com.br/insumos (proxy same-origin: /api/insumos/* via CRM API)."
     },
     {
-      "id": "whatsapp-official",
-      "label": "WhatsApp (Official Module)",
-      "path": "messaging/channels/whatsapp/official-module",
+      "id": "messaging-whatsapp",
+      "label": "Messaging WhatsApp Engine",
+      "path": "messaging/channels/whatsapp/engine",
       "kind": "service",
       "ports": {
         "base": 3001,
@@ -34,22 +34,7 @@
       "health": {
         "path": "/health"
       },
-      "notes": "Multi-canal via /whatsapp/:channelId/* e /api/channel-manager/*; compat legacy: /status, /qr, /qr.html"
-    },
-    {
-      "id": "whatsapp-gateway",
-      "label": "WhatsApp (Gateway Legacy)",
-      "path": "messaging/channels/whatsapp/gateway",
-      "kind": "service",
-      "ports": {
-        "base": 3001,
-        "range": "3001-3009"
-      },
-      "health": {
-        "path": "/health",
-        "alt": "/status"
-      },
-      "notes": "API legacy completa (/status, /qr.html, etc) + scripts e docker-compose"
+      "notes": "Runtime nativo único em /opt/skincos; API local na porta 8080 e compatibilidade multi-canal no CRM."
     },
     {
       "id": "harmonia",
@@ -114,13 +99,6 @@
         "path": "/health"
       },
       "notes": "Entrypoint: backend/scripts/dev.sh actual-server"
-    },
-    {
-      "id": "chat-module",
-      "label": "Chat Module",
-      "path": "messaging/channels/whatsapp/chat-module",
-      "kind": "service",
-      "notes": "Pacotes (opc.): backend/apps/whatsapp/chat-module/{whatsapp-core,whatsapp-api,whatsapp-ui}"
     },
     {
       "id": "instagram-module",

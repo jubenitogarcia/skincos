@@ -26,7 +26,6 @@ jobs:
             const windowMs = 90 * 60 * 1000; // 90 minutes
             const workflows = [
               { id: "deploy-workers-after-automerge.yml", label: "workers" },
-              { id: "deploy-crm-api-after-automerge.yml", label: "crm-api" },
               { id: "deploy-crm-pages-after-automerge.yml", label: "crm-pages" },
             ];
 

@@ -362,3 +362,39 @@
   while systemd units are enabled, causing cold starts and transient 502/1033.
 - Impact: the orb stack remains resident between Codex actions and is still
   started and supervised by systemd after Windows logon.
+
+## 2026-07-15 - Make the native Linux lifecycle runtime authoritative
+
+- Decision: run the seven final units from immutable releases under
+  `/opt/skincos/current`, with mutable state in `/var/lib/skincos-runtime`,
+  private configuration in `/etc/skincos` and logs in `/var/log/skincos`.
+- Why: recursive DrvFS access produced I/O stalls and tied production to a
+  checkout/worktree. Windows-to-Linux archives plus atomic release links give a
+  verifiable, reversible boundary.
+- Impact: no active service depends on `C:\CodexShared`, `/mnt/c`, or a Codex
+  worktree; source promotion and state transfer are separate controlled steps.
+
+## 2026-07-15 - Support one WhatsApp engine and forbid application-driven host recovery
+
+- Decision: retain only `messaging/channels/whatsapp/engine`; CRM delegates to
+  it and may retry a bounded upstream request, but may not spawn an engine,
+  execute Git, or restart host services through HTTP.
+- Why: the retired variants were unconsumed, carried high-severity scanner
+  findings and preserved several conflicting state/runtime contracts.
+- Impact: old source trees, local gateway routes, dashboards, scripts, HTTP
+  restart workflows and their GitHub credential are retired. Host recovery is
+  an authenticated operator/systemd operation with rollback evidence.
+
+## 2026-07-15 - Make Windows the owner of native Orb backup publication
+
+- Decision: `orb-backup.service` creates and restore-tests its snapshot entirely
+  under `/var/backups/skincos`; the Windows task `SkincosOrbBackup` starts that
+  unit and publishes the verified payload through `\\wsl.localhost` to
+  `C:\CodexRuntime\backups`.
+- Why: WSL system services cannot reliably launch Windows transfer binaries and
+  must not recursively traverse `/mnt/c`. The previous timer failed with an
+  interop `Invalid argument` before producing a new backup.
+- Impact: the WSL timer is disabled, Task Scheduler owns the daily schedule,
+  both database and storage hashes are revalidated after the Windows copy, ACLs
+  remain limited to SYSTEM and the operator, and only a restore-verified backup
+  is eligible for retention.

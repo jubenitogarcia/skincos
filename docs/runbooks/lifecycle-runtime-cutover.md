@@ -5,28 +5,22 @@ without deleting the legacy tree during the change window. It is intentionally
 separate from the source-layout pull request: a merged path move is never proof
 that a service is safe to rename.
 
-## Current validated checkpoint (2026-07-15)
+## Current validated state (2026-07-15)
 
-- A checksum-verified, state-only Orb archive has been extracted into a native
-  Linux staging directory. This replaces recursive DrvFS traversal of
-  `n8n-home`, which can block WSL in uninterruptible I/O on this host.
-- Rollback artifacts are staged at
-  `C:\CodexRuntime\artifacts\runtime-cutover\20260714T170200Z` and linked
-  only into the retained rollback worktree.
-- `C:\CodexRuntime\backups\orb\manual\20260714T233342Z` has a successful
-  PostgreSQL restore verification and matching manifest checksum. Incomplete
-  `.partial-*` backup attempts were removed after this checkpoint was validated.
-- The cutover dry-run, rendered lifecycle units, local health and public Orb/
-  CRM health passed. The legacy units remain authoritative until the final
-  security-alert triage and scheduled cut window are complete.
-- Non-Orb state is pre-copied through a Windows-created TAR and extracted on
-  ext4. The first verified transfer contained 9,969 WhatsApp session files,
-  CRM state and private runtime configuration; file-count, three session hash
-  samples and three private configuration hashes matched without logging a
-  credential value. A new final transfer is still required after the legacy
-  units stop; a pre-copy is never promoted as the final delta.
+- The cutover completed. `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`,
+  `booking`, `cloudflare-orb` and `cloudflare-runtime` run from native Linux
+  source and mutable state, not DrvFS or a worktree.
+- The Windows-created state archives and source releases matched their recorded
+  checksums; private files are `root:skincos` with no world-readable access.
+- `C:\CodexRuntime\backups\orb\daily\20260715T191707Z` passed a real
+  PostgreSQL/storage restore and hash comparison. The reversible cutover
+  checkpoint is `C:\CodexRuntime\backups\runtime-cutover\20260715T182203Z`.
+- A complete WSL shutdown/start validated unit enablement, process working
+  directories, sessions, persistence, keepalive and local/public endpoints.
+- The former seven `skincos-*` lifecycle units are disabled and are removed
+  only after the final source-retirement release passes its observation window.
 
-## Legacy proxy bridge before the cut
+## Historical proxy bridge before the cut
 
 The retained `skincos-orb-proxy.service` runs source-only code and deliberately
 does not retain an untracked `node_modules` tree. Until the lifecycle
@@ -229,8 +223,18 @@ continue unless its runtime artifact links resolve to the staged bundle.
 ## After the cut
 
 - Confirm each lifecycle unit is active and the old unit names are disabled.
-- Trigger `orb-backup.service` once. It validates a PostgreSQL restore before
-  retaining only the latest lifecycle backup.
+- Install the Windows-owned backup schedule from the `admin` operator session:
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\scripts\runtime\install-orb-backup-task.ps1 -RunNow
+  ```
+
+  `SkincosOrbBackup` starts `orb-backup.service`, which writes and restore-tests
+  a native snapshot under `/var/backups/skincos/orb/daily`. Windows then reads
+  that verified snapshot through `\\wsl.localhost`, validates both hashes and
+  the storage TAR, and atomically publishes it under
+  `C:\CodexRuntime\backups\orb\daily`. The WSL timer remains disabled so WSL
+  never launches Windows binaries or traverses `/mnt/c` during backup.
 - Run the official Orb validator and the local/public CRM and Orb smoke checks.
 - Keep the checkpoint at
   `C:\CodexRuntime\backups\runtime-cutover\<timestamp>` and the rollback

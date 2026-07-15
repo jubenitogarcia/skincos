@@ -85,7 +85,6 @@ check_github() {
     CLOUDFLARE_API_TOKEN
     CLOUDFLARE_ACCOUNT_ID
     GH_TOKEN
-    CRM_API_BASIC_AUTH
     META_ADS_REPORT_WORKER_API_TOKEN
     INTEGRATIONS_ENCRYPTION_SECRET
   )
@@ -219,7 +218,6 @@ check_workflows() {
     .github/workflows/codex-automerge.yml
     .github/workflows/dispatch-after-automerge-fallback.yml
     .github/workflows/deploy-crm-pages-after-automerge.yml
-    .github/workflows/deploy-crm-api-after-automerge.yml
     .github/workflows/deploy-workers-after-automerge.yml
     .github/workflows/cloudflare-audit.yml
     .github/workflows/security-secrets-audit.yml

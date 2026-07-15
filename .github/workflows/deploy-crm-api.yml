@@ -27,8 +27,6 @@ jobs:
           KEY: ${{ secrets.CRM_API_SSH_KEY }}
           APP_DIR: ${{ vars.CRM_API_APP_DIR }}
           COMMAND: ${{ vars.CRM_API_DEPLOY_COMMAND }}
-          RESTART_URL: ${{ vars.CRM_API_RESTART_URL }}
-          BASIC_AUTH: ${{ secrets.CRM_API_BASIC_AUTH }}
         run: |
           set -euo pipefail
           if [[ "${ENABLE:-}" != "true" ]]; then
@@ -38,18 +36,12 @@ jobs:
           fi
           MODE_NORM="$(printf '%s' "${MODE:-ssh}" | tr '[:upper:]' '[:lower:]')"
           echo "mode=${MODE_NORM}" >> "$GITHUB_OUTPUT"
-          if [[ "${MODE_NORM}" == "ssh" ]]; then
-            if [[ -z "${HOST:-}" || -z "${USER:-}" || -z "${KEY:-}" || -z "${APP_DIR:-}" || -z "${COMMAND:-}" ]]; then
-              echo "::error::CRM API deploy mode=ssh, but missing one or more required settings: CRM_API_SSH_HOST, CRM_API_SSH_USER, CRM_API_SSH_KEY, CRM_API_APP_DIR, CRM_API_DEPLOY_COMMAND."
-              exit 1
-            fi
-          elif [[ "${MODE_NORM}" == "http_restart" ]]; then
-            if [[ -z "${RESTART_URL:-}" || -z "${BASIC_AUTH:-}" ]]; then
-              echo "::error::CRM API deploy mode=http_restart, but missing CRM_API_RESTART_URL or CRM_API_BASIC_AUTH."
-              exit 1
-            fi
-          else
-            echo "::error::Unsupported CRM_API_DEPLOY_MODE='${MODE_NORM}'. Use 'ssh' or 'http_restart'."
+          if [[ "${MODE_NORM}" != "ssh" ]]; then
+            echo "::error::Unsupported CRM_API_DEPLOY_MODE='${MODE_NORM}'. The retired HTTP restart endpoint is intentionally disabled; use SSH or the native runtime promotion runbook."
+            exit 1
+          fi
+          if [[ -z "${HOST:-}" || -z "${USER:-}" || -z "${KEY:-}" || -z "${APP_DIR:-}" || -z "${COMMAND:-}" ]]; then
+            echo "::error::CRM API deploy mode=ssh, but missing one or more required settings: CRM_API_SSH_HOST, CRM_API_SSH_USER, CRM_API_SSH_KEY, CRM_API_APP_DIR, CRM_API_DEPLOY_COMMAND."
             exit 1
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -72,51 +64,3 @@ jobs:
           CRM_API_APP_DIR: ${{ vars.CRM_API_APP_DIR }}
           CRM_API_DEPLOY_COMMAND: ${{ vars.CRM_API_DEPLOY_COMMAND }}
           GITHUB_SHA: ${{ github.sha }}
-
-      - name: Deploy via HTTP restart
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.mode == 'http_restart' }}
-        env:
-          RESTART_URL: ${{ vars.CRM_API_RESTART_URL }}
-          BASIC_AUTH: ${{ secrets.CRM_API_BASIC_AUTH }}
-          GITHUB_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          AUTH_HEADER="$(printf '%s' "${BASIC_AUTH}" | base64)"
-          payload="$(cat <<JSON
-          {"mode":"stack","reason":"github-actions-deploy-crm-api","sha":"${GITHUB_SHA}","syncRepo":true,"syncSha":"${GITHUB_SHA}","syncAutoStash":false}
-          JSON
-          )"
-          response_file="$(mktemp)"
-          http_code="$(curl -sS --retry 3 --retry-delay 2 --retry-connrefused \
-            -o "${response_file}" \
-            -w "%{http_code}" \
-            -X POST "${RESTART_URL}" \
-            -H "authorization: Basic ${AUTH_HEADER}" \
-            -H "content-type: application/json" \
-            --data "${payload}")"
-          response="$(cat "${response_file}")"
-          rm -f "${response_file}"
-          echo "${response}"
-          if ! decision="$(jq -r '
-            if (.success == true) then "DEPLOYED"
-            elif ((.error // "") == "RECOVERY_SYNC_REPO_DIRTY") then "SKIP_DIRTY"
-            else "FAIL:\((.error // "UNKNOWN_ERROR"))"
-            end
-          ' <<<"${response}" 2>/dev/null)"; then
-            decision="FAIL:INVALID_JSON"
-          fi
-          case "${decision}" in
-            DEPLOYED)
-              ;;
-            SKIP_DIRTY)
-              echo "::warning::CRM API http_restart skipped deploy sync because workspace is dirty (http=${http_code}); retry when workspace is clean."
-              ;;
-            FAIL:*)
-              echo "::error::CRM API http_restart failed (http=${http_code}, reason=${decision#FAIL:})."
-              exit 1
-              ;;
-            *)
-              echo "::error::Unexpected deploy decision '${decision}' (http=${http_code})."
-              exit 1
-              ;;
-          esac
