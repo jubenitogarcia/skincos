@@ -118,7 +118,7 @@ Critérios:
 
 ## 7) Regras de deploy e colaboração
 - Sempre via PR curto e focado.
-- Habilitar auto-merge só com checks obrigatórios verdes.
+- Fazer merge controlado somente com checks obrigatórios verdes, segurança revisada, rollback preparado e superfícies afetadas identificadas.
 - Evitar editar em paralelo os mesmos arquivos grandes (`InsumosModule.tsx`, `App.tsx`) sem sincronizar `origin/main`.
 - CI guard anti-demo: `backend/scripts/ci-no-demo-guard.sh` (executado em `.github/workflows/ci-smoke.yml`).
 
