@@ -1,250 +1,128 @@
-# Lifecycle runtime cutover
+# Native runtime release, recovery and rollback
 
-This runbook moves active mutable state into native Linux filesystem roots
-without deleting the legacy tree during the change window. It is intentionally
-separate from the source-layout pull request: a merged path move is never proof
-that a service is safe to rename.
+## Contract
 
-## Current validated state (2026-07-15)
+- Reviewed source: immutable `/opt/skincos/releases/<sha>/source` with the
+  atomic link `/opt/skincos/current/source`.
+- WhatsApp build: `/opt/skincos/releases/<sha>/messaging-whatsapp` with the
+  atomic link `/opt/skincos/current/messaging-whatsapp`.
+- State: `/var/lib/skincos-runtime`; secrets/config: `/etc/skincos`; logs:
+  `/var/log/skincos`; cache/tmp: native Linux filesystems only.
+- Units: `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`,
+  `cloudflare-orb` and `cloudflare-runtime`.
+- Native backup staging: `/var/backups/skincos/orb/daily`.
+- Durable published backup and operator evidence: `C:\CodexRuntime`.
 
-- The cutover completed. `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`,
-  `booking`, `cloudflare-orb` and `cloudflare-runtime` run from native Linux
-  source and mutable state, not DrvFS or a worktree.
-- The Windows-created state archives and source releases matched their recorded
-  checksums; private files are `root:skincos` with no world-readable access.
-- `C:\CodexRuntime\backups\orb\daily\20260715T191707Z` passed a real
-  PostgreSQL/storage restore and hash comparison. The reversible cutover
-  checkpoint is `C:\CodexRuntime\backups\runtime-cutover\20260715T182203Z`.
-- A complete WSL shutdown/start validated unit enablement, process working
-  directories, sessions, persistence, keepalive and local/public endpoints.
-- The former seven `skincos-*` lifecycle units are disabled and are removed
-  only after the final source-retirement release passes its observation window.
+No active process may read mutable state or execute code from DrvFS, a shared
+checkout or a worktree. Windows initiates every Windows-to-Linux transfer
+through `\\wsl.localhost`; WSL never recursively walks `/mnt/c`.
 
-## Historical proxy bridge before the cut
+## Release promotion
 
-The retained `skincos-orb-proxy.service` runs source-only code and deliberately
-does not retain an untracked `node_modules` tree. Until the lifecycle
-`orb-proxy.service` replaces it, it needs the pinned n8n runtime modules after
-every WSL boot. Keep this narrow, reversible systemd drop-in on the **legacy**
-unit:
+1. Confirm the reviewed `origin/main` SHA and a clean canonical clone.
+2. On Windows, create `git archive --format=tar <sha>` in the private runtime,
+   compute SHA-256, and copy the tar to native Linux storage through
+   `\\wsl.localhost\Ubuntu-24.04\home\admin\skincos-native-release\<sha>`.
+3. From WSL, validate and promote source:
 
-```bash
-sudo install -d -m 0755 /etc/systemd/system/skincos-orb-proxy.service.d
-printf '%s\n' '[Service]' \
-  'Environment=NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules' \
-  | sudo tee /etc/systemd/system/skincos-orb-proxy.service.d/10-runtime-dependencies.conf >/dev/null
-sudo systemctl daemon-reload
-sudo systemctl restart skincos-orb-proxy.service
-curl --fail --max-time 10 http://127.0.0.1:8788/healthz
-```
+   ```bash
+   scripts/runtime/prepare-native-source-release.sh \
+     --archive /home/admin/skincos-native-release/<sha>/source.tar \
+     --sha256 <sha256> --release-sha <sha> --apply
+   ```
 
-This is a compatibility bridge, not a second runtime contract: the rendered
-lifecycle `orb-proxy.service` already owns the same `NODE_PATH` setting. Capture
-the legacy unit before changing it in
-`C:\CodexRuntime\artifacts\runtime-recovery\<timestamp>`. After a successful
-cut, the old unit and this drop-in are retired together; do not copy the
-drop-in to the lifecycle unit.
+4. Build and promote WhatsApp from the same source release:
 
-## Preconditions
+   ```bash
+   scripts/runtime/prepare-messaging-whatsapp-release.sh \
+     --source-root /opt/skincos/releases/<sha>/source \
+     --release-sha <sha> --apply
+   ```
 
-1. The source PR is merged, the canonical checkout is fast-forwarded, and all
-   required CI checks are green.
-2. A detached rollback worktree exists at the last known-good main commit. Keep
-   it until a post-cut verified backup and public smoke are complete. A clean
-   worktree is source-only: stage the legacy Livia workflow and CRM production
-   dependencies under `C:\CodexRuntime\artifacts\runtime-cutover\<timestamp>`;
-   do not put runtime state or dependencies into Git.
-3. `skincos-n8n-backup.service` has completed with `VERIFY_RESTORE=1`; record
-   the resulting directory under `C:\CodexRuntime\n8n\backups\daily` and
-   validate its manifest checksum before the cut.
-4. `scripts/runtime/stage-orb-state-archive.sh`,
-   `scripts/runtime/prepare-lifecycle-layout.sh`,
-   `scripts/runtime/install-lifecycle-units.sh`, and both native release
-   launchers pass. The reviewed main SHA is recorded for the native source and
-   WhatsApp releases.
-5. The window owner has WSL `sudo -n` access. No regular code deploy, D1
-   migration or workflow save runs during the window.
+5. Render/install only final units and restart them:
 
-## Cut sequence
+   ```bash
+   scripts/runtime/prepare-lifecycle-layout.sh --apply
+   scripts/runtime/install-lifecycle-units.sh --apply
+   scripts/runtime/manage-native-runtime.sh restart
+   scripts/runtime/manage-native-runtime.sh validate
+   ```
 
-Run the non-Orb pre-copy before the window; it does not stop services or remove
-data. Do **not** use the old generic helper to recurse from `/mnt/c`: this host
-has demonstrated blocked I/O when WSL traverses Windows runtime directories.
-The PowerShell command reads `C:` natively, writes one TAR through `\\wsl$`,
-and the Linux helper extracts and applies it only on ext4:
+6. Verify every process working directory and executable resolves under
+   `/opt/skincos/releases/<sha>` or a system binary. Verify no process maps a
+   worktree or `/mnt/c` path.
 
-```bash
-powershell -ExecutionPolicy Bypass -File .\scripts\runtime\transfer-lifecycle-state.ps1
-```
+## Backup and restore proof
 
-```bash
-scripts/runtime/apply-lifecycle-state-transfer.sh \
-  --transfer-root /home/admin/skincos-lifecycle-transfer/<transfer-id> --apply
-```
+The Windows task `SkincosOrbBackup` is the only scheduler. It starts
+`orb-backup.service`, waits for the native restore check, copies the result to
+`C:\CodexRuntime\backups\orb\daily`, validates the database and storage hashes
+again, applies private ACLs and retains only restore-verified snapshots.
 
-The helper copies from the legacy Windows runtime into these native roots:
-
-- state and caches: `/var/lib/skincos-runtime`;
-- private configuration and secrets: `/etc/skincos` (root-owned, group
-  readable only by `skincos`);
-- logs: `/var/log/skincos`;
-- temporary data: `/var/tmp/skincos`.
-
-Backups and durable artifacts remain under `C:\CodexRuntime`. The pre-copy rule
-still applies (copy only missing files); the final Windows TAR overlays changed
-source files but never deletes a legacy source or destination-only artifact.
-`n8n-home` is explicitly excluded from this helper: do not use `rsync`, `cp`,
-or a recursive DrvFS copy for Orb state.
-
-Before the window, create the state-only archive under the durable artifacts
-root from Windows, record the printed SHA-256, then transfer it with Windows
-tar through `\\wsl$` to the Linux filesystem. Do not let WSL read the large
-archive through `/mnt/c`: that reverse 9P traversal can hang or silently leave
-an incomplete extraction on this host. The archive excludes only the Windows
-`node_modules` trees. The staging helper rebuilds the custom nodes with
-`npm ci --ignore-scripts` after normalizing a lockfile only when npm proves it
-conflicts with the exact package manifest:
+Manual proof:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\runtime\export-orb-state-archive.ps1 \
-  -ArtifactRoot C:\CodexRuntime\artifacts\runtime-cutover\<timestamp>
+Start-ScheduledTask -TaskName SkincosOrbBackup
+while ((Get-ScheduledTask -TaskName SkincosOrbBackup).State -eq 'Running') {
+  Start-Sleep -Seconds 2
+}
+Get-ScheduledTaskInfo -TaskName SkincosOrbBackup
+Get-ChildItem C:\CodexRuntime\backups\orb\daily
 ```
+
+Acceptance requires `LastTaskResult = 0`, `RestoreVerified=True`, matching
+database/storage hashes, a readable tar and ACLs limited to SYSTEM and `admin`.
+Do not install a WSL timer or launch Windows executables from a systemd unit.
+
+## Controlled restart and smoke
 
 ```bash
-scripts/runtime/stage-orb-state-archive.sh \
-  --extracted-home /home/admin/skincos-orb-transfer/orb-n8n-transfer-<archive-sha>/n8n-home \
-  --sha256 <printed-sha256> --apply
+scripts/runtime/manage-native-runtime.sh status
+scripts/runtime/manage-native-runtime.sh validate
+systemctl show -p NRestarts,ActiveState,SubState \
+  orb orb-proxy messaging-whatsapp crm booking cloudflare-orb cloudflare-runtime
 ```
 
-Run the transfer from Windows after the archive checksum is recorded:
+Validate at minimum:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\runtime\transfer-orb-state-archive.ps1 \
-  -Archive C:\CodexRuntime\artifacts\runtime-cutover\<timestamp>\n8n-home-state.tar \
-  -Sha256 <printed-sha256>
-```
+- Orb `http://127.0.0.1:5678/healthz` and `https://orb.skincos.com.br/healthz`;
+- CRM `http://127.0.0.1:8099/health` and `https://crm.skincos.com.br`;
+- Booking `http://127.0.0.1:8765/healthz`;
+- API and website public endpoints;
+- WhatsApp `https://wa.skincos.com.br/health` plus authenticated credential and
+  instance checks without printing tokens or session data;
+- workflows, execution count and the invariant that Livia does not restart Orb.
 
-Record the resulting `STAGED_ORB_STATE_HOME`. It remains isolated under
-`/var/lib/skincos-runtime/staging` until the cutover script atomically promotes
-it after the legacy units have stopped. A new archive is required for every
-attempted cut; a staging directory is never silently reused.
+Repeat after `wsl --shutdown` and keepalive recovery to prove restart
+persistence before retiring a prior release.
 
-The pre-copy also transfers the active Livia workflow from the retained legacy
-source into `/var/lib/skincos-runtime/orb/workflows`. The lifecycle Orb unit and
-the official validator read this runtime location; no workflow state is copied
-into the new checkout.
+## Rollback
 
-Before the window, use Windows to create a tracked-source archive for the
-reviewed SHA and copy it into a native Linux ingress directory. Record its
-SHA-256. Do not run `git archive` from WSL against `/mnt/c`: the release helper
-accepts only the already-transferred native archive. It creates
-`/opt/skincos/current/source`, normalizes executable launchers and installs the
-locked CRM production dependencies. All lifecycle units use this path rather
-than a DrvFS checkout:
+Before promotion, record current links, units, environment file metadata,
+ports, health responses and the latest restore-verified backup. Preserve the
+previous immutable release and cutover checkpoint until the new release passes
+restart and observation checks.
 
-```bash
-SKINCOS_RELEASE_ID=<reviewed-main-sha> \
-  scripts/runtime/prepare-native-source-release.sh \
-    --archive /home/admin/skincos-native-release/<reviewed-main-sha>/source.tar \
-    --sha256 <windows-recorded-sha256> \
-    --apply
-```
+If a critical smoke fails:
 
-Before stopping the legacy WhatsApp service, stage the reviewed release on the
-native filesystem. This command is intentionally explicit about the release
-SHA and fails if the native lockfile install, Prisma generation or build cannot
-produce `dist/main.js`:
+1. stop only the affected final units;
+2. atomically repoint `/opt/skincos/current/source` and, when relevant,
+   `/opt/skincos/current/messaging-whatsapp` to the previous release;
+3. restore captured unit/config files only if they changed;
+4. restore state only from the verified backup when state corruption is proven;
+5. daemon-reload, restart affected units and repeat local/public smokes;
+6. keep the failed release and logs as private evidence until diagnosis closes.
 
-```bash
-MESSAGING_RELEASE_ID=<reviewed-main-sha> \
-  scripts/runtime/prepare-messaging-whatsapp-release.sh --apply
-```
+Never roll back by starting source from a worktree or by reviving retired units.
 
-The future `messaging-whatsapp.service` starts only
-`/opt/skincos/current/messaging-whatsapp/dist/main.js`; it never executes
-`npm install`, runs a build, or reads a worktree at service start.
+## Retention and cleanup
 
-At the window, first stage and verify the non-Git rollback artifacts while
-legacy services are still healthy. This is non-disruptive and creates only
-runtime artifacts plus symlinks in the retained rollback worktree:
+After successful restart persistence, public smoke and observation:
 
-```bash
-scripts/runtime/stage-rollback-artifacts.sh \
-  --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
-  --artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp>
-```
-
-Use a new timestamped artifact directory for every attempted cut. The staging
-helper refuses to overwrite a prior rollback bundle or an existing worktree
-link that points elsewhere. If a prior recovery left an older symbolic link in
-the worktree, verify the new timestamped bundle and add
-`--replace-rollback-links`; this can replace symbolic links only, never a
-regular file or directory.
-
-On this Windows host, rollback artifact staging uses native `robocopy` for CRM
-dependencies under `C:\`; use `ROLLBACK_ARTIFACT_SYNC_TRANSPORT=rsync` only for
-a non-Windows runtime or an explicit diagnostic.
-
-Then use the real backup directory, retained worktree and the exact staged
-artifact directory:
-
-```bash
-scripts/runtime/cutover-lifecycle-runtime.sh \
-  --backup-dir /mnt/c/CodexRuntime/backups/orb/manual/<timestamp> \
-  --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
-  --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp> \
-  --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home \
-  --windows-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-lifecycle-state.ps1 \
-  --windows-orb-export-script C:\CodexShared\Projetos\skincos\scripts\runtime\export-orb-state-archive.ps1 \
-  --windows-orb-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-orb-state-archive.ps1
-
-scripts/runtime/cutover-lifecycle-runtime.sh --apply \
-  --backup-dir /mnt/c/CodexRuntime/backups/orb/manual/<timestamp> \
-  --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
-  --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp> \
-  --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home \
-  --windows-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-lifecycle-state.ps1 \
-  --windows-orb-export-script C:\CodexShared\Projetos\skincos\scripts\runtime\export-orb-state-archive.ps1 \
-  --windows-orb-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-orb-state-archive.ps1
-```
-
-The apply command captures all old unit files, stops only the seven legacy
-units, has Windows create and transfer the final non-Orb delta, creates a new
-authoritative Orb archive only after the legacy n8n service is stopped, then
-atomically promotes that checksum-verified native state and starts `orb`,
-`orb-proxy`, `messaging-whatsapp`, `crm`, `booking`, `cloudflare-orb` and
-`cloudflare-runtime`. It requires local Orb health plus public Orb and CRM
-health. Legacy stop/start operations are asynchronous but bounded; a timeout
-causes rollback instead of leaving the operator waiting indefinitely. A failed
-post-stop step restores the captured units with paths rewritten to the retained
-rollback worktree and restarts the legacy services. The dry-run refuses to
-continue unless its runtime artifact links resolve to the staged bundle.
-
-## After the cut
-
-- Confirm each lifecycle unit is active and the old unit names are disabled.
-- Install the Windows-owned backup schedule from the `admin` operator session:
-
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File .\scripts\runtime\install-orb-backup-task.ps1 -RunNow
-  ```
-
-  `SkincosOrbBackup` starts `orb-backup.service`, which writes and restore-tests
-  a native snapshot under `/var/backups/skincos/orb/daily`. Windows then reads
-  that verified snapshot through `\\wsl.localhost`, validates both hashes and
-  the storage TAR, and atomically publishes it under
-  `C:\CodexRuntime\backups\orb\daily`. The WSL timer remains disabled so WSL
-  never launches Windows binaries or traverses `/mnt/c` during backup.
-- Run the official Orb validator and the local/public CRM and Orb smoke checks.
-- Keep the checkpoint at
-  `C:\CodexRuntime\backups\runtime-cutover\<timestamp>` and the rollback
-  worktree until all checks pass. Only then may the old runtime paths, old
-  timer, older backups and the rollback worktree enter retirement review.
-
-## Secret handling
-
-The copy helper reads no secret values to stdout. It relocates private
-environment files and tunnel credentials into `/etc/skincos`, rewrites only the
-local tunnel config path, and restricts access to `root:skincos` with no
-world-readable permission. No credential is written to the repository or to a
-worktree.
+- keep the active release and one proven prior release;
+- keep the latest restore-verified Orb backup plus the explicit cutover
+  checkpoint while it still has audit value;
+- remove stale staging archives, caches, disabled unit files and clean merged
+  worktrees with no open PR or active reference;
+- never remove dirty/unmerged worktrees, secrets, sessions, VHDs or evidence
+  without a separate proof and checkpoint.

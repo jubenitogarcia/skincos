@@ -349,7 +349,7 @@ curl -X POST "http://localhost:8080/message/sendText/crm-channel-1" \
 
 Regeneração dos snapshots locais:
 
-- usar [patch-meta-ads-performance-report-2.js](/Users/jubenitogarcia/Automation/n8n/scripts/patch-meta-ads-performance-report-2.js)
+- alterar o workflow exportado em branch dedicada e validar o contrato antes da importação
 - o script agora parte de [meta-ads.performance-report-2.live.current.json](/Users/jubenitogarcia/Automation/n8n/workflows/meta-ads.performance-report-2.live.current.json), sincroniza os helpers externos ainda usados e grava [meta-ads.performance-report-2.live.implemented.json](/Users/jubenitogarcia/Automation/n8n/workflows/meta-ads.performance-report-2.live.implemented.json)
 - ele não recria mais uma topologia paralela nem reintroduz nós antigos; o browser/n8n salvo continua sendo a fonte da verdade
 

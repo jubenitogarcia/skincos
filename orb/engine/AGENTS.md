@@ -1,6 +1,6 @@
-# n8n Workspace Agent Rules
+# Orb engine agent rules
 
-## Multi-Account Continuity
+## Operator continuity
 
 - This shared clone is the cross-account source of truth for code, exported
   snapshots, and operational documentation. It is not the live secret store.
@@ -11,12 +11,11 @@
   when parallel account work must change the umbrella repo.
 - Never store `.env`, `.n8n`, `.cloudflared`, database copies, tokens, or
   Codex auth state inside `C:\CodexShared`.
-- The live code root is
-  `C:\CodexShared\Projetos\skincos\modules\automations\n8n`.
-- The live machine runtime root is `C:\CodexRuntime\n8n`, mounted in WSL as
-  `/mnt/c/CodexRuntime/n8n`.
-- Runtime secrets and mutable state belong in `C:\CodexRuntime\n8n`, not in
-  user-private overlays and not in the shared repo.
+- Live code is an immutable release under `/opt/skincos/current/source`.
+- Runtime state belongs in `/var/lib/skincos-runtime/orb`, secrets in
+  `/etc/skincos`, logs in `/var/log/skincos/orb` and native backups in
+  `/var/backups/skincos/orb/daily`.
+- No active process may use DrvFS, the shared checkout or a worktree.
 
 ## Fonte da verdade dos workflows
 

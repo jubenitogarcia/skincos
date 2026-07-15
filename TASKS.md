@@ -1,10 +1,5 @@
 # TASKS
 
-## In progress
-
-- [ ] Merge the final legacy WhatsApp/source retirement and native backup-schedule repair after all CI/security gates pass; promote the resulting release, run restart/persistence smokes, then remove the disabled legacy units and temporary validation resources.
-- [ ] Complete the independent post-retirement audit: main/worktrees/branches, GitHub PRs/checks/scanners, runtime units/releases, backups, endpoints, secrets and obsolete path references.
-
 ## External/product follow-up
 
 - [ ] Confirm or reauthorize the `Google Calendar (Skincos)` credential for the exact scopes required by the inactive clinic Orb workflows.
@@ -21,3 +16,5 @@
 - [x] The CRM HTTP restart/Git mutation path was disabled operationally and removed from code/workflows; GitHub native deploy reconciliation no longer invokes it.
 - [x] Retired WhatsApp variants, their launchers, unconsumed UIs, stale docs/templates and scanner-only vendor trees were removed after production proof.
 - [x] Canonical code remains `C:\CodexShared\Projetos\skincos`; mutable state and secrets remain outside the shared repository.
+- [x] Legacy units, one-time migration launchers, applied workflow patchers and WSL backup timer were retired; daily backup scheduling is Windows-owned and restore-verified.
+- [x] Post-cutover Git, runtime, endpoint, scanner, backup, release and sensitive-artifact auditing completed with rollback preserved.

@@ -1,6 +1,6 @@
 # Atendimento: clone local seguro
 
-O CRM local usa `skincos_crm_local` para leituras, métricas e simulações do módulo Atendimento. A origem real nunca é carregada pelo serviço `skincos-crm-api.service`.
+O CRM local usa `skincos_crm_local` para leituras, métricas e simulações do módulo Atendimento. A origem real nunca é carregada automaticamente pelo serviço `crm.service`.
 
 ## Origem recuperada
 

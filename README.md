@@ -11,7 +11,9 @@ Plataforma interna (local) para automações e operações da clínica.
 - `ads/meta/` para o workspace do Meta Ads
 - `messaging/channels/whatsapp/engine/` para o único runtime nativo de WhatsApp
 - `backend/` continua hospedando infraestrutura compartilhada e blocos ainda não redistribuídos para `modules/` e `platform/`
-- Estado de máquina do n8n continua fora do repositório em `C:\CodexRuntime\n8n`.
+- Estado ativo do Orb fica em `/var/lib/skincos-runtime/orb`; segredos ficam em
+  `/etc/skincos` e backups restore-verified são publicados privadamente em
+  `C:\CodexRuntime\backups\orb\daily`.
 
 ## Como rodar (local)
 - Stack principal (recomendado): `./backend/scripts/dev.sh status|start|stop|restart`

@@ -329,7 +329,7 @@ O n8n precisa ter sido executado ao menos uma vez para criar o banco de dados.
 
 **Solução:**
 ```bash
-./start-n8n.sh start
+npm run service:status
 ```
 
 No mini-PC compartilhado, nao use isso para operar o runtime live. Use os
