@@ -1,4 +1,5 @@
 const dns = require('dns').promises;
+const https = require('https');
 const net = require('net');
 
 function isPrivateIpAddress(address) {
@@ -26,9 +27,10 @@ function parsePublicHttpsUrl(value) {
     }
 
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
-    if (hostname.toLowerCase() === 'localhost' ||
-        (net.isIP(hostname) && isPrivateIpAddress(hostname))) {
-        throw new Error('Private network URLs are not allowed');
+    if (hostname.toLowerCase() === 'localhost' || net.isIP(hostname)) {
+        // Accepting an IP literal makes it impossible to apply the DNS policy
+        // consistently at connect time. Callers must use a public hostname.
+        throw new Error('IP literals and private network URLs are not allowed');
     }
 
     return url;
@@ -47,4 +49,52 @@ async function assertPublicHttpsUrl(value) {
     return url.toString();
 }
 
-module.exports = { assertPublicHttpsUrl, isPrivateIpAddress, parsePublicHttpsUrl };
+function createPublicDnsLookup(lookup = dns.lookup) {
+    return (hostname, options, callback) => {
+        const done = typeof options === 'function' ? options : callback;
+        const lookupOptions = typeof options === 'object' && options ? options : {};
+
+        Promise.resolve(lookup(hostname, {
+            all: true,
+            verbatim: true,
+            family: lookupOptions.family || 0
+        })).then((addresses) => {
+            if (!Array.isArray(addresses) || addresses.length === 0 ||
+                addresses.some(({ address }) => isPrivateIpAddress(address))) {
+                throw new Error('URL hostname resolves to a private or invalid address');
+            }
+
+            const [{ address, family }] = addresses;
+            done(null, address, family);
+        }).catch((error) => done(error));
+    };
+}
+
+/**
+ * Builds transport options for user-supplied outbound HTTPS requests.
+ *
+ * The hostname is checked once when a URL is accepted and again by the TLS
+ * agent immediately before connection. This prevents DNS rebinding between
+ * validation and use. Callers must spread these options into axios/node-fetch
+ * requests instead of accepting a caller-provided agent, proxy or redirect.
+ */
+async function createSafeHttpsRequest(value) {
+    const url = await assertPublicHttpsUrl(value);
+    return {
+        url,
+        httpsAgent: new https.Agent({
+            keepAlive: false,
+            lookup: createPublicDnsLookup()
+        }),
+        maxRedirects: 0,
+        proxy: false
+    };
+}
+
+module.exports = {
+    assertPublicHttpsUrl,
+    createPublicDnsLookup,
+    createSafeHttpsRequest,
+    isPrivateIpAddress,
+    parsePublicHttpsUrl
+};

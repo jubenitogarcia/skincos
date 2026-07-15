@@ -7,24 +7,25 @@ Wants=network-online.target
 Type=simple
 User=skincos
 Group=skincos
-WorkingDirectory=__REPO_ROOT__/messaging/channels/whatsapp/engine
-Environment=WHATSAPP_RUNTIME_HOME=__RUNTIME_ROOT__/state/messaging-whatsapp
-Environment=EVOLUTION_API_ENV_FILE=__RUNTIME_ROOT__/secrets/messaging-whatsapp.env
-Environment=EVOLUTION_API_INSTANCES_DIR=__RUNTIME_ROOT__/state/messaging-whatsapp/instances
-Environment=EVOLUTION_API_STORE_DIR=__RUNTIME_ROOT__/state/messaging-whatsapp/store
+WorkingDirectory=/opt/skincos/current/messaging-whatsapp
+Environment=MESSAGING_RELEASE_ROOT=/opt/skincos/current/messaging-whatsapp
+Environment=WHATSAPP_RUNTIME_HOME=__STATE_ROOT__/messaging-whatsapp
+Environment=EVOLUTION_API_ENV_FILE=__CONFIG_ROOT__/messaging-whatsapp.env
+Environment=EVOLUTION_API_INSTANCES_DIR=__STATE_ROOT__/messaging-whatsapp/instances
+Environment=EVOLUTION_API_STORE_DIR=__STATE_ROOT__/messaging-whatsapp/store
 Environment=NODE20_BIN=/usr/bin
-EnvironmentFile=-__RUNTIME_ROOT__/secrets/messaging-whatsapp.env
-ExecStart=/bin/bash -lc 'exec ./start-evolution-api.sh'
+EnvironmentFile=-__CONFIG_ROOT__/messaging-whatsapp.env
+ExecStart=__REPO_ROOT__/scripts/runtime/run-messaging-whatsapp-release.sh
 Restart=always
 RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=__RUNTIME_ROOT__/state/messaging-whatsapp __RUNTIME_ROOT__/logs/messaging-whatsapp __RUNTIME_ROOT__/tmp/messaging-whatsapp
+ReadWritePaths=__STATE_ROOT__/messaging-whatsapp __LOG_ROOT__/messaging-whatsapp __TMP_ROOT__/messaging-whatsapp
 UMask=0027
-StandardOutput=append:__RUNTIME_ROOT__/logs/messaging-whatsapp/runtime.out.log
-StandardError=append:__RUNTIME_ROOT__/logs/messaging-whatsapp/runtime.err.log
+StandardOutput=append:__LOG_ROOT__/messaging-whatsapp/runtime.out.log
+StandardError=append:__LOG_ROOT__/messaging-whatsapp/runtime.err.log
 
 [Install]
 WantedBy=multi-user.target

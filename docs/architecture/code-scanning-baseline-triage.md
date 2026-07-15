@@ -81,6 +81,20 @@ clinical data or request payloads into Git.
 | CodeQL `#108` | First-party command injection | Source fix is integrated; an analysis from the current `main` revision is required before the historic instance is considered closed. |
 | CodeQL `#164`–`#177`, `#124`–`#125` | Historical moved paths | The recorded `backend/apps/**` paths are absent from the canonical tree. They remain open only until a current scan replaces historical instances; no path exclusion was added. |
 
+### WhatsApp dependency remediation: 2026-07-15
+
+The active WhatsApp engine keeps link-preview retrieval disabled by default and
+requires an explicit private `ENABLE_LINK_PREVIEW_FETCH=true` opt-in. The
+engine has no first-party import of `link-preview-js`; it is retained only as a
+Baileys peer dependency. The lockfile now resolves that peer to `4.0.1`, the
+first patched release for the reported SSRF issue, while the public request
+path remains disabled by default. Axios is pinned and overridden to `1.18.1`
+so the transitive Axios copy requested by the Chatwoot SDK cannot reintroduce
+the high-severity SSRF/prototype-pollution advisories. `npm ci --ignore-scripts`
+and `npm audit --omit=dev --audit-level=high` are release gates for this
+package; the latter reports zero high or critical findings for the resulting
+production dependency graph. No scanner exclusion or suppression was added.
+
 ### Current-analysis requirement
 
 The CodeQL workflow formerly did not trigger on `crm/api`, `messaging`, `orb`

@@ -4,6 +4,7 @@ import '@utils/instrumentSentry';
 // Now import other modules
 import { ProviderFiles } from '@api/provider/sessions';
 import { PrismaRepository } from '@api/repository/repository.service';
+import { registerRuntimeHealthRoute } from '@api/routes/runtimeHealth.route';
 import { HttpStatus, router } from '@api/routes/index.router';
 import { eventManager, waMonitor } from '@api/server.module';
 import {
@@ -69,6 +70,8 @@ async function bootstrap() {
   app.use(express.static(join(ROOT_DIR, 'public')));
 
   app.use('/store', express.static(join(ROOT_DIR, 'store')));
+
+  registerRuntimeHealthRoute(app);
 
   app.use('/', router);
 

@@ -9,22 +9,22 @@ User=skincos
 Group=skincos
 WorkingDirectory=__REPO_ROOT__/orb/engine
 Environment=ORB_ROOT=__REPO_ROOT__/orb/engine
-Environment=ORB_RUNTIME_HOME=__RUNTIME_ROOT__/state/orb
+Environment=ORB_RUNTIME_HOME=__STATE_ROOT__/orb
 Environment=N8N_ROOT=__REPO_ROOT__/orb/engine
-Environment=N8N_RUNTIME_HOME=__RUNTIME_ROOT__/state/orb
-Environment=N8N_ENV_FILE=__RUNTIME_ROOT__/secrets/orb.env
-Environment=N8N_BUSINESS_ENV_FILE=__RUNTIME_ROOT__/secrets/orb-business.env
-Environment=N8N_DATA_HOME=__RUNTIME_ROOT__/state/orb/n8n-home
-Environment=N8N_USER_FOLDER=__RUNTIME_ROOT__/state/orb/n8n-home
-Environment=N8N_WORKFLOWS_DIR=__RUNTIME_ROOT__/state/orb/workflows
-Environment=N8N_LOG_DIR=__RUNTIME_ROOT__/logs/orb
-Environment=N8N_HEALTH_DIR=__RUNTIME_ROOT__/state/orb/health
-Environment=N8N_TMP_DIR=__RUNTIME_ROOT__/tmp/orb
-Environment=N8N_BINARY_DATA_DIR=__RUNTIME_ROOT__/state/orb/n8n-home/.n8n/storage
-Environment=N8N_STORAGE_PATH=__RUNTIME_ROOT__/state/orb/n8n-home/.n8n/storage
+Environment=N8N_RUNTIME_HOME=__STATE_ROOT__/orb
+Environment=N8N_ENV_FILE=__CONFIG_ROOT__/orb.env
+Environment=N8N_BUSINESS_ENV_FILE=__CONFIG_ROOT__/orb-business.env
+Environment=N8N_DATA_HOME=__STATE_ROOT__/orb/n8n-home
+Environment=N8N_USER_FOLDER=__STATE_ROOT__/orb/n8n-home
+Environment=N8N_WORKFLOWS_DIR=__STATE_ROOT__/orb/workflows
+Environment=N8N_LOG_DIR=__LOG_ROOT__/orb
+Environment=N8N_HEALTH_DIR=__STATE_ROOT__/orb/health
+Environment=N8N_TMP_DIR=__TMP_ROOT__/orb
+Environment=N8N_BINARY_DATA_DIR=__STATE_ROOT__/orb/n8n-home/.n8n/storage
+Environment=N8N_STORAGE_PATH=__STATE_ROOT__/orb/n8n-home/.n8n/storage
 Environment=N8N_DIAGNOSTICS_ENABLED=false
-EnvironmentFile=-__RUNTIME_ROOT__/secrets/orb.env
-EnvironmentFile=-__RUNTIME_ROOT__/secrets/orb-business.env
+EnvironmentFile=-__CONFIG_ROOT__/orb.env
+EnvironmentFile=-__CONFIG_ROOT__/orb-business.env
 ExecStartPre=__REPO_ROOT__/orb/engine/scripts/wait-for-local-postgres.sh
 ExecStart=/usr/local/bin/n8n start
 Restart=always
@@ -33,10 +33,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=__RUNTIME_ROOT__/state/orb __RUNTIME_ROOT__/logs/orb __RUNTIME_ROOT__/tmp/orb
+ReadWritePaths=__STATE_ROOT__/orb __LOG_ROOT__/orb __TMP_ROOT__/orb
 UMask=0027
-StandardOutput=append:__RUNTIME_ROOT__/logs/orb/system-orb.out.log
-StandardError=append:__RUNTIME_ROOT__/logs/orb/system-orb.err.log
+StandardOutput=append:__LOG_ROOT__/orb/system-orb.out.log
+StandardError=append:__LOG_ROOT__/orb/system-orb.err.log
 
 [Install]
 WantedBy=multi-user.target
