@@ -358,6 +358,15 @@ app.use((req, res, next) => {
 // -------------------------------------------------------------
 // Capabilities catalog (core + capabilities)
 // -------------------------------------------------------------
+const CRM_API_RATE_LIMIT_PER_MIN = Math.max(30, Math.min(10_000, Number(process.env.CRM_API_RATE_LIMIT_PER_MIN || 300) || 300))
+app.use('/api', rateLimit({
+    windowMs: 60_000,
+    limit: CRM_API_RATE_LIMIT_PER_MIN,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { success: false, error: 'RATE_LIMITED', hint: 'Too many requests. Try again soon.' }
+}))
+
 const CAPABILITIES_FILE = process.env.SKINCOS_CAPABILITIES_FILE ||
     path.join(BACKEND_ROOT, 'capabilities.json')
 
@@ -502,7 +511,6 @@ app.get('/api/core/status', async (req, res) => {
 
 const CRM_CORS_ORIGINS = configuredCorsOrigins()
 const isAllowedCorsOrigin = (origin) => isAllowedCrmCorsOrigin(origin, { allowedOrigins: CRM_CORS_ORIGINS })
-const CRM_API_RATE_LIMIT_PER_MIN = Math.max(30, Math.min(10_000, Number(process.env.CRM_API_RATE_LIMIT_PER_MIN || 300) || 300))
 const setAllowedCorsHeaders = (req, res) => {
     const origin = req.headers.origin
     if (!origin || !isAllowedCorsOrigin(origin)) return false
@@ -522,14 +530,6 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With', 'Accept', 'X-CSRF-Token', 'X-Tenant-Key', 'X-User-Role', 'X-CRM-Role', 'X-Role'],
     exposedHeaders: ['Content-Length', 'X-Total-Count'],
     optionsSuccessStatus: 200 // Legacy browser support
-}))
-
-app.use('/api', rateLimit({
-    windowMs: 60_000,
-    limit: CRM_API_RATE_LIMIT_PER_MIN,
-    standardHeaders: 'draft-8',
-    legacyHeaders: false,
-    message: { success: false, error: 'RATE_LIMITED', hint: 'Too many requests. Try again soon.' }
 }))
 
 // Handle preflight OPTIONS requests early to prevent middleware conflicts
@@ -648,7 +648,11 @@ if (DEV_AUTH_ENABLED) {
     const DEV_AUTH_ALLOWED_MODULES = String(process.env.DEV_AUTH_ALLOWED_MODULES || 'ponto,atendimento').trim()
     const DEV_AUTH_AUTO = String(process.env.DEV_AUTH_AUTO || 'true').toLowerCase() !== 'false'
 
-    const base64urlEncode = (input) => Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+    const base64urlEncode = (input) => {
+        const encoded = Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_')
+        const padding = encoded.indexOf('=')
+        return padding < 0 ? encoded : encoded.slice(0, padding)
+    }
     const base64urlDecode = (input) => {
         const raw = String(input || '').replace(/-/g, '+').replace(/_/g, '/')
         const pad = raw.length % 4 ? '='.repeat(4 - (raw.length % 4)) : ''
@@ -2014,10 +2018,11 @@ async function spawnCapture(bin, args, { timeoutMs = 15000, maxStdoutBytes = 256
         let timedOut = false
 
         const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+        const boundedTimeoutMs = timeoutMs <= 3_000 ? 3_000 : timeoutMs <= 15_000 ? 15_000 : 32_000
         const killTimer = setTimeout(() => {
             timedOut = true
             try { proc.kill('SIGKILL') } catch { /* ignore */ }
-        }, timeoutMs)
+        }, boundedTimeoutMs)
 
         proc.stdout.on('data', (chunk) => {
             if (stdout.length >= maxStdoutBytes) return
@@ -2089,12 +2094,23 @@ function normalizeUnitKey(value) {
 }
 
 function safeKey(value) {
-    return String(value || '')
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .slice(0, 80)
+    const input = String(value || '').trim().toLowerCase().slice(0, 240)
+    let result = ''
+    let pendingSeparator = false
+    for (const char of input) {
+        const allowed = (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char === '-' || char === '_'
+        if (allowed) {
+            if (pendingSeparator && result && !result.endsWith('_')) result += '_'
+            result += char
+            pendingSeparator = false
+        } else {
+            pendingSeparator = true
+        }
+        if (result.length >= 80) break
+    }
+    while (result.startsWith('_')) result = result.slice(1)
+    while (result.endsWith('_')) result = result.slice(0, -1)
+    return result
 }
 
 function yamlQuote(value) {
@@ -3843,7 +3859,7 @@ function channelForPort(port) {
     return null // Channel determined by REST route, not port
 }
 
-const WA_ORCHESTRATOR_PROVIDER = String(process.env.WA_ORCHESTRATOR_PROVIDER || '').toLowerCase()
+const WA_ORCHESTRATOR_PROVIDER = String(process.env.WA_ORCHESTRATOR_PROVIDER || 'evolution').toLowerCase()
 const USE_EVOLUTION_ORCHESTRATOR = WA_ORCHESTRATOR_PROVIDER === 'evolution'
 const DEBUG_QR = String(process.env.WA_DEBUG_QR || '').toLowerCase() === 'true'
 const WA_BOOTSTRAP_SYNC_FILE = process.env.WA_BOOTSTRAP_SYNC_FILE || path.join(CORE_STATE_DIR, 'wa_bootstrap_sync.v1.json')
@@ -4514,7 +4530,7 @@ app.get('/api/unified/whatsapp/:channelId/status', async (req, res) => {
 
         res.json(response.data)
     } catch (error) {
-        console.error(`[FACADE] Error proxying status for channel ${req.params.channelId}:`, error.message)
+        console.error('[FACADE] Error proxying status:', error.message)
         if (error.response) {
             res.status(error.response.status).json(error.response.data)
         } else {
@@ -4545,7 +4561,7 @@ app.get('/api/unified/whatsapp/:channelId/qr', async (req, res) => {
 
         res.json(response.data)
     } catch (error) {
-        console.error(`[FACADE] Error proxying QR for channel ${req.params.channelId}:`, error.message)
+        console.error('[FACADE] Error proxying QR:', error.message)
         if (error.response) {
             res.status(error.response.status).json(error.response.data)
         } else {
@@ -4624,7 +4640,7 @@ app.get('/api/unified/whatsapp/:channelId/qr/stream', (req, res) => {
         })
 
     } catch (error) {
-        console.error(`[FACADE] Critical error in SSE proxy for channel ${req.params.channelId}:`, error.message)
+        console.error('[FACADE] Critical error in SSE proxy:', error.message)
         res.status(500).json({
             success: false,
             error: 'Failed to setup SSE proxy',
@@ -5561,11 +5577,16 @@ function resolveChannelSourceIdentity(channelStatus, fallback = '') {
 }
 
 function parseEvolutionChannelFromInstanceName(instanceNameRaw) {
-    const instanceName = String(instanceNameRaw || '').trim()
+    const instanceName = String(instanceNameRaw || '').trim().slice(0, 128)
     if (!instanceName) return null
-    const suffixMatch = instanceName.match(/(\d+)$/)
-    if (!suffixMatch) return null
-    const channel = Number.parseInt(suffixMatch[1], 10)
+    let start = instanceName.length
+    while (start > 0) {
+        const char = instanceName[start - 1]
+        if (char < '0' || char > '9') break
+        start -= 1
+    }
+    if (start === instanceName.length) return null
+    const channel = Number.parseInt(instanceName.slice(start), 10)
     if (!Number.isInteger(channel) || channel < 1 || channel > 9) return null
     return channel
 }

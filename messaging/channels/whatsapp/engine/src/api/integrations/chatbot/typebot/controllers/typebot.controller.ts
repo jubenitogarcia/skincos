@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { InstanceDto } from '@api/dto/instance.dto';
 import { TypebotDto } from '@api/integrations/chatbot/typebot/dto/typebot.dto';
 import { TypebotService } from '@api/integrations/chatbot/typebot/services/typebot.service';
@@ -248,7 +250,7 @@ export class TypebotController extends BaseChatbotController<TypebotModel, Typeb
         prefilledVariables,
       );
     } else {
-      const id = Math.floor(Math.random() * 10000000000).toString();
+      const id = randomUUID();
 
       try {
         const version = configService.get<Typebot>('TYPEBOT').API_VERSION;

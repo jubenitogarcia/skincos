@@ -82,8 +82,8 @@ import { createId as cuid } from '@paralleldrive/cuid2';
 import { Instance, Message } from '@prisma/client';
 import { createJid, getLidFromJid } from '@utils/createJid';
 import { fetchLatestWaWebVersion } from '@utils/fetchLatestWaWebVersion';
-import { makeProxyAgent } from '@utils/makeProxyAgent';
 import { isLinkPreviewEnabled } from '@utils/linkPreviewPolicy';
+import { makeProxyAgent } from '@utils/makeProxyAgent';
 import { getOnWhatsappCache, saveOnWhatsappCache } from '@utils/onWhatsappCache';
 import { status } from '@utils/renderStatus';
 import useMultiFileAuthStatePrisma from '@utils/use-multi-file-auth-state-prisma';
@@ -109,9 +109,7 @@ import makeWASocket, {
   getContentType,
   getDevice,
   GroupMetadata,
-  isJidBroadcast,
   isJidGroup,
-  isJidNewsletter,
   isPnUser,
   makeCacheableSignalKeyStore,
   MessageUpsertType,
@@ -133,7 +131,7 @@ import { Label } from 'baileys/lib/Types/Label';
 import { LabelAssociation } from 'baileys/lib/Types/LabelAssociation';
 import { spawn } from 'child_process';
 import { isArray, isBase64, isURL } from 'class-validator';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomInt } from 'crypto';
 import EventEmitter2 from 'eventemitter2';
 import ffmpeg from 'fluent-ffmpeg';
 import FormData from 'form-data';
@@ -469,7 +467,7 @@ export class BaileysStartupService extends ChannelStartupService {
       qrcodeTerminal.generate(qr, { small: true }, (qrcode) =>
         this.logger.log(
           `\n{ instance: ${this.instance.name} pairingCode: ${this.instance.qrcode.pairingCode}, qrcodeCount: ${this.instance.qrcode.count} }\n` +
-          qrcode,
+            qrcode,
         ),
       );
 
@@ -492,7 +490,8 @@ export class BaileysStartupService extends ChannelStartupService {
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
 
       // Special handling for "conflict type=replaced" errors - pause longer
-      const isConflictError = lastDisconnect?.error?.message?.includes?.('conflict') ||
+      const isConflictError =
+        lastDisconnect?.error?.message?.includes?.('conflict') ||
         String((lastDisconnect?.error as Boom)?.output?.payload?.error || '').includes('conflict');
 
       if (shouldReconnect) {
@@ -504,7 +503,9 @@ export class BaileysStartupService extends ChannelStartupService {
           const baseBackoff = isConflictError ? 60000 : 5000; // 1 minute for conflicts, 5s for others
           const backoffMs = Math.min(this.reconnectAttempts * baseBackoff, isConflictError ? 300000 : 30000);
 
-          this.logger.info(`Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${backoffMs}ms ${isConflictError ? '(CONFLICT DETECTED - Extended delay)' : ''}`);
+          this.logger.info(
+            `Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${backoffMs}ms ${isConflictError ? '(CONFLICT DETECTED - Extended delay)' : ''}`,
+          );
           await delay(backoffMs);
 
           try {
@@ -513,7 +514,9 @@ export class BaileysStartupService extends ChannelStartupService {
             this.isReconnecting = false;
           }
         } else {
-          this.logger.error(`Max reconnect attempts (${this.maxReconnectAttempts}) reached for instance ${this.instance.name}`);
+          this.logger.error(
+            `Max reconnect attempts (${this.maxReconnectAttempts}) reached for instance ${this.instance.name}`,
+          );
           this.sendDataWebhook(Events.STATUS_INSTANCE, {
             instance: this.instance.name,
             status: 'closed',
@@ -732,7 +735,7 @@ export class BaileysStartupService extends ChannelStartupService {
           const response = await axios.get(this.localProxy?.host);
           const text = response.data;
           const proxyUrls = text.split('\r\n');
-          const rand = Math.floor(Math.random() * Math.floor(proxyUrls.length));
+          const rand = randomInt(proxyUrls.length);
           const proxyUrl = 'http://' + proxyUrls[rand];
           options = { agent: makeProxyAgent(proxyUrl), fetchAgent: makeProxyAgent(proxyUrl) };
         } catch {
@@ -1120,8 +1123,13 @@ export class BaileysStartupService extends ChannelStartupService {
           }
         }
 
-        const chatsRaw: { remoteJid: string; instanceId: string; name?: string; unreadMessages?: number; labels?: string[] }[] =
-          [];
+        const chatsRaw: {
+          remoteJid: string;
+          instanceId: string;
+          name?: string;
+          unreadMessages?: number;
+          labels?: string[];
+        }[] = [];
         const chatsToUpdate: {
           remoteJid: string;
           data: { remoteJid: string; name?: string; unreadMessages?: number; labels?: string[] };
@@ -1181,16 +1189,16 @@ export class BaileysStartupService extends ChannelStartupService {
 
         const messagesRepository: Set<string> = new Set(
           chatwootImport.getRepositoryMessagesCache(instance) ??
-          (
-            await this.prismaRepository.message.findMany({
-              select: { key: true },
-              where: { instanceId: this.instanceId },
-            })
-          ).map((message) => {
-            const key = message.key as { id: string };
+            (
+              await this.prismaRepository.message.findMany({
+                select: { key: true },
+                where: { instanceId: this.instanceId },
+              })
+            ).map((message) => {
+              const key = message.key as { id: string };
 
-            return key.id;
-          }),
+              return key.id;
+            }),
         );
 
         if (chatwootImport.getRepositoryMessagesCache(instance) === null) {
@@ -3198,7 +3206,7 @@ export class BaileysStartupService extends ChannelStartupService {
     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let result = '';
     for (let i = 0; i < length; i++) {
-      result += characters.charAt(Math.floor(Math.random() * characters.length));
+      result += characters.charAt(randomInt(characters.length));
     }
     return result;
   }

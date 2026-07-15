@@ -4,7 +4,7 @@ export function onUnexpectedError() {
   const limits = {
     decrypt: parseInt(process.env.LOG_DECRYPT_ERRORS_LIMIT || '50'),
   };
-  let counters = {
+  const counters = {
     decrypt: 0,
     windowStart: Date.now(),
   };

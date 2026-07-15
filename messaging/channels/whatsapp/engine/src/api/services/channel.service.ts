@@ -612,7 +612,9 @@ export class ChannelStartupService {
     const labels = this.parseChatLabels(raw);
     if (!labels.length) return false;
     return labels.some((label) => {
-      const normalized = String(label || '').trim().toLowerCase();
+      const normalized = String(label || '')
+        .trim()
+        .toLowerCase();
       return normalized === '__archived__' || normalized === 'archived' || normalized === 'arquivada';
     });
   }
@@ -760,9 +762,15 @@ export class ChannelStartupService {
     const archivedRequested =
       typeof query?.where?.archived === 'boolean'
         ? query.where.archived
-        : (String(query?.where?.archived || '').trim().toLowerCase() === 'true'
+        : String(query?.where?.archived || '')
+              .trim()
+              .toLowerCase() === 'true'
           ? true
-          : (String(query?.where?.archived || '').trim().toLowerCase() === 'false' ? false : null));
+          : String(query?.where?.archived || '')
+                .trim()
+                .toLowerCase() === 'false'
+            ? false
+            : null;
     const archivedLabelFilter =
       archivedRequested === true
         ? Prisma.sql`AND COALESCE("Chat"."labels" @> '["__archived__"]'::jsonb, false)`

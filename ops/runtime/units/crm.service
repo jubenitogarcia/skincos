@@ -15,6 +15,7 @@ Environment=BACKEND_DIR=__REPO_ROOT__/backend
 Environment=FRONTEND_DIR=__REPO_ROOT__/crm/console
 Environment=CONFIG_DIR=__REPO_ROOT__/backend/config
 EnvironmentFile=-__CONFIG_ROOT__/crm.env
+EnvironmentFile=-__CONFIG_ROOT__/crm-whatsapp.env
 ExecStart=__REPO_ROOT__/scripts/crm/run-api-linux.sh
 Restart=always
 RestartSec=5
