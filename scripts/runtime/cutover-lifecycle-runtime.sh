@@ -134,8 +134,12 @@ start_units_bounded() {
 validate_rollback_artifacts() {
   local workflow="$ROLLBACK_ARTIFACT_ROOT/orb/workflows/livia.active.json"
   local crm_dependencies="$ROLLBACK_ARTIFACT_ROOT/crm/node_modules"
-  local rollback_workflow="$ROLLBACK_ROOT/modules/automations/n8n/workflows/livia.active.json"
-  local rollback_dependencies="$ROLLBACK_ROOT/modules/crm/api/node_modules"
+  local rollback_workflows_dir rollback_crm_dir rollback_workflow rollback_dependencies
+
+  rollback_workflows_dir="$(resolve_workflows_dir "$ROLLBACK_ROOT")"
+  rollback_crm_dir="$(resolve_crm_dir "$ROLLBACK_ROOT")"
+  rollback_workflow="$rollback_workflows_dir/livia.active.json"
+  rollback_dependencies="$rollback_crm_dir/node_modules"
 
   [[ -f "$workflow" ]] || { echo "Missing staged Livia workflow: $workflow" >&2; return 1; }
   [[ -d "$crm_dependencies/express" ]] || { echo "Missing staged CRM production dependencies: $crm_dependencies/express" >&2; return 1; }
@@ -147,6 +151,24 @@ validate_rollback_artifacts() {
     echo "Rollback worktree CRM dependencies are not the verified runtime artifact." >&2
     return 1
   }
+}
+
+resolve_workflows_dir() {
+  local root="$1"
+  local candidate
+  for candidate in "$root/orb/engine/workflows" "$root/modules/automations/n8n/workflows"; do
+    [[ -d "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
+resolve_crm_dir() {
+  local root="$1"
+  local candidate
+  for candidate in "$root/crm/api" "$root/modules/crm/api"; do
+    [[ -d "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
 }
 
 save_legacy_units() {

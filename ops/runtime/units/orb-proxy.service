@@ -8,18 +8,18 @@ Type=simple
 User=skincos
 Group=skincos
 WorkingDirectory=__REPO_ROOT__/orb/engine
-Environment=ORB_RUNTIME_HOME=__RUNTIME_ROOT__/state/orb
+Environment=ORB_RUNTIME_HOME=__STATE_ROOT__/orb
 Environment=N8N_ROOT=__REPO_ROOT__/orb/engine
-Environment=N8N_RUNTIME_HOME=__RUNTIME_ROOT__/state/orb
-Environment=N8N_ENV_FILE=__RUNTIME_ROOT__/secrets/orb.env
-Environment=N8N_BUSINESS_ENV_FILE=__RUNTIME_ROOT__/secrets/orb-business.env
-Environment=ORB_LOG_DIR=__RUNTIME_ROOT__/logs/orb
-Environment=META_REVIEW_STORE_PATH=__RUNTIME_ROOT__/state/orb/meta-review-store.json
+Environment=N8N_RUNTIME_HOME=__STATE_ROOT__/orb
+Environment=N8N_ENV_FILE=__CONFIG_ROOT__/orb.env
+Environment=N8N_BUSINESS_ENV_FILE=__CONFIG_ROOT__/orb-business.env
+Environment=ORB_LOG_DIR=__LOG_ROOT__/orb
+Environment=META_REVIEW_STORE_PATH=__STATE_ROOT__/orb/meta-review-store.json
 # The proxy is intentionally source-only; http-proxy is supplied by the
 # pinned n8n runtime installation rather than an untracked node_modules tree.
 Environment=NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules
-EnvironmentFile=-__RUNTIME_ROOT__/secrets/orb.env
-EnvironmentFile=-__RUNTIME_ROOT__/secrets/orb-business.env
+EnvironmentFile=-__CONFIG_ROOT__/orb.env
+EnvironmentFile=-__CONFIG_ROOT__/orb-business.env
 ExecStart=/usr/bin/node orb-proxy/server.js
 Restart=always
 RestartSec=10
@@ -27,10 +27,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=__RUNTIME_ROOT__/state/orb __RUNTIME_ROOT__/logs/orb __RUNTIME_ROOT__/tmp/orb
+ReadWritePaths=__STATE_ROOT__/orb __LOG_ROOT__/orb __TMP_ROOT__/orb
 UMask=0027
-StandardOutput=append:__RUNTIME_ROOT__/logs/orb/orb-proxy.out.log
-StandardError=append:__RUNTIME_ROOT__/logs/orb/orb-proxy.err.log
+StandardOutput=append:__LOG_ROOT__/orb/orb-proxy.out.log
+StandardError=append:__LOG_ROOT__/orb/orb-proxy.err.log
 
 [Install]
 WantedBy=multi-user.target

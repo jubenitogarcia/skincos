@@ -1,9 +1,9 @@
 # Lifecycle runtime cutover
 
-This runbook moves active mutable state into the lifecycle layout without
-deleting the legacy tree during the change window. It is intentionally separate
-from the source-layout pull request: a merged path move is never proof that a
-service is safe to rename.
+This runbook moves active mutable state into native Linux filesystem roots
+without deleting the legacy tree during the change window. It is intentionally
+separate from the source-layout pull request: a merged path move is never proof
+that a service is safe to rename.
 
 ## Current validated checkpoint (2026-07-14)
 
@@ -12,9 +12,9 @@ service is safe to rename.
 - Rollback artifacts are staged at
   `C:\CodexRuntime\artifacts\runtime-cutover\20260714T170200Z` and linked
   only into the retained rollback worktree.
-- `C:\CodexRuntime\n8n\backups\daily\20260714T172136Z` has a successful
-  PostgreSQL restore verification. Incomplete `.partial-*` backup attempts
-  were removed after this checkpoint was validated.
+- `C:\CodexRuntime\backups\orb\manual\20260714T233342Z` has a successful
+  PostgreSQL restore verification and matching manifest checksum. Incomplete
+  `.partial-*` backup attempts were removed after this checkpoint was validated.
 - The cutover dry-run, rendered lifecycle units, local health and public Orb/
   CRM health passed. The legacy units remain authoritative until the final
   security-alert triage and scheduled cut window are complete.
@@ -56,8 +56,10 @@ drop-in to the lifecycle unit.
 3. `skincos-n8n-backup.service` has completed with `VERIFY_RESTORE=1`; record
    the resulting directory under `C:\CodexRuntime\n8n\backups\daily` and
    validate its manifest checksum before the cut.
-4. `scripts/runtime/prepare-lifecycle-layout.sh` and
-   `scripts/runtime/install-lifecycle-units.sh` both pass dry-run validation.
+4. `scripts/runtime/prepare-lifecycle-layout.sh`,
+   `scripts/runtime/install-lifecycle-units.sh`, and the WhatsApp release
+   launcher checks all pass. The reviewed main SHA is recorded for the native
+   WhatsApp release.
 5. The window owner has WSL `sudo -n` access. No regular code deploy, D1
    migration or workflow save runs during the window.
 
@@ -69,17 +71,37 @@ Run the pre-copy before the window; it does not stop services or remove data:
 scripts/runtime/prepare-lifecycle-layout.sh --apply
 ```
 
-On this Windows host, lifecycle copies under `C:\CodexRuntime` use native
-`robocopy` by default. It prevents WSL/DrvFS copy stalls while preserving the
-pre-copy rule (copy only missing files); final sync copies changed files but
-never deletes a legacy source or destination-only artifact. Set
-`LIFECYCLE_SYNC_TRANSPORT=rsync` only for a non-Windows runtime or an explicit
-diagnostic.
+The helper copies from the legacy Windows runtime into these native roots:
+
+- state and caches: `/var/lib/skincos-runtime`;
+- private configuration and secrets: `/etc/skincos` (root-owned, group
+  readable only by `skincos`);
+- logs: `/var/log/skincos`;
+- temporary data: `/var/tmp/skincos`.
+
+Backups and durable artifacts remain under `C:\CodexRuntime`. The pre-copy rule
+still applies (copy only missing files); final sync copies changed files but
+never deletes a legacy source or destination-only artifact. Copies from DrvFS
+to Linux use `rsync` under `sudo`, avoiding a runtime dependency on DrvFS.
 
 The pre-copy also transfers the active Livia workflow from the retained legacy
-source into `C:\CodexRuntime\state\orb\workflows`. The lifecycle Orb unit and
+source into `/var/lib/skincos-runtime/orb/workflows`. The lifecycle Orb unit and
 the official validator read this runtime location; no workflow state is copied
 into the new checkout.
+
+Before stopping the legacy WhatsApp service, stage the reviewed release on the
+native filesystem. This command is intentionally explicit about the release
+SHA and fails if the native lockfile install, Prisma generation or build cannot
+produce `dist/main.js`:
+
+```bash
+MESSAGING_RELEASE_ID=<reviewed-main-sha> \
+  scripts/runtime/prepare-messaging-whatsapp-release.sh --apply
+```
+
+The future `messaging-whatsapp.service` starts only
+`/opt/skincos/current/messaging-whatsapp/dist/main.js`; it never executes
+`npm install`, runs a build, or reads a worktree at service start.
 
 At the window, first stage and verify the non-Git rollback artifacts while
 legacy services are still healthy. This is non-disruptive and creates only
@@ -107,12 +129,12 @@ artifact directory:
 
 ```bash
 scripts/runtime/cutover-lifecycle-runtime.sh \
-  --backup-dir /mnt/c/CodexRuntime/n8n/backups/daily/<timestamp> \
+  --backup-dir /mnt/c/CodexRuntime/backups/orb/manual/<timestamp> \
   --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
   --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp>
 
 scripts/runtime/cutover-lifecycle-runtime.sh --apply \
-  --backup-dir /mnt/c/CodexRuntime/n8n/backups/daily/<timestamp> \
+  --backup-dir /mnt/c/CodexRuntime/backups/orb/manual/<timestamp> \
   --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
   --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp>
 ```
@@ -140,7 +162,8 @@ continue unless its runtime artifact links resolve to the staged bundle.
 
 ## Secret handling
 
-The copy helper reads no secret values to stdout. It relocates tunnel credential
-files into `C:\CodexRuntime\secrets`, rewrites only the local config file path,
-and applies a Windows ACL limited to `admin` and `LocalSystem`. No credential is
-written to the repository or to a worktree.
+The copy helper reads no secret values to stdout. It relocates private
+environment files and tunnel credentials into `/etc/skincos`, rewrites only the
+local tunnel config path, and restricts access to `root:skincos` with no
+world-readable permission. No credential is written to the repository or to a
+worktree.

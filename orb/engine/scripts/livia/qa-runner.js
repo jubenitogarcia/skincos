@@ -4,8 +4,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
-const crypto = require('crypto');
 const { execFileSync, spawnSync } = require('child_process');
 const { parse } = require('/usr/local/lib/node_modules/n8n/node_modules/flatted');
 const runtimePaths = require('../lib/runtime-paths');
@@ -16,7 +14,6 @@ const PROCESS_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'pro
 const BUILD_GRAPH_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'build-platform-job-graph.js');
 const VERIFY_PUBLISHED_ARTIFACTS_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'verify-published-artifacts.js');
 const PUBLISH_PROGRESS_LEDGER_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'publish-progress-ledger.js');
-const DEFAULT_N8N_API_KEY_FILE = path.join(runtimePaths.runtimeHome, 'secrets', 'livia-qa-n8n-api-key');
 
 function parseProcessMediaOutput(run) {
   const raw = String(run?.data?.main?.[0]?.[0]?.json?.stdout || '').trim();
@@ -37,48 +34,12 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
-function assertN8nApiKey() {
-  const keyFile = process.env.N8N_API_KEY_FILE || DEFAULT_N8N_API_KEY_FILE;
-  const fileKey = fs.existsSync(keyFile) ? fs.readFileSync(keyFile, 'utf8').trim() : '';
-  const apiKey = process.env.N8N_API_KEY || process.env.N8N_PERSONAL_ACCESS_TOKEN || fileKey;
-  if (!apiKey) {
-    throw new Error(`N8N_API_KEY is required for API retry. Provide it through the private runtime file ${keyFile}, not the shared workspace.`);
-  }
-  return apiKey;
-}
-
 function runPsql(sql) {
   return execFileSync(
     'sudo',
     ['-n', '-u', 'postgres', 'psql', '-d', 'n8n_runtime', '-Atqc', sql],
     { encoding: 'utf8', maxBuffer: 120 * 1024 * 1024 },
   ).trim();
-}
-
-function sqlString(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-function getVariableValue(key) {
-  const value = runPsql(
-    `select value from n8n_runtime.variables where key=${sqlString(key)} limit 1;`,
-  );
-  return value === '' ? null : value;
-}
-
-function setVariableValue(key, value) {
-  const updated = runPsql(
-    `update n8n_runtime.variables set type='string', value=${sqlString(value)} where key=${sqlString(key)} returning key;`,
-  );
-  if (updated) return;
-
-  const projectId = runPsql(
-    `select "projectId" from n8n_runtime.variables where "projectId" is not null limit 1;`,
-  );
-  runPsql(
-    `insert into n8n_runtime.variables (key, type, value, id, "projectId")
-     values (${sqlString(key)}, 'string', ${sqlString(value)}, ${sqlString(crypto.randomUUID())}, ${projectId ? sqlString(projectId) : 'null'});`,
-  );
 }
 
 function loadExecutionData(executionId) {
@@ -820,94 +781,6 @@ function replayBuildGraph(executionId) {
   }, null, 2));
 }
 
-function httpRequest(method, requestPath, body) {
-  const apiKey = assertN8nApiKey();
-  const payload = body ? JSON.stringify(body) : '';
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port: 5678,
-        path: requestPath,
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-N8N-API-KEY': apiKey,
-          ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
-        },
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => resolve({ statusCode: res.statusCode, body: data }));
-      },
-    );
-    req.on('error', reject);
-    if (payload) req.write(payload);
-    req.end();
-  });
-}
-
-function pause(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function waitForN8nHealth() {
-  const deadline = Date.now() + 210_000;
-  let lastError = '';
-  while (Date.now() < deadline) {
-    try {
-      const result = await new Promise((resolve, reject) => {
-        const request = http.get({ hostname: '127.0.0.1', port: 5678, path: '/healthz', timeout: 5_000 }, (response) => {
-          let body = '';
-          response.setEncoding('utf8');
-          response.on('data', (chunk) => { body += chunk; });
-          response.on('end', () => resolve({ statusCode: response.statusCode, body }));
-        });
-        request.on('timeout', () => request.destroy(new Error('healthz timeout')));
-        request.on('error', reject);
-      });
-      if (result.statusCode >= 200 && result.statusCode < 300) return;
-      lastError = `healthz status=${result.statusCode}`;
-    } catch (error) {
-      lastError = error.message || String(error);
-    }
-    await pause(5_000);
-  }
-  throw new Error(`n8n did not become healthy after restart: ${lastError}`);
-}
-
-async function restartN8nForVariableReload() {
-  const result = spawnSync('sudo', ['-n', 'systemctl', 'restart', 'skincos-n8n.service'], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    throw new Error(`Unable to restart skincos-n8n.service: ${result.stderr || result.stdout || 'unknown error'}`);
-  }
-  await waitForN8nHealth();
-}
-
-async function retryExecution(executionId) {
-  const dryRun = hasFlag('--dry-run');
-  if (!dryRun) {
-    throw new Error('QA retry requires --dry-run. Live retry is intentionally not supported by this runner.');
-  }
-  assertN8nApiKey();
-  const previousDryRunValue = getVariableValue('LIVIA_CODEX_DRY_RUN');
-  setVariableValue('LIVIA_CODEX_DRY_RUN', 'true');
-  await restartN8nForVariableReload();
-  try {
-    const result = await httpRequest('POST', `/api/v1/executions/${Number(executionId)}/retry`, { loadWorkflow: true });
-    if (result.statusCode < 200 || result.statusCode >= 300) {
-      throw new Error(`Retry failed: status=${result.statusCode} body=${result.body}`);
-    }
-    console.log(result.body || JSON.stringify({ ok: true }));
-  } finally {
-    setVariableValue('LIVIA_CODEX_DRY_RUN', previousDryRunValue || 'false');
-    await restartN8nForVariableReload();
-  }
-}
-
 async function main() {
   const command = process.argv[2] || 'inspect';
   if (command === 'inspect') {
@@ -935,8 +808,9 @@ async function main() {
     return;
   }
   if (command === 'retry') {
-    await retryExecution(flag('--execution', latestExecutionId()));
-    return;
+    throw new Error(
+      'Livia retry is disabled: the QA runner must never reload variables or restart Orb itself. Use the controlled runtime runbook after an explicit dry-run and operator review.',
+    );
   }
   if (command === 'restore-progress') {
     restoreInterruptedProgress(flag('--execution', latestExecutionId()));

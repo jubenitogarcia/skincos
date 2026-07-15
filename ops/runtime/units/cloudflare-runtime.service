@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=skincos
 Group=skincos
-EnvironmentFile=__RUNTIME_ROOT__/config/cloudflare/runtime/tunnel.env
+EnvironmentFile=__CONFIG_ROOT__/cloudflare/runtime/tunnel.env
 ExecStart=/bin/bash -lc 'exec /usr/bin/cloudflared tunnel --config "$CLOUDFLARED_CONFIG_PATH" run'
 Restart=always
 RestartSec=5
@@ -15,8 +15,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadOnlyPaths=__RUNTIME_ROOT__/config/cloudflare/runtime
+ReadWritePaths=__LOG_ROOT__/cloudflare-runtime __TMP_ROOT__/cloudflare-runtime
 UMask=0027
+StandardOutput=append:__LOG_ROOT__/cloudflare-runtime/tunnel.out.log
+StandardError=append:__LOG_ROOT__/cloudflare-runtime/tunnel.err.log
 
 [Install]
 WantedBy=multi-user.target
