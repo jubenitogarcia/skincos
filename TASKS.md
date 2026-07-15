@@ -7,7 +7,7 @@
 - [ ] Review and finish the independent Meta Ads publish-journal work in
   `codex/admin/meta-ads-publish-production-audit`; do not mix it into runtime
   cleanup commits.
-- [ ] Decide whether draft PR #658 should graduate from the optional GitHub
+- [ ] Decide whether draft PR #674 should graduate from the optional GitHub
   autonomy-broker experiment; it is isolated and not deployed.
 
 ## Done — architecture and runtime program
