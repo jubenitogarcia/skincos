@@ -70,6 +70,11 @@ $record = [ordered]@{
     nodesDependencies = 'excluded-and-rebuilt-natively'
     legacyOrbStoppedRequired = [bool]$RequireLegacyOrbStopped
 }
-$record | ConvertTo-Json | Set-Content -LiteralPath $manifest -Encoding utf8NoBOM
+$manifestJson = $record | ConvertTo-Json
+[System.IO.File]::WriteAllText(
+    $manifest,
+    $manifestJson,
+    (New-Object System.Text.UTF8Encoding($false))
+)
 Write-Output "ORB_STATE_ARCHIVE=$archive"
 Write-Output "ORB_STATE_SHA256=$sha256"
