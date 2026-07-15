@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT="$ROOT_DIR/scripts/runtime/prepare-native-source-release.sh"
+
+bash -n "$SCRIPT"
+
+required=(
+  '--archive <native-tar> --sha256 <sha256>'
+  'Windows creates and transfers the archive first'
+  '[[ "$RELEASE_ARCHIVE" != /mnt/* ]]'
+  'actual_archive_sha256="$(sha256sum "$RELEASE_ARCHIVE"'
+  'sudo -n tar -xf "$RELEASE_ARCHIVE" -C "$STAGING"'
+  'find "$STAGING" -type f'
+)
+
+for pattern in "${required[@]}"; do
+  grep -F -- "$pattern" "$SCRIPT" >/dev/null || {
+    echo "Missing native source release transfer guard: $pattern" >&2
+    exit 1
+  }
+done
+
+if grep -F -- 'git -C "$CANONICAL_REPO_ROOT" archive' "$SCRIPT" >/dev/null; then
+  echo 'Source release must not archive through the Windows checkout from WSL.' >&2
+  exit 1
+fi
+
+echo 'PASS: native source release accepts only a checksum-verified Linux archive.'
