@@ -4,6 +4,11 @@
 
 - [ ] Confirm or reauthorize the `Google Calendar (Skincos)` credential for the exact scopes required by the inactive clinic Orb workflows.
 - [ ] Provide `GOOGLE_CALENDAR_ID`, approved test data and a non-production-safe validation window before enabling a workflow that can create a real calendar event or booking.
+- [ ] Review and finish the independent Meta Ads publish-journal work in
+  `codex/admin/meta-ads-publish-production-audit`; do not mix it into runtime
+  cleanup commits.
+- [ ] Decide whether draft PR #658 should graduate from the optional GitHub
+  autonomy-broker experiment; it is isolated and not deployed.
 
 ## Done — architecture and runtime program
 
@@ -18,3 +23,9 @@
 - [x] Canonical code remains `C:\CodexShared\Projetos\skincos`; mutable state and secrets remain outside the shared repository.
 - [x] Legacy units, one-time migration launchers, applied workflow patchers and WSL backup timer were retired; daily backup scheduling is Windows-owned and restore-verified.
 - [x] Post-cutover Git, runtime, endpoint, scanner, backup, release and sensitive-artifact auditing completed with rollback preserved.
+- [x] Native releases were reduced to the active release plus one proven
+  rollback; obsolete transfer archives, recovery worktrees and generated local
+  dependencies were removed after consumer checks.
+- [x] CRM, Booking and WhatsApp state/config received a separate checksum-
+  verified backup with real PostgreSQL restores before Windows legacy state was
+  retired.

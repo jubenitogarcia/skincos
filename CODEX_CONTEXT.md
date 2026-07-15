@@ -13,12 +13,19 @@
 - WhatsApp release: `/opt/skincos/current/messaging-whatsapp`; the only supported implementation is `messaging/channels/whatsapp/engine`.
 - Mutable state: `/var/lib/skincos-runtime`; private config/secrets: `/etc/skincos`; logs: `/var/log/skincos`; temporary runtime: `/var/tmp/skincos`.
 - Active units: `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`, `cloudflare-orb` and `cloudflare-runtime`.
-- Windows keepalive: scheduled task `SkincosWslRuntimeKeepalive`; Linux service supervision remains under `systemd`.
+- Windows keepalive: scheduled task `SkincosWslRuntimeKeepalive`; its single
+  anchor uses native cwd `/`, while Linux service supervision remains under
+  `systemd`.
 - The runtime survived a full WSL shutdown/start cycle with state and sessions preserved. Orb, CRM, Booking, WhatsApp and both Cloudflare tunnels passed local/public health checks with zero service restarts after promotion.
 
 ## Backup and rollback
 
-- Restore-verified Orb backup: `C:\CodexRuntime\backups\orb\daily\20260715T214829Z`; PostgreSQL and storage hashes were validated by a real restore.
+- Restore-verified Orb backup: `C:\CodexRuntime\backups\orb\daily\20260715T222726Z`; PostgreSQL and storage hashes were validated by a real restore.
+- Restore-verified lifecycle backup:
+  `C:\CodexRuntime\backups\runtime\20260715T231622Z`; it contains private
+  config, native Booking/CRM/WhatsApp state and PostgreSQL dumps. Restore tests
+  recreated 37 WhatsApp tables and 17 CRM tables in temporary databases, and
+  every Windows-published artifact matched its native SHA-256.
 - Scheduled backup owner: Windows task `SkincosOrbBackup`. It triggers a native
   `/var/backups/skincos/orb/daily` snapshot and publishes it to
   `C:\CodexRuntime\backups\orb\daily` only after restore, database checksum and
@@ -27,6 +34,17 @@
 - Native releases are immutable. Rollback repoints `/opt/skincos/current/*` to the prior release, restores the captured units/config and restarts only the affected services.
 - Cross-filesystem transfer is Windows-owned. Do not recursively traverse `C:`
   from WSL or launch Windows transfer binaries from a Linux service.
+
+## Preserved independent work
+
+- `codex/admin/meta-ads-publish-production-audit` contains uncommitted product
+  work for the Meta Ads publish journal. It is intentionally isolated from the
+  completed architecture/runtime program and must be reviewed in its own task.
+- PR #658 (`codex/admin/github-codex-autonomy`) remains a deliberate draft for
+  the optional GitHub autonomy broker; it is not part of the production
+  runtime and has no deployment dependency.
+- The detached worktree under `%USERPROFILE%\.codex\worktrees` is Codex
+  App-managed state and is not a project cleanup target while the App owns it.
 
 ## Messaging and CRM contract
 

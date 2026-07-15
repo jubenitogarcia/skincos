@@ -6,6 +6,7 @@ import { createPgPool } from '../server/harmonia/store/pg.js'
 import { readAtendimentoSheet, readGerenciaSheet } from '../server/atendimento/importer.js'
 import {
     backupAtendimentoMirror,
+    DEFAULT_CRM_RUNTIME_HOME,
     ensureAtendimentoMirrorMetadata,
     getAtendimentoMirrorStatus,
     isLocalMirrorDestination,
@@ -22,7 +23,7 @@ const sourceMode = String(process.env.ATENDIMENTO_SOURCE_MODE || '').trim().toLo
 const atendimentoWorkbook = String(process.env.ATENDIMENTO_GOOGLE_XLSX_FILE || '').trim()
 const gerenciaWorkbook = String(process.env.GERENCIA_GOOGLE_XLSX_FILE || '').trim()
 const googleServiceAccountFile = String(process.env.ATENDIMENTO_GOOGLE_SA_FILE || '').trim()
-const runtimeHome = String(process.env.CRM_RUNTIME_HOME || '/mnt/c/CodexRuntime/crm-api').trim()
+const runtimeHome = String(process.env.CRM_RUNTIME_HOME || DEFAULT_CRM_RUNTIME_HOME).trim()
 
 function print(value) {
     process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)

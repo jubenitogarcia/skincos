@@ -405,3 +405,15 @@
 - Impact: Git history and the private cutover checkpoint preserve audit and
   rollback evidence; current operations use only the lifecycle installer,
   native runtime manager, release builders and Windows-owned backup publisher.
+
+## 2026-07-15 - Keep only publication, evidence and restore checkpoints on Windows
+
+- Decision: after the native runtime passed restart and public smoke gates,
+  remove mutable service trees from `C:\CodexRuntime`; retain only verified
+  backups, private operator evidence and `config\orb\publish-backup.ps1`.
+- Why: duplicated Booking, CRM, WhatsApp, tunnel and Orb state on NTFS no longer
+  had an active consumer and could silently revive the retired DrvFS contract.
+- Impact: native state is authoritative under `/var/lib/skincos-runtime` and
+  `/etc/skincos`. Windows owns transfer/publication only; the final lifecycle
+  backup includes private configuration, snapshots and real PostgreSQL restore
+  proof before the duplicate trees are deleted.
