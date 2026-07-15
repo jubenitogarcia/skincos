@@ -31,7 +31,7 @@ $resolvedArtifactRoot = [System.IO.Path]::GetFullPath($ArtifactRoot)
 New-Item -ItemType Directory -Path $resolvedArtifactRoot -Force | Out-Null
 $archive = Join-Path $resolvedArtifactRoot 'n8n-home-state.tar'
 $manifest = Join-Path $resolvedArtifactRoot 'n8n-home-state.manifest.json'
-if (Test-Path -LiteralPath $archive -or Test-Path -LiteralPath $manifest) {
+if ((Test-Path -LiteralPath $archive) -or (Test-Path -LiteralPath $manifest)) {
     throw "Refusing to overwrite an existing Orb state archive in: $resolvedArtifactRoot"
 }
 
