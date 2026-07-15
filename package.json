@@ -45,7 +45,7 @@
     "quality:frontend": "npm --prefix crm/console run lint && npm --prefix crm/console run typecheck && npm --prefix crm/console run test && npm --prefix crm/console run build",
     "quality:website": "npm run module:site-public:website:lint && npm run module:site-public:website:typecheck && npm run module:site-public:website:test && npm run module:site-public:website:build",
     "quality:backend:crm-api": "npm run module:crm:api:test",
-    "quality:backend:python": "cd backend && python -m pytest tests/unit --cov=config --cov-report=term --cov-fail-under=80",
+    "quality:backend:python": "cd backend && python3 -m pytest tests/unit --cov=config --cov-report=term --cov-fail-under=80",
     "quality:security": "node ./scripts/check-js-security-exceptions.mjs && bash ./backend/scripts/ci-no-demo-guard.sh",
     "quality:critical": "npm run quality:frontend && npm run quality:website && npm run quality:backend:crm-api && npm run quality:backend:python && npm run quality:security",
     "codex:context": "bash ./scripts/codex-context.sh",
