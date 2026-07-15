@@ -20,7 +20,10 @@
 
 ## Backup and rollback
 
-- Restore-verified Orb backup: `C:\CodexRuntime\backups\orb\daily\20260715T222726Z`; PostgreSQL and storage hashes were validated by a real restore.
+- Restore-verified Orb backup: the newest timestamped directory under
+  `C:\CodexRuntime\backups\orb\daily`; the scheduled publisher retains a
+  snapshot only after a real PostgreSQL restore and storage hash validation
+  succeed.
 - Restore-verified lifecycle backup:
   `C:\CodexRuntime\backups\runtime\20260715T231622Z`; it contains private
   config, native Booking/CRM/WhatsApp state and PostgreSQL dumps. Restore tests
