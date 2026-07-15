@@ -90,4 +90,14 @@ if (crmRunner.includes("/../../../..")) {
   fail("CRM runner escapes the native source release by resolving four parent directories");
 }
 
+for (const workflow of ["deploy-crm-pages.yml", "deploy-crm-pages-reconcile.yml"]) {
+  const source = fs.readFileSync(path.join(root, ".github/workflows", workflow), "utf8");
+  if (!/^  group: deploy-crm-pages$/m.test(source)) {
+    fail(`${workflow} must share the production deployment concurrency group`);
+  }
+  if (!/^  cancel-in-progress: false$/m.test(source)) {
+    fail(`${workflow} must serialize rather than cancel an in-flight production deployment`);
+  }
+}
+
 if (!process.exitCode) process.stdout.write("Architecture contract validation OK.\n");

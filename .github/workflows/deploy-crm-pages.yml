@@ -9,8 +9,8 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: deploy-crm-pages-${{ github.ref }}
-  cancel-in-progress: true
+  group: deploy-crm-pages
+  cancel-in-progress: false
 
 jobs:
   deploy:

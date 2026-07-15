@@ -14,8 +14,8 @@ on:
         type: boolean
 
 concurrency:
-  group: deploy-crm-pages-reconcile-main
-  cancel-in-progress: true
+  group: deploy-crm-pages
+  cancel-in-progress: false
 
 jobs:
   deploy:
