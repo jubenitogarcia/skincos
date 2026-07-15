@@ -59,6 +59,9 @@ cleanup_staging() {
 trap cleanup_staging EXIT INT TERM
 
 sudo -n install -d -o skincos -g skincos -m 0750 "$STAGING" "$NPM_CACHE"
+# The cache is durable runtime state. A prior diagnostic run as another user
+# must not make a later production release fail before dependencies are built.
+sudo -n chown -R skincos:skincos "$NPM_CACHE"
 sudo -n rsync -a --delete \
   --exclude '.env' --exclude '.env.*' --exclude 'node_modules' --exclude 'dist' \
   "$SOURCE_DIR/" "$STAGING/"
