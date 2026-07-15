@@ -106,7 +106,23 @@ resolve_windows_validator() {
   }
 }
 
+ensure_windows_interop() {
+  if [[ -n "${WSL_INTEROP:-}" && -S "$WSL_INTEROP" ]]; then
+    return 0
+  fi
+  # systemd services do not inherit the interactive WSL interop socket. WSL
+  # maintains this stable link to init's current socket specifically so native
+  # services can launch Windows processes without depending on a shell PID.
+  if [[ -S /run/WSL/1_interop ]]; then
+    export WSL_INTEROP=/run/WSL/1_interop
+    return 0
+  fi
+  echo 'A live WSL interoperability socket is required for Windows-native backup transfer.' >&2
+  return 1
+}
+
 sync_native_storage_via_windows() {
+  ensure_windows_interop
   resolve_robocopy || { echo "robocopy.exe is required for native storage backup transfer." >&2; return 1; }
   resolve_windows_validator
   command -v tar >/dev/null 2>&1 || { echo "tar is required for native storage backup transfer." >&2; return 1; }
@@ -176,6 +192,7 @@ sync_storage() {
     return
   fi
   if should_use_robocopy; then
+    ensure_windows_interop
     local source_windows destination_windows status=0
     source_windows="$(wslpath -w "$N8N_STORAGE_PATH")"
     destination_windows="$(wslpath -w "$partial/storage")"

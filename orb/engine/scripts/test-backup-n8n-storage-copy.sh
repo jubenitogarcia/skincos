@@ -79,7 +79,8 @@ exit 0
 EOF
 chmod +x "$fake_bin"/*
 
-PATH="$fake_bin:$PATH" \
+env -u WSL_INTEROP \
+  PATH="$fake_bin:$PATH" \
   N8N_ROOT="$repo_root" \
   N8N_RUNTIME_HOME="$runtime_root" \
   N8N_ENV_FILE="$runtime_root/env/n8n.env" \
@@ -110,7 +111,8 @@ printf 'config\n' > "$native_runtime_root/n8n-home/.n8n/config"
 printf 'N8N_ENCRYPTION_KEY=test-only\n' > "$native_runtime_root/env/n8n.env"
 printf 'N8N_DEFAULT_UNIT_SLUG=test-only\n' > "$native_runtime_root/env/n8n-business.env"
 
-PATH="$fake_bin:$PATH" \
+env -u WSL_INTEROP \
+  PATH="$fake_bin:$PATH" \
   N8N_ROOT="$repo_root" \
   N8N_RUNTIME_HOME="$native_runtime_root" \
   N8N_ENV_FILE="$native_runtime_root/env/n8n.env" \
