@@ -219,11 +219,9 @@ let channelManagementAPI = null;
 const webhooksStore = [];
 const eventsStore = [];
 const webhookDeliveriesStore = [];
-const WEBHOOK_MAX_ATTEMPTS = 3;
-const WEBHOOK_RETRY_BASE_MS = 1000;
 
 // Webhook dispatch function
-async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
+async function dispatchWebhook(webhook, fullPayload) {
     const startedAt = Date.now();
     // User-provided webhook destinations are disabled until a fixed-endpoint,
     // service-authenticated broker owns delivery and egress policy.
@@ -237,7 +235,7 @@ async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
         eventId: fullPayload.eventId,
         type: fullPayload.event,
         status,
-        attempt,
+        attempt: 1,
         startedAt,
         finishedAt,
         durationMs: finishedAt - startedAt,
