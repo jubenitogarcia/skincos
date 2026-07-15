@@ -33,4 +33,13 @@ if STATE_ROOT="$state_root" SKINCOS_RUNTIME_USER="$runtime_user" \
   echo "Checksum mismatch unexpectedly passed" >&2
   exit 1
 fi
+
+extracted_home="$tmp_dir/extracted-n8n-home"
+cp -a "$fixture" "$extracted_home"
+extracted_checksum="$(printf '1%.0s' {1..64})"
+STATE_ROOT="$state_root" SKINCOS_RUNTIME_USER="$runtime_user" \
+  "$ROOT_DIR/scripts/runtime/stage-orb-state-archive.sh" --extracted-home "$extracted_home" --sha256 "$extracted_checksum" --apply >/dev/null
+staged_extracted="$state_root/staging/orb-n8n-home-${extracted_checksum:0:16}/n8n-home"
+[[ -f "$staged_extracted/state-archive.manifest" ]]
+[[ ! -e "$extracted_home" ]]
 echo "stage Orb state archive test passed"

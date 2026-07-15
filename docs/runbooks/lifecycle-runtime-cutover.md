@@ -89,10 +89,13 @@ explicitly excluded from this helper: do not use `rsync`, `cp`, or a recursive
 DrvFS copy for Orb state.
 
 Before the window, create the state-only archive under the durable artifacts
-root from Windows, record the printed SHA-256, then stage it on Linux. The
-archive excludes only the Windows `node_modules` trees. The staging helper
-rebuilds the custom nodes with `npm ci --ignore-scripts` after normalizing a
-lockfile only when npm proves it conflicts with the exact package manifest:
+root from Windows, record the printed SHA-256, then transfer it with Windows
+tar through `\\wsl$` to the Linux filesystem. Do not let WSL read the large
+archive through `/mnt/c`: that reverse 9P traversal can hang or silently leave
+an incomplete extraction on this host. The archive excludes only the Windows
+`node_modules` trees. The staging helper rebuilds the custom nodes with
+`npm ci --ignore-scripts` after normalizing a lockfile only when npm proves it
+conflicts with the exact package manifest:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\runtime\export-orb-state-archive.ps1 \
@@ -101,8 +104,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\runtime\export-orb-state-arch
 
 ```bash
 scripts/runtime/stage-orb-state-archive.sh \
-  --archive /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp>/n8n-home-state.tar \
+  --extracted-home /home/admin/skincos-orb-transfer/orb-n8n-transfer-<archive-sha>/n8n-home \
   --sha256 <printed-sha256> --apply
+```
+
+Run the transfer from Windows after the archive checksum is recorded:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\runtime\transfer-orb-state-archive.ps1 \
+  -Archive C:\CodexRuntime\artifacts\runtime-cutover\<timestamp>\n8n-home-state.tar \
+  -Sha256 <printed-sha256>
 ```
 
 Record the resulting `STAGED_ORB_STATE_HOME`. It remains isolated under

@@ -82,8 +82,8 @@ sudo -n true
 [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]] || { echo "--backup-dir must name an existing backup directory." >&2; exit 1; }
 [[ -n "$ROLLBACK_ROOT" && -e "$ROLLBACK_ROOT/.git" ]] || { echo "--rollback-root must be a retained Git worktree." >&2; exit 1; }
 [[ -n "$ROLLBACK_ARTIFACT_ROOT" && -d "$ROLLBACK_ARTIFACT_ROOT" ]] || { echo "--rollback-artifact-root must name staged runtime artifacts outside Git." >&2; exit 1; }
-[[ -n "$ORB_STATE_HOME" && -d "$ORB_STATE_HOME" ]] || { echo "--orb-state-home must name checksum-verified native staging state." >&2; exit 1; }
-[[ -f "$ORB_STATE_HOME/state-archive.manifest" && -f "$ORB_STATE_HOME/.n8n/config" ]] || { echo "--orb-state-home is incomplete." >&2; exit 1; }
+[[ -n "$ORB_STATE_HOME" ]] && sudo -n test -d "$ORB_STATE_HOME" || { echo "--orb-state-home must name checksum-verified native staging state." >&2; exit 1; }
+sudo -n test -f "$ORB_STATE_HOME/state-archive.manifest" && sudo -n test -f "$ORB_STATE_HOME/.n8n/config" || { echo "--orb-state-home is incomplete." >&2; exit 1; }
 [[ -f "$BACKUP_DIR/manifest.json" && -f "$BACKUP_DIR/n8n_runtime.dump" ]] || { echo "Backup is missing manifest.json or n8n_runtime.dump." >&2; exit 1; }
 [[ "$STOP_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "CUTOVER_STOP_TIMEOUT_SECONDS must be a positive integer." >&2; exit 1; }
 [[ "$START_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "CUTOVER_START_TIMEOUT_SECONDS must be a positive integer." >&2; exit 1; }
