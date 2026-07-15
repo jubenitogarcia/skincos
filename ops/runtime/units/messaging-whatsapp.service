@@ -7,14 +7,15 @@ Wants=network-online.target
 Type=simple
 User=skincos
 Group=skincos
-WorkingDirectory=__REPO_ROOT__/messaging/channels/whatsapp/engine
+WorkingDirectory=/opt/skincos/current/messaging-whatsapp
+Environment=MESSAGING_RELEASE_ROOT=/opt/skincos/current/messaging-whatsapp
 Environment=WHATSAPP_RUNTIME_HOME=__STATE_ROOT__/messaging-whatsapp
 Environment=EVOLUTION_API_ENV_FILE=__CONFIG_ROOT__/messaging-whatsapp.env
 Environment=EVOLUTION_API_INSTANCES_DIR=__STATE_ROOT__/messaging-whatsapp/instances
 Environment=EVOLUTION_API_STORE_DIR=__STATE_ROOT__/messaging-whatsapp/store
 Environment=NODE20_BIN=/usr/bin
 EnvironmentFile=-__CONFIG_ROOT__/messaging-whatsapp.env
-ExecStart=/bin/bash -lc 'exec ./start-evolution-api.sh'
+ExecStart=__REPO_ROOT__/scripts/runtime/run-messaging-whatsapp-release.sh
 Restart=always
 RestartSec=10
 NoNewPrivileges=true
