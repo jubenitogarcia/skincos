@@ -129,7 +129,27 @@ sync_path() {
         mkdir -p "$destination"
         rsync "${args[@]}" "$source" "$destination/"
       else
-        sudo -n rsync "${args[@]}" "$source" "$destination/"
+        local error_log status
+        error_log="$(mktemp)"
+        if sudo -n rsync "${args[@]}" "$source" "$destination/" 2>"$error_log"; then
+          :
+        else
+          status=$?
+          # A pre-copy intentionally never replaces destination entries. rsync
+          # reports code 23 when a legacy node_modules symlink already exists;
+          # accept only that exact non-destructive collision, never an I/O or
+          # transfer failure. The final sync remains strict and overwrites the
+          # current native release only after legacy services have stopped.
+          if [[ "$FINAL_SYNC" == "0" && "$status" == "23" ]] \
+            && ! grep -vE '^(rsync: .*failed: File exists \(17\)|rsync error: some files/attrs were not transferred.*code 23)' "$error_log" | grep -q .; then
+            echo "WARN existing destination entries skipped during pre-copy: $source"
+          else
+            cat "$error_log" >&2
+            rm -f "$error_log"
+            return "$status"
+          fi
+        fi
+        rm -f "$error_log"
         sudo -n chown -R skincos:skincos "$destination"
       fi
     fi
