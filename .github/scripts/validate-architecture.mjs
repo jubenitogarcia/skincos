@@ -40,4 +40,34 @@ for (const rootName of ["api", "booking", "integration", "messaging", "workforce
   if (!map.includes(`\`${rootName}\``)) fail(`target domain map is missing ${rootName}`);
 }
 
+const lifecycleUnits = [
+  "orb.service",
+  "orb-proxy.service",
+  "messaging-whatsapp.service",
+  "crm.service",
+  "booking.service",
+  "cloudflare-orb.service",
+  "cloudflare-runtime.service",
+];
+for (const unit of lifecycleUnits) {
+  const source = fs.readFileSync(path.join(root, "ops/runtime/units", unit), "utf8");
+  if (!/^PrivateTmp=true$/m.test(source)) fail(`${unit} must retain a private temporary namespace`);
+  if (/^ReadWritePaths=.*__TMP_ROOT__/m.test(source)) {
+    fail(`${unit} cannot bind __TMP_ROOT__ while PrivateTmp hides the host /var/tmp tree`);
+  }
+}
+
+const orbUnit = fs.readFileSync(path.join(root, "ops/runtime/units/orb.service"), "utf8");
+if (!/^Environment=N8N_TMP_DIR=\/tmp$/m.test(orbUnit)) {
+  fail("orb.service must use its systemd-private /tmp namespace");
+}
+
+const crmRunner = fs.readFileSync(path.join(root, "crm/api/scripts/run.sh"), "utf8");
+if (!/dirname "\$\{BASH_SOURCE\[0\]\}"\)\/\.\.\/\.\.\/\.\./.test(crmRunner)) {
+  fail("CRM runner must resolve the repository root three levels above crm/api/scripts");
+}
+if (crmRunner.includes("/../../../..")) {
+  fail("CRM runner escapes the native source release by resolving four parent directories");
+}
+
 if (!process.exitCode) process.stdout.write("Architecture contract validation OK.\n");
