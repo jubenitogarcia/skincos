@@ -25,6 +25,10 @@ fake_bin="$test_root/fake-bin"
 native_runtime_root="/home/admin/skincos-backup-storage-copy-test.$$"
 
 cleanup() {
+  if [[ "${KEEP_BACKUP_STORAGE_TEST:-0}" == "1" ]]; then
+    echo "backup storage test preserved: $test_root $native_runtime_root" >&2
+    return
+  fi
   rm -rf "$test_root"
   rm -rf "$native_runtime_root"
 }
@@ -55,7 +59,7 @@ for arg in "$@"; do
     --file=*) printf 'dump\n' > "${arg#--file=}"; exit 0 ;;
   esac
 done
-exit 1
+printf 'dump\n'
 EOF
 cat > "$fake_bin/pg_restore" <<'EOF'
 #!/usr/bin/env bash
@@ -106,6 +110,7 @@ grep -q '"restoreVerified": true' "$backup_dir/manifest.json"
 grep -q '"storageBytes": null' "$backup_dir/manifest.json"
 
 mkdir -p "$native_runtime_root/n8n-home/.n8n/storage/nested" "$native_runtime_root/env" "$native_runtime_root/health"
+mkdir -p "$native_backup_root"
 printf 'native-payload\n' > "$native_runtime_root/n8n-home/.n8n/storage/nested/file.txt"
 printf 'config\n' > "$native_runtime_root/n8n-home/.n8n/config"
 printf 'N8N_ENCRYPTION_KEY=test-only\n' > "$native_runtime_root/env/n8n.env"
