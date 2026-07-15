@@ -9,6 +9,7 @@ UNIT_DEST="${UNIT_DEST:-/etc/systemd/system}"
 # never depend on DrvFS. These roots intentionally mirror the final runtime
 # lifecycle contract.
 RUNTIME_ROOT="${RUNTIME_ROOT:-/mnt/c/CodexRuntime}"
+SOURCE_ROOT="${SOURCE_ROOT:-}"
 STATE_ROOT="${STATE_ROOT:-/var/lib/skincos-runtime}"
 CONFIG_ROOT="${CONFIG_ROOT:-/etc/skincos}"
 LOG_ROOT="${LOG_ROOT:-/var/log/skincos}"
@@ -27,8 +28,9 @@ installs, enables and daemon-reloads the final units; it deliberately does not
 stop or disable the old units. The coordinated cutover script owns that step.
 
 Default native roots are /var/lib/skincos-runtime, /etc/skincos,
-/var/log/skincos and /var/tmp/skincos. C:\CodexRuntime is retained only for
-durable backups and artifacts unless explicit root overrides are supplied.
+/var/log/skincos and /var/tmp/skincos. Runtime source is read from
+/opt/skincos/current/source. C:\CodexRuntime is retained only for durable
+backups and artifacts unless explicit root overrides are supplied.
 EOF
 }
 
@@ -41,16 +43,31 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# Validation renders executables from the checkout without claiming that this
+# is a runtime path. Applying units always uses the promoted native source.
+if [[ -z "$SOURCE_ROOT" ]]; then
+  if [[ "$APPLY" == "1" ]]; then
+    SOURCE_ROOT="/opt/skincos/current/source"
+  else
+    SOURCE_ROOT="$ROOT_DIR"
+  fi
+fi
+
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }
 }
 
 require_cmd sed
 require_cmd systemd-analyze
-if [[ "$APPLY" == "1" ]]; then require_cmd sudo; fi
+VERIFY_WITH_SUDO=0
+if [[ "$APPLY" == "1" || "$SOURCE_ROOT" == /opt/skincos/* ]]; then
+  require_cmd sudo
+  sudo -n true
+  VERIFY_WITH_SUDO=1
+fi
 
 sed_escape() { printf '%s' "$1" | sed 's/[&|]/\\&/g'; }
-repo_escaped="$(sed_escape "$ROOT_DIR")"
+source_escaped="$(sed_escape "$SOURCE_ROOT")"
 runtime_escaped="$(sed_escape "$RUNTIME_ROOT")"
 state_escaped="$(sed_escape "$STATE_ROOT")"
 config_escaped="$(sed_escape "$CONFIG_ROOT")"
@@ -78,7 +95,7 @@ for unit in "${units[@]}"; do
   [[ -f "$source_file" ]] || { echo "Missing unit template: $source_file" >&2; exit 1; }
   output="$render_dir/$unit"
   sed \
-    -e "s|__REPO_ROOT__|$repo_escaped|g" \
+    -e "s|__REPO_ROOT__|$source_escaped|g" \
     -e "s|__RUNTIME_ROOT__|$runtime_escaped|g" \
     -e "s|__STATE_ROOT__|$state_escaped|g" \
     -e "s|__CONFIG_ROOT__|$config_escaped|g" \
@@ -93,7 +110,7 @@ done
 
 rendered_timer="$render_dir/orb-backup.timer"
 sed \
-  -e "s|__REPO_ROOT__|$repo_escaped|g" \
+  -e "s|__REPO_ROOT__|$source_escaped|g" \
   -e "s|__RUNTIME_ROOT__|$runtime_escaped|g" \
   -e "s|__STATE_ROOT__|$state_escaped|g" \
   -e "s|__CONFIG_ROOT__|$config_escaped|g" \
@@ -103,11 +120,16 @@ sed \
   -e "s|__BACKUP_ROOT__|$backup_escaped|g" \
   "$UNIT_SRC/orb-backup.timer" >"$rendered_timer"
 chmod 0644 "$rendered_timer"
-systemd-analyze verify "${rendered[@]}" "$rendered_timer"
+if [[ "$VERIFY_WITH_SUDO" == "1" ]]; then
+  sudo -n systemd-analyze verify "${rendered[@]}" "$rendered_timer"
+else
+  systemd-analyze verify "${rendered[@]}" "$rendered_timer"
+fi
 echo "Lifecycle unit templates verify successfully."
 printf '  %s\n' "${units[@]}"
 
 if [[ "$APPLY" == "1" ]]; then
+  [[ -d "$SOURCE_ROOT" ]] || { echo "Native source release is unavailable: $SOURCE_ROOT" >&2; exit 1; }
   sudo -n mkdir -p "$UNIT_DEST"
   for index in "${!units[@]}"; do
     sudo -n install -m 0644 "${rendered[$index]}" "$UNIT_DEST/${units[$index]}"

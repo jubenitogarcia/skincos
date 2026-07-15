@@ -57,9 +57,9 @@ drop-in to the lifecycle unit.
    the resulting directory under `C:\CodexRuntime\n8n\backups\daily` and
    validate its manifest checksum before the cut.
 4. `scripts/runtime/prepare-lifecycle-layout.sh`,
-   `scripts/runtime/install-lifecycle-units.sh`, and the WhatsApp release
-   launcher checks all pass. The reviewed main SHA is recorded for the native
-   WhatsApp release.
+   `scripts/runtime/install-lifecycle-units.sh`, and both native release
+   launchers pass. The reviewed main SHA is recorded for the native source and
+   WhatsApp releases.
 5. The window owner has WSL `sudo -n` access. No regular code deploy, D1
    migration or workflow save runs during the window.
 
@@ -88,6 +88,16 @@ The pre-copy also transfers the active Livia workflow from the retained legacy
 source into `/var/lib/skincos-runtime/orb/workflows`. The lifecycle Orb unit and
 the official validator read this runtime location; no workflow state is copied
 into the new checkout.
+
+Before the window, stage the reviewed tracked source and locked CRM production
+dependencies on Linux. This creates `/opt/skincos/current/source` from `git
+archive`; it excludes worktree metadata, ignored files and private overlays.
+All lifecycle units use this path rather than a DrvFS checkout:
+
+```bash
+SKINCOS_RELEASE_ID=<reviewed-main-sha> \
+  scripts/runtime/prepare-native-source-release.sh --apply
+```
 
 Before stopping the legacy WhatsApp service, stage the reviewed release on the
 native filesystem. This command is intentionally explicit about the release

@@ -8,6 +8,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUNTIME_ROOT="${RUNTIME_ROOT:-/mnt/c/CodexRuntime}"
+STATE_ROOT="${STATE_ROOT:-/var/lib/skincos-runtime}"
+SOURCE_ROOT="${SOURCE_ROOT:-/opt/skincos/current/source}"
+MESSAGING_RELEASE_ROOT="${MESSAGING_RELEASE_ROOT:-/opt/skincos/current/messaging-whatsapp}"
 LEGACY_REPO_ROOT="${LEGACY_REPO_ROOT:-/mnt/c/CodexShared/Projetos/skincos}"
 APPLY=0
 BACKUP_DIR=""
@@ -71,6 +74,8 @@ require_cmd() {
 }
 
 for command in curl readlink sha256sum python3 systemctl; do require_cmd "$command"; done
+require_cmd sudo
+sudo -n true
 [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]] || { echo "--backup-dir must name an existing backup directory." >&2; exit 1; }
 [[ -n "$ROLLBACK_ROOT" && -e "$ROLLBACK_ROOT/.git" ]] || { echo "--rollback-root must be a retained Git worktree." >&2; exit 1; }
 [[ -n "$ROLLBACK_ARTIFACT_ROOT" && -d "$ROLLBACK_ARTIFACT_ROOT" ]] || { echo "--rollback-artifact-root must name staged runtime artifacts outside Git." >&2; exit 1; }
@@ -83,11 +88,14 @@ actual_sha="$(sha256sum "$BACKUP_DIR/n8n_runtime.dump" | awk '{print $1}')"
 [[ "$expected_sha" == "$actual_sha" ]] || { echo "Backup database checksum mismatch." >&2; exit 1; }
 restore_verified="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1])).get("restoreVerified", False)).lower())' "$BACKUP_DIR/manifest.json")"
 [[ "$restore_verified" == "true" ]] || { echo "Backup has no verified restore proof." >&2; exit 1; }
-
-if [[ "$APPLY" == "1" ]]; then
-  require_cmd sudo
-  sudo -n true
-fi
+sudo -n test -f "$SOURCE_ROOT/orb/engine/orb-proxy/server.js" || { echo "Native Orb source is unavailable: $SOURCE_ROOT" >&2; exit 1; }
+sudo -n test -f "$SOURCE_ROOT/scripts/booking/bootstrap-venv.sh" || { echo "Native Booking launcher is unavailable: $SOURCE_ROOT" >&2; exit 1; }
+sudo -n test -f "$SOURCE_ROOT/crm/api/scripts/run.sh" || { echo "Native CRM source is unavailable: $SOURCE_ROOT" >&2; exit 1; }
+sudo -n test -d "$SOURCE_ROOT/crm/api/node_modules/express" || { echo "Native CRM dependencies are unavailable: $SOURCE_ROOT" >&2; exit 1; }
+sudo -n test -f "$MESSAGING_RELEASE_ROOT/dist/main.js" && sudo -n test -d "$MESSAGING_RELEASE_ROOT/node_modules" || {
+  echo "Native WhatsApp release is unavailable: $MESSAGING_RELEASE_ROOT" >&2
+  exit 1
+}
 
 timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
 CHECKPOINT_DIR="$RUNTIME_ROOT/backups/runtime-cutover/$timestamp"
@@ -213,6 +221,8 @@ trap on_exit EXIT INT TERM
 echo "Verified backup: $BACKUP_DIR"
 echo "Rollback worktree: $ROLLBACK_ROOT"
 echo "Rollback runtime artifacts: $ROLLBACK_ARTIFACT_ROOT"
+echo "Native source release: $SOURCE_ROOT"
+echo "Native WhatsApp release: $MESSAGING_RELEASE_ROOT"
 echo "Lifecycle source: $ROOT_DIR"
 printf 'Legacy services: %s\n' "${legacy_units[*]}"
 printf 'Lifecycle services: %s\n' "${new_units[*]}"
@@ -220,7 +230,7 @@ printf 'Lifecycle services: %s\n' "${new_units[*]}"
 if [[ "$APPLY" != "1" ]]; then
   validate_rollback_artifacts
   "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh"
-  "$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh"
+  SOURCE_ROOT="$SOURCE_ROOT" "$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh"
   echo "Preflight passed. Use --apply only in the scheduled cut window."
   exit 0
 fi
@@ -232,7 +242,7 @@ CUTOVER_STARTED=1
 echo "Stopping legacy ingress and runtimes."
 stop_units_bounded "${legacy_units[@]}"
 "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply --final-sync
-BOOKING_API_RUNTIME_HOME="$RUNTIME_ROOT/state/booking" EF_SCRAPER_VENV_DIR="$RUNTIME_ROOT/state/booking/venv" "$ROOT_DIR/scripts/booking/bootstrap-venv.sh"
+BOOKING_API_RUNTIME_HOME="$STATE_ROOT/booking" EF_SCRAPER_VENV_DIR="$STATE_ROOT/booking/venv" "$SOURCE_ROOT/scripts/booking/bootstrap-venv.sh"
 "$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh" --apply
 
 echo "Starting lifecycle runtimes and ingress."
