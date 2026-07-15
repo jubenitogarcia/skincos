@@ -45,6 +45,9 @@ new_units=(
   cloudflare-orb.service
   cloudflare-runtime.service
 )
+LEGACY_WATCHDOG_TIMER="skincos-mini-pc-watchdog.timer"
+LEGACY_WATCHDOG_SERVICE="skincos-mini-pc-watchdog.service"
+LEGACY_WATCHDOG_WAS_ENABLED=0
 
 usage() {
   cat <<'EOF'
@@ -246,6 +249,26 @@ save_legacy_units() {
   done
 }
 
+suspend_legacy_watchdog() {
+  if ! sudo -n systemctl cat "$LEGACY_WATCHDOG_TIMER" >/dev/null 2>&1; then
+    return
+  fi
+
+  if sudo -n systemctl is-enabled --quiet "$LEGACY_WATCHDOG_TIMER"; then
+    LEGACY_WATCHDOG_WAS_ENABLED=1
+  fi
+
+  # The legacy watchdog starts n8n and the proxy whenever it observes them
+  # down. It must be quiesced before the bounded stop window begins.
+  sudo -n systemctl stop "$LEGACY_WATCHDOG_TIMER" "$LEGACY_WATCHDOG_SERVICE" || true
+}
+
+restore_legacy_watchdog() {
+  if [[ "$LEGACY_WATCHDOG_WAS_ENABLED" == "1" ]]; then
+    sudo -n systemctl enable --now "$LEGACY_WATCHDOG_TIMER"
+  fi
+}
+
 restore_legacy_services() {
   echo "Rolling back to retained worktree: $ROLLBACK_ROOT" >&2
   local unit source destination escaped_legacy escaped_rollback
@@ -263,6 +286,7 @@ restore_legacy_services() {
   wait_for_units_state inactive "$STOP_TIMEOUT_SECONDS" "${new_units[@]}" || true
   sudo -n systemctl enable "${legacy_units[@]}" >/dev/null
   start_units_bounded "${legacy_units[@]}"
+  restore_legacy_watchdog
 }
 
 run_final_windows_transfer() {
@@ -334,6 +358,8 @@ validate_rollback_artifacts
 save_legacy_units
 CUTOVER_STARTED=1
 
+echo "Quiescing the legacy watchdog."
+suspend_legacy_watchdog
 echo "Stopping legacy ingress and runtimes."
 if ! stop_units_bounded "${legacy_units[@]}"; then
   echo "Legacy services did not reach a stopped state; restoring the retained stack before exit." >&2
@@ -363,5 +389,6 @@ done
 
 sudo -n systemctl disable "${legacy_units[@]}" >/dev/null
 sudo -n systemctl reset-failed "${legacy_units[@]}" || true
+sudo -n systemctl disable --now "$LEGACY_WATCHDOG_TIMER" >/dev/null 2>&1 || true
 CUTOVER_COMPLETE=1
 echo "Lifecycle cutover passed. Retain $CHECKPOINT_DIR and $ROLLBACK_ROOT until the post-cut backup and public smoke are complete."

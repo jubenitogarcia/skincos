@@ -16,6 +16,11 @@ required=(
   '"$expected" == "inactive" && "$state" == "failed"'
   'Legacy services did not reach a stopped state; restoring the retained stack before exit.'
   'if ! stop_units_bounded "${legacy_units[@]}"; then'
+  'LEGACY_WATCHDOG_TIMER="skincos-mini-pc-watchdog.timer"'
+  'suspend_legacy_watchdog()'
+  'restore_legacy_watchdog()'
+  'Quiescing the legacy watchdog.'
+  'systemctl disable --now "$LEGACY_WATCHDOG_TIMER"'
 )
 
 for pattern in "${required[@]}"; do
