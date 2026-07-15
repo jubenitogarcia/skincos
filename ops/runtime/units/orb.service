@@ -19,12 +19,15 @@ Environment=N8N_USER_FOLDER=__STATE_ROOT__/orb/n8n-home
 Environment=N8N_WORKFLOWS_DIR=__STATE_ROOT__/orb/workflows
 Environment=N8N_LOG_DIR=__LOG_ROOT__/orb
 Environment=N8N_HEALTH_DIR=__STATE_ROOT__/orb/health
-Environment=N8N_TMP_DIR=__TMP_ROOT__/orb
+# PrivateTmp gives this unit its own native /tmp. Point n8n there instead of
+# binding a host /var/tmp path that is hidden by the private mount namespace.
+Environment=N8N_TMP_DIR=/tmp
 Environment=N8N_BINARY_DATA_DIR=__STATE_ROOT__/orb/n8n-home/.n8n/storage
 Environment=N8N_STORAGE_PATH=__STATE_ROOT__/orb/n8n-home/.n8n/storage
 Environment=N8N_DIAGNOSTICS_ENABLED=false
 EnvironmentFile=-__CONFIG_ROOT__/orb.env
 EnvironmentFile=-__CONFIG_ROOT__/orb-business.env
+EnvironmentFile=__CONFIG_ROOT__/orb-runtime-paths.env
 ExecStartPre=__REPO_ROOT__/orb/engine/scripts/wait-for-local-postgres.sh
 ExecStart=/usr/local/bin/n8n start
 Restart=always
@@ -33,7 +36,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=__STATE_ROOT__/orb __LOG_ROOT__/orb __TMP_ROOT__/orb
+ReadWritePaths=__STATE_ROOT__/orb __LOG_ROOT__/orb
 UMask=0027
 StandardOutput=append:__LOG_ROOT__/orb/system-orb.out.log
 StandardError=append:__LOG_ROOT__/orb/system-orb.err.log

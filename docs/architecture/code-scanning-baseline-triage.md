@@ -95,6 +95,30 @@ and `npm audit --omit=dev --audit-level=high` are release gates for this
 package; the latter reports zero high or critical findings for the resulting
 production dependency graph. No scanner exclusion or suppression was added.
 
+### High-severity dependency remediation: 2026-07-15
+
+All eleven open high-severity Dependabot instances were inspected at their
+individual manifest and dependency paths. The reachability classification did
+not replace remediation: every affected lockfile now resolves the first fixed
+release, with no advisory suppression or scanner path exclusion.
+
+| Alert IDs | Dependency and reachability | Outcome |
+| --- | --- | --- |
+| `#961`, `#964`, `#971` | `undici` in the backend workspace, reached through Cloudflare development/deployment tooling rather than an application import | Backend override and lockfile resolve `7.28.0`. |
+| `#963`, `#966` | `undici` in the website toolchain; no production source imports the package directly | Website override and npm lockfile resolve `7.28.0`. |
+| `#1134`, `#1136` | `undici` in the inventory Wrangler toolchain, not the Worker request handler | Inventory override and lockfile resolve `7.28.0`. |
+| `#984`, `#985` | `lxml_html_clean` in Agent Zero, which is not installed by a final runtime unit and has no direct `Cleaner` call in repository source | All three Agent Zero dependency declarations pin `0.4.5`. |
+| `#1130` | `multer` through Nest `platform-express`; no upload decorator, interceptor or route consumes it in the Meta Ads applications | Workspace override and lockfile resolve `2.2.0`. |
+| `#1267` | `form-data` through the archived gateway dependency graph; the final WhatsApp unit uses the separately maintained engine | Gateway override and lockfile resolve `4.0.6`. |
+
+Lockfiles were revalidated with pnpm `9.15.4` (the repository CI version) or
+npm as appropriate. The website npm audit reports no high or critical finding;
+the remaining output is moderate-only. Backend pnpm lockfiles are assessed by
+the repository Trivy gate because the pnpm audit endpoint used by the CLI is
+retired and responds with HTTP 410. Python package availability was confirmed
+for `lxml_html_clean==0.4.5`; the repository pip-audit gate remains the release
+authority for the full requirements graph.
+
 ### Current-analysis requirement
 
 The CodeQL workflow formerly did not trigger on `crm/api`, `messaging`, `orb`

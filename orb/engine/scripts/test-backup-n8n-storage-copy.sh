@@ -20,10 +20,17 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_root="/mnt/c/CodexRuntime/tmp/backup-storage-copy-test.$$"
 runtime_root="$test_root/runtime"
 backup_root="$test_root/backups"
+native_backup_root="$test_root/native-backups"
 fake_bin="$test_root/fake-bin"
+native_runtime_root="/home/admin/skincos-backup-storage-copy-test.$$"
 
 cleanup() {
+  if [[ "${KEEP_BACKUP_STORAGE_TEST:-0}" == "1" ]]; then
+    echo "backup storage test preserved: $test_root $native_runtime_root" >&2
+    return
+  fi
   rm -rf "$test_root"
+  rm -rf "$native_runtime_root"
 }
 trap cleanup EXIT
 
@@ -52,7 +59,7 @@ for arg in "$@"; do
     --file=*) printf 'dump\n' > "${arg#--file=}"; exit 0 ;;
   esac
 done
-exit 1
+printf 'dump\n'
 EOF
 cat > "$fake_bin/pg_restore" <<'EOF'
 #!/usr/bin/env bash
@@ -76,7 +83,8 @@ exit 0
 EOF
 chmod +x "$fake_bin"/*
 
-PATH="$fake_bin:$PATH" \
+env -u WSL_INTEROP \
+  PATH="$fake_bin:$PATH" \
   N8N_ROOT="$repo_root" \
   N8N_RUNTIME_HOME="$runtime_root" \
   N8N_ENV_FILE="$runtime_root/env/n8n.env" \
@@ -100,5 +108,39 @@ backup_dir="$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d ! -name '.part
 [[ -f "$backup_dir/runtime/env/n8n-business.env" ]]
 grep -q '"restoreVerified": true' "$backup_dir/manifest.json"
 grep -q '"storageBytes": null' "$backup_dir/manifest.json"
+
+mkdir -p "$native_runtime_root/n8n-home/.n8n/storage/nested" "$native_runtime_root/env" "$native_runtime_root/health"
+mkdir -p "$native_backup_root"
+printf 'native-payload\n' > "$native_runtime_root/n8n-home/.n8n/storage/nested/file.txt"
+printf 'config\n' > "$native_runtime_root/n8n-home/.n8n/config"
+printf 'N8N_ENCRYPTION_KEY=test-only\n' > "$native_runtime_root/env/n8n.env"
+printf 'N8N_DEFAULT_UNIT_SLUG=test-only\n' > "$native_runtime_root/env/n8n-business.env"
+
+env -u WSL_INTEROP \
+  PATH="$fake_bin:$PATH" \
+  N8N_ROOT="$repo_root" \
+  N8N_RUNTIME_HOME="$native_runtime_root" \
+  N8N_ENV_FILE="$native_runtime_root/env/n8n.env" \
+  N8N_BUSINESS_ENV_FILE="$native_runtime_root/env/n8n-business.env" \
+  N8N_DATA_HOME="$native_runtime_root/n8n-home" \
+  N8N_STATE_HOME="$native_runtime_root/n8n-home/.n8n" \
+  N8N_STORAGE_PATH="$native_runtime_root/n8n-home/.n8n/storage" \
+  N8N_CONFIG_PATH="$native_runtime_root/n8n-home/.n8n/config" \
+  N8N_HEALTH_DIR="$native_runtime_root/health" \
+  BACKUP_ROOT="$native_backup_root" \
+  BACKUP_NATIVE_TRANSFER_ROOT="$native_runtime_root/transfer" \
+  BACKUP_STORAGE_COPY_TRANSPORT=auto \
+  ROBOCOPY_BIN="$robocopy_bin" \
+  MANAGE_N8N_SERVICE=0 \
+  VERIFY_RESTORE=1 \
+  RETENTION_COUNT=1 \
+  bash "$repo_root/scripts/backup-n8n.sh"
+
+backup_dir="$(find "$native_backup_root" -mindepth 1 -maxdepth 1 -type d ! -name '.partial-*' -print -quit)"
+[[ -f "$backup_dir/storage.tar" ]]
+[[ ! -e "$backup_dir/storage" ]]
+grep -q '"restoreVerified": true' "$backup_dir/manifest.json"
+grep -q '"storageFormat": "tar"' "$backup_dir/manifest.json"
+grep -Eq '"storageArchiveSha256": "[0-9a-f]{64}"' "$backup_dir/manifest.json"
 
 echo "backup robocopy storage test passed"

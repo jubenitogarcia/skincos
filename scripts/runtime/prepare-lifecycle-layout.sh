@@ -332,6 +332,20 @@ if [[ "$SKIP_LEGACY_TRANSFER" != "1" ]]; then
 fi
 
 if [[ "$APPLY" == "1" ]]; then
+  # Legacy Orb configuration also carries mutable-path variables. Keep the
+  # secret-bearing files byte-for-byte intact and layer a final, non-secret
+  # environment file after them so no lifecycle process can fall back to
+  # DrvFS for state, logs or temporary data.
+  printf '%s\n' \
+    "N8N_RESTRICT_FILE_ACCESS_TO=/tmp" \
+    "META_REVIEW_STORE_PATH=$STATE_ROOT/orb/meta-review-store.json" \
+    "N8N_USER_FOLDER=$STATE_ROOT/orb/n8n-home" \
+    "N8N_STORAGE_PATH=$STATE_ROOT/orb/n8n-home/.n8n/storage" \
+    "N8N_BINARY_DATA_DIR=$STATE_ROOT/orb/n8n-home/.n8n/storage" \
+    "N8N_LOG_FILE_LOCATION=$LOG_ROOT/orb/n8n.log" \
+    "N8N_TMP_DIR=/tmp" \
+    | sudo -n install -D -o root -g skincos -m 0640 /dev/stdin "$CONFIG_ROOT/orb-runtime-paths.env"
+
   # The runtime processes run as skincos:skincos. Keep the configuration root
   # root-owned, but preserve group read/traverse access for environment files
   # and Cloudflare credentials. Removing all group permissions would make the
