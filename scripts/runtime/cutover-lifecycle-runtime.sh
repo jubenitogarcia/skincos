@@ -17,6 +17,7 @@ BACKUP_DIR=""
 ROLLBACK_ROOT=""
 ROLLBACK_ARTIFACT_ROOT=""
 ORB_STATE_HOME=""
+WINDOWS_TRANSFER_SCRIPT=""
 CHECKPOINT_DIR=""
 CUTOVER_STARTED=0
 CUTOVER_COMPLETE=0
@@ -45,12 +46,13 @@ new_units=(
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/runtime/cutover-lifecycle-runtime.sh --backup-dir <verified-backup> --rollback-root <legacy-worktree> --rollback-artifact-root <runtime-artifacts> --orb-state-home <native-staging-home>
-  scripts/runtime/cutover-lifecycle-runtime.sh --apply --backup-dir <verified-backup> --rollback-root <legacy-worktree> --rollback-artifact-root <runtime-artifacts> --orb-state-home <native-staging-home>
+  scripts/runtime/cutover-lifecycle-runtime.sh --backup-dir <verified-backup> --rollback-root <legacy-worktree> --rollback-artifact-root <runtime-artifacts> --orb-state-home <native-staging-home> --windows-transfer-script <windows-ps1>
+  scripts/runtime/cutover-lifecycle-runtime.sh --apply --backup-dir <verified-backup> --rollback-root <legacy-worktree> --rollback-artifact-root <runtime-artifacts> --orb-state-home <native-staging-home> --windows-transfer-script <windows-ps1>
 
 Without --apply, prints and validates the cutover prerequisites. --apply
-stops only the listed legacy services, promotes checksum-verified native Orb
-state, performs the non-destructive final sync, starts the lifecycle services
+stops only the listed legacy services, obtains the final non-Orb state delta
+through a Windows PowerShell process into native Linux storage, promotes
+checksum-verified native Orb state, starts the lifecycle services
 and runs health checks. If a post-stop step
 fails it restores the captured legacy units against --rollback-root and starts
 them again. The rollback artifacts must first be staged outside Git with
@@ -66,6 +68,7 @@ while [[ $# -gt 0 ]]; do
     --rollback-root) ROLLBACK_ROOT="${2:-}"; shift ;;
     --rollback-artifact-root) ROLLBACK_ARTIFACT_ROOT="${2:-}"; shift ;;
     --orb-state-home) ORB_STATE_HOME="${2:-}"; shift ;;
+    --windows-transfer-script) WINDOWS_TRANSFER_SCRIPT="${2:-}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -87,6 +90,8 @@ sudo -n test -f "$ORB_STATE_HOME/state-archive.manifest" && sudo -n test -f "$OR
 [[ -f "$BACKUP_DIR/manifest.json" && -f "$BACKUP_DIR/n8n_runtime.dump" ]] || { echo "Backup is missing manifest.json or n8n_runtime.dump." >&2; exit 1; }
 [[ "$STOP_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "CUTOVER_STOP_TIMEOUT_SECONDS must be a positive integer." >&2; exit 1; }
 [[ "$START_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "CUTOVER_START_TIMEOUT_SECONDS must be a positive integer." >&2; exit 1; }
+[[ -n "$WINDOWS_TRANSFER_SCRIPT" ]] || { echo "--windows-transfer-script is required: final state must be copied by Windows, not read recursively through /mnt/c." >&2; exit 1; }
+command -v powershell.exe >/dev/null 2>&1 || { echo "powershell.exe is required for the Windows-native final transfer." >&2; exit 1; }
 
 expected_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["databaseSha256"])' "$BACKUP_DIR/manifest.json")"
 actual_sha="$(sha256sum "$BACKUP_DIR/n8n_runtime.dump" | awk '{print $1}')"
@@ -214,6 +219,20 @@ restore_legacy_services() {
   start_units_bounded "${legacy_units[@]}"
 }
 
+run_final_windows_transfer() {
+  local output transfer_root
+  echo "Capturing final non-Orb delta through Windows into native Linux storage."
+  output="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_TRANSFER_SCRIPT" -FinalSync)" || {
+    echo "Windows final transfer failed; legacy services will be restored." >&2
+    return 1
+  }
+  printf '%s\n' "$output"
+  transfer_root="$(printf '%s\n' "$output" | awk -F= '/^LIFECYCLE_TRANSFER_ROOT=/{print $2; exit}')"
+  [[ -n "$transfer_root" ]] || { echo "Windows transfer did not report LIFECYCLE_TRANSFER_ROOT." >&2; return 1; }
+  [[ "$transfer_root" != /mnt/c/* ]] || { echo "Windows transfer incorrectly returned a DrvFS path." >&2; return 1; }
+  "$ROOT_DIR/scripts/runtime/apply-lifecycle-state-transfer.sh" --transfer-root "$transfer_root" --apply --final-sync
+}
+
 on_exit() {
   local status=$?
   if [[ "$APPLY" == "1" && "$CUTOVER_STARTED" == "1" && "$CUTOVER_COMPLETE" != "1" ]]; then
@@ -229,6 +248,7 @@ echo "Rollback runtime artifacts: $ROLLBACK_ARTIFACT_ROOT"
 echo "Native source release: $SOURCE_ROOT"
 echo "Native WhatsApp release: $MESSAGING_RELEASE_ROOT"
 echo "Native Orb state staging: $ORB_STATE_HOME"
+echo "Windows final-transfer script: $WINDOWS_TRANSFER_SCRIPT"
 echo "Lifecycle source: $ROOT_DIR"
 printf 'Legacy services: %s\n' "${legacy_units[*]}"
 printf 'Lifecycle services: %s\n' "${new_units[*]}"
@@ -236,7 +256,7 @@ printf 'Lifecycle services: %s\n' "${new_units[*]}"
 if [[ "$APPLY" != "1" ]]; then
   validate_rollback_artifacts
   "$ROOT_DIR/scripts/runtime/promote-orb-state-staging.sh" --staged-home "$ORB_STATE_HOME"
-  "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh"
+  "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --skip-legacy-transfer
   SOURCE_ROOT="$SOURCE_ROOT" "$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh"
   echo "Preflight passed. Use --apply only in the scheduled cut window."
   exit 0
@@ -248,8 +268,9 @@ CUTOVER_STARTED=1
 
 echo "Stopping legacy ingress and runtimes."
 stop_units_bounded "${legacy_units[@]}"
+run_final_windows_transfer
 "$ROOT_DIR/scripts/runtime/promote-orb-state-staging.sh" --apply --staged-home "$ORB_STATE_HOME"
-"$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply --final-sync
+"$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply --final-sync --skip-legacy-transfer
 BOOKING_API_RUNTIME_HOME="$STATE_ROOT/booking" EF_SCRAPER_VENV_DIR="$STATE_ROOT/booking/venv" "$SOURCE_ROOT/scripts/booking/bootstrap-venv.sh"
 "$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh" --apply
 

@@ -39,4 +39,13 @@ env "${layout_env[@]}" LEGACY_REPO_ROOT="$legacy_root" LIFECYCLE_SYNC_TRANSPORT=
 env "${layout_env[@]}" LEGACY_REPO_ROOT="$legacy_root" LIFECYCLE_SYNC_TRANSPORT=robocopy \
   "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply --final-sync >/dev/null
 [[ ! -e "$runtime_root/state/orb/n8n-home/payload.txt" ]]
+
+# The cutover path must be able to avoid *all* legacy reads after the
+# Windows-native transfer is staged. It may not recreate secrets or state from
+# the test legacy root even during the final window.
+rm -rf "$runtime_root/state" "$runtime_root/config"
+env "${layout_env[@]}" LEGACY_REPO_ROOT="$legacy_root" LIFECYCLE_SYNC_TRANSPORT=robocopy \
+  "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply --final-sync --skip-legacy-transfer >/dev/null
+[[ ! -e "$runtime_root/state/messaging-whatsapp/instances" ]]
+[[ ! -e "$runtime_root/config/orb.env" ]]
 echo "prepare lifecycle layout excludes Orb n8n-home test passed"
