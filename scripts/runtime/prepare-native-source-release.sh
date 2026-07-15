@@ -1,37 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stages the tracked source required by the lifecycle units on native Linux.
-# It deliberately uses an explicit reviewed commit and `git archive`, so no
-# ignored files, local credentials, worktree metadata, node_modules or DrvFS
-# path remains a runtime dependency after the units are switched.
+# Stages a checksum-verified tracked-source archive required by the lifecycle
+# units on native Linux. Windows creates and transfers the archive first; this
+# script never walks the Windows checkout through /mnt/c.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CANONICAL_REPO_ROOT="${SKINCOS_CANONICAL_REPO_ROOT:-/mnt/c/CodexShared/Projetos/skincos}"
 RELEASE_BASE="${SKINCOS_RELEASE_BASE:-/opt/skincos/releases}"
 CURRENT_LINK="${SKINCOS_SOURCE_CURRENT_LINK:-/opt/skincos/current/source}"
 RELEASE_ID="${SKINCOS_RELEASE_ID:-}"
 DESTINATION="$RELEASE_BASE/$RELEASE_ID/source"
 STAGING="$RELEASE_BASE/.source-staging-$RELEASE_ID-$$"
-ARCHIVE=""
+RELEASE_ARCHIVE=""
+RELEASE_ARCHIVE_SHA256=""
 CRM_NPM_CACHE="${CRM_NPM_CACHE:-/var/lib/skincos-runtime/cache/crm-api}"
 APPLY=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/runtime/prepare-native-source-release.sh [--apply]
+Usage: scripts/runtime/prepare-native-source-release.sh --archive <native-tar> --sha256 <sha256> [--apply]
 
-Set SKINCOS_RELEASE_ID to the reviewed main commit SHA. With --apply, stages
-only tracked source in /opt/skincos/releases/<sha>/source, installs the locked
-CRM production dependencies on the Linux filesystem, and atomically promotes
-/opt/skincos/current/source. It never copies private .env files or worktree
-metadata from the Windows checkout.
+Set SKINCOS_RELEASE_ID to the reviewed main commit SHA. The archive must have
+already been created and copied by Windows into a native Linux path (never
+/mnt/c). With --apply, validates its SHA-256, stages tracked source in
+/opt/skincos/releases/<sha>/source, installs locked CRM production dependencies
+on Linux, and atomically promotes /opt/skincos/current/source. It never copies
+private .env files or worktree metadata.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=1 ;;
+    --archive) RELEASE_ARCHIVE="${2:-}"; shift ;;
+    --sha256) RELEASE_ARCHIVE_SHA256="${2:-}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -39,37 +41,33 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$RELEASE_ID" =~ ^[0-9a-f]{7,64}$ ]] || { echo 'SKINCOS_RELEASE_ID must be a reviewed hexadecimal commit SHA.' >&2; exit 1; }
+[[ -n "$RELEASE_ARCHIVE" && -f "$RELEASE_ARCHIVE" ]] || { echo '--archive must name an existing native source archive.' >&2; exit 1; }
+[[ "$RELEASE_ARCHIVE" != /mnt/* ]] || { echo '--archive must already be on native Linux storage, not /mnt/c.' >&2; exit 1; }
+[[ "$RELEASE_ARCHIVE_SHA256" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo '--sha256 must be a SHA-256 hexadecimal digest.' >&2; exit 1; }
 [[ ! -e "$DESTINATION" ]] || { echo "Source release destination already exists: $DESTINATION" >&2; exit 1; }
-git -C "$CANONICAL_REPO_ROOT" rev-parse --verify --quiet "$RELEASE_ID^{commit}" >/dev/null || {
-  echo "Reviewed commit is unavailable from the canonical checkout: $RELEASE_ID" >&2
-  exit 1
-}
 
 echo "Source release ID: $RELEASE_ID"
-echo "Source: $CANONICAL_REPO_ROOT (tracked files only)"
+echo "Native source archive: $RELEASE_ARCHIVE"
 echo "Destination: $DESTINATION"
 if [[ "$APPLY" != "1" ]]; then
   echo 'Dry run complete. Use --apply only after CI, backup and cutover gates pass.'
   exit 0
 fi
 
-command -v git >/dev/null 2>&1 || { echo 'Missing required command: git' >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo 'Missing required command: npm' >&2; exit 1; }
 command -v sudo >/dev/null 2>&1 || { echo 'Missing required command: sudo' >&2; exit 1; }
+command -v sha256sum >/dev/null 2>&1 || { echo 'Missing required command: sha256sum' >&2; exit 1; }
 sudo -n true
+actual_archive_sha256="$(sha256sum "$RELEASE_ARCHIVE" | awk '{print $1}')"
+[[ "${actual_archive_sha256,,}" == "${RELEASE_ARCHIVE_SHA256,,}" ]] || { echo 'Source archive checksum mismatch.' >&2; exit 1; }
 
 cleanup_staging() {
   sudo -n rm -rf "$STAGING"
-  [[ -z "$ARCHIVE" ]] || rm -f "$ARCHIVE"
 }
 trap cleanup_staging EXIT INT TERM
 
 sudo -n install -d -o root -g skincos -m 0750 "$STAGING" "$CRM_NPM_CACHE"
-ARCHIVE="$(mktemp /var/tmp/skincos-source-release.XXXXXX.tar)"
-git -C "$CANONICAL_REPO_ROOT" archive --format=tar --output="$ARCHIVE" "$RELEASE_ID"
-sudo -n tar -xf "$ARCHIVE" -C "$STAGING"
-rm -f "$ARCHIVE"
-ARCHIVE=""
+sudo -n tar -xf "$RELEASE_ARCHIVE" -C "$STAGING"
 sudo -n chown -R root:skincos "$STAGING"
 sudo -n find "$STAGING" -type d -exec chmod 0750 {} +
 sudo -n find "$STAGING" -type f -exec chmod 0640 {} +
