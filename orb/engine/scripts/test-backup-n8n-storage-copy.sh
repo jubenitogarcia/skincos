@@ -31,6 +31,7 @@ mkdir -p "$runtime_root/n8n-home/.n8n/storage/nested" "$runtime_root/env" "$runt
 printf 'payload\n' > "$runtime_root/n8n-home/.n8n/storage/nested/file.txt"
 printf 'config\n' > "$runtime_root/n8n-home/.n8n/config"
 printf 'N8N_ENCRYPTION_KEY=test-only\n' > "$runtime_root/env/n8n.env"
+printf 'N8N_DEFAULT_UNIT_SLUG=test-only\n' > "$runtime_root/env/n8n-business.env"
 
 cat > "$fake_bin/sudo" <<'EOF'
 #!/usr/bin/env bash
@@ -79,6 +80,7 @@ PATH="$fake_bin:$PATH" \
   N8N_ROOT="$repo_root" \
   N8N_RUNTIME_HOME="$runtime_root" \
   N8N_ENV_FILE="$runtime_root/env/n8n.env" \
+  N8N_BUSINESS_ENV_FILE="$runtime_root/env/n8n-business.env" \
   N8N_DATA_HOME="$runtime_root/n8n-home" \
   N8N_STATE_HOME="$runtime_root/n8n-home/.n8n" \
   N8N_STORAGE_PATH="$runtime_root/n8n-home/.n8n/storage" \
@@ -94,6 +96,8 @@ PATH="$fake_bin:$PATH" \
 
 backup_dir="$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d ! -name '.partial-*' -print -quit)"
 [[ -f "$backup_dir/storage/nested/file.txt" ]]
+[[ -f "$backup_dir/runtime/env/n8n.env" ]]
+[[ -f "$backup_dir/runtime/env/n8n-business.env" ]]
 grep -q '"restoreVerified": true' "$backup_dir/manifest.json"
 grep -q '"storageBytes": null' "$backup_dir/manifest.json"
 

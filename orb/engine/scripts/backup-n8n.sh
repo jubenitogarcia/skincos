@@ -117,14 +117,17 @@ sync_storage() {
   rsync "${rsync_args[@]}" "$N8N_STORAGE_PATH/" "$partial/storage/"
 }
 
-mkdir -p "$partial/runtime" "$partial/storage"
+mkdir -p "$partial/runtime/env" "$partial/storage"
 
 sudo -n -u postgres pg_dump --format=custom --no-owner --no-acl \
   --dbname=n8n_runtime --file="$partial/n8n_runtime.dump"
 sudo -n -u postgres pg_restore --list "$partial/n8n_runtime.dump" > "$partial/n8n_runtime.restore-list.txt"
 
 install -m 0600 "$N8N_CONFIG_PATH" "$partial/runtime/config"
-cp -a "$N8N_RUNTIME_HOME/env" "$partial/runtime/env"
+install -m 0600 "$N8N_ENV_FILE" "$partial/runtime/env/n8n.env"
+if [[ -f "$N8N_BUSINESS_ENV_FILE" ]]; then
+  install -m 0600 "$N8N_BUSINESS_ENV_FILE" "$partial/runtime/env/n8n-business.env"
+fi
 chmod -R go-rwx "$partial/runtime"
 
 sync_storage

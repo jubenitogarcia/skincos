@@ -12,13 +12,13 @@ rollback_root="$tmp_dir/rollback"
 artifact_root="$runtime_root/artifacts/runtime-cutover/test"
 
 mkdir -p \
-  "$legacy_root/modules/automations/n8n/workflows" \
-  "$legacy_root/modules/crm/api/node_modules/express" \
+  "$legacy_root/orb/engine/workflows" \
+  "$legacy_root/crm/api/node_modules/express" \
   "$rollback_root/modules/automations/n8n/workflows" \
   "$rollback_root/modules/crm/api"
 touch "$rollback_root/.git"
-printf '{"name":"Livia"}\n' >"$legacy_root/modules/automations/n8n/workflows/livia.active.json"
-printf '{}' >"$legacy_root/modules/crm/api/node_modules/express/package.json"
+printf '{"name":"Livia"}\n' >"$legacy_root/orb/engine/workflows/livia.active.json"
+printf '{}' >"$legacy_root/crm/api/node_modules/express/package.json"
 
 RUNTIME_ROOT="$runtime_root" LEGACY_REPO_ROOT="$legacy_root" ROLLBACK_ARTIFACT_SYNC_TRANSPORT=robocopy \
   "$ROOT_DIR/scripts/runtime/stage-rollback-artifacts.sh" \
