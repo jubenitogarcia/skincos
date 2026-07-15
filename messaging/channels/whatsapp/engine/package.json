@@ -76,7 +76,7 @@
     "@types/uuid": "^10.0.0",
     "amqplib": "^0.10.5",
     "audio-decode": "^2.2.3",
-    "axios": "^1.7.9",
+    "axios": "1.18.1",
     "baileys": "^7.0.0-rc12",
     "class-validator": "^0.14.1",
     "compression": "^1.7.5",
@@ -96,7 +96,6 @@
     "jsonschema": "^1.4.1",
     "jsonwebtoken": "^9.0.2",
     "kafkajs": "^2.2.4",
-    "link-preview-js": "^3.0.13",
     "long": "^5.2.3",
     "mediainfo.js": "^0.3.4",
     "mime": "^4.0.0",
@@ -124,7 +123,9 @@
     "uuid": "^13.0.0"
   },
   "overrides": {
-    "fast-xml-parser": "^5.7.0"
+    "axios": "1.18.1",
+    "fast-xml-parser": "^5.7.0",
+    "link-preview-js": "4.0.1"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.8.1",

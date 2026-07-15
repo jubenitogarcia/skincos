@@ -83,6 +83,7 @@ import { Instance, Message } from '@prisma/client';
 import { createJid, getLidFromJid } from '@utils/createJid';
 import { fetchLatestWaWebVersion } from '@utils/fetchLatestWaWebVersion';
 import { makeProxyAgent } from '@utils/makeProxyAgent';
+import { isLinkPreviewEnabled } from '@utils/linkPreviewPolicy';
 import { getOnWhatsappCache, saveOnWhatsappCache } from '@utils/onWhatsappCache';
 import { status } from '@utils/renderStatus';
 import useMultiFileAuthStatePrisma from '@utils/use-multi-file-auth-state-prisma';
@@ -2311,7 +2312,7 @@ export class BaileysStartupService extends ChannelStartupService {
         }
       }
 
-      const linkPreview = options?.linkPreview != false ? undefined : false;
+      const linkPreview = isLinkPreviewEnabled(options?.linkPreview) ? undefined : false;
 
       let quoted: proto.IWebMessageInfo;
 
@@ -2775,7 +2776,8 @@ export class BaileysStartupService extends ChannelStartupService {
 
           const response = await axios.get(mediaMessage.media, config);
 
-          mimetype = response.headers['content-type'];
+          const contentType = response.headers['content-type'];
+          mimetype = typeof contentType === 'string' ? contentType : undefined;
         }
       }
 
