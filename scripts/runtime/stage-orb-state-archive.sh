@@ -115,8 +115,16 @@ sudo -n true
 id "$RUNTIME_USER" >/dev/null 2>&1 || { echo "Runtime user does not exist: $RUNTIME_USER" >&2; exit 1; }
 sudo -n install -d -o "$RUNTIME_USER" -g "$RUNTIME_USER" -m 0750 "$staging_root"
 if sudo -n test -e "$stage_dir"; then
-  echo "Refusing to overwrite existing staged Orb state: $stage_dir" >&2
-  exit 1
+  sudo -n test -f "$home/.n8n/config" && sudo -n test -f "$home/database.sqlite" &&
+    sudo -n test -d "$home/storage" && sudo -n test -f "$home/nodes/package.json" &&
+    sudo -n test -f "$home/nodes/package-lock.json" && sudo -n test -d "$home/nodes/node_modules" &&
+    sudo -n test -L "$home/.n8n/nodes/node_modules" &&
+    sudo -n grep -Fx "archive_sha256=$actual_sha" "$home/state-archive.manifest" >/dev/null || {
+      echo "Refusing to reuse incomplete or mismatched staged Orb state: $stage_dir" >&2
+      exit 1
+    }
+  echo "STAGED_ORB_STATE_HOME=$home"
+  exit 0
 fi
 
 temporary_dir="$(sudo -n mktemp -d "$staging_root/.${stage_id}.XXXXXX")"
