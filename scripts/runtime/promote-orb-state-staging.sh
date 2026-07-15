@@ -29,12 +29,12 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-[[ -n "$STAGED_HOME" && -d "$STAGED_HOME" ]] || { echo "--staged-home must name an existing directory." >&2; exit 1; }
-[[ -f "$STAGED_HOME/.n8n/config" && -f "$STAGED_HOME/database.sqlite" && -f "$STAGED_HOME/state-archive.manifest" ]] || {
+[[ -n "$STAGED_HOME" ]] && sudo -n test -d "$STAGED_HOME" || { echo "--staged-home must name an existing directory." >&2; exit 1; }
+sudo -n test -f "$STAGED_HOME/.n8n/config" && sudo -n test -f "$STAGED_HOME/database.sqlite" && sudo -n test -f "$STAGED_HOME/state-archive.manifest" || {
   echo "Staged Orb state is incomplete or was not produced by the archive helper." >&2; exit 1;
 }
-native_staging="$(realpath "$STATE_ROOT/staging")"
-native_home="$(realpath "$STAGED_HOME")"
+native_staging="$(sudo -n realpath "$STATE_ROOT/staging")"
+native_home="$(sudo -n realpath "$STAGED_HOME")"
 [[ "$native_home" == "$native_staging"/* ]] || { echo "Staged Orb state must remain under $native_staging." >&2; exit 1; }
 
 destination="$STATE_ROOT/orb/n8n-home"
