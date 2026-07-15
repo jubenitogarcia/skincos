@@ -29,6 +29,12 @@ if ($source -match 'Test-Path\s+-LiteralPath\s+\$archive\s+-or\s+Test-Path\s+-Li
 if ($source -notmatch '\(\(Test-Path\s+-LiteralPath\s+\$archive\)\s+-or\s+\(Test-Path\s+-LiteralPath\s+\$manifest\)\)') {
     throw 'The archive collision guard is missing the expected parenthesized Test-Path expression.'
 }
+if ($source -match 'Set-Content\s+-LiteralPath\s+\$manifest\s+-Encoding\s+utf8NoBOM') {
+    throw 'Windows PowerShell 5.1 does not support utf8NoBOM for Set-Content; use the .NET UTF-8 writer.'
+}
+if ($source -notmatch '\[System\.IO\.File\]::WriteAllText\(') {
+    throw 'The manifest must be written through the PowerShell-5.1-compatible .NET UTF-8 writer.'
+}
 
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("skincos-orb-export-test-{0}" -f [guid]::NewGuid().ToString('N'))
 try {
@@ -42,6 +48,16 @@ try {
     Set-Content -LiteralPath $archive -Value 'state' -NoNewline
     if (-not ((Test-Path -LiteralPath $archive) -or (Test-Path -LiteralPath $manifest))) {
         throw 'The collision guard failed to detect an existing archive.'
+    }
+
+    $manifestPayload = [ordered]@{ archive = 'n8n-home-state.tar'; sha256 = 'test' } | ConvertTo-Json
+    [System.IO.File]::WriteAllText($manifest, $manifestPayload, (New-Object System.Text.UTF8Encoding($false)))
+    $manifestBytes = [System.IO.File]::ReadAllBytes($manifest)
+    if ($manifestBytes.Length -ge 3 -and $manifestBytes[0] -eq 0xEF -and $manifestBytes[1] -eq 0xBB -and $manifestBytes[2] -eq 0xBF) {
+        throw 'The manifest was written with a UTF-8 BOM.'
+    }
+    if ((Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).sha256 -ne 'test') {
+        throw 'The manifest written with the .NET UTF-8 writer is not valid JSON.'
     }
 }
 finally {
