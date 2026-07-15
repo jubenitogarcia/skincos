@@ -19,9 +19,14 @@
 ## Backup and rollback
 
 - Restore-verified Orb backup: `C:\CodexRuntime\backups\orb\daily\20260715T191707Z`; PostgreSQL and storage hashes were validated by a real restore.
+- Scheduled backup owner: Windows task `SkincosOrbBackup`. It triggers a native
+  `/var/backups/skincos/orb/daily` snapshot and publishes it to
+  `C:\CodexRuntime\backups\orb\daily` only after restore, database checksum and
+  storage checksum validation. `orb-backup.timer` is intentionally disabled.
 - Cutover checkpoint: `C:\CodexRuntime\backups\runtime-cutover\20260715T182203Z`; retain it until the post-retirement observation window and next scheduled restore-verified backup complete.
 - Native releases are immutable. Rollback repoints `/opt/skincos/current/*` to the prior release, restores the captured units/config and restarts only the affected services.
-- The transfer contract is Windows-to-Linux. Do not recursively traverse `C:` from WSL to copy state.
+- Cross-filesystem transfer is Windows-owned. Do not recursively traverse `C:`
+  from WSL or launch Windows transfer binaries from a Linux service.
 
 ## Messaging and CRM contract
 

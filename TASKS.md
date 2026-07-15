@@ -2,7 +2,7 @@
 
 ## In progress
 
-- [ ] Merge the final legacy WhatsApp/source retirement change after all CI and security gates pass; promote the resulting native release, run restart/persistence smokes, then remove the disabled legacy units and temporary validation resources.
+- [ ] Merge the final legacy WhatsApp/source retirement and native backup-schedule repair after all CI/security gates pass; promote the resulting release, run restart/persistence smokes, then remove the disabled legacy units and temporary validation resources.
 - [ ] Complete the independent post-retirement audit: main/worktrees/branches, GitHub PRs/checks/scanners, runtime units/releases, backups, endpoints, secrets and obsolete path references.
 
 ## External/product follow-up

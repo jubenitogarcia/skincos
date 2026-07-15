@@ -384,3 +384,17 @@
 - Impact: old source trees, local gateway routes, dashboards, scripts, HTTP
   restart workflows and their GitHub credential are retired. Host recovery is
   an authenticated operator/systemd operation with rollback evidence.
+
+## 2026-07-15 - Make Windows the owner of native Orb backup publication
+
+- Decision: `orb-backup.service` creates and restore-tests its snapshot entirely
+  under `/var/backups/skincos`; the Windows task `SkincosOrbBackup` starts that
+  unit and publishes the verified payload through `\\wsl.localhost` to
+  `C:\CodexRuntime\backups`.
+- Why: WSL system services cannot reliably launch Windows transfer binaries and
+  must not recursively traverse `/mnt/c`. The previous timer failed with an
+  interop `Invalid argument` before producing a new backup.
+- Impact: the WSL timer is disabled, Task Scheduler owns the daily schedule,
+  both database and storage hashes are revalidated after the Windows copy, ACLs
+  remain limited to SYSTEM and the operator, and only a restore-verified backup
+  is eligible for retention.

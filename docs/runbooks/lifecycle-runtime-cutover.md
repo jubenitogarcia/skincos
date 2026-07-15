@@ -223,8 +223,18 @@ continue unless its runtime artifact links resolve to the staged bundle.
 ## After the cut
 
 - Confirm each lifecycle unit is active and the old unit names are disabled.
-- Trigger `orb-backup.service` once. It validates a PostgreSQL restore before
-  retaining only the latest lifecycle backup.
+- Install the Windows-owned backup schedule from an elevated PowerShell:
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\scripts\runtime\install-orb-backup-task.ps1 -RunNow
+  ```
+
+  `SkincosOrbBackup` starts `orb-backup.service`, which writes and restore-tests
+  a native snapshot under `/var/backups/skincos/orb/daily`. Windows then reads
+  that verified snapshot through `\\wsl.localhost`, validates both hashes and
+  the storage TAR, and atomically publishes it under
+  `C:\CodexRuntime\backups\orb\daily`. The WSL timer remains disabled so WSL
+  never launches Windows binaries or traverses `/mnt/c` during backup.
 - Run the official Orb validator and the local/public CRM and Orb smoke checks.
 - Keep the checkpoint at
   `C:\CodexRuntime\backups\runtime-cutover\<timestamp>` and the rollback

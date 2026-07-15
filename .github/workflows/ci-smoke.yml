@@ -95,4 +95,4 @@ jobs:
         run: |
           set -euo pipefail
           bash backend/scripts/e2e.sh ci-smoke
-          bash backend/scripts/e2e.sh unit-monitor-ci
+          bash orb/engine/scripts/test-backup-n8n-storage-copy.sh
