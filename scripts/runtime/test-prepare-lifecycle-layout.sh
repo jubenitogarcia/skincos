@@ -28,16 +28,15 @@ printf '{"name":"Livia"}\n' >"$legacy_root/orb/engine/workflows/livia.active.jso
 env "${layout_env[@]}" LEGACY_REPO_ROOT="$legacy_root" LIFECYCLE_SYNC_TRANSPORT=robocopy \
   "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply >/dev/null
 
-[[ "$(<"$runtime_root/state/orb/n8n-home/payload.txt")" == "source-v1" ]]
+[[ ! -e "$runtime_root/state/orb/n8n-home/payload.txt" ]]
 [[ -f "$runtime_root/state/orb/workflows/livia.active.json" ]]
 
-printf 'destination-preserved\n' >"$runtime_root/state/orb/n8n-home/payload.txt"
 printf 'source-v2\n' >"$runtime_root/n8n/n8n-home/payload.txt"
 env "${layout_env[@]}" LEGACY_REPO_ROOT="$legacy_root" LIFECYCLE_SYNC_TRANSPORT=robocopy \
   "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply >/dev/null
-[[ "$(<"$runtime_root/state/orb/n8n-home/payload.txt")" == "destination-preserved" ]]
+[[ ! -e "$runtime_root/state/orb/n8n-home/payload.txt" ]]
 
 env "${layout_env[@]}" LEGACY_REPO_ROOT="$legacy_root" LIFECYCLE_SYNC_TRANSPORT=robocopy \
   "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply --final-sync >/dev/null
-[[ "$(<"$runtime_root/state/orb/n8n-home/payload.txt")" == "source-v2" ]]
-echo "prepare lifecycle layout robocopy test passed"
+[[ ! -e "$runtime_root/state/orb/n8n-home/payload.txt" ]]
+echo "prepare lifecycle layout excludes Orb n8n-home test passed"

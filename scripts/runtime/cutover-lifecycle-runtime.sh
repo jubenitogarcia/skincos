@@ -16,6 +16,7 @@ APPLY=0
 BACKUP_DIR=""
 ROLLBACK_ROOT=""
 ROLLBACK_ARTIFACT_ROOT=""
+ORB_STATE_HOME=""
 CHECKPOINT_DIR=""
 CUTOVER_STARTED=0
 CUTOVER_COMPLETE=0
@@ -44,12 +45,13 @@ new_units=(
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/runtime/cutover-lifecycle-runtime.sh --backup-dir <verified-backup> --rollback-root <legacy-worktree> --rollback-artifact-root <runtime-artifacts>
-  scripts/runtime/cutover-lifecycle-runtime.sh --apply --backup-dir <verified-backup> --rollback-root <legacy-worktree> --rollback-artifact-root <runtime-artifacts>
+  scripts/runtime/cutover-lifecycle-runtime.sh --backup-dir <verified-backup> --rollback-root <legacy-worktree> --rollback-artifact-root <runtime-artifacts> --orb-state-home <native-staging-home>
+  scripts/runtime/cutover-lifecycle-runtime.sh --apply --backup-dir <verified-backup> --rollback-root <legacy-worktree> --rollback-artifact-root <runtime-artifacts> --orb-state-home <native-staging-home>
 
 Without --apply, prints and validates the cutover prerequisites. --apply
-stops only the listed legacy services, performs the non-destructive final
-sync, starts the lifecycle services and runs health checks. If a post-stop step
+stops only the listed legacy services, promotes checksum-verified native Orb
+state, performs the non-destructive final sync, starts the lifecycle services
+and runs health checks. If a post-stop step
 fails it restores the captured legacy units against --rollback-root and starts
 them again. The rollback artifacts must first be staged outside Git with
 scripts/runtime/stage-rollback-artifacts.sh. It never deletes legacy runtime
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
     --backup-dir) BACKUP_DIR="${2:-}"; shift ;;
     --rollback-root) ROLLBACK_ROOT="${2:-}"; shift ;;
     --rollback-artifact-root) ROLLBACK_ARTIFACT_ROOT="${2:-}"; shift ;;
+    --orb-state-home) ORB_STATE_HOME="${2:-}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -79,6 +82,8 @@ sudo -n true
 [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]] || { echo "--backup-dir must name an existing backup directory." >&2; exit 1; }
 [[ -n "$ROLLBACK_ROOT" && -e "$ROLLBACK_ROOT/.git" ]] || { echo "--rollback-root must be a retained Git worktree." >&2; exit 1; }
 [[ -n "$ROLLBACK_ARTIFACT_ROOT" && -d "$ROLLBACK_ARTIFACT_ROOT" ]] || { echo "--rollback-artifact-root must name staged runtime artifacts outside Git." >&2; exit 1; }
+[[ -n "$ORB_STATE_HOME" && -d "$ORB_STATE_HOME" ]] || { echo "--orb-state-home must name checksum-verified native staging state." >&2; exit 1; }
+[[ -f "$ORB_STATE_HOME/state-archive.manifest" && -f "$ORB_STATE_HOME/.n8n/config" ]] || { echo "--orb-state-home is incomplete." >&2; exit 1; }
 [[ -f "$BACKUP_DIR/manifest.json" && -f "$BACKUP_DIR/n8n_runtime.dump" ]] || { echo "Backup is missing manifest.json or n8n_runtime.dump." >&2; exit 1; }
 [[ "$STOP_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "CUTOVER_STOP_TIMEOUT_SECONDS must be a positive integer." >&2; exit 1; }
 [[ "$START_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "CUTOVER_START_TIMEOUT_SECONDS must be a positive integer." >&2; exit 1; }
@@ -223,12 +228,14 @@ echo "Rollback worktree: $ROLLBACK_ROOT"
 echo "Rollback runtime artifacts: $ROLLBACK_ARTIFACT_ROOT"
 echo "Native source release: $SOURCE_ROOT"
 echo "Native WhatsApp release: $MESSAGING_RELEASE_ROOT"
+echo "Native Orb state staging: $ORB_STATE_HOME"
 echo "Lifecycle source: $ROOT_DIR"
 printf 'Legacy services: %s\n' "${legacy_units[*]}"
 printf 'Lifecycle services: %s\n' "${new_units[*]}"
 
 if [[ "$APPLY" != "1" ]]; then
   validate_rollback_artifacts
+  "$ROOT_DIR/scripts/runtime/promote-orb-state-staging.sh" --staged-home "$ORB_STATE_HOME"
   "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh"
   SOURCE_ROOT="$SOURCE_ROOT" "$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh"
   echo "Preflight passed. Use --apply only in the scheduled cut window."
@@ -241,6 +248,7 @@ CUTOVER_STARTED=1
 
 echo "Stopping legacy ingress and runtimes."
 stop_units_bounded "${legacy_units[@]}"
+"$ROOT_DIR/scripts/runtime/promote-orb-state-staging.sh" --apply --staged-home "$ORB_STATE_HOME"
 "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply --final-sync
 BOOKING_API_RUNTIME_HOME="$STATE_ROOT/booking" EF_SCRAPER_VENV_DIR="$STATE_ROOT/booking/venv" "$SOURCE_ROOT/scripts/booking/bootstrap-venv.sh"
 "$ROOT_DIR/scripts/runtime/install-lifecycle-units.sh" --apply

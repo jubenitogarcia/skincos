@@ -13,13 +13,12 @@ ARTIFACT_ROOT="${ARTIFACT_ROOT:-$RUNTIME_ROOT/artifacts}"
 LEGACY_REPO_ROOT="${LEGACY_REPO_ROOT:-/mnt/c/CodexShared/Projetos/skincos}"
 APPLY=0
 FINAL_SYNC=0
-SKIP_ORB_STATE=0
 SKIP_MESSAGING_STATE=0
 SYNC_TRANSPORT="${LIFECYCLE_SYNC_TRANSPORT:-auto}"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/runtime/prepare-lifecycle-layout.sh [--apply] [--final-sync] [--skip-orb-state] [--skip-messaging-state]
+Usage: scripts/runtime/prepare-lifecycle-layout.sh [--apply] [--final-sync] [--skip-messaging-state]
 
 Copies mutable runtime state from the Windows legacy layout to native Linux
 state/config/log/tmp roots. C:\CodexRuntime remains the durable location for
@@ -27,8 +26,6 @@ backups and artifacts. Without --apply it reports the planned copies.
 --final-sync updates existing destination files but never deletes a legacy
 source or an existing destination. It is reserved for the short window after
 the old services have stopped.
---skip-orb-state is only for an already-completed independent pre-copy. It
-cannot be combined with --final-sync.
 --skip-messaging-state has the same restriction for the WhatsApp channel.
 
 LIFECYCLE_SYNC_TRANSPORT chooses the directory-copy transport: auto (default)
@@ -41,7 +38,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=1 ;;
     --final-sync) FINAL_SYNC=1 ;;
-    --skip-orb-state) SKIP_ORB_STATE=1 ;;
+    --skip-orb-state)
+      echo "--skip-orb-state was retired. Stage Orb state with stage-orb-state-archive.sh." >&2
+      exit 1
+      ;;
     --skip-messaging-state) SKIP_MESSAGING_STATE=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
@@ -53,7 +53,7 @@ if [[ "$FINAL_SYNC" == "1" && "$APPLY" != "1" ]]; then
   echo "--final-sync requires --apply." >&2
   exit 1
 fi
-if [[ "$FINAL_SYNC" == "1" && ( "$SKIP_ORB_STATE" == "1" || "$SKIP_MESSAGING_STATE" == "1" ) ]]; then
+if [[ "$FINAL_SYNC" == "1" && "$SKIP_MESSAGING_STATE" == "1" ]]; then
   echo "State skip options cannot be used during the final sync." >&2
   exit 1
 fi
@@ -283,11 +283,12 @@ for directory in "${directories[@]}"; do
   fi
 done
 
-if [[ "$SKIP_ORB_STATE" == "1" ]]; then
-  echo "SKIP orb state: completed by the independently recorded pre-copy."
-else
-  sync_path "$legacy_orb/n8n-home" "$STATE_ROOT/orb"
-fi
+# DrvFS metadata traversal across n8n-home has repeatedly left rsync in D
+# state on this host. Orb state is therefore always staged through the
+# checksum-verified archive helper into the native filesystem. The final
+# cutover promotes that prepared directory atomically after legacy services
+# stop; this generic layout helper must never recurse through n8n-home.
+echo "ORB state is archive-staged separately; n8n-home is intentionally not synced here."
 if [[ "$SKIP_MESSAGING_STATE" == "1" ]]; then
   echo "SKIP messaging state: completed by the independently recorded pre-copy."
 else

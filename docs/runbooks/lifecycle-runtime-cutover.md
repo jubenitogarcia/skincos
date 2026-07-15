@@ -5,10 +5,11 @@ without deleting the legacy tree during the change window. It is intentionally
 separate from the source-layout pull request: a merged path move is never proof
 that a service is safe to rename.
 
-## Current validated checkpoint (2026-07-14)
+## Current validated checkpoint (2026-07-15)
 
-- Pre-copy completed with the Windows-native transport and the runtime Livia
-  workflow matches the retained legacy source by SHA-256.
+- A checksum-verified, state-only Orb archive has been extracted into a native
+  Linux staging directory. This replaces recursive DrvFS traversal of
+  `n8n-home`, which can block WSL in uninterruptible I/O on this host.
 - Rollback artifacts are staged at
   `C:\CodexRuntime\artifacts\runtime-cutover\20260714T170200Z` and linked
   only into the retained rollback worktree.
@@ -56,7 +57,8 @@ drop-in to the lifecycle unit.
 3. `skincos-n8n-backup.service` has completed with `VERIFY_RESTORE=1`; record
    the resulting directory under `C:\CodexRuntime\n8n\backups\daily` and
    validate its manifest checksum before the cut.
-4. `scripts/runtime/prepare-lifecycle-layout.sh`,
+4. `scripts/runtime/stage-orb-state-archive.sh`,
+   `scripts/runtime/prepare-lifecycle-layout.sh`,
    `scripts/runtime/install-lifecycle-units.sh`, and both native release
    launchers pass. The reviewed main SHA is recorded for the native source and
    WhatsApp releases.
@@ -65,7 +67,8 @@ drop-in to the lifecycle unit.
 
 ## Cut sequence
 
-Run the pre-copy before the window; it does not stop services or remove data:
+Run the generic non-Orb pre-copy before the window; it does not stop services
+or remove data:
 
 ```bash
 scripts/runtime/prepare-lifecycle-layout.sh --apply
@@ -81,8 +84,31 @@ The helper copies from the legacy Windows runtime into these native roots:
 
 Backups and durable artifacts remain under `C:\CodexRuntime`. The pre-copy rule
 still applies (copy only missing files); final sync copies changed files but
-never deletes a legacy source or destination-only artifact. Copies from DrvFS
-to Linux use `rsync` under `sudo`, avoiding a runtime dependency on DrvFS.
+never deletes a legacy source or destination-only artifact. `n8n-home` is
+explicitly excluded from this helper: do not use `rsync`, `cp`, or a recursive
+DrvFS copy for Orb state.
+
+Before the window, create the state-only archive under the durable artifacts
+root from Windows, record the printed SHA-256, then stage it on Linux. The
+archive excludes only the Windows `node_modules` trees. The staging helper
+rebuilds the custom nodes with `npm ci --ignore-scripts` after normalizing a
+lockfile only when npm proves it conflicts with the exact package manifest:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\runtime\export-orb-state-archive.ps1 \
+  -ArtifactRoot C:\CodexRuntime\artifacts\runtime-cutover\<timestamp>
+```
+
+```bash
+scripts/runtime/stage-orb-state-archive.sh \
+  --archive /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp>/n8n-home-state.tar \
+  --sha256 <printed-sha256> --apply
+```
+
+Record the resulting `STAGED_ORB_STATE_HOME`. It remains isolated under
+`/var/lib/skincos-runtime/staging` until the cutover script atomically promotes
+it after the legacy units have stopped. A new archive is required for every
+attempted cut; a staging directory is never silently reused.
 
 The pre-copy also transfers the active Livia workflow from the retained legacy
 source into `/var/lib/skincos-runtime/orb/workflows`. The lifecycle Orb unit and
@@ -141,16 +167,19 @@ artifact directory:
 scripts/runtime/cutover-lifecycle-runtime.sh \
   --backup-dir /mnt/c/CodexRuntime/backups/orb/manual/<timestamp> \
   --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
-  --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp>
+  --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp> \
+  --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home
 
 scripts/runtime/cutover-lifecycle-runtime.sh --apply \
   --backup-dir /mnt/c/CodexRuntime/backups/orb/manual/<timestamp> \
   --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
-  --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp>
+  --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp> \
+  --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home
 ```
 
 The apply command captures all old unit files, stops only the seven legacy
-units, makes the final non-destructive data sync, installs and starts `orb`,
+units, atomically promotes the checksum-verified native Orb state, makes the
+remaining final non-destructive data sync, installs and starts `orb`,
 `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`, `cloudflare-orb` and
 `cloudflare-runtime`. It requires local Orb health plus public Orb and CRM
 health. Legacy stop/start operations are asynchronous but bounded; a timeout
