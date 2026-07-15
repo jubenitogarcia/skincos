@@ -167,10 +167,14 @@ wait_for_units_state() {
     pending=0
     for unit in "$@"; do
       state="$(sudo -n systemctl is-active "$unit" 2>/dev/null || true)"
-      if [[ "$state" != "$expected" ]]; then
-        pending=1
-        printf 'unit=%s state=%s expected=%s\n' "$unit" "${state:-unknown}" "$expected" >&2
+      # `systemctl stop` can leave a unit in failed when its process exits
+      # during shutdown. It is still stopped, so accept that terminal state
+      # only while waiting for a stop; startup still requires active.
+      if [[ "$state" == "$expected" ]] || [[ "$expected" == "inactive" && "$state" == "failed" ]]; then
+        continue
       fi
+      pending=1
+      printf 'unit=%s state=%s expected=%s\n' "$unit" "${state:-unknown}" "$expected" >&2
     done
     [[ "$pending" == "0" ]] && return 0
     if (( SECONDS >= deadline )); then
