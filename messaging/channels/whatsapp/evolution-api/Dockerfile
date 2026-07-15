@@ -40,6 +40,8 @@ ENV DOCKER_ENV=true
 
 WORKDIR /evolution
 
+RUN addgroup -S evolution && adduser -S -G evolution -h /evolution evolution
+
 COPY --from=builder /evolution/package.json ./package.json
 COPY --from=builder /evolution/package-lock.json ./package-lock.json
 
@@ -53,8 +55,12 @@ COPY --from=builder /evolution/Docker ./Docker
 COPY --from=builder /evolution/runWithProvider.js ./runWithProvider.js
 COPY --from=builder /evolution/tsup.config.ts ./tsup.config.ts
 
+RUN chown -R evolution:evolution /evolution
+
 ENV DOCKER_ENV=true
 
 EXPOSE 8080
+
+USER evolution
 
 ENTRYPOINT ["/bin/bash", "-c", ". ./Docker/scripts/deploy_database.sh && npm run start:prod" ]
