@@ -7,6 +7,8 @@ RELEASE_BASE="${MESSAGING_RELEASE_BASE:-/opt/skincos/releases}"
 CURRENT_LINK="${MESSAGING_CURRENT_LINK:-/opt/skincos/current/messaging-whatsapp}"
 RELEASE_ID="${MESSAGING_RELEASE_ID:-}"
 DESTINATION="$RELEASE_BASE/$RELEASE_ID/messaging-whatsapp"
+STAGING="$RELEASE_BASE/.staging-$RELEASE_ID-$$"
+NPM_CACHE="${MESSAGING_NPM_CACHE:-/var/lib/skincos-runtime/cache/npm}"
 APPLY=0
 
 usage() {
@@ -36,6 +38,7 @@ done
 [[ -f "$SOURCE_DIR/package-lock.json" ]] || { echo "Missing lockfile: $SOURCE_DIR/package-lock.json" >&2; exit 1; }
 [[ -f "$SOURCE_DIR/src/main.ts" ]] || { echo "Missing source entrypoint: $SOURCE_DIR/src/main.ts" >&2; exit 1; }
 [[ "$RELEASE_ID" =~ ^[0-9a-f]{7,64}$ ]] || { echo 'MESSAGING_RELEASE_ID must be a reviewed hexadecimal commit SHA.' >&2; exit 1; }
+[[ ! -e "$DESTINATION" ]] || { echo "Release destination already exists: $DESTINATION" >&2; exit 1; }
 
 echo "Release ID: $RELEASE_ID"
 echo "Source: $SOURCE_DIR"
@@ -50,18 +53,26 @@ command -v npm >/dev/null 2>&1 || { echo 'Missing required command: npm' >&2; ex
 command -v sudo >/dev/null 2>&1 || { echo 'Missing required command: sudo' >&2; exit 1; }
 sudo -n true
 
-sudo -n install -d -o skincos -g skincos -m 0750 "$DESTINATION"
+cleanup_staging() {
+  sudo -n rm -rf "$STAGING"
+}
+trap cleanup_staging EXIT INT TERM
+
+sudo -n install -d -o skincos -g skincos -m 0750 "$STAGING" "$NPM_CACHE"
 sudo -n rsync -a --delete \
   --exclude '.env' --exclude '.env.*' --exclude 'node_modules' --exclude 'dist' \
-  "$SOURCE_DIR/" "$DESTINATION/"
-sudo -n chown -R skincos:skincos "$DESTINATION"
+  "$SOURCE_DIR/" "$STAGING/"
+sudo -n chown -R skincos:skincos "$STAGING"
 
-sudo -n -u skincos env npm_config_cache=/var/lib/skincos-runtime/cache/npm \
-  npm --prefix "$DESTINATION" ci --ignore-scripts
-sudo -n -u skincos npm --prefix "$DESTINATION" run db:generate
-sudo -n -u skincos npm --prefix "$DESTINATION" run build
-[[ -f "$DESTINATION/dist/main.js" ]] || { echo "Build did not produce dist/main.js" >&2; exit 1; }
+sudo -n -u skincos env npm_config_cache="$NPM_CACHE" \
+  npm --prefix "$STAGING" ci --ignore-scripts
+sudo -n -u skincos npm --prefix "$STAGING" run db:generate
+sudo -n -u skincos npm --prefix "$STAGING" run build
+[[ -f "$STAGING/dist/main.js" ]] || { echo "Build did not produce dist/main.js" >&2; exit 1; }
 
+sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$DESTINATION")"
+sudo -n mv "$STAGING" "$DESTINATION"
+trap - EXIT INT TERM
 sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$CURRENT_LINK")"
 sudo -n ln -sfn "$DESTINATION" "$CURRENT_LINK"
 echo "Native WhatsApp release prepared: $CURRENT_LINK -> $DESTINATION"
