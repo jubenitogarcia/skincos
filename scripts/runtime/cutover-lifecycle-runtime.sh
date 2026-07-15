@@ -167,10 +167,14 @@ wait_for_units_state() {
     pending=0
     for unit in "$@"; do
       state="$(sudo -n systemctl is-active "$unit" 2>/dev/null || true)"
-      if [[ "$state" != "$expected" ]]; then
-        pending=1
-        printf 'unit=%s state=%s expected=%s\n' "$unit" "${state:-unknown}" "$expected" >&2
+      # `systemctl stop` can leave a unit in failed when its process exits
+      # during shutdown. It is still stopped, so accept that terminal state
+      # only while waiting for a stop; startup still requires active.
+      if [[ "$state" == "$expected" ]] || [[ "$expected" == "inactive" && "$state" == "failed" ]]; then
+        continue
       fi
+      pending=1
+      printf 'unit=%s state=%s expected=%s\n' "$unit" "${state:-unknown}" "$expected" >&2
     done
     [[ "$pending" == "0" ]] && return 0
     if (( SECONDS >= deadline )); then
@@ -331,7 +335,12 @@ save_legacy_units
 CUTOVER_STARTED=1
 
 echo "Stopping legacy ingress and runtimes."
-stop_units_bounded "${legacy_units[@]}"
+if ! stop_units_bounded "${legacy_units[@]}"; then
+  echo "Legacy services did not reach a stopped state; restoring the retained stack before exit." >&2
+  restore_legacy_services
+  CUTOVER_STARTED=0
+  exit 1
+fi
 run_final_windows_transfer
 run_final_orb_transfer
 "$ROOT_DIR/scripts/runtime/promote-orb-state-staging.sh" --apply --staged-home "$ORB_STATE_HOME"

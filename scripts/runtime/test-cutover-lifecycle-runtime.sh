@@ -13,6 +13,9 @@ required=(
   'to_windows_path()'
   'wslpath -w "$path"'
   '"$WINDOWS_POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_TRANSFER_SCRIPT" -FinalSync'
+  '"$expected" == "inactive" && "$state" == "failed"'
+  'Legacy services did not reach a stopped state; restoring the retained stack before exit.'
+  'if ! stop_units_bounded "${legacy_units[@]}"; then'
 )
 
 for pattern in "${required[@]}"; do
@@ -22,4 +25,21 @@ for pattern in "${required[@]}"; do
   }
 done
 
-echo "PASS: cutover resolves Windows PowerShell without relying on the WSL PATH."
+function_file="$(mktemp)"
+trap 'rm -f "$function_file"' EXIT
+sed -n '/^wait_for_units_state()/,/^}$/p' "$SCRIPT" > "$function_file"
+# shellcheck source=/dev/null
+source "$function_file"
+
+sudo() {
+  [[ "$1" == "-n" ]] && shift
+  [[ "$1" == "systemctl" && "$2" == "is-active" ]] || return 1
+  printf 'failed\n'
+}
+
+# A failed unit has no running process after systemctl stop, and must not hold
+# the cutover in the legacy-stop phase. Startup is separately checked for active.
+wait_for_units_state inactive 1 stopped-unit.service
+unset -f sudo
+
+echo "PASS: cutover resolves Windows PowerShell and accepts failed as stopped."
