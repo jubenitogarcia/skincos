@@ -27,6 +27,7 @@ Environment=N8N_STORAGE_PATH=__STATE_ROOT__/orb/n8n-home/.n8n/storage
 Environment=N8N_DIAGNOSTICS_ENABLED=false
 EnvironmentFile=-__CONFIG_ROOT__/orb.env
 EnvironmentFile=-__CONFIG_ROOT__/orb-business.env
+EnvironmentFile=__CONFIG_ROOT__/orb-runtime-paths.env
 ExecStartPre=__REPO_ROOT__/orb/engine/scripts/wait-for-local-postgres.sh
 ExecStart=/usr/local/bin/n8n start
 Restart=always

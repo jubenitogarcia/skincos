@@ -20,6 +20,7 @@ Environment=META_REVIEW_STORE_PATH=__STATE_ROOT__/orb/meta-review-store.json
 Environment=NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules
 EnvironmentFile=-__CONFIG_ROOT__/orb.env
 EnvironmentFile=-__CONFIG_ROOT__/orb-business.env
+EnvironmentFile=__CONFIG_ROOT__/orb-runtime-paths.env
 ExecStart=/usr/bin/node orb-proxy/server.js
 Restart=always
 RestartSec=10
