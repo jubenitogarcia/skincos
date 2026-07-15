@@ -15,7 +15,7 @@ Permitir trabalho paralelo em varios chats/agents sem perder alteracoes e sem co
 2. Trabalhar apenas no escopo definido.
 3. Abrir PR cedo (draft) para checkpoint.
 4. Atualizar branch com `origin/main` quando ficar `BEHIND`.
-5. Habilitar auto-merge quando checks estiverem verdes.
+5. Confirmar checks, segurança, rollback e superfícies afetadas antes do merge controlado.
 6. Validar deploy/smoke apos merge.
 
 ## Comandos padrao
@@ -51,5 +51,5 @@ git push
 ## Checklist de encerramento por chat
 - Branch/worktree limpos (`git status` sem alteracoes locais).
 - PR aberto e rastreavel.
-- Auto-merge configurado quando aplicavel.
+- Merge controlado somente após os gates de segurança e operação estarem documentados no PR.
 - Deploy/smoke verificados quando o PR for mergeado.
