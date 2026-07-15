@@ -14,11 +14,13 @@ LEGACY_REPO_ROOT="${LEGACY_REPO_ROOT:-/mnt/c/CodexShared/Projetos/skincos}"
 APPLY=0
 FINAL_SYNC=0
 SKIP_MESSAGING_STATE=0
+SKIP_RUNTIME_DATA=0
+SKIP_LEGACY_TRANSFER=0
 SYNC_TRANSPORT="${LIFECYCLE_SYNC_TRANSPORT:-auto}"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/runtime/prepare-lifecycle-layout.sh [--apply] [--final-sync] [--skip-messaging-state]
+Usage: scripts/runtime/prepare-lifecycle-layout.sh [--apply] [--final-sync] [--skip-messaging-state] [--skip-runtime-data] [--skip-legacy-transfer]
 
 Copies mutable runtime state from the Windows legacy layout to native Linux
 state/config/log/tmp roots. C:\CodexRuntime remains the durable location for
@@ -27,6 +29,11 @@ backups and artifacts. Without --apply it reports the planned copies.
 source or an existing destination. It is reserved for the short window after
 the old services have stopped.
 --skip-messaging-state has the same restriction for the WhatsApp channel.
+--skip-runtime-data skips every recursive legacy directory copy after a
+Windows-to-Linux transfer has staged those paths natively.
+--skip-legacy-transfer skips every legacy runtime read. It is only valid when
+apply-lifecycle-state-transfer.sh has staged both data and private config from
+Windows through \\wsl$; it prevents a cutover from falling back to DrvFS.
 
 LIFECYCLE_SYNC_TRANSPORT chooses the directory-copy transport: auto (default)
 uses Windows robocopy for paths on /mnt/c and rsync otherwise; robocopy and
@@ -43,6 +50,8 @@ while [[ $# -gt 0 ]]; do
       exit 1
       ;;
     --skip-messaging-state) SKIP_MESSAGING_STATE=1 ;;
+    --skip-runtime-data) SKIP_RUNTIME_DATA=1 ;;
+    --skip-legacy-transfer) SKIP_LEGACY_TRANSFER=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -289,36 +298,47 @@ done
 # cutover promotes that prepared directory atomically after legacy services
 # stop; this generic layout helper must never recurse through n8n-home.
 echo "ORB state is archive-staged separately; n8n-home is intentionally not synced here."
-if [[ "$SKIP_MESSAGING_STATE" == "1" ]]; then
+if [[ "$SKIP_LEGACY_TRANSFER" == "1" ]]; then
+  echo "SKIP legacy data and private configuration: Windows-native transfer is authoritative."
+elif [[ "$SKIP_RUNTIME_DATA" == "1" ]]; then
+  echo "SKIP legacy runtime directories: transferred through the Windows-native channel."
+elif [[ "$SKIP_MESSAGING_STATE" == "1" ]]; then
   echo "SKIP messaging state: completed by the independently recorded pre-copy."
 else
   sync_path "$legacy_orb/evolution-api/instances" "$STATE_ROOT/messaging-whatsapp"
   sync_path "$legacy_orb/evolution-api/store" "$STATE_ROOT/messaging-whatsapp"
+  workflows_source="$(resolve_workflows_dir "$LEGACY_REPO_ROOT" || true)"
+  if [[ -n "$workflows_source" ]]; then
+    sync_path "$workflows_source" "$STATE_ROOT/orb"
+  else
+    echo "SKIP missing Orb workflows under $LEGACY_REPO_ROOT"
+  fi
+  sync_path "$legacy_orb/logs/." "$LOG_ROOT/orb"
+  sync_path "$legacy_crm/var" "$STATE_ROOT/crm"
+  sync_path "$legacy_booking/report" "$ARTIFACT_ROOT/booking"
+  sync_path "$legacy_booking/debug" "$ARTIFACT_ROOT/booking"
+  sync_path "$legacy_booking/chrome-profile" "$STATE_ROOT/booking"
+  echo "REBUILD $STATE_ROOT/booking/venv from the locked booking requirements during cutover"
 fi
-workflows_source="$(resolve_workflows_dir "$LEGACY_REPO_ROOT" || true)"
-if [[ -n "$workflows_source" ]]; then
-  sync_path "$workflows_source" "$STATE_ROOT/orb"
-else
-  echo "SKIP missing Orb workflows under $LEGACY_REPO_ROOT"
-fi
-sync_path "$legacy_orb/logs/." "$LOG_ROOT/orb"
-sync_path "$legacy_crm/var" "$STATE_ROOT/crm"
-sync_path "$legacy_booking/report" "$ARTIFACT_ROOT/booking"
-sync_path "$legacy_booking/debug" "$ARTIFACT_ROOT/booking"
-sync_path "$legacy_booking/chrome-profile" "$STATE_ROOT/booking"
-echo "REBUILD $STATE_ROOT/booking/venv from the locked booking requirements during cutover"
 
-sync_secret "$legacy_orb/env/n8n.env" "$secrets_dir/orb.env"
-sync_secret "$legacy_orb/env/n8n-business.env" "$secrets_dir/orb-business.env"
-sync_secret "$legacy_orb/env/evolution-api.env" "$secrets_dir/messaging-whatsapp.env"
-sync_secret "$legacy_crm/env/crm-api.env" "$secrets_dir/crm.env"
-sync_secret "$legacy_booking/env/booking-api.env" "$secrets_dir/booking.env"
-sync_tunnel_config orb "$legacy_orb/cloudflared/orb-config.yml" "$CONFIG_ROOT/cloudflare/orb/config.yml" "$secrets_dir/cloudflare-orb.json"
-sync_runtime_tunnel
+if [[ "$SKIP_LEGACY_TRANSFER" != "1" ]]; then
+  sync_secret "$legacy_orb/env/n8n.env" "$secrets_dir/orb.env"
+  sync_secret "$legacy_orb/env/n8n-business.env" "$secrets_dir/orb-business.env"
+  sync_secret "$legacy_orb/env/evolution-api.env" "$secrets_dir/messaging-whatsapp.env"
+  sync_secret "$legacy_crm/env/crm-api.env" "$secrets_dir/crm.env"
+  sync_secret "$legacy_booking/env/booking-api.env" "$secrets_dir/booking.env"
+  sync_tunnel_config orb "$legacy_orb/cloudflared/orb-config.yml" "$CONFIG_ROOT/cloudflare/orb/config.yml" "$secrets_dir/cloudflare-orb.json"
+  sync_runtime_tunnel
+fi
 
 if [[ "$APPLY" == "1" ]]; then
+  # The runtime processes run as skincos:skincos. Keep the configuration root
+  # root-owned, but preserve group read/traverse access for environment files
+  # and Cloudflare credentials. Removing all group permissions would make the
+  # final tunnel units fail only after the legacy services are stopped.
   sudo -n chown -R root:skincos "$CONFIG_ROOT"
-  sudo -n chmod -R go-rwx "$CONFIG_ROOT"
+  sudo -n find "$CONFIG_ROOT" -type d -exec chmod 0750 {} +
+  sudo -n find "$CONFIG_ROOT" -type f -exec chmod 0640 {} +
   echo "Copy complete. Legacy runtime was preserved; only the coordinated cutover may stop services or retire old paths."
 else
   echo "Dry run complete. Use --apply only after the source PR, backup checkpoint and service cutover plan are approved."

@@ -19,6 +19,12 @@ that a service is safe to rename.
 - The cutover dry-run, rendered lifecycle units, local health and public Orb/
   CRM health passed. The legacy units remain authoritative until the final
   security-alert triage and scheduled cut window are complete.
+- Non-Orb state is pre-copied through a Windows-created TAR and extracted on
+  ext4. The first verified transfer contained 9,969 WhatsApp session files,
+  CRM state and private runtime configuration; file-count, three session hash
+  samples and three private configuration hashes matched without logging a
+  credential value. A new final transfer is still required after the legacy
+  units stop; a pre-copy is never promoted as the final delta.
 
 ## Legacy proxy bridge before the cut
 
@@ -67,11 +73,19 @@ drop-in to the lifecycle unit.
 
 ## Cut sequence
 
-Run the generic non-Orb pre-copy before the window; it does not stop services
-or remove data:
+Run the non-Orb pre-copy before the window; it does not stop services or remove
+data. Do **not** use the old generic helper to recurse from `/mnt/c`: this host
+has demonstrated blocked I/O when WSL traverses Windows runtime directories.
+The PowerShell command reads `C:` natively, writes one TAR through `\\wsl$`,
+and the Linux helper extracts and applies it only on ext4:
 
 ```bash
-scripts/runtime/prepare-lifecycle-layout.sh --apply
+powershell -ExecutionPolicy Bypass -File .\scripts\runtime\transfer-lifecycle-state.ps1
+```
+
+```bash
+scripts/runtime/apply-lifecycle-state-transfer.sh \
+  --transfer-root /home/admin/skincos-lifecycle-transfer/<transfer-id> --apply
 ```
 
 The helper copies from the legacy Windows runtime into these native roots:
@@ -83,10 +97,10 @@ The helper copies from the legacy Windows runtime into these native roots:
 - temporary data: `/var/tmp/skincos`.
 
 Backups and durable artifacts remain under `C:\CodexRuntime`. The pre-copy rule
-still applies (copy only missing files); final sync copies changed files but
-never deletes a legacy source or destination-only artifact. `n8n-home` is
-explicitly excluded from this helper: do not use `rsync`, `cp`, or a recursive
-DrvFS copy for Orb state.
+still applies (copy only missing files); the final Windows TAR overlays changed
+source files but never deletes a legacy source or destination-only artifact.
+`n8n-home` is explicitly excluded from this helper: do not use `rsync`, `cp`,
+or a recursive DrvFS copy for Orb state.
 
 Before the window, create the state-only archive under the durable artifacts
 root from Windows, record the printed SHA-256, then transfer it with Windows
@@ -179,18 +193,25 @@ scripts/runtime/cutover-lifecycle-runtime.sh \
   --backup-dir /mnt/c/CodexRuntime/backups/orb/manual/<timestamp> \
   --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
   --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp> \
-  --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home
+  --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home \
+  --windows-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-lifecycle-state.ps1 \
+  --windows-orb-export-script C:\CodexShared\Projetos\skincos\scripts\runtime\export-orb-state-archive.ps1 \
+  --windows-orb-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-orb-state-archive.ps1
 
 scripts/runtime/cutover-lifecycle-runtime.sh --apply \
   --backup-dir /mnt/c/CodexRuntime/backups/orb/manual/<timestamp> \
   --rollback-root /mnt/c/CodexShared/Worktrees/skincos/admin/runtime-cutover-rollback \
   --rollback-artifact-root /mnt/c/CodexRuntime/artifacts/runtime-cutover/<timestamp> \
-  --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home
+  --orb-state-home /var/lib/skincos-runtime/staging/orb-n8n-home-<archive-sha>/n8n-home \
+  --windows-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-lifecycle-state.ps1 \
+  --windows-orb-export-script C:\CodexShared\Projetos\skincos\scripts\runtime\export-orb-state-archive.ps1 \
+  --windows-orb-transfer-script C:\CodexShared\Projetos\skincos\scripts\runtime\transfer-orb-state-archive.ps1
 ```
 
 The apply command captures all old unit files, stops only the seven legacy
-units, atomically promotes the checksum-verified native Orb state, makes the
-remaining final non-destructive data sync, installs and starts `orb`,
+units, has Windows create and transfer the final non-Orb delta, creates a new
+authoritative Orb archive only after the legacy n8n service is stopped, then
+atomically promotes that checksum-verified native state and starts `orb`,
 `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`, `cloudflare-orb` and
 `cloudflare-runtime`. It requires local Orb health plus public Orb and CRM
 health. Legacy stop/start operations are asynchronous but bounded; a timeout
