@@ -8,13 +8,13 @@ Type=simple
 User=skincos
 Group=skincos
 WorkingDirectory=__REPO_ROOT__
-Environment=CRM_RUNTIME_HOME=__RUNTIME_ROOT__/state/crm
-Environment=SKINCOS_CRM_API_ENV_FILE=__RUNTIME_ROOT__/secrets/crm.env
-Environment=VAR_DIR=__RUNTIME_ROOT__/state/crm/var
+Environment=CRM_RUNTIME_HOME=__STATE_ROOT__/crm
+Environment=SKINCOS_CRM_API_ENV_FILE=__CONFIG_ROOT__/crm.env
+Environment=VAR_DIR=__STATE_ROOT__/crm/var
 Environment=BACKEND_DIR=__REPO_ROOT__/backend
 Environment=FRONTEND_DIR=__REPO_ROOT__/crm/console
 Environment=CONFIG_DIR=__REPO_ROOT__/backend/config
-EnvironmentFile=-__RUNTIME_ROOT__/secrets/crm.env
+EnvironmentFile=-__CONFIG_ROOT__/crm.env
 ExecStart=__REPO_ROOT__/scripts/crm/run-api-linux.sh
 Restart=always
 RestartSec=5
@@ -24,7 +24,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=__RUNTIME_ROOT__/state/crm __RUNTIME_ROOT__/logs/crm __RUNTIME_ROOT__/tmp/crm
+ReadWritePaths=__STATE_ROOT__/crm __LOG_ROOT__/crm __TMP_ROOT__/crm
 UMask=0027
 
 [Install]

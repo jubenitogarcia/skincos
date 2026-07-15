@@ -5,6 +5,11 @@ set -euo pipefail
 # the legacy runtime intact. The coordinated cutover script owns stop/start.
 
 RUNTIME_ROOT="${RUNTIME_ROOT:-/mnt/c/CodexRuntime}"
+STATE_ROOT="${STATE_ROOT:-/var/lib/skincos-runtime}"
+CONFIG_ROOT="${CONFIG_ROOT:-/etc/skincos}"
+LOG_ROOT="${LOG_ROOT:-/var/log/skincos}"
+TMP_ROOT="${TMP_ROOT:-/var/tmp/skincos}"
+ARTIFACT_ROOT="${ARTIFACT_ROOT:-$RUNTIME_ROOT/artifacts}"
 LEGACY_REPO_ROOT="${LEGACY_REPO_ROOT:-/mnt/c/CodexShared/Projetos/skincos}"
 APPLY=0
 FINAL_SYNC=0
@@ -16,8 +21,9 @@ usage() {
   cat <<'EOF'
 Usage: scripts/runtime/prepare-lifecycle-layout.sh [--apply] [--final-sync] [--skip-orb-state] [--skip-messaging-state]
 
-Creates the lifecycle layout under C:\CodexRuntime and copies mutable runtime
-state from the legacy layout. Without --apply it reports the planned copies.
+Copies mutable runtime state from the Windows legacy layout to native Linux
+state/config/log/tmp roots. C:\CodexRuntime remains the durable location for
+backups and artifacts. Without --apply it reports the planned copies.
 --final-sync updates existing destination files but never deletes a legacy
 source or an existing destination. It is reserved for the short window after
 the old services have stopped.
@@ -74,34 +80,34 @@ legacy_orb="$RUNTIME_ROOT/n8n"
 legacy_crm="$RUNTIME_ROOT/crm-api"
 legacy_booking="$RUNTIME_ROOT/booking-api"
 legacy_runtime_tunnel="$RUNTIME_ROOT/cloudflared/cs"
-secrets_dir="$RUNTIME_ROOT/secrets"
+secrets_dir="$CONFIG_ROOT"
 
 declare -a directories=(
-  "$RUNTIME_ROOT/state/orb"
-  "$RUNTIME_ROOT/state/messaging-whatsapp"
-  "$RUNTIME_ROOT/state/crm"
-  "$RUNTIME_ROOT/state/booking"
-  "$RUNTIME_ROOT/config/cloudflare/orb"
-  "$RUNTIME_ROOT/config/cloudflare/runtime"
-  "$RUNTIME_ROOT/logs/orb"
-  "$RUNTIME_ROOT/logs/messaging-whatsapp"
-  "$RUNTIME_ROOT/logs/crm"
-  "$RUNTIME_ROOT/logs/booking"
-  "$RUNTIME_ROOT/logs/cloudflare-orb"
-  "$RUNTIME_ROOT/logs/cloudflare-runtime"
+  "$STATE_ROOT/orb"
+  "$STATE_ROOT/messaging-whatsapp"
+  "$STATE_ROOT/crm"
+  "$STATE_ROOT/booking"
+  "$CONFIG_ROOT/cloudflare/orb"
+  "$CONFIG_ROOT/cloudflare/runtime"
+  "$LOG_ROOT/orb"
+  "$LOG_ROOT/messaging-whatsapp"
+  "$LOG_ROOT/crm"
+  "$LOG_ROOT/booking"
+  "$LOG_ROOT/cloudflare-orb"
+  "$LOG_ROOT/cloudflare-runtime"
   "$RUNTIME_ROOT/backups/orb"
   "$RUNTIME_ROOT/backups/messaging-whatsapp"
   "$RUNTIME_ROOT/backups/crm"
   "$RUNTIME_ROOT/backups/booking"
-  "$RUNTIME_ROOT/artifacts/booking"
-  "$RUNTIME_ROOT/cache/orb"
-  "$RUNTIME_ROOT/cache/messaging-whatsapp"
-  "$RUNTIME_ROOT/cache/crm"
-  "$RUNTIME_ROOT/cache/booking"
-  "$RUNTIME_ROOT/tmp/orb"
-  "$RUNTIME_ROOT/tmp/messaging-whatsapp"
-  "$RUNTIME_ROOT/tmp/crm"
-  "$RUNTIME_ROOT/tmp/booking"
+  "$ARTIFACT_ROOT/booking"
+  "$STATE_ROOT/cache/orb"
+  "$STATE_ROOT/cache/messaging-whatsapp"
+  "$STATE_ROOT/cache/crm"
+  "$STATE_ROOT/cache/booking"
+  "$TMP_ROOT/orb"
+  "$TMP_ROOT/messaging-whatsapp"
+  "$TMP_ROOT/crm"
+  "$TMP_ROOT/booking"
   "$secrets_dir"
 )
 
@@ -117,10 +123,15 @@ sync_path() {
     if should_use_robocopy "$source" "$destination"; then
       sync_path_robocopy "$source" "$destination"
     else
-      mkdir -p "$destination"
       local -a args=(-a)
       [[ "$FINAL_SYNC" == "0" ]] && args+=(--ignore-existing)
-      rsync "${args[@]}" "$source" "$destination/"
+      if [[ "$destination" == /mnt/c/* ]]; then
+        mkdir -p "$destination"
+        rsync "${args[@]}" "$source" "$destination/"
+      else
+        sudo -n rsync "${args[@]}" "$source" "$destination/"
+        sudo -n chown -R skincos:skincos "$destination"
+      fi
     fi
   fi
 }
@@ -182,11 +193,7 @@ sync_secret() {
   fi
   echo "SECRET $source -> $destination"
   if [[ "$APPLY" == "1" && ( "$FINAL_SYNC" == "1" || ! -e "$destination" ) ]]; then
-    if [[ -r "$source" ]]; then
-      install -m 0600 "$source" "$destination"
-    else
-      sudo -n install -m 0600 "$source" "$destination"
-    fi
+    sudo -n install -D -o root -g skincos -m 0640 "$source" "$destination"
   fi
 }
 
@@ -220,8 +227,8 @@ sync_tunnel_config() {
   fi
   echo "TUNNEL $label credential -> $destination_secret"
   if [[ "$APPLY" == "1" && ( "$FINAL_SYNC" == "1" || ! -e "$destination_config" ) ]]; then
-    install -D -m 0640 "$source_config" "$destination_config"
-    rewrite_credentials_file "$destination_config" "$destination_secret"
+    sudo -n install -D -o root -g skincos -m 0640 "$source_config" "$destination_config"
+    sudo -n sed -i -E "s|^([[:space:]]*credentials-file:[[:space:]]*).*|\\1$(printf '%s' "$destination_secret" | sed 's/[&|]/\\&/g')|" "$destination_config"
   fi
   sync_secret "$credential" "$destination_secret"
 }
@@ -234,65 +241,63 @@ sync_runtime_tunnel() {
     echo "SKIP missing runtime tunnel environment: $source_env"
     return
   fi
-  local destination_config="$RUNTIME_ROOT/config/cloudflare/runtime/config.yml"
-  local destination_env="$RUNTIME_ROOT/config/cloudflare/runtime/tunnel.env"
+  local destination_config="$CONFIG_ROOT/cloudflare/runtime/config.yml"
+  local destination_env="$CONFIG_ROOT/cloudflare/runtime/tunnel.env"
   sync_tunnel_config runtime "$source_config" "$destination_config" "$secrets_dir/cloudflare-runtime.json"
   echo "TUNNEL runtime environment -> $destination_env"
   if [[ "$APPLY" == "1" && ( "$FINAL_SYNC" == "1" || ! -e "$destination_env" ) ]]; then
-    printf 'CLOUDFLARED_CONFIG_PATH=%s\n' "$destination_config" | install -m 0640 /dev/stdin "$destination_env"
+    printf 'CLOUDFLARED_CONFIG_PATH=%s\n' "$destination_config" | sudo -n install -D -o root -g skincos -m 0640 /dev/stdin "$destination_env"
   fi
-}
-
-harden_windows_secret_acl() {
-  local windows_path
-  windows_path="$(wslpath -w "$secrets_dir")"
-  # WSL services access C: through the Windows admin identity. Restricting this
-  # directory to that identity plus LocalSystem keeps these files out of normal
-  # Windows user profiles while preserving the service mount contract.
-  /mnt/c/Windows/System32/icacls.exe "$windows_path" /inheritance:r /grant:r 'admin:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F' >/dev/null
 }
 
 echo "Runtime root: $RUNTIME_ROOT"
 echo "Mode: $([[ "$APPLY" == "1" ]] && ([[ "$FINAL_SYNC" == "1" ]] && echo final-sync || echo pre-copy) || echo dry-run)"
 for directory in "${directories[@]}"; do
   echo "DIR $directory"
-  [[ "$APPLY" == "1" ]] && mkdir -p "$directory"
+  if [[ "$APPLY" == "1" ]]; then
+    if [[ "$directory" == /mnt/c/* ]]; then
+      mkdir -p "$directory"
+    else
+      sudo -n install -d -o skincos -g skincos -m 0750 "$directory"
+    fi
+  fi
 done
 
 if [[ "$SKIP_ORB_STATE" == "1" ]]; then
   echo "SKIP orb state: completed by the independently recorded pre-copy."
 else
-  sync_path "$legacy_orb/n8n-home" "$RUNTIME_ROOT/state/orb"
+  sync_path "$legacy_orb/n8n-home" "$STATE_ROOT/orb"
 fi
 if [[ "$SKIP_MESSAGING_STATE" == "1" ]]; then
   echo "SKIP messaging state: completed by the independently recorded pre-copy."
 else
-  sync_path "$legacy_orb/evolution-api/instances" "$RUNTIME_ROOT/state/messaging-whatsapp"
-  sync_path "$legacy_orb/evolution-api/store" "$RUNTIME_ROOT/state/messaging-whatsapp"
+  sync_path "$legacy_orb/evolution-api/instances" "$STATE_ROOT/messaging-whatsapp"
+  sync_path "$legacy_orb/evolution-api/store" "$STATE_ROOT/messaging-whatsapp"
 fi
 workflows_source="$(resolve_workflows_dir "$LEGACY_REPO_ROOT" || true)"
 if [[ -n "$workflows_source" ]]; then
-  sync_path "$workflows_source" "$RUNTIME_ROOT/state/orb"
+  sync_path "$workflows_source" "$STATE_ROOT/orb"
 else
   echo "SKIP missing Orb workflows under $LEGACY_REPO_ROOT"
 fi
-sync_path "$legacy_orb/logs/." "$RUNTIME_ROOT/logs/orb"
-sync_path "$legacy_crm/var" "$RUNTIME_ROOT/state/crm"
-sync_path "$legacy_booking/report" "$RUNTIME_ROOT/artifacts/booking"
-sync_path "$legacy_booking/debug" "$RUNTIME_ROOT/artifacts/booking"
-sync_path "$legacy_booking/chrome-profile" "$RUNTIME_ROOT/state/booking"
-echo "REBUILD $RUNTIME_ROOT/state/booking/venv from the locked booking requirements during cutover"
+sync_path "$legacy_orb/logs/." "$LOG_ROOT/orb"
+sync_path "$legacy_crm/var" "$STATE_ROOT/crm"
+sync_path "$legacy_booking/report" "$ARTIFACT_ROOT/booking"
+sync_path "$legacy_booking/debug" "$ARTIFACT_ROOT/booking"
+sync_path "$legacy_booking/chrome-profile" "$STATE_ROOT/booking"
+echo "REBUILD $STATE_ROOT/booking/venv from the locked booking requirements during cutover"
 
 sync_secret "$legacy_orb/env/n8n.env" "$secrets_dir/orb.env"
 sync_secret "$legacy_orb/env/n8n-business.env" "$secrets_dir/orb-business.env"
 sync_secret "$legacy_orb/env/evolution-api.env" "$secrets_dir/messaging-whatsapp.env"
 sync_secret "$legacy_crm/env/crm-api.env" "$secrets_dir/crm.env"
 sync_secret "$legacy_booking/env/booking-api.env" "$secrets_dir/booking.env"
-sync_tunnel_config orb "$legacy_orb/cloudflared/orb-config.yml" "$RUNTIME_ROOT/config/cloudflare/orb/config.yml" "$secrets_dir/cloudflare-orb.json"
+sync_tunnel_config orb "$legacy_orb/cloudflared/orb-config.yml" "$CONFIG_ROOT/cloudflare/orb/config.yml" "$secrets_dir/cloudflare-orb.json"
 sync_runtime_tunnel
 
 if [[ "$APPLY" == "1" ]]; then
-  harden_windows_secret_acl
+  sudo -n chown -R root:skincos "$CONFIG_ROOT"
+  sudo -n chmod -R go-rwx "$CONFIG_ROOT"
   echo "Copy complete. Legacy runtime was preserved; only the coordinated cutover may stop services or retire old paths."
 else
   echo "Dry run complete. Use --apply only after the source PR, backup checkpoint and service cutover plan are approved."
