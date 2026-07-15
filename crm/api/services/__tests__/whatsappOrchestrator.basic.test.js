@@ -13,8 +13,8 @@ test('whatsappOrchestrator returns all channels and ports arrays', () => {
 })
 
 test('whatsappOrchestrator only builds local allowlisted upstream URLs', () => {
-    assert.equal(buildLocalWhatsAppUrl(3001, '/api/status'), 'http://localhost:3001/api/status')
-    assert.equal(buildLocalWhatsAppUrl(3009, '/api/qr'), 'http://localhost:3009/api/qr')
+    assert.equal(buildLocalWhatsAppUrl(3001, '/api/status'), 'http://127.0.0.1:3001/api/status')
+    assert.equal(buildLocalWhatsAppUrl(3009, '/api/qr'), 'http://127.0.0.1:3009/api/qr')
     assert.throws(() => buildLocalWhatsAppUrl(22, '/api/status'), /INVALID_WHATSAPP_LOCAL_PORT/)
     assert.throws(() => buildLocalWhatsAppUrl(3001, '/api/status?next=https://attacker.invalid'), /INVALID_WHATSAPP_LOCAL_PATH/)
 })

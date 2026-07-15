@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { isLinkPreviewEnabled } from './linkPreviewPolicy';
 
 test('link previews remain disabled until the operator enables the fetch capability', () => {

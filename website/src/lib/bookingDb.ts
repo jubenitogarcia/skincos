@@ -348,7 +348,15 @@ export function normalizePhone(raw: string): string {
 export function normalizeEmail(raw: string): string {
     const value = (raw ?? "").trim().toLowerCase();
     if (!value) return "";
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return "";
+    if (value.length > 254) return "";
+    const at = value.indexOf("@");
+    if (at <= 0 || at !== value.lastIndexOf("@")) return "";
+    const domain = value.slice(at + 1);
+    const dot = domain.lastIndexOf(".");
+    if (dot <= 0 || dot === domain.length - 1) return "";
+    for (const char of value) {
+        if (char.charCodeAt(0) <= 32 || char === "\u007f") return "";
+    }
     return value;
 }
 

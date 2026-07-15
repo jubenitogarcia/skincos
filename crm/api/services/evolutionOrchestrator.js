@@ -11,7 +11,7 @@ function resolveEvolutionConfig() {
     process.env.EVOLUTION_API_URL ||
     process.env.EVOLUTION_API_TARGET ||
     process.env.WHATSAPP_EVOLUTION_API_URL ||
-    ''
+    'http://127.0.0.1:8080'
   const apiKey = process.env.EVOLUTION_API_KEY || process.env.EVOLUTION_API_TOKEN || process.env.WHATSAPP_EVOLUTION_API_KEY || ''
   const instancePrefix = process.env.EVOLUTION_INSTANCE_PREFIX || DEFAULT_INSTANCE_PREFIX
   return { baseUrl, apiKey, instancePrefix }

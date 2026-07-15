@@ -178,23 +178,6 @@ export function RichTaskManager() {
     }
   }
 
-  const renderMarkdown = (content: string) => {
-    // Simple markdown rendering for demo
-    return content
-      .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold mb-4">$1</h1>')
-      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-semibold mb-3">$1</h2>')
-      .replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold">$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em class="italic">$1</em>')
-      .replace(/`(.+?)`/g, '<code class="bg-muted px-1 py-0.5 rounded text-sm font-mono">$1</code>')
-      .replace(/^> (.+)$/gm, '<blockquote class="border-l-4 border-muted pl-4 italic text-muted-foreground">$1</blockquote>')
-      .replace(/- \[x\] (.+)$/gm, '<div class="flex items-center space-x-2 mb-1"><input type="checkbox" checked disabled class="rounded"><span class="line-through text-muted-foreground">$1</span></div>')
-      .replace(/- \[ \] (.+)$/gm, '<div class="flex items-center space-x-2 mb-1"><input type="checkbox" disabled class="rounded"><span>$1</span></div>')
-      .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre class="bg-muted p-4 rounded-lg overflow-x-auto"><code class="text-sm font-mono">$2</code></pre>')
-      .replace(/^\d+\. (.+)$/gm, '<li class="ml-4">$1</li>')
-      .replace(/^- (.+)$/gm, '<li class="ml-4">• $1</li>')
-      .split('\n').map(line => line.includes('<h') || line.includes('<li') || line.includes('<div') || line.includes('<blockquote') || line.includes('<pre') ? line : line ? `<p class="mb-2">${line}</p>` : '').join('')
-  }
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -294,10 +277,8 @@ export function RichTaskManager() {
 
                 <CardContent className="space-y-4">
                   {/* Rich Description Preview */}
-                  <div className="text-sm text-muted-foreground line-clamp-3">
-                    <div dangerouslySetInnerHTML={{
-                      __html: renderMarkdown(task.description.split('\n').slice(0, 3).join('\n'))
-                    }} />
+                  <div className="text-sm text-muted-foreground line-clamp-3 whitespace-pre-wrap">
+                    {task.description.split('\n').slice(0, 3).join('\n')}
                   </div>
 
                   {/* Progress */}
@@ -500,23 +481,6 @@ function RichTaskEditor({ task, onSave }: { task?: Task, onSave: () => void }) {
     setDescription(prev => prev + markdown)
   }
 
-  const renderMarkdown = (content: string) => {
-    return content
-      .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold mb-4">$1</h1>')
-      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-semibold mb-3">$1</h2>')
-      .replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold">$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em class="italic">$1</em>')
-      .replace(/`(.+?)`/g, '<code class="bg-muted px-1 py-0.5 rounded text-sm font-mono">$1</code>')
-      .replace(/^> (.+)$/gm, '<blockquote class="border-l-4 border-muted pl-4 italic text-muted-foreground mb-2">$1</blockquote>')
-      .replace(/- \[x\] (.+)$/gm, '<div class="flex items-center space-x-2 mb-1"><input type="checkbox" checked disabled class="rounded"><span class="line-through text-muted-foreground">$1</span></div>')
-      .replace(/- \[ \] (.+)$/gm, '<div class="flex items-center space-x-2 mb-1"><input type="checkbox" disabled class="rounded"><span>$1</span></div>')
-      .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre class="bg-muted p-4 rounded-lg overflow-x-auto mb-4"><code class="text-sm font-mono">$2</code></pre>')
-      .split('\n').map(line => {
-        if (line.includes('<h') || line.includes('<div') || line.includes('<blockquote') || line.includes('<pre')) return line
-        return line ? `<p class="mb-2">${line}</p>` : ''
-      }).join('')
-  }
-
   return (
     <div className="space-y-4">
       {/* Title */}
@@ -571,8 +535,8 @@ function RichTaskEditor({ task, onSave }: { task?: Task, onSave: () => void }) {
 
         {/* Editor */}
         {isPreview ? (
-          <div className="min-h-[300px] p-4 border rounded bg-background">
-            <div dangerouslySetInnerHTML={{ __html: renderMarkdown(description) }} />
+            <div className="min-h-[300px] p-4 border rounded bg-background whitespace-pre-wrap">
+              {description}
           </div>
         ) : (
           <Textarea
@@ -696,23 +660,6 @@ function TaskDetailModal({
 }) {
   const [isEditing, setIsEditing] = useState(false)
 
-  const renderMarkdown = (content: string) => {
-    return content
-      .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold mb-4">$1</h1>')
-      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-semibold mb-3">$1</h2>')
-      .replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold">$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em class="italic">$1</em>')
-      .replace(/`(.+?)`/g, '<code class="bg-muted px-1 py-0.5 rounded text-sm font-mono">$1</code>')
-      .replace(/^> (.+)$/gm, '<blockquote class="border-l-4 border-muted pl-4 italic text-muted-foreground mb-2">$1</blockquote>')
-      .replace(/- \[x\] (.+)$/gm, '<div class="flex items-center space-x-2 mb-1"><input type="checkbox" checked disabled class="rounded"><span class="line-through text-muted-foreground">$1</span></div>')
-      .replace(/- \[ \] (.+)$/gm, '<div class="flex items-center space-x-2 mb-1"><input type="checkbox" disabled class="rounded"><span>$1</span></div>')
-      .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre class="bg-muted p-4 rounded-lg overflow-x-auto mb-4"><code class="text-sm font-mono">$2</code></pre>')
-      .split('\n').map(line => {
-        if (line.includes('<h') || line.includes('<div') || line.includes('<blockquote') || line.includes('<pre')) return line
-        return line ? `<p class="mb-2">${line}</p>` : ''
-      }).join('')
-  }
-
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
@@ -749,10 +696,7 @@ function TaskDetailModal({
               {/* Rich Description */}
               <div>
                 <h3 className="font-semibold mb-4">Descrição</h3>
-                <div
-                  className="prose max-w-none"
-                  dangerouslySetInnerHTML={{ __html: renderMarkdown(task.description) }}
-                />
+                <div className="prose max-w-none whitespace-pre-wrap">{task.description}</div>
               </div>
 
               {/* Progress */}
@@ -793,10 +737,7 @@ function TaskDetailModal({
                           {new Date(comment.createdAt).toLocaleDateString('pt-BR')}
                         </span>
                       </div>
-                      <div
-                        className="text-sm"
-                        dangerouslySetInnerHTML={{ __html: renderMarkdown(comment.content) }}
-                      />
+                      <div className="text-sm whitespace-pre-wrap">{comment.content}</div>
                     </div>
                   ))}
                 </div>

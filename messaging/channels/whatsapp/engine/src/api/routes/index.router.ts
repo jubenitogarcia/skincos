@@ -9,6 +9,7 @@ import { waMonitor } from '@api/server.module';
 import { configService, Database, Facebook } from '@config/env.config';
 import { fetchLatestWaWebVersion } from '@utils/fetchLatestWaWebVersion';
 import { NextFunction, Request, Response, Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import fs from 'fs';
 import mimeTypes from 'mime-types';
 import path from 'path';
@@ -41,6 +42,12 @@ const databaseConfig = configService.get<Database>('DATABASE');
 const guards = [instanceExistsGuard, instanceLoggedGuard, authGuard['apikey']];
 
 const telemetry = new Telemetry();
+const managerAssetRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
 
 const packageJson = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
 
@@ -157,7 +164,7 @@ if (metricsConfig.ENABLED) {
 
 if (!serverConfig.DISABLE_MANAGER) router.use('/manager', new ViewsRouter().router);
 
-router.get('/assets/*', (req, res) => {
+router.get('/assets/*', managerAssetRateLimit, (req, res) => {
   const fileName = req.params[0];
 
   // Security: Reject paths containing traversal patterns
