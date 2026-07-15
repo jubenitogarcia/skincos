@@ -48,4 +48,11 @@ env "${layout_env[@]}" LEGACY_REPO_ROOT="$legacy_root" LIFECYCLE_SYNC_TRANSPORT=
   "$ROOT_DIR/scripts/runtime/prepare-lifecycle-layout.sh" --apply --final-sync --skip-legacy-transfer >/dev/null
 [[ ! -e "$runtime_root/state/messaging-whatsapp/instances" ]]
 [[ ! -e "$runtime_root/config/orb.env" ]]
+runtime_paths="$runtime_root/config/orb-runtime-paths.env"
+[[ -f "$runtime_paths" ]]
+grep -Fx "N8N_USER_FOLDER=$runtime_root/state/orb/n8n-home" "$runtime_paths" >/dev/null
+grep -Fx "N8N_STORAGE_PATH=$runtime_root/state/orb/n8n-home/.n8n/storage" "$runtime_paths" >/dev/null
+grep -Fx "N8N_LOG_FILE_LOCATION=$runtime_root/logs/orb/n8n.log" "$runtime_paths" >/dev/null
+grep -Fx 'N8N_RESTRICT_FILE_ACCESS_TO=/tmp' "$runtime_paths" >/dev/null
+! grep -q '/mnt/c/CodexRuntime/n8n' "$runtime_paths"
 echo "prepare lifecycle layout excludes Orb n8n-home test passed"
