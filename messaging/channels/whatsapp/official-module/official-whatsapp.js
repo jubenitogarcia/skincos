@@ -2,12 +2,10 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
-const axios = require('axios');
 const os = require('os');
 const fs = require('fs');
 const helmet = require('helmet');
 const session = require('express-session');
-const { assertPublicHttpsUrl, createSafeHttpsRequest } = require('../security/publicUrl');
 
 // Import security middleware
 const {
@@ -65,10 +63,11 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Import WhatsApp Web.js from the official cloned repository
 // Adjusted path after centralization to whatsapp/official
-const { Client, LocalAuth, MessageMedia, Location } = require('../official');
+const { Client, LocalAuth, Location } = require('../official');
 
 // Import extension handlers
 const MediaHandler = require('./extensions/media-handler');
+const { REMOTE_MEDIA_DISABLED } = MediaHandler;
 const ChatManager = require('./extensions/chat-manager');
 const ContactManager = require('./extensions/contact-manager');
 
@@ -226,29 +225,10 @@ const WEBHOOK_RETRY_BASE_MS = 1000;
 // Webhook dispatch function
 async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
     const startedAt = Date.now();
-    let status = 'ok';
-    let error = null;
-    const bodyString = JSON.stringify(fullPayload);
-
-    try {
-        const { url: safeUrl, ...webhookRequest } = await createSafeHttpsRequest(webhook.url);
-        const signature = crypto.createHmac('sha256', webhook.secret || 'default_secret').update(bodyString).digest('hex');
-        await axios.post(safeUrl, bodyString, {
-            ...webhookRequest,
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Webhook-Id': webhook.id,
-                'X-Signature': signature,
-                'X-Event-Id': fullPayload.eventId,
-                'X-Event-Type': fullPayload.event,
-                'X-Event-Version': '1'
-            },
-            timeout: 10000
-        });
-    } catch (e) {
-        status = 'error';
-        error = e.message || String(e);
-    }
+    // User-provided webhook destinations are disabled until a fixed-endpoint,
+    // service-authenticated broker owns delivery and egress policy.
+    const status = 'blocked';
+    const error = REMOTE_MEDIA_DISABLED;
 
     const finishedAt = Date.now();
     webhookDeliveriesStore.push({
@@ -264,12 +244,6 @@ async function dispatchWebhook(webhook, fullPayload, attempt = 1) {
         error
     });
 
-    if (status === 'error' && attempt < WEBHOOK_MAX_ATTEMPTS) {
-        const delay = WEBHOOK_RETRY_BASE_MS * Math.pow(2, attempt - 1);
-        setTimeout(() => {
-            dispatchWebhook(webhook, fullPayload, attempt + 1).catch(() => { });
-        }, delay);
-    }
 }
 
 // Trigger webhooks for events
@@ -1137,8 +1111,7 @@ app.post('/v1/messages', async (req, res) => {
         if (type === 'text' || !type) {
             result = await client.sendMessage(chatId, body);
         } else if (mediaUrl) {
-            const media = await MessageMedia.fromUrl(mediaUrl, { filename });
-            result = await client.sendMessage(chatId, media, { caption });
+            return res.status(410).json({ success: false, error: REMOTE_MEDIA_DISABLED });
         }
 
         res.json({
@@ -1334,12 +1307,7 @@ app.post('/v1/media', async (req, res) => {
         const chatId = to.includes('@c.us') ? to : `${to}@c.us`;
         let result;
 
-        try {
-            const media = await MessageMedia.fromUrl(url, { filename });
-            result = await client.sendMessage(chatId, media, { caption });
-        } catch (error) {
-            return res.status(400).json({ success: false, error: 'Failed to process media: ' + error.message });
-        }
+        return res.status(410).json({ success: false, error: REMOTE_MEDIA_DISABLED });
 
         res.json({
             success: true,
@@ -1543,35 +1511,8 @@ app.post('/start-client', async (req, res) => {
 // ========== WEBHOOK APIs ==========
 
 // Create webhook
-app.post('/v1/webhooks', authenticate({ required: true }), async (req, res) => {
-    try {
-        const { url, secret, events = [] } = req.body;
-
-        if (!url) {
-            return res.status(400).json({ success: false, error: 'URL is required' });
-        }
-
-        const safeUrl = await assertPublicHttpsUrl(url);
-        const webhook = {
-            id: crypto.randomUUID(),
-            url: safeUrl,
-            secret: secret || crypto.randomUUID(),
-            events: Array.isArray(events) ? events : [],
-            active: true,
-            createdAt: new Date().toISOString(),
-            retries: 0
-        };
-
-        webhooksStore.push(webhook);
-
-        res.json({
-            success: true,
-            webhook: webhook
-        });
-    } catch (error) {
-        console.error('Error creating webhook:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
+app.post('/v1/webhooks', authenticate({ required: true }), (_req, res) => {
+    res.status(410).json({ success: false, error: REMOTE_MEDIA_DISABLED });
 });
 
 // List webhooks
