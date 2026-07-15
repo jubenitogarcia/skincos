@@ -66,6 +66,10 @@ sudo -n rsync -a --delete \
   --exclude '.env' --exclude '.env.*' --exclude 'node_modules' --exclude 'dist' \
   "$SOURCE_DIR/" "$STAGING/"
 sudo -n chown -R skincos:skincos "$STAGING"
+# tsconfig writes its incremental build info under dist before tsup runs. The
+# release copy intentionally excludes generated dist, so create the native
+# output directory explicitly instead of depending on an old worktree build.
+sudo -n install -d -o skincos -g skincos -m 0750 "$STAGING/dist"
 
 sudo -n -u skincos env npm_config_cache="$NPM_CACHE" \
   npm --prefix "$STAGING" ci --ignore-scripts
