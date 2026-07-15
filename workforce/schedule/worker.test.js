@@ -1,7 +1,24 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import worker from './worker.js'
+
+test('Escala SQL seed preserves the reviewed contact data from the JSON source', () => {
+  const jsonSeed = JSON.parse(readFileSync(new URL('./seed/escala_seed.json', import.meta.url), 'utf8'))
+  const sqlSeed = readFileSync(new URL('./seed/escala_seed.sql', import.meta.url), 'utf8')
+
+  for (const name of ['Luize Baum', 'Rafaela Ferreira']) {
+    const professional = jsonSeed.professionals.find((entry) => entry.name === name)
+    assert.ok(professional, `Missing ${name} from JSON seed`)
+
+    const sqlRow = sqlSeed.split(/\r?\n/).find((line) => line.includes(`'${name}'`))
+    assert.ok(sqlRow, `Missing ${name} from SQL seed`)
+    assert.ok(sqlRow.includes(`'${professional.phone}'`), `${name} phone drifted between JSON and SQL seeds`)
+    assert.ok(sqlRow.includes(`'${professional.email}'`), `${name} email drifted between JSON and SQL seeds`)
+    assert.ok(sqlRow.includes(`'${professional.instagram}'`), `${name} Instagram drifted between JSON and SQL seeds`)
+  }
+})
 
 function normalizeSql(sql) {
   return String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase()
