@@ -61,7 +61,15 @@ function unitEmailFromSlug(slug: string): string | null {
 
 function sanitizeEmail(value: string): string {
     const email = (value ?? "").trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "";
+    if (!email || email.length > 254) return "";
+    const at = email.indexOf("@");
+    if (at <= 0 || at !== email.lastIndexOf("@")) return "";
+    const domain = email.slice(at + 1);
+    const dot = domain.lastIndexOf(".");
+    if (dot <= 0 || dot === domain.length - 1) return "";
+    for (const char of email) {
+        if (char.charCodeAt(0) <= 32 || char === "\u007f") return "";
+    }
     return email;
 }
 

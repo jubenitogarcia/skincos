@@ -226,6 +226,27 @@ sync_secret() {
   fi
 }
 
+write_crm_whatsapp_overlay() {
+  local source="$secrets_dir/messaging-whatsapp.env"
+  local destination="$secrets_dir/crm-whatsapp.env"
+  echo "PRIVATE OVERLAY messaging-whatsapp -> CRM provider configuration"
+  if [[ "$APPLY" != "1" ]]; then
+    return
+  fi
+  if [[ ! -r "$source" ]] && ! sudo -n test -r "$source" 2>/dev/null; then
+    echo "SKIP missing messaging WhatsApp secret for CRM overlay: $source"
+    return
+  fi
+  local api_key
+  api_key="$(sudo -n awk '$0 ~ /^AUTHENTICATION_API_KEY=/ { sub(/^[^=]*=/, ""); gsub(/\r$/, ""); print; exit }' "$source")"
+  [[ -n "$api_key" ]] || { echo 'Messaging WhatsApp API key is unavailable for the CRM private overlay.' >&2; exit 1; }
+  {
+    printf 'WA_ORCHESTRATOR_PROVIDER=evolution\n'
+    printf 'EVOLUTION_API_URL=http://127.0.0.1:8080\n'
+    printf 'EVOLUTION_API_KEY=%s\n' "$api_key"
+  } | sudo -n install -D -o root -g skincos -m 0640 /dev/stdin "$destination"
+}
+
 yaml_credentials_file() {
   awk '$1 == "credentials-file:" { print $2; exit }' "$1"
 }
@@ -330,6 +351,10 @@ if [[ "$SKIP_LEGACY_TRANSFER" != "1" ]]; then
   sync_tunnel_config orb "$legacy_orb/cloudflared/orb-config.yml" "$CONFIG_ROOT/cloudflare/orb/config.yml" "$secrets_dir/cloudflare-orb.json"
   sync_runtime_tunnel
 fi
+
+# The overlay is derived from the final private secret location and must also
+# be refreshed when legacy transfer is intentionally skipped on later installs.
+write_crm_whatsapp_overlay
 
 if [[ "$APPLY" == "1" ]]; then
   # Legacy Orb configuration also carries mutable-path variables. Keep the

@@ -18,12 +18,6 @@ const DEFAULT_INSTANCES_FILE = process.env.VAR_DIR
   : path.join(BACKEND_ROOT, 'var', 'core', 'whatsapp_instances.json')
 const INSTANCES_FILE = process.env.WA_INSTANCES_FILE || DEFAULT_INSTANCES_FILE
 const PORTS_RANGE = { min: 3001, max: 3009 } // 9 available channels
-const LOCAL_WHATSAPP_PATHS = new Set([
-  '/api/status',
-  '/api/qr',
-  '/whatsapp/1/status',
-  '/start-client'
-])
 const DEFAULT_OFFICIAL_MODULE_PATH = path.join(SKINCOS_ROOT, 'modules', 'whatsapp', 'whatsapp', 'official-module')
 const LEGACY_OFFICIAL_MODULE_PATH = path.join(SKINCOS_ROOT, 'whatsapp', 'official-module')
 const WHATSAPP_MODULE_PATH = process.env.WHATSAPP_MODULE_PATH ||
@@ -35,15 +29,28 @@ const CRM_UNIFIED_API_KEY = process.env.CRM_UNIFIED_API_KEY || 'unified-dev-key'
 const UNIFIED_AUTOSTART_ON_READY = process.env.UNIFIED_AUTOSTART_ON_READY === 'true'
 
 export function buildLocalWhatsAppUrl(port, pathname) {
-  if (!Number.isInteger(port) || port < PORTS_RANGE.min || port > PORTS_RANGE.max) {
-    throw new Error('INVALID_WHATSAPP_LOCAL_PORT')
+  let origin
+  switch (port) {
+    case 3001: origin = 'http://127.0.0.1:3001'; break
+    case 3002: origin = 'http://127.0.0.1:3002'; break
+    case 3003: origin = 'http://127.0.0.1:3003'; break
+    case 3004: origin = 'http://127.0.0.1:3004'; break
+    case 3005: origin = 'http://127.0.0.1:3005'; break
+    case 3006: origin = 'http://127.0.0.1:3006'; break
+    case 3007: origin = 'http://127.0.0.1:3007'; break
+    case 3008: origin = 'http://127.0.0.1:3008'; break
+    case 3009: origin = 'http://127.0.0.1:3009'; break
+    default: throw new Error('INVALID_WHATSAPP_LOCAL_PORT')
   }
-
-  if (!LOCAL_WHATSAPP_PATHS.has(pathname)) {
-    throw new Error('INVALID_WHATSAPP_LOCAL_PATH')
+  let suffix
+  switch (pathname) {
+    case '/api/status': suffix = '/api/status'; break
+    case '/api/qr': suffix = '/api/qr'; break
+    case '/whatsapp/1/status': suffix = '/whatsapp/1/status'; break
+    case '/start-client': suffix = '/start-client'; break
+    default: throw new Error('INVALID_WHATSAPP_LOCAL_PATH')
   }
-
-  return `http://localhost:${port}${pathname}`
+  return origin + suffix
 }
 
 class WhatsAppOrchestrator {
@@ -600,7 +607,7 @@ class WhatsAppOrchestrator {
         explicitStart: true // Mark as explicitly started by user
       }
 
-      console.log(`[WhatsApp Orchestrator] Starting instance on Channel ${targetChannel} (Port ${targetPort}) with name: ${instance.name}`)
+      console.log('[WhatsApp Orchestrator] Starting instance', { channel: targetChannel, port: targetPort })
 
       // Start WhatsApp process
       const env = {
@@ -619,7 +626,7 @@ class WhatsAppOrchestrator {
 
       // Handle process events
       child.on('error', (error) => {
-        console.error(`[WhatsApp Orchestrator] Process error for port ${targetPort}:`, error)
+        console.error('[WhatsApp Orchestrator] Process error', { port: targetPort, error: error?.message || String(error) })
         instance.status = 'error'
         instance.metadata = {
           ...instance.metadata,
@@ -630,7 +637,7 @@ class WhatsAppOrchestrator {
       })
 
       child.on('exit', (code, signal) => {
-        console.log(`[WhatsApp Orchestrator] Process exited for port ${targetPort}. Code: ${code}, Signal: ${signal}`)
+        console.log('[WhatsApp Orchestrator] Process exited', { port: targetPort, code, signal })
         if (instance.status !== 'stopping') {
           instance.status = 'error'
           instance.metadata = {

@@ -1,14 +1,6 @@
 {
   "patterns": {
     "dangerouslySetInnerHTML": {
-      "crm/console/EmailTemplatesManager.tsx": {
-        "count": 1,
-        "reason": "Admin preview of curated email HTML templates."
-      },
-      "crm/console/RichTaskManager.tsx": {
-        "count": 4,
-        "reason": "Rich task descriptions rendered from controlled markdown paths; future work should sanitize explicitly."
-      },
       "crm/console/chart.tsx": {
         "count": 1,
         "reason": "Static SVG/markup injection generated locally for chart export."

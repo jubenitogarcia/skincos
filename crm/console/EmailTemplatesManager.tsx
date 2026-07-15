@@ -35,6 +35,7 @@ import {
 } from "@phosphor-icons/react"
 import { toast } from 'sonner'
 import { LoadingPercentText } from '@/LoadingPattern'
+import { htmlToPlainText } from '@/contentSanitization'
 
 interface EmailTemplate {
   id: string
@@ -328,7 +329,7 @@ export function EmailTemplatesManager() {
       name: prebuilt.name,
       subject: prebuilt.subject,
       category: prebuilt.category,
-      content: { html: prebuilt.html, text: prebuilt.html.replace(/<[^>]*>/g, '') },
+      content: { html: prebuilt.html, text: htmlToPlainText(prebuilt.html) },
       variables: commonVariables.filter(v => prebuilt.html.includes(`{{${v.name}}}`) || prebuilt.subject.includes(`{{${v.name}}}`))
     }
     await createTemplate(templateData as any)
@@ -658,13 +659,9 @@ export function EmailTemplatesManager() {
 
                   <div>
                     <Label className="text-sm font-medium">Conteúdo HTML</Label>
-                    <div className="border rounded-lg p-4 mt-1 bg-white max-h-96 overflow-y-auto">
-                      <div
-                        dangerouslySetInnerHTML={{
-                          __html: getPreviewContent(selectedTemplate)
-                        }}
-                      />
-                    </div>
+                    <pre className="border rounded-lg p-4 mt-1 bg-white max-h-96 overflow-auto whitespace-pre-wrap text-sm">
+                      {getPreviewContent(selectedTemplate)}
+                    </pre>
                   </div>
                 </div>
               </TabsContent>

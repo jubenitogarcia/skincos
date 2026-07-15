@@ -322,9 +322,24 @@ function buildPayloadFromEvolutionWebhook({ body, config }) {
 }
 
 function sanitizeUnitSlug(v) {
-    const s = String(v || '').trim().toLowerCase()
-    if (!s) return null
-    return s.replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '')
+    const input = String(v || '').trim().toLowerCase().slice(0, 240)
+    if (!input) return null
+    let slug = ''
+    let pendingSeparator = false
+    for (const char of input) {
+        const allowed = (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char === '_'
+        if (allowed) {
+            if (pendingSeparator && slug && !slug.endsWith('_')) slug += '_'
+            slug += char
+            pendingSeparator = false
+        } else {
+            pendingSeparator = true
+        }
+        if (slug.length >= 80) break
+    }
+    while (slug.startsWith('_')) slug = slug.slice(1)
+    while (slug.endsWith('_')) slug = slug.slice(0, -1)
+    return slug || null
 }
 
 function verifyWebhookSignature(req, config) {
