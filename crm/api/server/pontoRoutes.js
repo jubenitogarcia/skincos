@@ -98,8 +98,10 @@ function isNumberArray(arr, minLen, maxLen) {
 }
 
 function l2(a, b) {
+  if (!isNumberArray(a, 64, 1024) || !isNumberArray(b, a.length, a.length)) return Number.POSITIVE_INFINITY
+  const length = Math.min(a.length, 1024)
   let sum = 0
-  for (let i = 0; i < a.length; i++) {
+  for (let i = 0; i < length; i++) {
     const d = a[i] - b[i]
     sum += d * d
   }

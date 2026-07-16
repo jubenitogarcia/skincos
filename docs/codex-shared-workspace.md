@@ -39,11 +39,10 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
    powershell -ExecutionPolicy Bypass -File .\scripts\validate-shared-codex-workspace.ps1
    ```
 
-3. Preparar o runtime compartilhado do orb/n8n:
+3. Validar o runtime nativo do Orb:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\scripts\setup-shared-runtime.ps1
-   powershell -ExecutionPolicy Bypass -File .\scripts\validate-shared-runtime.ps1
+   wsl.exe -d Ubuntu-24.04 -u admin -- bash -lc "/opt/skincos/current/source/scripts/runtime/manage-native-runtime.sh validate"
    ```
 
 4. Instalar os atalhos compartilhados:
@@ -143,13 +142,9 @@ uma mensagem clara em vez de fingir suporte.
 - `Support Services Apply`
 - `Import Clinic Workflows Live -> Dry Run | Apply`
 
-Esses atalhos convivem com um instalador complementar de serviços de suporte:
-
-- `bash ./scripts/install-shared-support-system-services.sh --apply`
-
-Ele reaplica o contrato compartilhado de `crm-api`, `booking-api` e
-`cloudflared-cs` sem depender de paths legados em `/srv/skincos` ou
-`/etc/skincos`.
+`Support Services Apply` reaplica exclusivamente as units finais a partir da
+release nativa. `Repair` recria o layout nativo, reaplica essas units, reinicia
+e executa os smokes. Nenhuma ação inicia serviços a partir do checkout.
 
 ## Botões do topo no Codex App
 
@@ -208,28 +203,19 @@ O botão `EF App Caixa` roda em modo interativo guiado no terminal do Codex App:
 
 ### Runtime live
 
-Usado para status, restart, logs e validação do stack live do orb/n8n/Evolution.
+Usado para status, restart, logs e validação do runtime nativo.
 
-- resolve código a partir de `modules\automations\n8n`;
-- usa o runtime compartilhado em `C:\CodexRuntime\n8n`;
-- executa via WSL e `systemd` de sistema com os units `skincos-*`;
-- não deve depender de `systemctl --user` na conta humana para o orb;
-- espera um PostgreSQL local com o role/database `n8n_runtime` compatível com
-  o contrato de `C:\CodexRuntime\n8n\env\n8n.env`.
-- quando esse contrato estiver desalinhado, o fluxo suportado é `Orb Repair`,
-  não uma intervenção manual dependente de uma conta específica.
+- resolve código pela release imutável `/opt/skincos/current/source`;
+- usa estado em `/var/lib/skincos-runtime`, configuração privada em
+  `/etc/skincos` e logs em `/var/log/skincos`;
+- executa via units de sistema `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`,
+  `booking`, `cloudflare-orb` e `cloudflare-runtime`;
+- não depende de `systemctl --user`, checkout, worktree ou DrvFS;
+- usa PostgreSQL local para o Orb e publica somente backups restore-verified em
+  `C:\CodexRuntime\backups\orb\daily`.
 
-Além do orb, o mini-PC agora mantém estes serviços de suporte no mesmo modelo
-compartilhado:
-
-- `skincos-crm-api.service`, com env em `C:\CodexRuntime\crm-api\env\crm-api.env`
-  e estado mutável em `C:\CodexRuntime\crm-api\var`;
-- `skincos-booking-api.service`, com env em
-  `C:\CodexRuntime\booking-api\env\booking-api.env`, venv em
-  `C:\CodexRuntime\booking-api\venv` e estado mutável em
-  `C:\CodexRuntime\booking-api\var`;
-- `skincos-cloudflared-cs.service`, com config e credenciais em
-  `C:\CodexRuntime\cloudflared\cs`.
+Quando o contrato estiver desalinhado, `Orb Repair` recria o layout nativo,
+reaplica as units finais, reinicia e executa os smokes suportados.
 
 ## Status rápido e worktrees
 
@@ -275,8 +261,8 @@ Rode periodicamente, ou antes de uma limpeza, a auditoria somente-leitura:
 npm run codex:footprint:audit
 ```
 
-Ela confere worktrees limpos/mesclados, caminhos aposentados, a tarefa
-agendada antiga, backup n8n, espaço em disco, `git fsck` e health local/público
+Ela confere worktrees limpos/mesclados, caminhos aposentados, tarefas
+agendadas, backup Orb, espaço em disco, `git fsck` e health local/público
 de Orb e CRM. Use `npm run codex:footprint:validate` em uma sessão elevada
 somente quando todos os legados reportados tiverem sido removidos.
 
@@ -294,10 +280,8 @@ canônica do aplicativo para usar como alvo suportado.
 `Orb Validate` faz retry curto nos health checks do orb para evitar falso
 negativo logo após um restart saudável do stack.
 
-`Orb Repair` lê somente as chaves `DB_POSTGRESDB_*` de
-`C:\CodexRuntime\n8n\env\n8n.env`, reconcilia role/database/schema do
-PostgreSQL local, reinicia o stack live e grava evidência redigida em
-`C:\CodexRuntime\n8n\exports\repair-<timestamp>\`.
+`Orb Repair` não move dados nem recria segredos: ele garante o layout nativo,
+reaplica as units da release promovida, reinicia e roda health/smoke.
 
 Critério oficial de pronto:
 

@@ -1,24 +1,22 @@
-# SKINCOS · WhatsApp (Evolution) → n8n → Postgres → Google Calendar
+# SKINCOS Orb engine
 
-Este diretório agora é o workspace n8n embutido no monorepo `skincos`.
-O código compartilhado live fica em
-`C:\CodexShared\Projetos\skincos\modules\automations\n8n` e o
-estado/runtime segue em `C:\CodexRuntime\n8n`.
+Este diretório contém workflows, validações e ferramentas de negócio do Orb.
+Produção executa uma release imutável em `/opt/skincos/current/source/orb/engine`;
+o checkout compartilhado não é um runtime.
 
 Este módulo adiciona workflows n8n + schema Postgres para triagem, agendamento e reativação de leads via WhatsApp (Evolution API).
 
 ## Operação suportada hoje
 
-- Runtime live compartilhado: serviços `skincos-*` sob systemd de sistema.
-- Código live: `C:\CodexShared\Projetos\skincos\modules\automations\n8n`
-- Estado live: `C:\CodexRuntime\n8n`
+- Runtime: `orb.service` e `orb-proxy.service` sob systemd.
+- Estado: `/var/lib/skincos-runtime/orb`
+- Configuração privada: `/etc/skincos`
 - Validação de infraestrutura: `npm run service:validate`
 - Validação de prontidão funcional: `npm run service:validate:business`
 
-Comandos locais/manuais como `start-n8n.sh`, `run-n8n.sh`,
-`install-mini-pc-systemd.sh` e `cutover-wsl-shared-runtime.sh` permanecem
-apenas como ferramental histórico ou de rollback auditado, não como fluxo
-operacional principal do orb.
+Migração, recuperação e backup seguem
+`../../docs/runbooks/lifecycle-runtime-cutover.md`; launchers locais e units de
+transição foram aposentados.
 
 ## Estrutura
 - Workflows n8n: `workflows/`

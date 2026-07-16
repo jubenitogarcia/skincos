@@ -20,6 +20,8 @@ export const MIRROR_TABLES = [
     'goal_table_rows',
 ]
 
+export const DEFAULT_CRM_RUNTIME_HOME = '/var/lib/skincos-runtime/crm'
+
 const LOCAL_DATABASE_NAME = 'skincos_crm_local'
 const IDENTIFIER_RE = /^[a-z_][a-z0-9_]*$/
 const INSERT_BATCH_SIZE = 250
@@ -192,7 +194,7 @@ async function runProcess(command, args) {
     })
 }
 
-export async function backupAtendimentoMirror(destinationUrl, runtimeHome = process.env.CRM_RUNTIME_HOME || '/mnt/c/CodexRuntime/crm-api') {
+export async function backupAtendimentoMirror(destinationUrl, runtimeHome = process.env.CRM_RUNTIME_HOME || DEFAULT_CRM_RUNTIME_HOME) {
     const backupDir = path.join(runtimeHome, 'backups', 'atendimento')
     await fs.mkdir(backupDir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -338,6 +340,7 @@ export async function syncAtendimentoMirror({
 }
 
 export const __testables = {
+    DEFAULT_CRM_RUNTIME_HOME,
     connectionFingerprint,
     isLocalMirrorDestination,
     parsePostgresConnection,

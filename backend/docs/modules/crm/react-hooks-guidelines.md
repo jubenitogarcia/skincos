@@ -162,7 +162,7 @@ function Component(props) {
 
 ## Applied Fixes in SKINCOS AI
 
-1. **WhatsAppBusinessHub.tsx**: Moved `!whatsapp.connected` check to end, stored UI in `notConnectedUI` variable
+1. **CRM channel components**: keep connection-state early returns after hook declarations
 2. **AuthContext.tsx**: Called `useReplitAuth()` unconditionally, conditional logic moved after hook
 3. **All Components**: Verified no early returns before hooks
 

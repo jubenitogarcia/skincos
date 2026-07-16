@@ -18,6 +18,8 @@ Environment=N8N_STORAGE_PATH=__STATE_ROOT__/orb/n8n-home/.n8n/storage
 Environment=N8N_CONFIG_PATH=__STATE_ROOT__/orb/n8n-home/.n8n/config
 Environment=N8N_HEALTH_DIR=__STATE_ROOT__/orb/health
 Environment=BACKUP_ROOT=__BACKUP_ROOT__/orb/daily
+Environment=BACKUP_STORAGE_COPY_TRANSPORT=tar
+Environment=BACKUP_PUBLISH_OWNER=admin
 Environment=RUNTIME_SERVICE=orb.service
 Environment=RETENTION_COUNT=1
 Environment=VERIFY_RESTORE=1

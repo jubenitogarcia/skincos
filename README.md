@@ -7,14 +7,16 @@ Plataforma interna (local) para automações e operações da clínica.
   - `website/` para o site público e seu deploy Cloudflare/OpenNext
   - `crm/console/` para a UI operacional do CRM
   - `crm/api/` para o backend operacional do CRM
-  - `orb/engine/` para automações, `orb-proxy` e `evolution-api`
+  - `orb/engine/` para automações e `orb-proxy`
 - `ads/meta/` para o workspace do Meta Ads
-- `messaging/channels/whatsapp/` para gateway, official module, Evolution API e afins
+- `messaging/channels/whatsapp/engine/` para o único runtime nativo de WhatsApp
 - `backend/` continua hospedando infraestrutura compartilhada e blocos ainda não redistribuídos para `modules/` e `platform/`
-- Estado de máquina do n8n continua fora do repositório em `C:\CodexRuntime\n8n`.
+- Estado ativo do Orb fica em `/var/lib/skincos-runtime/orb`; segredos ficam em
+  `/etc/skincos` e backups restore-verified são publicados privadamente em
+  `C:\CodexRuntime\backups\orb\daily`.
 
 ## Como rodar (local)
-- Stack principal (recomendado): `./backend/scripts/dev.sh watch`
+- Stack principal (recomendado): `./backend/scripts/dev.sh status|start|stop|restart`
 - CRM (frontend + API): `./crm/console/restart_crm.sh --watch-full`
 - CRM local production-like: `npm run crm:local`
 - Preflight de autonomia Codex/deploy: `npm run codex:preflight`
@@ -138,16 +140,14 @@ Plataforma interna (local) para automações e operações da clínica.
 
 ## Docs
 - Arquitetura do envelope modular: `docs/architecture/modular-envelope.md`
-- Mapa do backend: `backend/docs/INDEX.md`
-- Política de lockfiles: `backend/docs/LOCKFILES.md`
+- Catálogo de serviços: `docs/service-catalog.md`
+- Ownership e operação: `docs/ownership-model.md`
 - Segredos e rotação: `docs/secrets-rotation.md`
 - Autonomia Codex/deploy: `docs/codex-autonomy.md`
 - Codex App nativo: `docs/codex-app-native.md`
 - Workspace compartilhado no Codex App: `docs/codex-shared-workspace.md`
 - Prompt inicial para novas threads: `docs/codex-thread-bootstrap.md`
 - Observabilidade/SLOs: `docs/observability.md`
-- Catálogo de serviços: `docs/service-catalog.md`
-- Ownership e operação: `docs/ownership-model.md`
 - Controle estratégico: `docs/strategic-control-plan.md`
 - Workflow de criativos WhatsApp (prompt system): `backend/docs/modules/crm/whatsapp-creative-workflow.md`
 

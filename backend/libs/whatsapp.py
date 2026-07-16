@@ -9,7 +9,6 @@ Kept compatible with previous `libs.whatsapp_integration.*` imports via re-expor
 in `backend/libs/whatsapp_integration.py`.
 """
 
-import hashlib
 import logging
 import os
 import time
@@ -207,19 +206,6 @@ class MessageSender:
         config = ConfigManager.get_config()
         self.whatsapp_config = config.get("whatsapp_config", {})
 
-    @staticmethod
-    def _mask_phone(phone_number: str) -> str:
-        cleaned = "".join(filter(str.isdigit, phone_number or ""))
-        if len(cleaned) <= 4:
-            return "***"
-        return f"***{cleaned[-4:]}"
-
-    @staticmethod
-    def _fingerprint_message(message: str) -> str:
-        if not message:
-            return "empty"
-        return hashlib.sha256(message.encode("utf-8")).hexdigest()[:8]
-
     def send_message(
         self, phone_number: str, message: str, media_url: Optional[str] = None, **kwargs
     ) -> Optional[Any]:
@@ -236,10 +222,9 @@ class MessageSender:
             "on",
         )
 
-        safe_phone = self._mask_phone(phone_number)
-        msg_len = len(message or "")
-        msg_fp = self._fingerprint_message(message or "")
-        logger.info(f"📤 Envio WhatsApp para {safe_phone} (len={msg_len}, fp={msg_fp})")
+        # Do not emit phone-derived values or message fingerprints. Even masked
+        # identifiers can be correlated across clinical communication logs.
+        logger.info("WhatsApp send requested")
         if not message or not message.strip():
             raise ValueError("Mensagem não pode estar vazia")
         if not phone_number:

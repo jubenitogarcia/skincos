@@ -1,48 +1,28 @@
 const DEFAULT_CHANNELS = Array.from({ length: 9 }, (_, i) => i + 1)
 const DEFAULT_INSTANCE_PREFIX = 'crm-channel-'
 const DEBUG_QR = String(process.env.WA_DEBUG_QR || '').toLowerCase() === 'true'
-const AUTO_RECOVERY_TAG = 'evolution-auto-recovery'
-let autoRecoveryInFlight = null
-let autoRecoveryLastAt = 0
-let autoRecoverySuppressionDepth = 0
 
 function resolveEvolutionConfig() {
   const baseUrl =
     process.env.EVOLUTION_API_URL ||
     process.env.EVOLUTION_API_TARGET ||
     process.env.WHATSAPP_EVOLUTION_API_URL ||
-    ''
+    'http://127.0.0.1:8080'
   const apiKey = process.env.EVOLUTION_API_KEY || process.env.EVOLUTION_API_TOKEN || process.env.WHATSAPP_EVOLUTION_API_KEY || ''
   const instancePrefix = process.env.EVOLUTION_INSTANCE_PREFIX || DEFAULT_INSTANCE_PREFIX
   return { baseUrl, apiKey, instancePrefix }
 }
 
-function resolveAutoRecoveryConfig() {
-  const enabled = String(
-    process.env.EVOLUTION_AUTO_RECOVERY_ENABLED ||
-    process.env.WA_EVOLUTION_AUTO_RECOVERY_ENABLED ||
-    'true'
-  ).toLowerCase() !== 'false'
-  const endpoint = String(
-    process.env.EVOLUTION_AUTO_RECOVERY_ENDPOINT ||
-    `http://127.0.0.1:${process.env.CRM_API_PORT || process.env.PORT || '8099'}/api/wa-orchestrator/local/recovery/restart`
-  ).trim()
-  const mode = String(process.env.EVOLUTION_AUTO_RECOVERY_MODE || 'evolution').trim().toLowerCase() === 'stack'
-    ? 'stack'
-    : 'evolution'
-  const cooldownMs = Math.max(
-    1000,
-    Number.parseInt(String(process.env.EVOLUTION_AUTO_RECOVERY_COOLDOWN_MS || '30000'), 10) || 30000
-  )
+function resolveRequestConfig() {
   const retryDelayMs = Math.max(
     0,
-    Number.parseInt(String(process.env.EVOLUTION_AUTO_RECOVERY_RETRY_DELAY_MS || '1200'), 10) || 1200
+    Number.parseInt(String(process.env.EVOLUTION_RETRY_DELAY_MS || '1200'), 10) || 1200
   )
   const requestTimeoutMs = Math.max(
     3000,
-    Number.parseInt(String(process.env.EVOLUTION_FETCH_TIMEOUT_MS || '22000'), 10) || 22000
+    Number.parseInt(String(process.env.EVOLUTION_REQUEST_TIMEOUT_MS || process.env.EVOLUTION_FETCH_TIMEOUT_MS || '22000'), 10) || 22000
   )
-  return { enabled, endpoint, mode, cooldownMs, retryDelayMs, requestTimeoutMs }
+  return { retryDelayMs, requestTimeoutMs }
 }
 
 function wait(ms) {
@@ -70,77 +50,6 @@ function isRecoverableTransportError(error) {
     message.includes('abort') ||
     message.includes('timed out')
   )
-}
-
-async function triggerAutoRecovery(reason, context = {}) {
-  const config = resolveAutoRecoveryConfig()
-  if (!config.enabled || !config.endpoint) {
-    return { success: false, skipped: 'disabled' }
-  }
-
-  const now = Date.now()
-  if (now - autoRecoveryLastAt < config.cooldownMs) {
-    return { success: false, skipped: 'cooldown' }
-  }
-
-  if (autoRecoveryInFlight) {
-    return autoRecoveryInFlight
-  }
-
-  autoRecoveryInFlight = (async () => {
-    const payload = {
-      mode: config.mode,
-      trigger: AUTO_RECOVERY_TAG,
-      reason: String(reason || '').slice(0, 200) || 'Evolution request failure',
-      context: {
-        path: String(context?.path || ''),
-        status: Number(context?.status || 0) || undefined
-      }
-    }
-    try {
-      const response = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-      const rawText = await response.text()
-      let json = null
-      try {
-        json = rawText ? JSON.parse(rawText) : null
-      } catch {
-        json = null
-      }
-      const success = Boolean(response.ok && (json?.success !== false))
-      if (success) {
-        autoRecoveryLastAt = Date.now()
-      }
-      console.warn('[EVOLUTION_AUTO_RECOVERY] trigger result', {
-        success,
-        status: response.status,
-        mode: config.mode,
-        reason: payload.reason
-      })
-      return { success, status: response.status, payload: json || rawText || null }
-    } catch (error) {
-      console.warn('[EVOLUTION_AUTO_RECOVERY] trigger failed', {
-        error: error?.message || String(error)
-      })
-      return { success: false, error: error?.message || String(error) }
-    } finally {
-      autoRecoveryInFlight = null
-    }
-  })()
-
-  return autoRecoveryInFlight
-}
-
-async function runWithoutAutoRecovery(task) {
-  autoRecoverySuppressionDepth += 1
-  try {
-    return await task()
-  } finally {
-    autoRecoverySuppressionDepth = Math.max(0, autoRecoverySuppressionDepth - 1)
-  }
 }
 
 function normalizeState(raw) {
@@ -275,8 +184,8 @@ function debugQr(event, payload = {}) {
 
 async function evolutionFetch(path, options = {}, attempt = 0) {
   const { baseUrl, apiKey } = resolveEvolutionConfig()
-  const recoveryConfig = resolveAutoRecoveryConfig()
-  const canAutoRecover = recoveryConfig.enabled && autoRecoverySuppressionDepth === 0 && !options?.disableAutoRecovery
+  const requestConfig = resolveRequestConfig()
+  const canRetry = attempt === 0 && !options?.disableRetry
   if (!baseUrl) {
     throw new Error('EVOLUTION_API_URL not configured')
   }
@@ -286,7 +195,7 @@ async function evolutionFetch(path, options = {}, attempt = 0) {
   if (options.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(new Error(`Evolution request timeout after ${recoveryConfig.requestTimeoutMs}ms`)), recoveryConfig.requestTimeoutMs)
+  const timeout = setTimeout(() => controller.abort(new Error(`Evolution request timeout after ${requestConfig.requestTimeoutMs}ms`)), requestConfig.requestTimeoutMs)
 
   let res
   try {
@@ -297,9 +206,8 @@ async function evolutionFetch(path, options = {}, attempt = 0) {
       signal: controller.signal
     })
   } catch (error) {
-    if (attempt === 0 && canAutoRecover && isRecoverableTransportError(error)) {
-      await triggerAutoRecovery(error?.message || 'Evolution transport error', { path, status: 0 })
-      await wait(recoveryConfig.retryDelayMs)
+    if (canRetry && isRecoverableTransportError(error)) {
+      await wait(requestConfig.retryDelayMs)
       return evolutionFetch(path, options, 1)
     }
     throw error
@@ -307,9 +215,8 @@ async function evolutionFetch(path, options = {}, attempt = 0) {
     clearTimeout(timeout)
   }
 
-  if (!res.ok && attempt === 0 && canAutoRecover && isRecoverableStatus(res.status)) {
-    await triggerAutoRecovery(`Evolution HTTP ${res.status}`, { path, status: res.status })
-    await wait(recoveryConfig.retryDelayMs)
+  if (!res.ok && canRetry && isRecoverableStatus(res.status)) {
+    await wait(requestConfig.retryDelayMs)
     return evolutionFetch(path, options, 1)
   }
 
@@ -851,6 +758,5 @@ export const evolutionOrchestrator = {
   archiveChat,
   markMessagesAsRead,
   getBase64FromMediaMessage,
-  setWebhook,
-  runWithoutAutoRecovery
+  setWebhook
 }

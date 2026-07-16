@@ -3,6 +3,11 @@ import assert from 'node:assert/strict'
 
 import { __testables } from '../mirror.js'
 
+test('defaults mutable CRM state to the native Linux filesystem', () => {
+    assert.equal(__testables.DEFAULT_CRM_RUNTIME_HOME, '/var/lib/skincos-runtime/crm')
+    assert.doesNotMatch(__testables.DEFAULT_CRM_RUNTIME_HOME, /^\/mnt\//)
+})
+
 test('accepts only the local Atendimento mirror database as destination', () => {
     assert.equal(
         __testables.isLocalMirrorDestination('postgresql://skincos@/skincos_crm_local?host=/var/run/postgresql'),

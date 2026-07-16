@@ -3,12 +3,9 @@ packages:
   - "apps/api"
   - "apps/insumos"
   - "apps/instagram/module"
-  - "apps/whatsapp/official-module"
-  - "apps/whatsapp/official"
 
   # NOTE:
   # - `apps/agent-zero/` is its own Nx monorepo (npm workspaces).
   # - `apps/actual-server/` declares yarn@4.
-  # - `apps/whatsapp/chat-module/*` are npm packages (kept independent).
-  # - `apps/whatsapp/gateway/` is its own turbo monorepo/workspace.
+  # - `messaging/channels/whatsapp/engine/` is an independent npm project.
   # Keep those managed independently to avoid nested workspace conflicts.

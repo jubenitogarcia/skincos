@@ -208,7 +208,7 @@ class WorkflowAssistant {
             console.log(`🌐 Abrir no browser: ${N8N_API}/workflow/${id}\n`);
         } else {
             console.log('💡 Para o runtime compartilhado, prefira os comandos service:* e o browser do n8n.');
-            console.log('💡 Para um launcher local/manual isolado, use: ./start-n8n.sh start\n');
+            console.log('💡 Para operar o runtime nativo, use: npm run service:status\n');
         }
 
         return { dbRow: result, workflow };

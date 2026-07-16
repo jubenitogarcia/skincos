@@ -7,10 +7,7 @@ const ORIGINAL_ENV = {
   EVOLUTION_API_URL: process.env.EVOLUTION_API_URL,
   EVOLUTION_API_KEY: process.env.EVOLUTION_API_KEY,
   EVOLUTION_INSTANCE_PREFIX: process.env.EVOLUTION_INSTANCE_PREFIX,
-  EVOLUTION_AUTO_RECOVERY_ENABLED: process.env.EVOLUTION_AUTO_RECOVERY_ENABLED,
-  EVOLUTION_AUTO_RECOVERY_ENDPOINT: process.env.EVOLUTION_AUTO_RECOVERY_ENDPOINT,
-  EVOLUTION_AUTO_RECOVERY_COOLDOWN_MS: process.env.EVOLUTION_AUTO_RECOVERY_COOLDOWN_MS,
-  EVOLUTION_AUTO_RECOVERY_RETRY_DELAY_MS: process.env.EVOLUTION_AUTO_RECOVERY_RETRY_DELAY_MS
+  EVOLUTION_RETRY_DELAY_MS: process.env.EVOLUTION_RETRY_DELAY_MS
 }
 
 function restoreEnv() {
@@ -38,7 +35,6 @@ test.afterEach(() => {
 test('getStatus degrades gracefully when Evolution is offline', async () => {
   process.env.EVOLUTION_API_URL = 'http://127.0.0.1:8080'
   process.env.EVOLUTION_API_KEY = 'test-key'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   global.fetch = async () => {
     throw new TypeError('fetch failed')
@@ -56,7 +52,6 @@ test('getStatus treats disconnected and available-like states as free', async ()
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
   process.env.EVOLUTION_API_KEY = 'test-key'
   process.env.EVOLUTION_INSTANCE_PREFIX = 'crm-channel-'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   global.fetch = async (url) => {
     if (String(url) === 'http://evolution.local/instance/fetchInstances') {
@@ -86,7 +81,6 @@ test('fetchChats sends the expected Evolution endpoint and pagination payload', 
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
   process.env.EVOLUTION_API_KEY = 'test-key'
   process.env.EVOLUTION_INSTANCE_PREFIX = 'crm-channel-'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   let capturedUrl = ''
   let capturedInit = null
@@ -108,7 +102,6 @@ test('fetchChats sends archived=true filter when archivedOnly is requested', asy
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
   process.env.EVOLUTION_API_KEY = 'test-key'
   process.env.EVOLUTION_INSTANCE_PREFIX = 'crm-channel-'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   let capturedBody = null
   global.fetch = async (_url, init) => {
@@ -125,7 +118,6 @@ test('fetchContacts sends the expected Evolution endpoint and pagination payload
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
   process.env.EVOLUTION_API_KEY = 'test-key'
   process.env.EVOLUTION_INSTANCE_PREFIX = 'crm-channel-'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   let capturedUrl = ''
   let capturedInit = null
@@ -149,7 +141,6 @@ test('fetchContacts sends the expected Evolution endpoint and pagination payload
 
 test('fetchMessages normalizes remoteJid and sends the correct query payload', async () => {
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   let capturedBody = null
   global.fetch = async (_url, init) => {
@@ -172,7 +163,6 @@ test('fetchMessages normalizes remoteJid and sends the correct query payload', a
 
 test('sendText uses /message/sendText with number and quoted reply metadata', async () => {
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   let capturedUrl = ''
   let capturedBody = null
@@ -206,7 +196,6 @@ test('sendText uses /message/sendText with number and quoted reply metadata', as
 
 test('archiveChat uses /chat/archiveChat with normalized remoteJid and archive flag', async () => {
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   let capturedUrl = ''
   let capturedBody = null
@@ -227,7 +216,6 @@ test('archiveChat uses /chat/archiveChat with normalized remoteJid and archive f
 
 test('markMessagesAsRead sends readMessages with normalized keys to the correct endpoint', async () => {
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   let capturedUrl = ''
   let capturedBody = null
@@ -253,7 +241,6 @@ test('markMessagesAsRead sends readMessages with normalized keys to the correct 
 
 test('media download and webhook use the expected Evolution endpoints', async () => {
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'false'
 
   const calls = []
   global.fetch = async (url, init) => {
@@ -291,12 +278,9 @@ test('media download and webhook use the expected Evolution endpoints', async ()
   ])
 })
 
-test('fetchMessages triggers local recovery endpoint and retries once on recoverable upstream status', async () => {
+test('fetchMessages retries once without invoking a host recovery endpoint', async () => {
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENABLED = 'true'
-  process.env.EVOLUTION_AUTO_RECOVERY_ENDPOINT = 'http://127.0.0.1:8099/api/wa-orchestrator/local/recovery/restart'
-  process.env.EVOLUTION_AUTO_RECOVERY_COOLDOWN_MS = '1'
-  process.env.EVOLUTION_AUTO_RECOVERY_RETRY_DELAY_MS = '0'
+  process.env.EVOLUTION_RETRY_DELAY_MS = '0'
 
   const calls = []
   global.fetch = async (url, init) => {
@@ -312,10 +296,6 @@ test('fetchMessages triggers local recovery endpoint and retries once on recover
       return mockJsonResponse({ messages: { records: [] } })
     }
 
-    if (String(url).includes('/api/wa-orchestrator/local/recovery/restart')) {
-      return mockJsonResponse({ success: true, mode: 'evolution' })
-    }
-
     return mockJsonResponse({ ok: true })
   }
 
@@ -323,9 +303,6 @@ test('fetchMessages triggers local recovery endpoint and retries once on recover
   assert.ok(out?.messages)
 
   const findMessagesCalls = calls.filter((item) => item.url.includes('/chat/findMessages/'))
-  const recoveryCalls = calls.filter((item) => item.url.includes('/api/wa-orchestrator/local/recovery/restart'))
   assert.equal(findMessagesCalls.length, 2)
-  assert.equal(recoveryCalls.length, 1)
-  assert.equal(recoveryCalls[0].method, 'POST')
-  assert.equal(recoveryCalls[0].body?.mode, 'evolution')
+  assert.equal(calls.length, 2)
 })

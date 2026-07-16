@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { PrismaRepository } from '@api/repository/repository.service';
 import { WAMonitoringService } from '@api/services/monitor.service';
 import { Events } from '@api/types/wa.types';
@@ -84,7 +86,7 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
    */
   public async createNewSession(instance: Instance, data: any) {
     if (data.remoteJid === 'status@broadcast') return;
-    const id = Math.floor(Math.random() * 10000000000).toString();
+    const id = randomUUID();
 
     try {
       const version = this.configService.get<Typebot>('TYPEBOT').API_VERSION;

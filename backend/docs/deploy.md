@@ -1,79 +1,25 @@
-# Deploy (skincos)
+# Deploy SKINCOS
 
-Este repo não “se auto-deploya” sozinho: isso depende de integrações (Cloudflare Pages/Workers) ou de um servidor (VPS) consumindo o código.
+## Superfícies Cloudflare
 
-## Frontend (CRM) → `crm.skincos.com.br`
+- CRM UI: `crm/console`, publicado em `https://crm.skincos.com.br` por `.github/workflows/deploy-crm-pages.yml`.
+- Gateway/API e Workers: publicados pelos workflows específicos de `api/`, `website/` e dos domínios proprietários.
+- Credenciais de Cloudflare permanecem em GitHub Actions/Cloudflare; nunca no checkout.
 
-Opção A (recomendado): **Cloudflare Pages** conectado ao GitHub.
+## CRM API nativa
 
-- Root directory: `frontend`
-- Build command: `npm ci && npm run build`
-- Output directory: `dist`
+O CRM API ativo roda como `crm.service` no filesystem Linux, a partir de `/opt/skincos/current/source`. O release é promovido pelo procedimento controlado de runtime em `docs/runtime-native-cutover-runbook.md`, com backup e rollback prévios.
 
-### `/api/*` no domínio do Pages (backend mínimo)
+O workflow `.github/workflows/deploy-crm-api.yml` aceita somente transporte SSH e permanece opt-in (`ENABLE_CRM_API_DEPLOY=true`). Neste host, a promoção nativa local é a fonte de verdade e a flag deve permanecer desabilitada enquanto não existir um destino SSH dedicado.
 
-Para o CRM conseguir chamar `/api/*` em produção (sem precisar de um Node server), usamos **Pages Functions**:
+Não existe modo de deploy ou restart por HTTP. O CRM não pode executar `git checkout`, `git reset` ou reiniciar serviços a partir de uma requisição de aplicação.
 
-- Proxy Insumos: `frontend/functions/api/insumos/[[path]].ts`
-- Health: `frontend/functions/api/health.ts`
-- Rotas: `frontend/public/_routes.json`
-  - Básicas: `/api/health`, `/api/auth/*`, `/api/insumos/*`
-  - Opcionais (módulos): `/api/instagram/*`, `/api/instagram-module/*`, `/api/social/*`, `/api/share/*`, `/api/unit-monitor/*`, `/api/placeholder/*`
-  - Pages Functions de UI: `/share/*`, `/social-media/*`
+## Validação mínima
 
-Obs:
-- O deploy do Pages (incluindo `functions/`) pode acontecer automaticamente via integração Git↔Cloudflare Pages **ou**
-- via GitHub Actions + `wrangler` (workflow `.github/workflows/deploy-crm-pages.yml`, requer `secrets.CLOUDFLARE_API_TOKEN`, `secrets.CLOUDFLARE_ACCOUNT_ID` e `vars.ENABLE_CRM_PAGES_DEPLOY=true`).
-- Recomendação: configure o Pages com `path_includes=["frontend/**"]` para não rebuildar/redeployar quando só o backend mudar.
+Após uma publicação, verificar:
 
-## Backend (Insumos) → `api.skincos.com.br/insumos/*`
-
-É um **Cloudflare Worker** em `inventory`.
-
-## Backend (API) → `api.skincos.com.br/*`
-
-É um **Cloudflare Worker** em `api` (implementação compartilhada com `apps/insumos`).
-
-Workflow de deploy:
-- `.github/workflows/deploy-insumos-worker.yml`
-
-Requer:
-- `secrets.CLOUDFLARE_API_TOKEN` (e opcionalmente `secrets.CLOUDFLARE_ACCOUNT_ID`)
-- (opcional) `vars.INSUMOS_D1_DB_NAME` (default: `skincos-db`)
-
-Importante: variáveis/segredos de produção devem estar no Dashboard (ou `wrangler secret put`) e o deploy usa `--keep-vars`:
-- `SPREADSHEET_ID`, `SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `SESSION_SECRET`
-
-## Backend (CRM API) → `/api/*`
-
-O servidor local é `backend/apps/crm-api/server.js` (Express). Para produção, você precisa escolher **onde ele roda**:
-
-- **VPS + Cloudflare Tunnel** (sem Docker): rodar Node + `systemd/pm2`, expor via `cloudflared`.
-- **Outro hosting Node** (Railway/Render/etc) e configurar DNS/proxy no Cloudflare.
-
-Workflow de deploy (opcional):
-- `.github/workflows/deploy-crm-api.yml`
-
-Requer:
-- `vars.ENABLE_CRM_API_DEPLOY=true`
-- `vars.CRM_API_DEPLOY_MODE` (`ssh` ou `http_restart`; default `ssh`)
-
-Modo `ssh`:
-- `secrets.CRM_API_SSH_HOST`
-- `secrets.CRM_API_SSH_USER`
-- `secrets.CRM_API_SSH_KEY`
-- (opcional) `secrets.CRM_API_SSH_PORT`
-- `vars.CRM_API_APP_DIR` (diretório do repo no servidor)
-- `vars.CRM_API_DEPLOY_COMMAND` (ex.: `pm2 reload crm-api` ou `systemctl restart crm-api`)
-
-Modo `http_restart`:
-- `vars.CRM_API_RESTART_URL` (ex.: `https://cs-api.skincos.com.br/api/wa-orchestrator/local/recovery/restart`)
-- `secrets.CRM_API_BASIC_AUTH` (valor `user:password`; o workflow envia em `Authorization: Basic ...`)
-- O workflow envia payload com:
-  - `mode=stack`
-  - `sha=<commit do deploy>`
-  - `syncRepo=true` (sincroniza repo local antes do restart)
-  - `syncSha=<commit do deploy>` (alvo do `git reset --hard`)
-  - `syncAutoStash=false` (não faz stash automático por padrão)
-  - Se precisar permitir auto-stash explicitamente, defina `WA_LOCAL_RECOVERY_SYNC_ALLOW_AUTOSTASH=true` no ambiente do CRM API.
-  - Se o workspace local estiver sujo e `syncAutoStash=false`, o endpoint retorna `RECOVERY_SYNC_REPO_DIRTY` (`HTTP 409`) e os workflows marcam como `skip` (sem salvar cache de deploy), para tentar novamente depois sem sobrescrever mudanças locais.
+- `systemctl is-active crm.service` e ausência de reinícios inesperados;
+- `http://127.0.0.1:8099/health`;
+- `https://crm.skincos.com.br/api/health`;
+- smoke do módulo alterado e SHA/build efetivamente servido;
+- logs de `journalctl` sem erros novos.

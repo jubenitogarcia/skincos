@@ -194,7 +194,6 @@ kill_processes() {
     pkill -f "vite --port $CRM_PORT" 2>/dev/null || true
 
     # Kill WhatsApp gateway processes (best-effort)
-    pkill -f "bot_com_api.js" 2>/dev/null || true
 
     sleep 2
     echo "[restart] Processes stopped"

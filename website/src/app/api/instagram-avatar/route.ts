@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { decodeHtmlEntities } from "@/lib/htmlEntities";
 import { getCachedInstagramAvatarUrl } from "@/lib/instagramSync";
 
 export const dynamic = "force-dynamic";
@@ -62,17 +63,6 @@ function placeholderSvg(initials: string): string {
     <rect x="0" y="0" width="56" height="56" rx="14" fill="url(#g)"/>
     <text x="28" y="33" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" font-size="18" font-weight="700" fill="#ffffff">${safe}</text>
 </svg>`;
-}
-
-function decodeHtmlEntities(input: string): string {
-    return input
-        .replace(/&amp;/g, "&")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-        .replace(/&#([0-9]+);/g, (_, num: string) => String.fromCharCode(parseInt(num, 10)));
 }
 
 function extractOgImage(html: string): string | null {

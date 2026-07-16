@@ -40,4 +40,64 @@ for (const rootName of ["api", "booking", "integration", "messaging", "workforce
   if (!map.includes(`\`${rootName}\``)) fail(`target domain map is missing ${rootName}`);
 }
 
+const lifecycleUnits = [
+  "orb.service",
+  "orb-proxy.service",
+  "messaging-whatsapp.service",
+  "crm.service",
+  "booking.service",
+  "cloudflare-orb.service",
+  "cloudflare-runtime.service",
+];
+for (const unit of lifecycleUnits) {
+  const source = fs.readFileSync(path.join(root, "ops/runtime/units", unit), "utf8");
+  if (!/^PrivateTmp=true$/m.test(source)) fail(`${unit} must retain a private temporary namespace`);
+  if (/^ReadWritePaths=.*__TMP_ROOT__/m.test(source)) {
+    fail(`${unit} cannot bind __TMP_ROOT__ while PrivateTmp hides the host /var/tmp tree`);
+  }
+}
+
+const orbUnit = fs.readFileSync(path.join(root, "ops/runtime/units/orb.service"), "utf8");
+if (!/^Environment=N8N_TMP_DIR=\/tmp$/m.test(orbUnit)) {
+  fail("orb.service must use its systemd-private /tmp namespace");
+}
+
+for (const unit of ["orb.service", "orb-proxy.service"]) {
+  const source = fs.readFileSync(path.join(root, "ops/runtime/units", unit), "utf8");
+  const legacyEnvironment = source.lastIndexOf("EnvironmentFile=-__CONFIG_ROOT__/orb-business.env");
+  const nativeEnvironment = source.lastIndexOf("EnvironmentFile=__CONFIG_ROOT__/orb-runtime-paths.env");
+  if (legacyEnvironment === -1 || nativeEnvironment <= legacyEnvironment) {
+    fail(`${unit} must load native Orb paths after the legacy secret environment`);
+  }
+}
+
+const lifecycleLayout = fs.readFileSync(path.join(root, "scripts/runtime/prepare-lifecycle-layout.sh"), "utf8");
+for (const variable of [
+  "N8N_RESTRICT_FILE_ACCESS_TO=/tmp",
+  "META_REVIEW_STORE_PATH=$STATE_ROOT/orb/meta-review-store.json",
+  "N8N_USER_FOLDER=$STATE_ROOT/orb/n8n-home",
+  "N8N_STORAGE_PATH=$STATE_ROOT/orb/n8n-home/.n8n/storage",
+  "N8N_LOG_FILE_LOCATION=$LOG_ROOT/orb/n8n.log",
+]) {
+  if (!lifecycleLayout.includes(variable)) fail(`native Orb path overlay is missing ${variable}`);
+}
+
+const crmRunner = fs.readFileSync(path.join(root, "crm/api/scripts/run.sh"), "utf8");
+if (!/dirname "\$\{BASH_SOURCE\[0\]\}"\)\/\.\.\/\.\.\/\.\./.test(crmRunner)) {
+  fail("CRM runner must resolve the repository root three levels above crm/api/scripts");
+}
+if (crmRunner.includes("/../../../..")) {
+  fail("CRM runner escapes the native source release by resolving four parent directories");
+}
+
+for (const workflow of ["deploy-crm-pages.yml", "deploy-crm-pages-reconcile.yml"]) {
+  const source = fs.readFileSync(path.join(root, ".github/workflows", workflow), "utf8");
+  if (!/^  group: deploy-crm-pages$/m.test(source)) {
+    fail(`${workflow} must share the production deployment concurrency group`);
+  }
+  if (!/^  cancel-in-progress: false$/m.test(source)) {
+    fail(`${workflow} must serialize rather than cancel an in-flight production deployment`);
+  }
+}
+
 if (!process.exitCode) process.stdout.write("Architecture contract validation OK.\n");

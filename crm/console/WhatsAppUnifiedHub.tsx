@@ -1062,22 +1062,6 @@ export function WhatsAppUnifiedHub() {
     return selectedChannel ? getChannelInstance(selectedChannel) : null
   }
 
-  // Navigate to channel dashboard using proxy route
-  const navigateToChannelDashboard = (channel: number) => {
-    // Use proxy route with dashboard path
-    const channelRoute = `/canal${channel}/dashboard`
-    
-    // Validate that channel is actually connected before redirecting
-    const instance = getCurrentChannelInstance()
-    if (!instance || instance.status !== 'connected') {
-      toast.error(`Canal ${channel} não está conectado. Inicie o canal primeiro.`)
-      return
-    }
-    
-    // Open dashboard in new tab using the proxy route - this loads the full WhatsApp Business dashboard
-    window.open(channelRoute, '_blank')
-  }
-
   return (
     <div className="space-y-6">
       {/* Header with Channel Selection */}
@@ -1301,17 +1285,6 @@ export function WhatsAppUnifiedHub() {
                           >
                             <Spinner className="w-5 h-5 mr-2 animate-spin" />
                             Iniciando...
-                          </Button>
-                        )}
-
-                        {isConnected && (
-                          <Button
-                            className="w-full bg-green-600 hover:bg-green-700"
-                            size="lg"
-                            onClick={() => navigateToChannelDashboard(selectedChannel)}
-                          >
-                            <Eye className="w-5 h-5 mr-2" />
-                            Acessar Canal
                           </Button>
                         )}
 

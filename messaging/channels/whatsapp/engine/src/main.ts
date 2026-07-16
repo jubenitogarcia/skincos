@@ -4,8 +4,8 @@ import '@utils/instrumentSentry';
 // Now import other modules
 import { ProviderFiles } from '@api/provider/sessions';
 import { PrismaRepository } from '@api/repository/repository.service';
-import { registerRuntimeHealthRoute } from '@api/routes/runtimeHealth.route';
 import { HttpStatus, router } from '@api/routes/index.router';
+import { registerRuntimeHealthRoute } from '@api/routes/runtimeHealth.route';
 import { eventManager, waMonitor } from '@api/server.module';
 import {
   Auth,

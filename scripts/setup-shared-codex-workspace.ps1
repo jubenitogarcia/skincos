@@ -1,7 +1,7 @@
 param(
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
     [string]$WorktreeRoot = "C:\CodexShared\Worktrees\skincos",
-    [string]$RuntimeRoot = "C:\CodexRuntime\n8n",
+    [string]$RuntimeRoot = "C:\CodexRuntime",
     [string]$OperatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos",
     [switch]$SkipAclRefresh,
     [switch]$DeepAclRefresh
@@ -95,18 +95,9 @@ Ensure-Directory -Path $OperatorRuntimeRoot
 
 $runtimeDirs = @(
     $RuntimeRoot,
-    (Join-Path $RuntimeRoot "env"),
-    (Join-Path $RuntimeRoot "logs"),
-    (Join-Path $RuntimeRoot "health"),
-    (Join-Path $RuntimeRoot "tmp"),
-    (Join-Path $RuntimeRoot "binary-data"),
-    (Join-Path $RuntimeRoot "exports"),
-    (Join-Path $RuntimeRoot "backups"),
-    (Join-Path $RuntimeRoot "n8n-home"),
-    (Join-Path $RuntimeRoot "cloudflared"),
-    (Join-Path $RuntimeRoot "evolution-api"),
-    (Join-Path $RuntimeRoot "evolution-api\instances"),
-    (Join-Path $RuntimeRoot "evolution-api\store")
+    (Join-Path $RuntimeRoot "backups\orb\daily"),
+    (Join-Path $RuntimeRoot "operator\admin\skincos"),
+    (Join-Path $RuntimeRoot "tmp")
 )
 
 foreach ($dir in $runtimeDirs) {
@@ -149,7 +140,6 @@ $codexEnvironment = Get-CodexEnvironmentStatus -RepoPath $ProjectRoot
 if (-not $SkipAclRefresh) {
     Grant-SharedAcl -TargetPath $ProjectRoot -Recursive:$DeepAclRefresh
     Grant-SharedAcl -TargetPath $WorktreeRoot -Recursive:$DeepAclRefresh
-    Grant-SharedAcl -TargetPath $RuntimeRoot -Recursive:$DeepAclRefresh
 }
 
 Ensure-SafeDirectory -RepoPath $ProjectRoot

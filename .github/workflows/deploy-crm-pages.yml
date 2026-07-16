@@ -9,8 +9,8 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: deploy-crm-pages-${{ github.ref }}
-  cancel-in-progress: true
+  group: deploy-crm-pages
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -115,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           .github/scripts/ponto_smoke.py \
-            --attempts 5 \
-            --sleep-seconds 6 \
+            --attempts 15 \
+            --sleep-seconds 10 \
             --allow-ponto-disabled \
             --user-agent "Mozilla/5.0 (compatible; PontoSmoke/1.0)"

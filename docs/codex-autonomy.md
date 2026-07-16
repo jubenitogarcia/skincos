@@ -12,7 +12,6 @@ For Codex App plugin routing, local Browser QA, Sites prototyping, and headless 
   - `CLOUDFLARE_API_TOKEN`
   - `CLOUDFLARE_ACCOUNT_ID`
   - `GH_TOKEN`
-  - `CRM_API_BASIC_AUTH`
   - `META_ADS_REPORT_WORKER_API_TOKEN`
   - `INTEGRATIONS_ENCRYPTION_SECRET`
 - GitHub deploy variables:
@@ -58,7 +57,7 @@ Preferred flow:
 3. Codex pushes and opens a PR.
 4. GitHub checks and security gates run.
 5. Codex só faz merge após os checks obrigatórios, a revisão de vulnerabilidades críticas/altas alcançáveis, o rollback e as superfícies afetadas estarem confirmados.
-6. After-automerge deploy workflows reconcile CRM Pages, Workers, and CRM API.
+6. After-merge deploy workflows reconcile CRM Pages and Workers. The native CRM runtime is promoted through the controlled Linux release procedure.
 7. Codex verifies production health endpoints.
 
 Manual deploys through local Wrangler are allowed when needed, but GitHub Actions are the preferred path because they are auditable and repeatable.
