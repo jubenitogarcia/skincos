@@ -43,7 +43,7 @@
 - `codex/admin/meta-ads-publish-production-audit` contains uncommitted product
   work for the Meta Ads publish journal. It is intentionally isolated from the
   completed architecture/runtime program and must be reviewed in its own task.
-- PR #658 (`codex/admin/github-codex-autonomy`) remains a deliberate draft for
+- PR #674 (`codex/admin/github-codex-autonomy`) remains a deliberate draft for
   the optional GitHub autonomy broker; it is not part of the production
   runtime and has no deployment dependency.
 - The detached worktree under `%USERPROFILE%\.codex\worktrees` is Codex
