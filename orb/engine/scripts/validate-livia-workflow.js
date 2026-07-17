@@ -94,7 +94,10 @@ function validateStructure() {
     'Read Media Asset',
     'Upload Main Media',
     'Attach Uploaded Main Media Metadata',
+    'Read Livia Visual Asset',
+    'Assert Livia Visual Input',
     'Livia',
+    'Assert Livia Visual Analysis',
     'Hydrate Publish Context',
     'Switch Publish Route',
     'Prepare HTTP Publish Request',
@@ -160,9 +163,11 @@ function validateStructure() {
   assert(connectionExists('Prepare Media Upload Batch', 'Read Media Asset'), 'Prepare Media Upload Batch must feed Read Media Asset');
   assert(connectionExists('Read Media Asset', 'Upload Main Media'), 'Read Media Asset must feed Upload Main Media');
   assert(connectionExists('Upload Main Media', 'Attach Uploaded Main Media Metadata'), 'Upload Main Media must feed Attach Uploaded Main Media Metadata');
-  assert(connectionExists('Attach Uploaded Main Media Metadata', 'Livia'), 'Attach Uploaded Main Media Metadata must feed Livia');
-
-  assert(connectionExists('Livia', 'Hydrate Publish Context'), 'Livia must feed Hydrate Publish Context');
+  assert(connectionExists('Attach Uploaded Main Media Metadata', 'Read Livia Visual Asset'), 'Uploaded media metadata must feed the visual asset reader');
+  assert(connectionExists('Read Livia Visual Asset', 'Assert Livia Visual Input'), 'Visual asset reader must feed the visual-input guard');
+  assert(connectionExists('Assert Livia Visual Input', 'Livia'), 'Visual-input guard must feed Livia');
+  assert(connectionExists('Livia', 'Assert Livia Visual Analysis'), 'Livia must feed the visual-analysis guard');
+  assert(connectionExists('Assert Livia Visual Analysis', 'Hydrate Publish Context'), 'Visual-analysis guard must feed Hydrate Publish Context');
   if (hasCompactBuildQueue) {
     assert(connectionExists('Hydrate Publish Context', 'Build Publish Queue'), 'Hydrate Publish Context must feed Build Publish Queue');
     assert(connectionExists('Build Publish Queue', 'Switch Publish Route'), 'Build Publish Queue must feed Switch Publish Route');
@@ -231,6 +236,10 @@ function validateContracts() {
   const attachVerified = codeOf('Attach Verified Publish Artifacts');
   const assertDrive = codeOf('Assert Drive Published');
   const attach = codeOf('Attach Uploaded Main Media Metadata');
+  const visualInputGuard = codeOf('Assert Livia Visual Input');
+  const visualAnalysisGuard = codeOf('Assert Livia Visual Analysis');
+  const visualAssetReader = String(getNode('Read Livia Visual Asset')?.parameters?.fileSelector || '');
+  const liviaPrompt = String(getNode('Livia')?.parameters?.text || '');
   const waitAmount = String(getNode('Wait')?.parameters?.amount || '');
   const downloadFileId = String(getNode('Download File')?.parameters?.fileId?.value || '');
   const writeFileName = String(getNode('Write File')?.parameters?.fileName || '');
@@ -382,6 +391,18 @@ function validateContracts() {
   assert(!workflowText.includes('"access_token":"EAA'), 'Workflow export must not contain inline Meta access tokens');
 
   assert(!attach.includes('Prepare Request'), 'Attach Uploaded Main Media Metadata must not reference Prepare Request anymore');
+  assert(visualAssetReader.includes("kind === 'video'"), 'Visual asset reader must use the generated thumbnail for videos');
+  assert(visualAssetReader.includes('thumbPath'), 'Visual asset reader must require a video thumbnail path');
+  assert(visualAssetReader.includes('mainMediaFilePath'), 'Visual asset reader must use the original image asset for images');
+  assert(visualInputGuard.includes("$('Read Livia Visual Asset').item"), 'Visual-input guard must recover the paired visual binary');
+  assert(visualInputGuard.includes("startsWith('image/')"), 'Visual-input guard must require an image binary or video thumbnail');
+  assert(visualInputGuard.includes('supportedMedia'), 'Visual-input guard must reject unsupported media types');
+  assert(visualInputGuard.includes('throw new Error'), 'Visual-input guard must fail closed when a visual binary is unavailable');
+  assert(visualInputGuard.includes('visualInput'), 'Visual-input guard must record the visual-input contract');
+  assert(visualAnalysisGuard.includes('visualInput'), 'Visual-analysis guard must verify the visual-input contract');
+  assert(visualAnalysisGuard.includes('apenas nos metadados'), 'Visual-analysis guard must reject metadata-only AI fallback');
+  assert(visualAnalysisGuard.includes('throw new Error'), 'Visual-analysis guard must fail closed on unavailable visual analysis');
+  assert(liviaPrompt.includes('URLs e metadados não substituem o arquivo binário'), 'Livia prompt must forbid metadata-only image publication');
 
   assert(waitAmount.includes('waitSeconds'), 'Wait must still depend on waitSeconds');
   assert(downloadFileId.includes("$('Prepare Media Items').item.json.id"), 'Download File must still depend on Prepare Media Items');
