@@ -107,12 +107,76 @@ function loadSource() {
   fail(`Could not find a ${NODE_NAME} Code-node source in ${WORKFLOW_PATH} or ${CHECKPOINT_DIR}.`);
 }
 
+function n8nItems(values) {
+  return asArray(values).map((value) => {
+    if (value && typeof value === 'object' && value.json && typeof value.json === 'object') return value;
+    return { json: asObject(value) };
+  });
+}
+
+function firstNonEmptyArray(...values) {
+  for (const value of values) {
+    const current = asArray(value);
+    if (current.length) return current;
+  }
+  return [];
+}
+
+function firstNonEmptyObject(...values) {
+  for (const value of values) {
+    const current = asObject(value);
+    if (Object.keys(current).length) return current;
+  }
+  return {};
+}
+
+function legacyInputs(payload) {
+  const tokenContext = firstNonEmptyObject(payload.normalizedTokenVaultContext, payload.tokenVaultContext);
+  const bootstrapItems = n8nItems(payload.bootstrapItems);
+  let composeItems = bootstrapItems.filter((item) => String(item?.json?.groupKey || '').trim());
+
+  if (!composeItems.length) {
+    composeItems = n8nItems(firstNonEmptyArray(payload.normalizedCombinedMediaItems, payload.combinedMediaItems))
+      .map((item) => ({
+        ...item,
+        json: {
+          ...item.json,
+          facebook: firstNonEmptyObject(item.json.facebook, tokenContext.facebook),
+          instagram: firstNonEmptyObject(item.json.instagram, tokenContext.instagram),
+          threads: firstNonEmptyObject(item.json.threads, tokenContext.threads),
+        },
+      }));
+  }
+
+  const uploadItems = n8nItems(firstNonEmptyArray(payload.normalizedCombinedMediaItems, payload.combinedMediaItems));
+  const liviaItems = n8nItems(firstNonEmptyArray(payload.normalizedLiviaOutput, payload.liviaOutput));
+  const aggregateItems = n8nItems(payload.aggregateCandidateUploads || []);
+
+  return {
+    'Compose (1)': composeItems,
+    'Upload File': uploadItems.length ? uploadItems : composeItems,
+    'Aggregate (2)': aggregateItems,
+    Livia: liviaItems,
+  };
+}
+
 function executeSource(jsCode, payload) {
   const inputItems = [{ json: payload }];
   const staticData = {};
+  const legacy = legacyInputs(payload);
+  if (process.env.LIVIA_BUILD_JOB_GRAPH_DEBUG_INPUTS === '1') {
+    console.error(JSON.stringify({
+      composeCount: legacy['Compose (1)'].length,
+      uploadCount: legacy['Upload File'].length,
+      aggregateCount: legacy['Aggregate (2)'].length,
+      liviaCount: legacy.Livia.length,
+      composeKeys: Object.keys(asObject(legacy['Compose (1)'][0]?.json)),
+    }));
+  }
   const fn = new Function(
     '$json',
     '$input',
+    '$items',
     '$execution',
     '$getWorkflowStaticData',
     `"use strict";\n${jsCode}`,
@@ -120,6 +184,7 @@ function executeSource(jsCode, payload) {
   return fn(
     payload,
     { all: () => inputItems },
+    (nodeName) => asArray(legacy[nodeName]),
     { id: String(process.env.LIVIA_EXECUTION_ID || Date.now()) },
     () => staticData,
   );
@@ -660,11 +725,15 @@ function loadResumeCompleted(jobs) {
 }
 
 function compactResult(result, payload, sourceFile) {
-  const firstJson = asObject(asArray(result)[0]?.json);
+  const resultItems = asArray(result);
+  const firstJson = asObject(resultItems[0]?.json);
   const facebookCredentials = facebookCredentialContext(payload);
   const credentialRefs = credentialReferences(payload);
   const frameContext = technicalFrameContext(payload);
-  const jobs = asArray(firstJson.jobs)
+  const sourceJobs = asArray(firstJson.jobs).length
+    ? asArray(firstJson.jobs)
+    : resultItems.map((entry) => asObject(entry?.json));
+  const jobs = sourceJobs
     .map((entry) => asObject(entry))
     .map((entry) => applyCaptionHygiene(entry))
     .map((entry) => applyTechnicalFrame(entry, frameContext))
@@ -713,7 +782,13 @@ function main() {
   const payload = parsePayload();
   const source = loadSource();
   const result = executeSource(source.jsCode, payload);
-  process.stdout.write(JSON.stringify(compactResult(result, payload, source.filePath)));
+  const output = JSON.stringify(compactResult(result, payload, source.filePath));
+  const outputFile = argValue('--output-file');
+  if (outputFile) {
+    fs.writeFileSync(outputFile, output, 'utf8');
+  } else {
+    process.stdout.write(output);
+  }
 }
 
 main();
