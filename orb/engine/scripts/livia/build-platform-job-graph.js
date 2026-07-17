@@ -619,7 +619,8 @@ function normalizeThreadsCarouselJob(job) {
   if (carouselChild) {
     // Threads requires the concrete media type for every child. CAROUSEL is
     // accepted only by the parent container that references these children.
-    request.media_type = 'IMAGE';
+    if (String(request.video_url || '').trim()) request.media_type = 'VIDEO';
+    else request.media_type = 'IMAGE';
   }
   if (phase === 'uploadcontainer') request.media_type = 'CAROUSEL';
   current.jsonRequest = request;

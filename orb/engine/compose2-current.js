@@ -1064,7 +1064,7 @@ for (const group of groups) {
 
       const uploadRunIndexes = [];
 
-      if (platform === "facebook" && firstIsVideo) {
+      if (platform === "facebook" && firstIsVideo && !isCarouselGroup) {
         facebookPublishMode = "reels";
 
         if (isCarouselGroup) pushUnique(warnings, "facebook.reels: grupo com múltiplos arquivos; usando apenas o 1º vídeo");
@@ -1262,21 +1262,19 @@ for (const group of groups) {
           }
 
           if (platform === "facebook") {
-            if (isVideo) {
-              pushUnique(fileWarnings, "facebook: vídeo detectado em grupo não-reels; ignorado (use fluxo reels)");
-              continue;
-            }
-
             const endpoint1 = str(fbObj.endpoint_1st, "").trim();
             const edge = str(c2.edge, "").trim();
-            const chosen = endpoint1 || edge || "photos";
+            const chosen = isVideo ? "videos" : (endpoint1 || edge || "photos");
 
             url = baseUrlAccount + chosen;
 
             const fbCaptionPublish = str(capsHere.fbCaption, "") || str(globalCaptions.fbCaption, "");
 
-            // Upload da foto sem duplicar copy.
-            body = buildUploadBodyFacebookPhotos({ url: finalUrl, caption: "" });
+            // Carrosséis do feed usam objetos não publicados, anexados depois
+            // por media_fbid. Isso preserva imagens e vídeos no mesmo grupo.
+            body = isVideo
+              ? { ...buildUploadBodyFacebookVideos({ url: finalUrl, caption: "", selectedFrameUrl: selectedFrameUrlResolved }), published: false }
+              : buildUploadBodyFacebookPhotos({ url: finalUrl, caption: "" });
 
             textMeta = {
               caption: fbCaptionPublish,
