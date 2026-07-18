@@ -61,11 +61,15 @@ describe('Atendimento helpers', () => {
     expect(validateAtendimentoForm({ ...form, clientName: '' }, ['#0799'])).toBe('Informe o cliente.')
   })
 
+  it('keeps the browser preview deterministic while the server remains authoritative', () => {
+    expect(calculateAtendimentoValue({ code: '#0799', quantity: 1, discount: false, otherValue: 0, roundValue: false })).toBe(799)
+  })
+
   it('filters staff by unit, role and current shift like the Apps Script cache', () => {
     const professionals = [
-      { name: 'Injetora A', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Injetor'], turnos: ['Manhã'] },
-      { name: 'Consultora A', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Coordenador', 'Consultor'], turnos: ['Tarde'] },
-      { name: 'Consultora B', status: 'Inativo', units: ['Novo Hamburgo'], roles: ['Consultor'], turnos: ['Tarde'] },
+      { id: 'injector-a', name: 'Injetora A', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Injetor'], turnos: ['Manhã'] },
+      { id: 'consultant-a', name: 'Consultora A', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Coordenador', 'Consultor'], turnos: ['Tarde'] },
+      { id: 'consultant-b', name: 'Consultora B', status: 'Inativo', units: ['Novo Hamburgo'], roles: ['Consultor'], turnos: ['Tarde'] },
     ]
     expect(determineAtendimentoShift('Novo Hamburgo', new Date('2026-06-16T15:00:00'))).toBe('Manhã')
     expect(filterProfessionalsByUnitRole(professionals, 'Novo Hamburgo', 'Injetor')).toEqual(['Injetora A'])
