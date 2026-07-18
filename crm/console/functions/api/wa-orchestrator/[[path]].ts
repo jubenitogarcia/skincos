@@ -1,10 +1,19 @@
 import { copySetCookieHeaders, proxyRequestBody, sanitizeProxyRequestHeaders } from '../../_lib/proxy'
 import { isLocalDevAuthBypassEnabled } from '../../_lib/crmAuth'
 
-function localOrchestratorStatus(): Response {
+function json(status: number, body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  })
+}
+
+function missingOrchestratorConfiguration(isLocalDev: boolean): Response {
   return new Response(JSON.stringify({
-    success: true,
-    provider: 'evolution',
+    success: false,
+    error: 'WA_ORCHESTRATOR_NOT_CONFIGURED',
+    code: 'WA_ORCHESTRATOR_API_TARGET_REQUIRED',
+    hint: 'Integração WhatsApp não configurada neste ambiente. Defina WA_ORCHESTRATOR_API_TARGET no overlay privado local.',
     channels: [],
     totalChannels: 0,
     availableChannels: 0,
@@ -14,23 +23,56 @@ function localOrchestratorStatus(): Response {
     startingInstances: 0,
     availableChannelsList: [],
     freeChannelsList: [],
-    localStub: true,
-    reason: 'WA_ORCHESTRATOR_BASIC_AUTH_NOT_CONFIGURED',
+    localStub: isLocalDev,
+    mode: 'stub',
+    targetSource: null,
+    reachability: 'not_configured',
   }), {
-    status: 200,
+    status: 503,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   })
 }
 
-function localOrchestratorEvents(): Response {
-  return new Response(`event: status\ndata: ${JSON.stringify({ success: true, localStub: true, channels: [] })}\n\n`, {
-    status: 200,
+function missingOrchestratorEvents(isLocalDev: boolean): Response {
+  return new Response(`event: error\ndata: ${JSON.stringify({
+    success: false,
+    error: 'WA_ORCHESTRATOR_NOT_CONFIGURED',
+    code: 'WA_ORCHESTRATOR_API_TARGET_REQUIRED',
+    localStub: isLocalDev,
+  })}\n\n`, {
+    status: 503,
     headers: {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-store',
       connection: 'keep-alive',
     },
   })
+}
+
+function sanitizeUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    url.username = ''
+    url.password = ''
+    return url.toString()
+  } catch {
+    return value
+  }
+}
+
+async function probeTarget(targetOrigin: string, headers: Headers): Promise<'reachable' | 'unreachable'> {
+  try {
+    const healthUrl = new URL(targetOrigin)
+    healthUrl.pathname = `${healthUrl.pathname.replace(/\/$/, '')}/health`
+    const response = await fetch(healthUrl.toString(), {
+      method: 'GET',
+      headers,
+      redirect: 'manual',
+    })
+    return response.ok ? 'reachable' : 'unreachable'
+  } catch {
+    return 'unreachable'
+  }
 }
 
 export async function onRequest(context: any): Promise<Response> {
@@ -47,87 +89,80 @@ export async function onRequest(context: any): Promise<Response> {
     if (typeof process !== 'undefined' && (process as any)?.env) return (process as any).env as Record<string, string | undefined>
     return {}
   })()
-  const rawTargets = [
-    runtimeEnv.WA_ORCHESTRATOR_API_TARGET,
-    runtimeEnv.CRM_API_TARGET,
-    runtimeEnv.INSUMOS_API_TARGET
-  ].map((v) => String(v || '').trim()).filter(Boolean)
+  const configuredTarget = String(runtimeEnv.WA_ORCHESTRATOR_API_TARGET || '').trim()
   const requestOrigin = url.origin
-
-  const defaultTarget = (() => {
-    const host = String(url.hostname || '').toLowerCase()
-    if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:8099'
-    return 'https://cs-api.skincos.com.br'
-  })()
-
-  const isValidOrchestratorTarget = (candidate: string) => {
-    try {
-      const parsed = new URL(candidate)
-      const host = parsed.hostname.toLowerCase()
-      if (host === 'api.skincos.com.br' || host.endsWith('.skincos.workers.dev')) return false
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  const pickTarget = () => {
-    for (const candidate of rawTargets) {
-      if (!isValidOrchestratorTarget(candidate)) continue
-      try {
-        const parsed = new URL(candidate)
-        if (parsed.origin === requestOrigin) continue
-        return candidate
-      } catch {
-        // ignore invalid
-      }
-    }
-    return defaultTarget
-  }
-
-  const targetOrigin = String(pickTarget())
-  const isProductionTarget = (() => {
-    const raw = String(targetOrigin || '').trim().toLowerCase()
-    return raw === 'https://api.skincos.com.br' || raw.endsWith('.skincos.com.br')
-  })()
-
   const basicAuthRaw = String(runtimeEnv.WA_ORCHESTRATOR_BASIC_AUTH || runtimeEnv.CRM_BASIC_AUTH || '').trim()
   const hasBasicAuth = Boolean(basicAuthRaw && basicAuthRaw.includes(':'))
-  const sanitizeUrl = (value: string) => {
-    try {
-      const u = new URL(value)
-      if (u.username || u.password) {
-        u.username = ''
-        u.password = ''
-      }
-      return u.toString()
-    } catch {
-      return value
-    }
-  }
+  const isLocalDev = isLocalDevAuthBypassEnabled(context)
 
   if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        target: sanitizeUrl(targetOrigin),
-        isProductionTarget,
+    if (!configuredTarget) {
+      return json(503, {
+        ok: false,
+        mode: 'stub',
+        localStub: isLocalDev,
+        target: null,
+        targetSource: null,
         requestOrigin,
-        targets: rawTargets.map(sanitizeUrl),
-        hasBasicAuth
-      }),
-      {
-        status: 200,
-        headers: {
-          'content-type': 'application/json',
-          'cache-control': 'no-store'
-        }
-      }
-    )
+        hasBasicAuth,
+        reachability: 'not_configured',
+        reason: 'WA_ORCHESTRATOR_API_TARGET_REQUIRED',
+      })
+    }
+
+    let targetOrigin: string
+    try {
+      targetOrigin = new URL(configuredTarget).toString()
+    } catch {
+      return json(503, {
+        ok: false,
+        mode: 'stub',
+        localStub: isLocalDev,
+        target: null,
+        targetSource: 'WA_ORCHESTRATOR_API_TARGET',
+        requestOrigin,
+        hasBasicAuth,
+        reachability: 'not_configured',
+        reason: 'WA_ORCHESTRATOR_API_TARGET_INVALID',
+      })
+    }
+
+    const probeHeaders = new Headers({ accept: 'application/json' })
+    if (hasBasicAuth) {
+      const runtime = globalThis as { Buffer?: { from: (input: string) => { toString: (encoding: string) => string } } }
+      const encoded = typeof btoa === 'function'
+        ? btoa(basicAuthRaw)
+        : runtime.Buffer?.from(basicAuthRaw).toString('base64')
+      probeHeaders.set('authorization', `Basic ${encoded}`)
+    }
+    const reachability = await probeTarget(targetOrigin, probeHeaders)
+    return json(reachability === 'reachable' ? 200 : 503, {
+      ok: reachability === 'reachable',
+      mode: 'real',
+      localStub: false,
+      target: sanitizeUrl(targetOrigin),
+      targetSource: 'WA_ORCHESTRATOR_API_TARGET',
+      requestOrigin,
+      hasBasicAuth,
+      reachability,
+      reason: reachability === 'reachable' ? null : 'WA_ORCHESTRATOR_TARGET_UNREACHABLE',
+    })
   }
-  if (isLocalDevAuthBypassEnabled(context) && !hasBasicAuth) {
-    if (rest === '/status') return localOrchestratorStatus()
-    if (rest === '/events') return localOrchestratorEvents()
+  if (!configuredTarget) {
+    if (rest === '/events') return missingOrchestratorEvents(isLocalDev)
+    return missingOrchestratorConfiguration(isLocalDev)
+  }
+  let targetOrigin: string
+  try {
+    targetOrigin = new URL(configuredTarget).toString()
+  } catch {
+    return json(503, {
+      success: false,
+      error: 'WA_ORCHESTRATOR_API_TARGET_INVALID',
+      hint: 'WA_ORCHESTRATOR_API_TARGET deve conter uma URL válida no overlay privado local.',
+      localStub: isLocalDev,
+      mode: 'stub',
+    })
   }
   const targetUrl = new URL(targetOrigin)
   const basePath = targetUrl.pathname.replace(/\/$/, '')
@@ -166,7 +201,7 @@ export async function onRequest(context: any): Promise<Response> {
 
   const contentType = upstream.headers.get('content-type') || ''
   if (contentType.includes('text/html')) {
-    const message = `Resposta inválida do orquestrador. Verifique WA_ORCHESTRATOR_API_TARGET/CRM_API_TARGET.`
+    const message = 'Resposta inválida do orquestrador. Verifique WA_ORCHESTRATOR_API_TARGET.'
     if (rest.startsWith('/events')) {
       return new Response(`data: ${JSON.stringify({ type: 'error', message })}\n\n`, {
         status: 502,

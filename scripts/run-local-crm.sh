@@ -2,11 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/crm-local-runtime.sh"
 FRONTEND_DIR="$ROOT_DIR/crm/console"
+FRONTEND_RUNTIME_DIR="${CRM_LOCAL_FRONTEND_RUNTIME_DIR:-/home/$(id -un)/.cache/skincos/crm-local-console}"
 BACKEND_DIR="$ROOT_DIR/backend"
 INSUMOS_HELPER="$ROOT_DIR/backend/scripts/insumos.sh"
 INSUMOS_EXPORTER="$ROOT_DIR/backend/scripts/insumos-d1-export.cjs"
 INSUMOS_SEEDER="$ROOT_DIR/backend/scripts/insumos-seed.sh"
+WHATSAPP_ORCHESTRATOR_HELPER="$ROOT_DIR/scripts/run-local-whatsapp-orchestrator.sh"
 
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
 CRM_VITE_PORT="${CRM_VITE_PORT:-5173}"
@@ -48,18 +51,21 @@ fi
 CRM_META_ADS_SCENARIO="${CRM_META_ADS_SCENARIO:-}"
 if [[ -n "${CRM_WITH_INSUMOS+x}" ]]; then
   CRM_WITH_INSUMOS="$CRM_WITH_INSUMOS"
+  CRM_WITH_INSUMOS_EXPLICIT=1
 elif [[ -z "$CRM_MODULE" ]]; then
-  # The generic shell exposes Insumos, so run its local Worker instead of proxying
-  # visible read requests to the shared authenticated backend.
-  CRM_WITH_INSUMOS=1
+  CRM_WITH_INSUMOS_EXPLICIT=0
 else
-  CRM_WITH_INSUMOS=0
+  CRM_WITH_INSUMOS_EXPLICIT=0
 fi
 CRM_INSUMOS_PORT="${CRM_INSUMOS_PORT:-8787}"
 CRM_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}"
 CRM_REFRESH_INSUMOS_SNAPSHOT="${CRM_REFRESH_INSUMOS_SNAPSHOT:-0}"
 CRM_INSUMOS_SEED_TOKEN="${CRM_INSUMOS_SEED_TOKEN:-dev-seed-token}"
+CRM_WITH_WHATSAPP="${CRM_WITH_WHATSAPP:-1}"
+CRM_WA_ORCHESTRATOR_PORT="${CRM_WA_ORCHESTRATOR_PORT:-8110}"
 CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
+CRM_OPERATOR_RUNTIME_ROOT="${CRM_OPERATOR_RUNTIME_ROOT:-/mnt/c/CodexRuntime/operator/admin/skincos}"
+CRM_PLAYWRIGHT_BROWSERS_PATH="${CRM_PLAYWRIGHT_BROWSERS_PATH:-$CRM_OPERATOR_RUNTIME_ROOT/playwright-browsers}"
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
 LOG_FILE="${CRM_LOG_FILE:-$ROOT_DIR/.crm-local-dev.log}"
 SNAPSHOT_DEFAULT_PATH="${CRM_INSUMOS_SNAPSHOT_DEFAULT:-$ROOT_DIR/backend/var/local/insumos-snapshot.latest.json}"
@@ -94,6 +100,10 @@ Opções:
   --insumos-snapshot FILE        Faz seed local do Insumos com este snapshot JSON
   --refresh-insumos-snapshot     Exporta um snapshot novo do D1 remoto antes do seed
   --insumos-seed-token TOKEN     Token local usado para /admin/seed (default: dev-seed-token)
+  --with-whatsapp                Inicia o adaptador local do orquestrador WhatsApp (padrão)
+  --without-whatsapp             Não inicia o adaptador local do WhatsApp
+  --whatsapp-port PORT           Porta do adaptador WhatsApp local (default: 8110)
+  --status                       Exibe o manifesto não sensível do runtime local atual
   CRM_LOCAL_LOG_LEVEL=LEVEL      Nível dos runtimes locais: warn (default), info, debug, error ou none
   --smoke                        Roda uma smoke local do módulo após subir o CRM
   --exit-after-smoke             Encerra o CRM local depois da smoke
@@ -120,6 +130,7 @@ case "$CRM_ROUTE" in
 esac
 
 STOP_ONLY=0
+STATUS_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -130,17 +141,21 @@ while [[ $# -gt 0 ]]; do
     --pages-port) shift; CRM_PAGES_PORT="$1" ;;
     --meta-ads-scenario) shift; CRM_META_ADS_SCENARIO="$1" ;;
     --skip-build) CRM_BUILD_BEFORE_START=0 ;;
-    --with-insumos) CRM_WITH_INSUMOS=1 ;;
+    --with-insumos) CRM_WITH_INSUMOS=1; CRM_WITH_INSUMOS_EXPLICIT=1 ;;
     --insumos-port) shift; CRM_INSUMOS_PORT="$1" ;;
     --insumos-snapshot) shift; CRM_INSUMOS_SNAPSHOT="$1" ;;
     --refresh-insumos-snapshot) CRM_REFRESH_INSUMOS_SNAPSHOT=1 ;;
     --insumos-seed-token) shift; CRM_INSUMOS_SEED_TOKEN="$1" ;;
+    --with-whatsapp) CRM_WITH_WHATSAPP=1 ;;
+    --without-whatsapp) CRM_WITH_WHATSAPP=0 ;;
+    --whatsapp-port) shift; CRM_WA_ORCHESTRATOR_PORT="$1" ;;
     --smoke) CRM_SMOKE=1 ;;
     --exit-after-smoke) CRM_EXIT_AFTER_SMOKE=1 ;;
     --headed-smoke) CRM_SMOKE_HEADED=1 ;;
     --browser) CRM_OPEN_BROWSER=1; CRM_OPEN_BROWSER_EXPLICIT=1 ;;
     --no-browser) CRM_OPEN_BROWSER=0; CRM_OPEN_BROWSER_EXPLICIT=1 ;;
     --stop) STOP_ONLY=1 ;;
+    --status) STATUS_ONLY=1 ;;
     -h|--help) usage; exit 0 ;;
     *)
       if [[ "$1" == /* && "$CRM_ROUTE" == "/" ]]; then
@@ -154,6 +169,16 @@ while [[ $# -gt 0 ]]; do
   esac
   shift || true
 done
+
+if [[ "$CRM_WITH_INSUMOS_EXPLICIT" == "0" ]]; then
+  if [[ -z "$CRM_MODULE" ]]; then
+    # The generic shell exposes Insumos, so run its local Worker instead of
+    # proxying visible read requests to the shared authenticated backend.
+    CRM_WITH_INSUMOS=1
+  else
+    CRM_WITH_INSUMOS=0
+  fi
+fi
 
 if [[ "$CRM_SMOKE" == "1" && "$CRM_OPEN_BROWSER_EXPLICIT" == "0" ]]; then
   CRM_OPEN_BROWSER=0
@@ -186,6 +211,26 @@ if [[ -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
   CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "metaAdsLocalScenario" "$CRM_META_ADS_SCENARIO")"
 fi
 
+crm_runtime_init
+if [[ "$STATUS_ONLY" == "1" ]]; then
+  crm_runtime_print_status
+  exit $?
+fi
+if [[ "$STOP_ONLY" == "1" ]]; then
+  crm_runtime_safe_stop
+  exit $?
+fi
+if ! crm_runtime_acquire_lock; then
+  exit 1
+fi
+trap crm_runtime_release_lock EXIT
+
+# The launcher serializes its own starts, then selects a verified free port for
+# every local component. This never adopts an unknown listener or assumes 8791.
+if crm_runtime_reuse_if_healthy; then
+  exit 0
+fi
+crm_runtime_select_ports
 DEFAULT_URL="http://localhost:${CRM_PAGES_PORT}${CRM_ROUTE}"
 NETWORK_URL="http://${CRM_HOST}:${CRM_PAGES_PORT}${CRM_ROUTE}"
 
@@ -275,7 +320,7 @@ stop_owned_port_listener() {
     while [[ -n "$candidate_pid" && "$candidate_pid" != "1" ]]; do
       local args
       args="$(ps -p "$candidate_pid" -o args= 2>/dev/null || true)"
-      if [[ "$args" == *"$ROOT_DIR"* ]] && [[ "$args" == *"vite"* || "$args" == *"wrangler"* || "$args" == *"workerd"* || "$args" == *"dev_pages.sh"* || "$args" == *"insumos.sh"* ]]; then
+      if [[ "$args" == *"$ROOT_DIR"* ]] && [[ "$args" == *"vite"* || "$args" == *"wrangler"* || "$args" == *"workerd"* || "$args" == *"dev_pages.sh"* || "$args" == *"insumos.sh"* || "$args" == *"run-local-whatsapp-orchestrator.sh"* || "$args" == *"crm/api/server.js"* ]]; then
         owned=1
         break
       fi
@@ -341,18 +386,27 @@ open_browser() {
 }
 
 ensure_frontend_ready() {
-  if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
-    echo "Dependências do frontend não encontradas. Instalando..."
-    npm --prefix "$FRONTEND_DIR" install
+  if [[ ! -x "$FRONTEND_RUNTIME_DIR/node_modules/.bin/tsc" || ! -x "$FRONTEND_RUNTIME_DIR/node_modules/.bin/vite" || ! -x "$FRONTEND_RUNTIME_DIR/node_modules/.bin/wrangler" ]]; then
+    echo "Dependências utilizáveis do frontend não encontradas. Instalando..."
+    npm --prefix "$FRONTEND_RUNTIME_DIR" install
   fi
 }
 
 ensure_frontend_dist_ready() {
-  if [[ -f "$FRONTEND_DIR/dist/index.html" ]]; then
+  if [[ -f "$FRONTEND_RUNTIME_DIR/dist/index.html" ]]; then
     return 0
   fi
   echo "[crm-local] Build local do frontend ausente; gerando dist inicial para o Pages local..."
-  npm --prefix "$FRONTEND_DIR" run build
+  npm --prefix "$FRONTEND_RUNTIME_DIR" run build
+}
+
+prepare_frontend_runtime() {
+  if [[ "$FRONTEND_RUNTIME_DIR" == "$FRONTEND_DIR" ]]; then
+    return 0
+  fi
+  install -d -m 0750 "$FRONTEND_RUNTIME_DIR"
+  rsync -a --delete --exclude node_modules \
+    "$FRONTEND_DIR/" "$FRONTEND_RUNTIME_DIR/"
 }
 
 ensure_insumos_seed_config() {
@@ -424,16 +478,25 @@ start_insumos_local() {
   fi
 }
 
-if [[ "$STOP_ONLY" == "1" ]]; then
-  stop_existing
-  stop_owned_port_listener "$CRM_VITE_PORT" "vite"
-  stop_owned_port_listener "$CRM_PAGES_PORT" "pages"
-  if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
-    stop_owned_port_listener "$CRM_INSUMOS_PORT" "insumos"
+start_whatsapp_orchestrator_local() {
+  if [[ ! -x "$WHATSAPP_ORCHESTRATOR_HELPER" ]]; then
+    echo "[crm-local] Adaptador WhatsApp local não está executável: $WHATSAPP_ORCHESTRATOR_HELPER" >&2
+    exit 1
   fi
-  echo "CRM local finalizado."
-  exit 0
-fi
+  echo "[crm-local] Iniciando adaptador local do WhatsApp em :$CRM_WA_ORCHESTRATOR_PORT"
+  (
+    CRM_LOCAL_WA_ORCHESTRATOR_PORT="$CRM_WA_ORCHESTRATOR_PORT" \
+      LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}" \
+      LOCAL_AUTH_ROLE="${LOCAL_AUTH_ROLE:-GESTOR}" \
+      "$WHATSAPP_ORCHESTRATOR_HELPER"
+  ) >>"$LOG_FILE" 2>&1 &
+  WHATSAPP_ORCHESTRATOR_PID=$!
+
+  if ! wait_for_http "http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}/health" 60; then
+    echo "[crm-local] Adaptador local do WhatsApp não respondeu em tempo hábil." >&2
+    exit 1
+  fi
+}
 
 if [[ "$CRM_PROFILE" != "realistic" && "$CRM_PROFILE" != "session" ]]; then
   echo "Perfil inválido: $CRM_PROFILE" >&2
@@ -487,23 +550,30 @@ if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
     echo "Snapshot Insumos: $CRM_INSUMOS_SNAPSHOT"
   fi
 fi
+if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+  echo "WhatsApp local: http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}"
+fi
 echo "Log: $LOG_FILE"
 echo ""
 
-stop_existing
 rotate_current_log
 assert_port_free "$CRM_VITE_PORT" "vite"
 assert_port_free "$CRM_PAGES_PORT" "pages"
+if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+  assert_port_free "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
+fi
+prepare_frontend_runtime
 ensure_frontend_ready
 
 if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
   echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
-  npm --prefix "$FRONTEND_DIR" run build
+  npm --prefix "$FRONTEND_RUNTIME_DIR" run build
 else
   ensure_frontend_dist_ready
 fi
 
 INSUMOS_PID=""
+WHATSAPP_ORCHESTRATOR_PID=""
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   assert_port_free "$CRM_INSUMOS_PORT" "insumos"
   start_insumos_local
@@ -524,6 +594,11 @@ else
   export LOCAL_AUTH_BYPASS=false
 fi
 
+if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+  start_whatsapp_orchestrator_local
+  export LOCAL_WA_ORCHESTRATOR_API_TARGET="http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}"
+fi
+
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   export LOCAL_INSUMOS_API_TARGET="http://127.0.0.1:${CRM_INSUMOS_PORT}"
 fi
@@ -532,8 +607,12 @@ if [[ -n "$CRM_MODULE" ]]; then
   export VITE_LOCAL_CRM_FOCUS_MODULE="$CRM_MODULE"
 fi
 
+CRM_RUNTIME_CREATED_AT="$(date -Iseconds)"
+crm_runtime_write_manifest starting
+crm_runtime_export_pages_bindings
+
 (
-  cd "$FRONTEND_DIR"
+  cd "$FRONTEND_RUNTIME_DIR"
   npm run dev:pages
 ) >>"$LOG_FILE" 2>&1 &
 CRM_PID=$!
@@ -547,6 +626,9 @@ cleanup() {
   if [[ -n "${INSUMOS_PID:-}" ]]; then
     kill "$INSUMOS_PID" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${WHATSAPP_ORCHESTRATOR_PID:-}" ]]; then
+    kill "$WHATSAPP_ORCHESTRATOR_PID" >/dev/null 2>&1 || true
+  fi
   if [[ -f "$PID_FILE" ]]; then
     local tracked_pid
     tracked_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
@@ -554,6 +636,8 @@ cleanup() {
       rm -f "$PID_FILE"
     fi
   fi
+  crm_runtime_write_manifest stopped 2>/dev/null || true
+  crm_runtime_release_lock
 }
 
 trap cleanup EXIT INT TERM
@@ -571,8 +655,8 @@ fi
 run_gate_smoke() {
   echo "[crm-local] Rodando gate obrigatório do shell local..."
   (
-    cd "$FRONTEND_DIR"
-    PLAYWRIGHT_BROWSERS_PATH=0 \
+    cd "$FRONTEND_RUNTIME_DIR"
+      PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" \
       CRM_URL="$DEFAULT_URL" \
       HEADED=0 \
       TIMEOUT_MS="${CRM_GATE_TIMEOUT_MS:-120000}" \
@@ -624,20 +708,20 @@ if [[ "$CRM_SMOKE" == "1" ]]; then
   if [[ "$CRM_MODULE" == "meta-ads" ]]; then
     echo "[crm-local] Rodando smoke local do Meta Ads..."
     (
-      cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
+      cd "$FRONTEND_RUNTIME_DIR"
+      PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
     )
   elif [[ "$CRM_MODULE" == "site-tracking" ]]; then
     echo "[crm-local] Rodando smoke local do Site EF..."
     (
-      cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
+      cd "$FRONTEND_RUNTIME_DIR"
+      PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
     )
   else
     echo "[crm-local] Rodando smoke local padrão..."
     (
-      cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
+      cd "$FRONTEND_RUNTIME_DIR"
+      PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
     )
   fi
 
@@ -650,6 +734,10 @@ fi
 if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
   open_browser
 fi
+
+crm_runtime_write_manifest ready
+echo "CRM_LOCAL_RUNTIME_MANIFEST=$CRM_RUNTIME_MANIFEST"
+echo "CRM_LOCAL_URL=$DEFAULT_URL"
 
 echo "Notas:"
   echo "  - O shell do CRM local usa Pages Functions reais."
@@ -665,6 +753,11 @@ if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   echo "  - Insumos está apontando para o worker local, sem risco de gravar na produção."
 else
   echo "  - Insumos continua usando o target definido em crm/console/.dev.vars ou crm/console/wrangler.toml."
+fi
+if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+  echo "  - WhatsApp aponta para o adaptador local autenticado pelo overlay nativo, sem expor credenciais."
+else
+  echo "  - WhatsApp local está desabilitado; a interface exibirá a configuração pendente."
 fi
 if [[ -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
   echo "  - Meta Ads/tracking está em cenário local controlado; o fluxo é simulado só em localhost."

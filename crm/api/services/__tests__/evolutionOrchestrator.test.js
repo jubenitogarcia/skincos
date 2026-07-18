@@ -77,6 +77,92 @@ test('getStatus treats disconnected and available-like states as free', async ()
   assert.equal(status.errorInstances, 0)
 })
 
+test('startChannel recycles the same closed unpaired Evolution instance before requesting its QR', async () => {
+  process.env.EVOLUTION_API_URL = 'http://evolution.local'
+  process.env.EVOLUTION_API_KEY = 'test-key'
+  process.env.EVOLUTION_INSTANCE_PREFIX = 'crm-channel-'
+
+  const calls = []
+  let createAttempts = 0
+  global.fetch = async (url, init = {}) => {
+    const request = { url: String(url), method: init.method || 'GET' }
+    calls.push(request)
+    if (request.url.endsWith('/instance/fetchInstances')) {
+      return mockJsonResponse([{
+        name: 'crm-channel-2',
+        connectionStatus: 'connecting',
+        number: null,
+        ownerJid: null
+      }])
+    }
+    if (request.url.endsWith('/instance/connectionState/crm-channel-2')) {
+      return mockJsonResponse({ instance: { state: 'close' } })
+    }
+    if (request.url.endsWith('/instance/delete/crm-channel-2')) {
+      return mockJsonResponse({ status: 'SUCCESS' })
+    }
+    if (request.url.endsWith('/instance/create')) {
+      createAttempts += 1
+      if (createAttempts === 1) {
+        return mockJsonResponse({ message: 'Forbidden' }, { ok: false, status: 403 })
+      }
+      return mockJsonResponse({ instance: { instanceName: 'crm-channel-2', status: 'created' } })
+    }
+    if (request.url.endsWith('/instance/connect/crm-channel-2')) {
+      return mockJsonResponse({ base64: 'data:image/png;base64,real-qr', instance: { state: 'connecting' } })
+    }
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`)
+  }
+
+  const result = await evolutionOrchestrator.startChannel(2)
+  const cached = await evolutionOrchestrator.getChannelQR(2)
+
+  assert.equal(result.instance.channel, 2)
+  assert.equal(result.qr, 'data:image/png;base64,real-qr')
+  assert.equal(cached.qr, result.qr)
+  assert.equal(cached.cached, true)
+  assert.deepEqual(calls.map((item) => `${item.method} ${item.url}`), [
+    'GET http://evolution.local/instance/fetchInstances',
+    'GET http://evolution.local/instance/connectionState/crm-channel-2',
+    'DELETE http://evolution.local/instance/delete/crm-channel-2',
+    'POST http://evolution.local/instance/create',
+    'POST http://evolution.local/instance/create',
+    'GET http://evolution.local/instance/connect/crm-channel-2'
+  ])
+})
+
+test('getChannelQR coalesces concurrent provider requests for the same channel', async () => {
+  process.env.EVOLUTION_API_URL = 'http://evolution.local'
+  process.env.EVOLUTION_API_KEY = 'test-key'
+  process.env.EVOLUTION_INSTANCE_PREFIX = 'crm-channel-'
+
+  let connectCalls = 0
+  let releaseConnect
+  const connectResponse = new Promise((resolve) => {
+    releaseConnect = resolve
+  })
+  global.fetch = async (url) => {
+    assert.equal(String(url), 'http://evolution.local/instance/connect/crm-channel-9')
+    connectCalls += 1
+    return connectResponse
+  }
+
+  const first = evolutionOrchestrator.getChannelQR(9)
+  const second = evolutionOrchestrator.getChannelQR(9)
+  await Promise.resolve()
+  assert.equal(connectCalls, 1)
+
+  releaseConnect(mockJsonResponse({
+    base64: 'data:image/png;base64,coalesced-qr',
+    instance: { state: 'connecting' }
+  }))
+  const [firstResult, secondResult] = await Promise.all([first, second])
+
+  assert.equal(firstResult.qr, 'data:image/png;base64,coalesced-qr')
+  assert.equal(secondResult.qr, firstResult.qr)
+  assert.equal(connectCalls, 1)
+})
+
 test('fetchChats sends the expected Evolution endpoint and pagination payload', async () => {
   process.env.EVOLUTION_API_URL = 'http://evolution.local'
   process.env.EVOLUTION_API_KEY = 'test-key'

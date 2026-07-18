@@ -6929,8 +6929,9 @@ app.use((req, res, next) => {
 
 // CRM Backend API configuration - default port 8099 (separate from frontend on 5000)
 const PORT = process.env.CRM_API_PORT || process.env.PORT || 8099
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 CRM Backend API running on http://0.0.0.0:${PORT}`)
+const HOST = process.env.CRM_API_HOST || '0.0.0.0'
+app.listen(PORT, HOST, () => {
+    console.log(`🚀 CRM Backend API running on http://${HOST}:${PORT}`)
     console.log(`📊 Health check: http://localhost:${PORT}/health`)
     console.log(`🎯 API endpoints: http://localhost:${PORT}/api/`)
     console.log(`⚙️  Mode: ${process.env.NODE_ENV || 'development'}`)

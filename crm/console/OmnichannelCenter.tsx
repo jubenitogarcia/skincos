@@ -219,6 +219,12 @@ interface OrchestratorStatus {
   bootstrapSync?: Record<string, any>
 }
 
+type OrchestratorIssue = {
+  code: string
+  message: string
+  retriable: boolean
+}
+
 function normalizeChannelStatus(value: any): ChannelStatus {
   const normalized = String(value || '').trim().toLowerCase()
   if (!normalized) return 'free'
@@ -1004,14 +1010,19 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   const [messageScrollState, setMessageScrollState] = useState({ canScrollUp: false, canScrollDown: false })
   const [scrollAffordanceZone, setScrollAffordanceZone] = useState<'top' | 'bottom' | null>(null)
   const [orchestratorStatus, setOrchestratorStatus] = useState<OrchestratorStatus | null>(null)
+  const [orchestratorIssue, setOrchestratorIssue] = useState<OrchestratorIssue | null>(null)
   const orchestratorStatusRef = useRef<OrchestratorStatus | null>(null)
   const [statusFailureCount, setStatusFailureCount] = useState(0)
   const [statusPausedUntil, setStatusPausedUntil] = useState<number | null>(null)
   const [channelQR, setChannelQR] = useState<Map<number, QRData>>(new Map())
   const [qrDialogChannel, setQrDialogChannel] = useState<number | null>(null)
+  const [qrConnectionPhase, setQrConnectionPhase] = useState<'idle' | 'starting' | 'waiting' | 'rendering' | 'ready' | 'error'>('idle')
+  const [qrConnectionError, setQrConnectionError] = useState<string | null>(null)
   const [waInitialSyncChannel, setWaInitialSyncChannel] = useState<number | null>(null)
   const waInitialSyncChannelRef = useRef<number | null>(null)
   const qrPollingRef = useRef<Map<number, NodeJS.Timeout>>(new Map())
+  const qrPollingInFlightRef = useRef<Set<number>>(new Set())
+  const qrLastSuccessAtRef = useRef<Map<number, number>>(new Map())
   const qrDialogChannelRef = useRef<number | null>(null)
   const waEventsRefreshTimerRef = useRef<number | null>(null)
   const waConversationRefreshTimerRef = useRef<number | null>(null)
@@ -1145,11 +1156,23 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       }
       const data = await res.json().catch(() => null)
       if (!res.ok || data?.success === false) {
-        throw new Error(data?.error || `HTTP ${res.status}`)
+        const code = String(data?.code || data?.error || `HTTP_${res.status}`)
+        const message = String(
+          data?.hint ||
+          (code === 'WA_ORCHESTRATOR_API_TARGET_REQUIRED'
+            ? 'Integração WhatsApp não configurada neste ambiente.'
+            : code === 'WA_ORCHESTRATOR_TARGET_UNREACHABLE'
+              ? 'Não foi possível alcançar o orquestrador WhatsApp local.'
+              : 'Não foi possível consultar o orquestrador WhatsApp.')
+        )
+        setOrchestratorIssue({ code, message, retriable: res.status >= 500 || res.status === 408 || res.status === 429 })
+        setOrchestratorStatus(null)
+        throw new Error(code)
       }
       setProvider(data?.provider || null)
       const normalized = normalizeOrchestratorStatus(data)
       setOrchestratorStatus(normalized)
+      setOrchestratorIssue(null)
       setStatusFailureCount(0)
       setStatusPausedUntil(null)
     } catch {
@@ -2998,7 +3021,18 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
   )
 
   const pollChannelQR = useCallback(async (channel: number) => {
+    if (qrPollingInFlightRef.current.has(channel)) return
     stopQrPolling(channel)
+    const lastSuccessAt = qrLastSuccessAtRef.current.get(channel) || 0
+    const refreshDelayMs = Math.max(0, 15000 - (Date.now() - lastSuccessAt))
+    if (refreshDelayMs > 0) {
+      const timer = setTimeout(() => {
+        void pollChannelQR(channel)
+      }, refreshDelayMs)
+      qrPollingRef.current.set(channel, timer)
+      return
+    }
+    qrPollingInFlightRef.current.add(channel)
     const queueNextPoll = (delayMs = 3000) => {
       if (qrDialogChannelRef.current !== channel) {
         stopQrPolling(channel)
@@ -3033,17 +3067,21 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
           return
         }
         console.warn('[WA_QR_DEBUG] pollChannelQR:non_ok', { channel, status: response.status })
-        queueNextPoll(3000)
+        setQrConnectionPhase('error')
+        setQrConnectionError(`Não foi possível obter o QR Code (HTTP ${response.status}).`)
+        stopQrPolling(channel)
         return
       }
 
       const result = await response.json().catch(() => ({}))
       if (!result?.success || (!result?.qr && !result?.dataUrl)) {
+        setQrConnectionPhase('waiting')
         queueNextPoll(2500)
         return
       }
 
       let qrDataUrl: string | undefined
+      setQrConnectionPhase('rendering')
       if (result.dataUrl) {
         qrDataUrl = result.dataUrl
       } else if (result.qr) {
@@ -3051,7 +3089,9 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       }
 
       if (qrDataUrl) {
+        qrLastSuccessAtRef.current.set(channel, Date.now())
         setChannelQR(prev => new Map(prev.set(channel, { qr: result.qr || qrDataUrl, dataUrl: qrDataUrl })))
+        setQrConnectionPhase('ready')
       }
 
       const status = String(result?.status || '').toLowerCase()
@@ -3060,23 +3100,36 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         void runInitialWhatsAppSync(channel)
         return
       }
-      queueNextPoll(3000)
+      queueNextPoll(15000)
     } catch (err: any) {
       console.warn('[WA_QR_DEBUG] pollChannelQR:error', { channel, error: err?.message || String(err) })
-      queueNextPoll(3500)
+      setQrConnectionPhase('error')
+      setQrConnectionError('Não foi possível alcançar o orquestrador para obter o QR Code.')
+      stopQrPolling(channel)
+    } finally {
+      qrPollingInFlightRef.current.delete(channel)
     }
   }, [QR_DARK, QR_LIGHT, runInitialWhatsAppSync, stopQrPolling])
 
   useEffect(() => {
-    if (!qrDialogChannel) return
-    void pollChannelQR(qrDialogChannel)
+    if (!qrDialogChannel || !['waiting', 'ready'].includes(qrConnectionPhase)) return
+    if (qrConnectionPhase === 'ready') {
+      const timer = setTimeout(() => {
+        void pollChannelQR(qrDialogChannel)
+      }, 15000)
+      qrPollingRef.current.set(qrDialogChannel, timer)
+    } else {
+      void pollChannelQR(qrDialogChannel)
+    }
     return () => {
       stopQrPolling(qrDialogChannel)
     }
-  }, [qrDialogChannel, pollChannelQR, stopQrPolling])
+  }, [qrDialogChannel, qrConnectionPhase, pollChannelQR, stopQrPolling])
 
   const startChannel = useCallback(async (channel: number) => {
     try {
+      setQrConnectionError(null)
+      setQrConnectionPhase('starting')
       const response = await fetch(`/api/wa-orchestrator/channels/${channel}/start`, {
         method: 'POST',
         headers: buildCrmBasicAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -3085,20 +3138,28 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       const result = await response.json().catch(() => ({}))
       if (!result?.success) throw new Error(result?.error || 'Falha ao iniciar canal')
       if (result?.qr) {
+        setQrConnectionPhase('rendering')
         const normalizedQr = String(result.qr).trim().replace(/\\\//g, '/')
         const qrDataUrl = normalizedQr.startsWith('data:image')
           ? normalizedQr
           : (/^[A-Za-z0-9+/]+={0,2}$/.test(normalizedQr) && normalizedQr.length > 120)
             ? `data:image/${normalizedQr.startsWith('/9j/') ? 'jpeg' : 'png'};base64,${normalizedQr}`
             : await QRCode.toDataURL(normalizedQr, { width: 300, margin: 2, color: { dark: QR_DARK, light: QR_LIGHT } })
+        qrLastSuccessAtRef.current.set(channel, Date.now())
         setChannelQR(prev => new Map(prev.set(channel, { qr: result.qr || qrDataUrl, dataUrl: qrDataUrl })))
+        setQrConnectionPhase('ready')
+      } else {
+        setQrConnectionPhase('waiting')
       }
       toast.success(`Canal ${channel} iniciado`)
-      pollChannelQR(channel)
+      return true
     } catch (err: any) {
       const message = err?.message || 'Falha ao iniciar canal'
       console.error('[WA_QR_DEBUG] startChannel:error', { channel, error: message })
+      setQrConnectionPhase('error')
+      setQrConnectionError(message)
       toast.error(message)
+      return false
     }
   }, [QR_DARK, QR_LIGHT, pollChannelQR])
 
@@ -3118,7 +3179,57 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       }
     }
 
-    const free = sorted.find((instance) => instance.status === 'free')
+    const cachedQrChannel = [...channelQR.keys()]
+      .sort((a, b) => a - b)
+      .find((channel) => {
+        const instance = sorted.find((item) => item.channel === channel)
+        return Boolean(
+          channelQR.get(channel)?.dataUrl &&
+          instance &&
+          instance.status !== 'connected' &&
+          !instance.metadata?.phoneNumber &&
+          !instance.metadata?.ownerJid
+        )
+      })
+    if (cachedQrChannel) {
+      return { channel: cachedQrChannel, action: 'poll' as const }
+    }
+
+    // Reuse any channel whose QR flow is already active before provisioning a
+    // new slot. After a page reload qrDialogChannelRef is empty, but the
+    // orchestrator still knows which instance is waiting for pairing.
+    const pending = sorted.find((instance) => instance.status === 'qr_pending' || instance.status === 'starting')
+    if (pending) {
+      return { channel: pending.channel, action: 'poll' as const }
+    }
+
+    // A disconnected Evolution instance may be reported as `free` even though
+    // it has already been created. Prefer that unpaired instance over a pristine
+    // slot so repeated clicks/reloads do not open crm-channel-2, -3, ... while
+    // the first QR flow is still awaiting an account.
+    const reusableUnpaired = sorted.find(
+      (instance) =>
+        instance.status === 'free' &&
+        !instance.metadata?.phoneNumber &&
+        !instance.metadata?.ownerJid &&
+        Boolean(
+          instance.createdAt ||
+          instance.updatedAt ||
+          (instance.name && !/^WhatsApp Channel \d+$/i.test(instance.name))
+        )
+    )
+    if (reusableUnpaired) {
+      return { channel: reusableUnpaired.channel, action: 'start' as const }
+    }
+
+    const free = sorted.find(
+      (instance) =>
+        instance.status === 'free' &&
+        !instance.metadata?.phoneNumber &&
+        !instance.metadata?.ownerJid &&
+        !instance.createdAt &&
+        !instance.updatedAt
+    ) || sorted.find((instance) => instance.status === 'free')
     if (free) {
       return { channel: free.channel, action: 'start' as const }
     }
@@ -3133,29 +3244,31 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       return { channel: availableFromList, action: 'start' as const }
     }
 
-    const pending = sorted.find((instance) => instance.status === 'qr_pending' || instance.status === 'starting')
-    if (pending) {
-      return { channel: pending.channel, action: 'poll' as const }
-    }
-
     return null
-  }, [orchestratorStatus])
+  }, [channelQR, orchestratorStatus])
 
   const connectWhatsApp = useCallback(async () => {
+    if (orchestratorIssue) {
+      toast.error(orchestratorIssue.message)
+      await loadStatus()
+      return
+    }
     const next = resolveNextWhatsAppChannel()
     if (!next?.channel) {
-      toast.error('Nenhum canal livre disponível.')
+      toast.error('Nenhum canal livre disponível. Atualize o status ou verifique o provisionamento do orquestrador.')
+      return
+    }
+
+    if (next.action === 'poll') {
+      setQrDialogChannel(next.channel)
+      setQrConnectionPhase('waiting')
       return
     }
 
     setQrDialogChannel(next.channel)
-
-    if (next.action === 'poll') {
-      return
-    }
-
-    await startChannel(next.channel)
-  }, [resolveNextWhatsAppChannel, startChannel])
+    setQrConnectionPhase('starting')
+    void startChannel(next.channel)
+  }, [loadStatus, orchestratorIssue, resolveNextWhatsAppChannel, startChannel])
 
   const markConnectedChannelAction = useCallback((channel: number, action?: 'refresh' | 'disconnect') => {
     setConnectedChannelAction((prev) => {
@@ -3329,6 +3442,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         next.delete(channel)
         return next
       })
+      qrLastSuccessAtRef.current.delete(channel)
       if (qrDialogChannelRef.current === channel) {
         setQrDialogChannel(null)
       }
@@ -5065,13 +5179,23 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         <Dialog open={waStatusOpen} onOpenChange={setWaStatusOpen}>
           <DialogContent className="max-w-sm">
             <DialogHeader>
-              <DialogTitle>WhatsApp conectado</DialogTitle>
+              <DialogTitle>{orchestratorIssue ? 'Integração WhatsApp indisponível' : 'WhatsApp conectado'}</DialogTitle>
               <DialogDescription>
-                {connectedWhatsapps.length
+                {orchestratorIssue
+                  ? orchestratorIssue.message
+                  : connectedWhatsapps.length
                   ? `${connectedWhatsapps.length} canal(is) ativo(s).`
                   : 'Nenhum canal conectado no momento.'}
               </DialogDescription>
             </DialogHeader>
+            {orchestratorIssue ? (
+              <div className="rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                <div className="font-medium">Código operacional: {orchestratorIssue.code}</div>
+                <div className="mt-1 text-amber-100/80">
+                  O CRM não tentará iniciar uma conta até que o orquestrador esteja disponível.
+                </div>
+              </div>
+            ) : null}
             <div className="space-y-2">
               {connectedWhatsapps.map((instance) => (
                 <div
@@ -5142,9 +5266,25 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
               <Button variant="outline" onClick={() => setWaStatusOpen(false)}>
                 Fechar
               </Button>
-              <Button onClick={() => connectWhatsApp()}>
-                Conectar novo
-              </Button>
+              {orchestratorIssue ? (
+                <Button onClick={() => void loadStatus()} disabled={!orchestratorIssue.retriable}>
+                  {orchestratorIssue.retriable ? 'Tentar novamente' : 'Configuração necessária'}
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => void connectWhatsApp()}
+                  disabled={qrConnectionPhase === 'starting' || qrConnectionPhase === 'rendering'}
+                >
+                  {qrConnectionPhase === 'starting' || qrConnectionPhase === 'rendering' ? (
+                    <>
+                      <CircleNotch className="mr-1 h-4 w-4 animate-spin" />
+                      Preparando QR...
+                    </>
+                  ) : (
+                    'Conectar novo'
+                  )}
+                </Button>
+              )}
             </div>
           </DialogContent>
         </Dialog>
@@ -5358,16 +5498,34 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
           </DialogContent>
         </Dialog>
 
-        <Dialog open={qrDialogChannel !== null} onOpenChange={(open) => !open && setQrDialogChannel(null)}>
+        <Dialog
+          open={qrDialogChannel !== null}
+          onOpenChange={(open) => {
+            if (open) return
+            setQrDialogChannel(null)
+            setQrConnectionPhase('idle')
+            setQrConnectionError(null)
+          }}
+        >
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>
-                {waInitialSyncChannel === qrDialogChannel ? `Conectando canal ${qrDialogChannel}` : `QR Code do canal ${qrDialogChannel}`}
+                {waInitialSyncChannel === qrDialogChannel
+                  ? `Conectando canal ${qrDialogChannel}`
+                  : qrConnectionPhase === 'starting' || qrConnectionPhase === 'rendering'
+                    ? `Preparando QR do canal ${qrDialogChannel}`
+                    : `QR Code do canal ${qrDialogChannel}`}
               </DialogTitle>
               <DialogDescription>
                 {waInitialSyncChannel === qrDialogChannel
                   ? 'Sincronização inicial em andamento.'
-                  : 'Use o WhatsApp para escanear.'}
+                  : qrConnectionPhase === 'starting'
+                    ? 'Canal selecionado. Solicitando o QR Code ao WhatsApp.'
+                    : qrConnectionPhase === 'rendering'
+                      ? 'QR Code recebido. Preparando a exibição.'
+                      : qrConnectionPhase === 'waiting'
+                        ? 'Canal iniciado. Aguardando o QR Code do WhatsApp.'
+                        : 'Use o WhatsApp para escanear.'}
               </DialogDescription>
             </DialogHeader>
             <div className="flex justify-center">
@@ -5382,11 +5540,30 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
                 </div>
               ) : qrDialogChannel && channelQR.get(qrDialogChannel)?.dataUrl ? (
                 <img src={channelQR.get(qrDialogChannel)?.dataUrl} alt={`QR ${qrDialogChannel}`} className="h-64 w-64 rounded-lg bg-white p-2" />
+              ) : qrConnectionError ? (
+                <div className="w-full rounded-xl border border-red-300/30 bg-red-500/10 px-4 py-5 text-sm text-red-100">
+                  {qrConnectionError}
+                </div>
               ) : (
-                <div className="text-sm text-blue-100/70">Gerando QR...</div>
+                <div className="w-full rounded-xl border border-blue-300/30 bg-blue-500/10 px-4 py-5">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-blue-300/30 bg-blue-400/15 px-3 py-1.5 text-sm font-medium text-blue-100">
+                    <CircleNotch className="h-4 w-4 animate-spin" />
+                    <span>{qrConnectionPhase === 'waiting' ? 'Aguardando QR Code' : 'Conectando ao WhatsApp'}</span>
+                  </div>
+                  <div className="mt-3 text-sm text-blue-100/90">
+                    {qrConnectionPhase === 'waiting'
+                      ? 'O WhatsApp ainda está preparando o código. Esta janela será atualizada automaticamente.'
+                      : 'O pedido foi enviado. Aguarde enquanto o canal é inicializado.'}
+                  </div>
+                </div>
               )}
             </div>
             <div className="flex justify-end">
+              {qrConnectionError && qrDialogChannel ? (
+                <Button variant="outline" className="mr-2" onClick={() => void startChannel(qrDialogChannel)}>
+                  Tentar novamente
+                </Button>
+              ) : null}
               <Button variant="outline" onClick={() => setQrDialogChannel(null)}>
                 Fechar
               </Button>
