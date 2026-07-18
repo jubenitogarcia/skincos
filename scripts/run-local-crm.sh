@@ -36,9 +36,9 @@ CRM_SMOKE_HEADED="${CRM_SMOKE_HEADED:-${HEADED:-0}}"
 CRM_EXIT_AFTER_SMOKE="${CRM_EXIT_AFTER_SMOKE:-0}"
 if [[ -n "${CRM_GATE_STRICT+x}" ]]; then
   CRM_GATE_STRICT="$CRM_GATE_STRICT"
-elif [[ -z "$CRM_MODULE" ]]; then
-  CRM_GATE_STRICT=1
+  CRM_GATE_STRICT_EXPLICIT=1
 else
+  CRM_GATE_STRICT_EXPLICIT=0
   CRM_GATE_STRICT=0
 fi
 if [[ -n "${CRM_BUILD_BEFORE_START+x}" ]]; then
@@ -66,6 +66,7 @@ CRM_WA_ORCHESTRATOR_PORT="${CRM_WA_ORCHESTRATOR_PORT:-8110}"
 CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
 CRM_OPERATOR_RUNTIME_ROOT="${CRM_OPERATOR_RUNTIME_ROOT:-/mnt/c/CodexRuntime/operator/admin/skincos}"
 CRM_PLAYWRIGHT_BROWSERS_PATH="${CRM_PLAYWRIGHT_BROWSERS_PATH:-$CRM_OPERATOR_RUNTIME_ROOT/playwright-browsers}"
+CRM_BUILD_STATE_FILE="${CRM_BUILD_STATE_FILE:-$CRM_OPERATOR_RUNTIME_ROOT/state/crm-local-build-state.env}"
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
 LOG_FILE="${CRM_LOG_FILE:-$ROOT_DIR/.crm-local-dev.log}"
 SNAPSHOT_DEFAULT_PATH="${CRM_INSUMOS_SNAPSHOT_DEFAULT:-$ROOT_DIR/backend/var/local/insumos-snapshot.latest.json}"
@@ -105,6 +106,8 @@ Opções:
   --whatsapp-port PORT           Porta do adaptador WhatsApp local (default: 8110)
   --status                       Exibe o manifesto não sensível do runtime local atual
   CRM_LOCAL_LOG_LEVEL=LEVEL      Nível dos runtimes locais: warn (default), info, debug, error ou none
+  CRM_BUILD_BEFORE_START=auto    Reutiliza o build somente quando a impressão privada ainda corresponder aos fontes
+  CRM_BUILD_STATE_FILE           Estado privado da impressão do build automático
   --smoke                        Roda uma smoke local do módulo após subir o CRM
   --exit-after-smoke             Encerra o CRM local depois da smoke
   --headed-smoke                 Roda a smoke com janela visível para debug
@@ -180,6 +183,14 @@ if [[ "$CRM_WITH_INSUMOS_EXPLICIT" == "0" ]]; then
   fi
 fi
 
+if [[ "$CRM_GATE_STRICT_EXPLICIT" == "0" ]]; then
+  if [[ -z "$CRM_MODULE" ]]; then
+    CRM_GATE_STRICT=1
+  else
+    CRM_GATE_STRICT=0
+  fi
+fi
+
 if [[ "$CRM_SMOKE" == "1" && "$CRM_OPEN_BROWSER_EXPLICIT" == "0" ]]; then
   CRM_OPEN_BROWSER=0
 fi
@@ -227,9 +238,11 @@ trap crm_runtime_release_lock EXIT
 
 # The launcher serializes its own starts, then selects a verified free port for
 # every local component. This never adopts an unknown listener or assumes 8791.
+echo "[crm-local] Fase: verificando runtime reutilizável..."
 if crm_runtime_reuse_if_healthy; then
   exit 0
 fi
+echo "[crm-local] Fase: selecionando portas disponíveis..."
 crm_runtime_select_ports
 DEFAULT_URL="http://localhost:${CRM_PAGES_PORT}${CRM_ROUTE}"
 NETWORK_URL="http://${CRM_HOST}:${CRM_PAGES_PORT}${CRM_ROUTE}"
@@ -400,6 +413,82 @@ ensure_frontend_dist_ready() {
   npm --prefix "$FRONTEND_RUNTIME_DIR" run build
 }
 
+build_input_fingerprint() {
+  (
+    cd "$FRONTEND_DIR"
+    find . -type f \
+      ! -path './node_modules/*' ! -path './dist/*' ! -path './.wrangler/*' \
+      ! -path './.vite/*' ! -path './coverage/*' ! -path './test-results/*' \
+      ! -path './playwright-report/*' ! -path './.playwright-*/*' \
+      ! -name '.dev.vars' ! -name '.dev.vars.*' -print0 |
+      LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+  )
+}
+
+lockfile_fingerprint() {
+  sha256sum "$FRONTEND_DIR/${1:-package-lock.json}" | awk '{print $1}'
+}
+
+read_build_state_value() {
+  local key="$1"
+  [[ -f "$CRM_BUILD_STATE_FILE" ]] || return 0
+  sed -n "s/^${key}=//p" "$CRM_BUILD_STATE_FILE" | head -n 1
+}
+
+write_build_state() {
+  local inputs="$1" lockfile="$2" state_dir temporary
+  state_dir="$(dirname "$CRM_BUILD_STATE_FILE")"
+  mkdir -p "$state_dir"
+  temporary="$(mktemp "$state_dir/.crm-local-build-state.XXXXXX")"
+  printf 'version=1\ninputs=%s\nlockfile=%s\n' "$inputs" "$lockfile" > "$temporary"
+  mv -f "$temporary" "$CRM_BUILD_STATE_FILE"
+}
+
+frontend_dist_is_current() {
+  local dist_index="$FRONTEND_RUNTIME_DIR/dist/index.html"
+  [[ -f "$dist_index" ]] || return 1
+  ! (
+    cd "$FRONTEND_DIR"
+    find . -type f \
+      ! -path './node_modules/*' ! -path './dist/*' ! -path './.wrangler/*' \
+      ! -path './.vite/*' ! -path './coverage/*' ! -path './test-results/*' \
+      ! -path './playwright-report/*' ! -path './.playwright-*/*' \
+      ! -name '.dev.vars' ! -name '.dev.vars.*' -newer "$dist_index" -print -quit | grep -q .
+  )
+}
+
+ensure_frontend_build_current() {
+  local inputs lockfile previous_inputs previous_lockfile
+  case "$CRM_BUILD_BEFORE_START" in
+    0) ensure_frontend_dist_ready ;;
+    1)
+      echo "[crm-local] Fase: compilando frontend..."
+      npm --prefix "$FRONTEND_RUNTIME_DIR" run build
+      ;;
+    auto)
+      inputs="$(build_input_fingerprint)"
+      lockfile="$(lockfile_fingerprint)"
+      previous_inputs="$(read_build_state_value inputs)"
+      previous_lockfile="$(read_build_state_value lockfile)"
+      if [[ -f "$FRONTEND_RUNTIME_DIR/dist/index.html" && "$inputs" == "$previous_inputs" && "$lockfile" == "$previous_lockfile" ]] && frontend_dist_is_current; then
+        echo "[crm-local] Fase: reutilizando build validado pela impressão privada."
+      else
+        if [[ "$lockfile" != "$previous_lockfile" && -f "$FRONTEND_RUNTIME_DIR/package-lock.json" ]]; then
+          echo "[crm-local] Fase: alinhando dependências após alteração do lockfile..."
+          npm --prefix "$FRONTEND_RUNTIME_DIR" ci
+        fi
+        echo "[crm-local] Fase: compilando build desatualizado..."
+        npm --prefix "$FRONTEND_RUNTIME_DIR" run build
+        write_build_state "$inputs" "$lockfile"
+      fi
+      ;;
+    *)
+      echo "CRM_BUILD_BEFORE_START inválido: $CRM_BUILD_BEFORE_START (use 0, 1 ou auto)." >&2
+      exit 1
+      ;;
+  esac
+}
+
 prepare_frontend_runtime() {
   if [[ "$FRONTEND_RUNTIME_DIR" == "$FRONTEND_DIR" ]]; then
     return 0
@@ -564,13 +653,7 @@ if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
 fi
 prepare_frontend_runtime
 ensure_frontend_ready
-
-if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
-  echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
-  npm --prefix "$FRONTEND_RUNTIME_DIR" run build
-else
-  ensure_frontend_dist_ready
-fi
+ensure_frontend_build_current
 
 INSUMOS_PID=""
 WHATSAPP_ORCHESTRATOR_PID=""
@@ -595,6 +678,7 @@ else
 fi
 
 if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+  echo "[crm-local] Fase: iniciando adaptador WhatsApp..."
   start_whatsapp_orchestrator_local
   export LOCAL_WA_ORCHESTRATOR_API_TARGET="http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}"
 fi
@@ -611,6 +695,7 @@ CRM_RUNTIME_CREATED_AT="$(date -Iseconds)"
 crm_runtime_write_manifest starting
 crm_runtime_export_pages_bindings
 
+echo "[crm-local] Fase: iniciando CRM..."
 (
   cd "$FRONTEND_RUNTIME_DIR"
   npm run dev:pages
@@ -621,13 +706,13 @@ echo "$$" > "$PID_FILE"
 
 cleanup() {
   if [[ -n "${CRM_PID:-}" ]]; then
-    kill "$CRM_PID" >/dev/null 2>&1 || true
+    terminate_pid "$CRM_PID"
   fi
   if [[ -n "${INSUMOS_PID:-}" ]]; then
-    kill "$INSUMOS_PID" >/dev/null 2>&1 || true
+    terminate_pid "$INSUMOS_PID"
   fi
   if [[ -n "${WHATSAPP_ORCHESTRATOR_PID:-}" ]]; then
-    kill "$WHATSAPP_ORCHESTRATOR_PID" >/dev/null 2>&1 || true
+    terminate_pid "$WHATSAPP_ORCHESTRATOR_PID"
   fi
   if [[ -f "$PID_FILE" ]]; then
     local tracked_pid
@@ -649,6 +734,12 @@ fi
 
 if ! wait_for_http "$DEFAULT_URL" 60; then
   echo "[crm-local] O shell do CRM não respondeu em $DEFAULT_URL dentro do tempo esperado." >&2
+  exit 1
+fi
+
+echo "[crm-local] Fase: validando identidade e proxy WhatsApp..."
+if ! crm_runtime_validate_identity "$DEFAULT_URL"; then
+  echo "[crm-local] A resposta local não corresponde à sessão, portas ou proxy WhatsApp esperados." >&2
   exit 1
 fi
 
@@ -731,11 +822,13 @@ if [[ "$CRM_SMOKE" == "1" ]]; then
   fi
 fi
 
+crm_runtime_write_manifest ready
+DEFAULT_URL="$(crm_runtime_manifest_url)"
+echo "[crm-local] Fase: ambiente pronto. URL confirmada pelo manifesto: $DEFAULT_URL"
 if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
+  echo "[crm-local] Fase: abrindo URL confirmada..."
   open_browser
 fi
-
-crm_runtime_write_manifest ready
 echo "CRM_LOCAL_RUNTIME_MANIFEST=$CRM_RUNTIME_MANIFEST"
 echo "CRM_LOCAL_URL=$DEFAULT_URL"
 

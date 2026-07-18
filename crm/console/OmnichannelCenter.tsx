@@ -1145,14 +1145,14 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     } satisfies OrchestratorStatus
   }, [])
 
-  const loadStatus = useCallback(async () => {
-    if (statusPausedUntil && Date.now() < statusPausedUntil) return
+  const loadStatus = useCallback(async (): Promise<OrchestratorStatus | null> => {
+    if (statusPausedUntil && Date.now() < statusPausedUntil) return null
     try {
       const res = await fetch('/api/wa-orchestrator/status', { headers: buildCrmBasicAuthHeaders() })
       if (res.status === 304) {
         setStatusFailureCount(0)
         setStatusPausedUntil(null)
-        return
+        return orchestratorStatusRef.current
       }
       const data = await res.json().catch(() => null)
       if (!res.ok || data?.success === false) {
@@ -1175,6 +1175,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       setOrchestratorIssue(null)
       setStatusFailureCount(0)
       setStatusPausedUntil(null)
+      return normalized
     } catch {
       setStatusFailureCount((prev) => {
         const next = prev + 1
@@ -1184,6 +1185,7 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
         }
         return next
       })
+      return null
     }
   }, [normalizeOrchestratorStatus, statusPausedUntil])
 
@@ -3163,8 +3165,9 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
     }
   }, [QR_DARK, QR_LIGHT, pollChannelQR])
 
-  const resolveNextWhatsAppChannel = useCallback(() => {
-    const instances = orchestratorStatus?.instances ?? []
+  const resolveNextWhatsAppChannel = useCallback((statusSnapshot?: OrchestratorStatus | null) => {
+    const effectiveStatus = statusSnapshot ?? orchestratorStatus
+    const instances = effectiveStatus?.instances ?? []
     const sorted = [...instances].sort((a, b) => a.channel - b.channel)
 
     const activeDialogChannel = qrDialogChannelRef.current
@@ -3234,12 +3237,12 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       return { channel: free.channel, action: 'start' as const }
     }
 
-    const freeFromList = [...(orchestratorStatus?.freeChannelsList ?? [])].sort((a, b) => a - b)[0]
+    const freeFromList = [...(effectiveStatus?.freeChannelsList ?? [])].sort((a, b) => a - b)[0]
     if (freeFromList) {
       return { channel: freeFromList, action: 'start' as const }
     }
 
-    const availableFromList = [...(orchestratorStatus?.availableChannelsList ?? [])].sort((a, b) => a - b)[0]
+    const availableFromList = [...(effectiveStatus?.availableChannelsList ?? [])].sort((a, b) => a - b)[0]
     if (availableFromList) {
       return { channel: availableFromList, action: 'start' as const }
     }
@@ -3253,8 +3256,12 @@ export const OmnichannelCenter = forwardRef<OmnichannelCenterHandle, Omnichannel
       await loadStatus()
       return
     }
-    const next = resolveNextWhatsAppChannel()
+    setQrConnectionError(null)
+    setQrConnectionPhase('starting')
+    const freshStatus = await loadStatus()
+    const next = resolveNextWhatsAppChannel(freshStatus)
     if (!next?.channel) {
+      setQrConnectionPhase('idle')
       toast.error('Nenhum canal livre disponível. Atualize o status ou verifique o provisionamento do orquestrador.')
       return
     }

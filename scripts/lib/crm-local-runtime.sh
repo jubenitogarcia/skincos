@@ -113,6 +113,9 @@ crm_runtime_write_manifest() {
   local state="$1"
   local manifest_tmp
   local session_manifest
+  # Resolve at the write boundary as well: a Windows Git commit can occur
+  # between launcher startup and the final readiness transition.
+  CRM_RUNTIME_COMMIT="$(crm_runtime_git_commit)"
   mkdir -p "$(dirname "$CRM_RUNTIME_MANIFEST")" "$CRM_RUNTIME_ROOT/sessions"
   manifest_tmp="$(mktemp "${CRM_RUNTIME_MANIFEST}.tmp.XXXXXX")"
   session_manifest="$CRM_RUNTIME_ROOT/sessions/${CRM_RUNTIME_SESSION_ID}.json"
@@ -186,6 +189,64 @@ NODE
   mv -f "$manifest_tmp" "$CRM_RUNTIME_MANIFEST"
 }
 
+crm_runtime_manifest_url() {
+  [[ -f "$CRM_RUNTIME_MANIFEST" ]] || return 1
+  node - "$CRM_RUNTIME_MANIFEST" <<'NODE'
+const fs = require('fs')
+try {
+  const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+  const url = new URL(value.url)
+  if (!/^https?:$/.test(url.protocol)) process.exit(1)
+  process.stdout.write(url.toString())
+} catch {
+  process.exit(1)
+}
+NODE
+}
+
+crm_runtime_identity_url() {
+  node - "$1" <<'NODE'
+try {
+  const url = new URL(process.argv[2])
+  process.stdout.write(`${url.origin}/_local-runtime`)
+} catch {
+  process.exit(1)
+}
+NODE
+}
+
+crm_runtime_validate_identity() {
+  local runtime_url="${1:-$DEFAULT_URL}"
+  local identity_url
+  local runtime_status
+  identity_url="$(crm_runtime_identity_url "$runtime_url")" || return 1
+  runtime_status="$(curl -fsS --max-time 5 "$identity_url" 2>/dev/null || true)"
+  node - "$runtime_status" "$CRM_RUNTIME_SESSION_ID" "$ROOT_DIR" "$CRM_PAGES_PORT" "${CRM_WA_ORCHESTRATOR_PORT:-}" "${CRM_WITH_WHATSAPP:-0}" <<'NODE'
+try {
+  const [body, sessionId, worktree, pagesPort, waPort, whatsappEnabled] = process.argv.slice(2)
+  const runtime = JSON.parse(body)
+  const valid = runtime?.ok === true
+    && runtime.sessionId === sessionId
+    && runtime.worktree === worktree
+    && Number(runtime?.ports?.pages) === Number(pagesPort)
+  if (!valid) {
+    console.error(`[crm-local] Identidade recebida: ${JSON.stringify({ ok: runtime?.ok, sessionId: runtime?.sessionId, worktree: runtime?.worktree, pages: runtime?.ports?.pages })}`)
+    process.exit(1)
+  }
+  if (whatsappEnabled === '1') {
+    const expectedTarget = `http://127.0.0.1:${waPort}`
+    if (runtime?.whatsapp?.mode !== 'real' || runtime?.localStub !== false || runtime?.whatsapp?.effectiveTarget !== expectedTarget) {
+      console.error(`[crm-local] Proxy WhatsApp recebido: ${JSON.stringify({ mode: runtime?.whatsapp?.mode, localStub: runtime?.localStub, effectiveTarget: runtime?.whatsapp?.effectiveTarget })}`)
+      process.exit(1)
+    }
+  }
+} catch {
+  console.error('[crm-local] O endpoint /_local-runtime não retornou identidade JSON válida.')
+  process.exit(1)
+}
+NODE
+}
+
 crm_runtime_reuse_if_healthy() {
   [[ -f "$CRM_RUNTIME_MANIFEST" ]] || return 1
   local candidate
@@ -203,7 +264,9 @@ NODE
   url="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(x.url)' "$candidate")"
   session="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(x.sessionId)' "$candidate")"
   local runtime_status
-  runtime_status="$(curl -fsS --max-time 3 "${url%/}/_local-runtime" 2>/dev/null || true)"
+  local identity_url
+  identity_url="$(crm_runtime_identity_url "$url")" || return 1
+  runtime_status="$(curl -fsS --max-time 3 "$identity_url" 2>/dev/null || true)"
   if node - "$candidate" "$runtime_status" "$session" <<'NODE'
 try {
   const manifest = JSON.parse(process.argv[2])
@@ -255,6 +318,41 @@ console.log(JSON.stringify({
 NODE
 }
 
+crm_runtime_collect_descendants() {
+  local parent_pid="$1" child_pid
+  command -v pgrep >/dev/null 2>&1 || return 0
+  while IFS= read -r child_pid; do
+    [[ -n "$child_pid" ]] || continue
+    crm_runtime_collect_descendants "$child_pid"
+    printf '%s\n' "$child_pid"
+  done < <(pgrep -P "$parent_pid" 2>/dev/null || true)
+}
+
+crm_runtime_terminate_tree() {
+  local root_pid="$1" descendants
+  descendants="$(crm_runtime_collect_descendants "$root_pid" | tr '\n' ' ')"
+  [[ -n "$descendants" ]] && kill -TERM $descendants 2>/dev/null || true
+  kill -TERM "$root_pid" 2>/dev/null || true
+  sleep 2
+  [[ -n "$descendants" ]] && kill -KILL $descendants 2>/dev/null || true
+  kill -KILL "$root_pid" 2>/dev/null || true
+}
+
+crm_runtime_mark_manifest_stopped() {
+  node - "$CRM_RUNTIME_MANIFEST" <<'NODE'
+const fs = require('fs')
+try {
+  const file = process.argv[2]
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'))
+  value.state = 'stopped'
+  value.updatedAt = new Date().toISOString()
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+} catch {
+  process.exit(1)
+}
+NODE
+}
+
 crm_runtime_safe_stop() {
   [[ -f "$CRM_RUNTIME_MANIFEST" ]] || { echo '[crm-local] Não existe manifesto de runtime para encerrar.'; return 0; }
   local candidate
@@ -268,11 +366,14 @@ NODE
     return 0
   fi
   local command_line
+  local process_cwd
   command_line="$(ps -p "$candidate" -o args= 2>/dev/null || true)"
-  if [[ "$command_line" != *"$ROOT_DIR"* || "$command_line" != *"run-local-crm.sh"* ]]; then
+  process_cwd="$(readlink "/proc/$candidate/cwd" 2>/dev/null || true)"
+  if [[ "$command_line" != *"run-local-crm.sh"* || ( "$command_line" != *"$ROOT_DIR"* && "$process_cwd" != "$ROOT_DIR" ) ]]; then
     echo '[crm-local] O PID do manifesto não prova pertencer a este worktree; não foi encerrado.' >&2
     return 1
   fi
   echo "[crm-local] Encerrando runtime identificado (PID $candidate)."
-  kill -TERM "$candidate"
+  crm_runtime_terminate_tree "$candidate"
+  crm_runtime_mark_manifest_stopped
 }
