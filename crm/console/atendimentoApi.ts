@@ -53,6 +53,10 @@ export type AtendimentoAttendance = AtendimentoForm & {
   unitSlug: string
   unitName: string
   value: number
+  valueFormulaVersion?: string
+  revision: number
+  injectorId?: string | null
+  consultantId?: string | null
   sourceTab?: string | null
   sourceRow?: number | null
   createdAt?: string
@@ -61,8 +65,13 @@ export type AtendimentoAttendance = AtendimentoForm & {
 
 export type AtendimentoReferences = {
   units: Array<{ slug: string; name: string }>
-  professionals: Array<{ id: string; name: string; role?: string; status?: string; units?: string[]; shift?: string; roles?: string[]; turnos?: string[]; backgroundColor?: string; fontColor?: string; fontFamily?: string; fontSize?: number | null; fontWeight?: string; fontStyle?: string; alias?: string; phone?: string; email?: string; instagram?: string }>
+  professionals: Array<{ id: string; canonicalId?: string; name: string; role?: string; status?: string; units?: string[]; shift?: string; roles?: string[]; turnos?: string[]; backgroundColor?: string; fontColor?: string; fontFamily?: string; fontSize?: number | null; fontWeight?: string; fontStyle?: string; alias?: string; phone?: string; email?: string; instagram?: string }>
   procedures: Array<{ id: string; name: string; codes: string[] }>
+}
+
+export type AtendimentoClientSuggestion = {
+  name: string
+  usageCount: number
 }
 
 export type AtendimentoOverview = {
@@ -97,12 +106,20 @@ export type AtendimentoReportPreview = {
   from: string
   to: string
   summary: { doctors: number; attendances: number; quantityTotal: number; totalValue: number; remuneration: number }
+  remunerationPolicy?: {
+    version: string
+    percentage: number
+    minimum: number
+    scope: 'report_preview_only'
+    businessStatus: 'pending_confirmation'
+  }
   doctors: Array<{
     doctorName: string
     count: number
     quantityTotal: number
     totalValue: number
     remuneration: number
+    remunerationFormulaVersion?: string
     rows: Array<{ date: string; clientName: string; procedureName: string; quantity: number; value: number; consultantName: string }>
   }>
 }
@@ -286,6 +303,8 @@ export type AtendimentoManagementConversionReport = {
       unitName: string
       unitSlug: string
       isAggregate?: boolean
+      calendarMode?: 'unit-calendar' | 'per-unit-capacity-sum'
+      calendarCompatible?: boolean
       aggregateNotice?: string
       goalPlan?: {
         periodOperationalDays: number
@@ -438,6 +457,15 @@ function parseJson(text: string) {
 }
 
 function normalizeApiError(res: Response, json: ApiErrorPayload | null, text: string) {
+  if (json?.error === 'REVISION_CONFLICT') return 'Este lançamento foi alterado por outra pessoa. Atualize a lista antes de tentar novamente.'
+  if (json?.error === 'REVISION_REQUIRED') return 'A versão do lançamento não foi informada. Atualize a lista e tente novamente.'
+  if (json?.error === 'UNIT_FORBIDDEN') return 'Você não tem permissão para alterar esta unidade.'
+  if (json?.error === 'PROFESSIONAL_ID_REQUIRED') return 'Selecione um profissional da lista para registrar uma identidade válida.'
+  if (json?.error === 'PROFESSIONAL_IDENTITY_MISMATCH') return 'O profissional selecionado não corresponde ao nome do lançamento. Atualize a seleção.'
+  if (json?.error === 'AMBIGUOUS_PROFESSIONAL') return 'Há mais de um profissional compatível. Selecione o cadastro correto na lista.'
+  if (json?.error === 'INACTIVE_PROFESSIONAL') return 'Este profissional está inativo e não pode ser usado em novos lançamentos.'
+  if (json?.error === 'PROFESSIONAL_NOT_AVAILABLE_FOR_UNIT') return 'Este profissional não está vinculado à unidade selecionada.'
+  if (json?.error === 'PROFESSIONAL_ROLE_MISMATCH') return 'O profissional não possui o papel necessário para este campo.'
   if (json?.hint) return `${json.error || json.message || `HTTP ${res.status}`}: ${json.hint}`
   if (json?.error) return String(json.error)
   if (json?.message) return String(json.message)
@@ -445,7 +473,7 @@ function normalizeApiError(res: Response, json: ApiErrorPayload | null, text: st
   return compact ? compact.slice(0, 180) : `HTTP ${res.status}`
 }
 
-async function api<T>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<ApiResponse<T>> {
+async function api<T>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<ApiResponse<T>> {
   const method = opts.method || 'GET'
   try {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -454,6 +482,7 @@ async function api<T>(path: string, opts: { method?: string; body?: unknown } = 
       headers: {
         accept: 'application/json',
         ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(opts.headers || {}),
       },
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     })
@@ -472,6 +501,11 @@ async function api<T>(path: string, opts: { method?: string; body?: unknown } = 
 
 export async function fetchAtendimentoReferences() {
   return api<AtendimentoReferences>('/references')
+}
+
+export async function fetchAtendimentoClientSuggestions(unit: string, query: string, limit = 8) {
+  const params = new URLSearchParams({ unit, q: query, limit: String(limit) })
+  return api<{ clients: AtendimentoClientSuggestion[] }>(`/clients?${params.toString()}`)
 }
 
 export type AtendimentoDoctorConversionConfig = {
@@ -534,16 +568,22 @@ export async function fetchAtendimentoReportPreview(filters: { unit?: string; da
   return api<AtendimentoReportPreview>(`/reports/preview?${params.toString()}`)
 }
 
-export async function createAtendimentoAttendance(payload: AtendimentoForm) {
-  return api<{ data: AtendimentoAttendance }>('/attendances', { method: 'POST', body: payload })
+export type AtendimentoMutation = Omit<AtendimentoForm, 'value'> & { revision?: number }
+
+export async function createAtendimentoAttendance(payload: AtendimentoMutation, idempotencyKey: string) {
+  return api<{ data: AtendimentoAttendance }>('/attendances', {
+    method: 'POST',
+    body: payload,
+    headers: { 'idempotency-key': idempotencyKey },
+  })
 }
 
-export async function updateAtendimentoAttendance(id: string, payload: AtendimentoForm) {
+export async function updateAtendimentoAttendance(id: string, payload: AtendimentoMutation) {
   return api<{ data: AtendimentoAttendance }>(`/attendances/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
 }
 
-export async function deleteAtendimentoAttendance(id: string) {
-  return api<{ ok: boolean }>(`/attendances/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export async function deleteAtendimentoAttendance(id: string, revision: number) {
+  return api<{ ok: boolean }>(`/attendances/${encodeURIComponent(id)}`, { method: 'DELETE', body: { revision } })
 }
 
 export async function importAtendimentoGoogleSheet(dryRun = true) {

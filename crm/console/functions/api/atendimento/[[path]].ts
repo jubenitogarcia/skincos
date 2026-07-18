@@ -88,6 +88,7 @@ function buildUpstreamHeaders(request: Request, requestId: string): Headers {
   const allow = new Set([
     'accept',
     'content-type',
+    'idempotency-key',
     'cache-control',
     'pragma',
     'user-agent',
@@ -127,6 +128,12 @@ function hasModuleAccess(user: CrmUserLike): boolean {
 
 function shouldAllowUnsignedLocalProxy(context: AtendimentoProxyContext, actorKey: string): boolean {
   return !actorKey && isLocalDevAuthBypassEnabled(context)
+}
+
+function upstreamUnavailableResponse(requestId: string): Response {
+  // The upstream message can contain internal hostnames, ports or transport
+  // details. Keep correlation through x-request-id and server-side logs.
+  return json(502, { ok: false, error: 'UPSTREAM_UNREACHABLE' }, { 'x-request-id': requestId })
 }
 
 export async function onRequest(context: AtendimentoProxyContext): Promise<Response> {
@@ -198,7 +205,7 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
   })).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
 
   if (upstream instanceof Error) {
-    return json(502, { ok: false, error: 'UPSTREAM_UNREACHABLE', detail: upstream.message }, { 'x-request-id': requestId })
+    return upstreamUnavailableResponse(requestId)
   }
 
   const outHeaders = new Headers(upstream.headers)
@@ -219,6 +226,7 @@ export const __testables = {
   resolveAtendimentoActorHmacKey,
   shouldAllowUnsignedLocalProxy,
   toAtendimentoActor,
+  upstreamUnavailableResponse,
 }
 
 function resolveAtendimentoActorHmacKey(env: Record<string, unknown> = {}) {

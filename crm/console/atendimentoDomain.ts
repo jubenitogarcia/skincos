@@ -11,6 +11,7 @@ export type AtendimentoFilters = {
 
 export type AtendimentoForm = {
   id?: string
+  revision?: number
   unitSlug: string
   unitName?: string
   date: string
@@ -22,12 +23,16 @@ export type AtendimentoForm = {
   otherValue: number
   roundValue: boolean
   value?: number
+  injectorId?: string | null
+  consultantId?: string | null
   injectorName: string
   consultantName: string
   observation: string
 }
 
 export type AtendimentoProfessionalRef = {
+  id: string
+  canonicalId?: string
   name: string
   role?: string
   status?: string
@@ -65,7 +70,9 @@ export const EMPTY_ATENDIMENTO_FORM: AtendimentoForm = {
   otherValue: 0,
   roundValue: false,
   injectorName: '',
+  injectorId: null,
   consultantName: '',
+  consultantId: null,
   observation: '',
 }
 
@@ -162,6 +169,16 @@ export function filterProfessionalsByUnitRole(
   role: string,
   shift?: string,
 ) {
+  return filterProfessionalReferencesByUnitRole(professionals, unitName, role, shift)
+    .map((professional) => professional.name)
+}
+
+export function filterProfessionalReferencesByUnitRole(
+  professionals: AtendimentoProfessionalRef[],
+  unitName: string,
+  role: string,
+  shift?: string,
+) {
   const wantedRole = normalizeRole(role)
   return professionals
     .filter((professional) => {
@@ -174,7 +191,6 @@ export function filterProfessionalsByUnitRole(
       if (shift && shifts.length && !shifts.includes(shift)) return false
       return true
     })
-    .map((professional) => professional.name)
 }
 
 export function formatCurrencyBRL(value: number) {

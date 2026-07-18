@@ -31,12 +31,14 @@ describe('Atendimento proxy helpers', () => {
         authorization: 'Bearer secret',
         cookie: 'sid=secret',
         'content-type': 'application/json',
+        'idempotency-key': 'att-123',
         'x-custom': 'drop-me',
       },
     })
     const headers = __testables.buildUpstreamHeaders(request, 'req-1')
     expect(headers.get('accept')).toBe('application/json')
     expect(headers.get('content-type')).toBe('application/json')
+    expect(headers.get('idempotency-key')).toBe('att-123')
     expect(headers.get('x-request-id')).toBe('req-1')
     expect(headers.has('authorization')).toBe(false)
     expect(headers.has('cookie')).toBe(false)
@@ -96,5 +98,12 @@ describe('Atendimento proxy helpers', () => {
       request: new Request('http://localhost:8791/api/atendimento/overview'),
       env: { LOCAL_AUTH_BYPASS: 'true' },
     }, 'real-secret')).toBe(false)
+  })
+
+  it('does not expose upstream transport details to the browser', async () => {
+    const response = __testables.upstreamUnavailableResponse('req-safe')
+    expect(response.status).toBe(502)
+    expect(response.headers.get('x-request-id')).toBe('req-safe')
+    expect(await response.json()).toEqual({ ok: false, error: 'UPSTREAM_UNREACHABLE' })
   })
 })

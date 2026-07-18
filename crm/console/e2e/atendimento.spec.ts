@@ -10,13 +10,19 @@ async function mockAuth(page: Page, role = 'GESTOR') {
   })
 }
 
-async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: boolean; duplicateDoctorAlias?: boolean; invalidDoctorRows?: boolean } = {}) {
+async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: boolean; duplicateDoctorAlias?: boolean; duplicateProfessionalAlias?: boolean; invalidDoctorRows?: boolean } = {}) {
   const references = {
     ok: true,
     units: [{ slug: 'novo-hamburgo', name: 'Novo Hamburgo' }],
     professionals: [
       { id: 'p1', name: 'Dra. Sintética', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'] },
       { id: 'p2', name: 'Consultora Sintética', role: 'Consultor', status: 'Ativo', units: ['Novo Hamburgo'] },
+      ...(options.duplicateProfessionalAlias
+        ? [
+            { id: 'raul-short', name: 'Raul Júnior', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'] },
+            { id: 'raul-full', name: 'Raul Rosário Júnior', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'] },
+          ]
+        : []),
     ],
     procedures: [{ id: 'botox', name: 'Botox', codes: ['#0799', '#0599'] }],
   }
@@ -34,6 +40,8 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
       otherValue: 0,
       roundValue: false,
       value: 799,
+      valueFormulaVersion: 'attendance-value/v1',
+      revision: 1,
       injectorName: 'Dra. Sintética',
       consultantName: 'Consultora Sintética',
       observation: '',
@@ -79,6 +87,11 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
     const method = route.request().method()
     if (url.pathname.endsWith('/references')) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(references) })
+    }
+    if (url.pathname.endsWith('/clients')) {
+      const query = String(url.searchParams.get('q') || '').toLocaleLowerCase('pt-BR')
+      const clients = query.includes('cyn') ? [{ name: 'Cynthia Cordova', usageCount: 2 }] : []
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, clients }) })
     }
     if (url.pathname.endsWith('/overview')) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(overview()) })
@@ -129,9 +142,13 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
               metrics: {
                 periodAttendanceTotal: { label: 'Total', weekValue: rows.reduce((acc, row) => acc + row.value, 0), totalValue: rows.reduce((acc, row) => acc + row.value, 0) },
                 rankedDoctorTotal: { label: 'Total ranqueável', weekValue: rows.reduce((acc, row) => acc + row.value, 0), totalValue: rows.reduce((acc, row) => acc + row.value, 0) },
-                periodGoal: { label: 'Meta do período', weekValue: 20, totalValue: 20 },
-                dailyGoal: { label: 'Meta diária', weekValue: 20, totalValue: 20 },
+                periodGoal: { label: 'Meta do período', weekValue: 10, totalValue: 10 },
+                dailyGoal: { label: 'Meta diária', weekValue: 10, totalValue: 10 },
                 periodOperationalDays: { label: 'Dias período', weekValue: 1, totalValue: 1 },
+                eligibleDoctorCount: { label: 'Doutores elegíveis', weekValue: 3, totalValue: 3 },
+                average: { label: 'Média', weekValue: 14, totalValue: 14 },
+                median: { label: 'Mediana', weekValue: 14, totalValue: 14 },
+                standardDeviation: { label: 'Desvio padrão', weekValue: 4.31, totalValue: 4.31 },
                 cutLine: { label: 'Linha Corte', weekValue: 12, totalValue: 12 },
                 interval: { label: 'Intervalo', weekValue: 4, totalValue: 4 },
                 intervalMultiplier: { label: 'Multiplicador Otimizado', weekValue: 0.92853, totalValue: 0.92853 },
@@ -223,13 +240,15 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
     }
     if (url.pathname.endsWith('/attendances') && method === 'POST') {
       const body = await route.request().postDataJSON()
-      const next = { ...body, id: 'row-2', unitName: 'Novo Hamburgo' }
+      expect(route.request().headers()['idempotency-key']).toBeTruthy()
+      expect(body.value).toBeUndefined()
+      const next = { ...body, id: 'row-2', unitName: 'Novo Hamburgo', valueFormulaVersion: 'attendance-value/v1', revision: 1 }
       rows = [next, ...rows]
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: next }) })
     }
     if (url.pathname.includes('/attendances/row-2') && method === 'PATCH') {
       const body = await route.request().postDataJSON()
-      rows = rows.map((row) => row.id === 'row-2' ? { ...row, ...body } : row)
+      rows = rows.map((row) => row.id === 'row-2' ? { ...row, ...body, revision: Number(row.revision || 1) + 1 } : row)
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: rows.find((row) => row.id === 'row-2') }) })
     }
     if (url.pathname.includes('/attendances/row-2') && method === 'DELETE') {
@@ -249,17 +268,13 @@ test.describe('atendimento', () => {
     await page.goto('/?module=atendimento')
 
     await expect(page.getByRole('heading', { name: 'Atendimento' })).toBeVisible({ timeout: 30000 })
-    await expect(page.getByRole('button', { name: '7d' })).toHaveAttribute('title', 'Últimos 7 dias')
-    await expect(page.getByRole('button', { name: '30d' })).toHaveAttribute('title', 'Últimos 30 dias')
+    await expect(page.getByRole('button', { name: '7d' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '30d' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Semana atual' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Mês atual' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Selecionar período personalizado' })).toBeVisible()
     await expect(page.getByRole('button', { name: '60d' })).toHaveCount(0)
-    await page.getByTestId('atendimento-header-refresh').hover()
-    const refreshTooltip = page.getByRole('tooltip').filter({ hasText: 'Atualizar Atendimento' })
-    await expect(refreshTooltip).toBeVisible()
-    await expect(refreshTooltip).toContainText('Status: Dados carregados')
-    await expect(refreshTooltip).toContainText('Listagem: 1 linhas')
+    await expect(page.getByTestId('atendimento-header-refresh')).toHaveAttribute('aria-label', 'Atualizar Atendimento')
     await page.getByRole('button', { name: 'Semana atual' }).hover()
     const weekTooltip = page.getByRole('tooltip').filter({ hasText: 'Semana atual' })
     await expect(weekTooltip).toBeVisible()
@@ -268,14 +283,22 @@ test.describe('atendimento', () => {
     const monthTooltip = page.getByRole('tooltip').filter({ hasText: 'Mês atual' })
     await expect(monthTooltip).toBeVisible()
     await expect(monthTooltip).toContainText('Do primeiro dia do mês até hoje.')
+    await page.getByRole('button', { name: 'Semana atual' }).click()
     await page.getByRole('button', { name: 'Selecionar período personalizado' }).click()
     const periodMenu = page.getByRole('menu')
     await expect(periodMenu).toContainText('Período personalizado')
+    await expect(periodMenu.getByRole('button', { name: 'Últimos 7 dias' })).toBeVisible()
+    await expect(periodMenu.getByRole('button', { name: 'Últimos 30 dias' })).toBeVisible()
     await expect(periodMenu).not.toContainText('Todos procedimentos')
     await periodMenu.getByLabel('Data inicial').fill('2026-06-01')
     await periodMenu.getByLabel('Data final').fill('2026-06-15')
     await periodMenu.getByRole('button', { name: 'Aplicar período' }).click()
     await expect(page.getByTestId('atendimento-custom-period-label')).toHaveText('01/06/2026 - 15/06/2026')
+    const analysisToggle = page.getByTestId('atendimento-analysis-toggle')
+    await expect(analysisToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByTestId('atendimento-analysis-collapsed')).toBeVisible()
+    await analysisToggle.click()
+    await expect(analysisToggle).toHaveAttribute('aria-expanded', 'true')
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Ticket médio')
     await expect(page.getByTestId('atendimento-kpis')).toContainText('Total')
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Total ranqueável')
@@ -285,19 +308,19 @@ test.describe('atendimento', () => {
     await expect(page.getByTestId('atendimento-kpis')).toContainText('Desempenho por doutor')
     await expect(page.getByTestId('atendimento-kpi-ranking')).toHaveCount(0)
     await expect(page.getByTestId('atendimento-kpi-resumo')).toHaveCount(0)
-    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Linha Corte')
-    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Lado Inferior')
-    await expect(page.getByTestId('atendimento-conversion-optimization-status')).toContainText('Quatro faixas equilibradas')
-    await expect(page.getByTestId('atendimento-conversion-optimization-status')).toContainText('H 100%')
-    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('1 · 25%')
     await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Resumo')
-    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('3 pts')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Meta diária')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Limite Superior')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Linha Corte')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Limite Inferior')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('R$ 10,00 ÷ 1 dia = R$ 10,00')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('30% × R$ 14,00 + 20% × R$ 14,00 + 50% × R$ 10,00 = R$ 12,00')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('3 pts')
     await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('Total principal do período e dispersão calculada pelo CRM')
+    // As faixas foram incorporadas ao Resumo para evitar dois painéis
+    // concorrentes; o único tooltip de grupo restante explica essa composição.
     for (const group of [
-      { label: 'Resumo', excerpt: 'Síntese do resultado financeiro' },
-      { label: 'Faixas', excerpt: 'Referências financeiras que separam os níveis' },
-      { label: 'Níveis', excerpt: 'Distribuição dos doutores entre os níveis' },
-      { label: 'Razões', excerpt: 'Partes simétricas da distribuição real' },
+      { label: 'Resumo', excerpt: 'Síntese financeira e referências de classificação' },
     ]) {
       await page.getByRole('button', { name: `Detalhes de ${group.label}` }).hover()
       const groupTooltip = page.getByRole('tooltip', { name: new RegExp(`^${group.label} O que é:`) })
@@ -306,9 +329,7 @@ test.describe('atendimento', () => {
       await expect(groupTooltip).toContainText('Uso:')
       await expect(groupTooltip).toContainText(group.excerpt)
     }
-    await expect(page.getByTestId('atendimento-conversion-goals')).toContainText('Meta diária')
-    await expect(page.getByTestId('atendimento-conversion-goals')).toContainText('Meta do período')
-    await expect(page.getByTestId('atendimento-conversion-goals')).toContainText('Dias período')
+    await expect(page.getByTestId('atendimento-conversion-goals')).toHaveCount(0)
     await expect(page.getByTestId('atendimento-rank-trophy-1')).toBeVisible()
     await expect(page.getByTestId('atendimento-rank-trophy-2')).toBeVisible()
     await expect(page.getByTestId('atendimento-rank-trophy-3')).toBeVisible()
@@ -316,24 +337,73 @@ test.describe('atendimento', () => {
     await expect(page.getByText('Gerência', { exact: true })).toHaveCount(0)
     await expect(page.getByTestId('atendimento-conversion-ranking')).toContainText('Dra. Sintética')
     await expect(page.getByTestId('atendimento-kpis')).toContainText('Total')
-    await expect(page.getByTestId('atendimento-kpis')).toContainText('Limite Superior')
-    await expect(page.getByTestId('atendimento-kpis')).toContainText('Limite Inferior')
+    await expect(page.getByRole('button', { name: 'Detalhes de Faixas' })).toHaveCount(0)
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Total do período')
-    await expect(page.getByTestId('atendimento-conversion-optimization-status')).toContainText('equilíbrio uniforme')
-    await expect(page.getByTestId('atendimento-conversion-k-history')).toContainText('10/06/2026 · 0,929x')
-    await expect(page.getByTestId('atendimento-conversion-k-history')).toContainText('03/06/2026 · 0,7x')
-    await page.getByTestId('atendimento-multiplier-popover-trigger').click()
-    const multiplierPopover = page.getByTestId('atendimento-multiplier-popover')
-    await expect(multiplierPopover).toBeVisible()
-    await expect(multiplierPopover).toContainText('Multiplicador por homogeneidade')
-    await expect(multiplierPopover).toContainText('centro do maior platô ótimo')
-    await expect(multiplierPopover).toContainText('N0 1')
-    await page.keyboard.press('Escape')
-    await expect(multiplierPopover).toBeHidden()
-    await page.getByTestId('atendimento-multiplier-popover-trigger').focus()
-    await page.keyboard.press('Enter')
-    await expect(multiplierPopover).toBeVisible()
-    await page.keyboard.press('Escape')
+    const multiplierDetails = page.getByTestId('atendimento-multiplier-details')
+    await expect(multiplierDetails).toBeVisible()
+    await expect(multiplierDetails).toContainText('Multiplicador por homogeneidade')
+    await expect(multiplierDetails).toContainText('Lado inferior')
+    await expect(multiplierDetails).toContainText('Lado superior')
+    await expect(multiplierDetails).toContainText('Faixas centrais')
+    await expect(multiplierDetails).toContainText('Faixas extremas')
+    await expect(page.getByTestId('atendimento-multiplier-group-lower-levels')).toHaveAttribute('aria-label', 'Nível 0 e Nível 1 · 50%')
+    await expect(multiplierDetails).not.toContainText('N0 + N1')
+    await expect(page.getByTestId('atendimento-multiplier-calculation-basis')).toContainText('Base do cálculo')
+    await expect(page.getByTestId('atendimento-multiplier-calculation-basis')).toContainText('Platô ótimo')
+    const doctorProfileTarget = page.getByLabel('Detalhes do perfil de Dra. Sintética: R$ 18,00, Nível 3, posição 1.')
+    await expect(doctorProfileTarget).toHaveCount(1)
+    await doctorProfileTarget.hover()
+    const doctorProfileTooltip = page.getByTestId('atendimento-doctor-tooltip')
+    await expect(doctorProfileTooltip).toContainText('Dra. Sintética')
+    await expect(doctorProfileTooltip).not.toContainText('Z modificado')
+    await expect(doctorProfileTooltip).not.toContainText('Distância ao')
+    const [doctorProfileBox, doctorProfileTooltipBox] = await Promise.all([
+      doctorProfileTarget.boundingBox(),
+      doctorProfileTooltip.boundingBox(),
+    ])
+    expect(doctorProfileBox).not.toBeNull()
+    expect(doctorProfileTooltipBox).not.toBeNull()
+    if (doctorProfileBox && doctorProfileTooltipBox) {
+      expect(Math.abs(
+        (doctorProfileTooltipBox.x + doctorProfileTooltipBox.width / 2)
+        - (doctorProfileBox.x + doctorProfileBox.width / 2),
+      )).toBeLessThan(150)
+      const doctorTooltipGap = doctorProfileBox.y - (doctorProfileTooltipBox.y + doctorProfileTooltipBox.height)
+      expect(doctorTooltipGap).toBeGreaterThanOrEqual(0)
+      expect(doctorTooltipGap).toBeLessThan(96)
+    }
+    await expect(multiplierDetails).toContainText('Evolução recente')
+    await expect(page.getByTestId('atendimento-conversion-k-history-chart')).toBeVisible()
+    await expect(page.getByTestId('atendimento-conversion-optimization-status')).toHaveCount(0)
+    await page.getByTestId('atendimento-multiplier-selected-value').hover()
+    const multiplierTooltip = page.getByRole('tooltip').filter({ hasText: 'Quatro faixas equilibradas' })
+    await expect(multiplierTooltip).toContainText('centro do maior platô ótimo')
+    await page.getByRole('button', { name: 'Como funciona o multiplicador por homogeneidade' }).hover()
+    const multiplierInfoTooltip = page.getByRole('tooltip').filter({ hasText: 'curva em degraus avalia' })
+    await expect(multiplierInfoTooltip).toContainText('Cálculo:')
+    await expect(page.getByTestId('atendimento-multiplier-popover-trigger')).toHaveCount(0)
+    await expect(page.getByTestId('atendimento-multiplier-popover')).toHaveCount(0)
+    const cutReference = page.getByTestId('atendimento-reference-badge-cut')
+    await cutReference.getByRole('img').hover()
+    const cutReferenceTooltip = page.getByTestId('atendimento-reference-tooltip-cut')
+    await expect(cutReferenceTooltip).toBeVisible()
+    await expect(cutReferenceTooltip).toContainText('Linha de corte')
+    await expect(cutReferenceTooltip).toContainText('R$ 12,00')
+    await expect(cutReference.locator('title')).toHaveCount(0)
+    await page.getByText('Meta diária', { exact: true }).hover()
+    const dailyGoalTooltip = page.getByRole('tooltip').filter({ hasText: 'meta_periodo / dias_trabalhados_periodo' })
+    await expect(dailyGoalTooltip).toContainText('Cálculo:')
+    await expect(dailyGoalTooltip).not.toContainText('R$ 10,00 ÷ 1 dia')
+    await page.getByTestId('atendimento-conversion-band-2').focus()
+    const bandTooltip = page.getByTestId('atendimento-conversion-band-tooltip')
+    await expect(bandTooltip).toContainText('Nível 2')
+    await expect(bandTooltip).toContainText('Razão da faixa: 25%')
+    await expect(page.getByTestId('atendimento-conversion-band-2')).toHaveAttribute('fill-opacity', '0.3')
+    const doctorBar = page.locator('[data-testid^="atendimento-doctor-bar-target-"]').first()
+    await doctorBar.hover()
+    const doctorTooltip = page.getByTestId('atendimento-doctor-tooltip')
+    await expect(doctorTooltip).toBeVisible()
+    await expect(doctorTooltip).toContainText('Realizado')
     await expect(page.getByTestId('atendimento-row-client-row-1')).toHaveValue('Cliente Inicial')
     await expect(page.getByTestId('atendimento-loaded-count')).toContainText('1/1')
     await expect(page.getByTestId('atendimento-header-report')).toBeVisible()
@@ -376,6 +446,7 @@ test.describe('atendimento', () => {
     await page.getByRole('option', { name: 'Dra. Sintética' }).click()
     await page.getByTestId('atendimento-inline-consultant').click()
     await page.getByRole('option', { name: 'Consultora Sintética' }).click()
+    await page.getByTestId('atendimento-inline-save').click()
     await expect(page.getByTestId('atendimento-row-client-row-2')).toHaveValue('Cliente Criado', { timeout: 5000 })
 
     await page.getByTestId('atendimento-row-client-row-2').fill('Cliente Editado')
@@ -388,6 +459,8 @@ test.describe('atendimento', () => {
     await mockAtendimentoApi(page, { duplicateDoctorAlias: true, invalidDoctorRows: true })
     await page.goto('/?module=atendimento')
 
+    await page.getByTestId('atendimento-analysis-toggle').click()
+
     const distribution = page.getByTestId('atendimento-conversion-distribution')
     await expect(distribution).toBeVisible({ timeout: 30000 })
     await expect(distribution.getByText('Raul Júnior', { exact: true })).toHaveCount(1)
@@ -396,23 +469,42 @@ test.describe('atendimento', () => {
     const avatars = distribution.locator('svg image')
     await expect(avatars).toHaveCount(1)
     await expect(avatars.first()).toHaveAttribute('width', '64')
-    const chartBottomGap = await distribution.evaluate((root) => {
-      const chart = root.querySelector('.recharts-responsive-container svg')
-      const scoreLabels = [...root.querySelectorAll('[data-testid^="atendimento-doctor-score-"]')]
-      if (!chart || !scoreLabels.length) return Number.POSITIVE_INFINITY
-      const labelsBottom = Math.max(...scoreLabels.map((label) => label.getBoundingClientRect().bottom))
-      return chart.getBoundingClientRect().bottom - labelsBottom
-    })
-    expect(chartBottomGap).toBeLessThanOrEqual(24)
+    await expect(distribution.locator('[data-testid^="atendimento-doctor-score-"]')).toHaveCount(0)
     await expect(distribution.getByTestId('atendimento-reference-badge-upper')).toBeVisible()
     await expect(distribution.getByTestId('atendimento-reference-badge-cut')).toBeVisible()
     await expect(distribution.getByTestId('atendimento-reference-badge-lower')).toBeVisible()
+  })
+
+  test('sugere clientes da unidade e não repete alias confirmado de profissional', async ({ page }) => {
+    await mockAuth(page)
+    await mockAtendimentoApi(page, { duplicateProfessionalAlias: true })
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await page.goto('/?module=atendimento')
+
+    const clientInput = page.getByTestId('atendimento-inline-client')
+    await clientInput.fill('Cyn')
+    const clientSuggestions = page.getByTestId('atendimento-client-suggestions')
+    await expect(clientSuggestions.getByRole('option', { name: 'Cynthia Cordova 2 atend.' })).toBeVisible()
+    await clientSuggestions.getByRole('option', { name: 'Cynthia Cordova 2 atend.' }).click()
+    await expect(clientInput).toHaveValue('Cynthia Cordova')
+
+    await page.getByTestId('atendimento-inline-injector').click()
+    await expect(page.getByRole('option', { name: 'Raul Rosário Júnior' })).toHaveCount(1)
+    await expect(page.getByRole('option', { name: 'Raul Júnior' })).toHaveCount(0)
+
+    const scrollMetrics = await page.getByTestId('atendimento-table-scroll').evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }))
+    expect(scrollMetrics.scrollWidth).toBeLessThanOrEqual(scrollMetrics.clientWidth)
   })
 
   test('keeps management area usable for non-manager users without restricted data', async ({ page }) => {
     await mockAuth(page, 'INJETOR')
     await mockAtendimentoApi(page, { restrictedManagement: true })
     await page.goto('/?module=atendimento')
+
+    await page.getByTestId('atendimento-analysis-toggle').click()
 
     await expect(page.getByRole('heading', { name: 'Atendimento' })).toBeVisible({ timeout: 30000 })
     await expect(page.getByTestId('atendimento-filters')).toBeVisible()
