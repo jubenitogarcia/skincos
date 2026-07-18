@@ -1,0 +1,38 @@
+name: Timekeeping CI
+
+on:
+  pull_request:
+    paths:
+      - 'workforce/timekeeping/**'
+      - 'api/**'
+      - 'crm/console/functions/api/ponto/**'
+      - 'crm/console/PontoModule.tsx'
+      - '.github/workflows/timekeeping-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'workforce/timekeeping/**'
+      - 'api/**'
+      - 'crm/console/functions/api/ponto/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: |
+            api/package-lock.json
+            crm/console/package-lock.json
+      - name: Test Timekeeping domain
+        run: node --test workforce/timekeeping/*.test.js
+      - name: Test gateway routing
+        run: npm --prefix api ci && npm --prefix api test
+      - name: Typecheck and test CRM proxy
+        run: npm --prefix crm/console ci && npm --prefix crm/console run typecheck && npm --prefix crm/console test

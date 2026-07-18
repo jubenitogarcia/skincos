@@ -27,6 +27,10 @@ binding = "DB"
 database_name = "skincos-db"
 database_id = "13e59612-99ba-450e-9014-ddefbee72965"
 
+[[services]]
+binding = "TIMEKEEPING"
+service = "skincos-timekeeping"
+
 [[r2_buckets]]
 binding = "BACKUP_BUCKET"
 bucket_name = "skincos-backups"
@@ -39,6 +43,10 @@ routes = ["api-staging.skincos.com.br/*"]
 binding = "DB"
 database_name = "skincos-db-staging"
 database_id = "REPLACE_ME"
+
+[[env.staging.services]]
+binding = "TIMEKEEPING"
+service = "skincos-timekeeping-staging"
 
 [[env.staging.r2_buckets]]
 binding = "BACKUP_BUCKET"

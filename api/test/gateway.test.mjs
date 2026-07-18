@@ -8,6 +8,10 @@ const gateway = createGatewayHandler({
         calls.push(new URL(request.url));
         return new Response('inventory-ok', { status: 200, headers: { 'x-owner': 'inventory' } });
     },
+    timekeepingHandler: async (request) => {
+        calls.push(new URL(request.url));
+        return new Response(JSON.stringify({ ok: true, service: 'workforce-timekeeping' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
 });
 
 test('health is owned by the gateway', async () => {
@@ -24,6 +28,14 @@ test('inventory is mounted without retaining the legacy public prefix', async ()
     assert.equal(response.headers.get('x-request-id'), 'inventory-1');
     assert.equal(calls.at(-1).pathname, '/insumos');
     assert.equal(calls.at(-1).search, '?unidade=nh');
+});
+
+test('workforce owns the canonical public Ponto mount', async () => {
+    const response = await gateway(new Request('https://api.skincos.com.br/api/ponto/health', { headers: { 'x-request-id': 'ponto-1' } }), {}, {});
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).service, 'workforce-timekeeping');
+    assert.equal(calls.at(-1).pathname, '/api/ponto/health');
+    assert.equal(response.headers.get('x-request-id'), 'ponto-1');
 });
 
 test('internal paths require a private service identity', async () => {
