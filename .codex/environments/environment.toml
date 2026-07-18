@@ -16,9 +16,9 @@ icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action ContextMenu"
 
 [[actions]]
-name = "Local"
+name = "CRM – Local"
 icon = "run"
-command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action LocalMenu"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmLocal"
 
 [[actions]]
 name = "EF App"

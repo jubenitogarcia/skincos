@@ -39,6 +39,8 @@ CRM_EXIT_AFTER_SMOKE="${CRM_EXIT_AFTER_SMOKE:-0}"
 CRM_BUILD_BEFORE_START="${CRM_BUILD_BEFORE_START:-0}"
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-atendimento-local.pid}"
 LOG_FILE="${CRM_LOG_FILE:-$ROOT_DIR/.crm-atendimento-local.log}"
+CRM_OPERATOR_RUNTIME_ROOT="${CRM_OPERATOR_RUNTIME_ROOT:-/mnt/c/CodexRuntime/operator/admin/skincos}"
+CRM_PLAYWRIGHT_BROWSERS_PATH="${CRM_PLAYWRIGHT_BROWSERS_PATH:-${PLAYWRIGHT_BROWSERS_PATH:-$CRM_OPERATOR_RUNTIME_ROOT/playwright-browsers}}"
 
 usage() {
   cat <<EOF
@@ -56,6 +58,8 @@ Opções:
   --smoke                   Roda smoke Playwright do módulo após subir
   --exit-after-smoke        Encerra o CRM local depois da smoke
   --headed-smoke            Roda a smoke com janela visível
+  CRM_PLAYWRIGHT_BROWSERS_PATH
+                            Cache privado dos navegadores Playwright
   --browser                 Abre o navegador automaticamente
   --no-browser              Não abre o navegador automaticamente
   --stop                    Encerra a instância atual e sai
@@ -124,10 +128,24 @@ load_env_file() {
   if [[ ! -f "$file" ]]; then
     return 0
   fi
-  set -a
-  # shellcheck disable=SC1090
-  source "$file"
-  set +a
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]] && continue
+    if [[ ! "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      echo "[atendimento-local] Ignorando linha inválida em $(basename "$file")." >&2
+      continue
+    fi
+    key="${BASH_REMATCH[2]}"
+    value="${BASH_REMATCH[3]}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ ${#value} -ge 2 ]] && { [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]] || [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; }; then
+      value="${value:1:${#value}-2}"
+    fi
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < "$file"
 }
 
 load_local_env() {
@@ -184,11 +202,22 @@ stop_existing() {
   local pid
   pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
-    echo "[atendimento-local] Encerrando instancia anterior (pid: $pid)"
-    terminate_tree "$pid"
-    sleep 1
+    if process_belongs_to_checkout "$pid"; then
+      echo "[atendimento-local] Encerrando instancia anterior (pid: $pid)"
+      terminate_tree "$pid"
+      sleep 1
+    else
+      echo "[atendimento-local] PID $pid do estado anterior não pertence a este checkout; preservado." >&2
+    fi
   fi
   rm -f "$PID_FILE"
+}
+
+process_belongs_to_checkout() {
+  local pid="$1"
+  local args
+  args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+  [[ -n "$args" && "$args" == *"$ROOT_DIR"* ]]
 }
 
 stop_owned_port_listener() {
@@ -203,7 +232,7 @@ stop_owned_port_listener() {
   for pid in $pids; do
     local args
     args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
-    if [[ "$args" == *"$ROOT_DIR"* || "$args" == *"crm/api/server.js"* ]]; then
+    if [[ "$args" == *"$ROOT_DIR"* ]]; then
       if [[ "$args" == *"vite"* || "$args" == *"crm/api/server.js"* || "$args" == *"npm run dev"* ]]; then
         echo "[atendimento-local] Encerrando $label preso na porta $port (pid: $pid)"
         terminate_tree "$pid"
@@ -213,10 +242,15 @@ stop_owned_port_listener() {
 }
 
 open_browser() {
+  # Launch a URL as an argument, never through cmd.exe /c, so query strings
+  # cannot be interpreted as Windows shell syntax.
+  if command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -NonInteractive -Command 'Start-Process -FilePath $args[0]' -- "$DEFAULT_URL" >/dev/null 2>&1 && return 0
+  fi
   if command -v open >/dev/null 2>&1; then
-    open "$DEFAULT_URL"
+    open "$DEFAULT_URL" >/dev/null 2>&1 &
   elif command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$DEFAULT_URL" >/dev/null 2>&1 || true
+    xdg-open "$DEFAULT_URL" >/dev/null 2>&1 &
   fi
 }
 
@@ -249,10 +283,17 @@ terminate_tree() {
   kill "$pid" >/dev/null 2>&1 || true
 }
 
+remove_controlled_shutdown_noise() {
+  if [[ -f "$LOG_FILE" ]]; then
+    sed -i '/ELIFECYCLE.*Command failed\.$/d' "$LOG_FILE"
+  fi
+}
+
 if [[ "$STOP_ONLY" == "1" ]]; then
   stop_existing
   stop_owned_port_listener "$CRM_API_PORT" "crm-api"
   stop_owned_port_listener "$FRONTEND_PORT" "vite"
+  remove_controlled_shutdown_noise
   echo "CRM Atendimento local finalizado."
   exit 0
 fi
@@ -266,6 +307,37 @@ if ! command -v curl >/dev/null 2>&1; then
   echo "curl nao encontrado no PATH." >&2
   exit 1
 fi
+
+ensure_playwright_browser_ready() {
+  local playwright_bin="$FRONTEND_DIR/node_modules/.bin/playwright"
+  local browsers_manifest="$FRONTEND_DIR/node_modules/playwright-core/browsers.json"
+  local chromium_revision
+  local headless_revision
+  local ffmpeg_revision
+  if [[ ! -x "$playwright_bin" || ! -f "$browsers_manifest" ]]; then
+    echo "[atendimento-local] Playwright não está instalado em $FRONTEND_DIR." >&2
+    exit 1
+  fi
+  mkdir -p "$CRM_PLAYWRIGHT_BROWSERS_PATH"
+  read -r chromium_revision headless_revision ffmpeg_revision < <(
+    node - "$browsers_manifest" <<'NODE'
+const manifest = require(process.argv[2])
+const revision = (name) => manifest.browsers.find((entry) => entry.name === name)?.revision || ''
+process.stdout.write(`${revision('chromium')} ${revision('chromium-headless-shell')} ${revision('ffmpeg')}\n`)
+NODE
+  )
+  if [[ -n "$chromium_revision" && -n "$headless_revision" && -n "$ffmpeg_revision" ]] &&
+    [[ -x "$CRM_PLAYWRIGHT_BROWSERS_PATH/chromium-$chromium_revision/chrome-linux64/chrome" ]] &&
+    [[ -x "$CRM_PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-$headless_revision/chrome-headless-shell-linux64/chrome-headless-shell" ]] &&
+    [[ -x "$CRM_PLAYWRIGHT_BROWSERS_PATH/ffmpeg-$ffmpeg_revision/ffmpeg-linux" ]]; then
+    echo "[atendimento-local] Chromium headless $headless_revision pronto."
+    return 0
+  fi
+  if ! PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" "$playwright_bin" install chromium; then
+    echo "[atendimento-local] Não foi possível provisionar o Chromium em $CRM_PLAYWRIGHT_BROWSERS_PATH." >&2
+    exit 1
+  fi
+}
 
 mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
 : > "$LOG_FILE"
@@ -290,6 +362,9 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   echo "[atendimento-local] Defina DATABASE_URL no shell ou em backend/config/workspace.local.env antes de abrir o modulo." >&2
   exit 1
 fi
+
+echo "[atendimento-local] Aplicando migration local segura do Atendimento..."
+DATABASE_URL="$DATABASE_URL" node "$CRM_API_DIR/scripts/migrate-atendimento-write-safety.mjs" --apply
 
 if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
   echo "[atendimento-local] Gerando build do frontend..."
@@ -341,6 +416,7 @@ if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
 fi
 
 if [[ "$CRM_SMOKE" == "1" ]]; then
+  ensure_playwright_browser_ready
   if ! wait_for_http "$DEFAULT_URL" 90; then
     echo "[atendimento-local] O CRM nao respondeu para a smoke em tempo habil." >&2
     exit 1
@@ -348,7 +424,7 @@ if [[ "$CRM_SMOKE" == "1" ]]; then
   echo "[atendimento-local] Rodando smoke local do Atendimento..."
   (
     cd "$FRONTEND_DIR"
-    CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" npm run smoke:atendimento:local
+    PLAYWRIGHT_BROWSERS_PATH="$CRM_PLAYWRIGHT_BROWSERS_PATH" CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" npm run smoke:atendimento:local
   )
   if [[ "$CRM_EXIT_AFTER_SMOKE" == "1" ]]; then
     echo "[atendimento-local] Smoke concluida; encerrando CRM local."

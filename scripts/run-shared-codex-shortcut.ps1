@@ -93,6 +93,8 @@ $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
 $operatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 $tmpRoot = Join-Path $localStateRoot "tmp"
 $logRoot = Join-Path $operatorRuntimeRoot "logs"
+$playwrightBrowsersRoot = Join-Path $operatorRuntimeRoot "playwright-browsers"
+$crmBuildState = Join-Path $operatorRuntimeRoot "state\crm-local-build-state.env"
 $wslInvoker = Join-Path $scriptRoot "invoke-skincos-wsl.ps1"
 
 function Ensure-LocalState {
@@ -100,6 +102,8 @@ function Ensure-LocalState {
         $localStateRoot,
         $tmpRoot,
         $logRoot,
+        $playwrightBrowsersRoot,
+        (Split-Path -Parent $crmBuildState),
         (Join-Path $operatorRuntimeRoot "scraper"),
         (Join-Path $operatorRuntimeRoot "scraper\report"),
         (Join-Path $operatorRuntimeRoot "scraper\debug"),
@@ -136,6 +140,7 @@ function Invoke-ShortcutWsl {
     param(
         [string]$Command,
         [string[]]$EnvVar = @(),
+        [int[]]$AcceptedExitCode = @(0),
         [switch]$SkipBootstrapCheck,
         [switch]$SkipNodeCheck,
         [switch]$SkipNpmCheck,
@@ -153,7 +158,7 @@ function Invoke-ShortcutWsl {
         -SkipGitCheck:$SkipGitCheck `
         -SkipRepoCheck:$SkipRepoCheck
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($AcceptedExitCode -notcontains $LASTEXITCODE) {
         throw "The WSL command failed with exit code $LASTEXITCODE."
     }
 }
@@ -242,6 +247,8 @@ $websiteLogWsl = Convert-WindowsPathToWsl -Path $websiteLog
 $websitePortWsl = Convert-WindowsPathToWsl -Path $websitePort
 $crmPidWsl = Convert-WindowsPathToWsl -Path $crmPid
 $crmLogWsl = Convert-WindowsPathToWsl -Path $crmLog
+$playwrightBrowsersRootWsl = Convert-WindowsPathToWsl -Path $playwrightBrowsersRoot
+$crmBuildStateWsl = Convert-WindowsPathToWsl -Path $crmBuildState
 $atendimentoPidWsl = Convert-WindowsPathToWsl -Path $atendimentoPid
 $atendimentoLogWsl = Convert-WindowsPathToWsl -Path $atendimentoLog
 $efAppOutputRootWsl = Convert-WindowsPathToWsl -Path $efAppOutputRoot
@@ -329,39 +336,56 @@ function Invoke-ShortcutActionInternal {
         "WebsiteSiteCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:check" }
         "WebsiteReleaseCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:release-check" }
         "CrmLocal" {
-            Invoke-ShortcutWsl -Command ("CRM_BUILD_BEFORE_START=0 CRM_OPEN_BROWSER=0 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh" -f `
+            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command ("CRM_BUILD_BEFORE_START=auto CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} CRM_BUILD_STATE_FILE={3} bash ./scripts/run-local-crm.sh --module conversa" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl))
+                (Convert-ToBashLiteral -Value $crmLogWsl), `
+                (Convert-ToBashLiteral -Value $playwrightBrowsersRootWsl), `
+                (Convert-ToBashLiteral -Value $crmBuildStateWsl))
         }
         "CrmSiteEf" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready" -f `
+            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl))
+                (Convert-ToBashLiteral -Value $crmLogWsl), `
+                (Convert-ToBashLiteral -Value $playwrightBrowsersRootWsl))
         }
         "CrmMetaAds" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module meta-ads" -f `
+            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} bash ./scripts/run-local-crm.sh --module meta-ads" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl))
+                (Convert-ToBashLiteral -Value $crmLogWsl), `
+                (Convert-ToBashLiteral -Value $playwrightBrowsersRootWsl))
         }
         "CrmAtendimento" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh" -f `
+            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} bash ./scripts/run-local-atendimento.sh" -f `
                 (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
-                (Convert-ToBashLiteral -Value $atendimentoLogWsl))
+                (Convert-ToBashLiteral -Value $atendimentoLogWsl), `
+                (Convert-ToBashLiteral -Value $playwrightBrowsersRootWsl))
         }
         "CrmAtendimentoMirrorStatus" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-status" }
         "CrmAtendimentoMirrorSync" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-sync -- --apply" }
         "CrmLocalStop" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh --stop" -f `
-                (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
-                (Convert-ToBashLiteral -Value $atendimentoLogWsl))
             Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl))
+            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh --stop" -f `
+                (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
+                (Convert-ToBashLiteral -Value $atendimentoLogWsl))
         }
         "CrmMemory" { Invoke-ShortcutWsl -Command "bash ./scripts/codex-memory-crm.sh" }
-        "CrmSiteSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:site-smoke" }
-        "CrmMetaAdsSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:meta-ads-smoke" }
-        "CrmAtendimentoSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-smoke" }
+        "CrmSiteSmoke" {
+            Invoke-ShortcutWsl `
+                -EnvVar @("CRM_PLAYWRIGHT_BROWSERS_PATH=$playwrightBrowsersRoot") `
+                -Command "npm run codex:crm:site-smoke"
+        }
+        "CrmMetaAdsSmoke" {
+            Invoke-ShortcutWsl `
+                -EnvVar @("CRM_PLAYWRIGHT_BROWSERS_PATH=$playwrightBrowsersRoot") `
+                -Command "npm run codex:crm:meta-ads-smoke"
+        }
+        "CrmAtendimentoSmoke" {
+            Invoke-ShortcutWsl `
+                -EnvVar @("CRM_PLAYWRIGHT_BROWSERS_PATH=$playwrightBrowsersRoot") `
+                -Command "npm run codex:crm:atendimento-smoke"
+        }
         "PlatformLocalStart" { Invoke-ShortcutWsl -Command "OPEN_BROWSER=0 bash ./backend/scripts/dev.sh watch" }
         "EfAppSetup" {
             Invoke-ShortcutWsl `

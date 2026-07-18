@@ -284,11 +284,29 @@ stop_existing() {
   if [[ -f "$PID_FILE" ]]; then
     existing_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
     if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
-      echo "Instância anterior do CRM local detectada (PID $existing_pid). Finalizando..."
-      terminate_pid "$existing_pid"
+      if process_belongs_to_checkout "$existing_pid"; then
+        echo "Instância anterior do CRM local detectada (PID $existing_pid). Finalizando..."
+        terminate_pid "$existing_pid"
+      else
+        echo "[crm-local] PID $existing_pid do estado anterior não pertence a este checkout; preservado." >&2
+      fi
     fi
     rm -f "$PID_FILE"
   fi
+}
+
+process_belongs_to_checkout() {
+  local pid="$1"
+  local candidate_pid="$pid"
+  while [[ -n "$candidate_pid" && "$candidate_pid" != "1" ]]; do
+    local args
+    args="$(ps -p "$candidate_pid" -o args= 2>/dev/null || true)"
+    if [[ "$args" == *"$ROOT_DIR"* ]]; then
+      return 0
+    fi
+    candidate_pid="$(ps -p "$candidate_pid" -o ppid= 2>/dev/null | tr -d ' ' || true)"
+  done
+  return 1
 }
 
 rotate_current_log() {
@@ -391,8 +409,13 @@ wait_for_crm_api() {
 }
 
 open_browser() {
+  # WSL's xdg-open can launch Linux Chromium and emit unrelated GPU/DBus noise.
+  # Prefer the Windows default browser for a Windows-operated local workspace.
+  if command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -NonInteractive -Command 'Start-Process -FilePath $args[0]' -- "$DEFAULT_URL" >/dev/null 2>&1 && return 0
+  fi
   if command -v open >/dev/null 2>&1; then
-    open "$DEFAULT_URL"
+    open "$DEFAULT_URL" >/dev/null 2>&1 || true
   elif command -v xdg-open >/dev/null 2>&1; then
     xdg-open "$DEFAULT_URL" >/dev/null 2>&1 || true
   fi
