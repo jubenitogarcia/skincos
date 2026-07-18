@@ -131,7 +131,9 @@ const INVALID_PROFESSIONAL_NAME_KEYS = new Set(['', '[object object]', 'object o
 // Confirmed local roster overrides while the source team sheet still marks these records as active.
 const INACTIVE_CONVERSION_PROFESSIONAL_KEYS = new Set(['doris moisyn', 'doris caroline moisyn'])
 
-const CONVERSION_PROFESSIONAL_CANONICAL_NAMES = new Map([
+// Confirmed aliases from the roster.  Keep this deliberately small: similar
+// names are not sufficient evidence that two professionals are the same person.
+const PROFESSIONAL_CANONICAL_NAMES = new Map([
     ['raul junior', 'Raul Rosário Júnior'],
     ['raul rosario junior', 'Raul Rosário Júnior'],
     ['rafaela ferreira', 'Rafaela Machado Ferreira'],
@@ -147,9 +149,13 @@ export function isConversionProfessionalEligible(value) {
     return !INVALID_PROFESSIONAL_NAME_KEYS.has(key) && !INACTIVE_CONVERSION_PROFESSIONAL_KEYS.has(key)
 }
 
-export function getCanonicalConversionProfessionalName(value) {
+export function getCanonicalProfessionalName(value) {
     const raw = stringifyCellValue(value)
-    return CONVERSION_PROFESSIONAL_CANONICAL_NAMES.get(normalizeText(raw)) || raw
+    return PROFESSIONAL_CANONICAL_NAMES.get(normalizeText(raw)) || raw
+}
+
+export function getCanonicalConversionProfessionalName(value) {
+    return getCanonicalProfessionalName(value)
 }
 
 export function consolidateConversionProfessionals(doctors = []) {
@@ -260,6 +266,20 @@ export function roundToNearestTen(value) {
     return Math.round(num / 10) * 10
 }
 
+export const ATTENDANCE_VALUE_FORMULA_VERSION = 'attendance-value/v1'
+
+// This preserves the legacy preview rule that existed in reportPreview.  It is
+// intentionally marked as pending business confirmation: it is not a payroll
+// engine and must not be used to settle compensation without an approved
+// policy/version for the applicable contract.
+export const ATTENDANCE_REMUNERATION_POLICY = Object.freeze({
+    version: 'attendance-remuneration/legacy-preview-v1',
+    percentage: 0.10,
+    minimum: 212.50,
+    scope: 'report_preview_only',
+    businessStatus: 'pending_confirmation',
+})
+
 export function calculateAttendanceValue(input) {
     const base = codeNumericValue(input?.code)
     if (base == null) return null
@@ -271,6 +291,27 @@ export function calculateAttendanceValue(input) {
     const raw = base * quantity * factor - other
     const value = shouldRound ? roundToNearestTen(raw) : raw
     return Math.round((value + Number.EPSILON) * 100) / 100
+}
+
+export function calculateAttendanceRemuneration(totalValue, policy = ATTENDANCE_REMUNERATION_POLICY) {
+    const total = Number(totalValue)
+    const percentage = Number(policy?.percentage)
+    const minimum = Number(policy?.minimum)
+    if (!Number.isFinite(total) || total <= 0) {
+        return {
+            amount: 0,
+            formulaVersion: String(policy?.version || ATTENDANCE_REMUNERATION_POLICY.version),
+            applicable: false,
+        }
+    }
+    if (!Number.isFinite(percentage) || percentage < 0 || !Number.isFinite(minimum) || minimum < 0) {
+        throw new Error('INVALID_REMUNERATION_POLICY')
+    }
+    return {
+        amount: Math.round((Math.max(total * percentage, minimum) + Number.EPSILON) * 100) / 100,
+        formulaVersion: String(policy?.version || ATTENDANCE_REMUNERATION_POLICY.version),
+        applicable: true,
+    }
 }
 
 export function determineShift(unitNameOrSlug, dateInput = new Date()) {

@@ -3,6 +3,9 @@ import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
 import {
     buildConversionReportFromRawRows,
     buildScheduleDropdowns,
+    ATTENDANCE_REMUNERATION_POLICY,
+    ATTENDANCE_VALUE_FORMULA_VERSION,
+    calculateAttendanceRemuneration,
     calculateAttendanceValue,
     calculateWeekOfMonth,
     calculateConversionGoalPlan,
@@ -10,11 +13,15 @@ import {
     convertColorCodesToScores,
     GERENCIA_APPS_SCRIPT_CONFIG,
     getDoctorConversionOptimizationConfig,
+    getCanonicalProfessionalName,
     getFilteredBackgroundColorsFromMatrix,
     getReportPeriod,
     isConversionProfessionalEligible,
     isMeaningfulProfessionalName,
     normalizeCode,
+    parseBoolean,
+    parseCurrency,
+    parseDecimal,
     normalizeText,
     normalizeUnit,
     resolveConversionMetricBounds,
@@ -25,6 +32,14 @@ import {
     stableConfigHash,
 } from './domain.js'
 import { segmentCommercialProfiles, summarizeCommercialProfiles } from './clientCommercial.js'
+import {
+    PROFESSIONAL_IDENTITY_VERSION,
+    isValidProfessionalIdentityName,
+    normalizeProfessionalAliasKey,
+    resolveProfessionalIdentity,
+    professionalIdentityFromRow,
+    buildProfessionalIdentityDiagnosis,
+} from './professionalIdentity.js'
 
 let pool = null
 
@@ -74,6 +89,32 @@ export function atendimentoMigrationStatements() {
         `alter table crm_atendimento.professionals add column if not exists phone text;`,
         `alter table crm_atendimento.professionals add column if not exists email text;`,
         `alter table crm_atendimento.professionals add column if not exists instagram text;`,
+        `alter table crm_atendimento.professionals add column if not exists canonical_id uuid;`,
+        `alter table crm_atendimento.professionals add column if not exists identity_version text not null default 'professional-identity/v1';`,
+        `create table if not exists crm_atendimento.professional_aliases (
+            id uuid primary key default gen_random_uuid(),
+            professional_id uuid not null references crm_atendimento.professionals(id) on delete restrict,
+            alias text not null,
+            alias_key text not null,
+            source text not null default 'roster',
+            confidence text not null default 'confirmed',
+            active boolean not null default true,
+            created_by text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique(professional_id, alias_key)
+        );`,
+        `create index if not exists crm_atendimento_professional_aliases_key_idx
+            on crm_atendimento.professional_aliases(alias_key) where active;`,
+        `create table if not exists crm_atendimento.professional_identity_audit_events (
+            id uuid primary key default gen_random_uuid(),
+            event_type text not null,
+            actor jsonb,
+            source_professional_id uuid references crm_atendimento.professionals(id) on delete restrict,
+            canonical_professional_id uuid references crm_atendimento.professionals(id) on delete restrict,
+            payload jsonb not null default '{}'::jsonb,
+            created_at timestamptz not null default now()
+        );`,
         `create table if not exists crm_atendimento.procedures (
             id uuid primary key default gen_random_uuid(),
             name text unique not null,
@@ -101,8 +142,13 @@ export function atendimentoMigrationStatements() {
             other_value numeric(12,2) not null default 0,
             round_value boolean not null default false,
             value numeric(12,2) not null default 0,
+            value_formula_version text not null default 'attendance-value/v1',
+            revision integer not null default 1,
+            idempotency_key text,
             injector_id uuid references crm_atendimento.professionals(id),
             consultant_id uuid references crm_atendimento.professionals(id),
+            injector_source_name text,
+            consultant_source_name text,
             observation text,
             source_sheet_id text,
             source_tab text,
@@ -113,6 +159,24 @@ export function atendimentoMigrationStatements() {
             created_at timestamptz not null default now(),
             updated_at timestamptz not null default now()
         );`,
+        `alter table crm_atendimento.attendances add column if not exists revision integer;`,
+        `alter table crm_atendimento.attendances add column if not exists value_formula_version text;`,
+        `alter table crm_atendimento.attendances add column if not exists idempotency_key text;`,
+        `alter table crm_atendimento.attendances add column if not exists injector_source_name text;`,
+        `alter table crm_atendimento.attendances add column if not exists consultant_source_name text;`,
+        `alter table crm_atendimento.attendances alter column revision set default 1;`,
+        `alter table crm_atendimento.attendances alter column value_formula_version set default 'attendance-value/v1';`,
+        `create table if not exists crm_atendimento.clients (
+            id uuid primary key default gen_random_uuid(),
+            unit_id uuid not null references crm_atendimento.units(id) on delete cascade,
+            name text not null,
+            name_key text not null,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique(unit_id, name_key)
+        );`,
+        `create index if not exists crm_atendimento_clients_unit_search_idx
+            on crm_atendimento.clients(unit_id, name_key, name);`,
         `create unique index if not exists crm_atendimento_attendances_source_idx
             on crm_atendimento.attendances(source_sheet_id, source_tab, source_row)
             where source_sheet_id is not null and source_tab is not null and source_row is not null;`,
@@ -127,11 +191,13 @@ export function atendimentoMigrationStatements() {
             unit_id uuid not null references crm_atendimento.units(id),
             service_date date not null,
             doctor_name text,
+            professional_id uuid references crm_atendimento.professionals(id),
             source_year int,
             created_at timestamptz not null default now(),
             updated_at timestamptz not null default now(),
             unique(unit_id, service_date)
         );`,
+        `alter table crm_atendimento.schedule_days add column if not exists professional_id uuid;`,
         `create index if not exists crm_atendimento_schedule_days_date_idx
             on crm_atendimento.schedule_days(service_date, unit_id);`,
         `create table if not exists crm_atendimento.audit_events (
@@ -423,6 +489,15 @@ function actorLabel(actor) {
     return String(actor?.username || actor?.email || actor?.id || actor?.role || 'system').trim() || 'system'
 }
 
+// Mutation idempotency and audit attribution must never fall back to a role.
+// Two distinct operators with the same role would otherwise share an
+// idempotency namespace and could receive each other's persisted response.
+export function actorIdentityForMutation(actor) {
+    const identity = String(actor?.id || actor?.username || actor?.email || '').trim()
+    if (!identity) throw mutationError('ACTOR_IDENTITY_REQUIRED', 401)
+    return identity
+}
+
 function roleCanManage(actor) {
     const role = String(actor?.role || '').trim().toUpperCase()
     return role === 'GESTOR' || role === 'GERENTE'
@@ -433,10 +508,21 @@ function normalizeAllowedUnitKeys(actor) {
     return new Set(raw.map((unit) => normalizeUnit(unit).slug).filter(Boolean))
 }
 
-function professionalMatchesAllowedUnits(row, allowed) {
-    if (!allowed?.size) return true
+function actorHasExplicitUnitScope(actor) {
+    return !roleCanManage(actor) && Array.isArray(actor?.allowedUnits)
+}
+
+function actorCanReadUnit(actor, unit) {
+    if (!actorHasExplicitUnitScope(actor)) return true
+    return normalizeAllowedUnitKeys(actor).has(normalizeUnit(unit?.slug || unit?.name || unit).slug)
+}
+
+function professionalMatchesAllowedUnits(row, actor) {
+    if (!actorHasExplicitUnitScope(actor)) return true
+    const allowed = normalizeAllowedUnitKeys(actor)
+    if (!allowed.size) return false
     const units = Array.isArray(row?.units) ? row.units : []
-    if (!units.length) return true
+    if (!units.length) return false
     return units.some((unit) => allowed.has(normalizeUnit(unit).slug))
 }
 
@@ -456,15 +542,23 @@ export function canAccessAtendimento(actor, requestPath = '', requestMethod = 'G
 }
 
 function applyActorUnitFilter(where, params, actor) {
+    if (!actorHasExplicitUnitScope(actor)) return
     const allowed = normalizeAllowedUnitKeys(actor)
-    if (!allowed.size) return
+    if (!allowed.size) {
+        where.push('1 = 0')
+        return
+    }
     params.push(Array.from(allowed))
     where.push(`u.slug = any($${params.length})`)
 }
 
 function applyManagementItemUnitFilter(where, params, actor, column = 'unit_slug') {
+    if (!actorHasExplicitUnitScope(actor)) return
     const allowed = normalizeAllowedUnitKeys(actor)
-    if (!allowed.size) return
+    if (!allowed.size) {
+        where.push('1 = 0')
+        return
+    }
     params.push(Array.from(allowed))
     where.push(`(${column} is null or ${column} = any($${params.length}))`)
 }
@@ -638,7 +732,7 @@ function normalizeEscalaScheduleDoctorName(row) {
     return String(value || '').trim()
 }
 
-async function readEscalaScheduleCoverage(pgPool, selectedUnits, start, end, actor) {
+async function readEscalaScheduleCoverage(pgPool, selectedUnits, start, end, actor, { persistMissing = false } = {}) {
     const { target, actorKey } = getEscalaApiConfig()
     const months = monthKeysBetween(start, end)
     const byUnit = new Map(selectedUnits.map((unit) => [unit.slug, {
@@ -708,13 +802,15 @@ async function readEscalaScheduleCoverage(pgPool, selectedUnits, start, end, act
                         ? GERENCIA_APPS_SCRIPT_CONFIG.noServiceLabel
                         : Array.from(desired.doctors).join(', ')
                     if (!doctorName) continue
-                    await upsertScheduleDay(pgPool, {
-                        unitSlug: unit.slug,
-                        unitName: unit.name,
-                        date,
-                        doctorName,
-                        year: Number(date.slice(0, 4)) || null,
-                    })
+                    if (persistMissing) {
+                        await upsertScheduleDay(pgPool, {
+                            unitSlug: unit.slug,
+                            unitName: unit.name,
+                            date,
+                            doctorName,
+                            year: Number(date.slice(0, 4)) || null,
+                        })
+                    }
                     existingDates.add(date)
                 }
             }
@@ -853,10 +949,6 @@ function normalizeAggregateCountValue(value) {
     return Math.round(Number(value || 0) * 100) / 100
 }
 
-function buildAggregateConversionNotice() {
-    return 'As métricas de conversão usam meta, dias operacionais, linha de corte e intervalo por unidade. Selecione uma unidade para evitar consolidação estatística incorreta.'
-}
-
 function conversionOptimizationWarning(statusCode) {
     const messages = {
         OPTIMAL_EXTREMES_ONLY: 'A distribuição não permite preencher as quatro faixas; o melhor equilíbrio possível preserva os extremos.',
@@ -956,14 +1048,9 @@ async function readDoctorConversionConfig(pgPool) {
         `select * from crm_atendimento.doctor_conversion_config where singleton = true limit 1`,
     )
     const row = result.rows[0] || {}
-    const config = normalizeDoctorConversionConfig(row)
-    if (row.config_hash && row.config_hash !== config.configHash) {
-        await pgPool.query(
-            `update crm_atendimento.doctor_conversion_config set config_hash = $1, updated_at = now() where singleton = true`,
-            [config.configHash],
-        )
-    }
-    return config
+    // Reading the conversion report must never repair or rewrite configuration.
+    // The next explicit manager update persists the normalized hash instead.
+    return normalizeDoctorConversionConfig(row)
 }
 
 async function writeDoctorConversionConfig(pgPool, payload, actor) {
@@ -1177,7 +1264,7 @@ function resolveDoctorConversionOperationQuery(payload = {}) {
     return query
 }
 
-async function buildInternalConversionMetrics(pgPool, period, query, actor) {
+async function buildInternalConversionMetrics(pgPool, period, query, actor, { persist = false, syncSchedule = false } = {}) {
     const reportBounds = monthBoundsFromReportPeriod(period)
     const bounds = resolveConversionMetricBounds(reportBounds, query)
     const optimizationConfig = await readDoctorConversionConfig(pgPool)
@@ -1227,15 +1314,17 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
             [bounds.metricStart, bounds.metricEnd, unitSlugs],
         ),
         pgPool.query(
-            `select u.slug as unit_slug, inj.id as doctor_id, inj.name as doctor_name, coalesce(sum(a.value), 0)::numeric as total
+            `select u.slug as unit_slug, coalesce(inj.canonical_id, inj.id) as doctor_id,
+                    coalesce(inj_canonical.name, inj.name) as doctor_name, coalesce(sum(a.value), 0)::numeric as total
              from crm_atendimento.attendances a
              join crm_atendimento.units u on u.id = a.unit_id
              join crm_atendimento.professionals inj on inj.id = a.injector_id
+             left join crm_atendimento.professionals inj_canonical on inj_canonical.id = coalesce(inj.canonical_id, inj.id)
              where a.deleted_at is null
                and a.service_date >= $1::date
                and a.service_date <= $2::date
                and u.slug = any($3)
-             group by u.slug, inj.id, inj.name`,
+             group by u.slug, coalesce(inj.canonical_id, inj.id), coalesce(inj_canonical.name, inj.name)`,
             [bounds.metricStart, bounds.metricEnd, unitSlugs],
         ),
         pgPool.query(
@@ -1255,7 +1344,7 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
             [goalMonthKeys, unitSlugs],
         ),
     ])
-    const escalaCoverage = await readEscalaScheduleCoverage(pgPool, selectedUnits, scheduleStart, scheduleEnd, actor)
+    const escalaCoverage = await readEscalaScheduleCoverage(pgPool, selectedUnits, scheduleStart, scheduleEnd, actor, { persistMissing: syncSchedule })
     const scheduleRows = await pgPool.query(
         `select u.slug as unit_slug, s.service_date, s.doctor_name
          from crm_atendimento.schedule_days s
@@ -1388,21 +1477,24 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
                 position: '',
             })),
             isAggregate: false,
+            calendarMode: 'unit-calendar',
+            calendarCompatible: true,
             period: bounds,
         }
-        await persistDoctorConversionResult(pgPool, {
-            unit,
-            bounds,
-            reportDate: query?.date,
-            section,
-            actor,
-            calendarHash,
-        })
+        if (persist) {
+            await persistDoctorConversionResult(pgPool, {
+                unit,
+                bounds,
+                reportDate: query?.date,
+                section,
+                actor,
+                calendarHash,
+            })
+        }
         section.history = await queryDoctorConversionHistory(pgPool, { unit: unit.slug, limit: 8 }, actor)
         sections.push(section)
     }
 
-    const aggregateNotice = buildAggregateConversionNotice()
     const warnings = []
     const allDoctors = sections
         .flatMap((section) => section.doctors)
@@ -1410,14 +1502,91 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
             || Number(right.score || 0) - Number(left.score || 0)
             || left.name.localeCompare(right.name, 'pt-BR'))
         .map((doctor, index) => ({ ...doctor, rank: index + 1 }))
+    let topDoctors = allDoctors.slice(0, 8)
     if (!requestedUnit || requestedUnit === 'all') {
+        // The aggregate is a new calculation, not an average of the unit-level
+        // metrics. Goals and operational capacity are summed by unit/month and
+        // the same professional is consolidated before ranking.
+        const aggregateGoalPlan = calculateConversionGoalPlan(monthSegments.map((segment) => {
+            const capacity = selectedUnits.reduce((total, unit) => {
+                const firstGoalMap = firstGoalByUnitMonth.get(unit.slug) || new Map()
+                const baseGoalMap = baseGoalByUnitMonth.get(unit.slug) || new Map()
+                total.monthlyGoal += firstGoalMap.get(segment.monthKey) ?? baseGoalMap.get(segment.monthKey) ?? 0
+                total.monthOperationalDays += countOperationalDaysWithEscala(unit.slug, scheduleByUnit, escalaCoverage, segment.monthStart, segment.monthEnd)
+                total.periodOperationalDays += countOperationalDaysWithEscala(unit.slug, scheduleByUnit, escalaCoverage, segment.segmentStart, segment.segmentEnd)
+                return total
+            }, { monthlyGoal: 0, monthOperationalDays: 0, periodOperationalDays: 0 })
+            return { ...segment, ...capacity }
+        }))
+        const aggregateStats = calculateDoctorConversionRanking({
+            doctors: allDoctors.map((doctor) => ({
+                id: doctor.id,
+                name: doctor.name,
+                realized: Number(doctor.weekValue || 0),
+            })),
+            monthlyGoal: aggregateGoalPlan.monthlyGoal,
+            periodAttendanceTotal: selectedUnits.reduce((total, unit) => total + Number(weeklyTotalByUnit.get(unit.slug) || 0), 0),
+            monthOperationalDays: aggregateGoalPlan.monthOperationalDays,
+            weekOperationalDays: aggregateGoalPlan.periodOperationalDays,
+            dailyGoal: aggregateGoalPlan.dailyGoal,
+            periodGoal: aggregateGoalPlan.periodGoal,
+            weeklyGoal: aggregateGoalPlan.weeklyGoal,
+            intervalMultiplier: optimizationConfig.defaultIntervalMultiplier,
+            intervalMultiplierMin: optimizationConfig.intervalMultiplierMin,
+            intervalMultiplierMax: optimizationConfig.intervalMultiplierMax,
+            objectiveName: optimizationConfig.objectiveName,
+            requireAllBandsIfPossible: optimizationConfig.requireAllBandsIfPossible,
+            requireExtremesIfPossible: optimizationConfig.requireExtremesIfPossible,
+            stabilityTieBreak: optimizationConfig.stabilityTieBreak,
+            tieBreakPolicy: optimizationConfig.tieBreakPolicy,
+            unstableJumpThreshold: optimizationConfig.unstableJumpThreshold,
+        })
+        const aggregateCalendarHash = stableConfigHash({
+            unitSlugs: selectedUnits.map((unit) => unit.slug).sort(),
+            periodStart: bounds.metricStart,
+            periodEnd: bounds.metricEnd,
+            scheduleSource: escalaCoverage.source || 'crm',
+            goalSegments: aggregateGoalPlan.segments || [],
+        }).replace(/^fnv1a-/, 'calendar-fnv1a-')
+        const aggregateDoctors = aggregateStats.ranking.map((doctor) => ({
+            id: doctor.id,
+            name: doctor.name,
+            unitName: 'Todas unidades',
+            unitSlug: 'all',
+            weekValue: moneyMetric(doctor.weekValue).weekValue,
+            totalValue: moneyMetric(doctor.totalValue).totalValue,
+            score: doctor.score,
+            level: doctor.level,
+            classification: doctor.classification,
+            modifiedZ: doctor.modifiedZ,
+            distanceToCutOff: doctor.distanceToCutOff,
+            distanceToLowerLimit: doctor.distanceToLowerLimit,
+            distanceToUpperLimit: doctor.distanceToUpperLimit,
+            rank: doctor.rank,
+            position: '',
+        }))
+        // The aggregate has summed capacity, never a fictional shared calendar.
+        // Its doctor list is also the canonical, cross-unit consolidation used
+        // by the global top-doctor summary.
+        topDoctors = aggregateDoctors.slice(0, 8)
         sections.unshift({
             unitName: 'Todas unidades',
             unitSlug: 'all',
-            metrics: {},
-            doctors: allDoctors,
+            metrics: buildConversionMetricPayload(aggregateStats, 'Todas unidades'),
+            optimization: {
+                ...buildConversionOptimizationPayload(aggregateStats),
+                calendarHash: aggregateCalendarHash,
+            },
+            goalPlan: {
+                periodOperationalDays: Number(aggregateGoalPlan.periodOperationalDays || 0),
+                periodGoal: Number(aggregateGoalPlan.periodGoal || 0),
+                dailyGoal: Number(aggregateGoalPlan.dailyGoal || 0),
+                segments: aggregateGoalPlan.segments || [],
+            },
+            doctors: aggregateDoctors,
             isAggregate: true,
-            aggregateNotice,
+            calendarMode: 'per-unit-capacity-sum',
+            calendarCompatible: false,
             period: bounds,
         })
     }
@@ -1435,7 +1604,7 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor) {
     return {
         byUnit,
         sections,
-        topDoctors: allDoctors.slice(0, 8),
+        topDoctors,
         period: bounds,
         intervalMultiplier: optimizationConfig.defaultIntervalMultiplier,
         objectiveName: optimizationConfig.objectiveName,
@@ -1468,6 +1637,26 @@ function applyInternalConversionMetrics(report, internalMetrics) {
     return report
 }
 
+export function filterConversionReportToActorScope(report, query, actor) {
+    if (!report || typeof report !== 'object') return report
+    const requestedUnitRaw = String(query?.unit || query?.unitSlug || '').trim()
+    const requestedUnit = requestedUnitRaw ? normalizeUnit(requestedUnitRaw).slug : ''
+    const sections = (Array.isArray(report.sections) ? report.sections : []).filter((section) => {
+        const sectionUnit = normalizeUnit(section?.unitSlug || section?.unitName || '').slug
+        if (requestedUnit && requestedUnit !== 'all' && sectionUnit !== requestedUnit) return false
+        return actorCanReadUnit(actor, sectionUnit)
+    })
+    return {
+        ...report,
+        sections,
+        summary: {
+            ...(report.summary || {}),
+            sections: sections.length,
+            rows: sections.reduce((total, section) => total + (Array.isArray(section?.rows) ? section.rows.length : 0), 0),
+        },
+    }
+}
+
 export async function upsertUnit(client, unit) {
     const row = await client.query(
         `insert into crm_atendimento.units(slug, name)
@@ -1492,8 +1681,31 @@ export async function upsertProcedure(client, name) {
     return row.rows[0]
 }
 
+async function resolveAttendanceUnit(client, unit) {
+    const result = await client.query(
+        `select id, slug, name from crm_atendimento.units where slug = $1 limit 1`,
+        [unit.slug],
+    )
+    if (!result.rows[0]) throw mutationError('UNKNOWN_UNIT')
+    return result.rows[0]
+}
+
+async function resolveAttendanceProcedure(client, name) {
+    const result = await client.query(
+        `select id, name from crm_atendimento.procedures
+         where lower(trim(name)) = lower(trim($1))
+         order by created_at asc
+         limit 2`,
+        [name],
+    )
+    if (result.rows.length !== 1) {
+        throw mutationError(result.rows.length > 1 ? 'AMBIGUOUS_PROCEDURE' : 'UNKNOWN_PROCEDURE')
+    }
+    return result.rows[0]
+}
+
 export async function upsertProfessional(client, input) {
-    const name = String(input?.name || '').trim()
+    const name = getCanonicalProfessionalName(input?.name)
     if (!isMeaningfulProfessionalName(name)) return null
     const roles = Array.isArray(input?.roles) && input.roles.length ? input.roles.map(String).filter(Boolean) : splitList(input?.role)
     const turnos = Array.isArray(input?.turnos) && input.turnos.length ? input.turnos.map(String).filter(Boolean) : splitList(input?.shift)
@@ -1539,21 +1751,110 @@ export async function upsertProfessional(client, input) {
             String(input?.instagram || '').trim() || null,
         ],
     )
-    return row.rows[0]
+    const professional = row.rows[0]
+    if (!professional?.id) return professional
+    await client.query(
+        `update crm_atendimento.professionals
+         set canonical_id = coalesce(canonical_id, id),
+             identity_version = coalesce(nullif(identity_version, ''), $2)
+         where id = $1`,
+        [professional.id, PROFESSIONAL_IDENTITY_VERSION],
+    )
+    const aliases = [input?.name, input?.alias, professional.name]
+        .map((value) => String(value || '').trim())
+        .filter(isValidProfessionalIdentityName)
+    for (const alias of new Set(aliases)) {
+        await client.query(
+            `insert into crm_atendimento.professional_aliases(professional_id, alias, alias_key, source, confidence)
+             values ($1, $2, $3, 'roster-import', 'confirmed')
+             on conflict(professional_id, alias_key) do update set alias = excluded.alias, updated_at = now()`,
+            [professional.id, alias, normalizeProfessionalAliasKey(alias)],
+        )
+    }
+    return { ...professional, canonical_id: professional.canonical_id || professional.id, identity_version: PROFESSIONAL_IDENTITY_VERSION }
+}
+
+async function resolveAttendanceProfessional(client, input, unit, expectedRole, { allowTextResolution = false, allowInactive = false } = {}) {
+    const professionalId = String(input?.id || input?.professionalId || '').trim()
+    const professionalName = String(input?.name || input?.professionalName || '').trim()
+    if (!professionalId && !professionalName) return null
+    if (professionalName && !isValidProfessionalIdentityName(professionalName)) throw mutationError('INVALID_PROFESSIONAL')
+    const result = await client.query(
+        `select p.id, p.canonical_id, p.name, p.role, p.status, p.units, p.roles, p.identity_version,
+                canonical.name as canonical_name,
+                coalesce(array_agg(distinct pa.alias) filter (where pa.active), '{}') as aliases
+         from crm_atendimento.professionals p
+         left join crm_atendimento.professionals canonical on canonical.id = coalesce(p.canonical_id, p.id)
+         left join crm_atendimento.professional_aliases pa on pa.professional_id = coalesce(p.canonical_id, p.id)
+         group by p.id, canonical.id
+         order by p.created_at asc`,
+    )
+    try {
+        return resolveProfessionalIdentity({
+            professionalId,
+            professionalName,
+            unit,
+            expectedRole,
+            allowTextResolution,
+            allowInactive,
+        }, result.rows)
+    } catch (error) {
+        throw mutationError(error?.code || error?.message || 'UNKNOWN_PROFESSIONAL', error?.statusCode || 400)
+    }
+}
+
+async function resolveHistoricalProfessional(client, name, unit, expectedRole) {
+    const rawName = String(name || '').trim()
+    if (!rawName || !isValidProfessionalIdentityName(rawName)) return null
+    try {
+        return await resolveAttendanceProfessional(client, { name: rawName }, unit, expectedRole, {
+            allowTextResolution: true,
+            allowInactive: true,
+        })
+    } catch (error) {
+        // Historical imports retain the source label even when a name is not a
+        // safe identity match.  They never create a professional implicitly.
+        if (['UNKNOWN_PROFESSIONAL', 'AMBIGUOUS_PROFESSIONAL', 'PROFESSIONAL_ROLE_MISMATCH', 'PROFESSIONAL_NOT_AVAILABLE_FOR_UNIT'].includes(error?.message)) return null
+        throw error
+    }
+}
+
+function normalizeClientName(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+async function upsertClient(client, unitId, input) {
+    const name = normalizeClientName(input)
+    const nameKey = normalizeText(name)
+    if (!name || !nameKey) {
+        const err = new Error('CLIENT_REQUIRED')
+        err.statusCode = 400
+        throw err
+    }
+    const row = await client.query(
+        `insert into crm_atendimento.clients(unit_id, name, name_key)
+         values ($1, $2, $3)
+         on conflict(unit_id, name_key) do update set updated_at = now()
+         returning id, name, name_key`,
+        [unitId, name, nameKey],
+    )
+    return row.rows[0] || { name, nameKey }
 }
 
 async function upsertScheduleDay(client, input) {
     if (!input?.date || !input?.unitSlug) return null
     const unit = await upsertUnit(client, { slug: input.unitSlug, name: input.unitName || input.unitSlug })
+    const professional = await resolveHistoricalProfessional(client, input.doctorName, unit, 'Injetor')
     const row = await client.query(
-        `insert into crm_atendimento.schedule_days(unit_id, service_date, doctor_name, source_year)
-         values ($1, $2::date, $3, $4)
+        `insert into crm_atendimento.schedule_days(unit_id, service_date, doctor_name, professional_id, source_year)
+         values ($1, $2::date, $3, $4, $5)
          on conflict(unit_id, service_date) do update set
             doctor_name = excluded.doctor_name,
+            professional_id = excluded.professional_id,
             source_year = excluded.source_year,
             updated_at = now()
-         returning id, service_date, doctor_name, source_year`,
-        [unit.id, input.date, String(input.doctorName || '').trim() || null, Number(input.year) || null],
+         returning id, service_date, doctor_name, professional_id, source_year`,
+        [unit.id, input.date, String(input.doctorName || '').trim() || null, professional?.canonicalId || null, Number(input.year) || null],
     )
     return row.rows[0]
 }
@@ -1605,14 +1906,90 @@ function mapAttendance(row) {
         otherValue: Number(row.other_value || 0),
         roundValue: !!row.round_value,
         value: Number(row.value || 0),
-        injectorName: row.injector_name || '',
-        consultantName: row.consultant_name || '',
+        valueFormulaVersion: row.value_formula_version || ATTENDANCE_VALUE_FORMULA_VERSION,
+        revision: Number(row.revision || 1),
+        injectorId: row.injector_canonical_id || row.injector_id || null,
+        consultantId: row.consultant_canonical_id || row.consultant_id || null,
+        injectorName: getCanonicalProfessionalName(row.injector_name || row.injector_source_name || ''),
+        consultantName: getCanonicalProfessionalName(row.consultant_name || row.consultant_source_name || ''),
         observation: row.observation || '',
         sourceTab: row.source_tab || null,
         sourceRow: row.source_row || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     }
+}
+
+function mutationError(message, statusCode = 400) {
+    const err = new Error(message)
+    err.statusCode = statusCode
+    return err
+}
+
+function isValidIsoDate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false
+    const [year, month, day] = String(value).split('-').map(Number)
+    const date = new Date(Date.UTC(year, month - 1, day))
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+}
+
+export function normalizeAttendanceMutation(payload = {}) {
+    const unit = normalizeUnit(payload.unitSlug || payload.unitName)
+    const date = String(payload.date || '').trim()
+    const clientName = normalizeClientName(payload.clientName)
+    const procedureName = String(payload.procedureName || '').trim()
+    const code = normalizeCode(payload.code)
+    const quantity = parseDecimal(payload.quantity, Number.NaN)
+    const otherValue = parseCurrency(payload.otherValue, Number.NaN)
+    if (!unit.slug) throw mutationError('UNIT_REQUIRED')
+    if (!isValidIsoDate(date)) throw mutationError('INVALID_SERVICE_DATE')
+    if (!clientName) throw mutationError('CLIENT_REQUIRED')
+    if (!procedureName) throw mutationError('PROCEDURE_REQUIRED')
+    if (!code) throw mutationError('CODE_REQUIRED')
+    if (!Number.isFinite(quantity) || quantity <= 0) throw mutationError('INVALID_QUANTITY')
+    if (!Number.isFinite(otherValue) || otherValue < 0) throw mutationError('INVALID_OTHER_VALUE')
+    const discount = parseBoolean(payload.discount)
+    const roundValue = parseBoolean(payload.roundValue)
+    const value = calculateAttendanceValue({ code, quantity, otherValue, discount, roundValue })
+    if (!Number.isFinite(value) || value == null) throw mutationError('INVALID_CALCULATED_VALUE')
+    if (value < 0) throw mutationError('NEGATIVE_CALCULATED_VALUE')
+    return {
+        unit,
+        date,
+        clientName,
+        procedureName,
+        code,
+        quantity,
+        discount,
+        otherValue,
+        roundValue,
+        value,
+        injectorId: String(payload.injectorId || '').trim() || null,
+        consultantId: String(payload.consultantId || '').trim() || null,
+        injectorName: String(payload.injectorName || '').trim(),
+        consultantName: String(payload.consultantName || '').trim(),
+        observation: String(payload.observation || '').trim() || null,
+    }
+}
+
+export function assertActorCanMutateUnit(actor, unit) {
+    if (roleCanManage(actor)) return
+    const allowed = normalizeAllowedUnitKeys(actor)
+    if (allowed.has(normalizeUnit(unit?.slug || unit?.name || unit).slug)) return
+    throw mutationError('UNIT_FORBIDDEN', 403)
+}
+
+function expectedRevision(payload) {
+    const revision = Number(payload?.revision)
+    if (!Number.isInteger(revision) || revision < 1) throw mutationError('REVISION_REQUIRED', 428)
+    return revision
+}
+
+function normalizeIdempotencyKey(value) {
+    const key = String(value || '').trim()
+    if (!key) return null
+    if (key.length > 128) throw mutationError('INVALID_IDEMPOTENCY_KEY')
+    return key
 }
 
 function assertManager(actor) {
@@ -1625,6 +2002,7 @@ function assertManager(actor) {
 function mapProfessional(row, includeSensitive = false) {
     const base = {
         id: row.id,
+        canonicalId: row.canonical_id || row.id,
         name: row.name,
         role: row.role,
         status: row.status,
@@ -1647,6 +2025,37 @@ function mapProfessional(row, includeSensitive = false) {
         email: row.email || '',
         instagram: row.instagram || '',
     }
+}
+
+function mergeDistinctText(...lists) {
+    return Array.from(new Set(lists.flatMap((list) => Array.isArray(list) ? list : []).map((item) => String(item || '').trim()).filter(Boolean)))
+}
+
+function consolidateProfessionalReferences(rows, includeSensitive = false) {
+    const byIdentity = new Map()
+    for (const raw of rows || []) {
+        const name = getCanonicalProfessionalName(raw?.name)
+        if (!name) continue
+        const key = normalizeText(name)
+        const mapped = { ...mapProfessional(raw, includeSensitive), name }
+        const current = byIdentity.get(key)
+        if (!current) {
+            byIdentity.set(key, mapped)
+            continue
+        }
+        // Prefer the complete canonical registration, but retain all assigned roles,
+        // units and shifts so an alias never makes a professional disappear from a form.
+        const preferred = normalizeText(raw?.name) === key ? mapped : current
+        byIdentity.set(key, {
+            ...current,
+            ...preferred,
+            name,
+            units: mergeDistinctText(current.units, mapped.units),
+            roles: mergeDistinctText(current.roles, mapped.roles),
+            turnos: mergeDistinctText(current.turnos, mapped.turnos),
+        })
+    }
+    return Array.from(byIdentity.values()).sort((left, right) => left.name.localeCompare(right.name, 'pt-BR'))
 }
 
 function mapManagementItem(row) {
@@ -1828,25 +2237,29 @@ async function listMonthlyGoals(pgPool, query, actor) {
             end`,
         params,
     )
-    const allowed = normalizeAllowedUnitKeys(actor)
     const units = await pgPool.query(`select slug, name from crm_atendimento.units order by name`)
     return {
         goals: goals.rows.map(mapMonthlyGoal),
         goalLevels: goalLevels.rows.map(mapMonthlyGoalLevel),
         units: units.rows
-            .filter((row) => !allowed.size || allowed.has(row.slug))
+            .filter((row) => actorCanReadUnit(actor, row.slug))
             .map((row) => ({ slug: row.slug, name: row.name })),
     }
 }
 
 const ATTENDANCE_SELECT = `
     select a.*, u.slug as unit_slug, u.name as unit_name, p.name as procedure_name,
-           inj.name as injector_name, con.name as consultant_name
+           coalesce(inj_canonical.id, inj.id) as injector_canonical_id,
+           coalesce(con_canonical.id, con.id) as consultant_canonical_id,
+           coalesce(inj_canonical.name, inj.name) as injector_name,
+           coalesce(con_canonical.name, con.name) as consultant_name
     from crm_atendimento.attendances a
     join crm_atendimento.units u on u.id = a.unit_id
     join crm_atendimento.procedures p on p.id = a.procedure_id
     left join crm_atendimento.professionals inj on inj.id = a.injector_id
     left join crm_atendimento.professionals con on con.id = a.consultant_id
+    left join crm_atendimento.professionals inj_canonical on inj_canonical.id = coalesce(inj.canonical_id, inj.id)
+    left join crm_atendimento.professionals con_canonical on con_canonical.id = coalesce(con.canonical_id, con.id)
 `
 
 const COMMERCIAL_ACTION_STATUSES = new Set(['open', 'contacted', 'responded', 'scheduled', 'won_sale', 'returned', 'closed', 'cancelled'])
@@ -2226,8 +2639,13 @@ export function createAtendimentoStore(options = {}) {
         },
 
         async optimizeDoctorConversion(payload, actor) {
+            if (!roleCanManage(actor)) {
+                const error = new Error('FORBIDDEN')
+                error.statusCode = 403
+                throw error
+            }
             const query = resolveDoctorConversionOperationQuery(payload || {})
-            const report = await this.managementConversionReport(query, actor)
+            const report = await this.managementConversionReport(query, actor, { persist: true, syncSchedule: true })
             const requestedUnit = normalizeUnit(query.unit || '').slug
             const sections = report.doctorRanking?.sections || []
             const section = sections.find((item) => item.unitSlug === requestedUnit && !item.isAggregate)
@@ -2262,7 +2680,7 @@ export function createAtendimentoStore(options = {}) {
                     error.statusCode = 400
                     throw error
                 }
-                const report = await this.managementConversionReport(query, actor)
+                const report = await this.managementConversionReport(query, actor, { persist: true, syncSchedule: true })
                 results.push(...(report.doctorRanking?.sections || [])
                     .filter((section) => !section.isAggregate)
                     .map((section) => ({
@@ -2278,7 +2696,7 @@ export function createAtendimentoStore(options = {}) {
             await ensureReady()
             const units = await pgPool.query(`select slug, name from crm_atendimento.units order by name`)
             const professionals = await pgPool.query(
-                `select id, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias
+            `select id, canonical_id, identity_version, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias
                  from crm_atendimento.professionals
                  order by name`,
             )
@@ -2289,14 +2707,14 @@ export function createAtendimentoStore(options = {}) {
                  group by p.id, p.name
                  order by p.name`,
             )
-            const allowed = normalizeAllowedUnitKeys(actor)
             return {
                 units: units.rows
-                    .filter((row) => !allowed.size || allowed.has(row.slug))
+                    .filter((row) => actorCanReadUnit(actor, row.slug))
                     .map((row) => ({ slug: row.slug, name: row.name })),
-                professionals: professionals.rows
-                    .filter((row) => professionalMatchesAllowedUnits(row, allowed))
-                    .map((row) => mapProfessional(row, false)),
+                professionals: consolidateProfessionalReferences(
+                    professionals.rows.filter((row) => professionalMatchesAllowedUnits(row, actor)),
+                    false,
+                ),
                 procedures: procedures.rows.map((row) => ({
                     id: row.id,
                     name: row.name,
@@ -2586,6 +3004,51 @@ export function createAtendimentoStore(options = {}) {
             return { id, status }
         },
 
+        async clients(query, actor) {
+            await ensureReady()
+            const unit = normalizeUnit(query?.unit)
+            const search = normalizeText(query?.q || '')
+            if (!unit.slug || unit.slug === 'unknown' || search.length < 2) return { clients: [] }
+            if (!actorCanReadUnit(actor, unit)) {
+                const err = new Error('FORBIDDEN')
+                err.statusCode = 403
+                throw err
+            }
+            const limit = Math.min(Math.max(Number(query?.limit) || 8, 1), 20)
+            const result = await pgPool.query(
+                `with candidates as (
+                    select c.name, c.name_key, 0::int as usage_count
+                    from crm_atendimento.clients c
+                    join crm_atendimento.units u on u.id = c.unit_id
+                    where u.slug = $1
+                    union all
+                    select a.client_name as name,
+                           lower(regexp_replace(trim(a.client_name), '\\s+', ' ', 'g')) as name_key,
+                           count(*)::int as usage_count
+                    from crm_atendimento.attendances a
+                    join crm_atendimento.units u on u.id = a.unit_id
+                    where a.deleted_at is null and u.slug = $1 and nullif(trim(a.client_name), '') is not null
+                    group by a.client_name
+                ), ranked as (
+                    select distinct on (name_key) name, usage_count
+                    from candidates
+                    where name_key like $2
+                    order by name_key, usage_count desc, name
+                )
+                select name, usage_count
+                from ranked
+                order by usage_count desc, name
+                limit $3`,
+                [unit.slug, `%${search}%`, limit],
+            )
+            return {
+                clients: result.rows.map((row) => ({
+                    name: normalizeClientName(row.name),
+                    usageCount: Number(row.usage_count || 0),
+                })).filter((row) => row.name),
+            }
+        },
+
         async overview(query, actor) {
             await ensureReady()
             const { where, params } = buildAttendanceWhere(query, actor)
@@ -2754,16 +3217,19 @@ export function createAtendimentoStore(options = {}) {
                 err.statusCode = 400
                 throw err
             }
-            const allowed = normalizeAllowedUnitKeys(actor)
-            if (allowed.size && !allowed.has(unit.slug)) {
+            if (!actorCanReadUnit(actor, unit)) {
                 const err = new Error('FORBIDDEN_UNIT')
                 err.statusCode = 403
                 throw err
             }
             const row = await pgPool.query(
-                `select s.service_date::text as date, s.doctor_name, u.slug as unit_slug, u.name as unit_name
+                `select s.service_date::text as date,
+                        coalesce(canonical.name, p.name, s.doctor_name) as doctor_name,
+                        u.slug as unit_slug, u.name as unit_name
                  from crm_atendimento.schedule_days s
                  join crm_atendimento.units u on u.id = s.unit_id
+                 left join crm_atendimento.professionals p on p.id = s.professional_id
+                 left join crm_atendimento.professionals canonical on canonical.id = coalesce(p.canonical_id, p.id)
                  where u.slug = $1 and s.service_date = $2::date
                  limit 1`,
                 [unit.slug, date],
@@ -2818,12 +3284,13 @@ export function createAtendimentoStore(options = {}) {
             }
             const doctors = Array.from(byDoctor.values()).map((item) => {
                 const totalValue = Math.round(item.totalValue * 100) / 100
-                const remuneration = totalValue > 0 ? Math.max(totalValue * 0.10, 212.50) : 0
+                const remuneration = calculateAttendanceRemuneration(totalValue)
                 return {
                     ...item,
                     quantityTotal: normalizeAggregateCountValue(item.quantityTotal),
                     totalValue,
-                    remuneration: Math.round(remuneration * 100) / 100,
+                    remuneration: remuneration.amount,
+                    remunerationFormulaVersion: remuneration.formulaVersion,
                 }
             }).sort((a, b) => a.doctorName.localeCompare(b.doctorName, 'pt-BR'))
             return {
@@ -2838,57 +3305,82 @@ export function createAtendimentoStore(options = {}) {
                     totalValue: Math.round(doctors.reduce((acc, item) => acc + item.totalValue, 0) * 100) / 100,
                     remuneration: Math.round(doctors.reduce((acc, item) => acc + item.remuneration, 0) * 100) / 100,
                 },
+                remunerationPolicy: ATTENDANCE_REMUNERATION_POLICY,
             }
         },
 
         async createAttendance(payload, actor) {
             await ensureReady()
             return withPgTransaction(pgPool, async (client) => {
-                const unit = await upsertUnit(client, normalizeUnit(payload?.unitSlug || payload?.unitName))
-                const procedure = await upsertProcedure(client, payload?.procedureName)
-                if (!procedure) {
-                    const err = new Error('PROCEDURE_REQUIRED')
-                    err.statusCode = 400
-                    throw err
+                const input = normalizeAttendanceMutation(payload)
+                assertActorCanMutateUnit(actor, input.unit)
+                const idempotencyKey = normalizeIdempotencyKey(payload?.idempotencyKey)
+                const actorName = actorIdentityForMutation(actor)
+                if (idempotencyKey) {
+                    const existing = await client.query(
+                        `${ATTENDANCE_SELECT} where a.created_by = $1 and a.idempotency_key = $2 and a.deleted_at is null`,
+                        [actorName, idempotencyKey],
+                    )
+                    if (existing.rows[0]) {
+                        const persisted = mapAttendance(existing.rows[0])
+                        assertActorCanMutateUnit(actor, { slug: persisted.unitSlug, name: persisted.unitName })
+                        return persisted
+                    }
                 }
-                const code = normalizeCode(payload?.code)
-                const codeOk = await validateProcedureCode(client, procedure.id, code)
-                if (!codeOk) {
-                    const err = new Error('PROCEDURE_CODE_NOT_ALLOWED')
-                    err.statusCode = 400
-                    throw err
-                }
-                const injector = await upsertProfessional(client, { name: payload?.injectorName, roles: ['Injetor'], units: [unit.name] })
-                const consultant = await upsertProfessional(client, { name: payload?.consultantName, roles: ['Consultor'], units: [unit.name] })
-                const value = payload?.value === undefined || payload?.value === null
-                    ? calculateAttendanceValue(payload)
-                    : Number(payload.value)
+                const unit = await resolveAttendanceUnit(client, input.unit)
+                const procedure = await resolveAttendanceProcedure(client, input.procedureName)
+                const codeOk = await validateProcedureCode(client, procedure.id, input.code)
+                if (!codeOk) throw mutationError('PROCEDURE_CODE_NOT_ALLOWED')
+                const injector = await resolveAttendanceProfessional(client, { id: input.injectorId, name: input.injectorName }, unit, 'Injetor')
+                const consultant = await resolveAttendanceProfessional(client, { id: input.consultantId, name: input.consultantName }, unit, 'Consultor')
+                const attendanceClient = await upsertClient(client, unit.id, input.clientName)
                 const inserted = await client.query(
                     `insert into crm_atendimento.attendances(
                         unit_id, service_date, client_name, procedure_id, code, quantity,
                         discount, other_value, round_value, value, injector_id, consultant_id,
-                        observation, created_by, updated_by
-                    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
+                        observation, created_by, updated_by, idempotency_key, value_formula_version
+                    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16)
+                    on conflict(created_by, idempotency_key) where idempotency_key is not null do nothing
                     returning id`,
                     [
                         unit.id,
-                        payload?.date,
-                        String(payload?.clientName || '').trim(),
+                        input.date,
+                        attendanceClient.name,
                         procedure.id,
-                        code,
-                        Number(payload?.quantity || 1),
-                        !!payload?.discount,
-                        Number(payload?.otherValue || 0),
-                        !!payload?.roundValue,
-                        Number.isFinite(value) ? value : 0,
-                        injector?.id || null,
-                        consultant?.id || null,
-                        String(payload?.observation || '').trim() || null,
-                        actorLabel(actor),
+                        input.code,
+                        input.quantity,
+                        input.discount,
+                        input.otherValue,
+                        input.roundValue,
+                        input.value,
+                        injector?.canonicalId || null,
+                        consultant?.canonicalId || null,
+                        input.observation,
+                        actorName,
+                        idempotencyKey,
+                        ATTENDANCE_VALUE_FORMULA_VERSION,
                     ],
                 )
-                await audit(client, 'attendance.create', actor, inserted.rows[0].id, payload)
-                const row = await client.query(`${ATTENDANCE_SELECT} where a.id = $1`, [inserted.rows[0].id])
+                const attendanceId = inserted.rows[0]?.id
+                if (!attendanceId && idempotencyKey) {
+                    const existing = await client.query(
+                        `${ATTENDANCE_SELECT} where a.created_by = $1 and a.idempotency_key = $2 and a.deleted_at is null`,
+                        [actorName, idempotencyKey],
+                    )
+                    if (existing.rows[0]) {
+                        const persisted = mapAttendance(existing.rows[0])
+                        assertActorCanMutateUnit(actor, { slug: persisted.unitSlug, name: persisted.unitName })
+                        return persisted
+                    }
+                }
+                if (!attendanceId) throw mutationError('ATTENDANCE_CREATE_FAILED', 409)
+                await audit(client, 'attendance.create', actor, attendanceId, {
+                    after: input,
+                    formulaVersion: ATTENDANCE_VALUE_FORMULA_VERSION,
+                    clientValueIgnored: payload?.value !== undefined,
+                    idempotencyKey,
+                })
+                const row = await client.query(`${ATTENDANCE_SELECT} where a.id = $1`, [attendanceId])
                 return mapAttendance(row.rows[0])
             })
         },
@@ -2902,52 +3394,60 @@ export function createAtendimentoStore(options = {}) {
                     err.statusCode = 404
                     throw err
                 }
-                const merged = { ...mapAttendance(current.rows[0]), ...payload }
-                const unit = await upsertUnit(client, normalizeUnit(merged.unitSlug || merged.unitName))
-                const procedure = await upsertProcedure(client, merged.procedureName)
-                const code = normalizeCode(merged.code)
-                const codeOk = await validateProcedureCode(client, procedure.id, code)
-                if (!codeOk) {
-                    const err = new Error('PROCEDURE_CODE_NOT_ALLOWED')
-                    err.statusCode = 400
-                    throw err
-                }
-                const injector = await upsertProfessional(client, { name: merged.injectorName, roles: ['Injetor'], units: [unit.name] })
-                const consultant = await upsertProfessional(client, { name: merged.consultantName, roles: ['Consultor'], units: [unit.name] })
-                const value = payload?.value === undefined || payload?.value === null
-                    ? calculateAttendanceValue(merged)
-                    : Number(payload.value)
-                await client.query(
+                const before = mapAttendance(current.rows[0])
+                assertActorCanMutateUnit(actor, { slug: before.unitSlug, name: before.unitName })
+                const revision = expectedRevision(payload)
+                if (revision !== before.revision) throw mutationError('REVISION_CONFLICT', 409)
+                const input = normalizeAttendanceMutation({ ...before, ...payload })
+                assertActorCanMutateUnit(actor, input.unit)
+                const unit = await resolveAttendanceUnit(client, input.unit)
+                const procedure = await resolveAttendanceProcedure(client, input.procedureName)
+                const codeOk = await validateProcedureCode(client, procedure.id, input.code)
+                if (!codeOk) throw mutationError('PROCEDURE_CODE_NOT_ALLOWED')
+                const injector = await resolveAttendanceProfessional(client, { id: input.injectorId, name: input.injectorName }, unit, 'Injetor')
+                const consultant = await resolveAttendanceProfessional(client, { id: input.consultantId, name: input.consultantName }, unit, 'Consultor')
+                const attendanceClient = await upsertClient(client, unit.id, input.clientName)
+                const updated = await client.query(
                     `update crm_atendimento.attendances set
                         unit_id=$2, service_date=$3, client_name=$4, procedure_id=$5, code=$6,
                         quantity=$7, discount=$8, other_value=$9, round_value=$10, value=$11,
-                        injector_id=$12, consultant_id=$13, observation=$14, updated_by=$15, updated_at=now()
-                     where id=$1`,
+                        injector_id=$12, consultant_id=$13, observation=$14, updated_by=$15,
+                        value_formula_version=$16, revision = revision + 1, updated_at=now()
+                     where id=$1 and revision=$17
+                     returning id`,
                     [
                         id,
                         unit.id,
-                        merged.date,
-                        String(merged.clientName || '').trim(),
+                        input.date,
+                        attendanceClient.name,
                         procedure.id,
-                        code,
-                        Number(merged.quantity || 1),
-                        !!merged.discount,
-                        Number(merged.otherValue || 0),
-                        !!merged.roundValue,
-                        Number.isFinite(value) ? value : 0,
-                        injector?.id || null,
-                        consultant?.id || null,
-                        String(merged.observation || '').trim() || null,
-                        actorLabel(actor),
+                        input.code,
+                        input.quantity,
+                        input.discount,
+                        input.otherValue,
+                        input.roundValue,
+                        input.value,
+                        injector?.canonicalId || null,
+                        consultant?.canonicalId || null,
+                        input.observation,
+                        actorIdentityForMutation(actor),
+                        ATTENDANCE_VALUE_FORMULA_VERSION,
+                        revision,
                     ],
                 )
-                await audit(client, 'attendance.update', actor, id, { before: mapAttendance(current.rows[0]), after: merged })
+                if (!updated.rows[0]) throw mutationError('REVISION_CONFLICT', 409)
+                await audit(client, 'attendance.update', actor, id, {
+                    before,
+                    after: input,
+                    formulaVersion: ATTENDANCE_VALUE_FORMULA_VERSION,
+                    clientValueIgnored: payload?.value !== undefined,
+                })
                 const row = await client.query(`${ATTENDANCE_SELECT} where a.id = $1`, [id])
                 return mapAttendance(row.rows[0])
             })
         },
 
-        async deleteAttendance(id, actor) {
+        async deleteAttendance(id, payload, actor) {
             await ensureReady()
             return withPgTransaction(pgPool, async (client) => {
                 const current = await client.query(`${ATTENDANCE_SELECT} where a.id = $1 and a.deleted_at is null`, [id])
@@ -2956,11 +3456,19 @@ export function createAtendimentoStore(options = {}) {
                     err.statusCode = 404
                     throw err
                 }
-                await client.query(
-                    `update crm_atendimento.attendances set deleted_at = now(), updated_by = $2, updated_at = now() where id = $1`,
-                    [id, actorLabel(actor)],
+                const before = mapAttendance(current.rows[0])
+                assertActorCanMutateUnit(actor, { slug: before.unitSlug, name: before.unitName })
+                const revision = expectedRevision(payload)
+                if (revision !== before.revision) throw mutationError('REVISION_CONFLICT', 409)
+                const deleted = await client.query(
+                    `update crm_atendimento.attendances
+                     set deleted_at = now(), updated_by = $2, revision = revision + 1, updated_at = now()
+                     where id = $1 and revision = $3 and deleted_at is null
+                     returning id`,
+                    [id, actorIdentityForMutation(actor), revision],
                 )
-                await audit(client, 'attendance.delete', actor, id, { before: mapAttendance(current.rows[0]) })
+                if (!deleted.rows[0]) throw mutationError('REVISION_CONFLICT', 409)
+                await audit(client, 'attendance.delete', actor, id, { before })
                 return { ok: true }
             })
         },
@@ -2999,14 +3507,15 @@ export function createAtendimentoStore(options = {}) {
                     const unit = await upsertUnit(client, { slug: record.unitSlug, name: record.unitName })
                     const procedure = await upsertProcedure(client, record.procedureName)
                     await upsertProcedureCode(client, procedure.id, record.code)
-                    const injector = await upsertProfessional(client, { name: record.injectorName, role: 'Injetor', units: [unit.name] })
-                    const consultant = await upsertProfessional(client, { name: record.consultantName, role: 'Consultor', units: [unit.name] })
+                    const injector = await resolveHistoricalProfessional(client, record.injectorName, unit, 'Injetor')
+                    const consultant = await resolveHistoricalProfessional(client, record.consultantName, unit, 'Consultor')
+                    const attendanceClient = await upsertClient(client, unit.id, record.clientName)
                     const out = await client.query(
                         `insert into crm_atendimento.attendances(
                             unit_id, service_date, client_name, procedure_id, code, quantity,
-                            discount, other_value, round_value, value, injector_id, consultant_id,
+                            discount, other_value, round_value, value, injector_id, consultant_id, injector_source_name, consultant_source_name,
                             observation, source_sheet_id, source_tab, source_row, created_by, updated_by
-                        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
+                        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)
                         on conflict(source_sheet_id, source_tab, source_row) where source_sheet_id is not null and source_tab is not null and source_row is not null
                         do update set
                             unit_id = excluded.unit_id,
@@ -3021,6 +3530,8 @@ export function createAtendimentoStore(options = {}) {
                             value = excluded.value,
                             injector_id = excluded.injector_id,
                             consultant_id = excluded.consultant_id,
+                            injector_source_name = excluded.injector_source_name,
+                            consultant_source_name = excluded.consultant_source_name,
                             observation = excluded.observation,
                             updated_by = excluded.updated_by,
                             updated_at = now()
@@ -3038,6 +3549,8 @@ export function createAtendimentoStore(options = {}) {
                                 crm_atendimento.attendances.value,
                                 crm_atendimento.attendances.injector_id,
                                 crm_atendimento.attendances.consultant_id,
+                                crm_atendimento.attendances.injector_source_name,
+                                crm_atendimento.attendances.consultant_source_name,
                                 crm_atendimento.attendances.observation
                             ) is distinct from (
                                 excluded.unit_id,
@@ -3052,13 +3565,15 @@ export function createAtendimentoStore(options = {}) {
                                 excluded.value,
                                 excluded.injector_id,
                                 excluded.consultant_id,
+                                excluded.injector_source_name,
+                                excluded.consultant_source_name,
                                 excluded.observation
                             )
                         returning id, (xmax = 0) as inserted`,
                         [
                             unit.id,
                             record.date,
-                            record.clientName,
+                            attendanceClient.name,
                             procedure.id,
                             record.code,
                             record.quantity,
@@ -3066,8 +3581,10 @@ export function createAtendimentoStore(options = {}) {
                             record.otherValue,
                             record.roundValue,
                             record.value,
-                            injector?.id || null,
-                            consultant?.id || null,
+                            injector?.canonicalId || null,
+                            consultant?.canonicalId || null,
+                            String(record.injectorName || '').trim() || null,
+                            String(record.consultantName || '').trim() || null,
                             record.observation || null,
                             record.sourceSheetId,
                             record.sourceTab,
@@ -3159,7 +3676,7 @@ export function createAtendimentoStore(options = {}) {
             }
         },
 
-        async managementConversionReport(query, actor) {
+        async managementConversionReport(query, actor, options = {}) {
             await ensureReady()
             const date = String(query?.date || '').trim()
             const reportDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T12:00:00`) : new Date()
@@ -3169,12 +3686,13 @@ export function createAtendimentoStore(options = {}) {
                  where source_tab = 'Conversão'
                  order by source_row`,
             )
-            const report = buildConversionReportFromRawRows(rows.rows.map((row) => ({
+            const rawReport = buildConversionReportFromRawRows(rows.rows.map((row) => ({
                 sourceTab: row.source_tab,
                 sourceRow: Number(row.source_row || 0),
                 cells: row.cells || [],
             })), reportDate)
-            const internalMetrics = await buildInternalConversionMetrics(pgPool, report.period, query || {}, actor)
+            const report = filterConversionReportToActorScope(rawReport, query || {}, actor)
+            const internalMetrics = await buildInternalConversionMetrics(pgPool, report.period, query || {}, actor, options)
             applyInternalConversionMetrics(report, internalMetrics)
             return report
         },
@@ -3228,7 +3746,6 @@ export function createAtendimentoStore(options = {}) {
 
         async managementFinance(actor) {
             await ensureReady()
-            const allowed = normalizeAllowedUnitKeys(actor)
             const where = [`category = 'finance'`, `sensitive = false`]
             const managementParams = []
             applyManagementItemUnitFilter(where, managementParams, actor)
@@ -3275,7 +3792,7 @@ export function createAtendimentoStore(options = {}) {
                 goalTables: (await listGoalTables(pgPool, {}, actor)).tables,
                 attendanceTotals: {
                     units: totals.rows
-                        .filter((row) => !allowed.size || allowed.has(row.unit_slug))
+                        .filter((row) => actorCanReadUnit(actor, row.unit_slug))
                         .map((item) => ({
                             unitSlug: item.unit_slug,
                             unitName: item.unit_name,
@@ -3373,7 +3890,6 @@ export function createAtendimentoStore(options = {}) {
 
         async managementInventory(actor) {
             await ensureReady()
-            const allowed = normalizeAllowedUnitKeys(actor)
             const rows = await pgPool.query(
                 `select *
                  from crm_atendimento.inventory_items
@@ -3383,8 +3899,8 @@ export function createAtendimentoStore(options = {}) {
                 data: rows.rows.map((row) => ({
                     id: row.id,
                     product: row.product,
-                    barraShoppingSul: allowed.size && !allowed.has('barra-shopping-sul') ? null : Number(row.barra_shopping_sul || 0),
-                    novoHamburgo: allowed.size && !allowed.has('novo-hamburgo') ? null : Number(row.novo_hamburgo || 0),
+                    barraShoppingSul: actorCanReadUnit(actor, 'barra-shopping-sul') ? Number(row.barra_shopping_sul || 0) : null,
+                    novoHamburgo: actorCanReadUnit(actor, 'novo-hamburgo') ? Number(row.novo_hamburgo || 0) : null,
                     sourceRow: Number(row.source_row || 0),
                     importedAt: row.imported_at,
                 })),
@@ -3445,7 +3961,6 @@ export function createAtendimentoStore(options = {}) {
         async managementEscalaFeed(actor) {
             await ensureReady()
             assertManager(actor)
-            const allowed = normalizeAllowedUnitKeys(actor)
             const professionals = await pgPool.query(
                 `select id, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias, phone, email, instagram
                  from crm_atendimento.professionals
@@ -3477,7 +3992,7 @@ export function createAtendimentoStore(options = {}) {
                 scheduleEntries.push({ date, unit, professional: doctor })
             }
             const mappedProfessionals = professionals.rows
-                .filter((row) => professionalMatchesAllowedUnits(row, allowed))
+                .filter((row) => professionalMatchesAllowedUnits(row, actor))
                 .map((row) => {
                     const person = mapProfessional(row, true)
                     return {

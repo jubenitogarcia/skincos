@@ -1,12 +1,67 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { canAccessAtendimento, createAtendimentoStore } from '../store.js'
+import {
+    assertActorCanMutateUnit,
+    actorIdentityForMutation,
+    atendimentoMigrationStatements,
+    canAccessAtendimento,
+    createAtendimentoStore,
+    filterConversionReportToActorScope,
+    normalizeAttendanceMutation,
+} from '../store.js'
+import {
+    ATTENDANCE_LEGACY_VALUE_FORMULA_VERSION,
+    ATTENDANCE_WRITE_SAFETY_MIGRATION_ID,
+    attendanceWriteSafetyMigrationPlan,
+} from '../writeSafetyMigration.js'
+
+test('recalculates manual values on the server and rejects invalid financial records', () => {
+    const normalized = normalizeAttendanceMutation({
+        unitSlug: 'novo-hamburgo',
+        date: '2026-06-10',
+        clientName: ' Cliente ',
+        procedureName: ' Botox ',
+        code: '799',
+        quantity: '2',
+        discount: true,
+        otherValue: '66,00',
+        roundValue: false,
+        value: 1,
+    })
+    assert.equal(normalized.code, '#0799')
+    assert.equal(normalized.clientName, 'Cliente')
+    assert.equal(normalized.value, 1484.06)
+    assert.throws(() => normalizeAttendanceMutation({ ...normalized, date: '2026-02-30' }), /INVALID_SERVICE_DATE/)
+    assert.throws(() => normalizeAttendanceMutation({ ...normalized, quantity: 0 }), /INVALID_QUANTITY/)
+    assert.throws(() => normalizeAttendanceMutation({ ...normalized, otherValue: 2000 }), /NEGATIVE_CALCULATED_VALUE/)
+})
+
+test('enforces unit scope for mutations and includes revision, formula and idempotency migration safeguards', () => {
+    const actor = { role: 'INJETOR', allowedUnits: ['Novo Hamburgo'] }
+    assert.doesNotThrow(() => assertActorCanMutateUnit(actor, { slug: 'novo-hamburgo' }))
+    assert.throws(() => assertActorCanMutateUnit(actor, { slug: 'barra-shopping-sul' }), /UNIT_FORBIDDEN/)
+    assert.throws(() => assertActorCanMutateUnit({ role: 'INJETOR', allowedUnits: [] }, { slug: 'novo-hamburgo' }), /UNIT_FORBIDDEN/)
+    assert.equal(actorIdentityForMutation({ id: 'operator-1', role: 'INJETOR' }), 'operator-1')
+    assert.throws(() => actorIdentityForMutation({ role: 'INJETOR' }), /ACTOR_IDENTITY_REQUIRED/)
+    const migration = atendimentoMigrationStatements().join('\n')
+    assert.match(migration, /revision integer/i)
+    assert.match(migration, /value_formula_version text/i)
+    assert.match(migration, /idempotency_key text/i)
+    const plan = attendanceWriteSafetyMigrationPlan()
+    assert.equal(plan.id, ATTENDANCE_WRITE_SAFETY_MIGRATION_ID)
+    assert.equal(plan.legacyFormulaVersion, ATTENDANCE_LEGACY_VALUE_FORMULA_VERSION)
+    assert.equal(plan.indexes.find((index) => index.name === 'crm_atendimento_attendances_idempotency_idx')?.sql.includes('create unique index concurrently'), true)
+    assert.equal(plan.indexes.find((index) => index.name === 'crm_atendimento_attendances_idempotency_idx')?.sql.includes('idempotency_key is not null'), true)
+    assert.equal(plan.indexes.some((index) => index.name === 'crm_atendimento_attendances_unit_injector_period_idx'), true)
+    assert.equal(plan.indexes.some((index) => index.name === 'crm_atendimento_attendances_unit_consultant_period_idx'), true)
+})
 
 test('scopes atendimento router access by consuming module', () => {
     const procedimentosActor = { role: 'INJETOR', allowedModules: ['procedimentos'] }
     assert.equal(canAccessAtendimento(procedimentosActor, '/management/catalog', 'GET'), true)
     assert.equal(canAccessAtendimento(procedimentosActor, '/references', 'GET'), true)
+    assert.equal(canAccessAtendimento(procedimentosActor, '/clients', 'GET'), false)
     assert.equal(canAccessAtendimento(procedimentosActor, '/attendances', 'GET'), false)
     assert.equal(canAccessAtendimento(procedimentosActor, '/attendances', 'POST'), false)
 
@@ -16,7 +71,91 @@ test('scopes atendimento router access by consuming module', () => {
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/catalog', 'GET'), false)
 })
 
-test('marks all-units conversion view as non-consolidated in crm ranking payload', async () => {
+test('exposes a single canonical professional reference for confirmed aliases', async () => {
+    const fakePool = createFakePool([
+        (sql) => sql.includes('select slug, name from crm_atendimento.units order by name') && {
+            rows: [{ slug: 'barra-shopping-sul', name: 'BarraShoppingSul' }], rowCount: 1,
+        },
+        (sql) => sql.includes('from crm_atendimento.professionals') && {
+            rows: [
+                { id: 'raul-short', name: 'Raul Júnior', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Injetor'], turnos: [] },
+                { id: 'raul-full', name: 'Raul Rosário Júnior', role: 'Injetor', status: 'Ativo', units: ['BarraShoppingSul'], roles: ['Injetor'], turnos: [] },
+                { id: 'doris-short', name: 'Dóris Moisyn', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Injetor'], turnos: [] },
+                { id: 'doris-full', name: 'Dóris Caroline Moisyn', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Injetor'], turnos: [] },
+            ], rowCount: 4,
+        },
+        (sql) => sql.includes('from crm_atendimento.procedures') && { rows: [], rowCount: 0 },
+    ])
+
+    const refs = await createAtendimentoStore({ pool: fakePool }).references({ role: 'GESTOR' })
+    assert.deepEqual(refs.professionals.map((item) => item.name), ['Dóris Caroline Moisyn', 'Dóris Moisyn', 'Raul Rosário Júnior'])
+    assert.deepEqual(refs.professionals.find((item) => item.name === 'Raul Rosário Júnior')?.units.sort(), ['BarraShoppingSul', 'Novo Hamburgo'])
+})
+
+test('searches client suggestions only within the requested unit', async () => {
+    const fakePool = createFakePool([
+        (sql, params) => sql.includes('with candidates as') && {
+            rows: [{ name: 'Cynthia Cordova', usage_count: 2 }], rowCount: 1,
+        },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+    const result = await store.clients({ unit: 'barra-shopping-sul', q: 'cyn', limit: 8 }, { role: 'GESTOR' })
+
+    assert.deepEqual(result.clients, [{ name: 'Cynthia Cordova', usageCount: 2 }])
+    await assert.rejects(
+        () => store.clients({ unit: 'barra-shopping-sul', q: 'cyn' }, { role: 'INJETOR', allowedUnits: ['novo-hamburgo'] }),
+        { message: 'FORBIDDEN' },
+    )
+    await assert.rejects(
+        () => store.clients({ unit: 'barra-shopping-sul', q: 'cyn' }, { role: 'INJETOR', allowedUnits: [] }),
+        { message: 'FORBIDDEN' },
+    )
+})
+
+test('fails closed for read operations when an actor has an explicit empty unit scope', async () => {
+    const captured = []
+    const fakePool = createFakePool([
+        (sql) => sql.includes('from crm_atendimento.units order by name') && {
+            rows: [{ slug: 'novo-hamburgo', name: 'Novo Hamburgo' }], rowCount: 1,
+        },
+        (sql) => sql.includes('from crm_atendimento.professionals') && {
+            rows: [{ id: 'doctor-1', name: 'Dra. A', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Injetor'] }], rowCount: 1,
+        },
+        (sql) => sql.includes('from crm_atendimento.procedures') && { rows: [], rowCount: 0 },
+        (sql, params) => sql.includes('count(*)::int as total_attendances') && (() => {
+            captured.push({ sql, params })
+            return { rows: [{ total_attendances: 0, quantity_total: 0, total_value: 0, distinct_clients: 0 }], rowCount: 1 }
+        })(),
+        (sql) => sql.includes("to_char(a.service_date, 'YYYY-MM') as month") && { rows: [], rowCount: 0 },
+        (sql) => sql.includes('p.name as label') && { rows: [], rowCount: 0 },
+        (sql) => sql.includes("coalesce(nullif(inj.name, ''), 'Sem injetor') as label") && { rows: [], rowCount: 0 },
+        (sql) => sql.includes("coalesce(nullif(con.name, ''), 'Sem consultor') as label") && { rows: [], rowCount: 0 },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+    const actor = { role: 'INJETOR', allowedUnits: [] }
+
+    const refs = await store.references(actor)
+    await store.overview({}, actor)
+
+    assert.deepEqual(refs.units, [])
+    assert.deepEqual(refs.professionals, [])
+    assert.match(captured[0].sql, /1 = 0/)
+})
+
+test('filters raw conversion sections before returning them to a unit-restricted actor', () => {
+    const report = filterConversionReportToActorScope({
+        sections: [
+            { unitSlug: 'novo-hamburgo', rows: [{ id: 1 }] },
+            { unitSlug: 'barra-shopping-sul', rows: [{ id: 2 }, { id: 3 }] },
+        ],
+        summary: { sections: 2, rows: 3 },
+    }, {}, { role: 'INJETOR', allowedUnits: ['novo-hamburgo'] })
+
+    assert.deepEqual(report.sections.map((section) => section.unitSlug), ['novo-hamburgo'])
+    assert.deepEqual(report.summary, { sections: 1, rows: 1 })
+})
+
+test('calculates a consolidated all-units conversion view from summed unit capacity', async () => {
     const fakePool = createFakePool(buildConversionPoolHandlers())
 
     const store = createAtendimentoStore({ pool: fakePool })
@@ -24,8 +163,14 @@ test('marks all-units conversion view as non-consolidated in crm ranking payload
 
     assert.equal(report.doctorRanking.sections[0].unitSlug, 'all')
     assert.equal(report.doctorRanking.sections[0].isAggregate, true)
-    assert.equal(Object.keys(report.doctorRanking.sections[0].metrics || {}).length, 0)
-    assert.match(report.doctorRanking.sections[0].aggregateNotice || '', /Selecione uma unidade/i)
+    assert.equal(report.doctorRanking.sections[0].aggregateNotice, undefined)
+    assert.equal(report.doctorRanking.sections[0].metrics.periodAttendanceTotal.weekValue, 23)
+    assert.equal(report.doctorRanking.sections[0].metrics.periodGoal.weekValue, 120)
+    assert.equal(report.doctorRanking.sections[0].metrics.periodOperationalDays.weekValue, 2)
+    assert.equal(report.doctorRanking.sections[0].doctors.length, 2)
+    assert.equal(report.doctorRanking.sections[0].calendarMode, 'per-unit-capacity-sum')
+    assert.equal(report.doctorRanking.sections[0].calendarCompatible, false)
+    assert.equal(report.doctorRanking.sections[0].optimization.statusCode, 'INSUFFICIENT_DOCTORS')
     assert.equal(report.doctorRanking.topDoctors[0].name, 'Dra. A')
 })
 
@@ -76,7 +221,7 @@ test('returns segmented goal plan for cross-month periods without distorting the
             rows: [{ unit_slug: 'barra-shopping-sul', total: 30000 }],
             rowCount: 1,
         },
-        (sql) => sql.includes('inj.id as doctor_id') && {
+        (sql) => sql.includes('as doctor_id') && {
             rows: [{ unit_slug: 'barra-shopping-sul', doctor_id: 'doc-b', doctor_name: 'Dra. B', total: 30000 }],
             rowCount: 1,
         },
@@ -201,9 +346,9 @@ test('persists nullable conversion results idempotently and never reuses a non-a
     const store = createAtendimentoStore({ pool: fakePool })
     const actor = { role: 'GESTOR' }
 
-    const first = await store.managementConversionReport({ unit: 'novo-hamburgo', date: '2026-06-07', from: '2026-06-01', to: '2026-06-07' }, actor)
-    const second = await store.managementConversionReport({ unit: 'novo-hamburgo', date: '2026-06-14', from: '2026-06-08', to: '2026-06-14' }, actor)
-    await store.managementConversionReport({ unit: 'novo-hamburgo', date: '2026-06-14', from: '2026-06-08', to: '2026-06-14' }, actor)
+    const first = await store.managementConversionReport({ unit: 'novo-hamburgo', date: '2026-06-07', from: '2026-06-01', to: '2026-06-07' }, actor, { persist: true })
+    const second = await store.managementConversionReport({ unit: 'novo-hamburgo', date: '2026-06-14', from: '2026-06-08', to: '2026-06-14' }, actor, { persist: true })
+    await store.managementConversionReport({ unit: 'novo-hamburgo', date: '2026-06-14', from: '2026-06-08', to: '2026-06-14' }, actor, { persist: true })
 
     const firstOptimization = first.doctorRanking.sections[0].optimization
     const secondSection = second.doctorRanking.sections[0]
@@ -253,8 +398,43 @@ test('returns row-based overview metrics with explicit quantity totals', async (
     assert.equal(overview.summary.quantityTotal, 3)
     assert.equal(overview.summary.countMode, 'row')
     assert.equal(overview.summary.averageTicket, 799)
+    assert.equal(overview.summary.distinctClients, 1)
     assert.equal(overview.monthly[0].quantityTotal, 3)
     assert.equal(overview.rankings.procedures[0].quantityTotal, 3)
+})
+
+test('applies all attendance filters together before calculating overview metrics', async () => {
+    const captured = []
+    const fakePool = createFakePool([
+        (sql, params) => sql.includes('count(*)::int as total_attendances') && (() => {
+            captured.push({ sql, params })
+            return { rows: [{ total_attendances: 0, quantity_total: 0, total_value: 0, distinct_clients: 0 }], rowCount: 1 }
+        })(),
+        (sql) => sql.includes("to_char(a.service_date, 'YYYY-MM') as month") && { rows: [], rowCount: 0 },
+        (sql) => sql.includes('p.name as label') && { rows: [], rowCount: 0 },
+        (sql) => sql.includes("coalesce(nullif(inj.name, ''), 'Sem injetor') as label") && { rows: [], rowCount: 0 },
+        (sql) => sql.includes("coalesce(nullif(con.name, ''), 'Sem consultor') as label") && { rows: [], rowCount: 0 },
+    ])
+    await createAtendimentoStore({ pool: fakePool }).overview({
+        unit: 'novo-hamburgo',
+        from: '2026-06-01',
+        to: '2026-06-30',
+        procedure: 'Botox',
+        code: '#0799',
+        injector: 'Dra. A',
+        consultant: 'Consultora A',
+        search: 'cliente',
+    }, { role: 'INJETOR', allowedUnits: ['novo-hamburgo'] })
+
+    assert.equal(captured.length, 1)
+    assert.match(captured[0].sql, /u\.slug = any\(\$1\)/)
+    assert.match(captured[0].sql, /a\.service_date >=/)
+    assert.match(captured[0].sql, /a\.service_date <=/)
+    assert.match(captured[0].sql, /p\.name =/)
+    assert.match(captured[0].sql, /a\.code =/)
+    assert.match(captured[0].sql, /inj\.name =/)
+    assert.match(captured[0].sql, /con\.name =/)
+    assert.match(captured[0].sql, /lower\(a\.client_name\) like/)
 })
 
 test('returns finance totals with explicit quantity totals by unit', async () => {
@@ -298,6 +478,65 @@ test('does not suggest injector names on closed no-service days', async () => {
     assert.equal(result.doctorName, '')
 })
 
+test('reads conversion configuration without repairing or mutating it', async () => {
+    const fakePool = createFakePool([
+        (sql) => sql.includes('update crm_atendimento.doctor_conversion_config set config_hash') && (() => {
+            throw new Error('READ_MUST_NOT_WRITE_CONFIG')
+        })(),
+        (sql) => sql.includes('select * from crm_atendimento.doctor_conversion_config') && {
+            rows: [{
+                default_interval_multiplier: null,
+                interval_multiplier_min: 0,
+                interval_multiplier_max: 2,
+                objective_name: 'sse_uniform',
+                require_all_bands_if_possible: true,
+                require_extremes_if_possible: true,
+                stability_tie_break: true,
+                tie_break_policy: 'previous_then_widest_plateau_center',
+                unstable_jump_threshold: 0.5,
+                config_hash: 'legacy-stale-hash',
+            }],
+            rowCount: 1,
+        },
+    ])
+
+    const result = await createAtendimentoStore({ pool: fakePool }).doctorConversionConfig()
+    assert.match(result.config.configHash, /^fnv1a-/)
+    assert.notEqual(result.config.configHash, 'legacy-stale-hash')
+})
+
+test('returns remuneration only as a versioned legacy preview policy', async () => {
+    const fakePool = createFakePool([
+        (sql) => sql.includes('a.value > 0') && sql.includes('order by inj.name, a.service_date asc') && {
+            rows: [{
+                id: 'attendance-1',
+                unit_slug: 'novo-hamburgo',
+                unit_name: 'Novo Hamburgo',
+                service_date: '2026-06-10',
+                client_name: 'Cliente',
+                procedure_name: 'Botox',
+                code: '#3000',
+                quantity: 1,
+                discount: false,
+                other_value: 0,
+                round_value: false,
+                value: 3000,
+                injector_name: 'Dra. A',
+                consultant_name: '',
+            }],
+            rowCount: 1,
+        },
+    ])
+
+    const preview = await createAtendimentoStore({ pool: fakePool }).reportPreview(
+        { unit: 'novo-hamburgo', from: '2026-06-10', to: '2026-06-10' },
+        { role: 'GESTOR' },
+    )
+    assert.equal(preview.doctors[0].remuneration, 300)
+    assert.equal(preview.doctors[0].remunerationFormulaVersion, 'attendance-remuneration/legacy-preview-v1')
+    assert.equal(preview.remunerationPolicy.businessStatus, 'pending_confirmation')
+})
+
 function buildConversionPoolHandlers() {
     const conversionRows = buildConversionRawRows()
 
@@ -324,7 +563,7 @@ function buildConversionPoolHandlers() {
             ],
             rowCount: 2,
         },
-        (sql) => sql.includes('inj.id as doctor_id') && {
+        (sql) => sql.includes('as doctor_id') && {
             rows: [
                 { unit_slug: 'novo-hamburgo', doctor_id: 'doc-a', doctor_name: 'Dra. A', total: 14 },
                 { unit_slug: 'barra-shopping-sul', doctor_id: 'doc-b', doctor_name: 'Dra. B', total: 9 },
