@@ -1,6 +1,33 @@
 const DEFAULT_CHANNELS = Array.from({ length: 9 }, (_, i) => i + 1)
 const DEFAULT_INSTANCE_PREFIX = 'crm-channel-'
 const DEBUG_QR = String(process.env.WA_DEBUG_QR || '').toLowerCase() === 'true'
+const QR_CACHE_TTL_MS = Math.max(15000, Number.parseInt(String(process.env.EVOLUTION_QR_CACHE_TTL_MS || '55000'), 10) || 55000)
+const channelQrCache = new Map()
+const channelQrInFlight = new Map()
+
+function cacheChannelQr(channel, qr, status = 'qr_pending') {
+  if (!qr) return
+  channelQrCache.set(Number(channel), {
+    qr,
+    status,
+    expiresAt: Date.now() + QR_CACHE_TTL_MS
+  })
+}
+
+function getCachedChannelQr(channel) {
+  const key = Number(channel)
+  const cached = channelQrCache.get(key)
+  if (!cached) return null
+  if (cached.expiresAt <= Date.now()) {
+    channelQrCache.delete(key)
+    return null
+  }
+  return cached
+}
+
+function clearCachedChannelQr(channel) {
+  channelQrCache.delete(Number(channel))
+}
 
 function resolveEvolutionConfig() {
   const baseUrl =
@@ -241,11 +268,7 @@ async function fetchInstances() {
   return []
 }
 
-async function ensureInstance(channel, instanceName) {
-  const instances = await fetchInstances()
-  const existing = instances.find((inst) => String(inst?.name) === instanceName)
-  if (existing) return existing
-
+async function createInstance(instanceName) {
   const res = await evolutionFetch('/instance/create', {
     method: 'POST',
     body: {
@@ -259,6 +282,46 @@ async function ensureInstance(channel, instanceName) {
     throw new Error(message)
   }
   return res.json?.instance || null
+}
+
+async function ensureInstance(channel, instanceName) {
+  const instances = await fetchInstances()
+  const existing = instances.find((inst) => String(inst?.name) === instanceName)
+  if (existing) return { instance: existing, existed: true }
+  return { instance: await createInstance(instanceName), existed: false }
+}
+
+async function isReusableUnpairedInstance(instance, instanceName) {
+  if (!instance || instance.number || instance.ownerJid) return false
+  const storedStatus = mapStateToStatus(normalizeState(instance.connectionStatus || instance.status || instance.state))
+  if (storedStatus === 'free') return true
+  const liveState = await getInstanceConnectionState(instanceName)
+  return Boolean(liveState && mapStateToStatus(liveState) === 'free')
+}
+
+async function recycleUnpairedInstance(instanceName) {
+  console.info('[WA_ORCHESTRATOR] Recycling closed unpaired instance', { instanceName, phase: 'delete' })
+  const deleted = await evolutionFetch(`/instance/delete/${encodeURIComponent(instanceName)}`, {
+    method: 'DELETE',
+    disableRetry: true
+  })
+  if (!deleted.ok) {
+    const message = deleted.json?.error || deleted.json?.message || deleted.text || `HTTP ${deleted.status}`
+    throw new Error(message)
+  }
+  console.info('[WA_ORCHESTRATOR] Recycling closed unpaired instance', { instanceName, phase: 'create' })
+  let created
+  try {
+    created = await createInstance(instanceName)
+  } catch (error) {
+    // Evolution may acknowledge deletion before releasing the instance name.
+    // A single delayed retry keeps the same channel without spilling into the
+    // next slot or leaving the UI waiting on a stale connection.
+    await wait(1800)
+    created = await createInstance(instanceName)
+  }
+  console.info('[WA_ORCHESTRATOR] Recycled closed unpaired instance', { instanceName, phase: 'ready' })
+  return created
 }
 
 function normalizeInstanceSettingsPayload(raw = {}) {
@@ -307,7 +370,6 @@ async function ensureHistorySyncEnabled(instanceName) {
 }
 
 async function connectInstance(instanceName) {
-  await ensureHistorySyncEnabled(instanceName)
   const res = await evolutionFetch(`/instance/connect/${encodeURIComponent(instanceName)}`)
   debugQr('connectInstance:response', {
     instanceName,
@@ -321,9 +383,15 @@ async function connectInstance(instanceName) {
     const message = res.json?.error || res.json?.message || res.text || `HTTP ${res.status}`
     throw new Error(message)
   }
-  if (res.json) return res.json
-  if (res.text) return { rawText: res.text }
-  return null
+  const result = res.json || (res.text ? { rawText: res.text } : null)
+  const state = normalizeState(result?.instance?.status || result?.instance?.state || result?.state)
+  if (state === 'connected') {
+    // Settings endpoints reject or stall for an instance that is still waiting
+    // for its first pairing. Keep QR generation on the critical path and only
+    // enforce history sync after Evolution reports a connected session.
+    void ensureHistorySyncEnabled(instanceName)
+  }
+  return result
 }
 
 function isAlreadyDisconnectedMessage(message) {
@@ -413,6 +481,11 @@ async function getStatus() {
         status = mapStateToStatus(state)
       }
     }
+    if (status === 'connected') {
+      clearCachedChannelQr(channel)
+    } else if (status === 'free' && getCachedChannelQr(channel)) {
+      status = 'qr_pending'
+    }
     return {
       id: `wa-channel-${channel}`,
       channel,
@@ -451,33 +524,59 @@ async function getChannelStatus(channel) {
 }
 
 async function getChannelQR(channel) {
-  const { instancePrefix } = resolveEvolutionConfig()
-  const name = channelName(channel, instancePrefix)
-  const result = await connectInstance(name)
-  let qr = extractQrCandidate(result)
-  if (!qr && result?.rawText) {
-    qr = extractQrFromText(result.rawText)
+  const cached = getCachedChannelQr(channel)
+  if (cached) {
+    return { qr: cached.qr, status: cached.status, channel, port: 3001, cached: true }
   }
-  qr = normalizeQrValue(qr)
-  const state = normalizeState(result?.instance?.status || result?.instance?.state || result?.state)
-  let status = mapStateToStatus(state)
-  if (qr && status === 'error') status = 'qr_pending'
-  debugQr('getChannelQR:resolved', {
-    channel,
-    instanceName: name,
-    status,
-    hasQr: !!qr,
-    qrType: qr ? (String(qr).startsWith('data:image') ? 'image-data-url' : 'raw-text') : null,
-    qrLength: typeof qr === 'string' ? qr.length : 0,
-    qrPrefix: typeof qr === 'string' ? qr.slice(0, 24) : null
-  })
-  return { qr, status, channel, port: 3001 }
+  const key = Number(channel)
+  const existingRequest = channelQrInFlight.get(key)
+  if (existingRequest) return existingRequest
+
+  const request = (async () => {
+    const { instancePrefix } = resolveEvolutionConfig()
+    const name = channelName(channel, instancePrefix)
+    const result = await connectInstance(name)
+    let qr = extractQrCandidate(result)
+    if (!qr && result?.rawText) {
+      qr = extractQrFromText(result.rawText)
+    }
+    qr = normalizeQrValue(qr)
+    const state = normalizeState(result?.instance?.status || result?.instance?.state || result?.state)
+    let status = mapStateToStatus(state)
+    if (qr && status === 'error') status = 'qr_pending'
+    cacheChannelQr(channel, qr, status)
+    debugQr('getChannelQR:resolved', {
+      channel,
+      instanceName: name,
+      status,
+      hasQr: !!qr,
+      qrType: qr ? (String(qr).startsWith('data:image') ? 'image-data-url' : 'raw-text') : null,
+      qrLength: typeof qr === 'string' ? qr.length : 0,
+      qrPrefix: typeof qr === 'string' ? qr.slice(0, 24) : null
+    })
+    return { qr, status, channel, port: 3001 }
+  })()
+
+  channelQrInFlight.set(key, request)
+  try {
+    return await request
+  } finally {
+    if (channelQrInFlight.get(key) === request) {
+      channelQrInFlight.delete(key)
+    }
+  }
 }
 
 async function startChannel(channel, nameOverride) {
   const { instancePrefix } = resolveEvolutionConfig()
   const instanceName = channelName(channel, instancePrefix)
-  await ensureInstance(channel, instanceName)
+  const ensured = await ensureInstance(channel, instanceName)
+  if (ensured.existed && await isReusableUnpairedInstance(ensured.instance, instanceName)) {
+    // Evolution can retain a closed, never-paired instance whose connect
+    // endpoint no longer returns a QR. Recreate the same instance name so the
+    // CRM reuses the channel slot instead of leaking into the next channel.
+    await recycleUnpairedInstance(instanceName)
+  }
   const connect = await connectInstance(instanceName)
   let qr = extractQrCandidate(connect)
   if (!qr && connect?.rawText) {
@@ -487,6 +586,7 @@ async function startChannel(channel, nameOverride) {
   const state = normalizeState(connect?.instance?.status || connect?.instance?.state || connect?.state)
   let status = mapStateToStatus(state)
   if (qr && status === 'error') status = 'qr_pending'
+  cacheChannelQr(channel, qr, status)
   debugQr('startChannel:resolved', {
     channel,
     instanceName,
@@ -509,6 +609,7 @@ async function startChannel(channel, nameOverride) {
 }
 
 async function stopChannel(channel) {
+  clearCachedChannelQr(channel)
   const { instancePrefix } = resolveEvolutionConfig()
   const name = channelName(channel, instancePrefix)
   const res = await evolutionFetch(`/instance/logout/${encodeURIComponent(name)}`, { method: 'DELETE' })
@@ -531,6 +632,7 @@ async function stopChannel(channel) {
 }
 
 async function restartChannel(channel) {
+  clearCachedChannelQr(channel)
   const { instancePrefix } = resolveEvolutionConfig()
   const name = channelName(channel, instancePrefix)
   const res = await evolutionFetch(`/instance/restart/${encodeURIComponent(name)}`, { method: 'POST' })

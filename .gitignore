@@ -79,6 +79,8 @@ dist/
 eggs/
 .eggs/
 lib/
+!scripts/lib/
+!scripts/lib/crm-local-runtime.sh
 !orb/engine/scripts/lib/
 orb/engine/scripts/lib/*
 !orb/engine/scripts/lib/runtime-paths.sh

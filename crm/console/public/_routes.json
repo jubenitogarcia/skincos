@@ -18,6 +18,7 @@
         "/api/ponto/*",
         "/api/escala/*",
         "/api/unit-monitor/*",
+        "/_local-runtime",
         "/share",
         "/share/*",
         "/social-media",
