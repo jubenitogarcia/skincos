@@ -82,6 +82,8 @@ async function remoteD1Import(sqlText) {
   const { apiToken, base } = remoteD1Context()
   const endpoint = `${base}/import`
   const headers = { authorization: `Bearer ${apiToken}`, 'content-type': 'application/json' }
+  // lgtm[js/weak-cryptographic-algorithm]: Cloudflare D1 requires this MD5 only
+  // as the transport ETag for an import upload; it is never a security control.
   const etag = createHash('md5').update(sqlText).digest('hex')
   const requestJson = async (body) => {
     const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) })
