@@ -1,0 +1,217 @@
+name: Deploy Workforce Timekeeping
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Deploy target
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      staging_run_id:
+        description: Required for production - successful staging run id for this exact commit
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-timekeeping-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - name: Verify production staging attestation
+        if: inputs.target == 'production'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$STAGING_RUN_ID" =~ ^[0-9]+$ ]] || { echo "Production requires a numeric staging_run_id"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/staging-attestation"
+          gh run download "$STAGING_RUN_ID" --repo "$GITHUB_REPOSITORY" --name timekeeping-staging-attestation --dir "$RUNNER_TEMP/staging-attestation"
+          node - "$RUNNER_TEMP/staging-attestation/attestation.json" "$EXPECTED_SHA" <<'NODE'
+          const fs = require('fs')
+          const [file, expectedSha] = process.argv.slice(2)
+          const value = JSON.parse(fs.readFileSync(file, 'utf8'))
+          if (value.target !== 'staging' || value.sha !== expectedSha || value.health !== 200 || value.readiness !== 200) {
+            console.error('Staging attestation does not match this production commit')
+            process.exit(1)
+          }
+          NODE
+
+      - name: Guard target and credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_ID: ${{ inputs.target == 'production' && vars.TIMEKEEPING_D1_PRODUCTION_ID || vars.TIMEKEEPING_D1_STAGING_ID }}
+          PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+          PONTO_TEMPLATES_KEY: ${{ secrets.PONTO_TEMPLATES_KEY }}
+          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+          TIMEKEEPING_BACKUP_PASSPHRASE: ${{ secrets.TIMEKEEPING_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY ESCALA_ACTOR_HMAC_KEY TIMEKEEPING_BACKUP_PASSPHRASE; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }
+          done
+          [[ "$D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "Invalid Timekeeping D1 id"; exit 1; }
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
+
+      - name: Install pinned Worker toolchains
+        run: |
+          set -euo pipefail
+          npm --prefix workforce/timekeeping ci --ignore-scripts
+          npm --prefix api ci --ignore-scripts
+          # Node 22.12's bundled Corepack keyring cannot verify pnpm 9.15.4.
+          # Install the lockfile-declared version directly, rather than accepting
+          # an unpinned latest package-manager release.
+          (cd inventory && npx --yes pnpm@9.15.4 install --frozen-lockfile --ignore-scripts)
+
+      - name: Verify checked-out source identity
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo "Checkout SHA mismatch"; exit 1; }
+
+      - name: Test release source
+        run: |
+          set -euo pipefail
+          npm --prefix workforce/timekeeping test
+          npm --prefix api test
+
+      - name: Configure target D1 id in ephemeral checkout
+        env:
+          TARGET: ${{ inputs.target }}
+          D1_ID: ${{ inputs.target == 'production' && vars.TIMEKEEPING_D1_PRODUCTION_ID || vars.TIMEKEEPING_D1_STAGING_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == "production" ]]; then
+            sed -i "s/__CONFIGURE_TIMEKEEPING_D1_ID__/$D1_ID/" workforce/timekeeping/wrangler.toml
+          else
+            sed -i "s/__CONFIGURE_TIMEKEEPING_STAGING_D1_ID__/$D1_ID/" workforce/timekeeping/wrangler.toml
+          fi
+
+      - name: Capture encrypted D1 checkpoint
+        id: checkpoint
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+          TIMEKEEPING_BACKUP_PASSPHRASE: ${{ secrets.TIMEKEEPING_BACKUP_PASSPHRASE }}
+        working-directory: workforce/timekeeping
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); DB_NAME=skincos-timekeeping; else ENV_ARGS=(--env staging); DB_NAME=skincos-timekeeping-staging; fi
+          plain="$RUNNER_TEMP/timekeeping-${TARGET}-pre-migration-${GITHUB_SHA}.sql"
+          encrypted="${plain}.gpg"
+          ./node_modules/.bin/wrangler d1 export "$DB_NAME" --remote --output "$plain" --config wrangler.toml "${ENV_ARGS[@]}"
+          printf '%s' "$TIMEKEEPING_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
+          rm -f "$plain"
+          echo "artifact=$encrypted" >> "$GITHUB_OUTPUT"
+
+      - name: Upload encrypted migration checkpoint
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: timekeeping-${{ inputs.target }}-pre-migration-${{ github.sha }}
+          path: ${{ steps.checkpoint.outputs.artifact }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Apply remote migrations before code deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+        working-directory: workforce/timekeeping
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); DB_NAME=skincos-timekeeping; else ENV_ARGS=(--env staging); DB_NAME=skincos-timekeeping-staging; fi
+          ./node_modules/.bin/wrangler d1 migrations apply "$DB_NAME" --remote --config wrangler.toml "${ENV_ARGS[@]}"
+
+      - name: Configure Worker secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+          PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+          PONTO_TEMPLATES_KEY: ${{ secrets.PONTO_TEMPLATES_KEY }}
+          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); else ENV_ARGS=(--env staging); fi
+          for name in PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY ESCALA_ACTOR_HMAC_KEY; do
+            printf '%s' "${!name}" | workforce/timekeeping/node_modules/.bin/wrangler secret put "$name" --config workforce/timekeeping/wrangler.toml "${ENV_ARGS[@]}" >/dev/null
+          done
+
+      - name: Ensure proxied staging API DNS record
+        if: inputs.target == 'staging'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          zone="$(curl --fail --silent --show-error "${auth[@]}" 'https://api.cloudflare.com/client/v4/zones?name=skincos.com.br' | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);if(!r.success||r.result.length!==1)process.exit(1);process.stdout.write(r.result[0].id)})")"
+          record="$(curl --fail --silent --show-error "${auth[@]}" "https://api.cloudflare.com/client/v4/zones/$zone/dns_records?name=api-staging.skincos.com.br" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);if(!r.success)process.exit(1);process.stdout.write(r.result[0]?.id||'')})")"
+          if [[ -z "$record" ]]; then
+            curl --fail --silent --show-error --request POST "${auth[@]}" --data '{"type":"A","name":"api-staging.skincos.com.br","content":"192.0.2.1","ttl":1,"proxied":true}' "https://api.cloudflare.com/client/v4/zones/$zone/dns_records" >/dev/null
+          else
+            curl --fail --silent --show-error --request PATCH "${auth[@]}" --data '{"proxied":true,"ttl":1}' "https://api.cloudflare.com/client/v4/zones/$zone/dns_records/$record" >/dev/null
+          fi
+
+      - name: Deploy Timekeeping then gateway
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); else ENV_ARGS=(--env staging); fi
+          workforce/timekeeping/node_modules/.bin/wrangler deploy --config workforce/timekeeping/wrangler.toml --keep-vars "${ENV_ARGS[@]}"
+          workforce/timekeeping/node_modules/.bin/wrangler deploy --config api/wrangler.toml --keep-vars "${ENV_ARGS[@]}"
+
+      - name: Read-only endpoint smoke
+        id: smoke
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == "production" ]]; then BASE=https://api.skincos.com.br; else BASE=https://api-staging.skincos.com.br; fi
+          for path in health readiness; do
+            headers="$(mktemp)"; body="$(mktemp)"
+            code="$(curl --silent --show-error --retry 5 --retry-delay 4 --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$BASE/api/ponto/$path")"
+            [[ "$code" == "200" ]] || { echo "$path returned HTTP $code"; cat "$body"; exit 1; }
+            grep -Eiq '^content-type: application/json' "$headers" || { echo "$path returned invalid content-type"; exit 1; }
+            node -e "const p=JSON.parse(require('fs').readFileSync(process.argv[1])); if(!p.ok) process.exit(1)" "$body"
+          done
+
+      - name: Write staging attestation
+        if: inputs.target == 'staging'
+        run: |
+          mkdir -p "$RUNNER_TEMP/timekeeping-staging-attestation"
+          node -e "require('fs').writeFileSync(process.argv[1], JSON.stringify({target:'staging',sha:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,health:200,readiness:200,createdAt:new Date().toISOString()},null,2))" "$RUNNER_TEMP/timekeeping-staging-attestation/attestation.json"
+
+      - name: Upload staging attestation
+        if: inputs.target == 'staging'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: timekeeping-staging-attestation
+          path: ${{ runner.temp }}/timekeeping-staging-attestation/attestation.json
+          retention-days: 14
+          if-no-files-found: error

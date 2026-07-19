@@ -11,86 +11,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DEFAULT_UNIT_OPTIONS, type UnitOption } from '@/unitSelection'
 import * as QRCode from 'qrcode'
 import { LoadingPercentText } from '@/LoadingPattern'
-
-type ApiError = { ok?: boolean; error?: string; message?: string; code?: string; hint?: string }
-
-type PontoEmployeePublic = {
-  id: string
-  code?: string
-  name: string
-  cpf?: string
-  birthDate?: string
-  jobTitle?: string
-  phone?: string
-  loginEmail?: string
-  unit?: string
-  active?: boolean
-  createdAt?: string
-  updatedAt?: string
-  deletedAt?: string | null
-  faceDescriptorsCount?: number
-  lastEnrolledAt?: string | null
-  pinSet?: boolean
-}
-
-type PontoDevicePublic = {
-  id: string
-  label?: string
-  unit?: string
-  active?: boolean
-  createdAt?: string
-  revokedAt?: string | null
-  lastSeenAt?: string | null
-}
-
-type PontoEmailConflict = {
-  email: string
-  count: number
-  employees: PontoEmployeePublic[]
-}
-
-type PontoPunchRecord = {
-  id: string
-  kind: 'PUNCH'
-  employeeId: string
-  employeeName: string
-  type: 'IN' | 'OUT' | string
-  at: string
-  unit?: string | null
-  deviceId?: string | null
-  deviceLabel?: string | null
-  method?: 'FACE' | 'PIN' | 'ADMIN' | string
-  matchDistance?: number | null
-  note?: string | null
-  corrected?: { id: string; at: string; reason?: string | null } | null
-}
-
-type PontoMeResponse =
-  | { ok: true; linked: false; actorEmail?: string; hint?: string; allowedUnits?: string[] }
-  | {
-    ok: true
-    linked: true
-    actorEmail?: string
-    allowedUnits?: string[]
-    employee: PontoEmployeePublic
-    hasFace: boolean
-    pinSet: boolean
-    lastPunch: PontoPunchRecord | null
-    cooldown?: { active: boolean; secondsRemaining?: number }
-    suggestedNextMethod?: 'FACE' | 'PIN'
-  }
+import { apiBlob, apiJson, createRequestMeta, errorMetaString, fetchJsonWithMeta, getDevEmployeeActorHeaders, LS_DEV_ACTOR_EMAIL } from './pontoApi'
+import type { PontoCorrection, PontoDevicePublic, PontoEmailConflict, PontoEmployeePublic, PontoMeResponse, PontoMonthlyResult, PontoPunchRecord } from './pontoTypes'
 
 type FaceDetectorMode = 'tiny' | 'ssd'
 
-const LS_DEV_ACTOR_EMAIL = 'skincos.ponto.devActorEmail.v1'
-
-function errorMetaString(meta: { code?: string; requestId?: string; cfRay?: string }) {
-  const parts: string[] = []
-  if (meta.code) parts.push(`code:${meta.code}`)
-  if (meta.requestId) parts.push(`req:${meta.requestId}`)
-  if (meta.cfRay) parts.push(`cf:${meta.cfRay}`)
-  return parts.length ? parts.join(' • ') : ''
-}
 
 const FACE_FALLBACK_THRESHOLD = 3
 const FACE_FALLBACK_MESSAGE =
@@ -124,30 +49,6 @@ function toastErrorMeta(err: any) {
   if (text) toast.message(text)
 }
 
-function b64UrlEncodeBytes(bytes: ArrayBuffer): string {
-  const bin = String.fromCharCode(...new Uint8Array(bytes))
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
-}
-
-function b64UrlEncodeString(input: string): string {
-  const bytes = new TextEncoder().encode(input)
-  return b64UrlEncodeBytes(bytes.buffer)
-}
-
-function getDevEmployeeActorHeaders(emailOverride?: string): Record<string, string> {
-  if (!import.meta.env.DEV) return {}
-  let email = ''
-  if (emailOverride) {
-    email = String(emailOverride).trim().toLowerCase()
-  } else {
-    try { email = String(localStorage.getItem(LS_DEV_ACTOR_EMAIL) || '').trim().toLowerCase() } catch { email = '' }
-  }
-  if (!email) return {}
-  const actor = { email }
-  const actorB64 = b64UrlEncodeString(JSON.stringify(actor))
-  const actorTs = String(Date.now())
-  return { 'x-skincos-actor': actorB64, 'x-skincos-actor-ts': actorTs }
-}
 
 function fmtDate(value?: string | null) {
   const v = String(value || '').trim()
@@ -181,110 +82,6 @@ function toDateRangeISO(value: string, mode: 'start' | 'end'): string {
   const iso = mode === 'end' ? `${raw}T23:59:59.999` : `${raw}T00:00:00.000`
   const dt = new Date(iso)
   return Number.isFinite(dt.getTime()) ? dt.toISOString() : ''
-}
-
-function createRequestMeta() {
-  return {
-    requestId: (globalThis.crypto?.randomUUID?.() || String(Date.now())),
-    clientTime: new Date().toISOString(),
-    tzOffsetMinutes: -new Date().getTimezoneOffset(),
-    locale: navigator.language || 'pt-BR',
-    appVersion: null as string | null
-  }
-}
-
-async function apiJson<T>(
-  path: string,
-  opts: { method?: string; body?: unknown; adminToken?: string; signal?: AbortSignal; headers?: Record<string, string> } = {}
-): Promise<T> {
-  const method = (opts.method || 'GET').toUpperCase()
-  const headers: Record<string, string> = { Accept: 'application/json', ...(opts.headers || {}) }
-  if (opts.body !== undefined) headers['content-type'] = 'application/json'
-  if (opts.adminToken) headers.authorization = `Admin ${opts.adminToken}`
-  const res = await fetch(path, {
-    method,
-    credentials: 'include',
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    signal: opts.signal
-  })
-  const requestId = String(res.headers.get('x-request-id') || '').trim()
-  const cfRay = String(res.headers.get('cf-ray') || '').trim()
-  const text = await res.text()
-  let json: unknown = null
-  try {
-    json = text ? JSON.parse(text) : null
-  } catch {
-    json = null
-  }
-  if (res.ok) return json as T
-  const nonJsonText = String(text || '')
-  const htmlWorkerCrash = !json && (nonJsonText.includes('Worker threw exception') || nonJsonText.includes('Cloudflare Ray ID'))
-  const err = ((json || {}) as ApiError)
-  const inferredCode = htmlWorkerCrash ? 'UPSTREAM_WORKER_EXCEPTION' : ''
-  const code = String(err.error || err.code || inferredCode || '').trim()
-  const hintFromHtml = htmlWorkerCrash ? 'Falha no Worker upstream (Cloudflare 1101). Verifique logs com o request-id/cf-ray.' : ''
-  const hint = typeof err.hint === 'string' ? err.hint.trim() : hintFromHtml
-  const base = err.error || err.message || `HTTP ${res.status}`
-  const meta = errorMetaString({ code, requestId, cfRay })
-  const e = new Error([base, hint, meta].filter(Boolean).join(' • '))
-  ;(e as any).details = json || (code ? { error: code } : null)
-  ;(e as any).status = res.status
-  ;(e as any).requestId = requestId
-  ;(e as any).cfRay = cfRay
-  ;(e as any).code = code
-  ;(e as any).rawText = nonJsonText.slice(0, 240)
-  throw e
-}
-
-async function apiBlob(path: string, opts: { adminToken?: string; signal?: AbortSignal } = {}): Promise<Blob> {
-  const headers: Record<string, string> = {}
-  if (opts.adminToken) headers.authorization = `Admin ${opts.adminToken}`
-  const res = await fetch(path, { headers, credentials: 'include', signal: opts.signal })
-  if (!res.ok) {
-    const requestId = String(res.headers.get('x-request-id') || '').trim()
-    const cfRay = String(res.headers.get('cf-ray') || '').trim()
-    let msg = `HTTP ${res.status}`
-    try {
-      const json = (await res.json()) as ApiError
-      msg = json.error || json.message || msg
-    } catch { /* ignore */ }
-    const meta = errorMetaString({ requestId, cfRay })
-    const e = new Error([msg, meta].filter(Boolean).join(' • '))
-    ;(e as any).status = res.status
-    ;(e as any).requestId = requestId
-    ;(e as any).cfRay = cfRay
-    throw e
-  }
-  return await res.blob()
-}
-
-async function fetchJsonWithMeta(
-  path: string,
-  opts: { method?: string; body?: unknown; signal?: AbortSignal; headers?: Record<string, string> } = {}
-): Promise<{ ok: boolean; status: number; requestId: string; cfRay: string; json: any; text: string }> {
-  const method = (opts.method || 'GET').toUpperCase()
-  const headers: Record<string, string> = { Accept: 'application/json', ...(opts.headers || {}) }
-  if (opts.body !== undefined) headers['content-type'] = 'application/json'
-
-  const res = await fetch(path, {
-    method,
-    credentials: 'include',
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    signal: opts.signal
-  })
-
-  const requestId = String(res.headers.get('x-request-id') || '').trim()
-  const cfRay = String(res.headers.get('cf-ray') || '').trim()
-  const text = await res.text()
-  let json: any = null
-  try {
-    json = text ? JSON.parse(text) : null
-  } catch {
-    json = null
-  }
-  return { ok: res.ok, status: res.status, requestId, cfRay, json, text }
 }
 
 let faceLibPromise: Promise<any> | null = null
@@ -618,6 +415,19 @@ export function PontoModule() {
   const [conflictsLoading, setConflictsLoading] = useState(false)
   const [conflictsError, setConflictsError] = useState<string | null>(null)
   const [emailConflicts, setEmailConflicts] = useState<PontoEmailConflict[]>([])
+  const [managementMonth, setManagementMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [managementUnit, setManagementUnit] = useState('')
+  const [monthlyResult, setMonthlyResult] = useState<PontoMonthlyResult | null>(null)
+  const [monthlyLoading, setMonthlyLoading] = useState(false)
+  const [monthlyError, setMonthlyError] = useState<string | null>(null)
+  const [corrections, setCorrections] = useState<PontoCorrection[]>([])
+  const [correctionsLoading, setCorrectionsLoading] = useState(false)
+  const [correctionOpen, setCorrectionOpen] = useState(false)
+  const [correctionEvent, setCorrectionEvent] = useState<PontoPunchRecord | null>(null)
+  const [correctionAt, setCorrectionAt] = useState('')
+  const [correctionReason, setCorrectionReason] = useState('')
+  const [lastClosureId, setLastClosureId] = useState('')
+  const [periodReason, setPeriodReason] = useState('')
 
   const [adminUnitOptions, setAdminUnitOptions] = useState<UnitOption[]>(DEFAULT_UNIT_OPTIONS)
   const [adminUnitsLoading, setAdminUnitsLoading] = useState(false)
@@ -657,10 +467,21 @@ export function PontoModule() {
     }
   }, [allowedUnits])
 
+  useEffect(() => {
+    const employeeUnits = Array.from(new Set([...(selectedEmployee?.units || []), selectedEmployee?.unit || ''].filter(Boolean)))
+    const preferred = employeeUnits[0] || allowedUnits[0] || adminUnitOptions[0]?.value || ''
+    if ((!managementUnit || (employeeUnits.length > 0 && !employeeUnits.includes(managementUnit))) && preferred) {
+      setManagementUnit(preferred)
+    }
+  }, [adminUnitOptions, allowedUnits, managementUnit, selectedEmployee])
+
   const isDev = import.meta.env.DEV
   const crmRole = String(crmMe?.user?.role || '').toUpperCase()
-  const canAdmin = crmRole === 'GESTOR' || crmRole === 'GERENTE'
-  const canAdminActions = canAdmin
+  const canAdmin = ['GESTOR', 'GERENTE', 'RH', 'ADMIN', 'AUDITOR'].includes(crmRole)
+  const canAdminActions = ['GESTOR', 'GERENTE', 'RH', 'ADMIN'].includes(crmRole)
+  const canManageCanonicalEmployee = ['RH', 'ADMIN'].includes(crmRole)
+  const canApproveCorrection = ['RH', 'ADMIN'].includes(crmRole)
+  const canClosePeriod = ['RH', 'ADMIN'].includes(crmRole)
   const canSeeSensitive = canAdmin || (me && 'linked' in me && me.linked)
   const maskSensitive = (value?: string | null, mask: string = '•••') => {
     const raw = String(value || '').trim()
@@ -725,14 +546,14 @@ export function PontoModule() {
   }, [loadCrmMe])
 
   useEffect(() => {
-    if (!canAdminActions) return
+    if (!canAdmin) return
     void loadAdminUnits()
-  }, [canAdminActions, loadAdminUnits])
+  }, [canAdmin, loadAdminUnits])
 
   useEffect(() => {
-    if (!canAdminActions) return
+    if (!canAdmin) return
     void adminRefreshAll()
-  }, [canAdminActions])
+  }, [canAdmin])
 
   useEffect(() => {
     if (!enrollOpen) return
@@ -1210,7 +1031,7 @@ export function PontoModule() {
   }, [mePunchOpen, meStep, meFaceAutoRunning, faceDetectorMode, me, allowedUnits, resolvedMeUnit])
 
   async function adminRefreshAll() {
-    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
+    if (!canAdmin) return toast.error('Acesso restrito')
     setLoading(true)
     try {
       const [emps, devs] = await Promise.all([
@@ -1219,6 +1040,14 @@ export function PontoModule() {
       ])
       setAdminEmployees(emps.data || [])
       setAdminDevices(devs.data || [])
+      const linkedUnits = Array.from(new Set((emps.data || []).flatMap((employee) => [...(employee.units || []), employee.unit || '']).filter(Boolean)))
+      if (linkedUnits.length) {
+        setAdminUnitOptions((current) => {
+          const merged = new Map(current.map((unit) => [unit.value, unit]))
+          for (const unit of linkedUnits) if (!merged.has(unit)) merged.set(unit, { value: unit, label: formatUnitLabel(unit) })
+          return Array.from(merged.values())
+        })
+      }
       if (!selectedEmployeeId && (emps.data || []).length) setSelectedEmployeeId(emps.data[0].id)
       toast.success('Dados atualizados')
     } catch (e: any) {
@@ -1230,7 +1059,7 @@ export function PontoModule() {
   }
 
   async function adminLoadEmployeeDetail(employeeId: string) {
-    if (!canAdminActions) return
+    if (!canManageCanonicalEmployee) return
     if (!employeeId) return
     try {
       const res = await apiJson<{ ok: boolean; data: PontoEmployeePublic }>(
@@ -1257,7 +1086,7 @@ export function PontoModule() {
   }
 
   async function adminCreateEmployee(opts: { enrollAfter?: boolean } = {}) {
-    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
+    if (!canManageCanonicalEmployee) return toast.error('Cadastro restrito ao RH')
     const name = newEmployeeName.trim()
     if (!name) return toast.error('Nome é obrigatório')
     const loginEmail = newEmployeeLoginEmail.trim()
@@ -1328,7 +1157,7 @@ export function PontoModule() {
 
   async function autoEnrollFace() {
     if (enrollAutoRunning) return
-    if (!canAdminActions || !selectedEmployeeId) return
+    if (!canManageCanonicalEmployee || !selectedEmployeeId) return
     if (!stream || cameraOwner !== 'admin') return
     let videoEl = adminVideoRef.current
     if (!videoEl) {
@@ -1406,7 +1235,7 @@ export function PontoModule() {
   }
 
   async function adminSaveEmployeeEdit() {
-    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
+    if (!canManageCanonicalEmployee) return toast.error('Alteração restrita ao RH')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     const name = editName.trim()
     if (!name) return toast.error('Nome é obrigatório')
@@ -1456,7 +1285,7 @@ export function PontoModule() {
   }
 
   async function adminDeleteEmployee() {
-    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
+    if (!canManageCanonicalEmployee) return toast.error('Desligamento restrito ao RH')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     const name = selectedEmployee?.name || 'este funcionário'
     const confirmed = window.confirm(`Tem certeza que deseja remover ${name}?`)
@@ -1507,10 +1336,12 @@ export function PontoModule() {
         return
       }
       if (action === 'create') {
+        if (!canManageCanonicalEmployee) return toast.error('Cadastro canônico restrito ao RH')
         setNewEmployeeOpen(true)
         return
       }
       if (action === 'edit') {
+        if (!canManageCanonicalEmployee) return toast.error('Alteração cadastral restrita ao RH')
         openSelectEmployee('edit')
         return
       }
@@ -1525,7 +1356,7 @@ export function PontoModule() {
     }
     window.addEventListener('skincos:ponto:action', handler as EventListener)
     return () => window.removeEventListener('skincos:ponto:action', handler as EventListener)
-  }, [canAdminActions, adminDevices.length, adminRefreshAll, openSelectEmployee])
+  }, [canAdminActions, canManageCanonicalEmployee, adminDevices.length, adminRefreshAll, openSelectEmployee])
 
   async function adminLoadSelectedRecords() {
     if (!canAdminActions) return toast.error('Acesso restrito a gestores')
@@ -1552,7 +1383,7 @@ export function PontoModule() {
   }
 
   async function adminLoadEmailConflicts() {
-    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
+    if (!canManageCanonicalEmployee) return toast.error('Resolução restrita ao RH')
     setConflictsLoading(true)
     setConflictsError(null)
     try {
@@ -1572,7 +1403,7 @@ export function PontoModule() {
   }
 
   async function adminResolveEmailConflict(email: string, keepEmployeeId: string) {
-    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
+    if (!canManageCanonicalEmployee) return toast.error('Resolução restrita ao RH')
     setConflictsLoading(true)
     setConflictsError(null)
     try {
@@ -1598,11 +1429,11 @@ export function PontoModule() {
     if (!newDeviceUnit.trim()) return toast.error('Unidade é obrigatória')
     setLoading(true)
     try {
-      const res = await apiJson<{ ok: boolean; data: PontoDevicePublic; tokenOnce: string }>(
+      const res = await apiJson<{ ok: boolean; data: PontoDevicePublic & { token: string } }>(
         '/api/ponto/admin/devices',
         { method: 'POST', body: { unit: newDeviceUnit.trim(), label: newDeviceLabel.trim() } }
       )
-      setNewDeviceTokenOnce(res.tokenOnce)
+      setNewDeviceTokenOnce(res.data.token)
       setNewDeviceLabel('')
       await adminRefreshAll()
       toast.success('Dispositivo criado')
@@ -1676,6 +1507,82 @@ export function PontoModule() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function selectedMonthBounds() {
+    if (!/^\d{4}-\d{2}$/.test(managementMonth)) return null
+    const [year, month] = managementMonth.split('-').map(Number)
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+    return { from: `${managementMonth}-01`, to: `${managementMonth}-${String(lastDay).padStart(2, '0')}` }
+  }
+
+  async function loadMonthlyManagement() {
+    if (!selectedEmployeeId || !managementUnit) return toast.error('Selecione funcionário e unidade')
+    setMonthlyLoading(true); setMonthlyError(null)
+    try {
+      const query = new URLSearchParams({ employeeId: selectedEmployeeId, unitId: managementUnit, month: managementMonth })
+      const response = await apiJson<{ ok: true; data: PontoMonthlyResult }>(`/api/ponto/monthly?${query}`)
+      setMonthlyResult(response.data)
+    } catch (error: any) { setMonthlyError(error?.message || String(error)); toastErrorMeta(error) } finally { setMonthlyLoading(false) }
+  }
+
+  async function loadCorrections() {
+    setCorrectionsLoading(true)
+    try {
+      const query = new URLSearchParams({ status: 'PENDING' })
+      if (managementUnit) query.set('unitId', managementUnit)
+      const response = await apiJson<{ ok: true; data: PontoCorrection[] }>(`/api/ponto/corrections?${query}`)
+      setCorrections(response.data || [])
+    } catch (error: any) { toast.error(error?.message || String(error)); toastErrorMeta(error) } finally { setCorrectionsLoading(false) }
+  }
+
+  function openCorrection(record: PontoPunchRecord) {
+    setCorrectionEvent(record)
+    setCorrectionAt(toDateTimeLocalValue(new Date(record.corrected?.at || record.at)))
+    setCorrectionReason('')
+    setCorrectionOpen(true)
+  }
+
+  async function requestCorrection() {
+    if (!correctionEvent || !correctionReason.trim()) return toast.error('Informe a justificativa')
+    const proposed = new Date(correctionAt)
+    if (!Number.isFinite(proposed.getTime())) return toast.error('Informe uma data válida')
+    setLoading(true)
+    try {
+      await apiJson('/api/ponto/corrections', { method: 'POST', body: { eventId: correctionEvent.id, proposedAtUtc: proposed.toISOString(), reason: correctionReason.trim() } })
+      setCorrectionOpen(false); toast.success('Correção enviada para aprovação'); await loadCorrections()
+    } catch (error: any) { toast.error(error?.message || String(error)); toastErrorMeta(error) } finally { setLoading(false) }
+  }
+
+  async function decideCorrection(correction: PontoCorrection, decision: 'approve' | 'reject') {
+    const reason = window.prompt(decision === 'approve' ? 'Justificativa da aprovação:' : 'Justificativa da recusa:')?.trim()
+    if (!reason) return
+    setLoading(true)
+    try {
+      await apiJson(`/api/ponto/corrections/${correction.id}/${decision}`, { method: 'POST', body: { reason } })
+      toast.success(decision === 'approve' ? 'Correção aprovada' : 'Correção recusada'); await loadCorrections(); if (monthlyResult) await loadMonthlyManagement()
+    } catch (error: any) { toast.error(error?.message || String(error)); toastErrorMeta(error) } finally { setLoading(false) }
+  }
+
+  async function closeManagementPeriod() {
+    const bounds = selectedMonthBounds()
+    if (!bounds || !selectedEmployeeId || !managementUnit || !periodReason.trim()) return toast.error('Selecione funcionário, unidade, mês e informe a justificativa')
+    if (!window.confirm(`Fechar ${managementMonth} para ${selectedEmployee?.name || 'o funcionário'}? As batidas serão bloqueadas.`)) return
+    setLoading(true)
+    try {
+      const response = await apiJson<{ ok: true; data: { id: string } }>('/api/ponto/periods/close', { method: 'POST', body: { employeeId: selectedEmployeeId, unitId: managementUnit, ...bounds, reason: periodReason.trim() } })
+      setLastClosureId(response.data.id); toast.success('Período fechado com snapshot'); await loadMonthlyManagement()
+    } catch (error: any) { toast.error(error?.message || String(error)); toastErrorMeta(error) } finally { setLoading(false) }
+  }
+
+  async function reopenManagementPeriod() {
+    if (!lastClosureId || !periodReason.trim()) return toast.error('Informe a justificativa e carregue um fechamento desta sessão')
+    if (!window.confirm('Reabrir o período? Esta ação será auditada.')) return
+    setLoading(true)
+    try {
+      await apiJson('/api/ponto/periods/reopen', { method: 'POST', body: { closureId: lastClosureId, reason: periodReason.trim() } })
+      setLastClosureId(''); toast.success('Período reaberto'); await loadMonthlyManagement()
+    } catch (error: any) { toast.error(error?.message || String(error)); toastErrorMeta(error) } finally { setLoading(false) }
   }
 
   return (
@@ -1831,7 +1738,7 @@ export function PontoModule() {
                     <div className="space-y-2 md:col-span-1">
                       <Label>Unidade</Label>
                       {allowedUnits.length > 1 ? (
-                        <Select value={resolvedMeUnit || undefined} onValueChange={setMeUnit}>
+                        <Select value={resolvedMeUnit} onValueChange={setMeUnit}>
                           <SelectTrigger>
                             <SelectValue placeholder="Selecione..." />
                           </SelectTrigger>
@@ -1877,6 +1784,84 @@ export function PontoModule() {
               </div>
           </CardContent>
         </Card>
+
+        {canAdmin ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Gestão do ponto</CardTitle>
+              <CardDescription>Espelho mensal, inconsistências, correções, banco de horas e fechamento.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="ponto-management-employee">Funcionário</Label>
+                  <Select value={selectedEmployeeId} onValueChange={setSelectedEmployeeId}>
+                    <SelectTrigger id="ponto-management-employee"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                    <SelectContent>{adminEmployees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name}{employee.active === false ? ' (desligado)' : ''}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ponto-management-unit">Unidade</Label>
+                  <Select value={managementUnit} onValueChange={setManagementUnit}>
+                    <SelectTrigger id="ponto-management-unit"><SelectValue placeholder="Selecione...">{adminUnitOptions.find((unit) => unit.value === managementUnit)?.label || managementUnit}</SelectValue></SelectTrigger>
+                    <SelectContent>{adminUnitOptions.map((unit) => <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ponto-management-month">Mês</Label>
+                  <Input id="ponto-management-month" type="month" value={managementMonth} onChange={(event) => setManagementMonth(event.target.value)} />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={loadMonthlyManagement} disabled={monthlyLoading || !selectedEmployeeId || !managementUnit}>{monthlyLoading ? 'Calculando…' : 'Carregar espelho'}</Button>
+                <Button variant="outline" onClick={loadCorrections} disabled={correctionsLoading}>{correctionsLoading ? 'Carregando…' : 'Atualizar correções'}</Button>
+                <Button variant="outline" onClick={() => setManageDevicesOpen(true)} disabled={!canAdminActions}>Dispositivos e exportação</Button>
+                <Button variant="outline" onClick={() => setDiagOpen(true)}>Diagnóstico</Button>
+              </div>
+              {monthlyError ? <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">{monthlyError}</div> : null}
+              {monthlyResult ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline">Previsto: {monthlyResult.days.reduce((sum, day) => sum + day.expectedMinutes, 0)} min</Badge>
+                    <Badge variant="outline">Trabalhado: {monthlyResult.days.reduce((sum, day) => sum + day.workedMinutes, 0)} min</Badge>
+                    <Badge variant={monthlyResult.closingBalanceMinutes < 0 ? 'destructive' : 'secondary'}>Saldo: {monthlyResult.closingBalanceMinutes} min</Badge>
+                    <Badge variant="outline">Inconsistências: {monthlyResult.days.reduce((sum, day) => sum + day.inconsistencies.length, 0)}</Badge>
+                  </div>
+                  <div className="max-h-72 overflow-auto rounded-lg border" tabIndex={0} aria-label="Espelho mensal do ponto">
+                    <Table>
+                      <TableHeader><TableRow><TableHead>Dia</TableHead><TableHead>Previsto</TableHead><TableHead>Trabalhado</TableHead><TableHead>Intervalo</TableHead><TableHead>Saldo</TableHead><TableHead>Situação</TableHead></TableRow></TableHeader>
+                      <TableBody>{monthlyResult.days.map((day) => <TableRow key={day.date}><TableCell>{day.date.split('-').reverse().join('/')}</TableCell><TableCell>{day.expectedMinutes} min</TableCell><TableCell>{day.workedMinutes} min</TableCell><TableCell>{day.breakMinutes} min</TableCell><TableCell>{day.dailyBalanceMinutes} min</TableCell><TableCell><Badge variant={day.inconsistencies.length ? 'destructive' : 'outline'}>{day.frozen ? 'Fechado' : day.status}</Badge></TableCell></TableRow>)}</TableBody>
+                    </Table>
+                  </div>
+                </div>
+              ) : <div className="text-sm text-muted-foreground">Selecione os filtros e carregue o espelho mensal.</div>}
+              {canClosePeriod ? (
+                <div className="rounded-lg border p-3 space-y-3">
+                  <div className="font-medium">Fechamento mensal</div>
+                  <Label htmlFor="ponto-period-reason">Justificativa obrigatória</Label>
+                  <Input id="ponto-period-reason" value={periodReason} onChange={(event) => setPeriodReason(event.target.value)} placeholder="Motivo do fechamento ou reabertura" />
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={closeManagementPeriod} disabled={loading || !monthlyResult}>Fechar período</Button>
+                    <Button variant="destructive" onClick={reopenManagementPeriod} disabled={loading || !lastClosureId}>Reabrir último fechamento</Button>
+                  </div>
+                  <div className="text-xs text-muted-foreground">A reabertura exige permissão de RH/Administrador, justificativa e gera auditoria.</div>
+                </div>
+              ) : null}
+              <div className="space-y-2">
+                <div className="font-medium">Solicitações de correção pendentes</div>
+                <div className="rounded-lg border overflow-hidden">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Funcionário</TableHead><TableHead>Original</TableHead><TableHead>Proposto</TableHead><TableHead>Motivo</TableHead><TableHead>Ações</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {corrections.map((correction) => <TableRow key={correction.id}><TableCell>{correction.employeeName}</TableCell><TableCell>{fmtDate(correction.originalAtUtc)}</TableCell><TableCell>{fmtDate(correction.proposedAtUtc)}</TableCell><TableCell className="max-w-56 truncate" title={correction.reason}>{correction.reason}</TableCell><TableCell><div className="flex gap-2">{canApproveCorrection ? <><Button size="sm" onClick={() => decideCorrection(correction, 'approve')}>Aprovar</Button><Button size="sm" variant="outline" onClick={() => decideCorrection(correction, 'reject')}>Recusar</Button></> : <Badge variant="outline">Aguardando RH</Badge>}</div></TableCell></TableRow>)}
+                      {!corrections.length ? <TableRow><TableCell colSpan={5} className="text-sm text-muted-foreground">Nenhuma solicitação pendente carregada.</TableCell></TableRow> : null}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Dialog
           open={mePunchOpen}
@@ -1997,6 +1982,21 @@ export function PontoModule() {
         </Dialog>
       </div>
 
+      <Dialog open={correctionOpen} onOpenChange={setCorrectionOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Solicitar correção</DialogTitle>
+            <DialogDescription>O evento original será preservado. A alteração só vale após aprovação autorizada.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="text-sm">Registro original: <strong>{fmtDate(correctionEvent?.at)}</strong></div>
+            <div className="space-y-2"><Label htmlFor="ponto-correction-at">Novo horário</Label><Input id="ponto-correction-at" type="datetime-local" value={correctionAt} onChange={(event) => setCorrectionAt(event.target.value)} /></div>
+            <div className="space-y-2"><Label htmlFor="ponto-correction-reason">Justificativa</Label><Input id="ponto-correction-reason" value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Explique o motivo da correção" /></div>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setCorrectionOpen(false)}>Cancelar</Button><Button onClick={requestCorrection} disabled={loading || !correctionReason.trim()}>Enviar para aprovação</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={newEmployeeOpen} onOpenChange={setNewEmployeeOpen}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
@@ -2063,7 +2063,7 @@ export function PontoModule() {
               onClick={() => adminCreateEmployee()}
               disabled={
                 loading ||
-                !canAdminActions ||
+                !canManageCanonicalEmployee ||
                 !newEmployeeName.trim() ||
                 !newEmployeeLoginEmail.trim() ||
                 !newEmployeeLoginEmail.includes('@') ||
@@ -2078,7 +2078,7 @@ export function PontoModule() {
               onClick={() => adminCreateEmployee({ enrollAfter: true })}
               disabled={
                 loading ||
-                !canAdminActions ||
+                !canManageCanonicalEmployee ||
                 !newEmployeeName.trim() ||
                 !newEmployeeLoginEmail.trim() ||
                 !newEmployeeLoginEmail.includes('@') ||
@@ -2254,7 +2254,7 @@ export function PontoModule() {
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={loading}>Cancelar</Button>
-            <Button variant="destructive" onClick={adminDeleteEmployee} disabled={loading || !selectedEmployeeId}>Remover</Button>
+            <Button variant="destructive" onClick={adminDeleteEmployee} disabled={loading || !selectedEmployeeId || !canManageCanonicalEmployee}>Desligar</Button>
             <Button
               variant="secondary"
               onClick={() => {
@@ -2262,11 +2262,11 @@ export function PontoModule() {
                 setEditOpen(false)
                 setEnrollOpen(true)
               }}
-              disabled={loading || !selectedEmployeeId}
+              disabled={loading || !selectedEmployeeId || !canManageCanonicalEmployee}
             >
               Cadastrar biometria
             </Button>
-            <Button onClick={adminSaveEmployeeEdit} disabled={loading || !selectedEmployeeId || !editUnit.trim()}>Salvar</Button>
+            <Button onClick={adminSaveEmployeeEdit} disabled={loading || !selectedEmployeeId || !editUnit.trim() || !canManageCanonicalEmployee}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2353,6 +2353,7 @@ export function PontoModule() {
                     <TableHead>Tipo</TableHead>
                     <TableHead>Unidade</TableHead>
                     <TableHead>Metodo</TableHead>
+                    <TableHead>Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -2362,11 +2363,12 @@ export function PontoModule() {
                       <TableCell><Badge variant="outline">{r.type}</Badge></TableCell>
                       <TableCell className="text-sm">{r.unit || '-'}</TableCell>
                       <TableCell className="text-sm">{r.method || '-'}</TableCell>
+                      <TableCell><Button size="sm" variant="outline" onClick={() => openCorrection(r)}>Corrigir</Button></TableCell>
                     </TableRow>
                   ))}
                   {!selectedRecords.length ? (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-sm text-muted-foreground">Nenhum registro.</TableCell>
+                      <TableCell colSpan={5} className="text-sm text-muted-foreground">Nenhum registro.</TableCell>
                     </TableRow>
                   ) : null}
                 </TableBody>

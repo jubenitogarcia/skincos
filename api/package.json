@@ -10,7 +10,7 @@
     "lint": "echo \"(todo)\""
   },
   "devDependencies": {
-    "wrangler": "^4.60.0"
+    "wrangler": "4.112.0"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

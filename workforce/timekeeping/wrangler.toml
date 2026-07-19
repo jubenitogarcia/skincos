@@ -1,0 +1,34 @@
+name = "skincos-timekeeping"
+main = "worker.js"
+compatibility_date = "2026-07-18"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "skincos-timekeeping"
+database_id = "__CONFIGURE_TIMEKEEPING_D1_ID__"
+migrations_dir = "migrations"
+
+[[services]]
+binding = "SCHEDULE"
+service = "skincos-escala-api"
+
+[vars]
+APP_VERSION = "1.0.0"
+APP_ORIGIN = "https://crm.skincos.com.br"
+
+[env.staging]
+name = "skincos-timekeeping-staging"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "skincos-timekeeping-staging"
+database_id = "__CONFIGURE_TIMEKEEPING_STAGING_D1_ID__"
+migrations_dir = "migrations"
+
+[[env.staging.services]]
+binding = "SCHEDULE"
+service = "skincos-escala-api-staging"
+
+[env.staging.vars]
+APP_VERSION = "1.0.0"
+APP_ORIGIN = "https://crm-staging.skincos.com.br"

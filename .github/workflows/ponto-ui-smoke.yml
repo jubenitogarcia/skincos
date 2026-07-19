@@ -10,11 +10,6 @@ on:
         required: false
         default: ""
         type: string
-      mutate:
-        description: "Perform admin+employee create/link+delete (more coverage, writes data briefly)."
-        required: false
-        default: true
-        type: boolean
 
 concurrency:
   group: ponto-ui-smoke-prod
@@ -25,18 +20,19 @@ permissions:
 
 jobs:
   smoke:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_PONTO_UI_SMOKE == 'true' }}
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.ENABLE_PONTO_UI_SMOKE == 'true') }}
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
           ref: main
           fetch-depth: 1
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: "22.12.0"
           cache: "npm"
@@ -47,7 +43,7 @@ jobs:
         working-directory: crm/console
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-chromium
@@ -58,15 +54,17 @@ jobs:
 
       - name: Resolve expected SHA
         id: sha
+        env:
+          INPUT_SHA: ${{ github.event.inputs.expect_sha }}
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
             echo "sha=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          INPUT_SHA="${{ github.event.inputs.expect_sha }}"
           INPUT_SHA="$(echo "${INPUT_SHA:-}" | tr -d '[:space:]')"
           if [[ -n "${INPUT_SHA:-}" ]]; then
+            [[ "$INPUT_SHA" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "expect_sha must be 7-40 hexadecimal characters"; exit 1; }
             echo "sha=${INPUT_SHA}" >> "$GITHUB_OUTPUT"
           else
             echo "sha=" >> "$GITHUB_OUTPUT"
@@ -95,9 +93,9 @@ jobs:
           SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
           LOGIN_WAIT_MS: "120000"
           NO_SCREENSHOTS: "1"
-          MUTATE_ADMIN: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
-          MUTATE_EMPLOYEE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
-          MUTATE_PUNCH: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
+          MUTATE_ADMIN: "0"
+          MUTATE_EMPLOYEE: "0"
+          MUTATE_PUNCH: "0"
           NODE_PATH: crm/console/node_modules
         run: |
           set -euo pipefail
@@ -112,11 +110,11 @@ jobs:
           SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
           LOGIN_WAIT_MS: "120000"
-          TRACE: "1"
+          TRACE: "0"
           FULL_PAGE: "1"
-          MUTATE_ADMIN: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
-          MUTATE_EMPLOYEE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
-          MUTATE_PUNCH: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.mutate == true || github.event.inputs.mutate == 'true') }}
+          MUTATE_ADMIN: "0"
+          MUTATE_EMPLOYEE: "0"
+          MUTATE_PUNCH: "0"
           NODE_PATH: crm/console/node_modules
         run: |
           set -euo pipefail
@@ -124,10 +122,14 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ponto-ui-smoke-artifacts
-          path: output/playwright/
+          path: |
+            output/playwright/*.png
+            output/playwright/*.log
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Fail if fast smoke failed
         if: ${{ steps.smoke.outcome != 'success' }}

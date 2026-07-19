@@ -1,5 +1,19 @@
 # TASKS
 
+## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
+
+- [x] Domínio definitivo criado em `workforce/timekeeping` e montado no gateway.
+- [x] D1 modelado com migrations reproduzíveis, constraints, índices, snapshots e auditoria imutável.
+- [x] Importador JSON com dry-run, checksum, backup local, idempotência, conflitos e rollback validado.
+- [x] Identidade canônica, aliases, unidades temporais e adaptação conservadora da Escala.
+- [x] Motor diário/mensal, banco de horas, inconsistências, fechamento e reabertura.
+- [x] Matriz de permissões, PIN protegido, biometria cifrada, rate limit, replay e idempotência.
+- [x] Cliente/tipos centralizados e gestão funcional na aba CRM.
+- [x] Testes locais do domínio, gateway, proxy, cliente, D1 e integração HTTP.
+- [x] Executar todos os gates finais (lint completo, testes completos e build de produção).
+- [ ] Publicar e validar staging com D1/secrets próprios.
+- [ ] Promover por workflow oficial e executar smoke produtivo somente leitura.
+
 ## External/product follow-up
 
 - [ ] Confirm or reauthorize the `Google Calendar (Skincos)` credential for the exact scopes required by the inactive clinic Orb workflows.

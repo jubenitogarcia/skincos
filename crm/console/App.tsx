@@ -378,6 +378,8 @@ export default function AppFunctionalNeatlab() {
     const pontoCanAdmin =
         roleKey === 'GESTOR' ||
         roleKey === 'GERENTE' ||
+        roleKey === 'RH' ||
+        roleKey === 'ADMIN' ||
         (isLocalDev && devEmail.endsWith('@local.test'))
     const hasModuleAccess = React.useCallback(
         (moduleKey: string) => {
@@ -462,7 +464,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'conversa', 'atendimento', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais']),
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'conversa', 'atendimento', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais', 'ponto']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
