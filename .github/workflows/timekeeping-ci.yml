@@ -28,7 +28,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '22.12.0'
+          # node:sqlite is required by the migration rollback test.
+          node-version: '22.23.1'
           cache: npm
           cache-dependency-path: |
             workforce/timekeeping/package-lock.json
