@@ -1,0 +1,57 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import worker, { __testables } from './worker.js'
+
+test('health is public and does not disclose secrets', async () => {
+  const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/health'), { APP_VERSION: 'test', DB: {} })
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.equal(body.ok, true)
+  assert.equal(body.service, 'workforce-timekeeping')
+  assert.equal(JSON.stringify(body).includes('PONTO_'), false)
+})
+
+test('readiness fails closed when D1 is unavailable', async () => {
+  const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/readiness'), {})
+  assert.equal(response.status, 503)
+  assert.equal((await response.json()).code, 'DATABASE_UNAVAILABLE')
+})
+
+test('role matrix separates employee, manager, HR, admin and auditor duties', () => {
+  assert.equal(__testables.roleAllows('EMPLOYEE', 'self.punch'), true)
+  assert.equal(__testables.roleAllows('EMPLOYEE', 'unit.read'), false)
+  assert.equal(__testables.roleAllows('MANAGER', 'correction.request'), true)
+  assert.equal(__testables.roleAllows('MANAGER', 'correction.approve'), false)
+  assert.equal(__testables.roleAllows('HR', 'period.close'), true)
+  assert.equal(__testables.roleAllows('ADMIN', 'device.manage'), true)
+  assert.equal(__testables.roleAllows('AUDITOR', 'audit.read'), true)
+  assert.equal(__testables.roleAllows('AUDITOR', 'period.reopen'), false)
+})
+
+test('manager scope is horizontal and HR/admin scope is organization-wide', () => {
+  assert.equal(__testables.requireUnit({ role: 'MANAGER', allowedUnits: ['UNIT_A'] }, 'UNIT_A'), true)
+  assert.equal(__testables.requireUnit({ role: 'MANAGER', allowedUnits: ['UNIT_A'] }, 'UNIT_B'), false)
+  assert.equal(__testables.requireUnit({ role: 'HR', allowedUnits: [] }, 'UNIT_B'), true)
+  assert.equal(__testables.requireUnit({ role: 'ADMIN', allowedUnits: [] }, 'UNIT_B'), true)
+})
+
+test('CSV cells neutralize formulas and follow CSV quote escaping', () => {
+  assert.equal(__testables.csvCell('=HYPERLINK("https://invalid.example")'), '"\'=HYPERLINK(""https://invalid.example"")"')
+  assert.equal(__testables.csvCell('Pessoa "Teste"'), '"Pessoa ""Teste"""')
+})
+
+test('daily event partition keeps consecutive shifts separate and overnight completion together', () => {
+  const events = [
+    { id: 'a', eventType: 'WORK_START', occurredAt: '2026-07-18T11:00:00.000Z' },
+    { id: 'b', eventType: 'WORK_END', occurredAt: '2026-07-18T20:00:00.000Z' },
+    { id: 'c', eventType: 'WORK_START', occurredAt: '2026-07-19T11:00:00.000Z' },
+    { id: 'd', eventType: 'WORK_END', occurredAt: '2026-07-19T20:00:00.000Z' },
+  ]
+  assert.deepEqual(__testables.eventsForWorkDate(events, '2026-07-18', 'America/Sao_Paulo').map((event) => event.id), ['a', 'b'])
+  const overnight = [
+    { id: 'n1', eventType: 'WORK_START', occurredAt: '2026-07-19T01:00:00.000Z' },
+    { id: 'n2', eventType: 'WORK_END', occurredAt: '2026-07-19T09:00:00.000Z' },
+    { id: 'next', eventType: 'WORK_START', occurredAt: '2026-07-19T12:00:00.000Z' },
+  ]
+  assert.deepEqual(__testables.eventsForWorkDate(overnight, '2026-07-18', 'America/Sao_Paulo').map((event) => event.id), ['n1', 'n2'])
+})

@@ -417,3 +417,9 @@
   `/etc/skincos`. Windows owns transfer/publication only; the final lifecycle
   backup includes private configuration, snapshots and real PostgreSQL restore
   proof before the duplicate trees are deleted.
+
+## 2026-07-18 - Make Workforce Timekeeping canonical and D1-backed
+
+- Decision: own Controle de Ponto in `workforce/timekeeping`, expose it only through the public `api` gateway and use its D1 as the sole operational persistence.
+- Why: the CRM-local JSON backend could not provide durable concurrency, canonical employee identity, period snapshots or enforceable cross-unit authorization.
+- Impact: CRM is a same-origin client/proxy; legacy JSON is import-only, corrections preserve original events, Escala links require explicit aliases, and staging must pass before the guarded production workflow can run.

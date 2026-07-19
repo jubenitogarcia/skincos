@@ -31,7 +31,7 @@ function isInternalServiceRequest(request, env) {
  * selection, request tracing and the human/service access boundary; it must
  * not grow domain persistence or business rules.
  */
-export function createGatewayHandler({ inventoryHandler }) {
+export function createGatewayHandler({ inventoryHandler, timekeepingHandler }) {
     if (typeof inventoryHandler !== 'function') throw new TypeError('inventoryHandler is required');
 
     return async function handleGatewayRequest(request, env, ctx) {
@@ -40,6 +40,16 @@ export function createGatewayHandler({ inventoryHandler }) {
 
         if (url.pathname === '/health') {
             return json(200, { ok: true, service: 'api', requestId }, requestId);
+        }
+
+        if (url.pathname === '/api/ponto' || url.pathname.startsWith('/api/ponto/')) {
+            if (typeof timekeepingHandler !== 'function') {
+                return json(503, { ok: false, error: 'workforce_unavailable', requestId }, requestId);
+            }
+            const response = await timekeepingHandler(request, env, ctx);
+            const headers = new Headers(response.headers);
+            headers.set('x-request-id', requestId);
+            return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
         }
 
         if (url.pathname === '/inventory' || url.pathname.startsWith('/inventory/')) {

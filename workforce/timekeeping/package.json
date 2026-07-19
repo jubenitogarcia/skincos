@@ -1,0 +1,15 @@
+{
+  "name": "@skincos/workforce-timekeeping",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test *.test.js",
+    "test:integration:local": "node scripts/integration-local.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "migrate:local": "wrangler d1 migrations apply skincos-timekeeping --local --config wrangler.toml"
+  },
+  "devDependencies": {
+    "wrangler": "4.112.0"
+  }
+}

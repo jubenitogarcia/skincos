@@ -1,167 +1,74 @@
-# Runbook — Relógio‑Ponto (CRM)
+# Runbook — Controle de Ponto
 
-Este documento descreve **como validar, diagnosticar e operar** o módulo **Ponto** em produção.
+## Arquitetura operacional
 
-## 1) Arquitetura (3 camadas)
-1. **CRM (frontend)**: `frontend/PontoModule.tsx`
-2. **Proxy Pages Functions**: `frontend/functions/api/ponto/[[path]].ts`
-3. **CRM API (backend central)**: `backend/apps/crm-api/server/pontoRoutes.js`
+O navegador usa `https://crm.skincos.com.br/api/ponto/*`. A Pages Function autentica a sessão, assina claims mínimos e encaminha apenas headers autorizados para `https://api.skincos.com.br/api/ponto/*`. O gateway `api` monta o Worker `workforce/timekeeping` por Service Binding `TIMEKEEPING`. O domínio usa D1 próprio e consome a Escala pelo binding `SCHEDULE`.
 
-Observação: o Worker do Insumos **não** atende Ponto por padrão (somente se `PONTO_INSUMOS_ENABLED=true`).
+O backend legado `crm/api/server/pontoRoutes.js` não participa desse caminho. `ponto_store.v2.json` é somente entrada de migração/rollback controlado.
 
----
+## Saúde e 404
 
-## 2) Variáveis e secrets (produção)
-
-### Cloudflare Pages (CRM)
-- `PONTO_API_TARGET` → URL do backend (ex.: `https://crm-api.seudominio.com`) (**obrigatório**)
-- `PONTO_PROXY_TOKEN` → secret de autenticação do proxy
-- `PONTO_ACTOR_HMAC_KEY` → **obrigatório**: secret para assinatura do actor (employee). Recomenda‑se não reutilizar o `PONTO_PROXY_TOKEN`.
-- `PONTO_ADMIN_TOKEN` → secret para rotas admin (injeção no proxy)
-
-### CRM API (backend)
-- `PONTO_ADMIN_TOKEN`
-- `PONTO_PROXY_TOKEN`
-- `PONTO_ACTOR_HMAC_KEY`
-- `PONTO_AUDIT_HMAC_KEY` (opcional, mas recomendado)
-- `PONTO_TEMPLATES_KEY` (**obrigatório em produção**; criptografa biometria)
-- `PONTO_PIN_MAX_ATTEMPTS`, `PONTO_PIN_WINDOW_SECONDS`, `PONTO_PIN_LOCK_SECONDS` (opcionais; lockout de PIN)
-- `PONTO_REQUIRE_CONSENT` (opcional; exige consentimento explícito para biometria)
-
----
-
-## 3) Checklist rápido de saúde (produção)
-
-### 3.1 Proxy
-```
-GET https://crm.skincos.com.br/api/ponto/_proxy-status
-```
-Esperado:
-- `ok: true`
-- `targetConfigured: true`
-- `adminTokenConfigured: true`
-- `proxyTokenConfigured: true`
-- `actorKeyConfigured: true`
-Observação:
-`targetConfigured: true` indica `PONTO_API_TARGET` explícito; sem isso o proxy não encaminha.
-
-### 3.2 CRM API
-```
-GET https://crm.skincos.com.br/api/ponto/health
-```
-Esperado:
-- `ok: true`
-- `cryptoTemplates: true` (biometria criptografada)
-- `cryptoAuditHmac: true` (quando `PONTO_AUDIT_HMAC_KEY` estiver configurado)
-
----
-
-## 4) Checklist funcional (UI)
-1) Abrir **Ponto** no CRM  
-2) Conferir **Build** no header (ex.: `Build: 0f1196c`)  
-3) Clicar em **Diagnóstico**  
-4) Confirmar JSON de `_proxy-status` e `health`  
-5) (Admin) Verificar botões no header: **Cadastrar**, **Editar**, **Exportar**, **Gerenciar Dispositivo**
-
-### 4.1 Smoke automatizado (UI) com Playwright (sem credenciais no script)
-Rodar (do root do repo):
-```
-NODE_PATH=frontend/node_modules node frontend/scripts/ponto-ui-smoke.cjs
-```
-Se precisar logar manualmente (recomendado por segurança), rode em modo visível:
-```
-HEADED=1 LOGIN_WAIT_MS=600000 NODE_PATH=frontend/node_modules node frontend/scripts/ponto-ui-smoke.cjs
-```
-Artefatos: `output/playwright/` (screenshots + trace).
-
-### 4.2 Smoke automatizado (UI) no GitHub Actions (produção)
-Workflow: `.github/workflows/ponto-ui-smoke.yml`
-
-**Requisitos**
-- Habilitar o agendamento (repo → Settings → Secrets and variables → Actions → Variables):
-  - `ENABLE_PONTO_UI_SMOKE=true`
-- Criar um usuário dedicado “smoke bot” no CRM (evite usar credenciais pessoais).
-- Configurar os secrets no GitHub (repo → Settings → Secrets and variables → Actions):
-  - `PONTO_SMOKE_EMAIL`
-  - `PONTO_SMOKE_PASSWORD`
-
-**Bootstrap/repair do smoke bot (recomendado)**
-- Script (idempotente) que garante que o usuário existe com role `ADMIN` e rotaciona a senha, atualizando os secrets do GitHub:
-```
-NODE_PATH=frontend/node_modules node frontend/scripts/bootstrap-ponto-smoke-admin.cjs
-```
-Pré‑requisito: precisa existir uma sessão admin salva em `output/playwright/storage-crm.json` (você cria isso rodando o `ponto-ui-smoke.cjs` em `HEADED=1` e logando manualmente).
-
-**O que ele valida**
-- Build badge contém o SHA do `main` (detecta “site desatualizado”/deploy drift).
-- Diagnóstico carrega (`/_proxy-status` e `/health`).
-- Invariantes de UI (ações de Admin apenas no header; fluxo do Funcionário sem campos técnicos).
-- (Opcional) mutações rápidas: cria/vincula funcionário por email, seta PIN, valida `/me`, faz punch por PIN, valida `audit/verify`, exporta CSV e limpa em seguida.
-Variáveis úteis no smoke:
-- `SMOKE_UNIT` (força unidade quando Insumos estiver indisponível)
-- `CHECK_PIN_LOCKOUT=1` (valida lockout de PIN)
-
----
-
-## 5) Fluxo mínimo (Admin → Funcionário → Audit)
-1) Admin cria funcionário  
-2) Admin define PIN  
-3) Admin (opcional) cadastra face  
-4) Funcionário seleciona unidade (quando houver mais de uma permitida)  
-5) Funcionário bate ponto (Face → PIN)  
-6) Admin exporta CSV  
-7) Admin valida audit:
-```
-GET /api/ponto/admin/audit/verify
+```bash
+curl -i https://crm.skincos.com.br/api/ponto/health
+curl -i https://crm.skincos.com.br/api/ponto/readiness
+curl -i https://api.skincos.com.br/api/ponto/health
 ```
 
----
+`health` é público e informa serviço/versão sem secrets. `readiness` consulta D1 e retorna 503 JSON quando indisponível. Ambos precisam ter `content-type: application/json` e `x-request-id`.
 
-## 6) Problemas comuns
+Para 404: validar nesta ordem Pages proxy, `PONTO_API_TARGET`, gateway publicado, binding `TIMEKEEPING`, Worker publicado e migrations. HTML, redirect de frontend ou 200 sem JSON é falha operacional.
 
-### UI desatualizada
-**Sinal:** você ainda vê elementos antigos no Ponto.  
-**Solução:** conferir o **Build** no header e fazer hard refresh (Ctrl/Cmd+Shift+R).
+## Permissões
 
-### Admin não acessa
-**Sinal:** erro `ADMIN_TOKEN_NOT_CONFIGURED`.  
-**Ação:** validar secrets do Pages em `_proxy-status`.
+| Papel | Acesso |
+| --- | --- |
+| Funcionário | próprio contexto, histórico, batida e solicitação de correção |
+| Dispositivo | batida na unidade gravada no cadastro do dispositivo |
+| Gestor | leitura das unidades autorizadas, correção e dispositivos; não aprova a própria correção |
+| RH | leitura, identidade canônica, aprovação/recusa, fechamento e reabertura |
+| Administrador | RH + dispositivos e auditoria |
+| Auditor | leitura, exportação e auditoria; sem mutações |
 
-### Unidade não permitida (Funcionário)
-**Sinal:** erro `UNIT_ACCESS_NOT_CONFIGURED`, `UNIT_REQUIRED` ou `UNIT_FORBIDDEN`.  
-**Ação:** garantir que o usuário tem `allowedUnits` no CRM e selecionar a unidade correta no Ponto.
+O frontend apenas oculta/desabilita ações; o Worker sempre revalida papel, unidade, funcionário e dispositivo.
 
-### Biometria indisponível
-**Sinal:** erro `TEMPLATES_KEY_NOT_CONFIGURED` no enroll.  
-**Ação:** configurar `PONTO_TEMPLATES_KEY` no backend do CRM API.
+Mutações same-origin exigem o token CSRF da sessão. A Pages Function envia um envelope HMAC v2 que vincula ator, instante, método, caminho com query string, nonce e SHA-256 do corpo; o Worker rejeita versão antiga, assinatura reaproveitada e nonce repetido. O proxy encaminha somente uma allowlist de headers e limita o corpo a 1 MiB.
 
-### Vínculo de login não salva
-**Sinal:** erro `LOGIN_EMAIL_ALREADY_IN_USE`.  
-**Ação:** o email já está vinculado a outro funcionário ativo; revise no Admin e mantenha email único por funcionário.
+## Secrets e variáveis
 
-### Funcionário não consegue carregar `/me`
-**Sinal:** erro `LOGIN_EMAIL_AMBIGUOUS`.  
-**Ação:** há mais de um funcionário ativo com o mesmo email; corrija os cadastros duplicados antes de retestar.
+- `PONTO_ACTOR_HMAC_KEY`: assinatura CRM → Timekeeping;
+- `PONTO_IDEMPOTENCY_KEY`: fingerprint de retries;
+- `PONTO_TEMPLATES_KEY`: A256GCM dos templates biométricos;
+- `ESCALA_ACTOR_HMAC_KEY`: autenticação Timekeeping → Escala;
+- `TIMEKEEPING_BACKUP_PASSPHRASE`: cifra o checkpoint D1 criado pelo workflow antes de migrations remotas;
+- `PONTO_FACE_THRESHOLD`, `PONTO_PIN_ITERATIONS`, `PONTO_COOLDOWN_SECONDS`: ajustes operacionais no servidor;
+- `TIMEKEEPING_D1_STAGING_ID` e `TIMEKEEPING_D1_PRODUCTION_ID`: variables do GitHub, não secrets.
 
-### Duplicidade de email (admin)
-**Sinal:** `LOGIN_EMAIL_AMBIGUOUS` e acesso bloqueado.  
-**Ação:** use **Editar → Ver duplicidades** para manter o email em apenas um funcionário.
+Nunca registrar PIN, token de dispositivo, cookie, template, vetor, foto, score ou chave. A UI nunca recebe template/score.
 
-### `_proxy-status` diz que secrets não estão configurados, mesmo após sync
-**Sinal:** `proxyTokenConfigured=false` / `actorKeyConfigured=false` / `adminTokenConfigured=false`, mas o workflow de sync está “success”.  
-**Causa provável:** em Cloudflare Pages, alterações de env vars podem exigir um novo deploy para entrarem em vigor no runtime.  
-**Ação:** rode o reconcile do Pages (ele também faz smoke check):
-- Workflow: `.github/workflows/deploy-crm-pages-reconcile.yml`
+## Fechamento mensal
 
-### Face não reconhece
-**Sinal:** erro `NOT_RECOGNIZED`.  
-**Ação:** confirmar `face-models` carregados e biometria cadastrada.
+1. Sincronizar Escala e resolver conflitos de identidade.
+2. Carregar espelho, inconsistências e solicitações de correção.
+3. Aprovar/recusar correções por usuário diferente do solicitante.
+4. Informar justificativa e fechar o período.
+5. Confirmar snapshot, checksum e auditoria.
 
-### Retorno HTML com Cloudflare 1101
-**Sinal:** erro com `UPSTREAM_WORKER_EXCEPTION` (ou tela “Worker threw exception”).  
-**Ação:** usar `x-request-id` + `cf-ray` no Cloudflare Logs para identificar a exceção do Worker upstream.
+Fechamento bloqueia novas batidas/correções no intervalo. Reabertura exige RH/Admin, justificativa e auditoria. Mudanças de regra posteriores não alteram snapshots fechados.
 
----
+A trava `timekeeping_period_guards` é adquirida por data antes do cálculo e impede que uma batida concorra com o fechamento. O bloqueio de PIN é global por funcionário, inclusive quando as tentativas alternam entre dispositivos.
 
-## 7) Logs e rastreio
-- Use o **x-request-id** e **cf-ray** exibidos no diagnóstico/erros para buscar no Cloudflare.
+## Deploy e rollback
+
+Executar `.github/workflows/deploy-timekeeping.yml` primeiro em `staging`. O workflow exporta e cifra um checkpoint D1, aplica migrations, configura secrets, publica Worker e gateway e faz smoke read-only. Produção exige o `staging_run_id` numérico de uma execução verde para o mesmo SHA e o environment protegido `production`.
+
+Configure secrets e variables separadamente nos environments GitHub `staging` e `production`. O Pages environment `preview` usa `https://api-staging.skincos.com.br`; nunca compartilhe o upstream ou a chave HMAC de produção com preview. O smoke produtivo permanece somente leitura e não aceita opção para criar marcações.
+
+Rollback de aplicação: publicar a versão anterior do Worker/gateway. Migrations são expansivas; não remover colunas/tabelas em incidente. Rollback de importação segue `docs/ponto-migration.md`. Backups e evidências ficam em `C:\CodexRuntime\operator\admin\skincos\timekeeping`, nunca no repositório.
+
+## Incidentes
+
+- Banco indisponível: readiness 503, bloquear marcações e orientar contingência auditada; não escrever JSON.
+- Facial indisponível: diferenciar indisponibilidade técnica de não cadastrado/não reconhecido; permitir PIN auditado com rate limit.
+- PIN bloqueado: aguardar `locked_until`; RH pode redefinir credencial, nunca consultar o PIN.
+- Dispositivo comprometido: revogar cadastro, revisar auditoria pelo `deviceId` e emitir novo token mostrado uma vez.
+- Divergência de cálculo: não editar evento; abrir correção, recalcular período aberto ou reabrir formalmente o fechado.

@@ -240,7 +240,7 @@ async function main() {
       await waitForAuthOrError(LOGIN_WAIT_MS)
     }
     // Persist auth for the next run without needing a persistent profile.
-    await context.storageState({ path: storageStatePath }).catch(() => {})
+    if (!IS_CI) await context.storageState({ path: storageStatePath }).catch(() => {})
     await page.waitForTimeout(1500)
     await maybeScreenshot('after-auth')
 
