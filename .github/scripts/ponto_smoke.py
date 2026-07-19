@@ -24,10 +24,19 @@ def fetch_json(base_url: str, path: str, timeout: int, user_agent: str) -> dict:
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            if "application/json" not in content_type:
+                raise RuntimeError(f"HTTP {resp.status} {path} with invalid content-type {content_type!r}")
             data = resp.read().decode("utf-8", "ignore")
-            return json.loads(data)
+            payload = json.loads(data)
+            payload["__http_status"] = resp.status
+            payload["__content_type"] = content_type
+            return payload
     except HTTPError as err:
         body = err.read().decode("utf-8", "ignore")
+        content_type = (err.headers.get("Content-Type") or "").lower()
+        if "application/json" not in content_type:
+            raise RuntimeError(f"HTTP {err.code} {path} with invalid content-type {content_type!r}")
         try:
             data = json.loads(body)
         except Exception as exc:  # pragma: no cover - defensive branch
@@ -46,10 +55,6 @@ def check_once(args: argparse.Namespace) -> str:
     proxy = fetch_json(args.base_url, "/api/ponto/_proxy-status", args.timeout, args.user_agent)
     require_true(proxy, "ok", "proxy-status")
     require_true(proxy, "targetConfigured", "proxy-status")
-    require_true(proxy, "adminTokenConfigured", "proxy-status")
-
-    if args.require_proxy_token_configured:
-        require_true(proxy, "proxyTokenConfigured", "proxy-status")
     if args.require_actor_key_configured:
         require_true(proxy, "actorKeyConfigured", "proxy-status")
 
@@ -62,8 +67,15 @@ def check_once(args: argparse.Namespace) -> str:
         return "SKIP"
 
     require_true(health, "ok", "health")
-    if args.require_crypto_templates:
-        require_true(health, "cryptoTemplates", "health")
+    if health.get("service") != "workforce-timekeeping":
+        raise RuntimeError(f"health service mismatch: {health}")
+    readiness = fetch_json(args.base_url, "/api/ponto/readiness", args.timeout, args.user_agent)
+    require_true(readiness, "ok", "readiness")
+    if readiness.get("database") != "available":
+        raise RuntimeError(f"readiness database unavailable: {readiness}")
+    protected = fetch_json(args.base_url, "/api/ponto/context", args.timeout, args.user_agent)
+    if protected.get("__http_status") != 401 or protected.get("error") != "UNAUTHORIZED":
+        raise RuntimeError(f"protected route did not fail closed without session: {protected}")
     return "OK"
 
 
@@ -75,10 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=15)
     parser.add_argument("--user-agent", default="Mozilla/5.0 (compatible; PontoSmoke/1.0)")
     parser.add_argument("--allow-ponto-disabled", action="store_true")
-    parser.add_argument("--require-proxy-token-configured", action="store_true")
     parser.add_argument("--require-actor-key-configured", action="store_true")
-    parser.add_argument("--no-require-crypto-templates", dest="require_crypto_templates", action="store_false")
-    parser.set_defaults(require_crypto_templates=True)
     return parser.parse_args()
 
 

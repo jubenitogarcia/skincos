@@ -1,4 +1,4 @@
-name: Sync CRM Pages env (Ponto)
+name: Sync CRM Pages env (Timekeeping)
 
 on:
   schedule:
@@ -9,55 +9,46 @@ permissions:
   contents: read
 
 jobs:
-  sync:
+  production:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: production
     steps:
-      - name: Guard Cloudflare credentials
-        id: guard
-        env:
-          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
-          PONTO_PROXY_TOKEN: ${{ secrets.PONTO_PROXY_TOKEN }}
-          PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
-          PONTO_ADMIN_TOKEN: ${{ secrets.PONTO_ADMIN_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${TOKEN:-}" || -z "${ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare secrets missing; cannot sync."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [[ -z "${PONTO_PROXY_TOKEN:-}" || -z "${PONTO_ACTOR_HMAC_KEY:-}" || -z "${PONTO_ADMIN_TOKEN:-}" ]]; then
-            echo "Missing GitHub secrets PONTO_PROXY_TOKEN/PONTO_ACTOR_HMAC_KEY/PONTO_ADMIN_TOKEN; cannot sync."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "project=${PROJECT:-skincos}" >> "$GITHUB_OUTPUT"
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Node
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: "22.12.0"
-
-      - name: Sync Pages secrets (Ponto) by environment
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+          node-version: 22.12.0
+      - name: Sync production proxy configuration
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ steps.guard.outputs.project }}
-          PONTO_API_TARGET: "https://api.skincos.com.br"
-          PONTO_PROXY_TOKEN: ${{ secrets.PONTO_PROXY_TOKEN }}
+          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
           PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
-          PONTO_ADMIN_TOKEN: ${{ secrets.PONTO_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
-          for env_name in production preview; do
-            printf "%s" "$PONTO_API_TARGET" | npx --yes wrangler@4 pages secret put PONTO_API_TARGET --project-name "$PROJECT" --env "$env_name" >/dev/null
-            printf "%s" "$PONTO_PROXY_TOKEN" | npx --yes wrangler@4 pages secret put PONTO_PROXY_TOKEN --project-name "$PROJECT" --env "$env_name" >/dev/null
-            printf "%s" "$PONTO_ACTOR_HMAC_KEY" | npx --yes wrangler@4 pages secret put PONTO_ACTOR_HMAC_KEY --project-name "$PROJECT" --env "$env_name" >/dev/null
-            printf "%s" "$PONTO_ADMIN_TOKEN" | npx --yes wrangler@4 pages secret put PONTO_ADMIN_TOKEN --project-name "$PROJECT" --env "$env_name" >/dev/null
-            echo "Synced Ponto secrets for env=$env_name"
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID PONTO_ACTOR_HMAC_KEY; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }
           done
+          printf '%s' 'https://api.skincos.com.br' | npx --yes wrangler@4.112.0 pages secret put PONTO_API_TARGET --project-name "$PROJECT" --env production >/dev/null
+          printf '%s' "$PONTO_ACTOR_HMAC_KEY" | npx --yes wrangler@4.112.0 pages secret put PONTO_ACTOR_HMAC_KEY --project-name "$PROJECT" --env production >/dev/null
+
+  preview:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.12.0
+      - name: Sync isolated preview proxy configuration
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
+          PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID PONTO_ACTOR_HMAC_KEY; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required staging value: $name"; exit 1; }
+          done
+          printf '%s' 'https://api-staging.skincos.com.br' | npx --yes wrangler@4.112.0 pages secret put PONTO_API_TARGET --project-name "$PROJECT" --env preview >/dev/null
+          printf '%s' "$PONTO_ACTOR_HMAC_KEY" | npx --yes wrangler@4.112.0 pages secret put PONTO_ACTOR_HMAC_KEY --project-name "$PROJECT" --env preview >/dev/null
