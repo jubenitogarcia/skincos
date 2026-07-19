@@ -47,7 +47,13 @@ export async function apiJson<T>(path: string, opts: { method?: string; body?: u
   const hint = typeof detail.hint === 'string' ? detail.hint.trim() : workerCrash ? 'Falha no Worker upstream. Consulte os logs com request-id/cf-ray.' : ''
   const base = detail.error || detail.message || (res.ok ? 'Resposta inválida da API de Ponto' : `HTTP ${res.status}`)
   const error = new Error([base, hint, errorMetaString({ code, requestId, cfRay })].filter(Boolean).join(' • '))
-  Object.assign(error, { details: payload || { error: code }, status: res.status, requestId, cfRay, code, rawText: nonJsonText.slice(0, 240) })
+  const enriched = error as Error & Record<string, unknown>
+  enriched.details = payload || { error: code }
+  enriched.status = res.status
+  enriched.requestId = requestId
+  enriched.cfRay = cfRay
+  enriched.code = code
+  enriched.rawText = nonJsonText.slice(0, 240)
   throw error
 }
 
@@ -56,7 +62,11 @@ export async function apiBlob(path: string, opts: { signal?: AbortSignal } = {})
   if (!res.ok) {
     const requestId = String(res.headers.get('x-request-id') || '').trim(); const cfRay = String(res.headers.get('cf-ray') || '').trim(); let message = `HTTP ${res.status}`
     try { const body = await res.json() as PontoApiError; message = body.error || body.message || message } catch { /* response is not JSON */ }
-    const error = new Error([message, errorMetaString({ requestId, cfRay })].filter(Boolean).join(' • ')); Object.assign(error, { status: res.status, requestId, cfRay }); throw error
+    const error = new Error([message, errorMetaString({ requestId, cfRay })].filter(Boolean).join(' • ')) as Error & Record<string, unknown>
+    error.status = res.status
+    error.requestId = requestId
+    error.cfRay = cfRay
+    throw error
   }
   if (!String(res.headers.get('content-type') || '').toLowerCase().includes('text/csv')) throw new Error('Resposta de exportação inválida')
   return res.blob()

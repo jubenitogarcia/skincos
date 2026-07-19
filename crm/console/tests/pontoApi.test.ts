@@ -19,6 +19,11 @@ describe('Ponto API client', () => {
     await expect(apiJson('/api/ponto/punches')).rejects.toMatchObject({ status: 409, code: 'PERIOD_CLOSED', requestId: 'req-closed', cfRay: 'ray-1' })
   })
 
+  it('keeps API payload inside details instead of assigning its fields onto the error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, error: 'PERIOD_CLOSED', status: 200, requestId: 'attacker-value' }), { status: 409, headers: { 'content-type': 'application/json', 'x-request-id': 'req-authoritative' } })))
+    await expect(apiJson('/api/ponto/punches')).rejects.toMatchObject({ status: 409, requestId: 'req-authoritative', details: expect.objectContaining({ status: 200, requestId: 'attacker-value' }) })
+  })
+
   it('sends the CRM CSRF token on mutations', async () => {
     vi.stubGlobal('document', { cookie: 'csrfToken=test-csrf' })
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }))

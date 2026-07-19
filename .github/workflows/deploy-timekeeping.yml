@@ -66,11 +66,11 @@ jobs:
           done
           [[ "$D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "Invalid Timekeeping D1 id"; exit 1; }
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
           ref: main
           fetch-depth: 1
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: 22.12.0
 
@@ -123,7 +123,7 @@ jobs:
           echo "artifact=$encrypted" >> "$GITHUB_OUTPUT"
 
       - name: Upload encrypted migration checkpoint
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: timekeeping-${{ inputs.target }}-pre-migration-${{ github.sha }}
           path: ${{ steps.checkpoint.outputs.artifact }}
@@ -191,7 +191,7 @@ jobs:
 
       - name: Upload staging attestation
         if: inputs.target == 'staging'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: timekeeping-staging-attestation
           path: ${{ runner.temp }}/timekeeping-staging-attestation/attestation.json

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
+import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
 import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
+import { decryptLegacyBiometricTemplate, validLegacyBiometricTemplate } from '../legacyBiometric.js'
 
 const argv = process.argv.slice(2)
 const valueFor = (name) => { const index = argv.indexOf(name); return index >= 0 ? argv[index + 1] : '' }
@@ -107,27 +108,8 @@ async function remoteD1Import(sqlText) {
   throw new Error('D1_IMPORT_TIMEOUT')
 }
 
-function validBiometricTemplate(template) {
-  return Array.isArray(template) && template.length >= 64 && template.length <= 1024 && template.every((value) => Number.isFinite(value))
-}
-
-function decryptLegacyTemplate(payload, secret) {
-  if (Array.isArray(payload)) return validBiometricTemplate(payload) ? payload : null
-  if (!secret || payload?.alg !== 'A256GCM') return null
-  const keyRaw = String(secret).trim(); let key
-  try { key = Buffer.from(keyRaw.replace(/-/g, '+').replace(/_/g, '/'), 'base64') } catch { key = Buffer.alloc(0) }
-  if (key.length !== 32) { try { key = Buffer.from(keyRaw, 'hex') } catch { key = Buffer.alloc(0) } }
-  if (key.length !== 32) return null
-  try {
-    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(payload.iv, 'base64'))
-    decipher.setAuthTag(Buffer.from(payload.tag, 'base64'))
-    const template = JSON.parse(Buffer.concat([decipher.update(Buffer.from(payload.ct, 'base64')), decipher.final()]).toString('utf8'))
-    return validBiometricTemplate(template) ? template : null
-  } catch { return null }
-}
-
 function encryptTemplate(template, secret) {
-  if (!secret || !validBiometricTemplate(template)) return null
+  if (!secret || !validLegacyBiometricTemplate(template)) return null
   const key = createHash('sha256').update(String(secret)).digest()
   const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', key, iv)
   const encrypted = Buffer.concat([cipher.update(JSON.stringify(template), 'utf8'), cipher.final(), cipher.getAuthTag()])
@@ -182,7 +164,7 @@ for (const employee of employees) {
   if (employeeId && seenEmployees.has(employeeId)) duplicates.push({ entity: 'employee', id: employeeId })
   seenEmployees.add(employeeId)
   for (const [index, payload] of (Array.isArray(employee.faceTemplates) ? employee.faceTemplates : []).entries()) {
-    if (!decryptLegacyTemplate(payload, process.env.PONTO_LEGACY_TEMPLATES_KEY)) invalid.push({ entity: 'biometric_template', id: `${employeeId}:${index}`, reason: 'INVALID_OR_UNDECRYPTABLE_TEMPLATE' })
+    if (!decryptLegacyBiometricTemplate(payload, process.env.PONTO_LEGACY_TEMPLATES_KEY)) invalid.push({ entity: 'biometric_template', id: `${employeeId}:${index}`, reason: 'INVALID_OR_UNDECRYPTABLE_TEMPLATE' })
   }
 }
 for (const record of punches) {
@@ -255,7 +237,7 @@ for (const employee of employees) {
   }
   let templateIndex = 0
   for (const templatePayload of Array.isArray(employee.faceTemplates) ? employee.faceTemplates : []) {
-    const template = decryptLegacyTemplate(templatePayload, process.env.PONTO_LEGACY_TEMPLATES_KEY)
+    const template = decryptLegacyBiometricTemplate(templatePayload, process.env.PONTO_LEGACY_TEMPLATES_KEY)
     const encrypted = template && Array.isArray(template) ? encryptTemplate(template, process.env.PONTO_TEMPLATES_KEY) : null
     if (encrypted) {
       const templateId = randomUUID()
