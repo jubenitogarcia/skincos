@@ -160,6 +160,21 @@ jobs:
             printf '%s' "${!name}" | workforce/timekeeping/node_modules/.bin/wrangler secret put "$name" --config workforce/timekeeping/wrangler.toml "${ENV_ARGS[@]}" >/dev/null
           done
 
+      - name: Ensure proxied staging API DNS record
+        if: inputs.target == 'staging'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          zone="$(curl --fail --silent --show-error "${auth[@]}" 'https://api.cloudflare.com/client/v4/zones?name=skincos.com.br' | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);if(!r.success||r.result.length!==1)process.exit(1);process.stdout.write(r.result[0].id)})")"
+          record="$(curl --fail --silent --show-error "${auth[@]}" "https://api.cloudflare.com/client/v4/zones/$zone/dns_records?name=api-staging.skincos.com.br" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);if(!r.success)process.exit(1);process.stdout.write(r.result[0]?.id||'')})")"
+          if [[ -z "$record" ]]; then
+            curl --fail --silent --show-error --request POST "${auth[@]}" --data '{"type":"A","name":"api-staging.skincos.com.br","content":"192.0.2.1","ttl":1,"proxied":true}' "https://api.cloudflare.com/client/v4/zones/$zone/dns_records" >/dev/null
+          else
+            curl --fail --silent --show-error --request PATCH "${auth[@]}" --data '{"proxied":true,"ttl":1}' "https://api.cloudflare.com/client/v4/zones/$zone/dns_records/$record" >/dev/null
+          fi
+
       - name: Deploy Timekeeping then gateway
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
