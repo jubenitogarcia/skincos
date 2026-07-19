@@ -57,6 +57,23 @@ flowchart LR
 - **Calendário agregado:** como unidades podem ter calendários diferentes, a tela exibe capacidade somada e `calendarCompatible=false`, não uma agenda consolidada.
 - **Ambiente local:** o launcher isolado requer `DATABASE_URL` local para `skincos_crm_local`. Sem essa variável, a falha é esperada e segura.
 
+## Achados preservados da auditoria de origem, fora deste escopo
+
+Os controles abaixo não foram alterados pela consolidação de Atendimento. Eles
+continuam relevantes e foram preservados aqui para que a documentação de
+origem não seja perdida durante a aposentadoria da worktree de auditoria.
+
+| Tema | Risco observado | Próximo passo seguro |
+| --- | --- | --- |
+| Metas importadas e manuais | A meta manual e a meta importada ainda podem disputar a mesma linha efetiva, permitindo que uma importação posterior substitua uma decisão operacional. | Modelar `goal_overrides` separado, com vigência, motivo, aprovador e precedência explícita; manter o valor importado imutável. |
+| Reconciliação de importação | A importação identifica linhas por `(source_sheet_id, source_tab, source_row)`, mas a remoção da linha na fonte ainda não produz baixa/revisão explícita no Atendimento. | Introduzir lote com `seen_in_batch`, prévia/diff e aprovação antes de inativar ou reconciliar ausências. |
+| Retenção e classificação | Snapshots de planilhas podem replicar PII, fórmulas e dados financeiros sem política de classificação/retenção definida. | Classificar colunas, reduzir persistência, definir retenção/purga auditável e bloquear fallback público para fontes sensíveis. |
+| Produção, venda e recebimento | Atendimento mede produção; Caixa ainda não é um razão de recebimentos conciliado. | Criar domínio de recebimentos, estorno e conciliação antes de apresentar produção como receita recebida. |
+
+Esses itens são pendências de produto e governança de dados, não autorização
+para recalcular histórico, remover registros importados ou alterar metas sem
+aprovação explícita.
+
 ## Prioridade de evolução
 
 | Prioridade | Próxima ação | Critério de aceite |
