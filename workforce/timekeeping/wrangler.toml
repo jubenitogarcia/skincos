@@ -10,7 +10,7 @@ migrations_dir = "migrations"
 
 [[services]]
 binding = "SCHEDULE"
-service = "skincos-escala"
+service = "skincos-escala-api"
 
 [vars]
 APP_VERSION = "1.0.0"
@@ -27,7 +27,7 @@ migrations_dir = "migrations"
 
 [[env.staging.services]]
 binding = "SCHEDULE"
-service = "skincos-escala-staging"
+service = "skincos-escala-api-staging"
 
 [env.staging.vars]
 APP_VERSION = "1.0.0"
