@@ -684,7 +684,10 @@ export async function handleAuthRoutes({
                     await sendPasswordResetEmail({ env, to: email, code, expiresAt });
                 } catch (mailError) {
                     await env.DB.prepare(`DELETE FROM ${passwordResetsTable} WHERE id = ? AND sent_at IS NULL`).bind(resetId).run();
-                    console.error(JSON.stringify({ event: 'AUTH_PASSWORD_RESET_EMAIL_FAILED', reset_id: resetId }));
+                    const reason = String(mailError?.message || mailError || 'SMTP_ERROR_UNKNOWN')
+                        .replace(/[\r\n]+/g, ' ')
+                        .slice(0, 160);
+                    console.error(JSON.stringify({ event: 'AUTH_PASSWORD_RESET_EMAIL_FAILED', reset_id: resetId, reason }));
                     return withCORS(JSON.stringify({ success: false, error: 'EMAIL_DELIVERY_FAILED' }), { status: 503 }, appOrigin);
                 }
                 await env.DB.batch([
