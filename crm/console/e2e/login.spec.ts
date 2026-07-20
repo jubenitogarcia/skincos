@@ -52,12 +52,61 @@ test.describe('auth', () => {
     await expect(page.locator('#auth-inviteToken')).toHaveValue('ABCDEFGHIJKLMNOPQRSTUVWX')
     await page.fill('#auth-password', '123')
     await expect(page.getByText(/email corporativo válido/i)).toBeVisible()
-    await expect(page.getByText('Mínimo de 6 caracteres', { exact: true })).toBeVisible()
+    await expect(page.getByText('Mínimo de 12 caracteres', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Criar conta' })).toBeDisabled()
     await page.fill('#auth-email', 'ana@empresa.com')
-    await page.fill('#auth-password', '123456')
+    await page.fill('#auth-password', '123456789012')
     await expect(page.getByText(/Dados prontos/i)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Criar conta' })).toBeEnabled()
+  })
+
+  test('recovery validates the email code before allowing a new password', async ({ page }) => {
+    let authenticated = false
+    await page.route('**/api/auth/me', route => route.fulfill({
+      status: authenticated ? 200 : 401,
+      contentType: 'application/json',
+      body: authenticated
+        ? JSON.stringify({ success: true, user: { username: 'ana', email: 'ana@empresa.com', displayName: 'Ana Souza' } })
+        : JSON.stringify({ error: 'Not authenticated' }),
+    }))
+    await page.route('**/api/auth/password/request', route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, expiresAt: '2026-07-20T12:10:00.000Z' }),
+    }))
+    await page.route('**/api/auth/password/verify', route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, resetGrant: 'grant-only-in-memory', expiresAt: '2026-07-20T12:10:00.000Z' }),
+    }))
+    await page.route('**/api/auth/password/reset', route => {
+      authenticated = true
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true }) })
+    })
+
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Esqueci minha senha' }).click()
+    await page.fill('#auth-email', 'ana@empresa.com')
+    await page.getByRole('button', { name: 'Enviar código' }).click()
+    await expect(page.getByRole('heading', { name: 'Validar código' })).toBeVisible()
+    await page.fill('#auth-code', '123456')
+    await page.getByRole('button', { name: 'Validar código' }).click()
+    await expect(page.getByRole('heading', { name: 'Definir nova senha' })).toBeVisible()
+    await page.fill('#auth-password', 'senha-nova-123')
+    await page.fill('#auth-password-confirmation', 'senha-nova-123')
+    await page.getByRole('button', { name: 'Atualizar senha' }).click()
+  })
+
+  test('recovery explains when the email is not registered', async ({ page }) => {
+    await page.route('**/api/auth/me', route => route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Not authenticated' }) }))
+    await page.route('**/api/auth/password/request', route => route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: false, error: 'EMAIL_NOT_REGISTERED' }),
+    }))
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Esqueci minha senha' }).click()
+    await page.fill('#auth-email', 'ausente@empresa.com')
+    await page.getByRole('button', { name: 'Enviar código' }).click()
+    await expect(page.getByRole('alert')).toHaveText(/Não há e-mail cadastrado/i)
   })
 
   test('login persists session', async ({ page }) => {

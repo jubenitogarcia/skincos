@@ -60,6 +60,34 @@ jobs:
         if: ${{ steps.guard.outputs.skip != 'true' }}
         run: pnpm -C backend install --frozen-lockfile
 
+      - name: Sync password-recovery secrets (optional)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        working-directory: inventory
+        env:
+          AUTH_RESET_SMTP_HOST: ${{ secrets.AUTH_RESET_SMTP_HOST }}
+          AUTH_RESET_SMTP_PORT: ${{ secrets.AUTH_RESET_SMTP_PORT }}
+          AUTH_RESET_SMTP_USERNAME: ${{ secrets.AUTH_RESET_SMTP_USERNAME }}
+          AUTH_RESET_SMTP_PASSWORD: ${{ secrets.AUTH_RESET_SMTP_PASSWORD }}
+          AUTH_RESET_EMAIL_FROM: ${{ secrets.AUTH_RESET_EMAIL_FROM }}
+          AUTH_RESET_CODE_PEPPER: ${{ secrets.AUTH_RESET_CODE_PEPPER }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          put_secret() {
+            local name="$1"
+            local value="$2"
+            if [[ -n "$value" && "$value" != "__KEEP_EXISTING__" ]]; then
+              printf '%s' "$value" | pnpm -C ../backend -F @skincos/insumos-worker exec wrangler secret put "$name" --config wrangler.toml
+            fi
+          }
+          put_secret AUTH_RESET_SMTP_HOST "$AUTH_RESET_SMTP_HOST"
+          put_secret AUTH_RESET_SMTP_PORT "$AUTH_RESET_SMTP_PORT"
+          put_secret AUTH_RESET_SMTP_USERNAME "$AUTH_RESET_SMTP_USERNAME"
+          put_secret AUTH_RESET_SMTP_PASSWORD "$AUTH_RESET_SMTP_PASSWORD"
+          put_secret AUTH_RESET_EMAIL_FROM "$AUTH_RESET_EMAIL_FROM"
+          put_secret AUTH_RESET_CODE_PEPPER "$AUTH_RESET_CODE_PEPPER"
+
       - name: Deploy changed Workers
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:

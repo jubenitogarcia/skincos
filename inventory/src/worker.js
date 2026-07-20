@@ -1134,6 +1134,7 @@ export default {
             const windowSec = 60;
             const cfg = {
                 auth: { limit: 20 },
+                password_reset: { limit: 5 },
                 read: { limit: 240 },
                 write: { limit: 60 }
             }[kind] || { limit: 120 };
@@ -1228,10 +1229,16 @@ export default {
                 '/auth/register',
                 '/auth/signup',
                 '/auth/password/request',
+                '/auth/password/verify',
                 '/auth/password/reset',
             ];
             const isAuthSensitive = authSensitive.includes(url.pathname);
-            const kind = isAuthSensitive ? 'auth' : (isMutating ? 'write' : 'read');
+            const isPasswordRecovery = [
+                '/auth/password/request',
+                '/auth/password/verify',
+                '/auth/password/reset',
+            ].includes(url.pathname);
+            const kind = isPasswordRecovery ? 'password_reset' : (isAuthSensitive ? 'auth' : (isMutating ? 'write' : 'read'));
             const rl = await enforceRateLimit(kind);
             if (!rl.allowed) {
                 return withCORS(JSON.stringify({ success: false, error: 'Rate limit excedido', code: 'RATE_LIMITED' }), { status: 429 }, appOrigin);
@@ -1266,6 +1273,7 @@ export default {
 
         const session = cookies.session ? await decodeSessionCookie(cookies.session, sessionSecret) : null;
         const sessionUsername = session?.username ? String(session.username).trim() : null;
+        const sessionVersion = Number.isFinite(Number(session?.sv)) ? Number(session.sv) : 0;
         const sessionCsrf = session?.csrf ? String(session.csrf) : null;
         // CSRF protection for mutating calls (requires header token matching session/cookie)
         const methodUpper = (request.method || 'GET').toUpperCase();
@@ -1294,6 +1302,7 @@ export default {
             if (!sessionUsername) return null;
             const userDb = await d1GetUserByUsername(env, sessionUsername);
             if (!userDb || !userDb.ativo) return null;
+            if (Number(userDb.sessionVersion || 0) !== sessionVersion) return null;
             sessionUser = { ...userDb, role: normalizeRole(userDb.role || 'CONSULTOR') };
             return sessionUser;
         };
@@ -1414,6 +1423,7 @@ export default {
             appOrigin,
             withCORS,
             sessionUsername,
+            sessionVersion,
             sessionCsrf,
             cookies,
             bcrypt,
