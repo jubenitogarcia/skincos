@@ -108,6 +108,7 @@ Opções:
   --refresh-insumos-snapshot     Exporta um snapshot novo do D1 remoto antes do seed
   --insumos-seed-token TOKEN     Token local usado para /admin/seed (default: dev-seed-token)
   CRM_LOCAL_LOG_LEVEL=LEVEL      Nível dos runtimes locais: warn (default), info, debug, error ou none
+  CRM_BROWSER_DIAGNOSTICS_LOG=FILE Arquivo privado para diagnósticos conhecidos do Chromium durante smokes
   --smoke                        Roda uma smoke local do módulo após subir o CRM
   --exit-after-smoke             Encerra o CRM local depois da smoke
   --headed-smoke                 Roda a smoke com janela visível para debug
@@ -527,6 +528,7 @@ mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
 
 GATE_REPORT_FILE="${CRM_GATE_REPORT_FILE:-$(dirname "$LOG_FILE")/crm-local-gate-$(report_timestamp).json}"
 GATE_ARTIFACT_DIR="${CRM_SMOKE_ARTIFACT_DIR:-$(dirname "$LOG_FILE")/crm-local-smoke-artifacts}"
+BROWSER_DIAGNOSTICS_LOG="${CRM_BROWSER_DIAGNOSTICS_LOG:-$(dirname "$LOG_FILE")/crm-local-browser-diagnostics-$(report_timestamp).log}"
 mkdir -p "$GATE_ARTIFACT_DIR"
 
 refresh_insumos_snapshot_if_needed
@@ -648,16 +650,71 @@ fi
 
 run_gate_smoke() {
   echo "[crm-local] Rodando gate obrigatório do shell local..."
+  run_browser_smoke env \
+    PLAYWRIGHT_BROWSERS_PATH=0 \
+    CRM_URL="$DEFAULT_URL" \
+    HEADED=0 \
+    TIMEOUT_MS="${CRM_GATE_TIMEOUT_MS:-120000}" \
+    CRM_SMOKE_REPORT_FILE="$GATE_REPORT_FILE" \
+    SMOKE_ARTIFACT_DIR="$GATE_ARTIFACT_DIR" \
+    npm run smoke:crm-shell:local
+}
+
+is_known_browser_diagnostic() {
+  local line="$1"
+  case "$line" in
+    *"/org/freedesktop/UPower/devices/DisplayDevice"*"org.freedesktop.DBus.Error.ServiceUnknown"*|\
+    *"ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer."*|\
+    *"Created TensorFlow Lite XNNPACK delegate for CPU."*|\
+    *"Registration response error message: DEPRECATED_ENDPOINT"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+filter_browser_smoke_stderr() {
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if is_known_browser_diagnostic "$line"; then
+      printf '%s\n' "$line" >> "$BROWSER_DIAGNOSTICS_LOG"
+    else
+      printf '%s\n' "$line" >&2
+    fi
+  done
+}
+
+run_browser_smoke() {
+  : > "$BROWSER_DIAGNOSTICS_LOG"
+
+  local stderr_file
+  if ! stderr_file="$(mktemp "${BROWSER_DIAGNOSTICS_LOG}.tmp.XXXXXX")"; then
+    echo "[crm-local] Não foi possível preparar o diagnóstico do Chromium." >&2
+    return 1
+  fi
+
+  local status=0
   (
     cd "$FRONTEND_DIR"
-    PLAYWRIGHT_BROWSERS_PATH=0 \
-      CRM_URL="$DEFAULT_URL" \
-      HEADED=0 \
-      TIMEOUT_MS="${CRM_GATE_TIMEOUT_MS:-120000}" \
-      CRM_SMOKE_REPORT_FILE="$GATE_REPORT_FILE" \
-      SMOKE_ARTIFACT_DIR="$GATE_ARTIFACT_DIR" \
-      npm run smoke:crm-shell:local
-  )
+    "$@"
+  ) 2> "$stderr_file" || status=$?
+
+  local filter_status=0
+  filter_browser_smoke_stderr < "$stderr_file" || filter_status=$?
+  rm -f "$stderr_file"
+
+  if [[ "$filter_status" != "0" ]]; then
+    echo "[crm-local] O filtro de diagnósticos do Chromium falhou." >&2
+    return "$filter_status"
+  fi
+
+  if [[ -s "$BROWSER_DIAGNOSTICS_LOG" ]]; then
+    local diagnostic_count
+    diagnostic_count="$(wc -l < "$BROWSER_DIAGNOSTICS_LOG" | tr -d '[:space:]')"
+    echo "[crm-local] ${diagnostic_count} diagnóstico(s) conhecido(s) do Chromium arquivado(s) em $BROWSER_DIAGNOSTICS_LOG"
+  fi
+
+  return "$status"
 }
 
 print_gate_failure_summary() {
@@ -701,22 +758,13 @@ fi
 if [[ "$CRM_SMOKE" == "1" ]]; then
   if [[ "$CRM_MODULE" == "meta-ads" ]]; then
     echo "[crm-local] Rodando smoke local do Meta Ads..."
-    (
-      cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
-    )
+    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
   elif [[ "$CRM_MODULE" == "site-tracking" ]]; then
     echo "[crm-local] Rodando smoke local do Site EF..."
-    (
-      cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
-    )
+    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
   else
     echo "[crm-local] Rodando smoke local padrão..."
-    (
-      cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
-    )
+    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
   fi
 
   if [[ "$CRM_EXIT_AFTER_SMOKE" == "1" ]]; then
