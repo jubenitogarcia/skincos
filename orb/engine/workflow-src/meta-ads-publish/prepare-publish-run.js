@@ -1,6 +1,11 @@
 function text(value) { return String(value ?? '').trim(); }
 function list(value) { return Array.isArray(value) ? value : []; }
 
+// The run fingerprint must change when the Meta creative contract changes;
+// otherwise a corrected payload collides with a failed operation for the same
+// Drive lot and cannot be retried safely by the idempotency gateway.
+const PUBLISH_CONTRACT_REVISION = 'creative_payload_v7_preserve_whatsapp_replacement_destination';
+
 const groups = $input.all().map((item) => item.json || {});
 if (!groups.length) throw new Error('Prepare Publish Run recebeu zero grupos.');
 
@@ -16,7 +21,7 @@ for (const group of groups) {
       id,
       name: text(file.name),
       md5_checksum: text(file.md5_checksum || file.md5Checksum),
-      modified_time: text(file.modified_time || file.modifiedTime),
+      modified_time: `${text(file.modified_time || file.modifiedTime)}#${PUBLISH_CONTRACT_REVISION}`,
       size: text(file.size),
     };
     const previous = byId.get(id);

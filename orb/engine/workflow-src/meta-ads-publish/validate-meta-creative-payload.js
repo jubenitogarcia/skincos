@@ -5,22 +5,52 @@ const MIN_IMAGES = 3;
 const BODY_COUNT = 5;
 const TITLE_COUNT = 5;
 const DESCRIPTION_COUNT = 1;
-const ALLOWED_CTAS = new Set([
-  'WHATSAPP_MESSAGE',
-  'LEARN_MORE',
-  'GET_QUOTE',
-  'GET_A_QUOTE',
-  'BOOK_NOW',
-  'MAKE_AN_APPOINTMENT',
-  'BOOK_A_CONSULTATION',
-  'CONTACT_US',
-  'MESSAGE_PAGE',
+const VERTICAL_CROP_KEY = '90x160';
+const HORIZONTAL_CROP_KEY = '191x100';
+const REQUIRED_VERTICAL_PLATFORMS = ['facebook', 'instagram'];
+const REQUIRED_VERTICAL_FACEBOOK_POSITIONS = ['story', 'facebook_reels'];
+const REQUIRED_VERTICAL_INSTAGRAM_POSITIONS = ['story', 'reels'];
+const REQUIRED_VERTICAL_AUX_PLATFORMS = ['audience_network', 'whatsapp'];
+const REQUIRED_HORIZONTAL_PLATFORMS = ['facebook'];
+const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
+const REQUIRED_CTA = 'LEARN_MORE';
+const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
+const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
+  'add_text_overlay',
+  'image_touchups',
+  'music_generation',
+  'pac_relaxation',
+  'text_optimizations',
+  'inline_comment',
+  'enhance_cta',
+  'image_brightness_and_contrast',
+  'reveal_details_over_time',
+  'show_destination_blurbs',
+  'image_animation',
+  'site_extensions',
+]);
+const FORBIDDEN_ADVANTAGE_PLUS_FEATURES = new Set([
+  'image_template',
+  'media_type_automation',
+  'show_summary',
+  'audio',
+  ['standard', 'enhancements'].join('_'),
 ]);
 
 function safeString(value) { return String(value ?? '').trim(); }
 function safeArray(value) { return Array.isArray(value) ? value : []; }
 function asObject(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
+
+function restoredRunContext() {
+  let groups = [];
+  try { groups = $items('Restore Publish Groups') || []; } catch (error) { groups = []; }
+  const runIds = [...new Set(groups.map((item) => safeString(item && item.json && item.json.run_id)).filter(Boolean))];
+  const fingerprints = [...new Set(groups.map((item) => safeString(item && item.json && item.json.batch_fingerprint)).filter(Boolean))];
+  assert(runIds.length <= 1, 'restored_run_id_ambiguous', { count: runIds.length });
+  assert(fingerprints.length <= 1, 'restored_batch_fingerprint_ambiguous', { count: fingerprints.length });
+  return { run_id: runIds[0] || '', batch_fingerprint: fingerprints[0] || '' };
+}
 
 function fail(message, detail = {}) {
   throw new Error(`Meta creative quality gate: ${message} | detail=${JSON.stringify(detail)}`);
@@ -66,46 +96,145 @@ function allowedHosts(source) {
 
 function validateUrl(value, hosts, label) {
   const raw = safeString(value);
-  let url;
-  try { url = new URL(raw); } catch { fail(`${label}_invalid`, {}); }
-  assert(url.protocol === 'https:', `${label}_must_be_https`, {});
-  const hostname = url.hostname.toLowerCase();
+  const match = /^https:\/\/([^\/?#\s:@]+)(?::\d+)?(?:[\/?#]|$)/i.exec(raw);
+  const hostname = safeString(match && match[1]).replace(/\.$/, '').toLowerCase();
+  assert(Boolean(hostname) && !hostname.includes('..') && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(hostname), `${label}_invalid`, {});
   assert([...hosts].some((host) => hostname === host || hostname.endsWith(`.${host}`)), `${label}_host_not_allowed`, { hostname });
   return raw;
+}
+
+function isWhatsAppUrl(value) {
+  const raw = safeString(value);
+  const match = /^https:\/\/([^\/?#\s:@]+)(?::\d+)?(?:[\/?#]|$)/i.exec(raw);
+  const hostname = safeString(match && match[1]).toLowerCase();
+  return hostname === 'wa.me' || hostname === 'api.whatsapp.com' || hostname.endsWith('.whatsapp.com');
 }
 
 function labelNames(assets) {
   return new Set(safeArray(assets).flatMap((asset) => safeArray(asset && asset.adlabels).map((label) => safeString(label && label.name))).filter(Boolean));
 }
 
+function containsAll(actual, expected) {
+  const values = new Set(safeArray(actual).map((value) => safeString(value).toLowerCase()));
+  return expected.every((value) => values.has(value));
+}
+
+function validateCrop(image, index, cropKey, targetWidth, targetHeight, label) {
+  const crops = asObject(image && image.image_crops);
+  if (!Object.prototype.hasOwnProperty.call(crops, cropKey)) return false;
+  const crop = safeArray(crops[cropKey]);
+  assert(crop.length === 2, `${label}_crop_points_invalid`, { index });
+  const start = safeArray(crop[0]);
+  const end = safeArray(crop[1]);
+  assert(start.length === 2 && end.length === 2, `${label}_crop_coordinates_invalid`, { index });
+  const width = Number(end[0]) - Number(start[0]);
+  const height = Number(end[1]) - Number(start[1]);
+  assert(Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0, `${label}_crop_bounds_invalid`, { index });
+  // Meta may round a crop edge to a whole source pixel.  Comparing the
+  // resulting ratios with only one pixel of tolerance on the longest edge
+  // rejects valid crops such as 1731x906 for the 191x100 placement (the ideal
+  // height is fractional).  Keep the gate narrow, but allow the bounded error
+  // introduced by rounding either coordinate.
+  const expectedRatio = targetWidth / targetHeight;
+  const actualRatio = width / height;
+  const ratioTolerance = Math.max(0.002, 2 / Math.min(width, height));
+  assert(Math.abs(actualRatio - expectedRatio) <= ratioTolerance, `${label}_crop_ratio_invalid`, {
+    index,
+    width,
+    height,
+    expected_ratio: expectedRatio,
+    actual_ratio: actualRatio,
+    ratio_tolerance: ratioTolerance,
+  });
+  return true;
+}
+
+function validateVerticalCrop(image, index) {
+  return validateCrop(image, index, VERTICAL_CROP_KEY, 9, 16, 'vertical');
+}
+
+function validateHorizontalCrop(image, index) {
+  return validateCrop(image, index, HORIZONTAL_CROP_KEY, 191, 100, 'horizontal');
+}
+
 function validatePlacementRules(feed) {
   const imageLabels = labelNames(feed.images);
+  const videoLabels = labelNames(feed.videos);
   const bodyLabels = labelNames(feed.bodies);
   const titleLabels = labelNames(feed.titles);
+  const images = safeArray(feed.images);
+  let verticalMixedRuleCount = 0;
+  let verticalAuxRuleCount = 0;
+  let verticalLegacyRuleCount = 0;
+  let horizontalRuleCount = 0;
   for (const [index, rule] of safeArray(feed.asset_customization_rules).entries()) {
     const image = safeString(rule && rule.image_label && rule.image_label.name);
+    const video = safeString(rule && rule.video_label && rule.video_label.name);
     const body = safeString(rule && rule.body_label && rule.body_label.name);
     const title = safeString(rule && rule.title_label && rule.title_label.name);
     assert(imageLabels.has(image), 'placement_image_label_missing', { index, image });
+    if (video) assert(videoLabels.has(video), 'placement_video_label_missing', { index, video });
     assert(bodyLabels.has(body), 'placement_body_label_missing', { index, body });
     assert(titleLabels.has(title), 'placement_title_label_missing', { index, title });
+    const creativeImage = images.find((entry) => safeArray(entry && entry.adlabels)
+      .some((label) => safeString(label && label.name) === image));
+    const spec = asObject(rule && rule.customization_spec);
+    if (creativeImage && validateVerticalCrop(creativeImage, index)) {
+      if (video) {
+        verticalMixedRuleCount += 1;
+        assert(containsAll(spec.publisher_platforms, REQUIRED_VERTICAL_PLATFORMS), 'vertical_publishers_incomplete', { index });
+        assert(containsAll(spec.facebook_positions, REQUIRED_VERTICAL_FACEBOOK_POSITIONS), 'vertical_facebook_positions_incomplete', { index });
+        assert(containsAll(spec.instagram_positions, REQUIRED_VERTICAL_INSTAGRAM_POSITIONS), 'vertical_instagram_positions_incomplete', { index });
+      } else if (containsAll(spec.publisher_platforms, REQUIRED_VERTICAL_AUX_PLATFORMS)) {
+        verticalAuxRuleCount += 1;
+      } else {
+        verticalLegacyRuleCount += 1;
+      }
+    }
+    if (creativeImage && validateHorizontalCrop(creativeImage, index)) {
+      horizontalRuleCount += 1;
+      assert(containsAll(spec.publisher_platforms, REQUIRED_HORIZONTAL_PLATFORMS), 'horizontal_publishers_incomplete', { index });
+      assert(containsAll(spec.facebook_positions, REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS), 'horizontal_facebook_positions_incomplete', { index });
+    }
   }
+  if (safeArray(feed.videos).length) {
+    assert(verticalMixedRuleCount === 1, 'vertical_mixed_placement_rule_count_invalid', { actual: verticalMixedRuleCount });
+    assert(verticalAuxRuleCount === 1, 'vertical_aux_placement_rule_count_invalid', { actual: verticalAuxRuleCount });
+  } else {
+    assert(verticalLegacyRuleCount === 1, 'vertical_placement_rule_count_invalid', { actual: verticalLegacyRuleCount });
+  }
+  assert(horizontalRuleCount === 1, 'horizontal_placement_rule_count_invalid', { actual: horizontalRuleCount });
 }
 
 function validateAdvantagePlus(payload, source, hosts) {
   const legacyBundleKey = ['standard', 'enhancements'].join('_');
   assert(!Object.prototype.hasOwnProperty.call(payload, legacyBundleKey), 'legacy_enhancement_bundle_forbidden', {});
-  const features = asObject(asObject(payload.degrees_of_freedom_spec).creative_features_spec);
+  const freedom = asObject(payload.degrees_of_freedom_spec);
+  assert(!Object.prototype.hasOwnProperty.call(freedom, legacyBundleKey), 'legacy_enhancement_bundle_forbidden', {});
+  const features = asObject(freedom.creative_features_spec);
   const requested = safeArray(source.advantage_plus_requested_features);
   assert(Object.keys(features).length > 0, 'advantage_plus_features_missing', {});
   for (const [feature, config] of Object.entries(features)) {
+    assert(ALLOWED_ADVANTAGE_PLUS_FEATURES.has(feature), 'advantage_plus_feature_not_allowlisted', { feature });
+    assert(!FORBIDDEN_ADVANTAGE_PLUS_FEATURES.has(feature), 'advantage_plus_feature_forbidden', { feature });
     assert(safeString(config && config.enroll_status).toUpperCase() === 'OPT_IN', 'advantage_plus_feature_not_opted_in', { feature });
   }
   for (const feature of requested) {
     assert(Object.prototype.hasOwnProperty.call(features, feature), 'advantage_plus_requested_feature_missing', { feature });
   }
 
-  const siteLinks = safeArray(asObject(payload.creative_sourcing_spec).site_links_spec);
+  for (const feature of FORBIDDEN_ADVANTAGE_PLUS_FEATURES) {
+    assert(!Object.prototype.hasOwnProperty.call(features, feature), 'advantage_plus_feature_forbidden', { feature });
+  }
+
+  const sourcing = asObject(payload.creative_sourcing_spec);
+  // Meta accepts the scheduling landing page in asset_feed_spec.link_urls.  Do
+  // not add creative_sourcing_spec.source_url unless Meta site extensions are
+  // configured: it was rejected by this account's creative endpoint.
+  const sourceUrl = safeString(sourcing.source_url);
+  assert(!sourceUrl, 'creative_source_url_forbidden_without_site_extensions', {});
+
+  const siteLinks = safeArray(sourcing.site_links_spec);
   assert(siteLinks.length === 0 || (siteLinks.length >= 2 && siteLinks.length <= 4), 'site_links_count_invalid', { count: siteLinks.length });
   for (const [index, link] of siteLinks.entries()) {
     assert(safeString(link && link.site_link_title), 'site_link_title_missing', { index });
@@ -117,6 +246,9 @@ function validateAdvantagePlus(payload, source, hosts) {
 
 return $input.all().map((item) => {
   const source = sanitize(clone(item.json || {}));
+  const restored = restoredRunContext();
+  if (!safeString(source.run_id)) source.run_id = restored.run_id;
+  if (!safeString(source.batch_fingerprint)) source.batch_fingerprint = restored.batch_fingerprint;
   if (safeString(source.error)) fail('upstream_error', { error: safeString(source.error), upstream: safeString(source.upstream_error) });
 
   assert(safeString(source.run_id), 'run_id_missing', {});
@@ -128,32 +260,72 @@ return $input.all().map((item) => {
   const payload = asObject(source.creativePayload);
   const story = asObject(payload.object_story_spec);
   const feed = asObject(payload.asset_feed_spec);
+  const isVideoOnly = safeString(source.media_variant) === 'video_single';
   const hosts = allowedHosts(source);
   assert(safeString(payload.name), 'creative_name_missing', {});
   assert(safeString(story.page_id) === safeString(source.page_id), 'creative_page_id_mismatch', {});
-  assert(Object.keys(feed).length > 0, 'asset_feed_spec_required', {});
+  assert(isVideoOnly ? Object.keys(feed).length === 0 : Object.keys(feed).length > 0, isVideoOnly ? 'video_single_asset_feed_forbidden' : 'asset_feed_spec_required', {});
+
+  if (isVideoOnly) {
+    const videoData = asObject(story.video_data);
+    assert(/^\d+$/.test(safeString(videoData.video_id)), 'video_id_invalid', {});
+    assert(Boolean(safeString(videoData.image_hash)), 'video_thumbnail_hash_missing', {});
+    assert(safeString(source.video_status).toLowerCase() === 'ready', 'video_not_ready', { video_status: source.video_status });
+    const cta = asObject(videoData.call_to_action);
+    const primaryLink = validateUrl(asObject(cta.value).link, hosts, 'video_primary_link');
+    const whatsappDestination = safeString(source.destination_mode) === 'whatsapp_message_preserved_from_source_ad';
+    if (whatsappDestination) {
+      assert(safeString(cta.type).toUpperCase() === WHATSAPP_CTA, 'cta_must_be_whatsapp_message', { value: cta.type });
+      assert(isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_required', {});
+    } else {
+      assert(safeString(cta.type).toUpperCase() === REQUIRED_CTA, 'cta_must_be_learn_more', { value: cta.type });
+      assert(!isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_forbidden', {});
+      assert(primaryLink === safeString(source.landing_page_url), 'primary_link_landing_page_mismatch', {});
+    }
+  }
 
   const images = safeArray(feed.images);
-  assert(images.length >= MIN_IMAGES, 'image_count_invalid', { minimum: MIN_IMAGES, actual: images.length });
+  if (!isVideoOnly) assert(images.length >= MIN_IMAGES, 'image_count_invalid', { minimum: MIN_IMAGES, actual: images.length });
   for (const [index, image] of images.entries()) {
     assert(Boolean(safeString(image && image.hash) || safeString(image && image.url)), 'image_reference_missing', { index });
     if (safeString(image && image.url)) validateUrl(image.url, hosts, `image_${index}`);
   }
-  textAssets(feed.bodies, BODY_COUNT, MAX_BODY_LENGTH, 'bodies');
-  textAssets(feed.titles, TITLE_COUNT, MAX_TITLE_LENGTH, 'titles');
-  textAssets(feed.descriptions, DESCRIPTION_COUNT, MAX_DESCRIPTION_LENGTH, 'descriptions');
+  const videos = safeArray(feed.videos);
+  const requiresVideo = isVideoOnly;
+  assert(videos.length === 0, 'mixed_video_asset_feed_forbidden', { actual: videos.length });
+  for (const [index, video] of videos.entries()) {
+    assert(/^\d+$/.test(safeString(video && video.video_id)), 'video_id_invalid', { index });
+    assert(Boolean(safeString(video && video.thumbnail_hash)), 'video_thumbnail_hash_missing', { index });
+  }
+  if (!isVideoOnly) {
+    textAssets(feed.bodies, BODY_COUNT, MAX_BODY_LENGTH, 'bodies');
+    textAssets(feed.titles, TITLE_COUNT, MAX_TITLE_LENGTH, 'titles');
+    textAssets(feed.descriptions, DESCRIPTION_COUNT, MAX_DESCRIPTION_LENGTH, 'descriptions');
+  }
 
-  const linkUrls = safeArray(feed.link_urls);
-  assert(linkUrls.length === 1, 'link_url_count_invalid', { actual: linkUrls.length });
-  validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
   const ctas = safeArray(feed.call_to_action_types);
-  assert(ctas.length === 1 && ALLOWED_CTAS.has(safeString(ctas[0]).toUpperCase()), 'cta_invalid', { value: ctas });
-  validatePlacementRules(feed);
-  validateAdvantagePlus(payload, source, hosts);
+  const linkUrls = safeArray(feed.link_urls);
+  if (!isVideoOnly) assert(linkUrls.length === 1, 'link_url_count_invalid', { actual: linkUrls.length });
+  const primaryLink = isVideoOnly ? '' : validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
+  const whatsappDestination = safeString(source.destination_mode) === 'whatsapp_message_preserved_from_source_ad';
+  if (!isVideoOnly && whatsappDestination) {
+    assert(ctas.length === 1 && safeString(ctas[0]).toUpperCase() === WHATSAPP_CTA, 'cta_must_be_whatsapp_message', { value: ctas });
+    assert(isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_required', {});
+    const schedulingUrl = validateUrl(source.scheduling_landing_page_url, hosts, 'scheduling_landing_page');
+    assert(!isWhatsAppUrl(schedulingUrl), 'scheduling_landing_page_whatsapp_forbidden', {});
+  } else if (!isVideoOnly) {
+    assert(ctas.length === 1 && safeString(ctas[0]).toUpperCase() === REQUIRED_CTA, 'cta_must_be_learn_more', { value: ctas });
+    assert(!isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_forbidden', {});
+    assert(primaryLink === safeString(source.landing_page_url), 'primary_link_landing_page_mismatch', {});
+  }
+  if (!isVideoOnly) {
+    validatePlacementRules(feed);
+    validateAdvantagePlus(payload, source, hosts);
+  }
 
   const adPayload = asObject(source.adPayload);
   assert(safeString(adPayload.name), 'ad_name_missing', {});
-  assert(safeString(adPayload.status) === 'PAUSED', 'ad_stage_status_must_be_paused', { value: adPayload.status });
+  assert(safeString(adPayload.status) === 'ACTIVE', 'ad_publish_status_must_be_active', { value: adPayload.status });
   if (safeString(source.action) === 'create_new') {
     assert(/^\d+$/.test(safeString(adPayload.adset_id)), 'adset_id_required_for_create', {});
   }
@@ -173,9 +345,16 @@ return $input.all().map((item) => {
         creative_error_policy: 'fail_fast_before_ad_mutation',
         ad_mutation_requires_all_creatives: true,
         image_count: images.length,
-        body_count: BODY_COUNT,
-        title_count: TITLE_COUNT,
-        description_count: DESCRIPTION_COUNT,
+        video_count: videos.length,
+        video_status: safeString(source.video_status),
+        vertical_crop_key: VERTICAL_CROP_KEY,
+        media_variant: safeString(source.media_variant || 'static_flexible'),
+        vertical_placement_rule_count: isVideoOnly ? 0 : 1,
+        horizontal_crop_key: HORIZONTAL_CROP_KEY,
+        horizontal_placement_rule_count: 1,
+        body_count: isVideoOnly ? 0 : BODY_COUNT,
+        title_count: isVideoOnly ? 0 : TITLE_COUNT,
+        description_count: isVideoOnly ? 0 : DESCRIPTION_COUNT,
         site_links_count: safeArray(asObject(payload.creative_sourcing_spec).site_links_spec).length,
         advantage_plus_requested_features: safeArray(source.advantage_plus_requested_features),
       },

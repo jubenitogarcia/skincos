@@ -8,6 +8,36 @@ function pairedIndex(item, fallback) {
   return Number(fallback);
 }
 function unique(values) { return [...new Set(list(values).map(text).filter(Boolean))]; }
+function updateFeatureGroup(groups, reportedOptIn, removedOrIneligible, notReported) {
+  return list(groups).map((entry) => {
+    const feature = text(entry && entry.api_key);
+    const requested = entry && entry.requested === true;
+    if (!requested) return { ...entry, status: 'ineligible' };
+    if (reportedOptIn.includes(feature)) return { ...entry, status: 'graph_acknowledged' };
+    if (removedOrIneligible.includes(feature)) return { ...entry, status: 'rejected_or_ineligible' };
+    if (notReported.includes(feature)) return { ...entry, status: 'not_reported' };
+    return { ...entry, status: 'unknown' };
+  });
+}
+function buildEffectiveReport(source, reportedOptIn, removedOrIneligible, notReported, evidenceSource) {
+  const groups = object(source.advantage_plus_feature_groups);
+  return {
+    status: evidenceSource === 'graph_readback'
+      ? (removedOrIneligible.length || notReported.length ? 'inconclusive' : 'graph_acknowledged_ui_unverified')
+      : 'graph_readback_unavailable',
+    evidence_source: evidenceSource,
+    main: updateFeatureGroup(groups.main, reportedOptIn, removedOrIneligible, notReported),
+    essential: updateFeatureGroup(groups.essential, reportedOptIn, removedOrIneligible, notReported),
+    supplemental: updateFeatureGroup(groups.supplemental, reportedOptIn, removedOrIneligible, notReported),
+    graph_acknowledged_features: reportedOptIn,
+    ui_confirmed_features: [],
+    rejected_features: removedOrIneligible,
+    not_reported_features: notReported,
+    ineligible_features: unique(source.advantage_plus_skipped_features),
+    ui_confirmation_required: true,
+    graph_acknowledgement_is_not_ui_confirmation: true,
+  };
+}
 
 const sources = $items('Attach Creative Result') || [];
 return $input.all().map((item, index) => {
@@ -15,16 +45,48 @@ return $input.all().map((item, index) => {
   const sourceItem = sources[sourceIndex] || {};
   const source = object(sourceItem.json);
   const response = object(item.json);
+  const requested = unique(source.advantage_plus_requested_features);
   if (response.ok !== true || response.operation?.status !== 'completed') {
-    throw new Error(`Verify Advantage+ Creative falhou em ${source.job_key || sourceIndex}: ${JSON.stringify(response.detail || response.error || response)}`);
+    const detail = object(response.detail);
+    return {
+      json: {
+        ...source,
+        advantage_plus_effective_report: buildEffectiveReport(source, [], [], requested, 'none'),
+        advantage_plus_verification: {
+          status: 'unavailable',
+          checked_at: new Date().toISOString(),
+          requested_features: requested,
+          reported_opt_in: [],
+          removed_or_ineligible: [],
+          not_reported: requested,
+          applied_features: [],
+          removed_features: [],
+          graph_acknowledged_features: [],
+          ui_confirmed_features: [],
+          graph_acknowledgement_is_not_ui_confirmation: true,
+          site_links_requested_count: list(source.advantage_plus_site_links).length,
+          site_links_applied: [],
+          error_code: text(detail.code || response.status),
+          error_subcode: text(detail.error_subcode),
+        },
+        warnings: [
+          ...list(source.warnings),
+          'A verificacao informativa do creative Advantage+ nao ficou disponivel; a criacao confirmada foi preservada.',
+        ],
+      },
+      binary: sourceItem.binary || item.binary,
+      pairedItem: { item: sourceIndex },
+    };
   }
   const creative = object(response.operation.result);
   const features = object(object(creative.degrees_of_freedom_spec).creative_features_spec);
-  const applied = Object.entries(features)
+  const reported = Object.keys(features);
+  const reportedOptIn = Object.entries(features)
     .filter(([, config]) => text(config && config.enroll_status).toUpperCase() === 'OPT_IN')
     .map(([name]) => name);
-  const requested = unique(source.advantage_plus_requested_features);
-  const removed = requested.filter((feature) => !applied.includes(feature));
+  const removedOrIneligible = requested.filter((feature) => reported.includes(feature) && !reportedOptIn.includes(feature));
+  const notReported = requested.filter((feature) => !reported.includes(feature));
+  const verificationStatus = removedOrIneligible.length || notReported.length ? 'inconclusive' : 'verified';
   const siteLinks = list(object(creative.creative_sourcing_spec).site_links_spec).map((entry) => ({
     title: text(entry && (entry.site_link_title || entry.title)),
     url: text(entry && (entry.site_link_url || entry.url)),
@@ -33,23 +95,40 @@ return $input.all().map((item, index) => {
     json: {
       ...source,
       creative_id: text(source.creative_id || creative.id),
-      advantage_plus_applied_features: applied,
-      advantage_plus_removed_features: removed,
-      advantage_plus_final_features: applied,
+      advantage_plus_effective_report: buildEffectiveReport(
+        source,
+        reportedOptIn,
+        removedOrIneligible,
+        notReported,
+        'graph_readback',
+      ),
+      advantage_plus_applied_features: reportedOptIn,
+      advantage_plus_applied_features_semantics: 'legacy_graph_acknowledged_only',
+      advantage_plus_removed_features: removedOrIneligible,
+      advantage_plus_not_reported_features: notReported,
+      advantage_plus_final_features: reportedOptIn,
       site_links_applied: siteLinks,
       advantage_plus_verification: {
-        status: 'ok',
+        status: verificationStatus === 'verified' ? 'graph_acknowledged_ui_unverified' : verificationStatus,
         checked_at: new Date().toISOString(),
         requested_features: requested,
-        applied_features: applied,
-        removed_features: removed,
+        reported_opt_in: reportedOptIn,
+        removed_or_ineligible: removedOrIneligible,
+        not_reported: notReported,
+        applied_features: [],
+        removed_features: removedOrIneligible,
+        graph_acknowledged_features: reportedOptIn,
+        ui_confirmed_features: [],
+        graph_acknowledgement_is_not_ui_confirmation: true,
         site_links_requested_count: list(source.advantage_plus_site_links).length,
         site_links_applied: siteLinks,
         response_id: text(creative.id),
       },
       warnings: [
         ...list(source.warnings),
-        ...(removed.length ? [`A Meta removeu enhancements inelegiveis: ${removed.join(', ')}`] : []),
+        ...(reportedOptIn.length ? [`A Graph API reconheceu ${reportedOptIn.length} enhancements como OPT_IN; isso nao confirma ativacao no Ads Manager.`] : []),
+        ...(removedOrIneligible.length ? [`A Meta reportou enhancements removidos ou inelegiveis: ${removedOrIneligible.join(', ')}`] : []),
+        ...(notReported.length ? [`A Meta nao reportou o estado destes enhancements; o readback e inconclusivo: ${notReported.join(', ')}`] : []),
       ],
     },
     binary: sourceItem.binary || item.binary,

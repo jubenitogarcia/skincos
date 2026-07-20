@@ -11,7 +11,7 @@ return $input.all().map((item) => {
       ...job,
       gateway_request: {
         action: 'create_creative',
-        operation_key: key(`creative:${job.run_id}:${job.creative_group_key}:${job.destination_group}`),
+        operation_key: key(`creative:${job.run_id}:${job.creative_group_key}:${job.destination_group}:${job.media_variant || 'static_flexible'}`),
         token_id: text(job.token_id),
         account_id: text(job.account_id),
         api_version: text(job.api_version || 'v25.0'),

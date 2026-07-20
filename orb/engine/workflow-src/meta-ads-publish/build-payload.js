@@ -75,6 +75,16 @@ function normalizeKey(value) {
   return normalizeText(value).replace(/\s+/g, '_');
 }
 
+function normalizeLandingPageKey(value) {
+  return safeString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+}
+
 function normalizeCompactKey(value) {
   return normalizeText(value).replace(/\s+/g, '');
 }
@@ -603,6 +613,10 @@ function binaryKeyForRatio(ratio) {
   return `data_${safeString(ratio).replace(/[^a-zA-Z0-9]+/g, '_')}`;
 }
 
+function binaryKeyForRole(role) {
+  return `data_${safeString(role).replace(/[^a-zA-Z0-9]+/g, '_')}`;
+}
+
 function ratioToSlot(ratio) {
   const normalizedRatio = safeString(ratio);
   const config = SLOT_CONFIG.find((entry) => entry.acceptedRatios.includes(normalizedRatio));
@@ -1000,6 +1014,35 @@ function buildNameContext(name) {
   };
 }
 
+function buildEffectiveNameContext(json, name) {
+  const visual = json && typeof json.visual_grouping === 'object' && !Array.isArray(json.visual_grouping)
+    ? json.visual_grouping
+    : null;
+  if (!visual || safeString(visual.strategy) !== 'ai_visual_global') return buildNameContext(name);
+
+  const groupKey = normalizeKey(visual.group_key);
+  const ratio = safeString(visual.ratio).toLowerCase();
+  const visualConcept = safeString(visual.visual_concept) || groupKey;
+  if (!groupKey || !ratio) return buildNameContext(name);
+
+  return {
+    raw_name: safeString(name).normalize('NFC'),
+    cleaned_name: cleanupBrokenFileName(name),
+    ratio,
+    suffix_hint: 'campaign',
+    logical_base_name: visualConcept,
+    logical_base_with_suffix: visualConcept,
+    friendly_orientation: null,
+    parsed_naming: null,
+    offer_group_key: normalizeKey(visualConcept) || groupKey,
+    creative_group_key: groupKey,
+    grouping_discriminator: groupKey,
+    grouping_strategy: 'ai_visual_global',
+    group_key: groupKey,
+    visual_grouping: deepClone(visual),
+  };
+}
+
 function registerBinaryBucket(map, key, payload) {
   if (!key) return;
   if (!map.has(key)) map.set(key, []);
@@ -1051,6 +1094,8 @@ function chooseBestBinaryRef(candidates, preferredFileName, preferredSuffixHint)
 }
 
 function pickResolvedBinary(binaryState, group, image) {
+  const driveMatch = binaryState.byDriveId.get(safeString(image.id)) || null;
+  if (driveMatch) return driveMatch;
   const exactKey = normalizeKey(cleanupBrokenFileName(image.name || image.original_name));
   const exactMatch = binaryState.byExactName.get(exactKey) || null;
   if (exactMatch) return exactMatch;
@@ -1068,6 +1113,15 @@ const allJson = inputItems.map((item) => (item && item.json ? item.json : item |
 const driveItems = allJson.filter(isDriveItem);
 const destinations = allJson.filter(isDestinationItem);
 const flattenedData = flattenDataEntries(allJson);
+const placementChecks = allJson.flatMap((item) => safeArray(item && item.placement_checks));
+
+function placementCheckForDestination(destination) {
+  const adsetId = safeString(destination && (destination.adset_id || destination.destination_adset_id));
+  const group = normalizeCompactKey(destination && destination.destination_group);
+  return placementChecks.find((entry) => safeString(entry && entry.adset_id) === adsetId) ||
+    placementChecks.find((entry) => normalizeCompactKey(entry && entry.destination_group) === group) ||
+    null;
+}
 
 const sourceAds = uniqueObjectsBy(
   flattenedData.filter((item) =>
@@ -1081,39 +1135,43 @@ const sourceAds = uniqueObjectsBy(
 );
 
 const binaryState = {
+  byDriveId: new Map(),
   byExactName: new Map(),
   byGroupAndRatio: new Map(),
 };
 
 for (const item of inputItems) {
-  const binaries = item.binary || {};
-  for (const [, binaryData] of Object.entries(binaries)) {
-    const fileName = safeString(binaryData && binaryData.fileName);
-    if (!fileName) continue;
-
-    const context = buildNameContext(fileName);
-    const payload = {
-      data: deepClone(binaryData),
-      fileName,
-      group_key: context.group_key,
-      offer_group_key: context.offer_group_key,
-      creative_group_key: context.creative_group_key,
-      grouping_discriminator: context.grouping_discriminator,
-      grouping_strategy: context.grouping_strategy,
-      ratio: context.ratio,
-      suffix_hint: context.suffix_hint,
-    };
-
-    binaryState.byExactName.set(normalizeKey(cleanupBrokenFileName(fileName)), payload);
-    registerBinaryBucket(binaryState.byGroupAndRatio, `${context.group_key}::${context.ratio}`, payload);
-  }
+  const itemJson = item && item.json ? item.json : {};
+  const binaryData = item?.binary?.data;
+  const fileName = safeString(binaryData?.fileName || itemJson.name);
+  if (!binaryData || !fileName) continue;
+  const context = buildEffectiveNameContext(itemJson, itemJson.name || fileName);
+  const payload = {
+    data: deepClone(binaryData),
+    thumbnail: deepClone(item?.binary?.thumbnail || null),
+    analysis: deepClone(item?.binary?.analysis || null),
+    fileName,
+    source_file_id: safeString(itemJson.id),
+    media_type: safeString(itemJson.visual_grouping?.media_type || (safeString(binaryData.mimeType).startsWith('video/') ? 'video' : 'image')),
+    role: safeString(itemJson.visual_grouping?.role),
+    group_key: context.group_key,
+    offer_group_key: context.offer_group_key,
+    creative_group_key: context.creative_group_key,
+    grouping_discriminator: context.grouping_discriminator,
+    grouping_strategy: context.grouping_strategy,
+    ratio: context.ratio,
+    suffix_hint: context.suffix_hint,
+  };
+  if (payload.source_file_id) binaryState.byDriveId.set(payload.source_file_id, payload);
+  binaryState.byExactName.set(normalizeKey(cleanupBrokenFileName(fileName)), payload);
+  registerBinaryBucket(binaryState.byGroupAndRatio, `${context.group_key}::${context.ratio}`, payload);
 }
 
 const groups = new Map();
 
 for (const json of driveItems) {
   const id = safeString(json.id);
-  const nameContext = buildNameContext(json.name);
+  const nameContext = buildEffectiveNameContext(json, json.name);
 
   if (!id || !nameContext.cleaned_name || !nameContext.ratio) continue;
 
@@ -1147,12 +1205,15 @@ for (const json of driveItems) {
         banner: [],
         stories: [],
       },
+      video_candidates: [],
       all_candidates: [],
     });
   }
 
   const currentGroup = groups.get(nameContext.group_key);
-  const slot = ratioToSlot(nameContext.ratio);
+  const mediaType = safeString(json.visual_grouping?.media_type || (safeString(json.mimeType || json.mime_type).toLowerCase().startsWith('video/') ? 'video' : 'image')).toLowerCase();
+  const role = safeString(json.visual_grouping?.role || (mediaType === 'video' ? 'vertical_video' : '')).toLowerCase();
+  const slot = mediaType === 'image' ? ratioToSlot(nameContext.ratio) : '';
   const binaryRef = pickResolvedBinary(binaryState, currentGroup, {
     name: nameContext.cleaned_name,
     original_name: json.name,
@@ -1167,6 +1228,12 @@ for (const json of driveItems) {
     md5_checksum: safeString(json.md5Checksum || json.md5_checksum),
     modified_time: safeString(json.modifiedTime || json.modified_time),
     size: safeString(json.size),
+    media_type: mediaType,
+    role,
+    output_checksum_sha256: safeString(json.media_processing?.output_checksum_sha256),
+    thumbnail_checksum_sha256: safeString(json.media_processing?.thumbnail_checksum_sha256),
+    duration_seconds: Number(json.media_processing?.duration_seconds || 0),
+    media_processing: deepClone(json.media_processing || {}),
     proporcao: nameContext.ratio,
     slot,
     extension: safeString(nameContext.cleaned_name).match(/(\.[^.]+)$/)?.[1] || '',
@@ -1180,10 +1247,14 @@ for (const json of driveItems) {
     currentGroup.suffix_hints_found.push(nameContext.suffix_hint);
   }
 
-  if (slot) {
+  if (mediaType === 'video') {
+    currentGroup.video_candidates.push(candidate);
+  } else if (slot) {
     currentGroup.candidates_by_slot[slot].push(candidate);
   }
 }
+
+const requiresVideo = driveItems.some((item) => safeString(item.visual_grouping?.media_type || item.mimeType || item.mime_type).toLowerCase().includes('video'));
 
 const candidateGroupDebug = [];
 const groupedCreatives = [];
@@ -1229,15 +1300,54 @@ for (const group of groups.values()) {
     md5_checksum: image.md5_checksum,
     modified_time: image.modified_time,
     size: image.size,
+    media_type: 'image',
+    role: image.slot === 'feed' ? 'feed_image' : image.slot === 'banner' ? 'banner_image' : 'vertical_image',
   }));
 
+  const selectedVideos = group.video_candidates.filter((candidate) => candidate.role === 'vertical_video' && candidate.proporcao === '9x16');
+  group.videos = selectedVideos.slice(0, 1).map((video) => ({
+    id: video.id,
+    name: video.name,
+    original_name: video.original_name,
+    proporcao: video.proporcao,
+    role: 'vertical_video',
+    media_type: 'video',
+    binary_key: binaryKeyForRole('vertical_video'),
+    thumbnail_binary_key: 'thumbnail_vertical_video',
+    mime_type: video.mime_type,
+    output_checksum_sha256: video.output_checksum_sha256,
+    thumbnail_checksum_sha256: video.thumbnail_checksum_sha256,
+    duration_seconds: video.duration_seconds,
+    media_processing: deepClone(video.media_processing || {}),
+    modified_time: video.modified_time,
+    size: video.size,
+  }));
+
+  const hasCompleteStaticSet = group.imagens.length === SLOT_CONFIG.length;
+  const hasSingleVerticalVideo = group.videos.length === 1;
+  group.media_mode = hasCompleteStaticSet && hasSingleVerticalVideo
+    ? 'mixed'
+    : !group.imagens.length && hasSingleVerticalVideo
+      ? 'video_only'
+      : 'static_only';
+  group.required_media_roles = group.media_mode === 'mixed'
+    ? ['feed_image', 'banner_image', 'vertical_image', 'vertical_video']
+    : group.media_mode === 'video_only'
+      ? ['vertical_video']
+      : ['feed_image', 'banner_image', 'vertical_image'];
   group.available_ratios = uniqueStrings(group.all_candidates.map((candidate) => candidate.proporcao));
-  group.required_ratios = getRequiredRatiosForGroup(group);
-  group.grupo_completo = group.required_ratios.length === SLOT_CONFIG.length;
-  group.missing_ratios = SLOT_CONFIG
+  group.required_ratios = group.media_mode === 'video_only' ? [] : getRequiredRatiosForGroup(group);
+  group.grupo_completo = group.media_mode === 'mixed'
+    ? hasCompleteStaticSet && hasSingleVerticalVideo
+    : group.media_mode === 'video_only'
+      ? hasSingleVerticalVideo
+      : !requiresVideo && hasCompleteStaticSet;
+  group.missing_ratios = group.media_mode === 'video_only' ? [] : SLOT_CONFIG
     .filter((config) => !group.imagens.some((image) => config.acceptedRatios.includes(safeString(image.proporcao))))
     .map((config) => config.acceptedRatios.join('|'));
   group.duplicate_ratios = duplicate_ratios;
+  if (group.video_candidates.length > 1) group.duplicate_ratios.vertical_video = group.video_candidates.map((candidate) => candidate.original_name);
+  if ((requiresVideo || group.video_candidates.length) && group.videos.length !== 1) group.missing_ratios.push('vertical_video:9x16');
 
   candidateGroupDebug.push({
     group_key: group.group_key,
@@ -1249,8 +1359,11 @@ for (const group of groups.values()) {
     suffix_hint,
     ratios_found: group.available_ratios,
     required_ratios: group.required_ratios,
+    media_mode: group.media_mode,
+    required_media_roles: group.required_media_roles,
     missing_ratios: group.missing_ratios,
     duplicate_ratios: group.duplicate_ratios,
+    videos_found: group.video_candidates.map((candidate) => `${candidate.proporcao}:${candidate.original_name}`),
     slot_candidates: Object.fromEntries(
       Object.entries(group.candidates_by_slot).map(([slot, list]) => [
         slot,
@@ -1298,16 +1411,6 @@ if (incompleteGroups.length || duplicateGroups.length || groupedCreatives.length
   }, 'O lote inteiro foi bloqueado porque existem grupos incompletos ou slots duplicados.');
 }
 
-const unsupportedFiles = driveItems.filter((item) => {
-  const mimeType = safeString(item.mimeType || item.mime_type).toLowerCase();
-  return mimeType.startsWith('video/');
-});
-if (unsupportedFiles.length) {
-  return buildFailure({
-    unsupported_files: unsupportedFiles.map((item) => ({ id: safeString(item.id), name: safeString(item.name), mime_type: safeString(item.mimeType || item.mime_type) })),
-  }, 'O Meta Ads Publish aceita somente imagens estaticas; videos foram encontrados no lote.');
-}
-
 const batchFiles = driveItems
   .map((item) => ({
     id: safeString(item.id),
@@ -1315,6 +1418,8 @@ const batchFiles = driveItems
     md5_checksum: safeString(item.md5Checksum || item.md5_checksum),
     modified_time: safeString(item.modifiedTime || item.modified_time),
     size: safeString(item.size),
+    media_type: safeString(item.visual_grouping?.media_type || (safeString(item.mimeType || item.mime_type).startsWith('video/') ? 'video' : 'image')),
+    checksum_sha256: safeString(item.media_processing?.output_checksum_sha256),
   }))
   .sort((left, right) => left.id.localeCompare(right.id));
 const configRevisions = uniqueStrings(destinations.map((destination) => destination.config_revision));
@@ -1354,10 +1459,14 @@ for (const group of groupedCreatives) {
 
     media_inventory.push({
       id: image.id,
+      source_file_id: image.id,
       name: image.name,
       original_name: image.original_name,
+      media_type: 'image',
+      role: image.role,
       proporcao: image.proporcao,
       binary_key: binaryKey,
+      checksum_sha256: safeString(image.output_checksum_sha256 || image.md5_checksum),
       has_binary: Boolean(binaryRef && binaryRef.data),
     });
 
@@ -1366,6 +1475,32 @@ for (const group of groupedCreatives) {
     } else {
       warnings.push(`Binario nao encontrado para ${image.original_name || image.name}`);
     }
+  }
+
+  for (const video of safeArray(group.videos)) {
+    const binaryRef = pickResolvedBinary(binaryState, group, video);
+    const binaryKey = binaryKeyForRole('vertical_video');
+    media_inventory.push({
+      id: video.id,
+      source_file_id: video.id,
+      name: video.name,
+      original_name: video.original_name,
+      media_type: 'video',
+      role: 'vertical_video',
+      proporcao: '9x16',
+      binary_key: binaryKey,
+      thumbnail_binary_key: 'thumbnail_vertical_video',
+      checksum_sha256: video.output_checksum_sha256,
+      thumbnail_checksum_sha256: video.thumbnail_checksum_sha256,
+      duration_seconds: video.duration_seconds,
+      media_processing: deepClone(video.media_processing || {}),
+      has_binary: Boolean(binaryRef?.data),
+      has_thumbnail: Boolean(binaryRef?.thumbnail),
+    });
+    if (binaryRef?.data) binary[binaryKey] = deepClone(binaryRef.data);
+    else warnings.push(`Binario de video nao encontrado para ${video.original_name || video.name}`);
+    if (binaryRef?.thumbnail) binary.thumbnail_vertical_video = deepClone(binaryRef.thumbnail);
+    else warnings.push(`Miniatura de video nao encontrada para ${video.original_name || video.name}`);
   }
 
   const ratiosWithBinary = uniqueStrings(
@@ -1503,6 +1638,7 @@ for (const group of groupedCreatives) {
   const resolvedDestinations = destinations.map((destination) => {
     const destinationCampaignId = safeString(destination.campaign_id || destination.destination_campaign_id);
     const destinationAdsetId = safeString(destination.adset_id || destination.destination_adset_id);
+    const placementCheck = placementCheckForDestination(destination);
 
     const destinationWarnings = [
       ...(destinationCampaignId ? [] : ['Campaign ID nao encontrado para o destination atual.']),
@@ -1520,6 +1656,9 @@ for (const group of groupedCreatives) {
       destination_api_version: safeString(destination.api_version || destination.destination_api_version || 'v25.0'),
       token_id: safeString(destination.token_id),
       allowed_link_hosts: safeArray(destination.allowed_link_hosts),
+      landing_pages_by_creative_group: deepClone(destination.landing_pages_by_creative_group || {}),
+      landing_page_validation: deepClone(destination.landing_page_validation || {}),
+      placement_eligibility: deepClone(placementCheck || {}),
       freshness_window_days: Number(destination.freshness_window_days || 7),
       config_revision: safeString(destination.config_revision),
       destination_id_source: 'token_vault',
@@ -1527,6 +1666,33 @@ for (const group of groupedCreatives) {
       warnings: destinationWarnings,
     };
   });
+
+  for (const destination of resolvedDestinations) {
+    const landingPages = destination.landing_pages_by_creative_group && typeof destination.landing_pages_by_creative_group === 'object'
+      ? destination.landing_pages_by_creative_group
+      : {};
+    const exactLandingKeys = Object.keys(landingPages)
+      .filter((key) => normalizeLandingPageKey(key) === normalizeLandingPageKey(group.creative_group_key));
+    const defaultLandingKeys = Object.keys(landingPages)
+      .filter((key) => ['DEFAULT', 'ALL'].includes(normalizeLandingPageKey(key)) || safeString(key) === '*');
+    const uniqueLandingUrls = uniqueStrings(Object.values(landingPages));
+    const matchingLandingKeys = exactLandingKeys.length
+      ? exactLandingKeys
+      : defaultLandingKeys.length
+        ? defaultLandingKeys
+        : uniqueLandingUrls.length === 1
+          ? [Object.keys(landingPages).find((key) => safeString(landingPages[key]) === uniqueLandingUrls[0])]
+          : [];
+    if (matchingLandingKeys.length !== 1) {
+      buildFailure({
+        creative_group_key: group.creative_group_key,
+        destination_group: destination.destination_group,
+        configured_landing_page_keys: Object.keys(landingPages).map(normalizeLandingPageKey),
+      }, matchingLandingKeys.length
+        ? 'Landing page ambigua para o grupo criativo; lote bloqueado antes de upload e IA.'
+        : 'Landing page ausente para o grupo criativo e sem fallback seguro do destino; lote bloqueado antes de upload e IA.');
+    }
+  }
 
   for (const destination of resolvedDestinations) {
     warnings.push(...safeArray(destination.warnings));
@@ -1598,6 +1764,9 @@ for (const group of groupedCreatives) {
       },
 
       imagens: deepClone(group.imagens),
+      videos: deepClone(group.videos),
+      media_mode: group.media_mode,
+      required_media_roles: deepClone(group.required_media_roles),
       available_ratios: group.available_ratios,
       required_ratios: group.required_ratios,
       missing_ratios: group.missing_ratios,
@@ -1615,6 +1784,9 @@ for (const group of groupedCreatives) {
         destination_api_version: destination.destination_api_version,
         token_id: destination.token_id,
         allowed_link_hosts: destination.allowed_link_hosts,
+        landing_pages_by_creative_group: destination.landing_pages_by_creative_group,
+        landing_page_validation: destination.landing_page_validation,
+        placement_eligibility: destination.placement_eligibility,
         freshness_window_days: destination.freshness_window_days,
         config_revision: destination.config_revision,
         destination_id_source: destination.destination_id_source,
@@ -1677,7 +1849,7 @@ for (const group of groupedCreatives) {
       replacement_plan: deepClone(replacementPlan),
 
       related_ids: {
-        drive_file_ids: uniqueStrings(group.imagens.map((image) => image.id)),
+        drive_file_ids: uniqueStrings([...group.imagens, ...safeArray(group.videos)].map((media) => media.id)),
         matched_ad_ids: uniqueStrings(matchedAds.map((item) => item.ad_id)),
         selected_ad_ids: selectedAdIds,
         replacement_ad_ids: uniqueStrings(replacementPlan.map((item) => item.ad_id)),
@@ -1703,6 +1875,7 @@ for (const group of groupedCreatives) {
         complete_groups_found: groupedCreatives.length,
         incomplete_groups: candidateGroupDebug.filter((candidate) => safeArray(candidate.missing_ratios).length),
         selected_ratios: group.imagens.map((image) => image.proporcao),
+        selected_media_roles: [...group.imagens, ...safeArray(group.videos)].map((media) => media.role),
         available_ratios: group.available_ratios,
         missing_ratios: group.missing_ratios,
         duplicate_ratios: group.duplicate_ratios,

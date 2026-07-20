@@ -3,30 +3,12 @@
 
 const fs = require('fs');
 const path = require('path');
+const CODE_SOURCES = require('./meta-ads-publish-code-sources');
+const { applyGraphContract } = require('./meta-ads-publish-graph-contract');
 
 const moduleRoot = path.resolve(__dirname, '..');
 const workflowPath = path.join(moduleRoot, 'workflows', 'meta-ads-publish.current.json');
 const sourceRoot = path.join(moduleRoot, 'workflow-src', 'meta-ads-publish');
-
-const CODE_SOURCES = Object.freeze({
-  'Build Meta API Params From Vault': 'build-meta-api-params-from-vault.js',
-  'Build Meta Account Inventory Requests': 'build-meta-inventory-requests.js',
-  'Build Payload': 'build-payload.js',
-  'Prepare Publish Run': 'prepare-publish-run.js',
-  'Restore Publish Groups': 'restore-publish-groups.js',
-  'Prepare Gateway Uploads': 'prepare-gateway-uploads.js',
-  'Normalize Gateway Upload': 'normalize-gateway-upload.js',
-  'Build Jobs': 'build-jobs.js',
-  'Validate Meta Creative Payload': 'validate-meta-creative-payload.js',
-  'Prepare Creative Operation': 'prepare-creative-operation.js',
-  'Attach Creative Result': 'attach-creative-result.js',
-  'Attach Advantage+ Verification': 'attach-advantage-plus-verification.js',
-  'Build Stage Batch': 'build-stage-batch.js',
-  'Build Activate Batch': 'build-activate-batch.js',
-  'Build Drive Finalization': 'build-drive-finalization.js',
-  'Prepare Drive Read': 'prepare-drive-read.js',
-  'Verify Drive Finalization': 'verify-drive-finalization.js',
-});
 
 function readWorkflow() {
   return JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
@@ -55,7 +37,7 @@ function extract() {
 
 function inject({ write = true } = {}) {
   const workflow = readWorkflow();
-  const drift = [];
+  const drift = applyGraphContract(workflow);
   for (const [nodeName, fileName] of Object.entries(CODE_SOURCES)) {
     const filePath = path.join(sourceRoot, fileName);
     const code = fs.readFileSync(filePath, 'utf8').replace(/\s+$/, '');
