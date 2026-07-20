@@ -74,7 +74,10 @@ export async function sendPasswordResetEmail({ env, to, code, expiresAt }) {
   const username = String(env.AUTH_RESET_SMTP_USERNAME).trim();
   const password = String(env.AUTH_RESET_SMTP_PASSWORD);
   const { connect } = await import('cloudflare:sockets');
-  let socket = connect({ hostname, port, secureTransport: port === 465 ? 'on' : 'starttls' });
+  let socket = connect(
+    { hostname, port },
+    { secureTransport: port === 465 ? 'on' : 'starttls' }
+  );
   let writer = socket.writable.getWriter();
   let reader = socket.readable.getReader();
   let state = { buffer: '', lines: [] };
