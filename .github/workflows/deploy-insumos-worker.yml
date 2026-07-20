@@ -56,9 +56,11 @@ jobs:
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
 
-      - name: Install backend workspace deps
+      - name: Install Worker dependencies
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        run: pnpm -C backend install --frozen-lockfile
+        run: |
+          npm --prefix api ci
+          pnpm -C inventory install --frozen-lockfile
 
       - name: Sync password-recovery secrets (optional)
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -78,7 +80,7 @@ jobs:
             local name="$1"
             local value="$2"
             if [[ -n "$value" && "$value" != "__KEEP_EXISTING__" ]]; then
-              printf '%s' "$value" | pnpm -C ../backend -F @skincos/insumos-worker exec wrangler secret put "$name" --config wrangler.toml
+              printf '%s' "$value" | ./node_modules/.bin/wrangler secret put "$name" --config wrangler.toml
             fi
           }
           put_secret AUTH_RESET_SMTP_HOST "$AUTH_RESET_SMTP_HOST"
