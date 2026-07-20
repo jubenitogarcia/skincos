@@ -60,6 +60,13 @@ const rows = destinations.map((entry) => {
       landing_pages_by_creative_group: landingPages,
       landing_page_validation: asObject(item.landing_page_validation),
       freshness_window_days: Number(item.freshness_window_days || 7),
+      // Destination data is intentionally non-secret and lets the publisher
+      // validate the ad-set contract before it creates a new ad. Older Token
+      // Vault rows may omit it; Build Jobs then requires corroboration from an
+      // existing creative in the exact same ad set instead of guessing.
+      campaign_objective: safeString(item.campaign_objective),
+      optimization_goal: safeString(item.optimization_goal),
+      destination_type: safeString(item.destination_type).toUpperCase(),
       config_revision: safeString(root.config_revision),
       destination_id_source: 'meta_publish_gateway',
       secrets_exposed: false,

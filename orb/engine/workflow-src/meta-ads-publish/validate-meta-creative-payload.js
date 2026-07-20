@@ -110,6 +110,12 @@ function isWhatsAppUrl(value) {
   return hostname === 'wa.me' || hostname === 'api.whatsapp.com' || hostname.endsWith('.whatsapp.com');
 }
 
+function destinationContractKind(source) {
+  const kind = safeString(asObject(source.destination_contract).kind).toLowerCase();
+  assert(kind === 'whatsapp' || kind === 'website', 'destination_contract_missing_or_invalid', { kind });
+  return kind;
+}
+
 function labelNames(assets) {
   return new Set(safeArray(assets).flatMap((asset) => safeArray(asset && asset.adlabels).map((label) => safeString(label && label.name))).filter(Boolean));
 }
@@ -262,6 +268,7 @@ return $input.all().map((item) => {
   const feed = asObject(payload.asset_feed_spec);
   const isVideoOnly = safeString(source.media_variant) === 'video_single';
   const hosts = allowedHosts(source);
+  const destinationKind = destinationContractKind(source);
   assert(safeString(payload.name), 'creative_name_missing', {});
   assert(safeString(story.page_id) === safeString(source.page_id), 'creative_page_id_mismatch', {});
   assert(isVideoOnly ? Object.keys(feed).length === 0 : Object.keys(feed).length > 0, isVideoOnly ? 'video_single_asset_feed_forbidden' : 'asset_feed_spec_required', {});
@@ -273,7 +280,7 @@ return $input.all().map((item) => {
     assert(safeString(source.video_status).toLowerCase() === 'ready', 'video_not_ready', { video_status: source.video_status });
     const cta = asObject(videoData.call_to_action);
     const primaryLink = validateUrl(asObject(cta.value).link, hosts, 'video_primary_link');
-    const whatsappDestination = safeString(source.destination_mode) === 'whatsapp_message_preserved_from_source_ad';
+    const whatsappDestination = destinationKind === 'whatsapp';
     if (whatsappDestination) {
       assert(safeString(cta.type).toUpperCase() === WHATSAPP_CTA, 'cta_must_be_whatsapp_message', { value: cta.type });
       assert(isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_required', {});
@@ -307,7 +314,7 @@ return $input.all().map((item) => {
   const linkUrls = safeArray(feed.link_urls);
   if (!isVideoOnly) assert(linkUrls.length === 1, 'link_url_count_invalid', { actual: linkUrls.length });
   const primaryLink = isVideoOnly ? '' : validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
-  const whatsappDestination = safeString(source.destination_mode) === 'whatsapp_message_preserved_from_source_ad';
+  const whatsappDestination = destinationKind === 'whatsapp';
   if (!isVideoOnly && whatsappDestination) {
     assert(ctas.length === 1 && safeString(ctas[0]).toUpperCase() === WHATSAPP_CTA, 'cta_must_be_whatsapp_message', { value: ctas });
     assert(isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_required', {});
@@ -368,6 +375,7 @@ return $input.all().map((item) => {
         video_status: safeString(source.video_status),
         vertical_crop_key: VERTICAL_CROP_KEY,
         media_variant: safeString(source.media_variant || 'static_flexible'),
+        destination_contract_kind: destinationKind,
         vertical_placement_rule_count: isVideoOnly ? 0 : 1,
         horizontal_crop_key: HORIZONTAL_CROP_KEY,
         horizontal_placement_rule_count: 1,

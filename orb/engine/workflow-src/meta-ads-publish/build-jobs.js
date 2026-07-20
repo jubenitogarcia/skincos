@@ -101,6 +101,97 @@ function isWhatsAppHostname(value) {
   return hostname === 'wa.me' || hostname === 'api.whatsapp.com' || hostname.endsWith('.whatsapp.com');
 }
 
+function contractFromSourceAd(ad) {
+  const creative = asObject(ad && ad.creative);
+  const feed = asObject(creative.asset_feed_spec);
+  const story = asObject(creative.object_story_spec);
+  const linkData = asObject(story.link_data);
+  const storyCta = asObject(linkData.call_to_action);
+  const ctaType = safeString(
+    safeArray(feed.call_to_action_types)[0] || storyCta.type
+  ).toUpperCase();
+  const linkUrl = toHttps(
+    safeArray(feed.link_urls)[0] && safeArray(feed.link_urls)[0].website_url ||
+    asObject(storyCta.value).link ||
+    linkData.link
+  );
+  if (!ctaType || !linkUrl) return null;
+  if (ctaType === WHATSAPP_CTA_TYPE && isWhatsAppHostname(linkUrl)) {
+    return { kind: 'whatsapp', cta_type: WHATSAPP_CTA_TYPE, link_url: linkUrl };
+  }
+  if (!isWhatsAppHostname(linkUrl)) {
+    return { kind: 'website', cta_type: ctaType, link_url: linkUrl };
+  }
+  return null;
+}
+
+function configuredDestinationKind(destinationMeta) {
+  const value = safeString(destinationMeta && destinationMeta.destination_type).toUpperCase();
+  if (/WHATSAPP|MESSAG/.test(value)) return 'whatsapp';
+  if (/WEBSITE|WEB|SITE/.test(value)) return 'website';
+  return '';
+}
+
+function resolveDestinationContract(job, destinationMeta) {
+  const configuredKind = configuredDestinationKind(destinationMeta);
+  const scopedContracts = safeArray(job && job.source_ads)
+    .filter((ad) => safeString(ad && ad.adset_id) === safeString(destinationMeta && destinationMeta.destination_adset_id))
+    .map(contractFromSourceAd)
+    .filter(Boolean);
+  const observedKinds = uniqueStrings(scopedContracts.map((contract) => contract.kind));
+
+  if (configuredKind && observedKinds.length && (observedKinds.length !== 1 || observedKinds[0] !== configuredKind)) {
+    return { ok: false, error: 'destination_contract_conflict', configured_kind: configuredKind, observed_kinds: observedKinds };
+  }
+  const kind = configuredKind || (observedKinds.length === 1 ? observedKinds[0] : '');
+  if (!kind) {
+    return {
+      ok: false,
+      error: observedKinds.length > 1 ? 'destination_contract_ambiguous' : 'destination_contract_unverified',
+      configured_kind: configuredKind,
+      observed_kinds: observedKinds,
+    };
+  }
+  if (kind === 'website') {
+    return {
+      ok: true,
+      kind,
+      source: configuredKind ? 'gateway_destination_type' : 'source_adset_creative',
+      configured_kind: configuredKind,
+      observed_source_ad_count: scopedContracts.length,
+    };
+  }
+  const whatsappUrls = uniqueStrings(scopedContracts
+    .filter((contract) => contract.kind === 'whatsapp')
+    .map((contract) => contract.link_url));
+  if (whatsappUrls.length !== 1) {
+    return {
+      ok: false,
+      error: whatsappUrls.length > 1 ? 'destination_whatsapp_link_ambiguous' : 'destination_whatsapp_link_unverified',
+      configured_kind: configuredKind,
+      observed_kinds: observedKinds,
+    };
+  }
+  return {
+    ok: true,
+    kind,
+    link_url: whatsappUrls[0],
+    source: configuredKind ? 'gateway_destination_type_and_source_adset_creative' : 'source_adset_creative',
+    configured_kind: configuredKind,
+    observed_source_ad_count: scopedContracts.length,
+  };
+}
+
+function publicDestinationContract(contract) {
+  return {
+    kind: safeString(contract && contract.kind),
+    source: safeString(contract && contract.source),
+    configured_kind: safeString(contract && contract.configured_kind),
+    observed_source_ad_count: Number(contract && contract.observed_source_ad_count || 0),
+    link_host: safeHostname(contract && contract.link_url),
+  };
+}
+
 function uniqueStrings(values) {
   const out = [];
   const seen = new Set();
@@ -1229,6 +1320,9 @@ for (const entry of jobEntries) {
     landing_page_validation: deepClone(destination.landing_page_validation || {}),
     placement_eligibility: deepClone(destination.placement_eligibility || {}),
     freshness_window_days: Number(destination.freshness_window_days || TEMPORAL_GUARD_FRESH_DAYS),
+    campaign_objective: safeString(destination.campaign_objective),
+    optimization_goal: safeString(destination.optimization_goal),
+    destination_type: safeString(destination.destination_type).toUpperCase(),
     config_revision: safeString(destination.config_revision || job.config_revision),
     destination_id_source: safeString(destination.destination_id_source || 'build_payload'),
     suffix_hint: safeString(destination.suffix_hint || job.suffix_hint),
@@ -1531,12 +1625,26 @@ for (const entry of jobEntries) {
       continue;
     }
 
-    const sourceFeed = deepClone(asObject(chosenAd && chosenAd.creative && chosenAd.creative.asset_feed_spec));
-    const sourceCta = safeString(safeArray(sourceFeed.call_to_action_types)[0]).toUpperCase();
-    const sourceLinkUrl = safeString(safeArray(sourceFeed.link_urls)[0]?.website_url);
-    const preservesWhatsAppDestination = action === 'replace_existing' &&
-      sourceCta === WHATSAPP_CTA_TYPE && /^https:\/\/(?:api\.whatsapp\.com|wa\.me)(?:[/?#]|$)/i.test(sourceLinkUrl);
-    const ctaTypes = [preservesWhatsAppDestination ? WHATSAPP_CTA_TYPE : DEFAULT_CTA_TYPE];
+    const destinationContract = resolveDestinationContract(job, destinationMeta);
+    if (!destinationContract.ok) {
+      outputs.push({
+        json: {
+          error: 'O contrato de destino do ad set nao foi comprovado; lote bloqueado antes de qualquer mutacao Meta.',
+          upstream_node: 'Build Jobs',
+          upstream_error: destinationContract.error,
+          debug: {
+            job_key: safeString(job.job_key),
+            destination_group: safeString(destinationMeta.destination_group),
+            destination_adset_id_present: Boolean(safeString(destinationMeta.destination_adset_id)),
+            configured_kind: safeString(destinationContract.configured_kind),
+            observed_kinds: deepClone(destinationContract.observed_kinds || []),
+          },
+        },
+      });
+      continue;
+    }
+    const usesWhatsAppDestination = destinationContract.kind === 'whatsapp';
+    const ctaTypes = [usesWhatsAppDestination ? WHATSAPP_CTA_TYPE : DEFAULT_CTA_TYPE];
     const requestedRawSiteLinks = safeArray(overrides.site_links || overrides.siteLinks || ai.site_links || ai.siteLinks);
     const allowedLinkHosts = safeArray(destinationMeta.allowed_link_hosts || gatewayConfig && gatewayConfig.allowed_link_hosts);
     const siteLinks = normalizeSiteLinks(requestedRawSiteLinks);
@@ -1594,7 +1702,7 @@ for (const entry of jobEntries) {
     }
 
     const schedulingLandingPageUrl = landingPage.url;
-    const primaryLinkUrl = preservesWhatsAppDestination ? sourceLinkUrl : schedulingLandingPageUrl;
+    const primaryLinkUrl = usesWhatsAppDestination ? destinationContract.link_url : schedulingLandingPageUrl;
     const safeLinkUrls = [{ website_url: primaryLinkUrl }];
     const adMutationPayload = {
       name: finalAdName || sourceAdName,
@@ -1884,7 +1992,10 @@ for (const entry of jobEntries) {
         allowed_link_hosts: deepClone(allowedLinkHosts),
         landing_page_url: primaryLinkUrl,
         scheduling_landing_page_url: schedulingLandingPageUrl,
-        destination_mode: preservesWhatsAppDestination ? 'whatsapp_message_preserved_from_source_ad' : 'website_leads',
+        destination_mode: usesWhatsAppDestination
+          ? (action === 'replace_existing' ? 'whatsapp_message_preserved_from_source_ad' : 'whatsapp_message_inferred_from_adset')
+          : 'website_leads',
+        destination_contract: publicDestinationContract(destinationContract),
         landing_page_source: landingPage.source,
         landing_page_configured_key: landingPage.configured_key,
         desired_final_status: DEFAULT_AD_STATUS,
@@ -2006,6 +2117,7 @@ for (const entry of jobEntries) {
           replacement_plan_count: scopedReplacementPlan.length,
           replacement_plan_built_from_creative: !safeArray(job.replacement_plan).some((item) => safeString(item.ad_id) === resolvedSourceAdId) && scopedReplacementPlan.length > 0,
           temporal_guard: temporalGuard,
+          destination_contract: publicDestinationContract(destinationContract),
         },
 
         warnings: safeWarnings(safeWarnings(job.warnings, baseWarnings), warnings),

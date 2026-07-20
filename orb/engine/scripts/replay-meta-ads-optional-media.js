@@ -82,6 +82,9 @@ async function main() {
     const assemblies = await executeCode('assemble-job-inputs.js', [...livia, ...envelopes], named);
     const jobs = await executeCode('build-jobs.js', assemblies, named);
     const errors = jobs.filter((entry) => String(entry.json?.error || '').trim());
+    const validatedJobs = errors.length
+      ? []
+      : await executeCode('validate-meta-creative-payload.js', jobs, named);
 
     console.log(JSON.stringify({
       mode: 'read_only_replay',
@@ -103,12 +106,18 @@ async function main() {
       assembly_count: assemblies.length,
       build_jobs_count: jobs.length,
       build_jobs_error_count: errors.length,
+      validated_creative_count: validatedJobs.length,
       destination_count: new Set(jobs.map((entry) => entry.json?.destination_group).filter(Boolean)).size,
       replacement_decisions: jobs.map((entry) => ({
         action: entry.json?.action,
         match_status: entry.json?.match_status,
         offer_replacement_reason: entry.json?.offer_replacement_guard?.reason || '',
         offer_tag_present: Boolean(entry.json?.offer_replacement_guard?.expected_tag),
+        destination_mode: entry.json?.destination_mode || '',
+        destination_contract: entry.json?.destination_contract || {},
+        cta_type: entry.json?.media_variant === 'video_single'
+          ? entry.json?.creativePayload?.object_story_spec?.video_data?.call_to_action?.type || ''
+          : entry.json?.creativePayload?.asset_feed_spec?.call_to_action_types?.[0] || '',
       })),
       meta_mutations_performed: false,
     }, null, 2));

@@ -280,6 +280,35 @@ test('Build Jobs refuses raw merge items and accepts only assembled v2 inputs', 
   );
 });
 
+test('Token Vault destination contract survives normalization without exposing credentials', async () => {
+  const makeDestination = (destinationGroup, destinationType) => ({
+    token_id: `opaque-${destinationGroup}`,
+    destination_group: destinationGroup,
+    api_version: 'v25.0',
+    account_id: '100',
+    campaign_id: '200',
+    adset_id: destinationGroup === 'A' ? '300' : '301',
+    page_id: '400',
+    instagram_user_id: '500',
+    destination_type: destinationType,
+    campaign_objective: 'OUTCOME_LEADS',
+    optimization_goal: 'CONVERSATIONS',
+    landing_pages_by_creative_group: { DEFAULT: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' },
+  });
+  const output = await runCode('build-meta-api-params-from-vault.js', {
+    input: [item({
+      ok: true,
+      ready: true,
+      config_revision: 'test',
+      destinations: [makeDestination('A', 'whatsapp'), makeDestination('B', 'website')],
+    })],
+  });
+  assert.deepEqual(output.map((entry) => entry.json.destination_type), ['WHATSAPP', 'WEBSITE']);
+  assert.equal(output[0].json.campaign_objective, 'OUTCOME_LEADS');
+  assert.equal(output[0].json.optimization_goal, 'CONVERSATIONS');
+  assert.equal(Object.prototype.hasOwnProperty.call(output[0].json, 'access_token'), false);
+});
+
 test('graph contract makes optional branches explicit and retries Build Jobs', () => {
   const baseNode = (name, type = 'n8n-nodes-base.noOp') => ({ name, id: name, type, typeVersion: 1, position: [0, 0], parameters: {} });
   const workflow = {
