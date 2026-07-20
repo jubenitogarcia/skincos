@@ -39,6 +39,15 @@ function connectionExists(source, target, outputIndex = undefined) {
   );
 }
 
+function connectionTargetsInput(source, target, inputIndex) {
+  const groups = workflow.connections?.[source]?.main || [];
+  return groups.some((group) =>
+    Array.isArray(group) && group.some((connection) =>
+      connection?.node === target && connection?.type === 'main' && connection?.index === inputIndex
+    )
+  );
+}
+
 function incomingCount(name) {
   let total = 0;
   for (const conn of Object.values(workflow.connections || {})) {
@@ -97,6 +106,7 @@ function validateStructure() {
     'Read Livia Visual Asset',
     'Assert Livia Visual Input',
     'Livia',
+    'Merge Livia Output and Visual Contract',
     'Assert Livia Visual Analysis',
     'Hydrate Publish Context',
     'Switch Publish Route',
@@ -166,7 +176,9 @@ function validateStructure() {
   assert(connectionExists('Attach Uploaded Main Media Metadata', 'Read Livia Visual Asset'), 'Uploaded media metadata must feed the visual asset reader');
   assert(connectionExists('Read Livia Visual Asset', 'Assert Livia Visual Input'), 'Visual asset reader must feed the visual-input guard');
   assert(connectionExists('Assert Livia Visual Input', 'Livia'), 'Visual-input guard must feed Livia');
-  assert(connectionExists('Livia', 'Assert Livia Visual Analysis'), 'Livia must feed the visual-analysis guard');
+  assert(connectionTargetsInput('Assert Livia Visual Input', 'Merge Livia Output and Visual Contract', 0), 'Visual-input guard must send the local contract to merge input 0');
+  assert(connectionTargetsInput('Livia', 'Merge Livia Output and Visual Contract', 1), 'Livia output must feed merge input 1');
+  assert(connectionExists('Merge Livia Output and Visual Contract', 'Assert Livia Visual Analysis'), 'Merged Livia output and visual contract must feed the analysis guard');
   assert(connectionExists('Assert Livia Visual Analysis', 'Hydrate Publish Context'), 'Visual-analysis guard must feed Hydrate Publish Context');
   if (hasCompactBuildQueue) {
     assert(connectionExists('Hydrate Publish Context', 'Build Publish Queue'), 'Hydrate Publish Context must feed Build Publish Queue');
@@ -239,6 +251,7 @@ function validateContracts() {
   const visualInputGuard = codeOf('Assert Livia Visual Input');
   const visualAnalysisGuard = codeOf('Assert Livia Visual Analysis');
   const visualAssetReader = String(getNode('Read Livia Visual Asset')?.parameters?.fileSelector || '');
+  const visualContractMerge = getNode('Merge Livia Output and Visual Contract')?.parameters || {};
   const liviaPrompt = String(getNode('Livia')?.parameters?.text || '');
   const waitAmount = String(getNode('Wait')?.parameters?.amount || '');
   const downloadFileId = String(getNode('Download File')?.parameters?.fileId?.value || '');
@@ -394,14 +407,19 @@ function validateContracts() {
   assert(visualAssetReader.includes("kind === 'video'"), 'Visual asset reader must use the generated thumbnail for videos');
   assert(visualAssetReader.includes('thumbPath'), 'Visual asset reader must require a video thumbnail path');
   assert(visualAssetReader.includes('mainMediaFilePath'), 'Visual asset reader must use the original image asset for images');
-  assert(visualInputGuard.includes("$('Read Livia Visual Asset').item"), 'Visual-input guard must recover the paired visual binary');
+  assert(visualInputGuard.includes('$input.item?.binary'), 'Visual-input guard must use the current item binary directly');
+  assert(!visualInputGuard.includes('$('), 'Visual-input guard must not use named-node pairing lookups');
   assert(visualInputGuard.includes("startsWith('image/')"), 'Visual-input guard must require an image binary or video thumbnail');
   assert(visualInputGuard.includes('supportedMedia'), 'Visual-input guard must reject unsupported media types');
   assert(visualInputGuard.includes('throw new Error'), 'Visual-input guard must fail closed when a visual binary is unavailable');
   assert(visualInputGuard.includes('visualInput'), 'Visual-input guard must record the visual-input contract');
   assert(visualAnalysisGuard.includes('visualInput'), 'Visual-analysis guard must verify the visual-input contract');
+  assert(!visualAnalysisGuard.includes('$('), 'Visual-analysis guard must receive the visual contract through the merge, not a named-node lookup');
   assert(visualAnalysisGuard.includes('apenas nos metadados'), 'Visual-analysis guard must reject metadata-only AI fallback');
   assert(visualAnalysisGuard.includes('throw new Error'), 'Visual-analysis guard must fail closed on unavailable visual analysis');
+  assert(getNode('Assert Livia Visual Input')?.retryOnFail === false, 'Visual-input guard must fail immediately without retrying');
+  assert(getNode('Assert Livia Visual Analysis')?.retryOnFail === false, 'Visual-analysis guard must fail immediately without retrying');
+  assert(visualContractMerge.mode === 'combine' && visualContractMerge.combineBy === 'combineByPosition', 'Visual contract merge must preserve one-to-one item pairing');
   assert(liviaPrompt.includes('URLs e metadados não substituem o arquivo binário'), 'Livia prompt must forbid metadata-only image publication');
 
   assert(waitAmount.includes('waitSeconds'), 'Wait must still depend on waitSeconds');
