@@ -15,6 +15,7 @@ CRM_PAGES_PORT="${CRM_PAGES_PORT:-8791}"
 CRM_ROUTE="${CRM_ROUTE:-/}"
 CRM_MODULE="${CRM_MODULE:-}"
 CRM_PROFILE="${CRM_PROFILE:-realistic}"
+CRM_RESET_LOCAL_AUTH_ON_START="${CRM_RESET_LOCAL_AUTH_ON_START:-1}"
 if [[ -n "${CRM_OPEN_BROWSER+x}" ]]; then
   CRM_OPEN_BROWSER_EXPLICIT=1
 else
@@ -190,6 +191,10 @@ append_query_param() {
 
 if [[ -n "$CRM_MODULE" ]]; then
   CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "module" "$CRM_MODULE")"
+fi
+
+if [[ "$CRM_PROFILE" == "realistic" && "$CRM_RESET_LOCAL_AUTH_ON_START" != "0" ]]; then
+  CRM_ROUTE="$(append_query_param "$CRM_ROUTE" "localAuthReset" "1")"
 fi
 
 if [[ ( -z "$CRM_MODULE" || "$CRM_MODULE" == "meta-ads" || "$CRM_MODULE" == "site-tracking" ) && -z "$CRM_META_ADS_SCENARIO" && "$CRM_PROFILE" == "realistic" ]]; then
