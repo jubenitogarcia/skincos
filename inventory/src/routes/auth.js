@@ -652,12 +652,12 @@ export async function handleAuthRoutes({
                 return withCORS(JSON.stringify({ success: false, error: "EMAIL_REQUIRED" }), { status: 400 }, appOrigin);
             }
             try {
-                if (!hasPasswordResetMailerConfig(env) || !resetPepper) {
-                    return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_RECOVERY_UNAVAILABLE' }), { status: 503 }, appOrigin);
-                }
                 const userDb = await d1.getUserByIdentifier(email);
                 if (!userDb?.ativo || normalizeIdentifier(userDb.email) !== email) {
                     return withCORS(JSON.stringify({ success: false, error: 'EMAIL_NOT_REGISTERED' }), { status: 404 }, appOrigin);
+                }
+                if (!hasPasswordResetMailerConfig(env) || !resetPepper) {
+                    return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_RECOVERY_UNAVAILABLE' }), { status: 503 }, appOrigin);
                 }
                 const cooldownSeconds = Math.max(30, toInt(env?.AUTH_RESET_COOLDOWN_SECONDS, 60));
                 const cooldownSince = new Date(Date.now() - cooldownSeconds * 1000).toISOString();
