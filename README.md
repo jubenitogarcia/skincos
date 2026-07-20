@@ -38,6 +38,7 @@ Plataforma interna (local) para automações e operações da clínica.
 ### Auth local (sem login manual)
 - Em `localhost`, o bypass de auth **só é ativado com flag explícita** (`LOCAL_AUTH_BYPASS=true` ou `VITE_LOCAL_AUTH_BYPASS=true`).
 - Para habilitar bypass no frontend local: `VITE_LOCAL_AUTH_BYPASS=true npm run dev`.
+- Com o bypass local, a conta de teste é `GESTOR` por padrão e acessa todos os módulos ativos. Para validar um perfil restrito, use `LOCAL_AUTH_TEST_USER_ADMIN=false` junto de `LOCAL_AUTH_ROLE=<perfil>`.
 - Overrides úteis (frontend local): `VITE_LOCAL_AUTH_ROLE`, `VITE_LOCAL_AUTH_EMAIL`, `VITE_LOCAL_AUTH_NAME`.
 - Em Pages Functions local (`npm run dev:pages`), `requireCrmUser` só faz bypass em `localhost` quando a flag acima estiver ativa.
 - No CRM API local (`crm/api/server.js`), o stub de sessão dev exige `NO_AUTH=true` (não é mais default).

@@ -83,8 +83,13 @@ const apiProxyTarget =
 
 const localAuthBypassEnabled =
   parseBooleanEnv(envValue('VITE_LOCAL_AUTH_BYPASS', 'LOCAL_AUTH_BYPASS')) ?? false
+// The standard local account exercises the full Gestor surface. Set this to
+// false only when intentionally validating a restricted profile locally.
+const localTestUserAdmin =
+  parseBooleanEnv(envValue('VITE_LOCAL_AUTH_TEST_USER_ADMIN', 'LOCAL_AUTH_TEST_USER_ADMIN')) ?? true
 const localAuthRole = (() => {
   const raw = String(envValue('VITE_LOCAL_AUTH_ROLE', 'LOCAL_AUTH_ROLE') || 'GESTOR').trim().toUpperCase()
+  if (localTestUserAdmin) return 'GESTOR'
   if (raw === 'ADMIN') return 'GESTOR'
   if (raw === 'OPERADOR') return 'INJETOR'
   return raw || 'GESTOR'
@@ -102,7 +107,7 @@ const localAuthAllowedUnits = String(
   .map((item) => item.trim())
   .filter(Boolean)
 const localAuthAllowedModules = String(
-  envValue('VITE_LOCAL_AUTH_ALLOWED_MODULES', 'LOCAL_AUTH_ALLOWED_MODULES') || '',
+  localTestUserAdmin ? '' : (envValue('VITE_LOCAL_AUTH_ALLOWED_MODULES', 'LOCAL_AUTH_ALLOWED_MODULES') || ''),
 ).trim()
   .split(',')
   .map((item) => item.trim())

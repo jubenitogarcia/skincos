@@ -9,6 +9,9 @@ ESCALA_API_TARGET=https://escala-api.skincos.com.br
 AUTH_PATH_PREFIX=/insumos/auth
 LOCAL_AUTH_BYPASS=false
 LOCAL_AUTH_ROLE=GESTOR
+# Local test account defaults to Gestor and can access every active module.
+# Set false only while deliberately validating a restricted local role.
+LOCAL_AUTH_TEST_USER_ADMIN=true
 LOCAL_AUTH_EMAIL=dev@local.test
 LOCAL_AUTH_NAME=Dev Local
 LOCAL_ESCALA_MOCK=false
