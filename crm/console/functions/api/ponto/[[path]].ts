@@ -110,6 +110,13 @@ function normalizeUnits(values: unknown): string[] {
   return out
 }
 
+function normalizeCrmRole(value: unknown): string {
+  const role = String(value || '').trim().toUpperCase()
+  if (role === 'RH' || role === 'AUDITOR') return 'SUPERVISOR'
+  if (role === 'EMPLOYEE') return 'CONSULTOR'
+  return role
+}
+
 export async function onRequest(context: any): Promise<Response> {
   const request: Request = context.request
   const url = new URL(request.url)
@@ -187,8 +194,8 @@ export async function onRequest(context: any): Promise<Response> {
       )
     }
     if (isAdminRoute) {
-      const role = String(user.role || '').toUpperCase()
-      isAdminUser = ['ADMIN', 'GESTOR', 'GERENTE', 'RH', 'AUDITOR'].includes(role)
+      const role = normalizeCrmRole(user.role)
+      isAdminUser = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'].includes(role)
       if (!isAdminUser) {
         return json(
           403,
@@ -197,12 +204,14 @@ export async function onRequest(context: any): Promise<Response> {
         )
       }
     }
-    const role = String(user.role || '').toUpperCase()
+    const role = normalizeCrmRole(user.role)
     const workforceRole = role === 'GESTOR' || role === 'GERENTE'
       ? 'MANAGER'
-      : role === 'RH'
-        ? 'HR'
-        : role || 'EMPLOYEE'
+      : role === 'SUPERVISOR'
+        ? 'SUPERVISOR'
+        : role === 'CONSULTOR'
+          ? 'CONSULTOR'
+          : role || 'CONSULTOR'
     const actor = {
       id: String(user.id || user.email || ''),
       email: user.email ? String(user.email) : undefined,

@@ -38,14 +38,30 @@ describe('Ponto CRM proxy', () => {
     expect(actor).toMatchObject({ role: 'MANAGER', allowedUnits: ['UNIT_A'] })
   })
 
-  it('normalizes the CRM RH role to the Workforce HR contract', async () => {
+  it('normalizes legacy RH and Auditor roles to the Workforce Supervisor contract', async () => {
     ;(getInsumosUser as Mock).mockResolvedValue({ id: 'rh-1', email: 'rh@example.test', role: 'RH', allowedUnits: ['UNIT_A'] })
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, data: [] }), { headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
-    await onRequest(context('/api/ponto/employees'))
+    await onRequest(context('/api/ponto/admin/employees'))
     const upstream = fetchMock.mock.calls[0][0] as Request
     const actor = JSON.parse(Buffer.from(String(upstream.headers.get('x-skincos-actor')), 'base64url').toString('utf8'))
-    expect(actor.role).toBe('HR')
+    expect(actor.role).toBe('SUPERVISOR')
+
+    ;(getInsumosUser as Mock).mockResolvedValue({ id: 'audit-1', email: 'audit@example.test', role: 'AUDITOR', allowedUnits: ['UNIT_A'] })
+    await onRequest(context('/api/ponto/employees'))
+    const legacyAuditorUpstream = fetchMock.mock.calls[1][0] as Request
+    const legacyAuditorActor = JSON.parse(Buffer.from(String(legacyAuditorUpstream.headers.get('x-skincos-actor')), 'base64url').toString('utf8'))
+    expect(legacyAuditorActor.role).toBe('SUPERVISOR')
+  })
+
+  it('maps Consultor to a self-service Workforce actor', async () => {
+    ;(getInsumosUser as Mock).mockResolvedValue({ id: 'consultor-1', email: 'consultor@example.test', role: 'CONSULTOR', allowedUnits: ['UNIT_A'] })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, data: [] }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await onRequest(context('/api/ponto/me/records'))
+    const upstream = fetchMock.mock.calls[0][0] as Request
+    const actor = JSON.parse(Buffer.from(String(upstream.headers.get('x-skincos-actor')), 'base64url').toString('utf8'))
+    expect(actor.role).toBe('CONSULTOR')
   })
 
   it('adds a unique replay nonce to protected mutations', async () => {

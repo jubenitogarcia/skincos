@@ -17,21 +17,24 @@ test('readiness fails closed when D1 is unavailable', async () => {
   assert.equal((await response.json()).code, 'DATABASE_UNAVAILABLE')
 })
 
-test('role matrix separates employee, manager, HR, admin and auditor duties', () => {
-  assert.equal(__testables.roleAllows('EMPLOYEE', 'self.punch'), true)
-  assert.equal(__testables.roleAllows('EMPLOYEE', 'unit.read'), false)
+test('role matrix keeps consultor self-service and gives supervisor the former RH/auditor duties', () => {
+  assert.equal(__testables.roleAllows('CONSULTOR', 'self.punch'), true)
+  assert.equal(__testables.roleAllows('CONSULTOR', 'unit.read'), false)
   assert.equal(__testables.roleAllows('MANAGER', 'correction.request'), true)
   assert.equal(__testables.roleAllows('MANAGER', 'correction.approve'), false)
-  assert.equal(__testables.roleAllows('HR', 'period.close'), true)
+  assert.equal(__testables.roleAllows('SUPERVISOR', 'period.close'), true)
+  assert.equal(__testables.roleAllows('SUPERVISOR', 'audit.read'), true)
   assert.equal(__testables.roleAllows('ADMIN', 'device.manage'), true)
-  assert.equal(__testables.roleAllows('AUDITOR', 'audit.read'), true)
-  assert.equal(__testables.roleAllows('AUDITOR', 'period.reopen'), false)
+  assert.equal(__testables.normalizeWorkforceRole('RH'), 'SUPERVISOR')
+  assert.equal(__testables.normalizeWorkforceRole('AUDITOR'), 'SUPERVISOR')
+  assert.equal(__testables.normalizeWorkforceRole('EMPLOYEE'), 'CONSULTOR')
 })
 
-test('manager scope is horizontal and HR/admin scope is organization-wide', () => {
+test('manager and supervisor scopes are horizontal while admin remains organization-wide', () => {
   assert.equal(__testables.requireUnit({ role: 'MANAGER', allowedUnits: ['UNIT_A'] }, 'UNIT_A'), true)
   assert.equal(__testables.requireUnit({ role: 'MANAGER', allowedUnits: ['UNIT_A'] }, 'UNIT_B'), false)
-  assert.equal(__testables.requireUnit({ role: 'HR', allowedUnits: [] }, 'UNIT_B'), true)
+  assert.equal(__testables.requireUnit({ role: 'SUPERVISOR', allowedUnits: ['UNIT_A'] }, 'UNIT_A'), true)
+  assert.equal(__testables.requireUnit({ role: 'SUPERVISOR', allowedUnits: ['UNIT_A'] }, 'UNIT_B'), false)
   assert.equal(__testables.requireUnit({ role: 'ADMIN', allowedUnits: [] }, 'UNIT_B'), true)
 })
 

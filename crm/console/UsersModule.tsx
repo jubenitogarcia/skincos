@@ -119,8 +119,8 @@ export function UsersModule() {
   const role = String(me?.user?.role || '').trim().toUpperCase()
   const canManageInvites = role === 'GESTOR'
   const inviteRoleOptions = role === 'GESTOR'
-    ? ['INJETOR', 'GERENTE', 'GESTOR']
-    : ['INJETOR', 'GERENTE']
+    ? ['CONSULTOR', 'SUPERVISOR', 'GERENTE', 'GESTOR']
+    : ['CONSULTOR', 'SUPERVISOR', 'GERENTE']
 
   const allowedUnits = Array.isArray(me?.user?.allowedUnits) ? me!.user!.allowedUnits!.filter(Boolean) : []
 
@@ -173,7 +173,7 @@ export function UsersModule() {
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [invitesLoading, setInvitesLoading] = React.useState(false)
   const [invites, setInvites] = React.useState<Invite[]>([])
-  const [inviteRole, setInviteRole] = React.useState<string>('INJETOR')
+  const [inviteRole, setInviteRole] = React.useState<string>('CONSULTOR')
   const [inviteMaxUses, setInviteMaxUses] = React.useState<string>('1')
   const [inviteExpiresInDays, setInviteExpiresInDays] = React.useState<string>('30')
   const [inviteAllowedUnits, setInviteAllowedUnits] = React.useState<string>('')
@@ -212,7 +212,7 @@ export function UsersModule() {
     setInviteTokenOnce(null)
     setInviteTokenHint(null)
     setInviteNote('')
-    setInviteRole((cur) => (inviteRoleOptions.includes(cur) ? cur : 'INJETOR'))
+    setInviteRole((cur) => (inviteRoleOptions.includes(cur) ? cur : 'CONSULTOR'))
     setInviteAllowedUnits((cur) => {
       if (cur.trim()) return cur
       return allowedUnits.length ? allowedUnits.join(',') : ''
