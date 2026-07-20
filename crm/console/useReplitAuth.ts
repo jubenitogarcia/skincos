@@ -1,8 +1,17 @@
 // Replit Auth Integration: Custom hook for authentication
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { consumeLocalAuthReset } from './localDevAuthReset'
 
 export function useReplitAuth() {
   const queryClient = useQueryClient()
+  if (typeof window !== 'undefined') {
+    consumeLocalAuthReset(
+      window.location,
+      window.localStorage,
+      (value) => { document.cookie = value },
+      (url) => { window.history.replaceState(null, '', url) },
+    )
+  }
   const isLocalDevHost = typeof window !== 'undefined' &&
     ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
   const localAuthBypassEnabled =
