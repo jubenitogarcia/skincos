@@ -5,6 +5,7 @@ import { resolveCrmTables } from '../d1Store.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE'];
 const ROLE_INVITES = ['ADMIN', 'GESTOR'];
+const PASSWORD_MIN_LENGTH = 12;
 
 function slugifyCategory(value) {
   const s0 = String(value || '').trim().toLowerCase();
@@ -640,7 +641,7 @@ export async function handleAdminRoutes({
       if (!validateUsername(username)) {
         return withCORS(JSON.stringify({ success: false, error: 'USERNAME_INVALID' }), { status: 400 }, appOrigin);
       }
-      if (password.length < 6) {
+      if (password.length < PASSWORD_MIN_LENGTH) {
         return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_TOO_SHORT' }), { status: 400 }, appOrigin);
       }
 
@@ -808,13 +809,15 @@ export async function handleAdminRoutes({
       if (!target) return withCORS(JSON.stringify({ success: false, error: 'USERNAME_REQUIRED' }), { status: 400 }, appOrigin);
       const body = await request.json().catch(() => ({}));
       const password = String(body.newPassword || '').trim() || randomPassword();
-      if (password.length < 6) {
+      if (password.length < PASSWORD_MIN_LENGTH) {
         return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_TOO_SHORT' }), { status: 400 }, appOrigin);
       }
       const hash = await hashPasswordPBKDF2(env, password);
       const now = new Date().toISOString();
       const r = await env.DB.prepare(
-        `UPDATE ${usersTable} SET password_hash=?, updated_at=? WHERE LOWER(username)=LOWER(?)`
+        `UPDATE ${usersTable}
+         SET password_hash=?, session_version=COALESCE(session_version, 0) + 1, updated_at=?
+         WHERE LOWER(username)=LOWER(?)`
       )
         .bind(hash, now, target)
         .run();

@@ -46,8 +46,12 @@ async function main() {
         '--disable-background-timer-throttling',
         '--disable-dev-shm-usage',
         '--disable-features=Translate,BackForwardCache',
+        '--disable-background-networking',
+        '--disable-component-update',
+        '--disable-sync',
+        '--no-first-run',
         '--mute-audio',
-        ...(HEADED ? [] : ['--disable-gpu']),
+        ...(HEADED ? [] : ['--disable-gpu', '--use-angle=swiftshader']),
       ],
     })
     context = await browser.newContext({

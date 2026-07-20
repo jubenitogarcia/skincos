@@ -2,6 +2,7 @@
 // Auth routes extracted from the main worker router.
 
 import { resolveCrmTables } from '../d1Store.js';
+import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../smtpMailer.js';
 
 export async function handleAuthRoutes({
     request,
@@ -10,6 +11,7 @@ export async function handleAuthRoutes({
     appOrigin,
     withCORS,
     sessionUsername,
+    sessionVersion,
     sessionCsrf,
     cookies,
     bcrypt,
@@ -33,6 +35,9 @@ export async function handleAuthRoutes({
     const authIp = String(ip || '').trim();
     const authUserAgent = String(userAgent || '').trim();
     const normalizeIdentifier = (value) => String(value || '').trim().toLowerCase();
+    const isCurrentSession = (user) => Boolean(
+        user?.ativo && toInt(sessionVersion, 0) === toInt(user.sessionVersion, 0)
+    );
 
     const textEncoder = new TextEncoder();
     const bytesToB64Url = (bytes) => {
@@ -266,13 +271,29 @@ export async function handleAuthRoutes({
 	        const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
 	        const invitesHasModules = await tableHasColumn(invitesTable, 'allowed_modules_json');
 
-	        const sha256Hex = async (input) => {
+        const sha256Hex = async (input) => {
 	            const data = new TextEncoder().encode(String(input || ''));
 	            const hash = await crypto.subtle.digest('SHA-256', data);
 	            return Array.from(new Uint8Array(hash))
                 .map((b) => b.toString(16).padStart(2, '0'))
                 .join('');
         };
+
+        const resetPepper = String(env?.AUTH_RESET_CODE_PEPPER || '').trim();
+        const hashResetSecret = async (value) => {
+            if (!resetPepper) throw new Error('AUTH_RESET_CODE_PEPPER_NOT_CONFIGURED');
+            const key = await crypto.subtle.importKey(
+                'raw',
+                textEncoder.encode(resetPepper),
+                { name: 'HMAC', hash: 'SHA-256' },
+                false,
+                ['sign']
+            );
+            const bytes = new Uint8Array(await crypto.subtle.sign('HMAC', key, textEncoder.encode(String(value || ''))));
+            return bytesToB64Url(bytes);
+        };
+        const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+        const PASSWORD_MIN_LENGTH = 12;
 
         const slugifyUsername = (raw) => {
             const s = String(raw || '').trim().toLowerCase();
@@ -334,7 +355,7 @@ export async function handleAuthRoutes({
             }
             try {
                 const userDb = await d1.getUserByUsername(sessionUsername);
-                if (!userDb || !userDb.ativo) {
+                if (!isCurrentSession(userDb)) {
                     return withCORS(
                         JSON.stringify({ error: "Not authenticated" }),
                         { status: 401, headers: deleteAuthCookies() },
@@ -370,7 +391,7 @@ export async function handleAuthRoutes({
             }
             try {
                 const userDb = await d1.getUserByUsername(sessionUsername);
-                if (!userDb || !userDb.ativo) {
+                if (!isCurrentSession(userDb)) {
                     return withCORS(
                         JSON.stringify({ error: "Not authenticated" }),
                         { status: 401, headers: deleteAuthCookies() },
@@ -387,7 +408,7 @@ export async function handleAuthRoutes({
 	                    allowedUnits: userDb.allowedUnits || [],
 	                    allowedModules: userDb.allowedModules || [],
 	                };
-                const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
+                const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username, sv: userDb.sessionVersion || 0 });
                 return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ error: `Auth error: ${err.message}` }), { status: 500 }, appOrigin);
@@ -465,7 +486,7 @@ export async function handleAuthRoutes({
 	                };
                 await clearAuthFailures(identifier);
                 await logAuthAudit({ action: 'AUTH_LOGIN_SUCCESS', actor: userDb.username, role: userDb.role || '', detail: { username: userDb.username } });
-                const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username });
+                const { headers: headersOut, csrf } = await issueAuthCookies({ username: userDb.username, sv: userDb.sessionVersion || 0 });
                 return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
             } catch (err) {
                 await recordAuthFailure(identifier, 'LOGIN_ERROR');
@@ -495,7 +516,7 @@ export async function handleAuthRoutes({
                 if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
                     return withCORS(JSON.stringify({ success: false, error: "EMAIL_INVALID" }), { status: 400 }, appOrigin);
                 }
-                if (!password || password.length < 6) {
+                if (!password || password.length < PASSWORD_MIN_LENGTH) {
                     return withCORS(JSON.stringify({ success: false, error: "PASSWORD_TOO_SHORT" }), { status: 400 }, appOrigin);
                 }
 
@@ -616,7 +637,7 @@ export async function handleAuthRoutes({
                         allowedModules,
                     };
 
-                const { headers: headersOut, csrf } = await issueAuthCookies({ username: candidate });
+                const { headers: headersOut, csrf } = await issueAuthCookies({ username: candidate, sv: userDb?.sessionVersion || 0 });
                 return withCORS(JSON.stringify({ success: true, user, csrfToken: csrf }), { status: 201, headers: headersOut }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
@@ -626,37 +647,99 @@ export async function handleAuthRoutes({
         // POST /auth/password/request
         if (url.pathname === "/auth/password/request" && request.method === "POST") {
             const body = await request.json().catch(() => ({}));
-            const identifierRaw = String(body.email || body.username || body.user || '').trim();
-            const identifier = normalizeIdentifier(identifierRaw);
-            if (!identifier) {
-                return withCORS(JSON.stringify({ success: false, error: "IDENTIFIER_REQUIRED" }), { status: 400 }, appOrigin);
+            const email = normalizeIdentifier(body.email);
+            if (!isValidEmail(email)) {
+                return withCORS(JSON.stringify({ success: false, error: "EMAIL_REQUIRED" }), { status: 400 }, appOrigin);
             }
             try {
-                const userDb = await d1.getUserByIdentifier(identifierRaw);
-                if (userDb && userDb.ativo) {
-                    const token = crypto.randomUUID();
-                    const tokenHash = await sha256Hex(token);
-                    const ttlMinutes = Math.max(5, toInt(env?.AUTH_RESET_TTL_MINUTES, 30));
-                    const now = new Date();
-	                    const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1000).toISOString();
-	                    await env.DB.prepare(
-	                        `DELETE FROM ${passwordResetsTable} WHERE username = ? OR (email IS NOT NULL AND email = ?)`
-	                    )
-	                        .bind(userDb.username, userDb.email || '')
-	                        .run();
-	                    await env.DB.prepare(
-	                        `INSERT INTO ${passwordResetsTable} (token_hash, username, email, created_at, expires_at)
-	                         VALUES (?, ?, ?, ?, ?)`
-	                    )
-	                        .bind(tokenHash, userDb.username, userDb.email || '', now.toISOString(), expiresAt)
-	                        .run();
-                    await logAuthAudit({ action: 'AUTH_PASSWORD_RESET_REQUEST', actor: userDb.username, role: userDb.role || '', detail: { username: userDb.username } });
-                    const allowTokenReturn = String(env?.AUTH_RESET_RETURN_TOKEN || '').trim().toLowerCase() === 'true';
-                    if (allowTokenReturn) {
-                        return withCORS(JSON.stringify({ success: true, resetToken: token, expiresAt }), { status: 200 }, appOrigin);
-                    }
+                if (!hasPasswordResetMailerConfig(env) || !resetPepper) {
+                    return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_RECOVERY_UNAVAILABLE' }), { status: 503 }, appOrigin);
                 }
-                return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
+                const userDb = await d1.getUserByIdentifier(email);
+                if (!userDb?.ativo || normalizeIdentifier(userDb.email) !== email) {
+                    return withCORS(JSON.stringify({ success: false, error: 'EMAIL_NOT_REGISTERED' }), { status: 404 }, appOrigin);
+                }
+                const cooldownSeconds = Math.max(30, toInt(env?.AUTH_RESET_COOLDOWN_SECONDS, 60));
+                const cooldownSince = new Date(Date.now() - cooldownSeconds * 1000).toISOString();
+                const recent = await env.DB.prepare(
+                    `SELECT id FROM ${passwordResetsTable}
+                     WHERE LOWER(email) = ? AND sent_at IS NOT NULL AND created_at >= ? AND used_at IS NULL
+                     ORDER BY id DESC LIMIT 1`
+                ).bind(email, cooldownSince).first();
+                if (recent?.id) {
+                    return withCORS(JSON.stringify({ success: false, error: 'RESET_COOLDOWN', retryAfterSeconds: cooldownSeconds }), { status: 429 }, appOrigin);
+                }
+
+                const code = String(randomInt(100000, 999999));
+                const codeHash = await hashResetSecret(code);
+                const now = new Date();
+                const expiresAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+                const pending = await env.DB.prepare(
+                    `INSERT INTO ${passwordResetsTable} (token_hash, username, email, created_at, expires_at)
+                     VALUES (?, ?, ?, ?, ?)`
+                ).bind(codeHash, userDb.username, email, now.toISOString(), expiresAt).run();
+                const resetId = pending?.meta?.last_row_id;
+                if (!resetId) throw new Error('PASSWORD_RESET_CREATE_FAILED');
+                try {
+                    await sendPasswordResetEmail({ env, to: email, code, expiresAt });
+                } catch (mailError) {
+                    await env.DB.prepare(`DELETE FROM ${passwordResetsTable} WHERE id = ? AND sent_at IS NULL`).bind(resetId).run();
+                    const reason = String(mailError?.message || mailError || 'SMTP_ERROR_UNKNOWN')
+                        .replace(/[\r\n]+/g, ' ')
+                        .slice(0, 160);
+                    console.error(JSON.stringify({ event: 'AUTH_PASSWORD_RESET_EMAIL_FAILED', reset_id: resetId, reason }));
+                    return withCORS(JSON.stringify({ success: false, error: 'EMAIL_DELIVERY_FAILED' }), { status: 503 }, appOrigin);
+                }
+                await env.DB.batch([
+                    env.DB.prepare(`UPDATE ${passwordResetsTable} SET sent_at = ? WHERE id = ? AND sent_at IS NULL`).bind(new Date().toISOString(), resetId),
+                    env.DB.prepare(`UPDATE ${passwordResetsTable} SET used_at = ? WHERE username = ? AND id <> ? AND used_at IS NULL`).bind(new Date().toISOString(), userDb.username, resetId)
+                ]);
+                await logAuthAudit({ action: 'AUTH_PASSWORD_RESET_REQUEST', actor: userDb.username, role: userDb.role || '', detail: { delivery: 'smtp' } });
+                return withCORS(JSON.stringify({ success: true, expiresAt }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /auth/password/verify
+        if (url.pathname === '/auth/password/verify' && request.method === 'POST') {
+            const body = await request.json().catch(() => ({}));
+            const email = normalizeIdentifier(body.email);
+            const code = String(body.code || '').trim();
+            if (!isValidEmail(email) || !/^\d{6}$/.test(code)) {
+                return withCORS(JSON.stringify({ success: false, error: 'CODE_INVALID' }), { status: 400 }, appOrigin);
+            }
+            try {
+                const row = await env.DB.prepare(
+                    `SELECT id, token_hash, expires_at, used_at, verification_attempts
+                     FROM ${passwordResetsTable}
+                     WHERE LOWER(email) = ? AND sent_at IS NOT NULL AND used_at IS NULL
+                     ORDER BY id DESC LIMIT 1`
+                ).bind(email).first();
+                const exp = row?.expires_at ? new Date(row.expires_at).getTime() : 0;
+                if (!row?.id || !exp || Date.now() > exp) {
+                    return withCORS(JSON.stringify({ success: false, error: 'CODE_EXPIRED' }), { status: 400 }, appOrigin);
+                }
+                const attempts = Math.max(0, toInt(row.verification_attempts, 0));
+                if (attempts >= 5) {
+                    return withCORS(JSON.stringify({ success: false, error: 'CODE_LOCKED' }), { status: 429 }, appOrigin);
+                }
+                const codeHash = await hashResetSecret(code);
+                if (!safeEqualBytes(textEncoder.encode(codeHash), textEncoder.encode(String(row.token_hash || '')))) {
+                    const nextAttempts = attempts + 1;
+                    await env.DB.prepare(
+                        `UPDATE ${passwordResetsTable}
+                         SET verification_attempts = ?, last_attempt_at = ?, used_at = CASE WHEN ? >= 5 THEN ? ELSE used_at END
+                         WHERE id = ? AND used_at IS NULL`
+                    ).bind(nextAttempts, new Date().toISOString(), nextAttempts, new Date().toISOString(), row.id).run();
+                    return withCORS(JSON.stringify({ success: false, error: nextAttempts >= 5 ? 'CODE_LOCKED' : 'CODE_INVALID' }), { status: nextAttempts >= 5 ? 429 : 400 }, appOrigin);
+                }
+                const grant = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+                const grantHash = await hashResetSecret(grant);
+                await env.DB.prepare(
+                    `UPDATE ${passwordResetsTable} SET verified_at = ?, grant_hash = ? WHERE id = ? AND used_at IS NULL`
+                ).bind(new Date().toISOString(), grantHash, row.id).run();
+                return withCORS(JSON.stringify({ success: true, resetGrant: grant, expiresAt: row.expires_at }), { status: 200 }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
             }
@@ -665,47 +748,54 @@ export async function handleAuthRoutes({
         // POST /auth/password/reset
         if (url.pathname === "/auth/password/reset" && request.method === "POST") {
             const body = await request.json().catch(() => ({}));
-            const token = String(body.token || '').trim();
+            const grant = String(body.resetGrant || '').trim();
             const newPassword = String(body.password || body.newPassword || '').trim();
-            if (!token) {
-                return withCORS(JSON.stringify({ success: false, error: "TOKEN_REQUIRED" }), { status: 400 }, appOrigin);
+            if (!grant) {
+                return withCORS(JSON.stringify({ success: false, error: 'RESET_GRANT_REQUIRED' }), { status: 400 }, appOrigin);
             }
-            if (!newPassword || newPassword.length < 6) {
+            if (!newPassword || newPassword.length < PASSWORD_MIN_LENGTH) {
                 return withCORS(JSON.stringify({ success: false, error: "PASSWORD_TOO_SHORT" }), { status: 400 }, appOrigin);
             }
             try {
-	                const tokenHash = await sha256Hex(token);
+                const grantHash = await hashResetSecret(grant);
 	                const row = await env.DB.prepare(
-	                    `SELECT id, username, expires_at, used_at
+	                    `SELECT id, username, expires_at, used_at, grant_hash
 	                     FROM ${passwordResetsTable}
-	                     WHERE token_hash = ?
-	                     LIMIT 1`
-	                )
-	                    .bind(tokenHash)
-	                    .first();
+	                     WHERE grant_hash = ? LIMIT 1`
+	                ).bind(grantHash).first();
                 if (!row?.id) {
-                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_INVALID" }), { status: 400 }, appOrigin);
+                    return withCORS(JSON.stringify({ success: false, error: 'RESET_GRANT_INVALID' }), { status: 400 }, appOrigin);
                 }
                 if (row.used_at) {
-                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_USED" }), { status: 400 }, appOrigin);
+                    return withCORS(JSON.stringify({ success: false, error: 'RESET_GRANT_USED' }), { status: 400 }, appOrigin);
                 }
                 const exp = row.expires_at ? new Date(row.expires_at).getTime() : 0;
                 if (!exp || Date.now() > exp) {
-                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXPIRED" }), { status: 400 }, appOrigin);
+                    return withCORS(JSON.stringify({ success: false, error: 'RESET_GRANT_EXPIRED' }), { status: 400 }, appOrigin);
 	                }
                 const hash = await hashPassword(newPassword);
-                const updated = await d1.updateUserProfile(env, row.username, { passwordHash: hash });
-	                if (!updated?.ok) {
-	                    return withCORS(JSON.stringify({ success: false, error: updated?.error || 'PASSWORD_RESET_FAILED' }), { status: updated?.status || 500 }, appOrigin);
-	                }
-	                await env.DB.prepare(
-	                    `UPDATE ${passwordResetsTable} SET used_at = ? WHERE id = ?`
-	                )
-	                    .bind(new Date().toISOString(), row.id)
-	                    .run();
+                const now = new Date().toISOString();
+                const changed = await env.DB.batch([
+                    env.DB.prepare(
+                        `UPDATE ${usersTable}
+                         SET password_hash = ?, session_version = COALESCE(session_version, 0) + 1, updated_at = ?
+                         WHERE username = ? AND EXISTS (
+                           SELECT 1 FROM ${passwordResetsTable}
+                           WHERE id = ? AND grant_hash = ? AND used_at IS NULL AND expires_at >= ?
+                         )`
+                    ).bind(hash, now, row.username, row.id, grantHash, now),
+                    env.DB.prepare(
+                        `UPDATE ${passwordResetsTable} SET used_at = ?
+                         WHERE id = ? AND grant_hash = ? AND used_at IS NULL AND expires_at >= ?`
+                    ).bind(now, row.id, grantHash, now)
+                ]);
+                if (!changed?.[0]?.meta?.changes || !changed?.[1]?.meta?.changes) {
+                    return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_RESET_FAILED' }), { status: 409 }, appOrigin);
+                }
                 await clearAuthFailures(normalizeIdentifier(row.username));
                 await logAuthAudit({ action: 'AUTH_PASSWORD_RESET', actor: row.username, role: '', detail: { username: row.username } });
-                const { headers: headersOut, csrf } = await issueAuthCookies({ username: row.username });
+                const updatedUser = await d1.getUserByUsername(row.username);
+                const { headers: headersOut, csrf } = await issueAuthCookies({ username: row.username, sv: updatedUser?.sessionVersion || 0 });
                 return withCORS(JSON.stringify({ success: true, csrfToken: csrf }), { status: 200, headers: headersOut }, appOrigin);
             } catch (err) {
                 return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
@@ -738,7 +828,7 @@ export async function handleAuthRoutes({
                 }
 
                 const userDb = await d1.getUserByUsername(sessionUsername);
-                if (!userDb || !userDb.ativo) {
+                if (!isCurrentSession(userDb)) {
                     return withCORS(
                         JSON.stringify({ error: "Not authenticated" }),
                         { status: 401, headers: deleteAuthCookies() },
@@ -765,6 +855,9 @@ export async function handleAuthRoutes({
                     }
                 }
 
+                if (newPassword && newPassword.trim() && newPassword.trim().length < PASSWORD_MIN_LENGTH) {
+                    return withCORS(JSON.stringify({ error: 'PASSWORD_TOO_SHORT' }), { status: 400 }, appOrigin);
+                }
                 if (newPassword && newPassword.trim()) {
                     passwordHash = await hashPassword(newPassword);
                 }
@@ -785,7 +878,19 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: updated.error || 'Profile update error' }), { status }, appOrigin);
                 }
 
-                const outUser = updated.user || null;
+                const mustReissueSession = Boolean(passwordHash || (updated.username && updated.username !== sessionUsername));
+                let currentUser = updated.user || null;
+                if (mustReissueSession) {
+                    const currentUsername = updated.username || sessionUsername;
+                    if (passwordHash) {
+                    await env.DB.prepare(
+                        `UPDATE ${usersTable} SET session_version = COALESCE(session_version, 0) + 1 WHERE username = ?`
+                    ).bind(currentUsername).run();
+                    }
+                    currentUser = await d1.getUserByUsername(currentUsername);
+                }
+
+                const outUser = currentUser;
                 const responseUser = outUser
                     ? {
                         name: outUser.displayName || outUser.username,
@@ -801,8 +906,8 @@ export async function handleAuthRoutes({
 
                 let headersOut;
                 let csrfTokenOut;
-                if (updated.username && updated.username !== sessionUsername) {
-                    const issued = await issueAuthCookies({ username: updated.username });
+                if (mustReissueSession) {
+                    const issued = await issueAuthCookies({ username: updated.username || sessionUsername, sv: currentUser?.sessionVersion || 0 });
                     headersOut = issued.headers;
                     csrfTokenOut = issued.csrf;
                 }

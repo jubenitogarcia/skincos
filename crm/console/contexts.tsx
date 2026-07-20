@@ -35,6 +35,9 @@ interface AuthContextValue {
   initProgress: number
   signIn: (email: string, password: string) => Promise<void>
   signUp: (name: string, email: string, password: string, inviteToken: string) => Promise<void>
+  requestPasswordReset: (email: string) => Promise<{ expiresAt: string }>
+  verifyPasswordResetCode: (email: string, code: string) => Promise<{ resetGrant: string; expiresAt: string }>
+  resetPassword: (resetGrant: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   updateProfile: (data: Partial<Pick<AuthUser, 'name' | 'avatarUrl'>>) => void
   token: string | null
@@ -138,13 +141,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       : code === 'TOKEN_EXPIRED' ? 'Token expirado.'
       : code === 'TOKEN_EXHAUSTED' ? 'Token já foi utilizado.'
       : code === 'EMAIL_TAKEN' ? 'Este email já está cadastrado.'
-      : code === 'PASSWORD_TOO_SHORT' ? 'Senha muito curta (mín. 6).'
+      : code === 'PASSWORD_TOO_SHORT' ? 'Use uma senha com pelo menos 12 caracteres.'
       : code === 'EMAIL_INVALID' ? 'Email inválido.'
       : code === 'NAME_REQUIRED' ? 'Informe seu nome.'
       : code === 'USERNAME_UNAVAILABLE' ? 'Não foi possível gerar um usuário único. Tente novamente.'
       : code === 'DB_NOT_CONFIGURED' ? 'Cadastro indisponível no momento. Tente novamente mais tarde.'
       : (payload?.error || payload?.message || `HTTP ${status}`)
     return friendly
+  }
+
+  const friendlyPasswordResetError = (status: number, payload: any) => {
+    const code = String(payload?.error || payload?.code || '')
+    if (code === 'EMAIL_NOT_REGISTERED') return 'Não há e-mail cadastrado para esta conta. Fale com um gestor.'
+    if (code === 'RESET_COOLDOWN') return 'Aguarde um minuto antes de solicitar outro código.'
+    if (code === 'PASSWORD_RECOVERY_UNAVAILABLE' || code === 'EMAIL_DELIVERY_FAILED') return 'A recuperação por e-mail está indisponível. Tente novamente mais tarde.'
+    if (code === 'CODE_EXPIRED') return 'O código expirou. Solicite um novo código.'
+    if (code === 'CODE_LOCKED') return 'Este código foi bloqueado por excesso de tentativas. Solicite outro código.'
+    if (code === 'CODE_INVALID') return 'Código inválido. Verifique o e-mail recebido.'
+    if (code.startsWith('RESET_GRANT_')) return 'A validação expirou. Solicite e valide um novo código.'
+    if (code === 'PASSWORD_TOO_SHORT') return 'Use uma senha com pelo menos 12 caracteres.'
+    return payload?.error || payload?.message || `HTTP ${status}`
   }
 
   const signIn = async (email: string, password: string) => {
@@ -224,6 +240,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const passwordResetRequest = async (path: string, body: Record<string, string>) => {
+    const res = await fetchWithTimeout(
+      path,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body)
+      },
+      45000
+    ).catch((e: any) => {
+      if (e?.name === 'AbortError') throw new Error('Tempo limite. Tente novamente.')
+      throw e
+    })
+    const payload = readJson(await res.text())
+    if (!res.ok) throw new Error(friendlyPasswordResetError(res.status, payload))
+    return payload || {}
+  }
+
+  const requestPasswordReset = async (email: string) => {
+    setActionLoading(true)
+    try {
+      const payload = await passwordResetRequest('/api/auth/password/request', { email: email.trim().toLowerCase() })
+      return { expiresAt: String(payload.expiresAt || '') }
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const verifyPasswordResetCode = async (email: string, code: string) => {
+    setActionLoading(true)
+    try {
+      const payload = await passwordResetRequest('/api/auth/password/verify', { email: email.trim().toLowerCase(), code: code.trim() })
+      if (!payload.resetGrant) throw new Error('Não foi possível validar o código. Solicite outro.')
+      return { resetGrant: String(payload.resetGrant), expiresAt: String(payload.expiresAt || '') }
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const resetPassword = async (resetGrant: string, password: string) => {
+    setActionLoading(true)
+    try {
+      await passwordResetRequest('/api/auth/password/reset', { resetGrant, password })
+      const meRes = await fetchWithTimeout('/api/auth/me', { credentials: 'include' }, 15000)
+      if (!meRes.ok) throw new Error('Senha atualizada, mas não foi possível iniciar a nova sessão. Entre novamente.')
+      setAuthenticatedUserFromMe(await meRes.json().catch(() => null))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const isLocalHost =
     typeof window !== 'undefined' &&
     ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
@@ -266,6 +334,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initProgress,
     signIn,
     signUp,
+    requestPasswordReset,
+    verifyPasswordResetCode,
+    resetPassword,
     signOut,
     updateProfile,
     token: null,

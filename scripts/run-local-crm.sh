@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/crm/console"
 BACKEND_DIR="$ROOT_DIR/backend"
+TIMEKEEPING_DIR="$ROOT_DIR/workforce/timekeeping"
 INSUMOS_HELPER="$ROOT_DIR/backend/scripts/insumos.sh"
 INSUMOS_EXPORTER="$ROOT_DIR/backend/scripts/insumos-d1-export.cjs"
 INSUMOS_SEEDER="$ROOT_DIR/backend/scripts/insumos-seed.sh"
@@ -56,6 +57,18 @@ else
   CRM_WITH_INSUMOS=0
 fi
 CRM_INSUMOS_PORT="${CRM_INSUMOS_PORT:-8787}"
+if [[ -n "${CRM_WITH_TIMEKEEPING+x}" ]]; then
+  CRM_WITH_TIMEKEEPING="$CRM_WITH_TIMEKEEPING"
+elif [[ -z "$CRM_MODULE" || "$CRM_MODULE" == "ponto" ]]; then
+  CRM_WITH_TIMEKEEPING=1
+else
+  CRM_WITH_TIMEKEEPING=0
+fi
+CRM_TIMEKEEPING_PORT="${CRM_TIMEKEEPING_PORT:-8801}"
+# Local-only values. Production uses separate Pages and Worker secrets.
+CRM_TIMEKEEPING_ACTOR_KEY="${CRM_TIMEKEEPING_ACTOR_KEY:-test-actor-key-not-secret}"
+CRM_TIMEKEEPING_IDEMPOTENCY_KEY="${CRM_TIMEKEEPING_IDEMPOTENCY_KEY:-test-idempotency-key-not-secret}"
+CRM_TIMEKEEPING_TEMPLATES_KEY="${CRM_TIMEKEEPING_TEMPLATES_KEY:-test-template-key-not-secret}"
 CRM_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}"
 CRM_REFRESH_INSUMOS_SNAPSHOT="${CRM_REFRESH_INSUMOS_SNAPSHOT:-0}"
 CRM_INSUMOS_SEED_TOKEN="${CRM_INSUMOS_SEED_TOKEN:-dev-seed-token}"
@@ -95,6 +108,7 @@ Opções:
   --refresh-insumos-snapshot     Exporta um snapshot novo do D1 remoto antes do seed
   --insumos-seed-token TOKEN     Token local usado para /admin/seed (default: dev-seed-token)
   CRM_LOCAL_LOG_LEVEL=LEVEL      Nível dos runtimes locais: warn (default), info, debug, error ou none
+  CRM_BROWSER_DIAGNOSTICS_LOG=FILE Arquivo privado para diagnósticos conhecidos do Chromium durante smokes
   --smoke                        Roda uma smoke local do módulo após subir o CRM
   --exit-after-smoke             Encerra o CRM local depois da smoke
   --headed-smoke                 Roda a smoke com janela visível para debug
@@ -347,6 +361,53 @@ ensure_frontend_ready() {
   fi
 }
 
+ensure_playwright_chromium() {
+  if [[ "$CRM_GATE_STRICT" != "1" && "$CRM_SMOKE" != "1" ]]; then
+    return 0
+  fi
+
+  echo "[crm-local] Garantindo o Chromium do Playwright para o gate local..."
+  (
+    cd "$FRONTEND_DIR"
+    PLAYWRIGHT_BROWSERS_PATH=0 npm exec playwright install chromium
+  )
+}
+
+ensure_timekeeping_ready() {
+  if [[ ! -d "$TIMEKEEPING_DIR" ]]; then
+    echo "[crm-local] O domínio Workforce/Timekeeping não foi encontrado em $TIMEKEEPING_DIR." >&2
+    exit 1
+  fi
+  if [[ ! -d "$TIMEKEEPING_DIR/node_modules" ]]; then
+    echo "[crm-local] Instalando dependências locais do Timekeeping..."
+    npm --prefix "$TIMEKEEPING_DIR" install
+  fi
+}
+
+start_timekeeping_local() {
+  ensure_timekeeping_ready
+  echo "[crm-local] Aplicando migrations locais do Timekeeping..."
+  (
+    cd "$TIMEKEEPING_DIR"
+    ./node_modules/.bin/wrangler d1 migrations apply skincos-timekeeping --local --config=wrangler.toml
+  ) >>"$LOG_FILE" 2>&1
+
+  echo "[crm-local] Iniciando Workforce/Timekeeping local em :$CRM_TIMEKEEPING_PORT"
+  (
+    cd "$TIMEKEEPING_DIR"
+    ./node_modules/.bin/wrangler dev --local --port "$CRM_TIMEKEEPING_PORT" --config=wrangler.toml \
+      --var "PONTO_ACTOR_HMAC_KEY:$CRM_TIMEKEEPING_ACTOR_KEY" \
+      --var "PONTO_IDEMPOTENCY_KEY:$CRM_TIMEKEEPING_IDEMPOTENCY_KEY" \
+      --var "PONTO_TEMPLATES_KEY:$CRM_TIMEKEEPING_TEMPLATES_KEY"
+  ) >>"$LOG_FILE" 2>&1 &
+  TIMEKEEPING_PID=$!
+
+  if ! wait_for_http "http://127.0.0.1:${CRM_TIMEKEEPING_PORT}/api/ponto/readiness" 90; then
+    echo "[crm-local] Workforce/Timekeeping não respondeu em tempo hábil." >&2
+    exit 1
+  fi
+}
+
 ensure_frontend_dist_ready() {
   if [[ -f "$FRONTEND_DIR/dist/index.html" ]]; then
     return 0
@@ -431,6 +492,9 @@ if [[ "$STOP_ONLY" == "1" ]]; then
   if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
     stop_owned_port_listener "$CRM_INSUMOS_PORT" "insumos"
   fi
+  if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
+    stop_owned_port_listener "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
+  fi
   echo "CRM local finalizado."
   exit 0
 fi
@@ -464,6 +528,7 @@ mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
 
 GATE_REPORT_FILE="${CRM_GATE_REPORT_FILE:-$(dirname "$LOG_FILE")/crm-local-gate-$(report_timestamp).json}"
 GATE_ARTIFACT_DIR="${CRM_SMOKE_ARTIFACT_DIR:-$(dirname "$LOG_FILE")/crm-local-smoke-artifacts}"
+BROWSER_DIAGNOSTICS_LOG="${CRM_BROWSER_DIAGNOSTICS_LOG:-$(dirname "$LOG_FILE")/crm-local-browser-diagnostics-$(report_timestamp).log}"
 mkdir -p "$GATE_ARTIFACT_DIR"
 
 refresh_insumos_snapshot_if_needed
@@ -495,6 +560,7 @@ rotate_current_log
 assert_port_free "$CRM_VITE_PORT" "vite"
 assert_port_free "$CRM_PAGES_PORT" "pages"
 ensure_frontend_ready
+ensure_playwright_chromium
 
 if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
   echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
@@ -509,6 +575,12 @@ if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   start_insumos_local
 fi
 
+TIMEKEEPING_PID=""
+if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
+  assert_port_free "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
+  start_timekeeping_local
+fi
+
 export VITE_PORT="$CRM_VITE_PORT"
 export PAGES_PORT="$CRM_PAGES_PORT"
 
@@ -518,6 +590,10 @@ if [[ "$CRM_PROFILE" == "realistic" ]]; then
   export LOCAL_AUTH_TEST_USER_ADMIN="${LOCAL_AUTH_TEST_USER_ADMIN:-true}"
   export LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}"
   export LOCAL_AUTH_NAME="${LOCAL_AUTH_NAME:-Teste CRM Local}"
+  if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
+    export PONTO_API_TARGET="http://127.0.0.1:${CRM_TIMEKEEPING_PORT}"
+    export PONTO_ACTOR_HMAC_KEY="$CRM_TIMEKEEPING_ACTOR_KEY"
+  fi
   if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
     export ALLOW_DEV_AUTH_BYPASS=true
   fi
@@ -548,6 +624,9 @@ cleanup() {
   if [[ -n "${INSUMOS_PID:-}" ]]; then
     kill "$INSUMOS_PID" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${TIMEKEEPING_PID:-}" ]]; then
+    kill "$TIMEKEEPING_PID" >/dev/null 2>&1 || true
+  fi
   if [[ -f "$PID_FILE" ]]; then
     local tracked_pid
     tracked_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
@@ -571,16 +650,71 @@ fi
 
 run_gate_smoke() {
   echo "[crm-local] Rodando gate obrigatório do shell local..."
+  run_browser_smoke env \
+    PLAYWRIGHT_BROWSERS_PATH=0 \
+    CRM_URL="$DEFAULT_URL" \
+    HEADED=0 \
+    TIMEOUT_MS="${CRM_GATE_TIMEOUT_MS:-120000}" \
+    CRM_SMOKE_REPORT_FILE="$GATE_REPORT_FILE" \
+    SMOKE_ARTIFACT_DIR="$GATE_ARTIFACT_DIR" \
+    npm run smoke:crm-shell:local
+}
+
+is_known_browser_diagnostic() {
+  local line="$1"
+  case "$line" in
+    *"/org/freedesktop/UPower/devices/DisplayDevice"*"org.freedesktop.DBus.Error.ServiceUnknown"*|\
+    *"ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer."*|\
+    *"Created TensorFlow Lite XNNPACK delegate for CPU."*|\
+    *"Registration response error message: DEPRECATED_ENDPOINT"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+filter_browser_smoke_stderr() {
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if is_known_browser_diagnostic "$line"; then
+      printf '%s\n' "$line" >> "$BROWSER_DIAGNOSTICS_LOG"
+    else
+      printf '%s\n' "$line" >&2
+    fi
+  done
+}
+
+run_browser_smoke() {
+  : > "$BROWSER_DIAGNOSTICS_LOG"
+
+  local stderr_file
+  if ! stderr_file="$(mktemp "${BROWSER_DIAGNOSTICS_LOG}.tmp.XXXXXX")"; then
+    echo "[crm-local] Não foi possível preparar o diagnóstico do Chromium." >&2
+    return 1
+  fi
+
+  local status=0
   (
     cd "$FRONTEND_DIR"
-    PLAYWRIGHT_BROWSERS_PATH=0 \
-      CRM_URL="$DEFAULT_URL" \
-      HEADED=0 \
-      TIMEOUT_MS="${CRM_GATE_TIMEOUT_MS:-120000}" \
-      CRM_SMOKE_REPORT_FILE="$GATE_REPORT_FILE" \
-      SMOKE_ARTIFACT_DIR="$GATE_ARTIFACT_DIR" \
-      npm run smoke:crm-shell:local
-  )
+    "$@"
+  ) 2> "$stderr_file" || status=$?
+
+  local filter_status=0
+  filter_browser_smoke_stderr < "$stderr_file" || filter_status=$?
+  rm -f "$stderr_file"
+
+  if [[ "$filter_status" != "0" ]]; then
+    echo "[crm-local] O filtro de diagnósticos do Chromium falhou." >&2
+    return "$filter_status"
+  fi
+
+  if [[ -s "$BROWSER_DIAGNOSTICS_LOG" ]]; then
+    local diagnostic_count
+    diagnostic_count="$(wc -l < "$BROWSER_DIAGNOSTICS_LOG" | tr -d '[:space:]')"
+    echo "[crm-local] ${diagnostic_count} diagnóstico(s) conhecido(s) do Chromium arquivado(s) em $BROWSER_DIAGNOSTICS_LOG"
+  fi
+
+  return "$status"
 }
 
 print_gate_failure_summary() {
@@ -624,22 +758,13 @@ fi
 if [[ "$CRM_SMOKE" == "1" ]]; then
   if [[ "$CRM_MODULE" == "meta-ads" ]]; then
     echo "[crm-local] Rodando smoke local do Meta Ads..."
-    (
-      cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
-    )
+    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:meta-ads:local
   elif [[ "$CRM_MODULE" == "site-tracking" ]]; then
     echo "[crm-local] Rodando smoke local do Site EF..."
-    (
-      cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
-    )
+    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" META_ADS_LOCAL_SCENARIO="${CRM_META_ADS_SCENARIO:-connected-ready}" HEADED="$CRM_SMOKE_HEADED" npm run smoke:site-tracking:local
   else
     echo "[crm-local] Rodando smoke local padrão..."
-    (
-      cd "$FRONTEND_DIR"
-      PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
-    )
+    run_browser_smoke env PLAYWRIGHT_BROWSERS_PATH=0 CRM_URL="$DEFAULT_URL" HEADED="$CRM_SMOKE_HEADED" node ./scripts/crm-local-smoke.cjs
   fi
 
   if [[ "$CRM_EXIT_AFTER_SMOKE" == "1" ]]; then
