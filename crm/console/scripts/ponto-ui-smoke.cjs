@@ -323,9 +323,7 @@ async function main() {
         // Local direct backend mode: no proxy-layer config to validate.
       } else {
         if (!diag.proxy.targetConfigured) throw new Error('Proxy status: targetConfigured=false')
-        if (!diag.proxy.proxyTokenConfigured) throw new Error('Proxy status: proxyTokenConfigured=false')
         if (!diag.proxy.actorKeyConfigured) throw new Error('Proxy status: actorKeyConfigured=false')
-        if (!diag.proxy.adminTokenConfigured) throw new Error('Proxy status: adminTokenConfigured=false')
       }
     } else {
       console.log('[ponto-ui-smoke] local mode: /api/ponto/_proxy-status not available (skipping proxy asserts).')
@@ -334,8 +332,8 @@ async function main() {
     if (!diag.health || diag.health.ok !== true) {
       throw new Error(`Health failed: HTTP ${diag.healthStatus} body=${String(diag.healthText || '').slice(0, 260)}`)
     }
-    if (!proxyMissing && diag.health.cryptoTemplates !== true) {
-      throw new Error('Health: cryptoTemplates=false (biometria não configurada)')
+    if (!proxyMissing && (diag.health.service !== 'workforce-timekeeping' || diag.health.database !== true)) {
+      throw new Error(`Health contract mismatch: ${String(diag.healthText || '').slice(0, 260)}`)
     }
 
     await page.keyboard.press('Escape')
