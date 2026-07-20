@@ -911,26 +911,26 @@ function normalizeNameSegment(value) {
     .toLowerCase();
 }
 
-function buildCanonicalAdName(sourceAdName, destinationGroup) {
-  const source = safeString(sourceAdName);
+function buildCanonicalAdName(sourceAdName, destinationGroup, offerFingerprintTag) {
+  const source = safeString(sourceAdName).replace(/\s*\[OFV1:[A-Z0-9]+\]/ig, '').trim();
   const destination = safeString(destinationGroup);
+  const tag = safeString(offerFingerprintTag);
 
-  if (!source) return destination;
-  if (!destination) return source;
+  if (!source) return [destination, tag].filter(Boolean).join(' ');
+  if (!destination) return [source, tag].filter(Boolean).join(' ');
 
   const sourceParts = source
     .split('|')
     .map((part) => safeString(part))
     .filter(Boolean);
 
-  if (!sourceParts.length) return destination;
+  if (!sourceParts.length) return [destination, tag].filter(Boolean).join(' ');
 
   const lastPart = sourceParts[sourceParts.length - 1];
-  if (normalizeNameSegment(lastPart) === normalizeNameSegment(destination)) {
-    return sourceParts.join(' | ');
-  }
-
-  return [...sourceParts, destination].join(' | ');
+  const canonical = normalizeNameSegment(lastPart) === normalizeNameSegment(destination)
+    ? sourceParts.join(' | ')
+    : [...sourceParts, destination].join(' | ');
+  return [canonical, tag].filter(Boolean).join(' ').slice(0, 255);
 }
 
 function parseMetaTimestamp(value) {
@@ -1248,10 +1248,19 @@ for (const entry of jobEntries) {
       outputs.push({ json: { error: 'Modo de midia invalido.', upstream_node: 'Build Jobs', upstream_error: 'media_mode_invalid', debug: { job_key: safeString(job.job_key), media_mode: mediaMode } } });
       continue;
     }
-    // A mixed logical group is materialized as two physical ads.  Replacing one
+    // A mixed logical group is materialized as two physical ads. Replacing one
     // old ad with both would be non-idempotent and can silently discard a media
-    // variant, so this migration always creates separate ACTIVE ads.
-    const shouldReplaceExisting = requestedReplaceExisting && mediaMode === 'static_only';
+    // variant, so this migration always creates separate ACTIVE ads. Static
+    // replacement also needs a complete, deterministic commercial-offer
+    // fingerprint. Missing evidence must create a new ad, never broaden the
+    // candidate search back to campaign/product-only matches.
+    const expectedOfferFingerprint = asObject(job.offer_fingerprint);
+    const offerFingerprintTag = safeString(expectedOfferFingerprint.tag).toUpperCase();
+    const offerFingerprintReplacementEligible =
+      expectedOfferFingerprint.replacement_eligible === true &&
+      /^OFV1:[A-Z0-9]+$/.test(offerFingerprintTag);
+    const shouldReplaceExisting =
+      requestedReplaceExisting && mediaMode === 'static_only' && offerFingerprintReplacementEligible;
 
     const preferredIds = new Set(
       shouldReplaceExisting
@@ -1264,16 +1273,30 @@ for (const entry of jobEntries) {
         .filter(([adId]) => Boolean(adId))
     );
     const matchedIds = new Set([...matchedScoreByAdId.keys()]);
+    const offerMatchStatusByAdId = new Map(
+      safeArray(job.matched_ads)
+        .map((item) => [safeString(item && item.ad_id), safeString(item && item.offer_match_status)])
+        .filter(([adId]) => Boolean(adId))
+    );
 
     const inRunClaimExcludedAdIds = shouldReplaceExisting
       ? uniqueStrings(safeArray(job.source_ads).map((ad) => safeString(ad && ad.id)).filter((adId) => claimedReplacementAdIds.has(adId)))
+      : [];
+
+    const offerExcludedCandidateIds = shouldReplaceExisting
+      ? uniqueStrings(safeArray(job.source_ads)
+          .map((ad) => safeString(ad && ad.id))
+          .filter((adId) => adId && offerMatchStatusByAdId.get(adId) !== 'exact'))
       : [];
 
     const candidateSourceAds = shouldReplaceExisting
       ? safeArray(job.source_ads).filter((ad) => {
           const adId = safeString(ad && ad.id);
           if (claimedReplacementAdIds.has(adId)) return false;
-          if (!preferredIds.size && !matchedIds.size) return true;
+          // Build Payload is the only component allowed to prove offer
+          // equivalence. A source ad cannot become replaceable merely because
+          // it shares a campaign, destination, product, or legacy job_key.
+          if (offerMatchStatusByAdId.get(adId) !== 'exact') return false;
           return preferredIds.has(adId) || matchedIds.has(adId);
         })
       : [];
@@ -1328,7 +1351,9 @@ for (const entry of jobEntries) {
       chosen_ad_name: safeString(chosenAd && chosenAd.name),
       candidate_last_mutation_time: chosenEntry ? chosenEntry.temporal.candidate_last_mutation_time : '',
       candidate_last_mutation_iso: chosenEntry ? chosenEntry.temporal.candidate_last_mutation_iso : '',
-      reason: chosenEntry
+      reason: !offerFingerprintReplacementEligible
+        ? 'offer_fingerprint_unverified'
+        : chosenEntry
         ? (chosenEntry.temporal.has_known_time ? 'past_candidate_selected' : 'unknown_time_fallback_selected')
         : (freshCandidates.length ? 'all_matching_candidates_are_fresh' : 'no_matching_candidate'),
     };
@@ -1337,12 +1362,30 @@ for (const entry of jobEntries) {
     // exists. Recent candidates and an empty match set are both normal reasons
     // to create a separate ad in the configured ad set, never to block a valid
     // publication batch or overwrite a protected ad.
-    const replacementFallsBackToNewAd = shouldReplaceExisting && !chosenAd;
+    const replacementFallsBackToNewAd = requestedReplaceExisting && !chosenAd;
     const temporalGuardRequiresNewAd = replacementFallsBackToNewAd && freshCandidates.length > 0;
 
     const action = shouldReplaceExisting && !replacementFallsBackToNewAd
       ? 'replace_existing'
       : 'create_new';
+
+    const offerReplacementGuard = {
+      required: true,
+      requested_replace_existing: requestedReplaceExisting,
+      expected_status: safeString(expectedOfferFingerprint.status || (offerFingerprintReplacementEligible ? 'verified' : 'unverified')),
+      expected_tag: offerFingerprintTag,
+      replacement_eligible: offerFingerprintReplacementEligible,
+      exact_candidate_count: candidateSourceAds.length,
+      excluded_candidate_ids: offerExcludedCandidateIds,
+      selected_candidate_offer_match_status: chosenAd
+        ? safeString(offerMatchStatusByAdId.get(safeString(chosenAd.id)))
+        : '',
+      reason: action === 'replace_existing'
+        ? 'exact_eligible_candidate_selected'
+        : (!offerFingerprintReplacementEligible
+          ? 'offer_fingerprint_unverified'
+          : (freshCandidates.length ? 'all_exact_candidates_are_fresh' : 'offer_fingerprint_mismatch')),
+    };
 
     let scopedReplacementPlan = action === 'replace_existing'
       ? safeArray(job.replacement_plan).filter((item) =>
@@ -1436,8 +1479,9 @@ for (const entry of jobEntries) {
     if (action === 'create_new' && !resolvedAdsetId) warnings.push(`Job ${job.job_key} sem destination_adset_id para create_new.`);
     if (action === 'replace_existing' && !resolvedSourceAdId) warnings.push('source_ad_id ausente para replace_existing.');
     if (temporalGuardRequiresNewAd) warnings.push(`Janela de ${freshnessWindowDays} dias protegeu ${freshCandidates.length} anuncio(s) recente(s); sera criado um novo anuncio ACTIVE sem substituir os existentes.`);
-    if (replacementFallsBackToNewAd && !temporalGuardRequiresNewAd) warnings.push(`Nenhum candidato inequivoco foi localizado para substituicao; sera criado um novo anuncio ACTIVE sem substituir anuncios existentes.`);
-    if (requestedReplaceExisting && !shouldReplaceExisting) warnings.push('replace_existing foi convertido para create_new ACTIVE porque o grupo possui video; os anuncios fisicos precisam permanecer distintos.');
+    if (replacementFallsBackToNewAd && !temporalGuardRequiresNewAd) warnings.push(`Nenhum candidato com oferta comercial comprovadamente identica foi localizado para substituicao; sera criado um novo anuncio ACTIVE sem substituir anuncios existentes.`);
+    if (requestedReplaceExisting && !offerFingerprintReplacementEligible) warnings.push('replace_existing foi convertido para create_new ACTIVE porque a oferta comercial nao possui fingerprint comprovado.');
+    else if (requestedReplaceExisting && !shouldReplaceExisting) warnings.push('replace_existing foi convertido para create_new ACTIVE porque o grupo possui video; os anuncios fisicos precisam permanecer distintos.');
 
     const overrides = deepClone(ai.creative_override || {});
     const analysis = deepClone(ai.analysis || {});
@@ -1523,7 +1567,7 @@ for (const entry of jobEntries) {
       (action === 'replace_existing' && chosenAd && chosenAd.name) ||
       'Duplicated Ad'
     );
-    const finalAdName = buildCanonicalAdName(sourceAdName, destinationMeta.destination_group);
+    const finalAdName = buildCanonicalAdName(sourceAdName, destinationMeta.destination_group, offerFingerprintTag);
 
     const normalizedBodies = aiBodies;
     const normalizedTitles = aiTitles;
@@ -1787,7 +1831,9 @@ for (const entry of jobEntries) {
           ? 'destination_replace'
           : (temporalGuardRequiresNewAd
             ? 'temporal_guard_create_new'
-            : (replacementFallsBackToNewAd ? 'replacement_candidate_create_new' : safeString(job.match_status || 'no_match'))),
+            : (replacementFallsBackToNewAd
+              ? (offerFingerprintReplacementEligible ? 'offer_fingerprint_create_new' : 'offer_fingerprint_unverified_create_new')
+              : safeString(job.match_status || 'no_match'))),
         should_create_new_ad: action === 'create_new',
         should_replace_existing: action === 'replace_existing',
 
@@ -1806,6 +1852,8 @@ for (const entry of jobEntries) {
         nome_base: safeString(job.nome_base),
         product_key: safeString(job.product_key),
         suffix_hint: safeString(job.suffix_hint),
+        offer_fingerprint: deepClone(expectedOfferFingerprint),
+        offer_replacement_guard: deepClone(offerReplacementGuard),
 
         analysis,
         video_frame: videoFrame,
@@ -1944,6 +1992,13 @@ for (const entry of jobEntries) {
           in_run_claim_key: destinationClaimKey,
           in_run_claimed_ad_ids: [...claimedReplacementAdIds],
           in_run_claim_excluded_ad_ids: inRunClaimExcludedAdIds,
+          offer_fingerprint: {
+            status: safeString(expectedOfferFingerprint.status),
+            tag: offerFingerprintTag,
+            replacement_eligible: offerFingerprintReplacementEligible,
+            exact_candidate_count: candidateSourceAds.length,
+            excluded_candidate_ids: offerExcludedCandidateIds,
+          },
           candidate_count: candidateSourceAds.length,
           ranked_candidates: rankedCandidates.slice(0, 10).map((entry) => summarizeAd(entry.ad, entry.score, entry.reasons, entry.temporal)),
           chosen_ad_id: resolvedSourceAdId,

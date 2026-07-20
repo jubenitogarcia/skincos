@@ -439,6 +439,110 @@ function scoreOfferMarkerFit(groupMarkers, adMarkers) {
   return { score, reasons };
 }
 
+function fingerprintToken(value) {
+  return safeString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+}
+
+function fingerprintTag(value) {
+  const match = /\[OFV1:([A-Z0-9]+)\]/i.exec(safeString(value));
+  return match ? `OFV1:${safeString(match[1]).toUpperCase()}` : '';
+}
+
+function canonicalOfferFingerprint({ procedures, price_amount_cents, price_qualifier, payment_terms, condition_terms, validity }) {
+  return [
+    'v1',
+    `p=${safeArray(procedures).map((entry) => `${fingerprintToken(entry.key)}:${fingerprintToken(entry.quantity) || 'unknown'}:${fingerprintToken(entry.unit) || 'unknown'}`).sort().join('+') || 'unknown'}`,
+    `price=${Math.max(0, Math.trunc(Number(price_amount_cents || 0)))}:${['fixed', 'from'].includes(fingerprintToken(price_qualifier)) ? fingerprintToken(price_qualifier) : 'unknown'}`,
+    `pay=${safeArray(payment_terms).map(fingerprintToken).filter(Boolean).sort().join('+') || 'none'}`,
+    `cond=${safeArray(condition_terms).map(fingerprintToken).filter(Boolean).sort().join('+') || 'none'}`,
+    `valid=${fingerprintToken(validity) || 'none'}`,
+  ].join('|');
+}
+
+function normalizedOfferFingerprint(raw) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const procedures = safeArray(source.procedures)
+    .map((entry) => entry && typeof entry === 'object' ? entry : {})
+    .map((entry) => ({ key: fingerprintToken(entry.key), quantity: fingerprintToken(entry.quantity), unit: fingerprintToken(entry.unit) }))
+    .filter((entry) => entry.key);
+  const price_amount_cents = Math.max(0, Math.trunc(Number(source.price_amount_cents || 0)));
+  const price_qualifier = ['fixed', 'from'].includes(fingerprintToken(source.price_qualifier)) ? fingerprintToken(source.price_qualifier) : 'unknown';
+  const payment_terms = safeArray(source.payment_terms).map(fingerprintToken).filter(Boolean);
+  const condition_terms = safeArray(source.condition_terms).map(fingerprintToken).filter(Boolean);
+  const validity = fingerprintToken(source.validity);
+  const evidence = safeArray(source.evidence).map(safeString).filter(Boolean);
+  const replacement_eligible = source.replacement_eligible === true && Number(source.confidence) >= 0.9 &&
+    procedures.length > 0 && procedures.every((entry) => entry.quantity && entry.unit) &&
+    price_amount_cents > 0 && price_qualifier !== 'unknown' && evidence.length > 0;
+  return {
+    ...source,
+    procedures, price_amount_cents, price_qualifier, payment_terms, condition_terms, validity, evidence,
+    canonical_key: canonicalOfferFingerprint({ procedures, price_amount_cents, price_qualifier, payment_terms, condition_terms, validity }),
+    tag: fingerprintTag(source.tag) || safeString(source.tag),
+    replacement_eligible,
+    status: replacement_eligible ? 'verified' : 'unverified',
+  };
+}
+
+function centsFromText(value) {
+  const match = /R\$\s*([0-9]{1,6})(?:[\.,]([0-9]{1,2}))?/i.exec(safeString(value));
+  if (!match) return 0;
+  return Number(match[1]) * 100 + Number((match[2] || '0').padEnd(2, '0').slice(0, 2));
+}
+
+function legacyOfferFingerprint(ad) {
+  const search = buildAdSearchText(ad);
+  const tag = fingerprintTag(ad && ad.name) || fingerprintTag(search);
+  if (tag) return { status: 'tagged', tag, replacement_eligible: true, source: 'internal_ad_name_tag' };
+  const normalized = normalizeText(search).replace(/_/g, ' ');
+  const procedures = [];
+  const botox = /(?:BOTOX|TOXINA)[^0-9]{0,32}([0-9]{1,3})\s*(UI|U)\b/i.exec(normalized);
+  if (botox) procedures.push({ key: 'botox', quantity: botox[1], unit: botox[2].toLowerCase() === 'u' ? 'ui' : botox[2].toLowerCase() });
+  const filler = /PREENCHIMENTO(?:\s+LABIAL)?[^0-9]{0,40}([0-9]+(?:[\.,][0-9]+)?)\s*(ML)\b/i.exec(normalized);
+  if (filler) procedures.push({ key: /PREENCHIMENTO\s+LABIAL/i.test(normalized) ? 'preenchimento_labial' : 'preenchimento', quantity: filler[1].replace(',', '.'), unit: filler[2].toLowerCase() });
+  const price_amount_cents = centsFromText(search);
+  const price_qualifier = /A\s+PARTIR\s+DE/i.test(normalized) ? 'from' : price_amount_cents ? 'fixed' : 'unknown';
+  const payment_terms = [
+    ...(normalized.match(/\b([0-9]{1,2})X\b/g) || []).map((entry) => `parcelado_${entry.toLowerCase()}`),
+    ...(normalized.includes('PIX') ? ['pix'] : []),
+    ...(normalized.includes('A VISTA') ? ['avista'] : []),
+  ];
+  const condition_terms = ['COMBO', 'BRINDE', 'DESCONTO'].filter((term) => normalized.includes(term)).map((term) => term.toLowerCase());
+  const validityMatch = /(?:VALID[AO]\s+DE\s+)?([0-3]?[0-9]\s*(?:A|ATE)\s*[0-3]?[0-9](?:\/[0-1]?[0-9](?:\/[0-9]{2,4})?)?)/i.exec(normalized);
+  const validity = validityMatch ? fingerprintToken(validityMatch[1]) : '';
+  const fingerprint = normalizedOfferFingerprint({
+    confidence: procedures.length && price_amount_cents ? 1 : 0,
+    procedures, price_amount_cents, price_qualifier, payment_terms, condition_terms, validity,
+    evidence: procedures.length && price_amount_cents ? ['creative_text_reconstructed'] : [],
+    replacement_eligible: procedures.length > 0 && procedures.every((entry) => entry.quantity && entry.unit) && price_amount_cents > 0,
+  });
+  return { ...fingerprint, source: 'creative_text_reconstructed' };
+}
+
+function compareOfferFingerprints(expectedRaw, candidateRaw) {
+  const expected = normalizedOfferFingerprint(expectedRaw);
+  const candidate = candidateRaw && candidateRaw.status === 'tagged'
+    ? candidateRaw
+    : normalizedOfferFingerprint(candidateRaw);
+  if (!expected.replacement_eligible) return { status: 'offer_fingerprint_unverified', expected, candidate };
+  if (candidate.status === 'tagged') {
+    const expectedTag = fingerprintTag(expected.tag) || safeString(expected.tag).replace(/^\[|\]$/g, '');
+    return candidate.tag && candidate.tag === expectedTag
+      ? { status: 'exact', source: 'internal_ad_name_tag', expected, candidate }
+      : { status: 'offer_fingerprint_mismatch', source: 'internal_ad_name_tag', expected, candidate };
+  }
+  if (!candidate.replacement_eligible) return { status: 'offer_fingerprint_unverified', expected, candidate };
+  return candidate.canonical_key === expected.canonical_key
+    ? { status: 'exact', source: 'legacy_creative_text', expected, candidate }
+    : { status: 'offer_fingerprint_mismatch', source: 'legacy_creative_text', expected, candidate };
+}
+
 function parseStructuredCreativeNameFromText(text) {
   const direct = parseStructuredCreativeName(text);
   if (direct) return direct;
@@ -1176,6 +1280,7 @@ for (const json of driveItems) {
   if (!id || !nameContext.cleaned_name || !nameContext.ratio) continue;
 
   if (!groups.has(nameContext.group_key)) {
+    const visualOfferFingerprint = normalizedOfferFingerprint(nameContext.visual_grouping?.offer_fingerprint);
     groups.set(nameContext.group_key, {
       nome_base: nameContext.logical_base_name,
       group_key: nameContext.group_key,
@@ -1188,6 +1293,7 @@ for (const json of driveItems) {
       tokens: tokenize(nameContext.logical_base_name),
       product_family: inferProductFamily(nameContext.logical_base_name || nameContext.cleaned_name),
       offer_markers: inferOfferMarkers(nameContext.logical_base_name),
+      offer_fingerprint: visualOfferFingerprint,
       parsed_naming: nameContext.parsed_naming ? deepClone(nameContext.parsed_naming) : null,
       product_key: nameContext.parsed_naming ? safeString(nameContext.parsed_naming.product_key) : '',
       item_key: nameContext.parsed_naming ? safeString(nameContext.parsed_naming.item_key) : '',
@@ -1211,6 +1317,10 @@ for (const json of driveItems) {
   }
 
   const currentGroup = groups.get(nameContext.group_key);
+  const currentFingerprint = normalizedOfferFingerprint(nameContext.visual_grouping?.offer_fingerprint);
+  if (currentFingerprint.canonical_key !== currentGroup.offer_fingerprint.canonical_key) {
+    return buildFailure({ group_key: nameContext.group_key }, 'As midias do mesmo grupo visual retornaram offer_fingerprint divergente.');
+  }
   const mediaType = safeString(json.visual_grouping?.media_type || (safeString(json.mimeType || json.mime_type).toLowerCase().startsWith('video/') ? 'video' : 'image')).toLowerCase();
   const role = safeString(json.visual_grouping?.role || (mediaType === 'video' ? 'vertical_video' : '')).toLowerCase();
   const slot = mediaType === 'image' ? ratioToSlot(nameContext.ratio) : '';
@@ -1443,6 +1553,7 @@ const normalizedSourceAds = sourceAds.map((ad) => {
     search_text: searchText,
     extracted_texts: extractCreativeTexts(ad),
     parsed_naming: parsedNaming ? deepClone(parsedNaming) : null,
+    offer_fingerprint: legacyOfferFingerprint(ad),
   };
 });
 
@@ -1520,6 +1631,7 @@ for (const group of groupedCreatives) {
   const matchedAds = normalizedSourceAds
     .map((ad) => {
       const decision = buildMatchDecision(group, ad);
+      const offerDecision = compareOfferFingerprints(group.offer_fingerprint, ad.offer_fingerprint);
       return {
         ad_id: ad.id,
         ad_name: ad.name,
@@ -1532,6 +1644,9 @@ for (const group of groupedCreatives) {
         parsed_naming_found: Boolean(ad.parsed_naming),
         parsed_offer_key: ad.parsed_naming ? ad.parsed_naming.offer_key : '',
         parsed_product_key: ad.parsed_naming ? ad.parsed_naming.product_key : '',
+        offer_match_status: offerDecision.status,
+        offer_match_source: offerDecision.source || '',
+        offer_fingerprint: deepClone(ad.offer_fingerprint),
         source_ad: deepClone(ad.raw),
         source_ad_texts: deepClone(ad.extracted_texts),
       };
@@ -1539,7 +1654,8 @@ for (const group of groupedCreatives) {
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || a.ad_name.localeCompare(b.ad_name));
 
-  const bestStructured = matchedAds.find((item) => item.match_level !== 'text_fallback');
+  const replacementMatchedAds = matchedAds.filter((item) => item.offer_match_status === 'exact');
+  const bestStructured = replacementMatchedAds.find((item) => item.match_level !== 'text_fallback');
   let selectedAds = [];
 
   if (bestStructured) {
@@ -1554,15 +1670,15 @@ for (const group of groupedCreatives) {
     };
 
     const bestLevelScore = structuredPriority[bestStructured.match_level] || 0;
-    selectedAds = matchedAds.filter((item) => (structuredPriority[item.match_level] || 0) === bestLevelScore);
+    selectedAds = replacementMatchedAds.filter((item) => (structuredPriority[item.match_level] || 0) === bestLevelScore);
 
     if (selectedAds.length > 1) {
       const topStructuredScore = selectedAds[0].score;
       selectedAds = selectedAds.filter((item) => item.score >= topStructuredScore - 10);
     }
   } else {
-    const topScore = matchedAds.length ? matchedAds[0].score : 0;
-    selectedAds = matchedAds.filter((item) => {
+    const topScore = replacementMatchedAds.length ? replacementMatchedAds[0].score : 0;
+    selectedAds = replacementMatchedAds.filter((item) => {
       if (item.exact_name_match) return true;
       if (item.exact_token_match && item.score >= 12) return true;
       if (topScore > 0 && item.score >= Math.max(12, topScore - 4)) return true;
@@ -1577,7 +1693,7 @@ for (const group of groupedCreatives) {
   }
 
   if (!selectedAds.length) {
-    warnings.push(`Nenhum anuncio correspondente encontrado para ${group.nome_base}`);
+    warnings.push(`Nenhum anuncio substituivel com oferta comercial identica encontrado para ${group.nome_base}; ${group.offer_fingerprint.replacement_eligible ? 'offer_fingerprint_mismatch' : 'offer_fingerprint_unverified'}.`);
   }
 
   if (selectedAds.length > 3) {
@@ -1592,6 +1708,7 @@ for (const group of groupedCreatives) {
     : ['offer_key_exact'];
 
   const shouldReplaceExisting =
+    group.offer_fingerprint.replacement_eligible === true &&
     Boolean(primaryMatchedAd) &&
     replaceEligibleLevels.includes(matchStatus) &&
     primaryMatchedAd.score >= 380;
@@ -1733,6 +1850,7 @@ for (const group of groupedCreatives) {
       product_key: group.product_key,
       product_family: group.product_family,
       offer_markers: group.offer_markers,
+      offer_fingerprint: deepClone(group.offer_fingerprint),
       suffix_hint: group.suffix_hint,
 
       source_ad_id: sourceAd ? safeString(sourceAd.id) : '',
@@ -1760,6 +1878,7 @@ for (const group of groupedCreatives) {
         grouping_strategy: group.grouping_strategy,
         product_family: group.product_family,
         offer_markers: group.offer_markers,
+        offer_fingerprint: deepClone(group.offer_fingerprint),
         suffix_hint: group.suffix_hint,
       },
 
@@ -1826,6 +1945,8 @@ for (const group of groupedCreatives) {
         parsed_naming_found: item.parsed_naming_found,
         parsed_offer_key: item.parsed_offer_key,
         parsed_product_key: item.parsed_product_key,
+        offer_match_status: item.offer_match_status,
+        offer_match_source: item.offer_match_source,
         created_time: safeString(item.source_ad && item.source_ad.created_time),
         updated_time: safeString(item.source_ad && item.source_ad.updated_time),
         creative_created_time: safeString(item.source_ad && item.source_ad.creative && item.source_ad.creative.created_time),
@@ -1840,6 +1961,7 @@ for (const group of groupedCreatives) {
         match_level: item.match_level,
         parsed_offer_key: item.parsed_offer_key,
         parsed_product_key: item.parsed_product_key,
+        offer_match_status: item.offer_match_status,
         created_time: safeString(item.source_ad && item.source_ad.created_time),
         updated_time: safeString(item.source_ad && item.source_ad.updated_time),
         creative_created_time: safeString(item.source_ad && item.source_ad.creative && item.source_ad.creative.created_time),

@@ -9,6 +9,7 @@ const {
 } = require('./lib/meta-ads-publish-execution-semantics');
 const CODE_SOURCES = require('./meta-ads-publish-code-sources');
 const { validateGraphContract } = require('./meta-ads-publish-graph-contract');
+const { validateOfferFingerprintContract } = require('./meta-ads-publish-offer-fingerprint-contract');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 function loadPgClient() {
@@ -70,6 +71,7 @@ async function main() {
     }
     const settings = parseJson(workflow.settings, {});
     const graphFailures = validateGraphContract({ nodes, connections });
+    const offerFingerprintFailures = validateOfferFingerprintContract({ nodes, connections });
     const taskRunnerHealth = await checkTaskRunnerHealth();
     const report = {
       workflow_id: WORKFLOW_ID,
@@ -81,6 +83,7 @@ async function main() {
       code_sources_synchronized: drift.length === 0,
       code_source_drift: drift,
       graph_contract: { ok: graphFailures.length === 0, failures: graphFailures },
+      offer_fingerprint_contract: { ok: offerFingerprintFailures.length === 0, failures: offerFingerprintFailures },
       task_runner_health: taskRunnerHealth,
       manual_execution_audit: manualExecutionAuditState(settings),
       manual_execution_note: settings.saveManualExecutions === true
@@ -90,7 +93,7 @@ async function main() {
       service_restarts_performed: false,
     };
     console.log(JSON.stringify(report, null, 2));
-    if (drift.length || graphFailures.length || !taskRunnerHealth.ok) process.exitCode = 1;
+    if (drift.length || graphFailures.length || offerFingerprintFailures.length || !taskRunnerHealth.ok) process.exitCode = 1;
   } finally {
     await client.end();
   }

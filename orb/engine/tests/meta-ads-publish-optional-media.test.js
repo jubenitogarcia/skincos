@@ -10,6 +10,10 @@ const {
   validateGraphContract,
 } = require('../scripts/meta-ads-publish-graph-contract');
 const {
+  applyOfferFingerprintContract,
+  validateOfferFingerprintContract,
+} = require('../scripts/meta-ads-publish-offer-fingerprint-contract');
+const {
   DESIRED: TASK_RUNNER_HEALTH_ENV,
   render: renderTaskRunnerHealthEnv,
   summary: summarizeTaskRunnerHealthEnv,
@@ -26,7 +30,7 @@ async function runCode(fileName, { input = [], itemsByNode = {}, dollarItems = {
   const code = fs.readFileSync(path.join(sourceRoot, fileName), 'utf8');
   const execute = new AsyncFunction('$input', '$items', '$', code);
   return execute(
-    { all: () => input },
+    { all: () => input, first: () => input[0] },
     (name) => itemsByNode[name] || [],
     (name) => ({ all: () => dollarItems[name] || itemsByNode[name] || [] }),
   );
@@ -191,6 +195,76 @@ test('AI response must be unique and correlated by job_key and group_key', async
   );
 });
 
+test('visual grouping normalizes a proven commercial offer into one deterministic replacement tag', async () => {
+  const prepared = item({
+    visual_grouping_batch_version: '1',
+    media: [
+      { media_ref: 'IMG_001', media_type: 'image', source_item_index: 0, source_file_id: 'drive-a' },
+      { media_ref: 'IMG_002', media_type: 'image', source_item_index: 1, source_file_id: 'drive-b' },
+      { media_ref: 'IMG_003', media_type: 'image', source_item_index: 2, source_file_id: 'drive-c' },
+    ],
+  });
+  const originals = ['a', 'b', 'c'].map((suffix) => item({ id: `drive-${suffix}` }, { data: { mimeType: 'image/jpeg' } }));
+  const agentOutput = item({
+    groups: [{
+      group_key: 'VISUAL_GROUP_01', visual_concept: 'combo facial', confidence: 0.97, evidence: ['botox e preenchimento visiveis'],
+      offer_fingerprint: {
+        confidence: 0.97,
+        procedures: [
+          { key: 'botox', quantity: '40', unit: 'UI' },
+          { key: 'preenchimento labial', quantity: '1', unit: 'ml' },
+        ],
+        price_amount_cents: 99800, price_qualifier: 'fixed', payment_terms: ['12x'],
+        condition_terms: ['combo'], validity: 'julho', evidence: ['Botox 40 UI + preenchimento labial 1 ml por R$ 998'],
+      },
+    }],
+    assignments: [
+      { media_ref: 'IMG_001', media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '3x4', role: 'feed', confidence: 0.97, evidence: ['mesma modelo e oferta'] },
+      { media_ref: 'IMG_002', media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '2x1', role: 'banner', confidence: 0.97, evidence: ['mesmo tratamento e preco'] },
+      { media_ref: 'IMG_003', media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '9x16', role: 'stories', confidence: 0.97, evidence: ['mesma chamada comercial'] },
+    ],
+  });
+  const output = await runCode('validate-visual-grouping.js', {
+    input: [agentOutput],
+    itemsByNode: {
+      'Prepare Visual Grouping Batch': [prepared],
+      'Prepare Media Inventory': originals,
+    },
+  });
+  const fingerprints = output.map((entry) => entry.json.visual_grouping.offer_fingerprint);
+  assert.equal(fingerprints.every((entry) => entry.replacement_eligible), true);
+  assert.match(fingerprints[0].tag, /^\[OFV1:[A-Z0-9]+\]$/);
+  assert.equal(new Set(fingerprints.map((entry) => entry.tag)).size, 1);
+});
+
+test('visual grouping keeps an ambiguous offer publishable but marks it non-replaceable', async () => {
+  const prepared = item({
+    visual_grouping_batch_version: '1',
+    media: [
+      { media_ref: 'IMG_001', media_type: 'image', source_item_index: 0, source_file_id: 'drive-a' },
+      { media_ref: 'IMG_002', media_type: 'image', source_item_index: 1, source_file_id: 'drive-b' },
+      { media_ref: 'IMG_003', media_type: 'image', source_item_index: 2, source_file_id: 'drive-c' },
+    ],
+  });
+  const originals = ['a', 'b', 'c'].map((suffix) => item({ id: `drive-${suffix}` }, { data: { mimeType: 'image/jpeg' } }));
+  const output = await runCode('validate-visual-grouping.js', {
+    input: [item({
+      groups: [{
+        group_key: 'VISUAL_GROUP_01', visual_concept: 'procedimento', confidence: 0.9, evidence: ['procedimento visivel'],
+        offer_fingerprint: { confidence: 0.8, procedures: [{ key: 'botox', quantity: '', unit: '' }], price_amount_cents: 0, price_qualifier: 'unknown', payment_terms: [], condition_terms: [], validity: '', evidence: ['botox'] },
+      }],
+      assignments: [
+        { media_ref: 'IMG_001', media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '3x4', role: 'feed', confidence: 0.9, evidence: ['procedimento'] },
+        { media_ref: 'IMG_002', media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '2x1', role: 'banner', confidence: 0.9, evidence: ['procedimento'] },
+        { media_ref: 'IMG_003', media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '9x16', role: 'stories', confidence: 0.9, evidence: ['procedimento'] },
+      ],
+    })],
+    itemsByNode: { 'Prepare Visual Grouping Batch': [prepared], 'Prepare Media Inventory': originals },
+  });
+  assert.equal(output[0].json.visual_grouping.offer_fingerprint.status, 'unverified');
+  assert.equal(output[0].json.visual_grouping.offer_fingerprint.replacement_eligible, false);
+});
+
 test('Build Jobs refuses raw merge items and accepts only assembled v2 inputs', async () => {
   const group = mediaGroup({ jobKey: 'STRICT', groupKey: 'GSTRICT', images: 3, mediaMode: 'static_only' });
   await assert.rejects(
@@ -228,6 +302,29 @@ test('graph contract makes optional branches explicit and retries Build Jobs', (
   assert.deepEqual(validateGraphContract(workflow), []);
   assert.deepEqual(workflow.nodes.find((node) => node.name === 'Merge (2)').parameters, { mode: 'append', numberInputs: 2 });
   assert.equal(workflow.nodes.find((node) => node.name === 'Build Jobs').maxTries, 3);
+});
+
+test('visual agent contract requires offer fingerprint evidence and is idempotent', () => {
+  const workflow = {
+    nodes: [
+      {
+        name: 'OpenAI Vision Model (Grouping)',
+        parameters: {
+          options: {
+            textFormat: {
+              textOptions: {
+                schema: JSON.stringify({ properties: { groups: { items: { properties: {}, required: [] } } } }),
+              },
+            },
+          },
+        },
+      },
+      { name: 'Visual Grouping Agent', parameters: { text: 'Agrupe as artes.', options: { systemMessage: 'Use evidencias visuais.' } } },
+    ],
+  };
+  assert.ok(applyOfferFingerprintContract(workflow).length > 0);
+  assert.deepEqual(validateOfferFingerprintContract(workflow), []);
+  assert.deepEqual(applyOfferFingerprintContract(workflow), []);
 });
 
 test('task runner health configuration is rendered idempotently without changing unrelated values', () => {

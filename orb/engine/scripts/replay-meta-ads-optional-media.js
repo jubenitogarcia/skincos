@@ -104,6 +104,12 @@ async function main() {
       build_jobs_count: jobs.length,
       build_jobs_error_count: errors.length,
       destination_count: new Set(jobs.map((entry) => entry.json?.destination_group).filter(Boolean)).size,
+      replacement_decisions: jobs.map((entry) => ({
+        action: entry.json?.action,
+        match_status: entry.json?.match_status,
+        offer_replacement_reason: entry.json?.offer_replacement_guard?.reason || '',
+        offer_tag_present: Boolean(entry.json?.offer_replacement_guard?.expected_tag),
+      })),
       meta_mutations_performed: false,
     }, null, 2));
     if (errors.length) process.exitCode = 1;

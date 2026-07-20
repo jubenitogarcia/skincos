@@ -326,6 +326,25 @@ return $input.all().map((item) => {
   const adPayload = asObject(source.adPayload);
   assert(safeString(adPayload.name), 'ad_name_missing', {});
   assert(safeString(adPayload.status) === 'ACTIVE', 'ad_publish_status_must_be_active', { value: adPayload.status });
+  const offerFingerprint = asObject(source.offer_fingerprint);
+  const offerReplacementGuard = asObject(source.offer_replacement_guard);
+  const offerTag = safeString(offerFingerprint.tag).toUpperCase();
+  const offerReplacementEligible =
+    offerFingerprint.replacement_eligible === true && /^OFV1:[A-Z0-9]+$/.test(offerTag);
+  // Replacements are materially riskier than creates: the upstream selector
+  // must prove an exact commercial offer, and a verified new offer must leave
+  // its deterministic tag on the ad for future non-heuristic correlation.
+  assert(Object.keys(offerReplacementGuard).length > 0, 'offer_replacement_guard_missing', {});
+  if (safeString(source.action) === 'replace_existing') {
+    assert(offerReplacementEligible, 'replacement_offer_fingerprint_unverified', { status: offerFingerprint.status });
+    assert(safeString(offerReplacementGuard.reason) === 'exact_eligible_candidate_selected', 'replacement_offer_fingerprint_not_exact', {
+      reason: offerReplacementGuard.reason,
+    });
+    assert(safeString(offerReplacementGuard.selected_candidate_offer_match_status) === 'exact', 'replacement_candidate_offer_match_not_exact', {});
+  }
+  if (offerReplacementEligible) {
+    assert(new RegExp(`\\[${offerTag}\\]`, 'i').test(safeString(adPayload.name)), 'offer_fingerprint_tag_missing_from_ad_name', { offer_tag: offerTag });
+  }
   if (safeString(source.action) === 'create_new') {
     assert(/^\d+$/.test(safeString(adPayload.adset_id)), 'adset_id_required_for_create', {});
   }
@@ -357,6 +376,12 @@ return $input.all().map((item) => {
         description_count: isVideoOnly ? 0 : DESCRIPTION_COUNT,
         site_links_count: safeArray(asObject(payload.creative_sourcing_spec).site_links_spec).length,
         advantage_plus_requested_features: safeArray(source.advantage_plus_requested_features),
+        offer_fingerprint: {
+          status: safeString(offerFingerprint.status || 'unverified'),
+          tag: offerTag,
+          replacement_eligible: offerReplacementEligible,
+          replacement_reason: safeString(offerReplacementGuard.reason),
+        },
       },
       warnings: safeArray(source.warnings),
     },

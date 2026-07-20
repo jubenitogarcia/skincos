@@ -9,6 +9,8 @@ module.exports = Object.freeze({
   'Attach Video Staging Context': 'attach-video-staging-context.js',
   'Build Meta API Params From Vault': 'build-meta-api-params-from-vault.js',
   'Build Meta Account Inventory Requests': 'build-meta-inventory-requests.js',
+  'Prepare Visual Grouping Batch': 'prepare-visual-grouping-batch.js',
+  'Validate Visual Grouping': 'validate-visual-grouping.js',
   'Build Payload': 'build-payload.js',
   'Prepare Publish Run': 'prepare-publish-run.js',
   'Attach Task Runner Health': 'attach-task-runner-health.js',

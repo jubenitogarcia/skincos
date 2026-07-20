@@ -13,6 +13,7 @@
         "workflow:campaign-creative:build": "node scripts/build-campaign-creative-generator.js",
         "workflow:campaign-creative:validate": "node scripts/validate-campaign-creative-generator.js",
         "workflow:meta-ads-publish:live:check": "node scripts/sync-meta-ads-publish-live.js",
+        "workflow:meta-ads-publish:live:pull": "node scripts/sync-meta-ads-publish-live.js --pull",
         "workflow:meta-ads-publish:live:apply": "node scripts/sync-meta-ads-publish-live.js --apply",
         "cf:meta-ads-report:deploy": "wrangler deploy -c cloudflare/meta-ads-performance-report/wrangler.jsonc",
         "cf:meta-ads-report:deploy:staging": "wrangler deploy -c cloudflare/meta-ads-performance-report/wrangler.jsonc --env staging",
