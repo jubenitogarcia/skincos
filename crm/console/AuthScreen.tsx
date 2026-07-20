@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { CircleCheck, Eye, EyeOff, KeyRound, Mail, ShieldCheck, UserRound } from 'lucide-react'
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/card'
+import { Card, CardHeader, CardContent, CardDescription } from '@/card'
 import { Input } from '@/input'
 import { Button } from '@/button'
 import { useAuth } from '@/contexts'
@@ -188,9 +188,9 @@ export function AuthScreen() {
                     <Card className={`relative w-full max-w-[480px] gap-0 rounded-lg border border-white/12 bg-[#141922]/95 py-0 shadow-2xl shadow-black/35 transition-all duration-700 delay-100 hover:translate-y-0 hover:bg-[#141922]/95 hover:shadow-2xl ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
                         <CardHeader className="gap-4 px-5 pb-5 pt-6 sm:px-6">
                             <div>
-                                <CardTitle className="text-xl font-semibold text-white">
+                                <h2 className="text-xl font-semibold leading-tight text-white">
                                     {mode === 'signin' ? 'Acessar CRM' : mode === 'signup' ? 'Criar conta com convite' : mode === 'recovery-request' ? 'Recuperar senha' : mode === 'recovery-code' ? 'Validar código' : 'Definir nova senha'}
-                                </CardTitle>
+                                </h2>
                                 <CardDescription className="mt-2 text-sm text-slate-400">
                                     {mode === 'signin' ? 'Use seu email corporativo e senha cadastrada.' : mode === 'signup' ? 'O token define automaticamente perfil, unidades e módulos.' : mode === 'recovery-request' ? 'Informe o e-mail cadastrado para receber um código.' : mode === 'recovery-code' ? 'Digite o código enviado ao seu e-mail.' : 'Escolha uma senha nova e segura.'}
                                 </CardDescription>
