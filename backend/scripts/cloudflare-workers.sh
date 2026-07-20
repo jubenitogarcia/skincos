@@ -94,7 +94,7 @@ deploy_insumos() {
   pushd "$ROOT_DIR/inventory" >/dev/null
   # Auth and schema changes must fail closed: never deploy a Worker that expects
   # columns the remote D1 database does not yet have.
-  local d1_args=(--config wrangler.toml)
+  local d1_args=(--config wrangler.toml --remote)
   if [[ -n "${ENV_NAME:-}" ]]; then
     d1_args+=(--env "$ENV_NAME")
   fi
