@@ -135,6 +135,7 @@ function Convert-ToBashLiteral {
 function Invoke-ShortcutWsl {
     param(
         [string]$Command,
+        [string]$WorkingProjectRoot = $ProjectRoot,
         [string[]]$EnvVar = @(),
         [switch]$SkipBootstrapCheck,
         [switch]$SkipNodeCheck,
@@ -144,7 +145,7 @@ function Invoke-ShortcutWsl {
     )
 
     & $wslInvoker `
-        -ProjectRoot $ProjectRoot `
+        -ProjectRoot $WorkingProjectRoot `
         -RepoCommand $Command `
         -EnvVar $EnvVar `
         -SkipBootstrapCheck:$SkipBootstrapCheck `
@@ -156,6 +157,46 @@ function Invoke-ShortcutWsl {
     if ($LASTEXITCODE -ne 0) {
         throw "The WSL command failed with exit code $LASTEXITCODE."
     }
+}
+
+function Resolve-CrmLocalSourceRoot {
+    # CRM Local must never inherit uncommitted product work from the checkout
+    # that happens to invoke the Codex action. Keep a private, detached source
+    # worktree on origin/main instead.
+    $sourceRoot = Join-Path $operatorRuntimeRoot "source\crm-local-main"
+    $sourceParent = Split-Path -Parent $sourceRoot
+
+    if (-not (Test-Path -LiteralPath $sourceRoot)) {
+        New-Item -ItemType Directory -Path $sourceParent -Force | Out-Null
+        & git -C $ProjectRoot fetch origin main | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Não foi possível atualizar origin/main antes de preparar o CRM Local."
+        }
+        & git -C $ProjectRoot worktree add --detach $sourceRoot origin/main | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Não foi possível criar o worktree limpo do CRM Local em '$sourceRoot'."
+        }
+        return $sourceRoot
+    }
+
+    $trackedChanges = @(& git -C $sourceRoot status --porcelain --untracked-files=no)
+    if ($LASTEXITCODE -ne 0) {
+        throw "O worktree privado do CRM Local não está íntegro: '$sourceRoot'."
+    }
+    if ($trackedChanges.Count -gt 0) {
+        throw "O worktree privado do CRM Local contém alterações rastreadas e não será sobrescrito: '$sourceRoot'."
+    }
+
+    & git -C $ProjectRoot fetch origin main | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Não foi possível atualizar origin/main antes de iniciar o CRM Local."
+    }
+    & git -C $sourceRoot checkout --detach origin/main | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Não foi possível alinhar o worktree privado do CRM Local ao origin/main."
+    }
+
+    return $sourceRoot
 }
 
 function Invoke-RepoPowerShellScript {
@@ -329,17 +370,20 @@ function Invoke-ShortcutActionInternal {
         "WebsiteSiteCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:check" }
         "WebsiteReleaseCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:release-check" }
         "CrmLocal" {
-            Invoke-ShortcutWsl -Command ("CRM_BUILD_BEFORE_START=0 CRM_OPEN_BROWSER=0 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh" -f `
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=0 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl))
         }
         "CrmSiteEf" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready" -f `
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl))
         }
         "CrmMetaAds" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module meta-ads" -f `
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module meta-ads" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl))
         }
@@ -354,7 +398,8 @@ function Invoke-ShortcutActionInternal {
             Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh --stop" -f `
                 (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
                 (Convert-ToBashLiteral -Value $atendimentoLogWsl))
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl))
         }
