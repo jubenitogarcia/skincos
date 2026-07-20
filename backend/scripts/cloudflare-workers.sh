@@ -32,11 +32,18 @@ Examples:
 EOF
 }
 
-ensure_backend_deps() {
-  if [[ ! -d "$BACKEND_DIR/node_modules" ]]; then
-    echo "[workers] Installing backend workspace deps (pnpm)..."
-    install_node_deps "$BACKEND_DIR" install >/dev/null 2>&1 || true
-  fi
+ensure_worker_deps() {
+  local worker_dir
+  for worker_dir in "$ROOT_DIR/api" "$ROOT_DIR/inventory"; do
+    if [[ ! -x "$worker_dir/node_modules/.bin/wrangler" ]]; then
+      echo "[workers] Installing dependencies in ${worker_dir#$ROOT_DIR/} ..."
+      install_node_deps "$worker_dir" ci
+    fi
+    if [[ ! -x "$worker_dir/node_modules/.bin/wrangler" ]]; then
+      echo "[workers] ERROR: wrangler is unavailable in ${worker_dir#$ROOT_DIR/}" >&2
+      return 1
+    fi
+  done
 }
 
 resolve_env_flag() {
@@ -70,8 +77,7 @@ resolve_build_var_flag() {
 
 deploy_api() {
   echo "[workers] Deploying skincos-api..."
-  pushd "$BACKEND_DIR" >/dev/null
-  # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
+  pushd "$ROOT_DIR/api" >/dev/null
   local args=(--config wrangler.toml --keep-vars)
   if [[ -n "${ENV_NAME:-}" ]]; then
     args+=(--env "$ENV_NAME")
@@ -79,24 +85,23 @@ deploy_api() {
   if [[ -n "${BUILD_VAR_VALUE:-}" ]]; then
     args+=(--var "PONTO_BUILD_SHA:${BUILD_VAR_VALUE}")
   fi
-  run_pnpm -F @skincos/api-worker exec wrangler deploy "${args[@]}"
+  ./node_modules/.bin/wrangler deploy "${args[@]}"
   popd >/dev/null
 }
 
 deploy_insumos() {
   echo "[workers] Applying D1 migrations ..."
-  pushd "$BACKEND_DIR" >/dev/null
-  # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
+  pushd "$ROOT_DIR/inventory" >/dev/null
   # Auth and schema changes must fail closed: never deploy a Worker that expects
   # columns the remote D1 database does not yet have.
   local d1_args=(--config wrangler.toml)
   if [[ -n "${ENV_NAME:-}" ]]; then
     d1_args+=(--env "$ENV_NAME")
   fi
-  run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" "${d1_args[@]}"
+  ./node_modules/.bin/wrangler d1 migrations apply "$INSUMOS_DB_NAME" "${d1_args[@]}"
   popd >/dev/null
   echo "[workers] Deploying skincos-insumos..."
-  pushd "$BACKEND_DIR" >/dev/null
+  pushd "$ROOT_DIR/inventory" >/dev/null
   local args=(--config wrangler.toml --keep-vars)
   if [[ -n "${ENV_NAME:-}" ]]; then
     args+=(--env "$ENV_NAME")
@@ -104,7 +109,7 @@ deploy_insumos() {
   if [[ -n "${BUILD_VAR_VALUE:-}" ]]; then
     args+=(--var "PONTO_BUILD_SHA:${BUILD_VAR_VALUE}")
   fi
-  run_pnpm -F @skincos/insumos-worker exec wrangler deploy "${args[@]}"
+  ./node_modules/.bin/wrangler deploy "${args[@]}"
   popd >/dev/null
 }
 
@@ -141,7 +146,7 @@ deploy_by_changes() {
         do_insumos="true"
         do_api="true" # shared implementation
         ;;
-      backend/pnpm-lock.yaml|backend/pnpm-workspace.yaml|.github/workflows/deploy-insumos-worker.yml)
+      backend/pnpm-lock.yaml|backend/pnpm-workspace.yaml|backend/scripts/cloudflare-workers.sh|.github/workflows/deploy-insumos-worker.yml)
         do_api="true"
         do_insumos="true"
         ;;
@@ -168,7 +173,7 @@ ENV_NAME="${DEPLOY_ENV:-}"
 INSUMOS_DB_NAME=""
 BUILD_VAR_VALUE=""
 
-ensure_backend_deps
+ensure_worker_deps
 
 case "$cmd" in
   deploy)
