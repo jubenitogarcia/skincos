@@ -515,6 +515,7 @@ export PAGES_PORT="$CRM_PAGES_PORT"
 if [[ "$CRM_PROFILE" == "realistic" ]]; then
   export LOCAL_AUTH_BYPASS=true
   export LOCAL_AUTH_ROLE="${LOCAL_AUTH_ROLE:-GESTOR}"
+  export LOCAL_AUTH_TEST_USER_ADMIN="${LOCAL_AUTH_TEST_USER_ADMIN:-true}"
   export LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}"
   export LOCAL_AUTH_NAME="${LOCAL_AUTH_NAME:-Teste CRM Local}"
   if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then

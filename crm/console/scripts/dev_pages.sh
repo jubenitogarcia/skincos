@@ -48,6 +48,7 @@ upsert_non_secret_dev_var() {
 
 upsert_non_secret_dev_var "LOCAL_AUTH_BYPASS" "${LOCAL_AUTH_BYPASS:-false}"
 upsert_non_secret_dev_var "LOCAL_AUTH_ROLE" "${LOCAL_AUTH_ROLE:-GESTOR}"
+upsert_non_secret_dev_var "LOCAL_AUTH_TEST_USER_ADMIN" "${LOCAL_AUTH_TEST_USER_ADMIN:-true}"
 upsert_non_secret_dev_var "LOCAL_AUTH_EMAIL" "${LOCAL_AUTH_EMAIL:-dev@local.test}"
 upsert_non_secret_dev_var "LOCAL_AUTH_NAME" "${LOCAL_AUTH_NAME:-Dev Local}"
 ensure_dev_var "ESCALA_API_TARGET" "https://escala-api.skincos.com.br"
