@@ -385,8 +385,11 @@ export default function AppFunctionalNeatlab() {
         (moduleKey: string) => {
             const key = String(moduleKey || '').trim()
             if (!key) return false
-            if (key === 'escala-profissionais') return roleKey === 'GESTOR' || roleKey === 'GERENTE'
-            if (roleKey === 'GESTOR') return true
+            // Gestão do CRM não deve ficar limitada por listas de módulos
+            // eventualmente desatualizadas. Módulos ainda bloqueados continuam
+            // fora da navegação por UNLOCKED_MODULE_KEYS.
+            if (roleKey === 'GESTOR' || roleKey === 'ADMIN') return true
+            if (key === 'escala-profissionais') return roleKey === 'GERENTE'
             const allowed = Array.isArray(user?.allowedModules)
                 ? user.allowedModules.map(String).map((s) => s.trim()).filter(Boolean)
                 : []
