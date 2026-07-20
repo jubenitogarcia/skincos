@@ -11,8 +11,8 @@
 - [x] Cliente/tipos centralizados e gestão funcional na aba CRM.
 - [x] Testes locais do domínio, gateway, proxy, cliente, D1 e integração HTTP.
 - [x] Executar todos os gates finais (lint completo, testes completos e build de produção).
-- [ ] Publicar e validar staging com D1/secrets próprios.
-- [ ] Promover por workflow oficial e executar smoke produtivo somente leitura.
+- [x] Publicar e validar staging com D1/secrets próprios (workflow `29700256254`).
+- [x] Promover por workflow oficial e executar smoke produtivo somente leitura (produção `29700295125`; API `29700339758`; UI `29753110570`).
 
 ## External/product follow-up
 
