@@ -94,6 +94,9 @@ Plataforma interna (local) para automações e operações da clínica.
   - sobe o CRM via `Pages Functions` local (`crm/console/scripts/dev_pages.sh`)
   - ativa bypass local de auth apenas em `localhost`
   - preserva os módulos que já suportam leitura real com segurança, como `Escala`
+  - os atalhos `CRM Local`, `Site EF` e `Meta Ads` usam um worktree privado, destacado em `origin/main`. Alterações não integradas no checkout aberto não são carregadas no runtime local.
+  - o primeiro uso do gate local instala o Chromium do Playwright; o CRM não inicia se a smoke obrigatória não puder ser executada.
+  - no perfil genérico, o launcher inicia o `workforce/timekeeping` local, aplica suas migrations e faz o proxy do Ponto assinar requests com uma chave local de teste; nenhum secret de produção é copiado para o ambiente local.
 - Para testar a sessão real sem bypass: `CRM_PROFILE=session npm run crm:local`
 - Para testar `Insumos` sem tocar a produção:
   - `CRM_WITH_INSUMOS=1 npm run crm:local`

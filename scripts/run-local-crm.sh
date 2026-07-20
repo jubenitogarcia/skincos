@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/crm/console"
 BACKEND_DIR="$ROOT_DIR/backend"
+TIMEKEEPING_DIR="$ROOT_DIR/workforce/timekeeping"
 INSUMOS_HELPER="$ROOT_DIR/backend/scripts/insumos.sh"
 INSUMOS_EXPORTER="$ROOT_DIR/backend/scripts/insumos-d1-export.cjs"
 INSUMOS_SEEDER="$ROOT_DIR/backend/scripts/insumos-seed.sh"
@@ -56,6 +57,18 @@ else
   CRM_WITH_INSUMOS=0
 fi
 CRM_INSUMOS_PORT="${CRM_INSUMOS_PORT:-8787}"
+if [[ -n "${CRM_WITH_TIMEKEEPING+x}" ]]; then
+  CRM_WITH_TIMEKEEPING="$CRM_WITH_TIMEKEEPING"
+elif [[ -z "$CRM_MODULE" || "$CRM_MODULE" == "ponto" ]]; then
+  CRM_WITH_TIMEKEEPING=1
+else
+  CRM_WITH_TIMEKEEPING=0
+fi
+CRM_TIMEKEEPING_PORT="${CRM_TIMEKEEPING_PORT:-8801}"
+# Local-only values. Production uses separate Pages and Worker secrets.
+CRM_TIMEKEEPING_ACTOR_KEY="${CRM_TIMEKEEPING_ACTOR_KEY:-test-actor-key-not-secret}"
+CRM_TIMEKEEPING_IDEMPOTENCY_KEY="${CRM_TIMEKEEPING_IDEMPOTENCY_KEY:-test-idempotency-key-not-secret}"
+CRM_TIMEKEEPING_TEMPLATES_KEY="${CRM_TIMEKEEPING_TEMPLATES_KEY:-test-template-key-not-secret}"
 CRM_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}"
 CRM_REFRESH_INSUMOS_SNAPSHOT="${CRM_REFRESH_INSUMOS_SNAPSHOT:-0}"
 CRM_INSUMOS_SEED_TOKEN="${CRM_INSUMOS_SEED_TOKEN:-dev-seed-token}"
@@ -347,6 +360,53 @@ ensure_frontend_ready() {
   fi
 }
 
+ensure_playwright_chromium() {
+  if [[ "$CRM_GATE_STRICT" != "1" && "$CRM_SMOKE" != "1" ]]; then
+    return 0
+  fi
+
+  echo "[crm-local] Garantindo o Chromium do Playwright para o gate local..."
+  (
+    cd "$FRONTEND_DIR"
+    PLAYWRIGHT_BROWSERS_PATH=0 npm exec playwright install chromium
+  )
+}
+
+ensure_timekeeping_ready() {
+  if [[ ! -d "$TIMEKEEPING_DIR" ]]; then
+    echo "[crm-local] O domínio Workforce/Timekeeping não foi encontrado em $TIMEKEEPING_DIR." >&2
+    exit 1
+  fi
+  if [[ ! -d "$TIMEKEEPING_DIR/node_modules" ]]; then
+    echo "[crm-local] Instalando dependências locais do Timekeeping..."
+    npm --prefix "$TIMEKEEPING_DIR" install
+  fi
+}
+
+start_timekeeping_local() {
+  ensure_timekeeping_ready
+  echo "[crm-local] Aplicando migrations locais do Timekeeping..."
+  (
+    cd "$TIMEKEEPING_DIR"
+    ./node_modules/.bin/wrangler d1 migrations apply skincos-timekeeping --local --config=wrangler.toml
+  ) >>"$LOG_FILE" 2>&1
+
+  echo "[crm-local] Iniciando Workforce/Timekeeping local em :$CRM_TIMEKEEPING_PORT"
+  (
+    cd "$TIMEKEEPING_DIR"
+    ./node_modules/.bin/wrangler dev --local --port "$CRM_TIMEKEEPING_PORT" --config=wrangler.toml \
+      --var "PONTO_ACTOR_HMAC_KEY:$CRM_TIMEKEEPING_ACTOR_KEY" \
+      --var "PONTO_IDEMPOTENCY_KEY:$CRM_TIMEKEEPING_IDEMPOTENCY_KEY" \
+      --var "PONTO_TEMPLATES_KEY:$CRM_TIMEKEEPING_TEMPLATES_KEY"
+  ) >>"$LOG_FILE" 2>&1 &
+  TIMEKEEPING_PID=$!
+
+  if ! wait_for_http "http://127.0.0.1:${CRM_TIMEKEEPING_PORT}/api/ponto/readiness" 90; then
+    echo "[crm-local] Workforce/Timekeeping não respondeu em tempo hábil." >&2
+    exit 1
+  fi
+}
+
 ensure_frontend_dist_ready() {
   if [[ -f "$FRONTEND_DIR/dist/index.html" ]]; then
     return 0
@@ -431,6 +491,9 @@ if [[ "$STOP_ONLY" == "1" ]]; then
   if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
     stop_owned_port_listener "$CRM_INSUMOS_PORT" "insumos"
   fi
+  if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
+    stop_owned_port_listener "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
+  fi
   echo "CRM local finalizado."
   exit 0
 fi
@@ -495,6 +558,7 @@ rotate_current_log
 assert_port_free "$CRM_VITE_PORT" "vite"
 assert_port_free "$CRM_PAGES_PORT" "pages"
 ensure_frontend_ready
+ensure_playwright_chromium
 
 if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
   echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
@@ -509,6 +573,12 @@ if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   start_insumos_local
 fi
 
+TIMEKEEPING_PID=""
+if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
+  assert_port_free "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
+  start_timekeeping_local
+fi
+
 export VITE_PORT="$CRM_VITE_PORT"
 export PAGES_PORT="$CRM_PAGES_PORT"
 
@@ -518,6 +588,10 @@ if [[ "$CRM_PROFILE" == "realistic" ]]; then
   export LOCAL_AUTH_TEST_USER_ADMIN="${LOCAL_AUTH_TEST_USER_ADMIN:-true}"
   export LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}"
   export LOCAL_AUTH_NAME="${LOCAL_AUTH_NAME:-Teste CRM Local}"
+  if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
+    export PONTO_API_TARGET="http://127.0.0.1:${CRM_TIMEKEEPING_PORT}"
+    export PONTO_ACTOR_HMAC_KEY="$CRM_TIMEKEEPING_ACTOR_KEY"
+  fi
   if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
     export ALLOW_DEV_AUTH_BYPASS=true
   fi
@@ -547,6 +621,9 @@ cleanup() {
   fi
   if [[ -n "${INSUMOS_PID:-}" ]]; then
     kill "$INSUMOS_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${TIMEKEEPING_PID:-}" ]]; then
+    kill "$TIMEKEEPING_PID" >/dev/null 2>&1 || true
   fi
   if [[ -f "$PID_FILE" ]]; then
     local tracked_pid

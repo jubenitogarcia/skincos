@@ -60,6 +60,12 @@ PAGES_BINDING_ARGS=()
 if [[ -n "${LOCAL_INSUMOS_API_TARGET:-}" ]]; then
   PAGES_BINDING_ARGS+=(--binding "INSUMOS_API_TARGET=${LOCAL_INSUMOS_API_TARGET}")
 fi
+if [[ -n "${PONTO_API_TARGET:-}" ]]; then
+  PAGES_BINDING_ARGS+=(--binding "PONTO_API_TARGET=${PONTO_API_TARGET}")
+fi
+if [[ -n "${PONTO_ACTOR_HMAC_KEY:-}" ]]; then
+  PAGES_BINDING_ARGS+=(--binding "PONTO_ACTOR_HMAC_KEY=${PONTO_ACTOR_HMAC_KEY}")
+fi
 
 # Evita rota API quebrada por _routes.json desatualizado em dist/
 if [[ -f "$ROOT_DIR/public/_routes.json" ]]; then
