@@ -477,11 +477,12 @@ export function PontoModule() {
 
   const isDev = import.meta.env.DEV
   const crmRole = String(crmMe?.user?.role || '').toUpperCase()
-  const canAdmin = ['GESTOR', 'GERENTE', 'RH', 'ADMIN', 'AUDITOR'].includes(crmRole)
-  const canAdminActions = ['GESTOR', 'GERENTE', 'RH', 'ADMIN'].includes(crmRole)
-  const canManageCanonicalEmployee = ['RH', 'ADMIN'].includes(crmRole)
-  const canApproveCorrection = ['RH', 'ADMIN'].includes(crmRole)
-  const canClosePeriod = ['RH', 'ADMIN'].includes(crmRole)
+  const canAdmin = ['GESTOR', 'GERENTE', 'SUPERVISOR', 'ADMIN'].includes(crmRole)
+  const canAdminActions = ['GESTOR', 'GERENTE', 'SUPERVISOR', 'ADMIN'].includes(crmRole)
+  const canManageDevices = ['GESTOR', 'GERENTE', 'ADMIN'].includes(crmRole)
+  const canManageCanonicalEmployee = ['SUPERVISOR', 'ADMIN'].includes(crmRole)
+  const canApproveCorrection = ['SUPERVISOR', 'ADMIN'].includes(crmRole)
+  const canClosePeriod = ['SUPERVISOR', 'ADMIN'].includes(crmRole)
   const canSeeSensitive = canAdmin || (me && 'linked' in me && me.linked)
   const maskSensitive = (value?: string | null, mask: string = '•••') => {
     const raw = String(value || '').trim()
@@ -1086,7 +1087,7 @@ export function PontoModule() {
   }
 
   async function adminCreateEmployee(opts: { enrollAfter?: boolean } = {}) {
-    if (!canManageCanonicalEmployee) return toast.error('Cadastro restrito ao RH')
+    if (!canManageCanonicalEmployee) return toast.error('Cadastro restrito ao Supervisor')
     const name = newEmployeeName.trim()
     if (!name) return toast.error('Nome é obrigatório')
     const loginEmail = newEmployeeLoginEmail.trim()
@@ -1235,7 +1236,7 @@ export function PontoModule() {
   }
 
   async function adminSaveEmployeeEdit() {
-    if (!canManageCanonicalEmployee) return toast.error('Alteração restrita ao RH')
+    if (!canManageCanonicalEmployee) return toast.error('Alteração restrita ao Supervisor')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     const name = editName.trim()
     if (!name) return toast.error('Nome é obrigatório')
@@ -1285,7 +1286,7 @@ export function PontoModule() {
   }
 
   async function adminDeleteEmployee() {
-    if (!canManageCanonicalEmployee) return toast.error('Desligamento restrito ao RH')
+    if (!canManageCanonicalEmployee) return toast.error('Desligamento restrito ao Supervisor')
     if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
     const name = selectedEmployee?.name || 'este funcionário'
     const confirmed = window.confirm(`Tem certeza que deseja remover ${name}?`)
@@ -1336,12 +1337,12 @@ export function PontoModule() {
         return
       }
       if (action === 'create') {
-        if (!canManageCanonicalEmployee) return toast.error('Cadastro canônico restrito ao RH')
+        if (!canManageCanonicalEmployee) return toast.error('Cadastro canônico restrito ao Supervisor')
         setNewEmployeeOpen(true)
         return
       }
       if (action === 'edit') {
-        if (!canManageCanonicalEmployee) return toast.error('Alteração cadastral restrita ao RH')
+        if (!canManageCanonicalEmployee) return toast.error('Alteração cadastral restrita ao Supervisor')
         openSelectEmployee('edit')
         return
       }
@@ -1383,7 +1384,7 @@ export function PontoModule() {
   }
 
   async function adminLoadEmailConflicts() {
-    if (!canManageCanonicalEmployee) return toast.error('Resolução restrita ao RH')
+    if (!canManageCanonicalEmployee) return toast.error('Resolução restrita ao Supervisor')
     setConflictsLoading(true)
     setConflictsError(null)
     try {
@@ -1403,7 +1404,7 @@ export function PontoModule() {
   }
 
   async function adminResolveEmailConflict(email: string, keepEmployeeId: string) {
-    if (!canManageCanonicalEmployee) return toast.error('Resolução restrita ao RH')
+    if (!canManageCanonicalEmployee) return toast.error('Resolução restrita ao Supervisor')
     setConflictsLoading(true)
     setConflictsError(null)
     try {
@@ -1425,7 +1426,7 @@ export function PontoModule() {
   }
 
   async function adminCreateDevice() {
-    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
+    if (!canManageDevices) return toast.error('Gestão de dispositivos restrita a gerentes')
     if (!newDeviceUnit.trim()) return toast.error('Unidade é obrigatória')
     setLoading(true)
     try {
@@ -1446,7 +1447,7 @@ export function PontoModule() {
   }
 
   async function adminRevokeDevice(deviceId: string) {
-    if (!canAdminActions) return toast.error('Acesso restrito a gestores')
+    if (!canManageDevices) return toast.error('Gestão de dispositivos restrita a gerentes')
     setLoading(true)
     try {
       await apiJson('/api/ponto/admin/devices/' + deviceId + '/revoke', { method: 'POST' })
@@ -1844,7 +1845,7 @@ export function PontoModule() {
                     <Button onClick={closeManagementPeriod} disabled={loading || !monthlyResult}>Fechar período</Button>
                     <Button variant="destructive" onClick={reopenManagementPeriod} disabled={loading || !lastClosureId}>Reabrir último fechamento</Button>
                   </div>
-                  <div className="text-xs text-muted-foreground">A reabertura exige permissão de RH/Administrador, justificativa e gera auditoria.</div>
+                  <div className="text-xs text-muted-foreground">A reabertura exige permissão de Supervisor/Administrador, justificativa e gera auditoria.</div>
                 </div>
               ) : null}
               <div className="space-y-2">
@@ -1853,7 +1854,7 @@ export function PontoModule() {
                   <Table>
                     <TableHeader><TableRow><TableHead>Funcionário</TableHead><TableHead>Original</TableHead><TableHead>Proposto</TableHead><TableHead>Motivo</TableHead><TableHead>Ações</TableHead></TableRow></TableHeader>
                     <TableBody>
-                      {corrections.map((correction) => <TableRow key={correction.id}><TableCell>{correction.employeeName}</TableCell><TableCell>{fmtDate(correction.originalAtUtc)}</TableCell><TableCell>{fmtDate(correction.proposedAtUtc)}</TableCell><TableCell className="max-w-56 truncate" title={correction.reason}>{correction.reason}</TableCell><TableCell><div className="flex gap-2">{canApproveCorrection ? <><Button size="sm" onClick={() => decideCorrection(correction, 'approve')}>Aprovar</Button><Button size="sm" variant="outline" onClick={() => decideCorrection(correction, 'reject')}>Recusar</Button></> : <Badge variant="outline">Aguardando RH</Badge>}</div></TableCell></TableRow>)}
+                      {corrections.map((correction) => <TableRow key={correction.id}><TableCell>{correction.employeeName}</TableCell><TableCell>{fmtDate(correction.originalAtUtc)}</TableCell><TableCell>{fmtDate(correction.proposedAtUtc)}</TableCell><TableCell className="max-w-56 truncate" title={correction.reason}>{correction.reason}</TableCell><TableCell><div className="flex gap-2">{canApproveCorrection ? <><Button size="sm" onClick={() => decideCorrection(correction, 'approve')}>Aprovar</Button><Button size="sm" variant="outline" onClick={() => decideCorrection(correction, 'reject')}>Recusar</Button></> : <Badge variant="outline">Aguardando Supervisor</Badge>}</div></TableCell></TableRow>)}
                       {!corrections.length ? <TableRow><TableCell colSpan={5} className="text-sm text-muted-foreground">Nenhuma solicitação pendente carregada.</TableCell></TableRow> : null}
                     </TableBody>
                   </Table>
@@ -2397,7 +2398,7 @@ export function PontoModule() {
                   <Input value={newDeviceLabel} onChange={(e) => setNewDeviceLabel(e.target.value)} placeholder="Recepção, Sala 1..." />
                 </div>
                 <div className="flex items-end">
-                  <Button onClick={adminCreateDevice} disabled={loading || !canAdminActions}>Criar token</Button>
+                  <Button onClick={adminCreateDevice} disabled={loading || !canManageDevices}>Criar token</Button>
                 </div>
               </div>
               {newDeviceTokenOnce ? (
@@ -2446,7 +2447,7 @@ export function PontoModule() {
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(d.lastSeenAt)}</TableCell>
                       <TableCell className="text-right">
                         {!d.revokedAt ? (
-                          <Button size="sm" variant="outline" onClick={() => adminRevokeDevice(d.id)} disabled={loading}>
+                          <Button size="sm" variant="outline" onClick={() => adminRevokeDevice(d.id)} disabled={loading || !canManageDevices}>
                             Revogar
                           </Button>
                         ) : null}

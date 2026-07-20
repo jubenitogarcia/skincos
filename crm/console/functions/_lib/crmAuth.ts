@@ -20,6 +20,9 @@ function normalizeRole(value: unknown): string {
   if (!raw) return ''
   if (raw === 'ADMIN') return 'GESTOR'
   if (raw === 'OPERADOR') return 'INJETOR'
+  // Preserve existing users/invites while exposing the canonical hierarchy.
+  if (raw === 'RH' || raw === 'AUDITOR') return 'SUPERVISOR'
+  if (raw === 'EMPLOYEE') return 'CONSULTOR'
   return raw
 }
 
@@ -92,16 +95,22 @@ export function isLocalDevAuthBypassEnabled(context: any): boolean {
 
 export function getLocalDevAuthUser(context: any): CrmAuthUser {
   const env = context?.env || {}
-  const role = normalizeRole(env.LOCAL_AUTH_ROLE || env.DEV_AUTH_ROLE || 'GESTOR') || 'GESTOR'
+  // The local launcher represents one privileged test account. Keep it aligned
+  // with the Gestor experience so every active CRM module can be exercised
+  // locally. Role-specific local tests can opt out explicitly.
+  const localTestUserAdmin = parseBoolean(env.LOCAL_AUTH_TEST_USER_ADMIN) !== false
+  const role = localTestUserAdmin
+    ? 'GESTOR'
+    : (normalizeRole(env.LOCAL_AUTH_ROLE || env.DEV_AUTH_ROLE || 'GESTOR') || 'GESTOR')
   const email = String(env.LOCAL_AUTH_EMAIL || env.DEV_AUTH_EMAIL || 'dev@local.test').trim() || 'dev@local.test'
   const username = String(env.LOCAL_AUTH_USERNAME || email.split('@')[0] || 'dev').trim() || 'dev'
   const displayName = String(env.LOCAL_AUTH_NAME || env.DEV_AUTH_NAME || 'Dev Local').trim() || 'Dev Local'
   const allowedUnits =
     parseList(env.LOCAL_AUTH_ALLOWED_UNITS) ||
     parseList(env.DEV_AUTH_ALLOWED_UNITS)
-  const allowedModules =
-    parseList(env.LOCAL_AUTH_ALLOWED_MODULES) ||
-    parseList(env.DEV_AUTH_ALLOWED_MODULES)
+  const allowedModules = localTestUserAdmin
+    ? undefined
+    : (parseList(env.LOCAL_AUTH_ALLOWED_MODULES) || parseList(env.DEV_AUTH_ALLOWED_MODULES))
 
   return {
     id: username,

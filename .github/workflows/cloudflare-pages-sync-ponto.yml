@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   production:
@@ -30,6 +31,20 @@ jobs:
           done
           printf '%s' 'https://api.skincos.com.br' | npx --yes wrangler@4.112.0 pages secret put PONTO_API_TARGET --project-name "$PROJECT" --env production >/dev/null
           printf '%s' "$PONTO_ACTOR_HMAC_KEY" | npx --yes wrangler@4.112.0 pages secret put PONTO_ACTOR_HMAC_KEY --project-name "$PROJECT" --env production >/dev/null
+
+      - name: Force redeploy CRM Pages after production secret sync
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "deploy-crm-pages-reconcile.yml",
+              ref: "main",
+              inputs: { force: "true" },
+            })
+            core.info("Dispatched deploy-crm-pages-reconcile.yml with force=true")
 
   preview:
     if: github.ref == 'refs/heads/main'

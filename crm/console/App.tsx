@@ -43,6 +43,7 @@ import { dispatchSiteTrackingHeaderAction, subscribeSiteTrackingHeaderState } fr
 import type { SiteTrackingHeaderState } from '@/siteTrackingTypes'
 import { dispatchAtendimentoHeaderAction, subscribeAtendimentoHeaderState } from '@/atendimentoHeaderBridge'
 import type { AtendimentoHeaderState } from '@/atendimentoHeaderBridge'
+import { hasCrmModuleAccess } from '@/crmRoleAccess'
 import { BarChart3, CalendarX2, CheckCircle2, ChevronDown, ClipboardList, Download, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Stethoscope, WalletCards, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
@@ -378,33 +379,12 @@ export default function AppFunctionalNeatlab() {
     const pontoCanAdmin =
         roleKey === 'GESTOR' ||
         roleKey === 'GERENTE' ||
-        roleKey === 'RH' ||
+        roleKey === 'SUPERVISOR' ||
         roleKey === 'ADMIN' ||
         (isLocalDev && devEmail.endsWith('@local.test'))
     const hasModuleAccess = React.useCallback(
         (moduleKey: string) => {
-            const key = String(moduleKey || '').trim()
-            if (!key) return false
-            if (key === 'escala-profissionais') return roleKey === 'GESTOR' || roleKey === 'GERENTE'
-            if (roleKey === 'GESTOR') return true
-            const allowed = Array.isArray(user?.allowedModules)
-                ? user.allowedModules.map(String).map((s) => s.trim()).filter(Boolean)
-                : []
-            if (!allowed.length) return true // compat: vazio/ausente => ALL
-            if (allowed.includes(key)) return true
-            if (key === 'procedimentos') {
-                return allowed.some((m) => ['procedimentos', 'atendimento'].includes(m))
-            }
-            if (key === 'faturamento') {
-                return allowed.some((m) => ['faturamento', 'atendimento'].includes(m))
-            }
-            if (key === 'conversa') {
-                return allowed.some((m) => ['whatsapp-business', 'harmonia', 'omnichannel'].includes(m))
-            }
-            if (key === 'ai-automation') {
-                return allowed.some((m) => ['ai-automation', 'automation', 'whatsapp-n8n'].includes(m))
-            }
-            return false
+            return hasCrmModuleAccess(roleKey, user?.allowedModules, moduleKey)
         },
         [allowedModulesKey, roleKey]
     )

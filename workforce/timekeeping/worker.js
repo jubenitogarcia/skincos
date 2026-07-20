@@ -26,15 +26,22 @@ function equal(a, b) {
 
 function requestIdFor(request) { return String(request.headers.get('x-request-id') || crypto.randomUUID()).slice(0, 120) }
 function normalizeUnits(value) { return Array.from(new Set(Array.isArray(value) ? value.map((v) => String(v || '').trim()).filter(Boolean) : [])) }
+function normalizeWorkforceRole(value) {
+  const raw = String(value || '').trim().toUpperCase()
+  if (raw === 'RH' || raw === 'AUDITOR') return 'SUPERVISOR'
+  if (raw === 'EMPLOYEE') return 'CONSULTOR'
+  return raw || 'CONSULTOR'
+}
+function isConsultor(actor) { return actor?.role === 'CONSULTOR' }
+function canManageWorkforce(actor) { return actor?.role === 'SUPERVISOR' || actor?.role === 'ADMIN' }
 function roleAllows(role, action) {
   const matrix = {
-    EMPLOYEE: ['self.read', 'self.punch'], DEVICE: ['device.punch'],
+    CONSULTOR: ['self.read', 'self.punch'], DEVICE: ['device.punch'],
     MANAGER: ['unit.read', 'correction.request', 'device.manage'],
-    HR: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'export.read'],
+    SUPERVISOR: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'export.read', 'audit.read'],
     ADMIN: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'device.manage', 'export.read', 'audit.read'],
-    AUDITOR: ['unit.read', 'audit.read', 'export.read'],
   }
-  return (matrix[String(role || '').toUpperCase()] || []).includes(action)
+  return (matrix[normalizeWorkforceRole(role)] || []).includes(action)
 }
 
 async function actorFor(request, env, db, bodyHash) {
@@ -61,12 +68,12 @@ async function actorFor(request, env, db, bodyHash) {
   try {
     const parsed = JSON.parse(b64Url(raw))
     if (!parsed?.id || !parsed?.email) return null
-    return { id: String(parsed.id), email: String(parsed.email).toLowerCase(), role: String(parsed.role || 'EMPLOYEE').toUpperCase(), allowedUnits: normalizeUnits(parsed.allowedUnits), name: String(parsed.name || '') }
+    return { id: String(parsed.id), email: String(parsed.email).toLowerCase(), role: normalizeWorkforceRole(parsed.role), allowedUnits: normalizeUnits(parsed.allowedUnits), name: String(parsed.name || '') }
   } catch { return null }
 }
 
 function requireUnit(actor, unitId) {
-  return actor.role === 'ADMIN' || actor.role === 'HR' || actor.allowedUnits.includes(String(unitId || ''))
+  return actor.role === 'ADMIN' || actor.allowedUnits.includes(String(unitId || ''))
 }
 
 function publicEmployee(row) {
@@ -195,8 +202,8 @@ async function employeeUnits(db, employeeId, date = now().slice(0, 10)) {
 
 async function employeeVisible(db, actor, employee, unitId = '') {
   if (!employee) return false
-  if (actor.role === 'EMPLOYEE') return String(employee.login_email || '').toLowerCase() === actor.email
-  if (actor.role === 'ADMIN' || actor.role === 'HR' || actor.role === 'AUDITOR') return true
+  if (isConsultor(actor)) return String(employee.login_email || '').toLowerCase() === actor.email
+  if (actor.role === 'ADMIN') return true
   const units = unitId ? [unitId] : await employeeUnits(db, employee.id)
   return units.some((unit) => actor.allowedUnits.includes(unit))
 }
@@ -254,7 +261,7 @@ async function verifyPunchCredential(db, env, actor, employee, body) {
     }
     return matched ? { source: 'FACE' } : { error: 'FACE_NOT_RECOGNIZED' }
   }
-  if (actor.role === 'ADMIN' || actor.role === 'HR') return { source: 'MANUAL' }
+  if (canManageWorkforce(actor)) return { source: 'MANUAL' }
   if (String(env.ALLOW_SYSTEM_PUNCH || '').toLowerCase() === 'true') return { source: 'SYSTEM' }
   return { error: 'PUNCH_CREDENTIAL_REQUIRED' }
 }
@@ -298,14 +305,14 @@ async function periodCalculation(db, employeeId, unitId, start, end) {
 async function listScopedEmployees(db, actor, url) {
   const limit = limitFor(url, 100, 500)
   const unit = cleanText(url.searchParams.get('unitId') || url.searchParams.get('unit'), 120)
-  if (actor.role === 'MANAGER') {
+  if (actor.role === 'MANAGER' || actor.role === 'SUPERVISOR') {
     const units = unit ? [unit] : actor.allowedUnits
     if (!units.length || units.some((value) => !actor.allowedUnits.includes(value))) return []
     const placeholders = units.map(() => '?').join(',')
     const rows = await db.prepare(`SELECT DISTINCT e.* FROM workforce_employees e JOIN timekeeping_employee_units eu ON eu.employee_id=e.id WHERE eu.unit_id IN (${placeholders}) ORDER BY e.display_name LIMIT ?`).bind(...units, limit).all()
     return rows.results || []
   }
-  if (actor.role === 'EMPLOYEE') {
+  if (isConsultor(actor)) {
     const row = await employeeForActor(db, actor)
     return row ? [row] : []
   }
@@ -317,7 +324,7 @@ async function listRecords(db, actor, url, employeeOverride = null) {
   const employeeId = employeeOverride || cleanText(url.searchParams.get('employeeId'), 120)
   const unitId = cleanText(url.searchParams.get('unitId') || url.searchParams.get('unit'), 120)
   let employee = employeeId ? await employeeById(db, actor, employeeId, unitId) : null
-  if (actor.role === 'EMPLOYEE') employee = await employeeForActor(db, actor)
+  if (isConsultor(actor)) employee = await employeeForActor(db, actor)
   if (!employee) return null
   const from = cleanText(url.searchParams.get('from'), 40) || '1970-01-01T00:00:00.000Z'
   const to = cleanText(url.searchParams.get('to'), 40) || '9999-12-31T23:59:59.999Z'
@@ -429,7 +436,7 @@ export async function handleTimekeeping(request, env) {
     }
 
     if (path === '/api/ponto/employees' && request.method === 'GET') {
-      if (!roleAllows(actor.role, 'unit.read') && actor.role !== 'EMPLOYEE') return failure(403, 'FORBIDDEN', requestId)
+      if (!roleAllows(actor.role, 'unit.read') && !isConsultor(actor)) return failure(403, 'FORBIDDEN', requestId)
       const employees = await listScopedEmployees(db, actor, url)
       const output = []
       for (const employee of employees) {
@@ -443,7 +450,7 @@ export async function handleTimekeeping(request, env) {
 
     const employeeMatch = path.match(/^\/api\/ponto\/employees\/([^/]+)$/)
     if (employeeMatch && request.method === 'GET') {
-      if (!roleAllows(actor.role, 'unit.read') && actor.role !== 'EMPLOYEE') return failure(403, 'FORBIDDEN', requestId)
+      if (!roleAllows(actor.role, 'unit.read') && !isConsultor(actor)) return failure(403, 'FORBIDDEN', requestId)
       const employee = await employeeById(db, actor, decodeURIComponent(employeeMatch[1]))
       if (!employee) return failure(404, 'EMPLOYEE_NOT_FOUND', requestId)
       const units = await employeeUnits(db, employee.id)
@@ -451,10 +458,11 @@ export async function handleTimekeeping(request, env) {
     }
 
     if (path === '/api/ponto/employees' && request.method === 'POST') {
-      if (!['HR', 'ADMIN'].includes(actor.role)) return failure(403, 'FORBIDDEN', requestId)
+      if (!canManageWorkforce(actor)) return failure(403, 'FORBIDDEN', requestId)
       const body = await readJson(request)
       const name = cleanText(body?.name, 180); const email = cleanText(body?.loginEmail, 240).toLowerCase(); const unitId = cleanText(body?.unit || body?.unitId, 120)
       if (!name || !/^\S+@\S+\.\S+$/.test(email) || !unitId) return failure(400, 'INVALID_EMPLOYEE', requestId)
+      if (!requireUnit(actor, unitId)) return failure(403, 'UNIT_FORBIDDEN', requestId)
       const existing = await db.prepare('SELECT id, display_name FROM workforce_employees WHERE lower(login_email)=lower(?)').bind(email).first()
       if (existing) return failure(409, 'LOGIN_EMAIL_ALREADY_IN_USE', requestId, { employeeId: existing.id, employeeName: existing.display_name })
       const id = crypto.randomUUID(); const at = now(); const canonicalId = cleanText(body?.employeeId || body?.canonicalEmployeeId, 120) || `workforce:${id}`
@@ -468,7 +476,7 @@ export async function handleTimekeeping(request, env) {
     }
 
     if (employeeMatch && ['PATCH', 'DELETE'].includes(request.method)) {
-      if (!['HR', 'ADMIN'].includes(actor.role)) return failure(403, 'FORBIDDEN', requestId)
+      if (!canManageWorkforce(actor)) return failure(403, 'FORBIDDEN', requestId)
       const employee = await employeeById(db, actor, decodeURIComponent(employeeMatch[1]))
       if (!employee) return failure(404, 'EMPLOYEE_NOT_FOUND', requestId)
       const body = request.method === 'PATCH' ? await readJson(request) : {}
@@ -488,7 +496,7 @@ export async function handleTimekeeping(request, env) {
     if (path === '/api/ponto/punches' && request.method === 'POST') {
       const body = await readJson(request)
       if (!body) return failure(400, 'INVALID_PUNCH_REQUEST', requestId)
-      let employee = actor.role === 'EMPLOYEE' ? await employeeForActor(db, actor) : await employeeById(db, actor, cleanText(body.employeeId, 120), actor.allowedUnits[0] || '')
+      let employee = isConsultor(actor) ? await employeeForActor(db, actor) : await employeeById(db, actor, cleanText(body.employeeId, 120))
       if (!employee) return failure(404, 'EMPLOYEE_NOT_LINKED', requestId)
       if (employee.status !== 'ACTIVE') return failure(409, 'EMPLOYEE_NOT_ACTIVE', requestId)
       const occurredAt = body.occurredAt ? new Date(body.occurredAt).toISOString() : now()
@@ -497,7 +505,7 @@ export async function handleTimekeeping(request, env) {
       const punchRule = await resolveRule(db, employee.id, unitId, initialWorkDate)
       const workDate = isoDateInZone(occurredAt, punchRule.timeZone || 'America/Sao_Paulo')
       if (!unitId || !await activeUnitForEmployee(db, employee.id, unitId, workDate)) return failure(403, 'UNIT_FORBIDDEN', requestId)
-      if (actor.role === 'MANAGER' && !requireUnit(actor, unitId)) return failure(403, 'UNIT_FORBIDDEN', requestId)
+      if (!isConsultor(actor) && !requireUnit(actor, unitId)) return failure(403, 'UNIT_FORBIDDEN', requestId)
       if (await isPeriodClosed(db, employee.id, unitId, workDate)) return failure(409, 'PERIOD_CLOSED', requestId)
       const credential = await verifyPunchCredential(db, env, actor, employee, body)
       if (credential.error) return failure(credential.error === 'PIN_LOCKED' ? 429 : 401, credential.error, requestId, credential.secondsRemaining ? { secondsRemaining: credential.secondsRemaining } : {})
@@ -531,7 +539,7 @@ export async function handleTimekeeping(request, env) {
     }
 
     if (path === '/api/ponto/mirror' && request.method === 'GET') {
-      if (!roleAllows(actor.role, 'unit.read') && actor.role !== 'EMPLOYEE') return failure(403, 'FORBIDDEN', requestId)
+      if (!roleAllows(actor.role, 'unit.read') && !isConsultor(actor)) return failure(403, 'FORBIDDEN', requestId)
       const records = await listRecords(db, actor, url)
       return records ? json(200, { ok: true, data: records }, requestId) : failure(400, 'EMPLOYEE_REQUIRED', requestId)
     }
@@ -539,7 +547,7 @@ export async function handleTimekeeping(request, env) {
     if (['/api/ponto/daily', '/api/ponto/monthly', '/api/ponto/inconsistencies', '/api/ponto/bank'].includes(path) && request.method === 'GET') {
       const employeeId = cleanText(url.searchParams.get('employeeId'), 120)
       const unitId = cleanText(url.searchParams.get('unitId') || url.searchParams.get('unit'), 120)
-      const employee = actor.role === 'EMPLOYEE' ? await employeeForActor(db, actor) : await employeeById(db, actor, employeeId, unitId)
+      const employee = isConsultor(actor) ? await employeeForActor(db, actor) : await employeeById(db, actor, employeeId, unitId)
       if (!employee || !unitId) return failure(400, 'EMPLOYEE_AND_UNIT_REQUIRED', requestId)
       if (path === '/api/ponto/daily') {
         const date = dateOnly(url.searchParams.get('date'))
@@ -558,7 +566,7 @@ export async function handleTimekeeping(request, env) {
     }
 
     if (path === '/api/ponto/corrections' && request.method === 'POST') {
-      if (!roleAllows(actor.role, 'correction.request') && actor.role !== 'EMPLOYEE') return failure(403, 'FORBIDDEN', requestId)
+      if (!roleAllows(actor.role, 'correction.request') && !isConsultor(actor)) return failure(403, 'FORBIDDEN', requestId)
       const body = await readJson(request); const reason = cleanText(body?.reason, 500); const proposed = body?.proposedAtUtc ? new Date(body.proposedAtUtc).toISOString() : ''
       const event = await db.prepare('SELECT * FROM timekeeping_events WHERE id=?').bind(cleanText(body?.eventId, 120)).first()
       const employee = event ? await employeeById(db, actor, event.employee_id, event.unit_id) : null
@@ -573,15 +581,15 @@ export async function handleTimekeeping(request, env) {
     }
 
     if (path === '/api/ponto/corrections' && request.method === 'GET') {
-      if (!roleAllows(actor.role, 'unit.read') && actor.role !== 'EMPLOYEE') return failure(403, 'FORBIDDEN', requestId)
+      if (!roleAllows(actor.role, 'unit.read') && !isConsultor(actor)) return failure(403, 'FORBIDDEN', requestId)
       const status = cleanText(url.searchParams.get('status'), 20).toUpperCase(); const unitId = cleanText(url.searchParams.get('unitId'), 120)
       const rows = await db.prepare(`SELECT c.id, c.event_id, c.requested_at, c.requested_by, c.reason, c.proposed_at_utc, c.status, c.decided_at, c.decided_by, c.decision_reason, e.employee_id, e.unit_id, e.occurred_at_utc, w.display_name AS employee_name FROM timekeeping_corrections c JOIN timekeeping_events e ON e.id=c.event_id JOIN workforce_employees w ON w.id=e.employee_id WHERE (?='' OR c.status=?) AND (?='' OR e.unit_id=?) ORDER BY c.requested_at DESC LIMIT ?`).bind(status, status, unitId, unitId, limitFor(url, 100, 300)).all()
-      const data = (rows.results || []).filter((row) => actor.role === 'EMPLOYEE' ? row.requested_by === actor.id : requireUnit(actor, row.unit_id)).map((row) => ({ id: row.id, eventId: row.event_id, employeeId: row.employee_id, employeeName: row.employee_name, unitId: row.unit_id, originalAtUtc: row.occurred_at_utc, proposedAtUtc: row.proposed_at_utc, requestedAt: row.requested_at, requestedBy: row.requested_by, reason: row.reason, status: row.status, decidedAt: row.decided_at, decidedBy: row.decided_by, decisionReason: row.decision_reason }))
+      const data = (rows.results || []).filter((row) => isConsultor(actor) ? row.requested_by === actor.id : requireUnit(actor, row.unit_id)).map((row) => ({ id: row.id, eventId: row.event_id, employeeId: row.employee_id, employeeName: row.employee_name, unitId: row.unit_id, originalAtUtc: row.occurred_at_utc, proposedAtUtc: row.proposed_at_utc, requestedAt: row.requested_at, requestedBy: row.requested_by, reason: row.reason, status: row.status, decidedAt: row.decided_at, decidedBy: row.decided_by, decisionReason: row.decision_reason }))
       return json(200, { ok: true, data }, requestId)
     }
 
     if (path === '/api/ponto/schedule/sync' && request.method === 'POST') {
-      if (!['HR', 'ADMIN'].includes(actor.role)) return failure(403, 'FORBIDDEN', requestId)
+      if (!canManageWorkforce(actor)) return failure(403, 'FORBIDDEN', requestId)
       const body = await readJson(request); const unitId = cleanText(body?.unitId, 120); const month = monthOnly(body?.month)
       if (!unitId || !month || !requireUnit(actor, unitId)) return failure(400, 'UNIT_AND_MONTH_REQUIRED', requestId)
       const result = await syncSchedule(db, env, actor, unitId, month, requestId)
@@ -637,7 +645,7 @@ export async function handleTimekeeping(request, env) {
 
     const pinConfigure = path.match(/^\/api\/ponto\/pin\/configure(?:\/([^/]+))?$/)
     if (pinConfigure && request.method === 'POST') {
-      if (!['HR', 'ADMIN'].includes(actor.role)) return failure(403, 'FORBIDDEN', requestId)
+      if (!canManageWorkforce(actor)) return failure(403, 'FORBIDDEN', requestId)
       const body = await readJson(request); const employeeId = decodeURIComponent(pinConfigure[1] || cleanText(body?.employeeId, 120)); const employee = await employeeById(db, actor, employeeId)
       if (!employee) return failure(404, 'EMPLOYEE_NOT_FOUND', requestId)
       let credential
@@ -652,7 +660,7 @@ export async function handleTimekeeping(request, env) {
 
     const biometricEnroll = path.match(/^\/api\/ponto\/biometrics\/enroll(?:\/([^/]+))?$/)
     if (biometricEnroll && request.method === 'POST') {
-      if (!['HR', 'ADMIN'].includes(actor.role)) return failure(403, 'FORBIDDEN', requestId)
+      if (!canManageWorkforce(actor)) return failure(403, 'FORBIDDEN', requestId)
       if (!env.PONTO_TEMPLATES_KEY) return failure(503, 'BIOMETRIC_KEY_NOT_CONFIGURED', requestId)
       const body = await readJson(request); const employeeId = decodeURIComponent(biometricEnroll[1] || cleanText(body?.employeeId, 120)); const employee = await employeeById(db, actor, employeeId)
       const descriptors = body?.descriptors || (body?.descriptor ? [body.descriptor] : [])
@@ -667,7 +675,7 @@ export async function handleTimekeeping(request, env) {
     }
 
     if (path === '/api/ponto/biometrics/revoke' && request.method === 'POST') {
-      if (!['HR', 'ADMIN'].includes(actor.role)) return failure(403, 'FORBIDDEN', requestId)
+      if (!canManageWorkforce(actor)) return failure(403, 'FORBIDDEN', requestId)
       const body = await readJson(request); const employee = await employeeById(db, actor, cleanText(body?.employeeId, 120)); const reason = cleanText(body?.reason, 500)
       if (!employee || !reason) return failure(400, 'EMPLOYEE_AND_REASON_REQUIRED', requestId)
       await db.batch([db.prepare('UPDATE timekeeping_biometric_templates SET revoked_at=?, revoked_by=? WHERE employee_id=? AND revoked_at IS NULL').bind(now(), actor.id, employee.id), await audit(db, { actor, action: 'BIOMETRIC_REVOKE', entityType: 'workforce_employee', entityId: employee.id, requestId, reason, after: { revoked: true } })])
@@ -724,26 +732,36 @@ export async function handleTimekeeping(request, env) {
     }
 
     if (path === '/api/ponto/admin/conflicts/login-email' && request.method === 'GET') {
-      if (!['HR', 'ADMIN'].includes(actor.role)) return failure(403, 'FORBIDDEN', requestId)
+      if (!canManageWorkforce(actor)) return failure(403, 'FORBIDDEN', requestId)
       const rows = await db.prepare(`SELECT id, source_id, candidates_json FROM workforce_identity_conflicts WHERE source='PONTO_LOGIN_EMAIL' AND status='OPEN' ORDER BY created_at`).all()
       const data = []
       for (const conflict of rows.results || []) {
         const employees = []
+        let allCandidatesVisible = true
         for (const id of JSON.parse(conflict.candidates_json || '[]')) {
           const employee = await db.prepare('SELECT * FROM workforce_employees WHERE id=?').bind(id).first()
-          if (employee) employees.push({ ...publicEmployee(employee), loginEmail: employee.login_email || undefined, active: employee.status === 'ACTIVE' })
+          if (!employee || !await employeeVisible(db, actor, employee)) {
+            allCandidatesVisible = false
+            continue
+          }
+          employees.push({ ...publicEmployee(employee), loginEmail: employee.login_email || undefined, active: employee.status === 'ACTIVE' })
         }
-        data.push({ id: conflict.id, email: conflict.source_id, count: employees.length, employees })
+        // A Supervisor is never shown part of a cross-unit identity conflict.
+        if (allCandidatesVisible) data.push({ id: conflict.id, email: conflict.source_id, count: employees.length, employees })
       }
       return json(200, { ok: true, data }, requestId)
     }
 
     if (path === '/api/ponto/admin/conflicts/login-email/resolve' && request.method === 'POST') {
-      if (!['HR', 'ADMIN'].includes(actor.role)) return failure(403, 'FORBIDDEN', requestId)
+      if (!canManageWorkforce(actor)) return failure(403, 'FORBIDDEN', requestId)
       const body = await readJson(request); const email = cleanText(body?.email, 240).toLowerCase(); const keepId = cleanText(body?.keepEmployeeId, 120)
       const conflict = await db.prepare(`SELECT * FROM workforce_identity_conflicts WHERE source='PONTO_LOGIN_EMAIL' AND source_id=? AND status='OPEN' LIMIT 1`).bind(email).first()
       const candidates = conflict ? JSON.parse(conflict.candidates_json || '[]') : []
       if (!conflict || !candidates.includes(keepId)) return failure(400, 'INVALID_CONFLICT_RESOLUTION', requestId)
+      for (const candidateId of candidates) {
+        const candidate = await db.prepare('SELECT * FROM workforce_employees WHERE id=?').bind(candidateId).first()
+        if (!candidate || !await employeeVisible(db, actor, candidate)) return failure(403, 'UNIT_FORBIDDEN', requestId)
+      }
       await db.batch([
         db.prepare('UPDATE workforce_employees SET login_email=?, updated_at=? WHERE id=?').bind(email, now(), keepId),
         db.prepare(`UPDATE workforce_identity_conflicts SET status='RESOLVED', resolved_at=?, resolved_by=? WHERE id=?`).bind(now(), actor.id, conflict.id),
@@ -760,4 +778,4 @@ export async function handleTimekeeping(request, env) {
 }
 
 export default { fetch: handleTimekeeping }
-export const __testables = { roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate }
+export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate }
