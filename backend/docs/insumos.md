@@ -27,6 +27,7 @@ Observação: o Worker faz o *mount* em `/insumos/*` e mantém as rotas internas
 - Perfil (nome/email/senha): `PUT /insumos/auth/profile`
 - Cadastro (com token de convite): `POST /insumos/auth/register`
 - Solicitar reset de senha: `POST /insumos/auth/password/request`
+- Validar código de reset: `POST /insumos/auth/password/verify`
 - Resetar senha: `POST /insumos/auth/password/reset`
 
 ### Insumos e operações
@@ -101,8 +102,9 @@ Variável opcional:
 - `INSUMOS_API_TARGET` (prod default `https://api.skincos.com.br`; local default `http://127.0.0.1:8787`)
 - `AUTH_LOCKOUT_MAX_ATTEMPTS` (default `5`)
 - `AUTH_LOCKOUT_WINDOW_MINUTES` (default `15`)
-- `AUTH_RESET_TTL_MINUTES` (default `30`)
-- `AUTH_RESET_RETURN_TOKEN` (default `false`)
+- `AUTH_RESET_COOLDOWN_SECONDS` (default `60`)
+- `AUTH_RESET_CODE_PEPPER` (segredo obrigatório para recuperação; usado para HMAC do código/grant)
+- `AUTH_RESET_SMTP_HOST`, `AUTH_RESET_SMTP_PORT` (default `465`), `AUTH_RESET_SMTP_USERNAME`, `AUTH_RESET_SMTP_PASSWORD`, `AUTH_RESET_EMAIL_FROM` (SMTP de envio; enquanto ausentes, a recuperação falha com `PASSWORD_RECOVERY_UNAVAILABLE` sem criar código)
 
 ### Nota: crm-api (backend/apps/crm-api)
 
@@ -174,6 +176,8 @@ INSUMOS_SEED_TOKEN=seu-token-aqui \
 ### Obrigatórios (produção)
 
 - `SESSION_SECRET` (Worker): assina cookies de sessão/CSRF.
+- `AUTH_RESET_CODE_PEPPER` (Worker): protege hashes do código e do grant de recuperação.
+- `AUTH_RESET_SMTP_HOST`, `AUTH_RESET_SMTP_USERNAME`, `AUTH_RESET_SMTP_PASSWORD`, `AUTH_RESET_EMAIL_FROM` (Worker): entrega o código pelo remetente configurado. Para iCloud Mail, usar `smtp.mail.me.com`, porta `587` (STARTTLS), o endereço iCloud principal como usuário e uma senha específica de app.
 
 ### Opcionais
 

@@ -10,6 +10,8 @@ interface FormState {
     email: string
     password: string
     inviteToken: string
+    code: string
+    passwordConfirmation: string
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -18,9 +20,10 @@ const normalizeInviteToken = (token: string) => token.replace(/\s+/g, '').trim()
 const normalizeDisplayName = (name: string) => name.trim().replace(/\s+/g, ' ')
 
 export function AuthScreen() {
-    const { signIn, signUp, loading } = useAuth()
-    const [mode, setMode] = useState<'signin' | 'signup'>('signin')
-    const [form, setForm] = useState<FormState>({ name: '', email: '', password: '', inviteToken: '' })
+    const { signIn, signUp, requestPasswordReset, verifyPasswordResetCode, resetPassword, loading } = useAuth()
+    const [mode, setMode] = useState<'signin' | 'signup' | 'recovery-request' | 'recovery-code' | 'recovery-password'>('signin')
+    const [form, setForm] = useState<FormState>({ name: '', email: '', password: '', inviteToken: '', code: '', passwordConfirmation: '' })
+    const [resetGrant, setResetGrant] = useState('')
     const [error, setError] = useState<string | null>(null)
     const [isVisible, setIsVisible] = useState(false)
     const [showPassword, setShowPassword] = useState(false)
@@ -34,8 +37,9 @@ export function AuthScreen() {
     useEffect(() => {
         setError(null)
         setShowPassword(false)
+        if (mode === 'recovery-request') setResetGrant('')
         setForm(f => {
-            const next = { ...f, password: '' }
+            const next = { ...f, password: '', passwordConfirmation: '', code: '' }
             if (mode === 'signin') {
                 next.name = ''
                 next.inviteToken = ''
@@ -47,7 +51,7 @@ export function AuthScreen() {
     const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (error) setError(null)
         const { name, value } = e.target
-        const nextValue = name === 'inviteToken' ? normalizeInviteToken(value) : value
+        const nextValue = name === 'inviteToken' ? normalizeInviteToken(value) : name === 'code' ? value.replace(/\D/g, '').slice(0, 6) : value
         setForm(f => ({ ...f, [name]: nextValue }))
     }
 
@@ -65,8 +69,17 @@ export function AuthScreen() {
         try {
             if (mode === 'signin') {
                 await signIn(form.email.trim(), form.password)
-            } else {
+            } else if (mode === 'signup') {
                 await signUp(normalizeDisplayName(form.name), form.email.trim().toLowerCase(), form.password, normalizeInviteToken(form.inviteToken))
+            } else if (mode === 'recovery-request') {
+                await requestPasswordReset(form.email)
+                setMode('recovery-code')
+            } else if (mode === 'recovery-code') {
+                const verified = await verifyPasswordResetCode(form.email, form.code)
+                setResetGrant(verified.resetGrant)
+                setMode('recovery-password')
+            } else {
+                await resetPassword(resetGrant, form.password)
             }
         } catch (err: any) {
             setError(err.message || 'Erro desconhecido')
@@ -74,15 +87,24 @@ export function AuthScreen() {
     }
 
     const identifier = form.email.trim()
+    const recoveryMode = mode.startsWith('recovery')
     const signupEmailValid = mode !== 'signup' || EMAIL_RE.test(identifier)
+    const recoveryEmailValid = !recoveryMode || EMAIL_RE.test(identifier)
     const signupNameValid = mode !== 'signup' || normalizeDisplayName(form.name).length >= 2
     const signupTokenValid = mode !== 'signup' || normalizeInviteToken(form.inviteToken).length >= 16
-    const passwordValid = mode === 'signin' ? !!form.password : form.password.length >= 6
+    const passwordValid = mode === 'signin' ? !!form.password : mode === 'signup' || mode === 'recovery-password' ? form.password.length >= 12 : true
+    const passwordConfirmationValid = mode !== 'recovery-password' || (form.password === form.passwordConfirmation && !!form.passwordConfirmation)
     const canSubmit =
         !loading &&
         (mode === 'signin'
             ? !!identifier && passwordValid
-            : signupNameValid && signupEmailValid && signupTokenValid && passwordValid)
+            : mode === 'signup'
+                ? signupNameValid && signupEmailValid && signupTokenValid && passwordValid
+                : mode === 'recovery-request'
+                    ? recoveryEmailValid
+                    : mode === 'recovery-code'
+                        ? recoveryEmailValid && form.code.length === 6
+                        : !!resetGrant && passwordValid && passwordConfirmationValid)
 
     const formHint =
         mode === 'signin'
@@ -91,6 +113,12 @@ export function AuthScreen() {
                 : !form.password
                     ? 'Informe sua senha.'
                     : 'Pronto para acessar.'
+            : mode === 'recovery-request'
+                ? !recoveryEmailValid ? 'Informe o e-mail cadastrado no CRM.' : 'Enviaremos um código de seis dígitos.'
+                : mode === 'recovery-code'
+                    ? form.code.length !== 6 ? 'Digite o código de seis dígitos enviado por e-mail.' : 'Pronto para validar o código.'
+                    : mode === 'recovery-password'
+                        ? !passwordValid ? 'Use uma senha com pelo menos 12 caracteres.' : !passwordConfirmationValid ? 'As senhas precisam ser iguais.' : 'Pronto para atualizar sua senha.'
             : !signupNameValid
                 ? 'Informe seu nome completo.'
                 : !signupEmailValid
@@ -98,11 +126,11 @@ export function AuthScreen() {
                     : !signupTokenValid
                         ? 'Cole o token de convite completo.'
                         : !passwordValid
-                            ? 'Use uma senha com pelo menos 6 caracteres.'
+                            ? 'Use uma senha com pelo menos 12 caracteres.'
                             : 'Dados prontos para criação da conta.'
 
     const passwordRules = [
-        { label: 'Mínimo de 6 caracteres', ok: form.password.length >= 6 },
+        { label: 'Mínimo de 12 caracteres', ok: form.password.length >= 12 },
         { label: 'Token define perfil e módulos', ok: signupTokenValid },
     ]
 
@@ -161,14 +189,14 @@ export function AuthScreen() {
                         <CardHeader className="gap-4 px-5 pb-5 pt-6 sm:px-6">
                             <div>
                                 <CardTitle className="text-xl font-semibold text-white">
-                                    {mode === 'signin' ? 'Acessar CRM' : 'Criar conta com convite'}
+                                    {mode === 'signin' ? 'Acessar CRM' : mode === 'signup' ? 'Criar conta com convite' : mode === 'recovery-request' ? 'Recuperar senha' : mode === 'recovery-code' ? 'Validar código' : 'Definir nova senha'}
                                 </CardTitle>
                                 <CardDescription className="mt-2 text-sm text-slate-400">
-                                    {mode === 'signin' ? 'Use seu email corporativo e senha cadastrada.' : 'O token define automaticamente perfil, unidades e módulos.'}
+                                    {mode === 'signin' ? 'Use seu email corporativo e senha cadastrada.' : mode === 'signup' ? 'O token define automaticamente perfil, unidades e módulos.' : mode === 'recovery-request' ? 'Informe o e-mail cadastrado para receber um código.' : mode === 'recovery-code' ? 'Digite o código enviado ao seu e-mail.' : 'Escolha uma senha nova e segura.'}
                                 </CardDescription>
                             </div>
 
-                            <div className="grid grid-cols-2 rounded-lg border border-white/10 bg-black/20 p-1" role="tablist" aria-label="Tipo de acesso">
+                            {(mode === 'signin' || mode === 'signup') ? <div className="grid grid-cols-2 rounded-lg border border-white/10 bg-black/20 p-1" role="tablist" aria-label="Tipo de acesso">
                                 <button
                                     type="button"
                                     role="tab"
@@ -195,7 +223,7 @@ export function AuthScreen() {
                                 >
                                     Criar conta
                                 </button>
-                            </div>
+                            </div> : <button type="button" onClick={() => setMode('signin')} className="text-left text-sm font-medium text-cyan-200 hover:text-white">← Voltar para o acesso</button>}
                         </CardHeader>
 
                         <CardContent className="px-5 pb-6 sm:px-6">
@@ -221,9 +249,9 @@ export function AuthScreen() {
                                     </div>
                                 )}
 
-                                <div className="space-y-2">
+                                {mode !== 'recovery-password' && <div className="space-y-2">
                                     <label htmlFor="auth-email" className="block text-sm font-medium text-slate-200">
-                                        {mode === 'signin' ? 'Email ou usuário' : 'Email corporativo'}
+                                        {mode === 'signin' ? 'Email ou usuário' : recoveryMode ? 'E-mail cadastrado' : 'Email corporativo'}
                                     </label>
                                     <div className="relative">
                                         <Mail className={iconChrome} aria-hidden />
@@ -237,17 +265,17 @@ export function AuthScreen() {
                                             autoComplete={mode === 'signin' ? 'username' : 'email'}
                                             spellCheck={false}
                                             required
-                                            aria-invalid={mode === 'signup' && !!identifier && !signupEmailValid}
-                                            aria-describedby={mode === 'signup' ? 'auth-email-help' : undefined}
+                                            aria-invalid={(mode === 'signup' && !!identifier && !signupEmailValid) || (recoveryMode && !!identifier && !recoveryEmailValid)}
+                                            aria-describedby={mode === 'signup' || recoveryMode ? 'auth-email-help' : undefined}
                                             className={fieldChrome}
                                         />
                                     </div>
-                                    {mode === 'signup' && (
-                                        <p id="auth-email-help" className={`text-xs leading-relaxed ${identifier && !signupEmailValid ? 'text-amber-200' : 'text-slate-500'}`}>
-                                            Use o email corporativo que receberá acesso ao CRM.
+                                    {(mode === 'signup' || mode === 'recovery-request') && (
+                                        <p id="auth-email-help" className={`text-xs leading-relaxed ${identifier && !(mode === 'signup' ? signupEmailValid : recoveryEmailValid) ? 'text-amber-200' : 'text-slate-500'}`}>
+                                            {mode === 'signup' ? 'Use o email corporativo que receberá acesso ao CRM.' : 'Se não houver e-mail cadastrado, informe um gestor.'}
                                         </p>
                                     )}
-                                </div>
+                                </div>}
 
                                 {mode === 'signup' && (
                                     <div className="space-y-2">
@@ -274,9 +302,18 @@ export function AuthScreen() {
                                     </div>
                                 )}
 
-                                <div className="space-y-2">
+                                {mode === 'recovery-code' && <div className="space-y-2">
+                                    <label htmlFor="auth-code" className="block text-sm font-medium text-slate-200">Código de recuperação</label>
+                                    <div className="relative">
+                                        <KeyRound className={iconChrome} aria-hidden />
+                                        <Input id="auth-code" name="code" value={form.code} onChange={onChange} inputMode="numeric" autoComplete="one-time-code" placeholder="000000" className={`${fieldChrome} tracking-[0.35em]`} aria-describedby="auth-code-help" />
+                                    </div>
+                                    <p id="auth-code-help" className="text-xs leading-relaxed text-slate-500">O código expira em 10 minutos.</p>
+                                </div>}
+
+                                {(mode === 'signin' || mode === 'signup' || mode === 'recovery-password') && <div className="space-y-2">
                                     <label htmlFor="auth-password" className="block text-sm font-medium text-slate-200">
-                                        Senha {mode === 'signup' && '(mínimo de 6 caracteres)'}
+                                        Senha {(mode === 'signup' || mode === 'recovery-password') && '(mínimo de 12 caracteres)'}
                                     </label>
                                     <div className="relative">
                                         <KeyRound className={iconChrome} aria-hidden />
@@ -291,7 +328,7 @@ export function AuthScreen() {
                                             placeholder="••••••••"
                                             autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
                                             required
-                                            minLength={mode === 'signup' ? 6 : undefined}
+                                            minLength={mode === 'signin' ? undefined : 12}
                                             aria-describedby="auth-password-help"
                                             className={`${fieldChrome} pr-12`}
                                         />
@@ -310,9 +347,9 @@ export function AuthScreen() {
                                                 Caps Lock está ativado.
                                             </p>
                                         )}
-                                        {mode === 'signup' && (
+                                        {(mode === 'signup' || mode === 'recovery-password') && (
                                             <div className="grid gap-1.5 text-xs text-slate-500">
-                                                {passwordRules.map(rule => (
+                                                {(mode === 'signup' ? passwordRules : passwordRules.slice(0, 1)).map(rule => (
                                                     <div key={rule.label} className={`flex items-center gap-2 ${rule.ok ? 'text-emerald-300' : 'text-slate-500'}`}>
                                                         <CircleCheck className="h-3.5 w-3.5" aria-hidden />
                                                         {rule.label}
@@ -321,7 +358,12 @@ export function AuthScreen() {
                                             </div>
                                         )}
                                     </div>
-                                </div>
+                                    {mode === 'recovery-password' && <div className="space-y-2 pt-1">
+                                        <label htmlFor="auth-password-confirmation" className="block text-sm font-medium text-slate-200">Confirmar nova senha</label>
+                                        <Input id="auth-password-confirmation" name="passwordConfirmation" type={showPassword ? 'text' : 'password'} value={form.passwordConfirmation} onChange={onChange} autoComplete="new-password" minLength={12} className={fieldChrome} />
+                                    </div>}
+                                    {mode === 'signin' && <button type="button" onClick={() => setMode('recovery-request')} className="text-sm font-medium text-cyan-200 hover:text-white">Esqueci minha senha</button>}
+                                </div>}
 
                                 {error && (
                                     <div role="alert" className="rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-medium text-red-200">
@@ -340,7 +382,7 @@ export function AuthScreen() {
                                             Processando
                                         </span>
                                     ) : (
-                                        mode === 'signin' ? 'Acessar CRM' : 'Criar conta'
+                                        mode === 'signin' ? 'Acessar CRM' : mode === 'signup' ? 'Criar conta' : mode === 'recovery-request' ? 'Enviar código' : mode === 'recovery-code' ? 'Validar código' : 'Atualizar senha'
                                     )}
                                 </Button>
                                 <p className={`text-center text-xs ${canSubmit ? 'text-emerald-300' : 'text-slate-500'}`} aria-live="polite">

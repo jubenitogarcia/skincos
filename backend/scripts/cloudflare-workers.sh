@@ -84,15 +84,16 @@ deploy_api() {
 }
 
 deploy_insumos() {
-  echo "[workers] Applying D1 migrations (best effort) ..."
+  echo "[workers] Applying D1 migrations ..."
   pushd "$BACKEND_DIR" >/dev/null
   # NOTE: pnpm filtered exec runs with the package's CWD, so use package-local config path.
-  # Best-effort: D1 remote access requires extra API token scopes. Keep deploy unblocked.
+  # Auth and schema changes must fail closed: never deploy a Worker that expects
+  # columns the remote D1 database does not yet have.
   local d1_args=(--config wrangler.toml)
   if [[ -n "${ENV_NAME:-}" ]]; then
     d1_args+=(--env "$ENV_NAME")
   fi
-  run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" "${d1_args[@]}" || true
+  run_pnpm -F @skincos/insumos-worker exec wrangler d1 migrations apply "$INSUMOS_DB_NAME" "${d1_args[@]}"
   popd >/dev/null
   echo "[workers] Deploying skincos-insumos..."
   pushd "$BACKEND_DIR" >/dev/null

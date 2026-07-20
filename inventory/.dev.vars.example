@@ -11,6 +11,14 @@
 # ALLOW_DEV_SEED=true
 # INSUMOS_SEED_TOKEN="dev-seed-token"
 
+# Password recovery (use a private local .dev.vars only; never commit credentials)
+# AUTH_RESET_SMTP_HOST="smtp.mail.me.com"
+# AUTH_RESET_SMTP_PORT="587"
+# AUTH_RESET_SMTP_USERNAME="your-primary-icloud-address@icloud.com"
+# AUTH_RESET_SMTP_PASSWORD=""
+# AUTH_RESET_EMAIL_FROM="contato@skincos.com.br"
+# AUTH_RESET_CODE_PEPPER="generate-a-random-private-value"
+
 # Units (scales beyond 2 units)
 # UNIDADES="novo-hamburgo,barra-shopping-sul"
 # If your sheet uses non-standard headers for unit stock columns, map unit slug -> header key (lowercase).

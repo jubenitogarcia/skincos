@@ -1909,6 +1909,7 @@ export function d1UserRowToUser(row) {
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
     passwordHash: row.password_hash || '',
+    sessionVersion: toInt(row.session_version, 0),
   };
 }
 
@@ -1920,7 +1921,7 @@ export async function d1GetUserByUsername(env, username) {
   const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
   const extra = hasModules ? ', allowed_modules_json' : '';
   const row = await env.DB.prepare(
-    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at${extra}
+    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at, session_version${extra}
      FROM ${usersTable}
      WHERE LOWER(username) = LOWER(?)
      LIMIT 1`
@@ -1938,7 +1939,7 @@ export async function d1GetUserByIdentifier(env, identifier) {
   const hasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
   const extra = hasModules ? ', allowed_modules_json' : '';
   const row = await env.DB.prepare(
-    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at${extra}
+    `SELECT username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at, session_version${extra}
      FROM ${usersTable}
      WHERE LOWER(username) = LOWER(?) OR (email IS NOT NULL AND email != '' AND LOWER(email) = LOWER(?))
      LIMIT 1`
