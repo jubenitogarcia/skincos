@@ -15,6 +15,7 @@ const REQUIRED_HORIZONTAL_PLATFORMS = ['facebook'];
 const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
 const REQUIRED_CTA = 'LEARN_MORE';
 const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v2';
 const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'add_text_overlay',
   'image_touchups',
@@ -258,6 +259,11 @@ return $input.all().map((item) => {
   if (safeString(source.error)) fail('upstream_error', { error: safeString(source.error), upstream: safeString(source.upstream_error) });
 
   assert(safeString(source.run_id), 'run_id_missing', {});
+  assert(
+    safeString(source.workflow_contract_revision) === WORKFLOW_CONTRACT_REVISION,
+    'workflow_contract_version_skew',
+    { expected: WORKFLOW_CONTRACT_REVISION, received: safeString(source.workflow_contract_revision) },
+  );
   assert(safeString(source.token_id), 'token_id_missing', {});
   assert(/^v25\.0$/.test(safeString(source.api_version)), 'api_version_must_be_v25', { value: source.api_version });
   assert(/^\d+$/.test(safeString(source.account_id)), 'account_id_invalid', {});
@@ -376,6 +382,7 @@ return $input.all().map((item) => {
         vertical_crop_key: VERTICAL_CROP_KEY,
         media_variant: safeString(source.media_variant || 'static_flexible'),
         destination_contract_kind: destinationKind,
+        workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
         vertical_placement_rule_count: isVideoOnly ? 0 : 1,
         horizontal_crop_key: HORIZONTAL_CROP_KEY,
         horizontal_placement_rule_count: 1,

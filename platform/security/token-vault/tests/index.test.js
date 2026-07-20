@@ -36,7 +36,7 @@ class FakeStatement {
     }
     const provider = this.values[0];
     return {
-      results: this.db.tokens.filter((row) => row.provider === provider && row.active === 1),
+      results: this.db.tokens.filter((row) => (!provider || row.provider === provider) && row.active === 1),
     };
   }
 
@@ -77,6 +77,7 @@ function env(db) {
     REQUIRE_AUTH: 'true',
     WORKER_AUTH_HEADER_NAME: 'Authorization',
     WORKER_AUTH_SCHEME: 'Bearer',
+    LANDING_PAGE_FETCH: async () => new Response('', { status: 200 }),
   };
 }
 
@@ -171,6 +172,52 @@ test('lists facebook tokens with compatibility fields', async () => {
   assert.equal(body.items[0].fbId, '789');
   assert.equal(body.items[0].fbToken, FACEBOOK_TOKEN);
   assert.equal(body.items[0].token, FACEBOOK_TOKEN);
+});
+
+test('Meta Ads config emits the explicit WhatsApp destination contract without credentials', async () => {
+  const db = new FakeDb();
+  for (const [index, unit] of ['barra_shopping_sul', 'novo_hamburgo'].entries()) {
+    db.tokens.push({
+      id: `tok_meta_${index}`,
+      provider: 'facebook',
+      unit,
+      external_account_id: `account_${index}`,
+      token_type: 'long_lived_access_token',
+      token_ciphertext: 'not-read-by-config',
+      expires_at: null,
+      active: 1,
+      updated_at: '2026-07-20T00:00:00.000Z',
+      metadata_json: JSON.stringify({
+        meta_ads_publish: {
+          row_number: index + 1,
+          destination_group: unit,
+          api_version: 'v25.0',
+          account_id: '123456',
+          campaign_id: '123457',
+          adset_id: '123458',
+          page_id: '123459',
+          instagram_user_id: '123460',
+          destination_type: 'whatsapp',
+          campaign_objective: 'OUTCOME_LEADS',
+          optimization_goal: 'CONVERSATIONS',
+          whatsapp_destination_url: 'https://wa.me/5551999999999',
+          allowed_link_hosts: ['espacofacial.com'],
+          landing_pages_by_creative_group: { DEFAULT: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' },
+        },
+      }),
+    });
+  }
+
+  const response = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/meta-ads-publish/config', { headers: authHeaders() }),
+    env(db),
+  );
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.ready, true);
+  assert.equal(body.destinations[0].destination_type, 'WHATSAPP');
+  assert.equal(body.destinations[0].whatsapp_destination_url, 'https://wa.me/5551999999999');
+  assert.equal(Object.prototype.hasOwnProperty.call(body.destinations[0], 'token_ciphertext'), false);
 });
 
 test('patch updates encrypted token and writes audit without token payload', async () => {

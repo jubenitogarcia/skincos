@@ -1,4 +1,8 @@
 const DEFAULT_AD_STATUS = 'ACTIVE';
+// Build Jobs and the downstream quality gate must advance together. This
+// prevents a stale n8n node definition from quietly accepting a payload whose
+// destination contract was added by a newer workflow revision.
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v2';
 // Website Lead ad sets with dynamic creative reject BOOK_NOW. A replacement
 // must, however, preserve the destination contract of its source ad: message
 // campaigns require WHATSAPP_MESSAGE and the WhatsApp URL.
@@ -134,6 +138,7 @@ function configuredDestinationKind(destinationMeta) {
 
 function resolveDestinationContract(job, destinationMeta) {
   const configuredKind = configuredDestinationKind(destinationMeta);
+  const configuredWhatsAppUrl = toHttps(destinationMeta && destinationMeta.whatsapp_destination_url);
   const scopedContracts = safeArray(job && job.source_ads)
     .filter((ad) => safeString(ad && ad.adset_id) === safeString(destinationMeta && destinationMeta.destination_adset_id))
     .map(contractFromSourceAd)
@@ -157,6 +162,24 @@ function resolveDestinationContract(job, destinationMeta) {
       ok: true,
       kind,
       source: configuredKind ? 'gateway_destination_type' : 'source_adset_creative',
+      configured_kind: configuredKind,
+      observed_source_ad_count: scopedContracts.length,
+    };
+  }
+  if (configuredKind === 'whatsapp') {
+    if (!isWhatsAppHostname(configuredWhatsAppUrl)) {
+      return {
+        ok: false,
+        error: 'destination_whatsapp_url_config_missing_or_invalid',
+        configured_kind: configuredKind,
+        observed_kinds: observedKinds,
+      };
+    }
+    return {
+      ok: true,
+      kind,
+      link_url: configuredWhatsAppUrl,
+      source: scopedContracts.length ? 'gateway_destination_contract_and_source_adset_creative' : 'gateway_destination_contract',
       configured_kind: configuredKind,
       observed_source_ad_count: scopedContracts.length,
     };
@@ -189,6 +212,44 @@ function publicDestinationContract(contract) {
     configured_kind: safeString(contract && contract.configured_kind),
     observed_source_ad_count: Number(contract && contract.observed_source_ad_count || 0),
     link_host: safeHostname(contract && contract.link_url),
+  };
+}
+
+// Keep the contract beside the final Graph payload as well as beside its
+// resolution metadata. n8n may persist only selected Code-node fields after a
+// manual resume; reconstructing from the payload prevents that persistence
+// shape from stripping the fail-closed destination gate.
+function primaryLinkFromCreativePayload(payload) {
+  const story = asObject(asObject(payload).object_story_spec);
+  const videoCta = asObject(asObject(story.video_data).call_to_action);
+  const feed = asObject(asObject(payload).asset_feed_spec);
+  const feedLink = asObject(safeArray(feed.link_urls)[0]).website_url;
+  return toHttps(asObject(videoCta.value).link || feedLink);
+}
+
+function ensureOutputDestinationContract(output) {
+  const row = asObject(output && output.json);
+  if (safeString(row.error)) return;
+  const linkUrl = primaryLinkFromCreativePayload(row.creativePayload);
+  const inferredKind = isWhatsAppHostname(linkUrl) ? 'whatsapp' : 'website';
+  const existing = asObject(row.destination_contract);
+  const kind = safeString(existing.kind).toLowerCase() || inferredKind;
+  if (kind !== 'whatsapp' && kind !== 'website') {
+    throw new Error('Build Jobs gerou contrato de destino invalido para ' + safeString(row.job_key) + '.');
+  }
+  if (kind === 'whatsapp' && !isWhatsAppHostname(linkUrl)) {
+    throw new Error('Build Jobs perdeu URL WhatsApp no payload final para ' + safeString(row.job_key) + '.');
+  }
+  if (kind === 'website' && (!linkUrl || isWhatsAppHostname(linkUrl))) {
+    throw new Error('Build Jobs perdeu landing page web no payload final para ' + safeString(row.job_key) + '.');
+  }
+  row.workflow_contract_revision = WORKFLOW_CONTRACT_REVISION;
+  row.destination_contract = {
+    kind,
+    source: safeString(existing.source) || 'final_graph_payload',
+    configured_kind: safeString(existing.configured_kind),
+    observed_source_ad_count: Number(existing.observed_source_ad_count || 0),
+    link_host: safeHostname(linkUrl),
   };
 }
 
@@ -1238,8 +1299,21 @@ function persistedResumeJobs() {
   return [...unique.values()];
 }
 
-const resumeJobs = persistedResumeJobs();
-if (resumeJobs.length) {
+const persistedJobs = persistedResumeJobs();
+const resumeJobs = persistedJobs.filter((job) => {
+  const row = asObject(job);
+  const contract = asObject(row.destination_contract);
+  const kind = safeString(contract.kind).toLowerCase();
+  const linkUrl = primaryLinkFromCreativePayload(row.creativePayload);
+  return safeString(row.workflow_contract_revision) === WORKFLOW_CONTRACT_REVISION &&
+    (kind === 'website' || kind === 'whatsapp') &&
+    Boolean(linkUrl) &&
+    (kind !== 'whatsapp' || isWhatsAppHostname(linkUrl));
+});
+if (persistedJobs.length && !resumeJobs.length && !assembledInputItems.length) {
+  throw new Error('Build Jobs recusou resume_jobs de revisao de contrato anterior sem entradas suficientes para reconstruir com seguranca.');
+}
+if (resumeJobs.length === persistedJobs.length && resumeJobs.length) {
   return resumeJobs.map((job) => ({ json: job }));
 }
 
@@ -1323,6 +1397,7 @@ for (const entry of jobEntries) {
     campaign_objective: safeString(destination.campaign_objective),
     optimization_goal: safeString(destination.optimization_goal),
     destination_type: safeString(destination.destination_type).toUpperCase(),
+    whatsapp_destination_url: toHttps(destination.whatsapp_destination_url),
     config_revision: safeString(destination.config_revision || job.config_revision),
     destination_id_source: safeString(destination.destination_id_source || 'build_payload'),
     suffix_hint: safeString(destination.suffix_hint || job.suffix_hint),
@@ -1988,6 +2063,7 @@ for (const entry of jobEntries) {
         token_id: resolvedTokenId,
         run_id: safeString(job.run_id),
         batch_fingerprint: safeString(job.batch_fingerprint),
+        workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
         config_revision: safeString(destinationMeta.config_revision || job.config_revision),
         allowed_link_hosts: deepClone(allowedLinkHosts),
         landing_page_url: primaryLinkUrl,
@@ -2136,6 +2212,8 @@ if (!outputs.length) {
     aiByJobKeys: [...aiByJob.keys()],
   })}`);
 }
+
+for (const output of outputs) ensureOutputDestinationContract(output);
 
 const outputErrors = outputs.filter((item) => safeString(item && item.json && item.json.error));
 if (outputErrors.length) {

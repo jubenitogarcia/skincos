@@ -67,6 +67,7 @@ const rows = destinations.map((entry) => {
       campaign_objective: safeString(item.campaign_objective),
       optimization_goal: safeString(item.optimization_goal),
       destination_type: safeString(item.destination_type).toUpperCase(),
+      whatsapp_destination_url: safeString(item.whatsapp_destination_url),
       config_revision: safeString(root.config_revision),
       destination_id_source: 'meta_publish_gateway',
       secrets_exposed: false,

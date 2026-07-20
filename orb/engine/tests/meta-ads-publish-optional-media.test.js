@@ -291,6 +291,7 @@ test('Token Vault destination contract survives normalization without exposing c
     page_id: '400',
     instagram_user_id: '500',
     destination_type: destinationType,
+    whatsapp_destination_url: destinationType === 'whatsapp' ? 'https://wa.me/5551999999999' : '',
     campaign_objective: 'OUTCOME_LEADS',
     optimization_goal: 'CONVERSATIONS',
     landing_pages_by_creative_group: { DEFAULT: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' },
@@ -306,7 +307,17 @@ test('Token Vault destination contract survives normalization without exposing c
   assert.deepEqual(output.map((entry) => entry.json.destination_type), ['WHATSAPP', 'WEBSITE']);
   assert.equal(output[0].json.campaign_objective, 'OUTCOME_LEADS');
   assert.equal(output[0].json.optimization_goal, 'CONVERSATIONS');
+  assert.equal(output[0].json.whatsapp_destination_url, 'https://wa.me/5551999999999');
   assert.equal(Object.prototype.hasOwnProperty.call(output[0].json, 'access_token'), false);
+});
+
+test('creative validator source requires the destination-contract workflow revision', () => {
+  const source = fs.readFileSync(path.join(sourceRoot, 'validate-meta-creative-payload.js'), 'utf8');
+  const buildJobs = fs.readFileSync(path.join(sourceRoot, 'build-jobs.js'), 'utf8');
+  assert.match(source, /workflow_contract_version_skew/);
+  assert.match(source, /meta_destination_contract_v2/);
+  assert.match(buildJobs, /workflow_contract_revision: WORKFLOW_CONTRACT_REVISION/);
+  assert.match(buildJobs, /destination_whatsapp_url_config_missing_or_invalid/);
 });
 
 test('graph contract makes optional branches explicit and retries Build Jobs', () => {
