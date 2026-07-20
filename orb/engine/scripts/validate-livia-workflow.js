@@ -407,7 +407,9 @@ function validateContracts() {
   assert(visualAssetReader.includes("kind === 'video'"), 'Visual asset reader must use the generated thumbnail for videos');
   assert(visualAssetReader.includes('thumbPath'), 'Visual asset reader must require a video thumbnail path');
   assert(visualAssetReader.includes('mainMediaFilePath'), 'Visual asset reader must use the original image asset for images');
-  assert(visualInputGuard.includes('$input.item?.binary'), 'Visual-input guard must use the current item binary directly');
+  assert(getNode('Assert Livia Visual Input')?.parameters?.mode === 'runOnceForAllItems', 'Visual-input guard must batch the current input items into one task-runner request');
+  assert(visualInputGuard.includes('$input.all()'), 'Visual-input guard must read only the received input collection');
+  assert(visualInputGuard.includes('item?.binary'), 'Visual-input guard must use each current input item binary directly');
   assert(!visualInputGuard.includes('$('), 'Visual-input guard must not use named-node pairing lookups');
   assert(visualInputGuard.includes("startsWith('image/')"), 'Visual-input guard must require an image binary or video thumbnail');
   assert(visualInputGuard.includes('supportedMedia'), 'Visual-input guard must reject unsupported media types');
