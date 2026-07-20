@@ -88,10 +88,10 @@ export async function sendPasswordResetEmail({ env, to, code, expiresAt }) {
     if (port !== 465) {
       await command(writer, reader, state, 'STARTTLS', [220]);
       if (typeof socket.startTls !== 'function') throw new Error('SMTP_STARTTLS_UNAVAILABLE');
-      const secured = await Promise.resolve(socket.startTls());
-      if (!secured?.writable || !secured?.readable) throw new Error('SMTP_STARTTLS_FAILED');
       writer.releaseLock();
       reader.releaseLock();
+      const secured = await Promise.resolve(socket.startTls());
+      if (!secured?.writable || !secured?.readable) throw new Error('SMTP_STARTTLS_FAILED');
       socket = secured;
       writer = secured.writable.getWriter();
       reader = secured.readable.getReader();
