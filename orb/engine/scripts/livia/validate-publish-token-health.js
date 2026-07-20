@@ -86,11 +86,39 @@ async function checkThroughGateway(item) {
   }
 }
 
+// The social-publish gateway is the production transport and owns the token
+// material. A direct Graph probe is useful when it succeeds, but a transport
+// failure in the n8n worker (DNS, egress or a transient TLS failure) must not
+// turn into a false credential failure while the same gateway can validate the
+// actual publishing path. This is an explicit second validation, not a pass:
+// the item is healthy only when either direct Graph or the gateway returns OK.
+async function checkWithGatewayFallback(item) {
+  const direct = await check(item);
+  if (direct?.ok) return { ...direct, validationPath: 'direct_graph' };
+
+  const gateway = await checkThroughGateway(item);
+  if (gateway?.ok) {
+    return {
+      ...gateway,
+      validationPath: 'token_vault_gateway',
+      directFailure: direct ? { status: direct.status, code: direct.error?.code ?? null } : null,
+    };
+  }
+  if (gateway) {
+    return {
+      ...gateway,
+      validationPath: 'token_vault_gateway',
+      directFailure: direct ? { status: direct.status, code: direct.error?.code ?? null } : null,
+    };
+  }
+  return direct;
+}
+
 async function main() {
   const raw = argument('--payload');
   if (!raw) throw new Error('validate-publish-token-health requires --payload JSON.');
   const items = activeItems(JSON.parse(raw)).filter((item) => item && item.active !== false);
-  const checks = (await Promise.all(items.map(async (item) => (await check(item)) || (await checkThroughGateway(item))))).filter(Boolean);
+  const checks = (await Promise.all(items.map(checkWithGatewayFallback))).filter(Boolean);
   const expected = ['instagram', 'threads', 'facebook'];
   const missing = expected.filter((provider) => !checks.some((entry) => entry.provider === provider));
   const failures = checks.filter((entry) => !entry.ok);
@@ -101,7 +129,11 @@ async function main() {
   process.stdout.write(`${JSON.stringify({ ok: true, checkedAt: new Date().toISOString(), checks })}\n`);
 }
 
-main().catch((error) => {
-  console.error(error.stack || String(error));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.stack || String(error));
+    process.exit(1);
+  });
+}
+
+module.exports = { checkWithGatewayFallback };
