@@ -613,6 +613,9 @@ let saveVisualThemeTimer = null
 const ROLE_ALIASES = new Map([
     ['ADMIN', 'GESTOR'],
     ['OPERADOR', 'INJETOR'],
+    ['RH', 'SUPERVISOR'],
+    ['AUDITOR', 'SUPERVISOR'],
+    ['EMPLOYEE', 'CONSULTOR'],
 ])
 
 const normalizeRole = (value) => {

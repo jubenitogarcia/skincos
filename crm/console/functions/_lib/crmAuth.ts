@@ -20,6 +20,9 @@ function normalizeRole(value: unknown): string {
   if (!raw) return ''
   if (raw === 'ADMIN') return 'GESTOR'
   if (raw === 'OPERADOR') return 'INJETOR'
+  // Preserve existing users/invites while exposing the canonical hierarchy.
+  if (raw === 'RH' || raw === 'AUDITOR') return 'SUPERVISOR'
+  if (raw === 'EMPLOYEE') return 'CONSULTOR'
   return raw
 }
 
