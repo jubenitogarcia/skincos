@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/car
 import { Button } from '@/button'
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
-import { financeApi, type FinanceBootstrap } from '@/financeApi'
+import { financeApi, minorUnitsFromDisplay, type FinanceBootstrap } from '@/financeApi'
 
 const today = new Date().toISOString().slice(0, 10)
 const monthStart = `${today.slice(0, 8)}01`
@@ -46,7 +46,7 @@ export function FinanceModule() {
   const runAction = async (action: () => Promise<void>) => { setActionError(''); try { await action() } catch (e: any) { setActionError(e?.message || 'Não foi possível concluir a operação.') } }
   const createAccount = () => runAction(async () => { if (!accountName.trim()) return; await financeApi.create('/accounts', scopeId, { name: accountName, type: 'bank', currency: 'BRL' }); setAccountName(''); refresh() })
   const importCsv = () => runAction(async () => { if (!csvFile) return; const csv = await csvFile.text(); const result = await financeApi.stageCsv(scopeId, csvFile.name, csv); setImportBatchId(result.batchId); setCsvFile(null) })
-  const createMovement = () => runAction(async () => { const amountMinor = Math.round(Number(movement.amount.replace(',', '.')) * 100); if (!movement.accountId || !movement.description.trim() || !amountMinor || (movement.type === 'transfer' && !movement.destinationAccountId) || (movement.type !== 'transfer' && !movement.categoryId)) { setActionError('Preencha conta, categoria compatível e valor.'); return } await financeApi.create('/movements', scopeId, { ...movement, amountMinor, competenceDate: today, paidDate: today, currency: 'BRL' }); setMovement({ type: 'income', accountId: '', destinationAccountId: '', categoryId: '', description: '', amount: '' }); refresh() })
+  const createMovement = () => runAction(async () => { const amountMinor = minorUnitsFromDisplay(movement.amount); if (!movement.accountId || !movement.description.trim() || !amountMinor || (movement.type === 'transfer' && !movement.destinationAccountId) || (movement.type !== 'transfer' && !movement.categoryId)) { setActionError('Preencha conta, categoria compatível e valor.'); return } await financeApi.create('/movements', scopeId, { ...movement, amountMinor, competenceDate: today, paidDate: today, currency: 'BRL' }); setMovement({ type: 'income', accountId: '', destinationAccountId: '', categoryId: '', description: '', amount: '' }); refresh() })
   const createNamed = (path: '/categories' | '/payees', name: string, done: () => void) => runAction(async () => { if (!name.trim()) return; await financeApi.create(path, scopeId, path === '/categories' ? { name, direction: categoryDirection } : { name }); done(); refresh() })
   return <div className="space-y-6">
     {actionError ? <Card className="border-destructive"><CardContent className="p-3 text-sm text-destructive">{actionError}</CardContent></Card> : null}

@@ -4,16 +4,27 @@ import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migration = (await readFile(new URL('../migrations/0001_finance_foundation.sql', import.meta.url), 'utf8')).replace(/^--.*$/gm, '');
+const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';
 const scopePersonal = 'finance-scope-personal';
 
+function sqlStatements(migration) {
+  const statements = []; let buffer = ''; let trigger = false;
+  for (const line of migration.split(/\r?\n/)) {
+    const trimmed = line.trim(); if (!trimmed) continue; buffer += `${line}\n`;
+    if (/^CREATE\s+TRIGGER\b/i.test(trimmed)) trigger = true;
+    if ((trigger && (/^END;\s*$/i.test(trimmed) || (/\bBEGIN\b/i.test(trimmed) && /\bEND;\s*$/i.test(trimmed)))) || (!trigger && /;\s*$/.test(trimmed))) { statements.push(buffer.trim()); buffer = ''; trigger = false; }
+  }
+  if (buffer.trim()) throw new Error(`Unterminated migration statement: ${buffer}`);
+  return statements;
+}
+
 async function fixture({ enabled = true, actor = { username: 'pilot', allowedModules: ['finance'] } } = {}) {
   const mf = new Miniflare({ modules: true, script: 'export default { fetch() { return new Response("ok") } }', compatibilityDate: '2024-11-20', d1Databases: ['DB'] });
   const DB = await mf.getD1Database('DB');
-  for (const statement of migration.split(/;\s*\n/).map((value) => value.trim()).filter(Boolean)) await DB.prepare(statement).run();
+  for (const migration of migrations) for (const statement of sqlStatements(migration)) { try { await DB.prepare(statement).run(); } catch (error) { throw new Error(`${error.message}\nSQL:\n${statement}`); } }
   await DB.prepare(`UPDATE finance_settings SET value=? WHERE key='module_enabled'`).bind(enabled ? 'true' : 'false').run();
   return { mf, DB, env: { DB }, actor };
 }
@@ -33,6 +44,11 @@ async function request(env, actor, path, { method = 'GET', body, key = 'key' } =
 async function account(env, actor, scopeId, name, key) {
   const result = await request(env, actor, `/accounts?scopeId=${scopeId}`, { method: 'POST', key, body: { name, type: 'bank', currency: 'BRL' } });
   assert.equal(result.response.status, 201, JSON.stringify(result.body)); return result.body.account;
+}
+
+async function category(env, actor, scopeId, name, direction, key, parentId) {
+  const result = await request(env, actor, `/categories?scopeId=${scopeId}`, { method: 'POST', key, body: { name, direction, parentId } });
+  assert.equal(result.response.status, 201, JSON.stringify(result.body)); return result.body.category;
 }
 
 test('D1 local: flag, module and grants deny before domain data is exposed', async (t) => {
@@ -73,7 +89,7 @@ test('D1 local: transfer posts a balanced journal and an invalid income cannot b
   const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
   const source = await account(ctx.env, ctx.actor, scopeNh, 'Caixa', 'source'); const destination = await account(ctx.env, ctx.actor, scopeNh, 'Banco', 'destination');
   const transfer = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'transfer', body: { type: 'transfer', accountId: source.id, destinationAccountId: destination.id, description: 'Aporte', amountMinor: 2500, currency: 'BRL', competenceDate: '2026-07-21' } });
-  assert.equal(transfer.response.status, 201);
+  assert.equal(transfer.response.status, 201, JSON.stringify(transfer.body));
   const journal = await ctx.DB.prepare(`SELECT direction, amount_minor FROM finance_journal_lines`).all();
   assert.equal(journal.results.filter((line) => line.direction === 'debit').reduce((sum, line) => sum + line.amount_minor, 0), 2500);
   assert.equal(journal.results.filter((line) => line.direction === 'credit').reduce((sum, line) => sum + line.amount_minor, 0), 2500);
@@ -93,4 +109,48 @@ test('D1 local: audit is immutable and CSV reimports are explicitly deduplicated
   assert.equal(secondFileSameRow.response.status, 201);
   const duplicates = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_import_duplicate_candidates`).first();
   assert.equal(Number(duplicates.count), 1);
+});
+
+test('D1 local: splits, base currency, installments and operational lifecycle remain traceable', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Conta EUR', 'bank-eur');
+  const service = await category(ctx.env, ctx.actor, scopeNh, 'Serviços', 'income', 'category-service');
+  const retail = await category(ctx.env, ctx.actor, scopeNh, 'Varejo', 'income', 'category-retail');
+  const created = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'split-pending', body: {
+    type: 'income', accountId: bank.id, description: 'Receita parcelada', amountMinor: 10000, currency: 'EUR', baseCurrency: 'BRL', baseAmountMinor: 62000, exchangeRatePpm: 6200000,
+    competenceDate: '2026-07-21', operationalStatus: 'pending', splits: [
+      { categoryId: service.id, amountMinor: 4000, baseAmountMinor: 24800 }, { categoryId: retail.id, amountMinor: 6000, baseAmountMinor: 37200 },
+    ], installments: [{ dueDate: '2026-08-01', amountMinor: 5000 }, { dueDate: '2026-09-01', amountMinor: 5000 }],
+  } });
+  assert.equal(created.response.status, 201, JSON.stringify(created.body));
+  const movementId = created.body.movement.id;
+  const detail = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`);
+  assert.equal(detail.response.status, 200); assert.equal(detail.body.splits.length, 2); assert.equal(detail.body.installments.length, 2); assert.equal(detail.body.movement.base_currency, 'BRL');
+  assert.equal((await request(ctx.env, ctx.actor, `/movements/${movementId}/confirm?scopeId=${scopeNh}`, { method: 'POST', key: 'confirm-pending', body: {} })).response.status, 201);
+  assert.equal((await request(ctx.env, ctx.actor, `/installments/${detail.body.installments[0].id}/pay?scopeId=${scopeNh}`, { method: 'POST', key: 'pay-installment', body: { paidDate: '2026-08-01' } })).response.status, 201);
+  assert.equal((await request(ctx.env, ctx.actor, `/movements/${movementId}/reconcile?scopeId=${scopeNh}`, { method: 'POST', key: 'reconcile', body: {} })).response.status, 201);
+  const reversal = await request(ctx.env, ctx.actor, `/movements/${movementId}/reverse?scopeId=${scopeNh}`, { method: 'POST', key: 'reverse', body: { reason: 'Correção documentada' } });
+  assert.equal(reversal.response.status, 201, JSON.stringify(reversal.body));
+  const reversed = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`);
+  assert.equal(reversed.body.movement.operational_status, 'cancelled');
+  const reversalLines = await ctx.DB.prepare(`SELECT direction,amount_minor FROM finance_reversal_lines`).all();
+  assert.equal(reversalLines.results.reduce((sum, line) => sum + line.amount_minor, 0), 20_000);
+  await assert.rejects(ctx.DB.exec(`UPDATE finance_movement_revisions SET kind='tampered'`), /append-only/);
+});
+
+test('D1 local: scope and monetary safeguards reject cross-scope, unbalanced and reused cross-scope operations', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
+  const nhAccount = await account(ctx.env, ctx.actor, scopeNh, 'NH Banco', 'nh-account'); const bssAccount = await account(ctx.env, ctx.actor, scopeBss, 'BSS Banco', 'bss-account');
+  const nhCategory = await category(ctx.env, ctx.actor, scopeNh, 'NH Receita', 'income', 'nh-category');
+  const cross = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'cross-account', body: { type: 'transfer', accountId: nhAccount.id, destinationAccountId: bssAccount.id, description: 'Proibido', amountMinor: 1, currency: 'BRL', competenceDate: '2026-07-21' } });
+  assert.equal(cross.response.status, 400);
+  const fractional = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'fractional', body: { type: 'income', accountId: nhAccount.id, categoryId: nhCategory.id, description: 'Proibido', amountMinor: 1.5, currency: 'BRL', competenceDate: '2026-07-21' } });
+  assert.equal(fractional.response.status, 400);
+  const badSplit = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'bad-split', body: { type: 'income', accountId: nhAccount.id, description: 'Split inválido', amountMinor: 100, currency: 'BRL', competenceDate: '2026-07-21', splits: [{ categoryId: nhCategory.id, amountMinor: 99 }] } });
+  assert.equal(badSplit.response.status, 400);
+  const first = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`, { method: 'POST', key: 'cross-scope-key', body: { name: 'Chave NH', type: 'cash', currency: 'BRL' } });
+  const reused = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeBss}`, { method: 'POST', key: 'cross-scope-key', body: { name: 'Chave NH', type: 'cash', currency: 'BRL' } });
+  assert.equal(first.response.status, 201); assert.equal(reused.response.status, 409);
+  const filtered = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&accountId=${bssAccount.id}`);
+  assert.equal(filtered.response.status, 200); assert.equal(filtered.body.movements.length, 0);
 });
