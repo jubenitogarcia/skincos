@@ -33,60 +33,20 @@ export type HeroMediaScopeBuckets = {
     globalItems: HeroMediaItem[];
 };
 
-const HERO_ANIVERSARIO_7_ANOS_2026_CAMPAIGN_ITEMS = [
-    {
-        id: "website-01-aniversario-cruzeiro",
-        desktopFile: "website-01.png",
-        alt: "Campanha de 7 anos da Espaço Facial com prêmio de viagem internacional",
-    },
-    {
-        id: "website-02-compras-cruzeiro",
-        desktopFile: "website-02.png",
-        alt: "A cada R$ 1.500 em compras, concorra a um cruzeiro internacional com acompanhante",
-    },
-    {
-        id: "website-03-botox-bioestimulador",
-        desktopFile: "website-03.png",
-        alt: "Botox 35 UI a partir de R$ 399 e bioestimulador de colágeno a partir de R$ 799",
-    },
-] as const;
-
-const HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_CAMPAIGN_ITEMS = [
-    {
-        id: "mobile-01-botox-modelo",
-        file: "mobile-01.png",
-        width: 941,
-        height: 1672,
-        alt: "Campanha mobile de 7 anos com oferta de Botox 35 UI por R$ 399",
-    },
-    {
-        id: "mobile-02-bioestimulador-modelo",
-        file: "mobile-02.png",
-        width: 1080,
-        height: 1920,
-        alt: "Campanha mobile de 7 anos com bioestimulador de colágeno a partir de R$ 799",
-    },
-    {
-        id: "mobile-03-botox-antes-depois",
-        file: "mobile-03.png",
-        width: 1080,
-        height: 1920,
-        alt: "Campanha mobile de Botox com resultado antes e depois",
-    },
-    {
-        id: "mobile-04-botox-antes-depois-masculino",
-        file: "mobile-04.png",
-        width: 1080,
-        height: 1920,
-        alt: "Campanha mobile de Botox com resultado antes e depois masculino",
-    },
-    {
-        id: "mobile-05-bioestimulador-antes-depois",
-        file: "mobile-05.png",
-        width: 1080,
-        height: 1920,
-        alt: "Campanha mobile de bioestimulador de colágeno com resultado antes e depois",
-    },
+const HERO_JULHO_2026_CAMPAIGN_ITEMS = [
+    { id: "banner-01", desktopWidth: 1733, desktopHeight: 907 },
+    { id: "banner-02", desktopWidth: 1733, desktopHeight: 907 },
+    { id: "banner-03", desktopWidth: 1731, desktopHeight: 909 },
+    { id: "banner-04", desktopWidth: 1732, desktopHeight: 908 },
+    { id: "banner-05", desktopWidth: 1733, desktopHeight: 907 },
+    { id: "banner-06", desktopWidth: 1731, desktopHeight: 908 },
+    { id: "banner-07", desktopWidth: 1733, desktopHeight: 907 },
+    { id: "banner-08", desktopWidth: 1733, desktopHeight: 907 },
+    { id: "banner-09", desktopWidth: 1733, desktopHeight: 907 },
+    { id: "banner-10", desktopWidth: 1733, desktopHeight: 907 },
+    { id: "banner-11", desktopWidth: 1733, desktopHeight: 907 },
+    { id: "banner-12", desktopWidth: 1733, desktopHeight: 907 },
+    { id: "banner-13", desktopWidth: 1734, desktopHeight: 907 },
 ] as const;
 
 function formatHeroAspectRatio(width: number | undefined, height: number | undefined): string | undefined {
@@ -102,17 +62,33 @@ export function getHeroMediaAspectRatio(item: HeroMediaItem | null | undefined):
     return formatHeroAspectRatio(item.width, item.height) ?? null;
 }
 
-function heroAniversario7Anos2026DesktopItem(
-    item: (typeof HERO_ANIVERSARIO_7_ANOS_2026_CAMPAIGN_ITEMS)[number],
+function heroJulho2026DesktopItem(
+    item: (typeof HERO_JULHO_2026_CAMPAIGN_ITEMS)[number],
     index: number,
 ): HeroMediaItem {
-    const width = 1280;
-    const height = 504;
     return {
-        id: `aniversario-7-anos-2026-desktop-${item.id}`,
+        id: `julho-2026-desktop-${item.id}`,
         type: "image",
-        src: `/images/hero/campaigns/aniversario-7-anos-2026/desktop/${item.desktopFile}`,
-        alt: item.alt,
+        src: `/images/hero/campaigns/julho-2026/desktop/${item.id}.png`,
+        alt: `Banner promocional da Espaço Facial ${index + 1}`,
+        width: item.desktopWidth,
+        height: item.desktopHeight,
+        aspectRatio: formatHeroAspectRatio(item.desktopWidth, item.desktopHeight),
+        order: index + 1,
+    };
+}
+
+function heroJulho2026MobileItem(
+    item: (typeof HERO_JULHO_2026_CAMPAIGN_ITEMS)[number],
+    index: number,
+): HeroMediaItem {
+    const width = 1080;
+    const height = 1920;
+    return {
+        id: `julho-2026-mobile-${item.id}`,
+        type: "image",
+        src: `/images/hero/campaigns/julho-2026/mobile/${item.id}.png`,
+        alt: `Banner promocional da Espaço Facial ${index + 1}`,
         width,
         height,
         aspectRatio: formatHeroAspectRatio(width, height),
@@ -120,32 +96,15 @@ function heroAniversario7Anos2026DesktopItem(
     };
 }
 
-function heroAniversario7Anos2026MobileItem(
-    item: (typeof HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_CAMPAIGN_ITEMS)[number],
-    index: number,
-): HeroMediaItem {
-    return {
-        id: `aniversario-7-anos-2026-mobile-${item.id}`,
-        type: "image",
-        src: `/images/hero/campaigns/aniversario-7-anos-2026/mobile/${item.file}`,
-        alt: item.alt,
-        width: item.width,
-        height: item.height,
-        aspectRatio: formatHeroAspectRatio(item.width, item.height),
-        order: index + 1,
-    };
-}
-
-export const HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS: HeroMediaItem[] = HERO_ANIVERSARIO_7_ANOS_2026_CAMPAIGN_ITEMS.map(
-    heroAniversario7Anos2026DesktopItem,
+export const HERO_JULHO_2026_DESKTOP_ITEMS: HeroMediaItem[] = HERO_JULHO_2026_CAMPAIGN_ITEMS.map(
+    heroJulho2026DesktopItem,
 );
 
-export const HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS: HeroMediaItem[] =
-    HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_CAMPAIGN_ITEMS.map(heroAniversario7Anos2026MobileItem);
+export const HERO_JULHO_2026_MOBILE_ITEMS: HeroMediaItem[] = HERO_JULHO_2026_CAMPAIGN_ITEMS.map(heroJulho2026MobileItem);
 
-export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS;
+export const LOCAL_HERO_ITEMS_DESKTOP: HeroMediaItem[] = HERO_JULHO_2026_DESKTOP_ITEMS;
 
-export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS;
+export const LOCAL_HERO_ITEMS_MOBILE: HeroMediaItem[] = HERO_JULHO_2026_MOBILE_ITEMS;
 
 export const LOCAL_HERO_ITEMS_BY_UNIT: Partial<Record<string, HeroMediaUnitCampaign>> = {};
 
