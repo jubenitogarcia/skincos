@@ -1,6 +1,7 @@
 'use strict';
 
 const CODE_NODE_TYPE = 'n8n-nodes-base.code';
+const VIDEO_STAGING_ROOT = '/tmp/meta-ads-publish';
 
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -168,11 +169,30 @@ function setMainConnections(workflow, source, outputs, changes) {
   }
 }
 
+function ensureVideoStagingPath(workflow, changes) {
+  const classifier = nodeByName(workflow, 'Classify Media');
+  if (!classifier || classifier.type !== CODE_NODE_TYPE) {
+    throw new Error('Classify Media obrigatorio ausente ou nao e Code node.');
+  }
+  const source = String(classifier.parameters?.jsCode || '');
+  const legacy = '/var/lib/skincos-runtime/orb/tmp/meta-ads-publish/${executionId}/${sourceId}';
+  const target = VIDEO_STAGING_ROOT + '/${executionId}/${sourceId}';
+  const next = source.replace(legacy, target);
+  if (!next.includes(target)) {
+    throw new Error('Classify Media nao contem o contrato de staging de video esperado.');
+  }
+  if (next !== source) {
+    classifier.parameters.jsCode = next;
+    changes.push('video_staging_root:Classify Media');
+  }
+}
+
 function applyGraphContract(workflow) {
   const changes = [];
   workflow.nodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
   workflow.connections = workflow.connections && typeof workflow.connections === 'object' ? workflow.connections : {};
   for (const template of MANAGED_NODES) ensureNode(workflow, template, changes);
+  ensureVideoStagingPath(workflow, changes);
 
   const mergeUploads = nodeByName(workflow, 'Merge Media Upload Results');
   const mergeAi = nodeByName(workflow, 'Merge (2)');
@@ -254,6 +274,11 @@ function validateGraphContract(workflow) {
   if (buildJobs?.retryOnFail !== true || Number(buildJobs?.maxTries) !== 3) failures.push('build_jobs_retry_missing');
   const runnerHealth = nodeByName(workflow, 'Check Task Runner Health');
   if (runnerHealth?.parameters?.url !== 'http://127.0.0.1:5681/health') failures.push('runner_health_endpoint_invalid');
+  const classifier = nodeByName(workflow, 'Classify Media');
+  const classifierCode = String(classifier?.parameters?.jsCode || '');
+  if (!classifierCode.includes(VIDEO_STAGING_ROOT + '/${executionId}/${sourceId}')) {
+    failures.push('video_staging_path_not_runner_allowed');
+  }
   return failures;
 }
 

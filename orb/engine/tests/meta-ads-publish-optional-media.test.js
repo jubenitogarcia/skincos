@@ -334,6 +334,7 @@ test('graph contract makes optional branches explicit and retries Build Jobs', (
   const baseNode = (name, type = 'n8n-nodes-base.noOp') => ({ name, id: name, type, typeVersion: 1, position: [0, 0], parameters: {} });
   const workflow = {
     nodes: [
+      { ...baseNode('Classify Media', 'n8n-nodes-base.code'), parameters: { jsCode: 'const baseDir = `/var/lib/skincos-runtime/orb/tmp/meta-ads-publish/${executionId}/${sourceId}`;' } },
       baseNode('Build Payload'), baseNode('Prepare Publish Run'), baseNode('Acquire Publish Run'),
       baseNode('Restore Publish Groups'), baseNode('Resume Drive Only?'), baseNode('Build Drive Finalization'),
       baseNode('Prepare Gateway Uploads'), baseNode('Normalize Gateway Upload'), baseNode('Prepare Video Upload Starts'),
@@ -350,6 +351,7 @@ test('graph contract makes optional branches explicit and retries Build Jobs', (
   };
   assert.ok(applyGraphContract(workflow).length > 0);
   assert.deepEqual(validateGraphContract(workflow), []);
+  assert.match(workflow.nodes.find((node) => node.name === 'Classify Media').parameters.jsCode, /\/tmp\/meta-ads-publish/);
   assert.deepEqual(workflow.nodes.find((node) => node.name === 'Merge (2)').parameters, { mode: 'append', numberInputs: 2 });
   assert.equal(workflow.nodes.find((node) => node.name === 'Build Jobs').maxTries, 3);
 });
