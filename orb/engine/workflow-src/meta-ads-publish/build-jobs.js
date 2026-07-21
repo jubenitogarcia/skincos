@@ -8,10 +8,11 @@ const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v2';
 // campaigns require WHATSAPP_MESSAGE and the WhatsApp URL.
 const DEFAULT_CTA_TYPE = 'LEARN_MORE';
 const WHATSAPP_CTA_TYPE = 'WHATSAPP_MESSAGE';
-const RATIO_PRIORITY = ['3x4', '2x1', '9x16'];
+const RATIO_PRIORITY = ['4x5', '3x4', '2x1', '9x16'];
 const TEMPORAL_GUARD_FRESH_DAYS = 7;
 const VERTICAL_CROP_KEY = '90x160';
 const HORIZONTAL_CROP_KEY = '191x100';
+const FEED_FOUR_BY_FIVE_CROP_KEY = '400x500';
 const VERTICAL_PUBLISHER_PLATFORMS = ['facebook', 'instagram', 'audience_network', 'whatsapp'];
 const VERTICAL_FACEBOOK_POSITIONS = ['instream_video', 'story', 'facebook_reels'];
 const VERTICAL_INSTAGRAM_POSITIONS = ['story', 'reels'];
@@ -354,6 +355,13 @@ function inferRatioFromRule(rule, creativeImages) {
   const ratioFromLabel = detectRatioFromLabelName(imageLabel.name);
   if (ratioFromLabel) return ratioFromLabel;
 
+  const imageLabelId = safeString(imageLabel.id);
+  const creativeImage = safeArray(creativeImages).find((image) =>
+    safeArray(image && image.adlabels).some((label) => safeString(label && label.id) === imageLabelId)
+  );
+  const ratioFromCrop = inferRatioFromImageCrops(creativeImage && creativeImage.image_crops ? creativeImage.image_crops : {});
+  if (ratioFromCrop) return ratioFromCrop;
+
   const allPositions = [
     ...safeArray(customization.publisher_platforms),
     ...safeArray(customization.facebook_positions),
@@ -388,12 +396,7 @@ function inferRatioFromRule(rule, creativeImages) {
     return '3x4';
   }
 
-  const imageLabelId = safeString(imageLabel.id);
-  const creativeImage = safeArray(creativeImages).find((image) =>
-    safeArray(image && image.adlabels).some((label) => safeString(label && label.id) === imageLabelId)
-  );
-
-  return inferRatioFromImageCrops(creativeImage && creativeImage.image_crops ? creativeImage.image_crops : {});
+  return '';
 }
 
 function buildReplacementPlanForAd(ad, mediaInventoryByRatio) {
@@ -973,6 +976,10 @@ function buildCenteredCrop(widthValue, heightValue, targetWidth, targetHeight) {
 
 function buildImageCrops(asset) {
   const ratio = safeString(asset && asset.ratio);
+  if (ratio === '4x5') {
+    const crop = buildCenteredCrop(asset && asset.width, asset && asset.height, 4, 5);
+    return crop ? { [FEED_FOUR_BY_FIVE_CROP_KEY]: crop } : undefined;
+  }
   if (ratio === '9x16') {
     const crop = buildCenteredCrop(asset && asset.width, asset && asset.height, 9, 16);
     return crop ? { [VERTICAL_CROP_KEY]: crop } : undefined;

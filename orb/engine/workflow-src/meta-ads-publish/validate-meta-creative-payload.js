@@ -7,6 +7,7 @@ const TITLE_COUNT = 5;
 const DESCRIPTION_COUNT = 1;
 const VERTICAL_CROP_KEY = '90x160';
 const HORIZONTAL_CROP_KEY = '191x100';
+const FEED_FOUR_BY_FIVE_CROP_KEY = '400x500';
 const REQUIRED_VERTICAL_PLATFORMS = ['facebook', 'instagram'];
 const REQUIRED_VERTICAL_FACEBOOK_POSITIONS = ['story', 'facebook_reels'];
 const REQUIRED_VERTICAL_INSTAGRAM_POSITIONS = ['story', 'reels'];
@@ -164,6 +165,10 @@ function validateHorizontalCrop(image, index) {
   return validateCrop(image, index, HORIZONTAL_CROP_KEY, 191, 100, 'horizontal');
 }
 
+function validateFeedFourByFiveCrop(image, index) {
+  return validateCrop(image, index, FEED_FOUR_BY_FIVE_CROP_KEY, 4, 5, 'feed_four_by_five');
+}
+
 function validatePlacementRules(feed) {
   const imageLabels = labelNames(feed.images);
   const videoLabels = labelNames(feed.videos);
@@ -174,6 +179,7 @@ function validatePlacementRules(feed) {
   let verticalAuxRuleCount = 0;
   let verticalLegacyRuleCount = 0;
   let horizontalRuleCount = 0;
+  let feedFourByFiveRuleCount = 0;
   for (const [index, rule] of safeArray(feed.asset_customization_rules).entries()) {
     const image = safeString(rule && rule.image_label && rule.image_label.name);
     const video = safeString(rule && rule.video_label && rule.video_label.name);
@@ -186,6 +192,11 @@ function validatePlacementRules(feed) {
     const creativeImage = images.find((entry) => safeArray(entry && entry.adlabels)
       .some((label) => safeString(label && label.name) === image));
     const spec = asObject(rule && rule.customization_spec);
+    const isFeedPlacement = containsAll(spec.publisher_platforms, ['facebook', 'instagram']) &&
+      (containsAll(spec.facebook_positions, ['feed']) || containsAll(spec.instagram_positions, ['stream']));
+    if (creativeImage && isFeedPlacement && validateFeedFourByFiveCrop(creativeImage, index)) {
+      feedFourByFiveRuleCount += 1;
+    }
     if (creativeImage && validateVerticalCrop(creativeImage, index)) {
       if (video) {
         verticalMixedRuleCount += 1;
@@ -211,6 +222,10 @@ function validatePlacementRules(feed) {
     assert(verticalLegacyRuleCount === 1, 'vertical_placement_rule_count_invalid', { actual: verticalLegacyRuleCount });
   }
   assert(horizontalRuleCount === 1, 'horizontal_placement_rule_count_invalid', { actual: horizontalRuleCount });
+  // A 4:5 source carries Meta's explicit 400x500 crop. A 3:4 or 1:1 fallback
+  // deliberately keeps its native aspect, so it has no artificial 4:5 crop.
+  assert(feedFourByFiveRuleCount <= 1, 'feed_four_by_five_placement_rule_count_invalid', { actual: feedFourByFiveRuleCount });
+  return { feed_four_by_five_rule_count: feedFourByFiveRuleCount };
 }
 
 function validateAdvantagePlus(payload, source, hosts) {
@@ -331,8 +346,10 @@ return $input.all().map((item) => {
     assert(!isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_forbidden', {});
     assert(primaryLink === safeString(source.landing_page_url), 'primary_link_landing_page_mismatch', {});
   }
+  const placementValidation = !isVideoOnly
+    ? validatePlacementRules(feed)
+    : { feed_four_by_five_rule_count: 0 };
   if (!isVideoOnly) {
-    validatePlacementRules(feed);
     validateAdvantagePlus(payload, source, hosts);
   }
 
@@ -386,6 +403,7 @@ return $input.all().map((item) => {
         vertical_placement_rule_count: isVideoOnly ? 0 : 1,
         horizontal_crop_key: HORIZONTAL_CROP_KEY,
         horizontal_placement_rule_count: 1,
+        feed_four_by_five_placement_rule_count: Number(placementValidation.feed_four_by_five_rule_count || 0),
         body_count: isVideoOnly ? 0 : BODY_COUNT,
         title_count: isVideoOnly ? 0 : TITLE_COUNT,
         description_count: isVideoOnly ? 0 : DESCRIPTION_COUNT,

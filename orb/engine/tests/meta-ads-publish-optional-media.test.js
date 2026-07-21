@@ -320,6 +320,16 @@ test('creative validator source requires the destination-contract workflow revis
   assert.match(buildJobs, /destination_whatsapp_url_config_missing_or_invalid/);
 });
 
+test('feed media prefers a real 4:5 source and preserves non-4:5 fallback aspects', () => {
+  const buildPayload = fs.readFileSync(path.join(sourceRoot, 'build-payload.js'), 'utf8');
+  const buildJobs = fs.readFileSync(path.join(sourceRoot, 'build-jobs.js'), 'utf8');
+  const validator = fs.readFileSync(path.join(sourceRoot, 'validate-meta-creative-payload.js'), 'utf8');
+  assert.match(buildPayload, /slot: 'feed', acceptedRatios: \['4x5', '3x4', '1x1'\]/);
+  assert.match(buildJobs, /if \(ratio === '4x5'\)[\s\S]*\[FEED_FOUR_BY_FIVE_CROP_KEY\]/);
+  assert.match(validator, /FEED_FOUR_BY_FIVE_CROP_KEY = '400x500'/);
+  assert.match(validator, /deliberately keeps its native aspect/);
+});
+
 test('graph contract makes optional branches explicit and retries Build Jobs', () => {
   const baseNode = (name, type = 'n8n-nodes-base.noOp') => ({ name, id: name, type, typeVersion: 1, position: [0, 0], parameters: {} });
   const workflow = {

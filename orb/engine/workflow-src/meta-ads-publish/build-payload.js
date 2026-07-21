@@ -1,7 +1,9 @@
 const inputItems = $input.all();
 
 const SLOT_CONFIG = [
-  { slot: 'feed', acceptedRatios: ['3x4', '4x5', '1x1'] },
+  // Feed uses 4:5 when that exact source asset exists. Other accepted source
+  // aspects remain valid fallbacks and must not be cropped merely to invent 4:5.
+  { slot: 'feed', acceptedRatios: ['4x5', '3x4', '1x1'] },
   { slot: 'banner', acceptedRatios: ['2x1'] },
   { slot: 'stories', acceptedRatios: ['9x16'] },
 ];
@@ -9,8 +11,8 @@ const SLOT_CONFIG = [
 const RATIO_ORDER = {
   '1x1': 1,
   '2x1': 2,
-  '3x4': 3,
-  '4x5': 4,
+  '4x5': 3,
+  '3x4': 4,
   '9x16': 5,
   '16x9': 6,
 };
@@ -671,6 +673,13 @@ function inferRatioFromRule(rule, creativeImages) {
   const ratioFromLabel = detectRatioFromLabelName(labelName);
   if (ratioFromLabel) return ratioFromLabel;
 
+  const imageId = safeString(imageLabel.id);
+  const creativeImage = safeArray(creativeImages).find((img) =>
+    safeArray(img && img.adlabels).some((label) => safeString(label && label.id) === imageId)
+  );
+  const ratioFromCrop = inferRatioFromImageCrops(creativeImage && creativeImage.image_crops ? creativeImage.image_crops : {});
+  if (ratioFromCrop) return ratioFromCrop;
+
   const allPositions = [
     ...safeArray(customization.publisher_platforms),
     ...safeArray(customization.facebook_positions),
@@ -705,12 +714,7 @@ function inferRatioFromRule(rule, creativeImages) {
     return '3x4';
   }
 
-  const imageId = safeString(imageLabel.id);
-  const creativeImage = safeArray(creativeImages).find((img) =>
-    safeArray(img && img.adlabels).some((label) => safeString(label && label.id) === imageId)
-  );
-
-  return inferRatioFromImageCrops(creativeImage && creativeImage.image_crops ? creativeImage.image_crops : {});
+  return '';
 }
 
 function binaryKeyForRatio(ratio) {
