@@ -169,6 +169,8 @@ function Resolve-CrmLocalSourceRoot {
         [string]$Persona = "Gestor"
     )
 
+    $reviewRef = if ([string]::IsNullOrWhiteSpace($env:CRM_LOCAL_REVIEW_REF)) { "origin/main" } else { $env:CRM_LOCAL_REVIEW_REF }
+
     # CRM Local must never inherit uncommitted product work from the checkout
     # that happens to invoke the Codex action. Each persona gets an isolated,
     # detached origin/main worktree so Pages state and local auth never clash.
@@ -181,7 +183,7 @@ function Resolve-CrmLocalSourceRoot {
         if ($LASTEXITCODE -ne 0) {
             throw "Não foi possível atualizar origin/main antes de preparar o CRM Local."
         }
-        & git -C $ProjectRoot worktree add --detach $sourceRoot origin/main | Out-Host
+        & git -C $ProjectRoot worktree add --detach $sourceRoot $reviewRef | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Não foi possível criar o worktree limpo do CRM Local em '$sourceRoot'."
         }
@@ -200,7 +202,7 @@ function Resolve-CrmLocalSourceRoot {
     if ($LASTEXITCODE -ne 0) {
         throw "Não foi possível atualizar origin/main antes de iniciar o CRM Local."
     }
-    & git -C $sourceRoot checkout --detach origin/main | Out-Host
+    & git -C $sourceRoot checkout --detach $reviewRef | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "Não foi possível alinhar o worktree privado do CRM Local ao origin/main."
     }
@@ -209,20 +211,46 @@ function Resolve-CrmLocalSourceRoot {
 }
 
 function Assert-GestorSharedServices {
-    param([string]$WorkingProjectRoot)
+    $checks = @(
+        @{ Name = "autenticação do Gestor"; Url = "http://127.0.0.1:8791/api/auth/me"; Role = "GESTOR" },
+        @{ Name = "Insumos"; Url = "http://127.0.0.1:8787/insumos/health" },
+        @{ Name = "Timekeeping"; Url = "http://127.0.0.1:8801/api/ponto/readiness" },
+        @{ Name = "WhatsApp"; Url = "http://127.0.0.1:8110/health" }
+    )
+    foreach ($check in $checks) {
+        try {
+            $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri $check.Url
+            if ($response.StatusCode -ne 200) { throw "status $($response.StatusCode)" }
+            if ($check.Role) {
+                $payload = $response.Content | ConvertFrom-Json
+                if ([string]$payload.user.role -ne $check.Role) {
+                    throw "papel inesperado '$([string]$payload.user.role)'"
+                }
+            }
+        } catch {
+            throw "O CRM Local (Gestor) está incompleto: $($check.Name) não está pronto em $($check.Url). Reinicie a ação CRM – Local (Gestor) antes do Consultor."
+        }
+    }
+}
 
-    Invoke-ShortcutWsl -WorkingProjectRoot $WorkingProjectRoot -SkipBootstrapCheck -Command @'
-for endpoint in \
-  http://127.0.0.1:8791/api/auth/me \
-  http://127.0.0.1:8787/insumos/health \
-  http://127.0.0.1:8801/api/ponto/readiness \
-  http://127.0.0.1:8110/health; do
-  if ! curl -fsS --max-time 5 "$endpoint" >/dev/null; then
-    echo "[crm-consultor] O CRM Local (Gestor) não está pronto em $endpoint. Inicie CRM – Local antes do Consultor." >&2
-    exit 1
-  fi
-done
-'@
+function Stop-LegacyCrmRuntimeIfNeeded {
+    $manifestPath = Join-Path $operatorRuntimeRoot "runtime\crm-local\current.json"
+    if (-not (Test-Path -LiteralPath $manifestPath)) { return }
+    try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } catch { return }
+    if ([string]$manifest.persona) { return }
+    if ([int]$manifest.ports.pages -ne 8791) { return }
+    $manifestWorktree = [string]$manifest.worktree
+    $legacyProjectRoot = "C:\CodexShared\Projetos\skincos"
+    if (-not (Test-Path -LiteralPath $legacyProjectRoot)) { return }
+    $legacyProjectWsl = Convert-WindowsPathToWsl -Path $legacyProjectRoot
+    if ($manifestWorktree -ne $legacyProjectWsl) { return }
+
+    Write-Host "[crm-local] Encerrando somente o runtime legado identificado antes de iniciar o Gestor canônico."
+    $legacyRuntimeRootWsl = Convert-WindowsPathToWsl -Path (Join-Path $operatorRuntimeRoot "runtime\crm-local")
+    Invoke-ShortcutWsl -WorkingProjectRoot $legacyProjectRoot -SkipBootstrapCheck -Command ("CRM_PERSONA=LEGACY CRM_RUNTIME_ROOT={0} CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
+        (Convert-ToBashLiteral -Value $legacyRuntimeRootWsl), `
+        (Convert-ToBashLiteral -Value $crmLegacyPidWsl), `
+        (Convert-ToBashLiteral -Value $crmLegacyLogWsl))
 }
 
 function Invoke-RepoPowerShellScript {
@@ -293,6 +321,10 @@ $crmGestorPid = Join-Path $tmpRoot "crm-local-gestor.pid"
 $crmGestorLog = Join-Path $logRoot "crm-local-gestor.log"
 $crmConsultorPid = Join-Path $tmpRoot "crm-local-consultor.pid"
 $crmConsultorLog = Join-Path $logRoot "crm-local-consultor.log"
+$crmLegacyPid = Join-Path $tmpRoot "crm-local-dev.pid"
+$crmLegacyLog = Join-Path $logRoot "crm-local-dev.log"
+$crmGestorRuntimeRoot = Join-Path $operatorRuntimeRoot "runtime\crm-local\gestor"
+$crmConsultorRuntimeRoot = Join-Path $operatorRuntimeRoot "runtime\crm-local\consultor"
 $atendimentoPid = Join-Path $tmpRoot "crm-atendimento-local.pid"
 $atendimentoLog = Join-Path $logRoot "crm-atendimento-local.log"
 $efAppStateRoot = Join-Path $localStateRoot "espacofacial-app"
@@ -313,6 +345,10 @@ $crmGestorPidWsl = Convert-WindowsPathToWsl -Path $crmGestorPid
 $crmGestorLogWsl = Convert-WindowsPathToWsl -Path $crmGestorLog
 $crmConsultorPidWsl = Convert-WindowsPathToWsl -Path $crmConsultorPid
 $crmConsultorLogWsl = Convert-WindowsPathToWsl -Path $crmConsultorLog
+$crmLegacyPidWsl = Convert-WindowsPathToWsl -Path $crmLegacyPid
+$crmLegacyLogWsl = Convert-WindowsPathToWsl -Path $crmLegacyLog
+$crmGestorRuntimeRootWsl = Convert-WindowsPathToWsl -Path $crmGestorRuntimeRoot
+$crmConsultorRuntimeRootWsl = Convert-WindowsPathToWsl -Path $crmConsultorRuntimeRoot
 $atendimentoPidWsl = Convert-WindowsPathToWsl -Path $atendimentoPid
 $atendimentoLogWsl = Convert-WindowsPathToWsl -Path $atendimentoLog
 $efAppOutputRootWsl = Convert-WindowsPathToWsl -Path $efAppOutputRoot
@@ -400,21 +436,25 @@ function Invoke-ShortcutActionInternal {
         "WebsiteSiteCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:check" }
         "WebsiteReleaseCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:release-check" }
         "CrmLocal" {
+            Stop-LegacyCrmRuntimeIfNeeded
             $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh" -f `
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_PERSONA=GESTOR CRM_RUNTIME_ROOT={0} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh" -f `
+                (Convert-ToBashLiteral -Value $crmGestorRuntimeRootWsl), `
                 (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
                 (Convert-ToBashLiteral -Value $crmGestorLogWsl))
         }
         "CrmConsultor" {
             $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Consultor
-            Assert-GestorSharedServices -WorkingProjectRoot $crmLocalSourceRoot
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:8801 PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787 LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110 CRM_ROUTE='/?localAuthReset=1' CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module ponto" -f `
+            Assert-GestorSharedServices
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_PERSONA=CONSULTOR CRM_RUNTIME_ROOT={0} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:8801 PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787 LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110 CRM_ROUTE='/?localAuthReset=1' CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --module ponto" -f `
+                (Convert-ToBashLiteral -Value $crmConsultorRuntimeRootWsl), `
                 (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
                 (Convert-ToBashLiteral -Value $crmConsultorLogWsl))
         }
         "CrmConsultorStop" {
             $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Consultor
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_PERSONA=CONSULTOR CRM_RUNTIME_ROOT={0} CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
+                (Convert-ToBashLiteral -Value $crmConsultorRuntimeRootWsl), `
                 (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
                 (Convert-ToBashLiteral -Value $crmConsultorLogWsl))
         }
@@ -443,9 +483,11 @@ function Invoke-ShortcutActionInternal {
         "CrmLocalStop" {
             Invoke-ShortcutWsl -Command "npm run crm:local:finance:stop"
             $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_PERSONA=GESTOR CRM_RUNTIME_ROOT={0} CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
+                (Convert-ToBashLiteral -Value $crmGestorRuntimeRootWsl), `
                 (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
                 (Convert-ToBashLiteral -Value $crmGestorLogWsl))
+            Stop-LegacyCrmRuntimeIfNeeded
         }
         "CrmMemory" { Invoke-ShortcutWsl -Command "bash ./scripts/codex-memory-crm.sh" }
         "CrmSiteSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:site-smoke" }

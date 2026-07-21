@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT_DIR/scripts/crm-local-persona-runtime.sh"
 FRONTEND_DIR="$ROOT_DIR/crm/console"
 BACKEND_DIR="$ROOT_DIR/backend"
 TIMEKEEPING_DIR="$ROOT_DIR/workforce/timekeeping"
@@ -80,6 +81,7 @@ CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
 LOG_FILE="${CRM_LOG_FILE:-$ROOT_DIR/.crm-local-dev.log}"
 SNAPSHOT_DEFAULT_PATH="${CRM_INSUMOS_SNAPSHOT_DEFAULT:-$ROOT_DIR/backend/var/local/insumos-snapshot.latest.json}"
+crm_persona_runtime_init
 
 report_timestamp() {
   date +%Y%m%d-%H%M%S
@@ -362,9 +364,11 @@ wait_for_crm_api() {
 
 open_browser() {
   if command -v open >/dev/null 2>&1; then
-    open "$DEFAULT_URL"
+    open "$DEFAULT_URL" >/dev/null 2>&1 &
+    disown "$!" >/dev/null 2>&1 || true
   elif command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$DEFAULT_URL" >/dev/null 2>&1 || true
+    xdg-open "$DEFAULT_URL" >/dev/null 2>&1 &
+    disown "$!" >/dev/null 2>&1 || true
   fi
 }
 
@@ -520,6 +524,7 @@ start_whatsapp_orchestrator_local() {
 }
 
 if [[ "$STOP_ONLY" == "1" ]]; then
+  crm_persona_runtime_stop_manifest_owner
   stop_existing
   stop_owned_port_listener "$CRM_VITE_PORT" "vite"
   stop_owned_port_listener "$CRM_PAGES_PORT" "pages"
@@ -532,6 +537,7 @@ if [[ "$STOP_ONLY" == "1" ]]; then
   if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
     stop_owned_port_listener "$CRM_TIMEKEEPING_PORT" "workforce-timekeeping"
   fi
+  crm_persona_runtime_write_manifest stopped
   echo "CRM local finalizado."
   exit 0
 fi
@@ -562,6 +568,12 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
+crm_persona_runtime_acquire_lock
+bootstrap_cleanup() {
+  crm_persona_runtime_write_manifest failed 2>/dev/null || true
+  crm_persona_runtime_release_lock
+}
+trap bootstrap_cleanup EXIT
 
 GATE_REPORT_FILE="${CRM_GATE_REPORT_FILE:-$(dirname "$LOG_FILE")/crm-local-gate-$(report_timestamp).json}"
 GATE_ARTIFACT_DIR="${CRM_SMOKE_ARTIFACT_DIR:-$(dirname "$LOG_FILE")/crm-local-smoke-artifacts}"
@@ -596,6 +608,7 @@ echo "Log: $LOG_FILE"
 echo ""
 
 stop_existing
+crm_persona_runtime_write_manifest starting
 rotate_current_log
 assert_port_free "$CRM_VITE_PORT" "vite"
 assert_port_free "$CRM_PAGES_PORT" "pages"
@@ -608,6 +621,7 @@ ensure_playwright_chromium
 if [[ "$CRM_BUILD_BEFORE_START" == "1" ]]; then
   echo "[crm-local] Gerando build do frontend para alinhar o shell local ao online..."
   npm --prefix "$FRONTEND_DIR" run build
+  crm_persona_runtime_write_build_state
 else
   ensure_frontend_dist_ready
 fi
@@ -686,6 +700,8 @@ cleanup() {
       rm -f "$PID_FILE"
     fi
   fi
+  crm_persona_runtime_write_manifest stopped 2>/dev/null || true
+  crm_persona_runtime_release_lock
 }
 
 trap cleanup EXIT INT TERM
@@ -828,6 +844,8 @@ fi
 if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
   open_browser
 fi
+
+crm_persona_runtime_write_manifest ready
 
 echo "Notas:"
   echo "  - O shell do CRM local usa Pages Functions reais."
