@@ -78,8 +78,10 @@ async function main() {
         return { account: account.account.name, income: income.category.name, expense: expense.category.name }
       }, bootstrap.body.grants[0].scope_id)
       await page.getByRole('button', { name: 'Importar CSV' }).click()
+      await page.locator('label').filter({ hasText: 'Origem do arquivo' }).getByRole('combobox').click()
+      await page.getByRole('option', { name: 'MoneyWiz' }).click()
       const csvSuffix = Date.now().toString(36)
-      const csv = `Data;Descrição;Valor;Conta;Categoria;Moeda;Observação;Identificador Externo\n01/07/2026;Consulta São José;1.250,50;Banco;Receitas;BRL;UTF-8;smoke-${csvSuffix}\n01/07/2026;Consulta São José;1.250,50;Banco;Receitas;BRL;UTF-8;smoke-${csvSuffix}\n`
+      const csv = `Date,Description,Amount,Account,Category,Payee,Tags,Memo,Status,Currency,Transfers,Transaction ID\n2026-07-01,Consulta São José,1250.50,Banco,Receitas,Paciente Smoke,clínica,UTF-8,cleared,BRL,,smoke-${csvSuffix}\n2026-07-01,Consulta São José,1250.50,Banco,Receitas,Paciente Smoke,clínica,UTF-8,cleared,BRL,,smoke-${csvSuffix}\n`
       await page.getByLabel('Arquivo CSV').setInputFiles({ name: 'extrato-br.csv', mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8') })
       await page.getByRole('button', { name: 'Criar lote' }).click()
       await page.getByRole('button', { name: 'Analisar e pré-visualizar' }).waitFor({ state: 'visible', timeout: 30_000 })

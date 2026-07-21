@@ -8,7 +8,7 @@ test('analisa CSV brasileiro UTF-8 com ponto e vírgula, acentos e duplicidade p
   const analysis = analyseCsvImport(csv);
   assert.equal(analysis.delimiter, ';'); assert.equal(analysis.dateFormat, 'DD/MM/YYYY'); assert.equal(analysis.rows.length, 3);
   const first = normalizeImportRow(analysis.rows[0], analysis.mapping, analysis.dateFormat);
-  assert.deepEqual(first, { description: 'Consulta estética', competenceDate: '2026-07-01', paidDate: '2026-07-01', type: 'income', amountMinor: 125050, currency: 'BRL', accountName: 'Banco NH', categoryName: 'Receitas', payeeName: 'Paciente João', note: 'Pagamento cartão', externalId: 'ef-1001' });
+  assert.deepEqual(first, { description: 'Consulta estética', competenceDate: '2026-07-01', paidDate: '2026-07-01', type: 'income', amountMinor: 125050, currency: 'BRL', accountName: 'Banco NH', categoryName: 'Receitas', categoryPath: 'Receitas', payeeName: 'Paciente João', tagNames: [], note: 'Pagamento cartão', sourceStatus: null, transferAccountName: null, externalId: 'ef-1001' });
 });
 
 test('converte valores monetários brasileiros sem ponto flutuante', () => {
