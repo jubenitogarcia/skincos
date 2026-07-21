@@ -1,13 +1,13 @@
 import { FinanceContractError, asCurrency, asIsoDate, asTrimmedString } from './index.js';
 
-export const FINANCE_IMPORT_FIELDS = Object.freeze(['date', 'description', 'amount', 'income', 'expense', 'type', 'account', 'category', 'payee', 'currency', 'note', 'externalId']);
+export const FINANCE_IMPORT_FIELDS = Object.freeze(['date', 'description', 'amount', 'income', 'expense', 'type', 'account', 'category', 'payee', 'tags', 'note', 'status', 'currency', 'transferAccount', 'externalId']);
 
 const aliases = Object.freeze({
   date: ['data', 'date', 'competencia', 'competência', 'vencimento'],
   description: ['descricao', 'descrição', 'description', 'historico', 'histórico', 'memo'],
   amount: ['valor', 'amount', 'montante'], income: ['entrada', 'receita', 'credit', 'credito', 'crédito'], expense: ['saida', 'saída', 'despesa', 'debit', 'debito', 'débito'],
   type: ['tipo', 'type', 'natureza'], account: ['conta', 'account'], category: ['categoria', 'category'], payee: ['favorecido', 'beneficiario', 'beneficiário', 'payee'],
-  currency: ['moeda', 'currency'], note: ['observacao', 'observação', 'nota', 'note'], externalId: ['id externo', 'identificador externo', 'external id', 'external_id', 'id'],
+  tags: ['tags', 'tag', 'etiquetas'], note: ['observacao', 'observação', 'nota', 'note', 'memo'], status: ['status', 'situacao', 'situação'], currency: ['moeda', 'currency'], transferAccount: ['transferencias', 'transferências', 'transfers', 'transfer account', 'conta destino'], externalId: ['id externo', 'identificador externo', 'external id', 'external_id', 'transaction id', 'transaction_id', 'id', 'check #'],
 });
 
 export function importNameKey(value) { return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase().replace(/\s+/g, ' '); }
@@ -95,11 +95,12 @@ export function analyseCsvImport(content, suppliedMapping = {}, encoding = 'utf-
 export function normalizeImportRow(raw, mapping = {}, dateFormat = 'unknown') {
   const pick = (field) => { const mapped = mapping[field]; if (mapped && raw[importNameKey(mapped)] !== undefined) return raw[importNameKey(mapped)]; return aliases[field]?.map((alias) => raw[alias]).find((candidate) => candidate !== undefined); };
   const description = asTrimmedString(pick('description'), 'descrição'); const competenceDate = toIsoImportDate(pick('date'), dateFormat);
-  const income = pick('income'); const expense = pick('expense'); const amount = pick('amount');
+  const income = pick('income'); const expense = pick('expense'); const amount = pick('amount'); const hasNonZero = (value) => { const raw = String(value || '').trim(); if (!raw || /^[+-]?0(?:[.,]0{1,2})?$/.test(raw)) return false; return decimalToMinorUnits(value).amountMinor > 0; }; const hasIncome = hasNonZero(income); const hasExpense = hasNonZero(expense);
   let monetary; let type;
-  if (String(income || '').trim() || String(expense || '').trim()) { if (String(income || '').trim() && String(expense || '').trim()) throw new FinanceContractError('VALIDATION_ERROR', 'Linha possui entrada e saída ao mesmo tempo.'); monetary = decimalToMinorUnits(String(income || expense), income ? 'entrada' : 'saída'); type = income ? 'income' : 'expense'; }
+  if (hasIncome || hasExpense) { if (hasIncome && hasExpense) throw new FinanceContractError('VALIDATION_ERROR', 'Linha possui entrada e saída ao mesmo tempo.'); monetary = decimalToMinorUnits(String(hasIncome ? income : expense), hasIncome ? 'entrada' : 'saída'); type = hasIncome ? 'income' : 'expense'; }
   else { monetary = decimalToMinorUnits(amount); const typeText = importNameKey(pick('type')); type = typeText ? ({ receita: 'income', income: 'income', entrada: 'income', despesa: 'expense', expense: 'expense', saida: 'expense', saída: 'expense' }[typeText]) : (monetary.sign < 0 ? 'expense' : 'income'); }
   if (!type) throw new FinanceContractError('VALIDATION_ERROR', 'tipo deve ser receita ou despesa.');
   const currencyValue = pick('currency'); const currency = currencyValue ? asCurrency(currencyValue) : 'BRL';
-  return { description, competenceDate, paidDate: competenceDate, type, amountMinor: monetary.amountMinor, currency, accountName: String(pick('account') || '').trim() || null, categoryName: String(pick('category') || '').trim() || null, payeeName: String(pick('payee') || '').trim() || null, note: String(pick('note') || '').trim() || null, externalId: String(pick('externalId') || '').trim() || null };
+  const categoryPath = String(pick('category') || '').trim() || null; const tags = String(pick('tags') || '').split(/[;,|]/).map((tag) => tag.trim()).filter(Boolean);
+  return { description, competenceDate, paidDate: competenceDate, type, amountMinor: monetary.amountMinor, currency, accountName: String(pick('account') || '').trim() || null, categoryName: categoryPath, categoryPath, payeeName: String(pick('payee') || '').trim() || null, tagNames: tags, note: String(pick('note') || '').trim() || null, sourceStatus: String(pick('status') || '').trim() || null, transferAccountName: String(pick('transferAccount') || '').trim() || null, externalId: String(pick('externalId') || '').trim() || null };
 }

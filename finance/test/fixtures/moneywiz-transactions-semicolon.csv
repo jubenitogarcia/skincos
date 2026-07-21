@@ -1,0 +1,3 @@
+Date;Description;Credits;Debits;Account;Category;Payee;Tags;Memo;Currency;Transfers;Transaction ID
+05/07/2026;Venda de produto;100,00;0,00;Conta NH;Receitas > Produtos;Cliente João;varejo;CSV com ponto e vírgula;BRL;;mw-2001
+06/07/2026;Fornecedor;0,00;75,25;Conta NH;Despesas > Insumos;Fornecedor EF;estoque;Pagamento;BRL;;mw-2002

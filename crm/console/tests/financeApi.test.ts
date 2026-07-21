@@ -48,6 +48,13 @@ describe('Finance transport helpers', () => {
     expect(new Headers(calls[3].init.headers).get('idempotency-key')).toBe('commit-key')
   })
 
+  it('declares MoneyWiz as an import source instead of a ledger write path', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await financeApi.stageCsv('scope-nh', 'moneywiz.csv', 'Date,Description,Amount\n2026-07-01,Teste,1.00\n', { sourceType: 'moneywiz', idempotencyKey: 'moneywiz-stage' })
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toMatchObject({ sourceType: 'moneywiz' })
+  })
+
   it('routes Finance browser requests through the Pages proxy instead of the static shell', () => {
     const routes = JSON.parse(readFileSync(new URL('../public/_routes.json', import.meta.url), 'utf8'))
     expect(routes.include).toContain('/api/finance/*')

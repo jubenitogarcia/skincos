@@ -4,7 +4,7 @@ import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
+const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';
@@ -129,6 +129,17 @@ test('D1 local: CSV workflow retains source, maps Brazilian rows, records decisi
   const undo = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/undo?scopeId=${scopeNh}`, { method: 'POST', key: 'csv-undo', body: { reason: 'Arquivo incorreto' } }); assert.equal(undo.response.status, 201, JSON.stringify(undo.body));
   const movements = await ctx.DB.prepare(`SELECT operational_status FROM finance_movements WHERE source='csv'`).all(); assert.deepEqual(movements.results.map((row) => row.operational_status), ['cancelled', 'cancelled']);
   const operations = await ctx.DB.prepare(`SELECT kind FROM finance_import_operations WHERE batch_id=? ORDER BY created_at`).bind(staged.body.batchId).all(); assert.deepEqual(operations.results.map((row) => row.kind), ['commit', 'undo']);
+});
+
+test('D1 local: MoneyWiz adapter stages source metadata and transfer candidates without posting either side', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  await account(ctx.env, ctx.actor, scopeNh, 'Conta Principal', 'mw-source'); await account(ctx.env, ctx.actor, scopeNh, 'Cartão Corporativo', 'mw-destination');
+  const csv = await readFile(new URL('./fixtures/moneywiz-transactions-comma.csv', import.meta.url), 'utf8');
+  const staged = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'moneywiz-stage', body: { filename: 'moneywiz.csv', csv, sourceType: 'moneywiz', encoding: 'utf-8' } });
+  assert.equal(staged.response.status, 201, JSON.stringify(staged.body)); assert.equal(staged.body.analysis.sourceType, 'moneywiz');
+  const loaded = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}?scopeId=${scopeNh}`); assert.equal(loaded.body.batch.source_type, 'moneywiz'); assert.equal(loaded.body.batch.source_metadata_json.includes('transfers'), true);
+  assert.equal(loaded.body.transferCandidates.length, 2); assert.equal(loaded.body.rows.filter((row) => row.status === 'exact_duplicate').length, 1); assert.equal(loaded.body.rows.filter((row) => JSON.parse(row.normalized_json || '{}').transferAccountName).every((row) => row.decision === 'review'), true);
+  const ledger = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_movements`).first(); assert.equal(Number(ledger.count), 0);
 });
 
 test('D1 local: splits, base currency, installments and operational lifecycle remain traceable', async (t) => {
