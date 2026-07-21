@@ -1,0 +1,54 @@
+name: Codex GitHub Autonomy Dispatch
+
+on:
+  workflow_run:
+    workflows:
+      - CI Smoke (Assert)
+      - Central E2E Smoke
+      - CodeQL (Monorepo)
+      - Lint, Format & Static Analysis
+      - Security & Secrets Audit
+      - Test Coverage & Quality
+      - Deploy CRM API
+      - Deploy CRM (Cloudflare Pages)
+      - Deploy Core Workers (api + insumos)
+      - Deploy Website to Cloudflare
+      - Codex GitHub Autonomy Probe
+    types: [completed]
+
+concurrency:
+  group: codex-github-autonomy-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  forward_trusted_event:
+    # No checkout: this job runs a fixed local relay and submits an opaque run id only.
+    runs-on: [self-hosted, windows, skincos-gh-autonomy]
+    timeout-minutes: 2
+    steps:
+      - name: Submit authenticated event to the local broker
+        shell: powershell
+        env:
+          AUTONOMY_INGRESS_HMAC: ${{ secrets.AUTONOMY_INGRESS_HMAC }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:AUTONOMY_INGRESS_HMAC)) {
+            throw 'AUTONOMY_INGRESS_HMAC is not configured.'
+          }
+          if ($env:WORKFLOW_RUN_ID -notmatch '^\d+$') { throw 'Invalid workflow run id.' }
+          $body = (@{ run_id = [Int64]$env:WORKFLOW_RUN_ID } | ConvertTo-Json -Compress)
+          $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
+          $nonce = [Guid]::NewGuid().ToString('N')
+          $canonical = "$timestamp`n$nonce`n$body"
+          $hmac = [Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($env:AUTONOMY_INGRESS_HMAC))
+          try { $signature = ([BitConverter]::ToString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($canonical)))).Replace('-', '').ToLowerInvariant() } finally { $hmac.Dispose() }
+          Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:48189/autonomy/event' -ContentType 'application/json' -Headers @{
+            'X-Autonomy-Timestamp' = $timestamp
+            'X-Autonomy-Nonce' = $nonce
+            'X-Autonomy-Signature' = $signature
+          } -Body $body | Out-Null

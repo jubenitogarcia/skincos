@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "repository": "jubenitogarcia/skincos",
+  "trusted_head_prefixes": ["codex/admin/"],
+  "trusted_author_associations": ["OWNER"],
+  "required_checks": [
+    "CI Smoke (Assert)",
+    "Central E2E Smoke",
+    "JS/TS Checks (workspace)",
+    "Dependency Audit (JS/TS)",
+    "Scan for secrets (Gitleaks)"
+  ],
+  "watched_workflows": [
+    "CI Smoke (Assert)",
+    "Central E2E Smoke",
+    "CodeQL (Monorepo)",
+    "Lint, Format & Static Analysis",
+    "Security & Secrets Audit",
+    "Test Coverage & Quality",
+    "Deploy CRM API",
+    "Deploy CRM (Cloudflare Pages)",
+    "Deploy Core Workers (api + insumos)",
+    "Deploy Website to Cloudflare",
+    "Codex GitHub Autonomy Probe"
+  ],
+  "max_attempts_per_sha": 4,
+  "cooldown_seconds": 120,
+  "event_max_age_seconds": 300,
+  "broker_port": 48189,
+  "forbidden_changed_paths": [
+    ".github/workflows/",
+    "ops/github-autonomy/",
+    ".codex/",
+    "C:\\CodexRuntime\\"
+  ]
+}

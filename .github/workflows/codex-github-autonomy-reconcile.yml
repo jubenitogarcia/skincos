@@ -1,0 +1,33 @@
+name: Codex GitHub Autonomy Reconcile
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: codex-github-autonomy-reconcile
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  request_reconciliation:
+    runs-on: [self-hosted, windows, skincos-gh-autonomy]
+    timeout-minutes: 2
+    steps:
+      - name: Request local recovery sweep without checkout
+        shell: powershell
+        env:
+          AUTONOMY_INGRESS_HMAC: ${{ secrets.AUTONOMY_INGRESS_HMAC }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:AUTONOMY_INGRESS_HMAC)) { throw 'AUTONOMY_INGRESS_HMAC is not configured.' }
+          $body = '{"action":"reconcile"}'
+          $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
+          $nonce = [Guid]::NewGuid().ToString('N')
+          $hmac = [Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($env:AUTONOMY_INGRESS_HMAC))
+          try { $signature = ([BitConverter]::ToString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes("$timestamp`n$nonce`n$body")))).Replace('-', '').ToLowerInvariant() } finally { $hmac.Dispose() }
+          Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:48189/autonomy/reconcile' -ContentType 'application/json' -Headers @{'X-Autonomy-Timestamp'=$timestamp;'X-Autonomy-Nonce'=$nonce;'X-Autonomy-Signature'=$signature} -Body $body | Out-Null

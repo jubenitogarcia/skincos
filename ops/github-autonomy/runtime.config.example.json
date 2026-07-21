@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "paused": false,
+  "repository": "jubenitogarcia/skincos",
+  "runtime_root": "C:\\CodexRuntime\\operator\\admin\\skincos\\github-autonomy",
+  "codex_path": "C:\\Users\\skincos-codex-broker\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe",
+  "codex_home": "C:\\CodexRuntime\\operator\\admin\\skincos\\github-autonomy\\broker\\codex-home",
+  "worktree_root": "C:\\CodexRuntime\\operator\\admin\\skincos\\github-autonomy\\worktrees",
+  "mirror_path": "C:\\CodexRuntime\\operator\\admin\\skincos\\github-autonomy\\mirror.git",
+  "github_app_id": "REPLACE_WITH_APP_ID",
+  "github_installation_id": "REPLACE_WITH_INSTALLATION_ID",
+  "github_private_key_path": "C:\\CodexRuntime\\operator\\admin\\skincos\\github-autonomy\\secrets\\github-app.pem",
+  "hmac_secret_path": "C:\\CodexRuntime\\operator\\admin\\skincos\\github-autonomy\\secrets\\ingress-hmac.txt",
+  "broker_port": 48189
+}
