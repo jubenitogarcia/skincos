@@ -12,6 +12,7 @@ test('normaliza identidade e procedimentos confiáveis', () => {
 test('preserva total da venda e itens repetidos', () => {
     const records = buildCaixaRecords({ BarraShoppingSul: [['DATA'], ['05/03/2025', '11:13', 'Ana', '51999990000', 'R$ 1.197,00', 'Botox 3 Regiões (até 40 ui)\nBotox 3 Regiões (até 40 ui)']], 'Novo Hamburgo': [['DATA']] })
     assert.equal(records.length, 1)
+    assert.equal(records[0].unit.slug, 'barra-shopping-sul')
     assert.equal(records[0].total, 1197)
     assert.equal(records[0].items.length, 1)
     assert.equal(records[0].items[0].quantity, 2)
