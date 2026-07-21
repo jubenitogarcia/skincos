@@ -255,7 +255,6 @@ function validateContracts() {
   const visualAnalysisGuard = codeOf('Assert Livia Visual Analysis');
   const visualAssetReader = String(getNode('Read Livia Visual Asset')?.parameters?.fileSelector || '');
   const visualContractMerge = getNode('Merge Livia Output and Visual Contract')?.parameters || {};
-  const liviaPrompt = String(getNode('Livia')?.parameters?.text || '');
   const waitAmount = String(getNode('Wait')?.parameters?.amount || '');
   const downloadFileId = String(getNode('Download File')?.parameters?.fileId?.value || '');
   const writeFileName = String(getNode('Write File')?.parameters?.fileName || '');
