@@ -21,6 +21,11 @@ icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action LocalMenu"
 
 [[actions]]
+name = "CRM – Local (Gestor)"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmLocal"
+
+[[actions]]
 name = "CRM – Consultor (Ponto)"
 icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\run-shared-codex-shortcut.ps1 -Action CrmConsultor"

@@ -8,6 +8,7 @@ TIMEKEEPING_DIR="$ROOT_DIR/workforce/timekeeping"
 INSUMOS_HELPER="$ROOT_DIR/backend/scripts/insumos.sh"
 INSUMOS_EXPORTER="$ROOT_DIR/backend/scripts/insumos-d1-export.cjs"
 INSUMOS_SEEDER="$ROOT_DIR/backend/scripts/insumos-seed.sh"
+WHATSAPP_ORCHESTRATOR_HELPER="$ROOT_DIR/scripts/run-local-whatsapp-orchestrator.sh"
 
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
 CRM_VITE_PORT="${CRM_VITE_PORT:-5173}"
@@ -58,6 +59,8 @@ else
   CRM_WITH_INSUMOS=0
 fi
 CRM_INSUMOS_PORT="${CRM_INSUMOS_PORT:-8787}"
+CRM_WITH_WHATSAPP="${CRM_WITH_WHATSAPP:-0}"
+CRM_WA_ORCHESTRATOR_PORT="${CRM_WA_ORCHESTRATOR_PORT:-8110}"
 if [[ -n "${CRM_WITH_TIMEKEEPING+x}" ]]; then
   CRM_WITH_TIMEKEEPING="$CRM_WITH_TIMEKEEPING"
 elif [[ -z "$CRM_MODULE" || "$CRM_MODULE" == "ponto" ]]; then
@@ -108,6 +111,9 @@ Opções:
   --insumos-snapshot FILE        Faz seed local do Insumos com este snapshot JSON
   --refresh-insumos-snapshot     Exporta um snapshot novo do D1 remoto antes do seed
   --insumos-seed-token TOKEN     Token local usado para /admin/seed (default: dev-seed-token)
+  --with-whatsapp                Inicia o adaptador local do WhatsApp
+  --without-whatsapp             Não inicia o adaptador local do WhatsApp (default)
+  --whatsapp-port PORT           Porta do adaptador WhatsApp local (default: 8110)
   CRM_LOCAL_LOG_LEVEL=LEVEL      Nível dos runtimes locais: warn (default), info, debug, error ou none
   CRM_BROWSER_DIAGNOSTICS_LOG=FILE Arquivo privado para diagnósticos conhecidos do Chromium durante smokes
   --smoke                        Roda uma smoke local do módulo após subir o CRM
@@ -150,6 +156,9 @@ while [[ $# -gt 0 ]]; do
     --insumos-snapshot) shift; CRM_INSUMOS_SNAPSHOT="$1" ;;
     --refresh-insumos-snapshot) CRM_REFRESH_INSUMOS_SNAPSHOT=1 ;;
     --insumos-seed-token) shift; CRM_INSUMOS_SEED_TOKEN="$1" ;;
+    --with-whatsapp) CRM_WITH_WHATSAPP=1 ;;
+    --without-whatsapp) CRM_WITH_WHATSAPP=0 ;;
+    --whatsapp-port) shift; CRM_WA_ORCHESTRATOR_PORT="$1" ;;
     --smoke) CRM_SMOKE=1 ;;
     --exit-after-smoke) CRM_EXIT_AFTER_SMOKE=1 ;;
     --headed-smoke) CRM_SMOKE_HEADED=1 ;;
@@ -490,10 +499,33 @@ start_insumos_local() {
   fi
 }
 
+start_whatsapp_orchestrator_local() {
+  if [[ ! -x "$WHATSAPP_ORCHESTRATOR_HELPER" ]]; then
+    echo "[crm-local] Adaptador WhatsApp local não está executável: $WHATSAPP_ORCHESTRATOR_HELPER" >&2
+    exit 1
+  fi
+  echo "[crm-local] Iniciando adaptador local do WhatsApp em :$CRM_WA_ORCHESTRATOR_PORT"
+  (
+    CRM_LOCAL_WA_ORCHESTRATOR_PORT="$CRM_WA_ORCHESTRATOR_PORT" \
+      LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}" \
+      LOCAL_AUTH_ROLE="${LOCAL_AUTH_ROLE:-GESTOR}" \
+      "$WHATSAPP_ORCHESTRATOR_HELPER"
+  ) >>"$LOG_FILE" 2>&1 &
+  WHATSAPP_ORCHESTRATOR_PID=$!
+
+  if ! wait_for_http "http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}/health" 60; then
+    echo "[crm-local] Adaptador local do WhatsApp não respondeu em tempo hábil." >&2
+    exit 1
+  fi
+}
+
 if [[ "$STOP_ONLY" == "1" ]]; then
   stop_existing
   stop_owned_port_listener "$CRM_VITE_PORT" "vite"
   stop_owned_port_listener "$CRM_PAGES_PORT" "pages"
+  if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+    stop_owned_port_listener "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
+  fi
   if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
     stop_owned_port_listener "$CRM_INSUMOS_PORT" "insumos"
   fi
@@ -557,6 +589,9 @@ if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
     echo "Snapshot Insumos: $CRM_INSUMOS_SNAPSHOT"
   fi
 fi
+if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+  echo "WhatsApp local: http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}"
+fi
 echo "Log: $LOG_FILE"
 echo ""
 
@@ -564,6 +599,9 @@ stop_existing
 rotate_current_log
 assert_port_free "$CRM_VITE_PORT" "vite"
 assert_port_free "$CRM_PAGES_PORT" "pages"
+if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+  assert_port_free "$CRM_WA_ORCHESTRATOR_PORT" "whatsapp"
+fi
 ensure_frontend_ready
 ensure_playwright_chromium
 
@@ -575,6 +613,7 @@ else
 fi
 
 INSUMOS_PID=""
+WHATSAPP_ORCHESTRATOR_PID=""
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   assert_port_free "$CRM_INSUMOS_PORT" "insumos"
   start_insumos_local
@@ -606,6 +645,11 @@ else
   export LOCAL_AUTH_BYPASS=false
 fi
 
+if [[ "$CRM_WITH_WHATSAPP" == "1" ]]; then
+  start_whatsapp_orchestrator_local
+  export LOCAL_WA_ORCHESTRATOR_API_TARGET="http://127.0.0.1:${CRM_WA_ORCHESTRATOR_PORT}"
+fi
+
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   export LOCAL_INSUMOS_API_TARGET="http://127.0.0.1:${CRM_INSUMOS_PORT}"
 fi
@@ -631,6 +675,9 @@ cleanup() {
   fi
   if [[ -n "${TIMEKEEPING_PID:-}" ]]; then
     kill "$TIMEKEEPING_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${WHATSAPP_ORCHESTRATOR_PID:-}" ]]; then
+    kill "$WHATSAPP_ORCHESTRATOR_PID" >/dev/null 2>&1 || true
   fi
   if [[ -f "$PID_FILE" ]]; then
     local tracked_pid
