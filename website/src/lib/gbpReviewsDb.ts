@@ -1,6 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { units } from "@/data/units";
-import { formatReviewRelativeTimePtBr, type GbpFetchedReview } from "@/lib/googleGbp";
+import { discoverGoogleGbpLocationResourceName, formatReviewRelativeTimePtBr, getGoogleGbpAccessToken, type GbpFetchedReview } from "@/lib/googleGbp";
 
 type D1PreparedStatement = {
     bind: (...values: unknown[]) => D1PreparedStatement;
@@ -73,6 +73,20 @@ export type TrustEvidenceDbSummary = {
     totalReviews: number;
     weightedRating: number;
     capturedAtMs: number | null;
+};
+
+export type GbpReviewReplyDraft = {
+    id: string;
+    unitSlug: string;
+    reviewId: string;
+    locationResourceName: string;
+    comment: string;
+    status: "draft" | "approved" | "publishing" | "published" | "failed";
+    approvedBy: string | null;
+    approvedAtMs: number | null;
+    publishedAtMs: number | null;
+    googleReplyUpdateMs: number | null;
+    lastError: string | null;
 };
 
 let ensured = false;
@@ -154,6 +168,29 @@ async function ensureSchema(db: D1DatabaseLike): Promise<void> {
 
     await db
         .prepare("CREATE INDEX IF NOT EXISTS idx_gbp_review_sync_runs_unit_started ON gbp_review_sync_runs(unit_slug, started_at_ms DESC);")
+        .run();
+
+    await db
+        .prepare(
+            `CREATE TABLE IF NOT EXISTS gbp_review_reply_drafts (
+                id TEXT PRIMARY KEY,
+                unit_slug TEXT NOT NULL,
+                review_id TEXT NOT NULL,
+                location_resource_name TEXT NOT NULL,
+                comment TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('draft', 'approved', 'publishing', 'published', 'failed')),
+                approved_by TEXT,
+                approved_at_ms INTEGER,
+                published_at_ms INTEGER,
+                google_reply_update_ms INTEGER,
+                last_error TEXT,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            );`,
+        )
+        .run();
+    await db
+        .prepare("CREATE INDEX IF NOT EXISTS idx_gbp_review_reply_drafts_status ON gbp_review_reply_drafts(status, updated_at_ms DESC);")
         .run();
 }
 
@@ -450,4 +487,153 @@ export async function getTrustEvidenceDbSummary(unitSlugs: string[]): Promise<Tr
         ),
         capturedAtMs: validRows.reduce((max, row) => Math.max(max, toNumber(row.synced_at_ms)), 0) || null,
     };
+}
+
+type GbpReviewReplyDraftRow = {
+    id: string;
+    unit_slug: string;
+    review_id: string;
+    location_resource_name: string;
+    comment: string;
+    status: GbpReviewReplyDraft["status"];
+    approved_by: string | null;
+    approved_at_ms: number | null;
+    published_at_ms: number | null;
+    google_reply_update_ms: number | null;
+    last_error: string | null;
+};
+
+function mapReplyDraft(row: GbpReviewReplyDraftRow): GbpReviewReplyDraft {
+    return {
+        id: row.id,
+        unitSlug: row.unit_slug,
+        reviewId: row.review_id,
+        locationResourceName: row.location_resource_name,
+        comment: row.comment,
+        status: row.status,
+        approvedBy: row.approved_by,
+        approvedAtMs: row.approved_at_ms,
+        publishedAtMs: row.published_at_ms,
+        googleReplyUpdateMs: row.google_reply_update_ms,
+        lastError: row.last_error,
+    };
+}
+
+async function getReplyDraftRow(id: string): Promise<GbpReviewReplyDraftRow | null> {
+    const db = await getDb();
+    if (!db) return null;
+    return db
+        .prepare(
+            `SELECT id, unit_slug, review_id, location_resource_name, comment, status, approved_by, approved_at_ms,
+                    published_at_ms, google_reply_update_ms, last_error
+             FROM gbp_review_reply_drafts WHERE id = ? LIMIT 1;`,
+        )
+        .bind(id)
+        .first<GbpReviewReplyDraftRow>();
+}
+
+export async function createGbpReviewReplyDraft(params: {
+    id: string;
+    reviewId: string;
+    comment: string;
+    createdAtMs: number;
+}): Promise<GbpReviewReplyDraft> {
+    const db = await getDb();
+    if (!db) throw new Error("gbp_reply_db_unavailable");
+
+    const source = await db
+        .prepare(
+            `SELECT r.unit_slug, s.location_resource_name, s.gbp_location
+             FROM gbp_reviews r
+             INNER JOIN gbp_review_summaries s ON s.unit_slug = r.unit_slug
+             WHERE r.id = ? LIMIT 1;`,
+        )
+        .bind(params.reviewId)
+        .first<{ unit_slug: string; location_resource_name: string | null; gbp_location: string | null }>();
+    if (!source) throw new Error("review_not_available_for_reply");
+
+    const locationResourceName =
+        source.location_resource_name?.trim() ||
+        (source.gbp_location?.trim()
+            ? await discoverGoogleGbpLocationResourceName(await getGoogleGbpAccessToken(), source.gbp_location)
+            : "");
+    if (!locationResourceName) throw new Error("review_not_available_for_reply");
+
+    await db
+        .prepare(
+            `INSERT INTO gbp_review_reply_drafts (
+                id, unit_slug, review_id, location_resource_name, comment, status, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?);`,
+        )
+        .bind(params.id, source.unit_slug, params.reviewId, locationResourceName, params.comment, params.createdAtMs, params.createdAtMs)
+        .run();
+
+    const created = await getReplyDraftRow(params.id);
+    if (!created) throw new Error("reply_draft_create_failed");
+    return mapReplyDraft(created);
+}
+
+const replyDraftColumns = `id, unit_slug, review_id, location_resource_name, comment, status, approved_by, approved_at_ms,
+                           published_at_ms, google_reply_update_ms, last_error`;
+
+export async function approveGbpReviewReplyDraft(params: { id: string; approvedBy: string; approvedAtMs: number }): Promise<GbpReviewReplyDraft> {
+    const db = await getDb();
+    if (!db) throw new Error("gbp_reply_db_unavailable");
+    const approved = await db
+        .prepare(
+            `UPDATE gbp_review_reply_drafts
+             SET status = 'approved', approved_by = ?, approved_at_ms = ?, updated_at_ms = ?
+             WHERE id = ? AND status = 'draft'
+             RETURNING ${replyDraftColumns};`,
+        )
+        .bind(params.approvedBy, params.approvedAtMs, params.approvedAtMs, params.id)
+        .first<GbpReviewReplyDraftRow>();
+    if (!approved) {
+        const current = await getReplyDraftRow(params.id);
+        if (!current) throw new Error("reply_draft_not_found");
+        throw new Error(`reply_draft_not_approvable:${current.status}`);
+    }
+    return mapReplyDraft(approved);
+}
+
+export async function reserveGbpReviewReplyDraftForPublish(id: string, nowMs: number): Promise<GbpReviewReplyDraft> {
+    const db = await getDb();
+    if (!db) throw new Error("gbp_reply_db_unavailable");
+    const reserved = await db
+        .prepare(
+            `UPDATE gbp_review_reply_drafts
+             SET status = 'publishing', updated_at_ms = ?
+             WHERE id = ? AND status = 'approved'
+             RETURNING ${replyDraftColumns};`,
+        )
+        .bind(nowMs, id)
+        .first<GbpReviewReplyDraftRow>();
+    if (!reserved) {
+        const current = await getReplyDraftRow(id);
+        if (!current) throw new Error("reply_draft_not_found");
+        throw new Error(`reply_draft_not_publishable:${current.status}`);
+    }
+    return mapReplyDraft(reserved);
+}
+
+export async function recordGbpReviewReplyPublishResult(params: {
+    id: string;
+    publishedAtMs: number;
+    googleReplyUpdateMs: number | null;
+    error?: string | null;
+}): Promise<GbpReviewReplyDraft> {
+    const db = await getDb();
+    if (!db) throw new Error("gbp_reply_db_unavailable");
+    const succeeded = !params.error;
+    await db
+        .prepare(
+            `UPDATE gbp_review_reply_drafts
+             SET status = ?, published_at_ms = ?, google_reply_update_ms = ?, last_error = ?, updated_at_ms = ?
+             WHERE id = ? AND status = 'publishing';`,
+        )
+        .bind(succeeded ? "published" : "failed", succeeded ? params.publishedAtMs : null, params.googleReplyUpdateMs, params.error ?? null, params.publishedAtMs, params.id)
+        .run();
+    const finished = await getReplyDraftRow(params.id);
+    if (!finished) throw new Error("reply_draft_not_found");
+    return mapReplyDraft(finished);
 }
