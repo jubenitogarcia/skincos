@@ -8,6 +8,7 @@ const gateway = createGatewayHandler({
         calls.push(new URL(request.url));
         return new Response('inventory-ok', { status: 200, headers: { 'x-owner': 'inventory' } });
     },
+    financeHandler: async (request) => new Response(new URL(request.url).pathname === '/overview' ? 'finance-ok' : 'bad-finance-path', { status: 200 }),
 });
 
 test('health is owned by the gateway', async () => {
@@ -24,6 +25,12 @@ test('inventory is mounted without retaining the legacy public prefix', async ()
     assert.equal(response.headers.get('x-request-id'), 'inventory-1');
     assert.equal(calls.at(-1).pathname, '/insumos');
     assert.equal(calls.at(-1).search, '?unidade=nh');
+});
+
+test('finance is mounted by the gateway without taking ownership of domain rules', async () => {
+    const response = await gateway(new Request('https://api.skincos.com.br/finance/overview', { headers: { 'x-request-id': 'finance-1' } }), {}, {});
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'finance-ok');
 });
 
 test('internal paths require a private service identity', async () => {

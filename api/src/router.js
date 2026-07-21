@@ -31,7 +31,7 @@ function isInternalServiceRequest(request, env) {
  * selection, request tracing and the human/service access boundary; it must
  * not grow domain persistence or business rules.
  */
-export function createGatewayHandler({ inventoryHandler }) {
+export function createGatewayHandler({ inventoryHandler, financeHandler }) {
     if (typeof inventoryHandler !== 'function') throw new TypeError('inventoryHandler is required');
 
     return async function handleGatewayRequest(request, env, ctx) {
@@ -44,6 +44,14 @@ export function createGatewayHandler({ inventoryHandler }) {
 
         if (url.pathname === '/inventory' || url.pathname.startsWith('/inventory/')) {
             const response = await inventoryHandler(mountedRequest(request, '/inventory'), env, ctx);
+            const headers = new Headers(response.headers);
+            headers.set('x-request-id', requestId);
+            return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+        }
+
+        if (url.pathname === '/finance' || url.pathname.startsWith('/finance/')) {
+            if (typeof financeHandler !== 'function') return json(503, { ok: false, error: 'finance_handler_unavailable', requestId }, requestId);
+            const response = await financeHandler(mountedRequest(request, '/finance'), env, ctx);
             const headers = new Headers(response.headers);
             headers.set('x-request-id', requestId);
             return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
