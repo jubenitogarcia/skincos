@@ -364,6 +364,68 @@ def _format_address(values: dict[str, str]) -> str:
     return ", ".join(part for part in (first, complement, neighborhood, city, state, cep) if part)
 
 
+def _record_from_csv_row(row: dict[str, str]) -> ClientRegistrationRecord:
+    raw_page = _normalize_spaces(str(row.get("Página Lista", "")))
+    try:
+        page_number = int(raw_page)
+    except ValueError:
+        page_number = 0
+    return ClientRegistrationRecord(
+        unidade=_normalize_spaces(str(row.get("Unidade", ""))),
+        cliente=_normalize_spaces(str(row.get("Cliente", ""))),
+        cliente_id=_normalize_spaces(str(row.get("Cliente ID", ""))),
+        pagina_lista=page_number,
+        telefone=_normalize_spaces(str(row.get("Telefone", ""))),
+        telefones=_normalize_spaces(str(row.get("Telefones", ""))),
+        email=_normalize_spaces(str(row.get("Email", ""))),
+        emails=_normalize_spaces(str(row.get("Emails", ""))),
+        data_nascimento=_normalize_spaces(str(row.get("Nascimento", ""))),
+        sexo=_normalize_spaces(str(row.get("Sexo", ""))),
+        cpf=_normalize_spaces(str(row.get("CPF", ""))),
+        profissao=_normalize_spaces(str(row.get("Profissão", ""))),
+        origem=_normalize_spaces(str(row.get("Como conheceu", ""))),
+        cep=_normalize_spaces(str(row.get("CEP", ""))),
+        logradouro=_normalize_spaces(str(row.get("Logradouro", ""))),
+        numero=_normalize_spaces(str(row.get("Número", ""))),
+        complemento=_normalize_spaces(str(row.get("Complemento", ""))),
+        bairro=_normalize_spaces(str(row.get("Bairro", ""))),
+        cidade=_normalize_spaces(str(row.get("Cidade", ""))),
+        estado=_normalize_spaces(str(row.get("Estado", ""))),
+        endereco_completo=_normalize_spaces(str(row.get("Endereço completo", ""))),
+        url_cliente=_normalize_spaces(str(row.get("URL Cliente", ""))),
+        extraido_em=_normalize_spaces(str(row.get("Extraído em", ""))),
+    )
+
+
+def _load_checkpoint(output_dir: Path) -> dict[tuple[str, str], ClientRegistrationRecord]:
+    csv_path = output_dir / "cadastro_clientes_espacofacial.csv"
+    if not csv_path.exists():
+        return {}
+    frame = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
+    records: dict[tuple[str, str], ClientRegistrationRecord] = {}
+    for row in frame.to_dict("records"):
+        record = _record_from_csv_row(row)
+        if not record.unidade or not record.cliente:
+            continue
+        key = (record.unidade, record.cliente_id or record.cliente)
+        records[key] = record
+    return records
+
+
+def _normalized_client_name(value: str) -> str:
+    return _normalize_spaces(value).casefold()
+
+
+def _unique_existing_by_name(
+    records: dict[tuple[str, str], ClientRegistrationRecord],
+) -> dict[tuple[str, str], ClientRegistrationRecord]:
+    grouped: dict[tuple[str, str], list[ClientRegistrationRecord]] = {}
+    for record in records.values():
+        key = (record.unidade, _normalized_client_name(record.cliente))
+        grouped.setdefault(key, []).append(record)
+    return {key: values[0] for key, values in grouped.items() if len(values) == 1}
+
+
 def _record_from_fields(
     *,
     unit_name: str,
@@ -505,7 +567,13 @@ def run_client_registration_export(
     debug_dir: Path,
     timeout_seconds: int = 20,
 ) -> tuple[list[ClientRegistrationRecord], dict[str, Any]]:
-    records_by_key: dict[tuple[str, str], ClientRegistrationRecord] = {}
+    records_by_key = _load_checkpoint(output_dir)
+    existing_by_name = _unique_existing_by_name(records_by_key)
+    resumed_per_unit: dict[str, int] = {}
+    for record in records_by_key.values():
+        resumed_per_unit[record.unidade] = resumed_per_unit.get(record.unidade, 0) + 1
+    if records_by_key:
+        log(f"Client registration: resuming {len(records_by_key)} checkpoint records")
     summary: dict[str, Any] = {
         "units": {},
         "totals": {
@@ -514,6 +582,7 @@ def run_client_registration_export(
             "clients_attempted": 0,
             "clients_processed": 0,
             "records_exported": 0,
+            "resumed_records": len(records_by_key),
             "client_errors": 0,
         },
         "client_errors": [],
@@ -533,6 +602,7 @@ def run_client_registration_export(
             "clients_processed": 0,
             "records_exported": 0,
             "client_errors": 0,
+            "resumed_records": resumed_per_unit.get(unit_name, 0),
         }
         summary["units"][unit_name] = unit_summary
 
@@ -549,6 +619,10 @@ def run_client_registration_export(
             summary["totals"]["pages_processed"] += 1
 
             for client in clients:
+                existing_key = (unit_name, _normalized_client_name(client.name))
+                if existing_key in existing_by_name:
+                    unit_summary["clients_skipped_checkpoint"] = unit_summary.get("clients_skipped_checkpoint", 0) + 1
+                    continue
                 if client_limit is not None and unit_summary["clients_attempted"] >= client_limit:
                     break
                 unit_summary["clients_attempted"] += 1
@@ -634,22 +708,33 @@ def run_with_runtime(
 ) -> tuple[list[ClientRegistrationRecord], dict[str, Any]]:
     from .core import create_driver
 
-    driver = create_driver(headless=headless, user_data_dir=user_data_dir)
-    try:
-        return run_client_registration_export(
-            driver,
-            base_url=base_url,
-            creds=creds,
-            unit_names=resolve_units(),
-            output_dir=output_dir,
-            debug_dir=debug_dir,
-            timeout_seconds=timeout_seconds,
-        )
-    except Exception:
-        capture_artifacts(driver, output_dir=debug_dir, label="error_client_registration_export")
-        raise
-    finally:
+    max_session_retries = _positive_int_env("EF_CLIENT_REGISTRATION_MAX_SESSION_RETRIES") or 8
+    session_attempt = 0
+    while True:
+        driver = create_driver(headless=headless, user_data_dir=user_data_dir)
         try:
-            driver.quit()
-        except Exception:
-            pass
+            return run_client_registration_export(
+                driver,
+                base_url=base_url,
+                creds=creds,
+                unit_names=resolve_units(),
+                output_dir=output_dir,
+                debug_dir=debug_dir,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "tab crashed" not in message or session_attempt >= max_session_retries:
+                capture_artifacts(driver, output_dir=debug_dir, label="error_client_registration_export")
+                raise
+            session_attempt += 1
+            log(
+                "WARNING: Client registration: Chrome tab crashed; "
+                f"restarting session ({session_attempt}/{max_session_retries}) from checkpoint"
+            )
+            time.sleep(2)
+        finally:
+            try:
+                driver.quit()
+            except Exception:
+                pass

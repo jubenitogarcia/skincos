@@ -11,6 +11,7 @@ import pandas as pd
 from espacofacial.client_registration import (
     ClientRegistrationRecord,
     _format_address,
+    _load_checkpoint,
     _max_clients_per_unit,
     _max_pages,
     write_outputs,
@@ -77,6 +78,9 @@ class ClientRegistrationExportTests(unittest.TestCase):
             self.assertTrue(Path(outputs["xlsx"]).exists())
             summary = json.loads(Path(outputs["summary"]).read_text(encoding="utf-8"))
             self.assertEqual(summary["totals"]["records_exported"], 1)
+            resumed = _load_checkpoint(Path(temp_dir))
+            self.assertEqual(len(resumed), 1)
+            self.assertEqual(next(iter(resumed.values())).cliente_id, "client-123")
 
 
 if __name__ == "__main__":
