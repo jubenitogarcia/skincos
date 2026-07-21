@@ -140,17 +140,17 @@ Observações:
 
 ## Export de cadastro dos clientes
 
-> Status atual: esta secao permaneceu documentada, mas o modo
-> `client_registration` nao esta ligado no `run_scraper.py` atual. Antes de
-> republicar um atalho funcional para esse fluxo, o runner precisa voltar a
-> expor a implementacao correspondente.
+O modo `client_registration` está disponível no runner. Ele percorre a lista
+de clientes de cada unidade, abre a aba visível `Cadastro` e lê os campos sem
+alterar nada no aplicativo.
 
 - Export completo: `EF_MODE=client_registration HEADLESS=1 ./.venv/bin/python run_scraper.py`
 - Smoke test curto: `EF_MODE=client_registration HEADLESS=1 EF_CLIENT_REGISTRATION_MAX_PAGES=1 EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT=2 ./.venv/bin/python run_scraper.py`
-- Export seletivo por lista inline: `EF_MODE=client_registration HEADLESS=1 EF_UNITS='Novo Hamburgo' EF_CLIENT_REGISTRATION_TARGETS='Adair Nobre,Ana Leticia Algayer' ./.venv/bin/python run_scraper.py`
-- Export seletivo por arquivo: `EF_MODE=client_registration HEADLESS=1 EF_CLIENT_REGISTRATION_TARGETS_FILE='/caminho/clientes.xlsx' ./.venv/bin/python run_scraper.py`
-- Export seletivo por Google Sheets: `EF_MODE=client_registration HEADLESS=1 EF_CLIENT_REGISTRATION_TARGETS_SPREADSHEET_ID='...' EF_CLIENT_REGISTRATION_TARGETS_WORKSHEET='Clientes' ./.venv/bin/python run_scraper.py`
-- Export seletivo por Google Sheets usando URL + `gid`: `EF_MODE=client_registration HEADLESS=1 EF_CLIENT_REGISTRATION_TARGETS_SPREADSHEET_URL='https://docs.google.com/spreadsheets/d/.../edit?gid=1666496487#gid=1666496487' EF_CLIENT_REGISTRATION_TARGETS_WORKSHEET_GID='1666496487' ./.venv/bin/python run_scraper.py`
+- Smoke test: `EF_MODE=client_registration HEADLESS=0 EF_CLIENT_REGISTRATION_MAX_PAGES=1 EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT=2 ./.venv/bin/python run_scraper.py`
+
+Se o perfil persistente ainda não estiver autenticado, use
+`EF_WAIT_FOR_MANUAL_LOGIN=1` com `HEADLESS=0`; o scraper aguarda o login feito
+diretamente na janela do Chrome e não recebe nem grava senha.
 
 Saídas:
 
@@ -161,12 +161,9 @@ Saídas:
 Observações:
 
 - O modo `client_registration` percorre todas as unidades configuradas em `EF_UNITS` e atualiza os arquivos parciais durante a execução.
-- Quando algum alvo é informado via `EF_CLIENT_REGISTRATION_TARGETS`, arquivo local ou Google Sheets, o scraper troca a paginação completa pela busca da tela de clientes e exporta só os correspondentes.
-- Para arquivo/planilha, o parser tenta detectar colunas como `cliente`/`nome` e `unidade`. Se a coluna `unidade` existir, a busca fica restrita à unidade informada; sem essa coluna, ele procura o cliente nas unidades configuradas em `EF_UNITS`.
-- Quando a origem é Google Sheets e `EF_CLIENT_REGISTRATION_SYNC_SHEETS` está ativo, o scraper escreve de volta na própria linha da aba: `TELEFONE`, `EMAIL`, `NASCIMENTO`, `PROFISSÃO`, `ENDEREÇO`, `CIDADE`, `ESTADO`, `CEP` e `COMO CONHECEU`.
-- Clientes não encontrados entram em `missing_clients` no JSON de resumo; falhas durante abertura/leitura continuam indo para `client_errors`.
+- `EF_CLIENT_REGISTRATION_MAX_PAGES` e `EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT` limitam a execução para smoke tests; sem eles, o export percorre todas as páginas e as duas unidades de `EF_UNITS`.
 - O extrator lê os campos da aba `Cadastro` por rótulo visível, cobrindo dados pessoais, contatos e endereço.
-- Erros pontuais por cliente também vão para `client_errors` no JSON de resumo, sem derrubar o lote inteiro.
+- Erros pontuais por cliente vão para `client_errors` no JSON de resumo, sem derrubar o restante do lote. Os arquivos CSV/XLSX/JSON são atualizados após cada página.
 
 ## Self-test
 

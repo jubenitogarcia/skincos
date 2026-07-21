@@ -354,8 +354,27 @@ def login(driver: WebDriver, *, base_url: str, creds: Credentials, timeout_secon
             return True
 
         if not creds.email or not creds.password:
-            log("ERROR during login: login form is present but credentials are missing")
-            return False
+            wait_for_manual_login = os.getenv("EF_WAIT_FOR_MANUAL_LOGIN", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+            if not wait_for_manual_login:
+                log("ERROR during login: login form is present but credentials are missing")
+                return False
+
+            raw_timeout = os.getenv("EF_MANUAL_LOGIN_TIMEOUT_SECONDS", "300").strip()
+            try:
+                manual_timeout = max(1, int(raw_timeout))
+            except ValueError:
+                manual_timeout = 300
+            log("Login manual solicitado. Faça a autenticação na janela do Chrome aberta pelo scraper.")
+            WebDriverWait(driver, manual_timeout).until(
+                lambda current: not _visible('//input[@type="email"]')
+                and (("/unidade/" in (current.current_url or "").lower()) or ("/reception_services" in (current.current_url or "").lower()))
+            )
+            log("✓ Login manual concluído; sessão persistida")
+            return True
 
         email_input = WebDriverWait(driver, timeout_seconds).until(
             EC.visibility_of_element_located((By.XPATH, '//input[@type="email"]'))
