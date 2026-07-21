@@ -36,7 +36,7 @@ export function parseSheetTime(value) {
 export function normalizeUnit(tabName) {
     const key = normalizeText(tabName)
     if (key === 'novohamburgo' || key === 'novo hamburgo') return { slug: 'novo-hamburgo', name: 'Novo Hamburgo' }
-    if (key === 'barrashoppingsul' || key === 'barra shopping sul') return { slug: 'barrashoppingsul', name: 'BarraShoppingSul' }
+    if (key === 'barrashoppingsul' || key === 'barra shopping sul') return { slug: 'barra-shopping-sul', name: 'BarraShoppingSul' }
     return { slug: key.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''), name: String(tabName ?? '').trim() }
 }
 
