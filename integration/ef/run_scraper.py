@@ -1509,6 +1509,31 @@ def _run_client_registration(headless: bool, output_dir: Path, persist_session: 
         return 1
 
 
+def _run_client_registration_api(headless: bool, output_dir: Path, persist_session: bool) -> int:
+    started_at = datetime.now()
+    email, password = _get_credentials(persist_session=persist_session)
+    if (not email or not password) and not persist_session:
+        _write_run_summary(mode="client_registration_api", unit_name="", output_dir=output_dir, status="failed", started_at=started_at, ended_at=datetime.now(), details={"reason": "missing_credentials"})
+        return 2
+
+    _set_runtime_env(email, password, output_dir, headless, unit_name="", persist_session=persist_session)
+    from espacofacial.auth import Credentials, configure_file_logging, log, log_exception
+    from espacofacial.client_registration_api import run_with_runtime
+    from espacofacial.core import load_config
+
+    cfg = load_config()
+    configure_file_logging(cfg.output_dir, prefix="menu_client_registration_api")
+    try:
+        records, summary = run_with_runtime(base_url=cfg.base_url, creds=Credentials(cfg.email, cfg.password), output_dir=cfg.output_dir, headless=cfg.headless, user_data_dir=cfg.chrome_user_data_dir, timeout_seconds=cfg.timeout_seconds)
+        _write_run_summary(mode="client_registration_api", unit_name="", output_dir=output_dir, status="success", started_at=started_at, ended_at=datetime.now(), details={"records": len(records), "totals": summary.get("totals", {})}, outputs=list(summary.get("outputs", {}).values()))
+        log(f"Client registration API export completed: {len(records)} records")
+        return 0
+    except Exception as exc:
+        log_exception("ERROR: Client registration API export failed", exc)
+        _write_run_summary(mode="client_registration_api", unit_name="", output_dir=output_dir, status="failed", started_at=started_at, ended_at=datetime.now(), details={"error": str(exc)})
+        return 1
+
+
 def _run_selftest(headless: bool, output_dir: Path) -> int:
     started_at = datetime.now()
     # Self-test does not log in, but it may open Chrome.
@@ -1633,6 +1658,10 @@ def main() -> int:
         return rc
     if mode in {"client_registration", "cadastro_clientes", "clientes_cadastro"}:
         rc = _run_client_registration(headless=headless, output_dir=output_dir, persist_session=persist_session)
+        _maybe_print_log_path()
+        return rc
+    if mode in {"client_registration_api", "cadastro_clientes_api"}:
+        rc = _run_client_registration_api(headless=headless, output_dir=output_dir, persist_session=persist_session)
         _maybe_print_log_path()
         return rc
     if mode in {"recorder", "record"}:
