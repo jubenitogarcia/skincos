@@ -1056,15 +1056,23 @@ export default {
         // The bypass therefore requires both the dev-only Worker flag and the
         // marker emitted exclusively by the localhost Pages proxy.
         const devBypassActive = devBypassEnabled && proxiedLocalDevAuth;
+        // Keep the Insumos proxy aligned with the Pages local-auth identity.
+        // The local launcher deliberately exercises the Gestor path, including
+        // invite delegation. It therefore needs explicit scopes; an ADMIN with
+        // empty scopes would correctly be denied by the invitation policy.
         const devBypassUser = devBypassActive
             ? {
                 username: 'dev',
                 displayName: 'Dev Local',
-                email: 'dev@local',
-                role: 'ADMIN',
+                email: 'dev@local.test',
+                role: 'GESTOR',
                 ativo: true,
-                allowedUnits: [],
-                allowedModules: [],
+                allowedUnits: UNIDADES,
+                allowedModules: [
+                    'users', 'insumos', 'atendimento', 'ponto', 'faturamento',
+                    'procedimentos', 'leads', 'dashboard', 'conversa',
+                    'ai-automation', 'meta-ads', 'site-tracking', 'escala-profissionais',
+                ],
             }
             : null;
         const auditToken = String(env?.INSUMOS_AUDIT_TOKEN || '').trim();
