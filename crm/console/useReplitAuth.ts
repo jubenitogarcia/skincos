@@ -1,6 +1,7 @@
 // Replit Auth Integration: Custom hook for authentication
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { consumeLocalAuthReset } from './localDevAuthReset'
+import { isLocalTestUserAdmin } from './localAuthProfile'
 
 export function useReplitAuth() {
   const queryClient = useQueryClient()
@@ -18,7 +19,7 @@ export function useReplitAuth() {
     !!import.meta.env.DEV &&
     isLocalDevHost &&
     String(localStorage.getItem('crm.localAuth') || 'on').toLowerCase() !== 'off'
-  const localTestUserAdmin = String(import.meta.env.VITE_LOCAL_TEST_USER_ADMIN || 'true').trim().toLowerCase() !== 'false'
+  const localTestUserAdmin = isLocalTestUserAdmin(import.meta.env.VITE_LOCAL_AUTH_TEST_USER_ADMIN)
   const localRoleRaw = localTestUserAdmin
     ? 'GESTOR'
     : String(localStorage.getItem('crm.localRole') || import.meta.env.VITE_LOCAL_AUTH_ROLE || 'GESTOR').trim().toUpperCase()
