@@ -8,7 +8,11 @@ async function sheetsClient() {
         const error = new Error('GOOGLE_SHEETS_ACCESS_NOT_CONFIGURED'); error.statusCode = 424; throw error
     }
     const serviceAccount = JSON.parse(await fs.readFile(serviceAccountFile, 'utf8'))
-    const auth = new google.auth.JWT(serviceAccount.client_email, null, serviceAccount.private_key, ['https://www.googleapis.com/auth/spreadsheets.readonly'])
+    const auth = new google.auth.JWT({
+        email: serviceAccount.client_email,
+        key: serviceAccount.private_key,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+    })
     await auth.authorize()
     return google.sheets({ version: 'v4', auth })
 }
