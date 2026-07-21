@@ -9,7 +9,7 @@ export async function onRequest(context: { request: Request; env?: Record<string
   const request = context.request; const userOrResponse = await requireCrmUser(context); if (userOrResponse instanceof Response) return userOrResponse
   const allowed = Array.isArray(userOrResponse.allowedModules) ? userOrResponse.allowedModules.map(String) : []
   if (!['GESTOR', 'GERENTE'].includes(role(userOrResponse.role)) && allowed.length && !allowed.includes('caixa')) return json(403, { ok: false, error: 'FORBIDDEN' })
-  const env = context.env || {}; const targetOrigin = String(env.CAIXA_API_TARGET || env.ATENDIMENTO_API_TARGET || env.CRM_API_TARGET || '').trim(); const secret = String(env.ATENDIMENTO_ACTOR_HMAC_KEY || env.ESCALA_ACTOR_HMAC_KEY || env.CRM_ESCALA_HMAC_KEY || '').trim()
+  const env = context.env || {}; const targetOrigin = String(env.CAIXA_API_TARGET || env.ATENDIMENTO_API_TARGET || env.CRM_API_TARGET || '').trim(); const secret = String(env.CAIXA_ACTOR_HMAC_KEY || env.ATENDIMENTO_ACTOR_HMAC_KEY || env.ESCALA_ACTOR_HMAC_KEY || env.CRM_ESCALA_HMAC_KEY || '').trim()
   if (!targetOrigin) return json(503, { ok: false, error: 'CAIXA_API_TARGET_NOT_CONFIGURED' })
   if (!secret && !isLocalDevAuthBypassEnabled(context)) return json(503, { ok: false, error: 'ACTOR_KEY_NOT_CONFIGURED' })
   const actor = { id: String(userOrResponse.id || userOrResponse.username || userOrResponse.email || ''), username: userOrResponse.username, email: userOrResponse.email, name: userOrResponse.displayName, role: role(userOrResponse.role), allowedUnits: userOrResponse.allowedUnits, allowedModules: userOrResponse.allowedModules }
