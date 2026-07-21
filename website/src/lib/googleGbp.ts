@@ -87,10 +87,7 @@ export async function getGoogleGbpAccessToken(): Promise<string> {
         cache: "no-store",
     });
 
-    if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(`oauth_refresh_failed:${response.status}:${text.slice(0, 600)}`);
-    }
+    if (!response.ok) throw new Error(`oauth_refresh_failed:${response.status}`);
 
     const json = (await response.json()) as { access_token?: string; expires_in?: number };
     const accessToken = (json.access_token ?? "").trim();
@@ -119,10 +116,7 @@ async function listAccountIds(accessToken: string): Promise<string[]> {
         headers: { authorization: `Bearer ${accessToken}` },
         cache: "no-store",
     });
-    if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`accounts_fetch_failed:${res.status}:${text.slice(0, 600)}`);
-    }
+    if (!res.ok) throw new Error(`accounts_fetch_failed:${res.status}`);
 
     const json = (await res.json()) as { accounts?: Array<{ name?: string }> };
     return Array.from(
@@ -222,10 +216,7 @@ export async function fetchAllGoogleGbpReviews(rawLocationId: string): Promise<G
             cache: "no-store",
         });
 
-        if (!response.ok) {
-            const text = await response.text().catch(() => "");
-            throw new Error(`reviews_fetch_failed:${response.status}:${text.slice(0, 600)}`);
-        }
+        if (!response.ok) throw new Error(`reviews_fetch_failed:${response.status}`);
 
         const page = (await response.json()) as GoogleBusinessReviewsPage;
         if (typeof page.averageRating === "number") averageRating = page.averageRating;
