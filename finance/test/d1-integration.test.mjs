@@ -154,3 +154,20 @@ test('D1 local: scope and monetary safeguards reject cross-scope, unbalanced and
   const filtered = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&accountId=${bssAccount.id}`);
   assert.equal(filtered.response.status, 200); assert.equal(filtered.body.movements.length, 0);
 });
+
+test('D1 local: movement search and audit details remain scoped and paginated', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco', 'search-bank');
+  const categoryRow = await category(ctx.env, ctx.actor, scopeNh, 'Procedimentos', 'income', 'search-category');
+  const payee = await request(ctx.env, ctx.actor, `/payees?scopeId=${scopeNh}`, { method: 'POST', key: 'search-payee', body: { name: 'Paciente Ana' } });
+  const created = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'search-movement', body: { type: 'income', accountId: bank.id, categoryId: categoryRow.id, payeeId: payee.body.payee.id, description: 'Procedimento facial', amountMinor: 12000, currency: 'BRL', competenceDate: '2026-07-21' } });
+  assert.equal(created.response.status, 201, JSON.stringify(created.body));
+  const byDescription = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&q=facial&limit=1`);
+  assert.equal(byDescription.response.status, 200); assert.equal(byDescription.body.total, 1); assert.equal(byDescription.body.movements[0].id, created.body.movement.id);
+  const byPayee = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&q=ana`);
+  assert.equal(byPayee.body.movements.length, 1); assert.equal(byPayee.body.movements[0].payee_name, 'Paciente Ana');
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${created.body.movement.id}&entityType=movement`);
+  assert.equal(audit.response.status, 200); assert.equal(audit.body.total, 1); assert.equal(audit.body.events[0].action, 'MOVEMENT_CREATED');
+  const denied = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeBss}&entityId=${created.body.movement.id}`);
+  assert.equal(denied.response.status, 403);
+});

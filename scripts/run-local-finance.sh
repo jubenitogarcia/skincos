@@ -13,6 +13,8 @@ D1_STATE_DIR="$RUNTIME_ROOT/d1"
 PID_FILE="$RUNTIME_ROOT/launcher.pid"
 LOG_FILE="$RUNTIME_ROOT/finance-local.log"
 STATE_FILE="$RUNTIME_ROOT/current.env"
+GATEWAY_ENV_FILE="$RUNTIME_ROOT/gateway.dev.vars"
+API_DEV_VARS_LINK="$ROOT_DIR/api/.dev.vars"
 CRM_RUNTIME_ROOT="$RUNTIME_ROOT/crm"
 CRM_PID_FILE="$RUNTIME_ROOT/crm-launcher.pid"
 CRM_LOG_FILE="$RUNTIME_ROOT/crm-local.log"
@@ -62,6 +64,12 @@ EOF
 release_inventory_link() {
   if [[ "${INVENTORY_LINK_CREATED:-0}" == 1 && -L "$INVENTORY_NODE_MODULES_LINK" ]]; then
     rm -f "$INVENTORY_NODE_MODULES_LINK"
+  fi
+}
+
+release_gateway_env_link() {
+  if [[ "${GATEWAY_ENV_LINK_CREATED:-0}" == 1 && -L "$API_DEV_VARS_LINK" ]]; then
+    rm -f "$API_DEV_VARS_LINK"
   fi
 }
 
@@ -196,7 +204,7 @@ apply_finance_migrations() {
 
 prepare_frontend_runtime
 prepare_inventory_dependencies
-trap release_inventory_link EXIT
+trap 'release_inventory_link; release_gateway_env_link' EXIT
 WRANGLER="$(wrangler_bin)"
 [[ -x "$WRANGLER" ]] || { echo 'Wrangler não disponível após preparar o runtime.' >&2; exit 1; }
 
@@ -208,13 +216,35 @@ fixture_sql="$RUNTIME_ROOT/fixture.sql"
 fixture="$(node "$ROOT_DIR/finance/scripts/write-local-fixture.mjs" --scenario "$SCENARIO" --output "$fixture_sql")"
 d1 execute skincos-db --config "$ROOT_DIR/api/wrangler.toml" --file "$fixture_sql" >/dev/null
 
+case "$SCENARIO" in
+  disabled|no-module) LOCAL_MODULES='' ;;
+  *) LOCAL_MODULES='finance' ;;
+esac
+
 GATEWAY_PORT="$(select_port "$GATEWAY_PORT")"
+umask 077
+{
+  printf 'LOCAL_FINANCE_AUTH_BYPASS=true\n'
+  printf 'LOCAL_FINANCE_ACTOR=finance-local\n'
+  printf 'LOCAL_FINANCE_ALLOWED_MODULES=%s\n' "$LOCAL_MODULES"
+  printf 'LOCAL_FINANCE_CSRF_TOKEN=finance-local-csrf\n'
+} > "$GATEWAY_ENV_FILE"
+if [[ -L "$API_DEV_VARS_LINK" ]]; then
+  current_gateway_env="$(readlink -f "$API_DEV_VARS_LINK" 2>/dev/null || true)"
+  expected_gateway_env="$(readlink -f "$GATEWAY_ENV_FILE")"
+  [[ "$current_gateway_env" == "$expected_gateway_env" ]] || { echo 'api/.dev.vars já pertence a outro runtime; preservado.' >&2; exit 1; }
+elif [[ -e "$API_DEV_VARS_LINK" ]]; then
+  echo 'api/.dev.vars existe e não é um link do runtime Financeiro; preservado.' >&2
+  exit 1
+else
+  ln -s "$GATEWAY_ENV_FILE" "$API_DEV_VARS_LINK"
+  GATEWAY_ENV_LINK_CREATED=1
+fi
 : > "$LOG_FILE"
 echo "[finance-local] Iniciando gateway Financeiro em :$GATEWAY_PORT"
 (
   cd "$ROOT_DIR"
-  setsid "$WRANGLER" dev --config api/wrangler.toml --local --ip 127.0.0.1 --port "$GATEWAY_PORT" --persist-to "$D1_STATE_DIR" \
-    --var LOCAL_FINANCE_AUTH_BYPASS:true --var LOCAL_FINANCE_CSRF_TOKEN:finance-local-csrf \
+  setsid "$WRANGLER" dev --config api/wrangler.toml --local --ip 127.0.0.1 --port "$GATEWAY_PORT" --persist-to "$D1_STATE_DIR" --env-file "$GATEWAY_ENV_FILE" \
     --log-level warn --show-interactive-dev-session false
 ) >>"$LOG_FILE" 2>&1 &
 GATEWAY_PID=$!
@@ -225,20 +255,29 @@ cleanup() {
   [[ -n "${CRM_PID:-}" ]] && terminate_tree "$CRM_PID"
   [[ -n "${GATEWAY_PID:-}" ]] && terminate_tree "$GATEWAY_PID"
   release_inventory_link
+  release_gateway_env_link
   [[ -f "$STATE_FILE" && "$(state_value gateway_pid)" == "${GATEWAY_PID:-}" ]] && rm -f "$STATE_FILE"
+  rm -f "$GATEWAY_ENV_FILE"
   [[ -f "$PID_FILE" && "$(cat "$PID_FILE" 2>/dev/null || true)" == "$$" ]] && rm -f "$PID_FILE"
 }
 trap cleanup EXIT INT TERM
 
 if ! wait_for_http "http://127.0.0.1:${GATEWAY_PORT}/health"; then echo "Gateway Financeiro não respondeu. Veja $LOG_FILE" >&2; exit 1; fi
 
-case "$SCENARIO" in
-  disabled|no-module) LOCAL_MODULES='' ;;
-  *) LOCAL_MODULES='finance' ;;
-esac
 case "$SCENARIO" in nh) LOCAL_UNITS='novo-hamburgo';; bss) LOCAL_UNITS='barra-shopping-sul';; both) LOCAL_UNITS='novo-hamburgo,barra-shopping-sul';; *) LOCAL_UNITS='';; esac
 
 echo "[finance-local] Iniciando CRM Pages local para cenário $SCENARIO"
+# A previous interrupted launcher can leave a `ready` manifest behind even
+# though its Pages process no longer owns the recorded port. Do not let that
+# stale marker race the fresh CRM bootstrap below: retain a genuinely healthy
+# reusable runtime, otherwise remove only this private runtime's manifest.
+if [[ -f "$CRM_RUNTIME_ROOT/current.json" ]]; then
+  stale_crm_url="$(node -e "try{const x=JSON.parse(require('fs').readFileSync(process.argv[1]));if(x.state==='ready'&&x.url)process.stdout.write(x.url)}catch{}" "$CRM_RUNTIME_ROOT/current.json")"
+  if [[ -n "$stale_crm_url" ]] && ! wait_for_http "${stale_crm_url%\?*}/api/auth/me" 1; then
+    echo '[finance-local] Removendo manifesto CRM privado obsoleto.'
+    rm -f "$CRM_RUNTIME_ROOT/current.json"
+  fi
+fi
 (
   cd "$ROOT_DIR"
   CRM_LOCAL_FRONTEND_RUNTIME_DIR="$FRONTEND_RUNTIME_DIR" \
@@ -254,8 +293,8 @@ CRM_PID=$!
 
 for _ in $(seq 1 120); do
   if [[ -f "$CRM_RUNTIME_ROOT/current.json" ]]; then
-    CRM_URL="$(node -e "try{const x=JSON.parse(require('fs').readFileSync(process.argv[1]));if(x.state==='ready')process.stdout.write(x.url)}catch{}" "$CRM_RUNTIME_ROOT/current.json")"
-    [[ -n "${CRM_URL:-}" ]] && break
+    CRM_URL="$(node -e "try{const x=JSON.parse(require('fs').readFileSync(process.argv[1]));if(x.state==='ready'&&x.url)process.stdout.write(x.url)}catch{}" "$CRM_RUNTIME_ROOT/current.json")"
+    [[ -n "${CRM_URL:-}" ]] && wait_for_http "${CRM_URL%\?*}/api/auth/me" 1 && break
   fi
   sleep 1
 done

@@ -1,24 +1,18 @@
 import inventoryWorker from '../../inventory/src/worker.js';
 import { createGatewayHandler } from './router.js';
 import { createFinanceHandler } from '../../finance/api/worker.js';
-import { d1GetUserByUsername } from '../../inventory/src/d1Store.js';
 import { csrfErrorFor, resolveCrmActor } from '../../shared/crm-auth/worker.js';
-
-function isLoopbackRequest(request) {
-    try {
-        const host = new URL(request.url).hostname;
-        return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
-    } catch { return false; }
-}
 
 async function resolveFinanceActor(request, env) {
     const auth = await resolveCrmActor(request, env);
-    if (auth.actor || String(env?.LOCAL_FINANCE_AUTH_BYPASS || '') !== 'true' || !isLoopbackRequest(request)) return auth;
-    const username = String(request.headers.get('x-skincos-local-finance-actor') || '').trim();
-    const csrf = String(env?.LOCAL_FINANCE_CSRF_TOKEN || '').trim();
+    // This bypass exists only when the private runner injects its local-only
+    // Worker binding. Production configuration never defines that binding.
+    if (auth.actor || String(env?.LOCAL_FINANCE_AUTH_BYPASS || '') !== 'true') return auth;
+    const username = String(request.headers.get('x-skincos-local-finance-actor') || env?.LOCAL_FINANCE_ACTOR || '').trim();
+    const csrf = String(env?.LOCAL_FINANCE_CSRF_TOKEN || request.headers.get('x-csrf-token') || 'local-loopback-csrf').trim();
     if (!username || !csrf) return auth;
-    const actor = await d1GetUserByUsername(env, username);
-    return actor?.ativo ? { actor: { ...actor, role: String(actor.role || 'CONSULTOR').toUpperCase() }, csrf } : auth;
+    const allowedModules = String(request.headers.get('x-skincos-local-finance-modules') || env?.LOCAL_FINANCE_ALLOWED_MODULES || '').split(',').map((value) => value.trim()).filter(Boolean);
+    return { actor: { username, role: String(env?.LOCAL_FINANCE_ACTOR_ROLE || 'GESTOR').toUpperCase(), allowedModules }, csrf };
 }
 
 export { createGatewayHandler } from './router.js';

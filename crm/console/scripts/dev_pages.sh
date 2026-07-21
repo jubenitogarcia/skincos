@@ -48,8 +48,17 @@ upsert_non_secret_dev_var() {
 
 upsert_non_secret_dev_var "LOCAL_AUTH_BYPASS" "${LOCAL_AUTH_BYPASS:-false}"
 upsert_non_secret_dev_var "LOCAL_AUTH_ROLE" "${LOCAL_AUTH_ROLE:-GESTOR}"
+upsert_non_secret_dev_var "LOCAL_AUTH_USERNAME" "${LOCAL_AUTH_USERNAME:-dev}"
 upsert_non_secret_dev_var "LOCAL_AUTH_EMAIL" "${LOCAL_AUTH_EMAIL:-dev@local.test}"
 upsert_non_secret_dev_var "LOCAL_AUTH_NAME" "${LOCAL_AUTH_NAME:-Dev Local}"
+upsert_non_secret_dev_var "LOCAL_AUTH_ALLOWED_MODULES" "${LOCAL_AUTH_ALLOWED_MODULES:-}"
+upsert_non_secret_dev_var "LOCAL_AUTH_ALLOWED_UNITS" "${LOCAL_AUTH_ALLOWED_UNITS:-}"
+finance_api_target="${LOCAL_FINANCE_API_TARGET:-${FINANCE_API_TARGET:-}}"
+[[ -n "$finance_api_target" ]] && upsert_non_secret_dev_var "FINANCE_API_TARGET" "$finance_api_target"
+for finance_key in LOCAL_FINANCE_ACTOR LOCAL_FINANCE_CSRF_TOKEN; do
+  finance_value="${!finance_key:-}"
+  [[ -n "$finance_value" ]] && upsert_non_secret_dev_var "$finance_key" "$finance_value"
+done
 ensure_dev_var "ESCALA_API_TARGET" "https://escala-api.skincos.com.br"
 ensure_dev_var "LOCAL_ESCALA_MOCK" "false"
 ensure_dev_var "LOCAL_ESCALA_SHADOW_WRITES" "true"

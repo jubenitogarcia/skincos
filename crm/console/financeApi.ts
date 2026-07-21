@@ -1,7 +1,23 @@
 import { csrfHeader } from '@/csrf'
 
 const FINANCE_ORIGIN = String(import.meta.env.VITE_FINANCE_API_ORIGIN || '/api').replace(/\/$/, '')
-export type FinanceBootstrap = { ok: boolean; moduleEnabled: boolean; canAccess: boolean; grants: Array<{ scope_id: string; permission: string; label: string }> }
+
+export type FinanceGrant = { scope_id: string; permission: string; label: string; kind?: 'unit' | 'personal' }
+export type FinanceBootstrap = { ok: boolean; moduleEnabled: boolean; canAccess: boolean; grants: FinanceGrant[] }
+export type FinanceList<T> = { ok: boolean; page: number; limit: number; total?: number; movements?: T[]; events?: T[]; accounts?: T[]; categories?: T[]; payees?: T[]; tags?: T[]; costCenters?: T[] }
+export type FinanceFilters = { from?: string; to?: string; accountId?: string; categoryId?: string; payeeId?: string; costCenterId?: string; status?: string; q?: string; page?: number; limit?: number }
+
+export class FinanceApiError extends Error {
+  code?: string
+  status?: number
+
+  constructor(message: string, { code, status }: { code?: string; status?: number } = {}) {
+    super(message)
+    this.name = 'FinanceApiError'
+    this.code = code
+    this.status = status
+  }
+}
 
 // Transport-only parser. The Finance Worker repeats the invariant and remains
 // the authority; this avoids IEEE-754 arithmetic in the React component.
@@ -15,25 +31,36 @@ export function minorUnitsFromDisplay(value: string): number | null {
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${FINANCE_ORIGIN}/finance${path}`, { credentials: 'include', headers: { accept: 'application/json', ...csrfHeader(), ...(init.headers || {}) }, ...init })
   const payload = await res.json().catch(() => ({}))
-  if (!res.ok) throw Object.assign(new Error(payload.message || payload.error || `HTTP ${res.status}`), { code: payload.error, status: res.status })
+  if (!res.ok) throw new FinanceApiError(payload.message || payload.error || `HTTP ${res.status}`, { code: payload.error, status: res.status })
   return payload as T
 }
+
+function scopedQuery(scopeId: string, filters: Record<string, string | number | undefined> = {}) {
+  const search = new URLSearchParams({ scopeId })
+  for (const [key, value] of Object.entries(filters)) if (value !== undefined && value !== '') search.set(key, String(value))
+  return search.toString()
+}
+
+function idempotencyHeaders(key?: string) {
+  return { 'content-type': 'application/json', 'idempotency-key': key || crypto.randomUUID() }
+}
+
 export const financeApi = {
   bootstrap: () => request<FinanceBootstrap>('/bootstrap'),
-  overview: (scopeId: string, from: string, to: string) => request<any>(`/overview?scopeId=${encodeURIComponent(scopeId)}&from=${from}&to=${to}`),
-  accounts: (scopeId: string) => request<any>(`/accounts?scopeId=${encodeURIComponent(scopeId)}`),
-  movements: (scopeId: string, filters: Record<string, string | number | undefined> = {}) => {
-    const search = new URLSearchParams({ scopeId })
-    for (const [key, value] of Object.entries(filters)) if (value !== undefined && value !== '') search.set(key, String(value))
-    return request<any>(`/movements?${search.toString()}`)
-  },
-  movement: (scopeId: string, movementId: string) => request<any>(`/movements/${encodeURIComponent(movementId)}?scopeId=${encodeURIComponent(scopeId)}`),
-  categories: (scopeId: string) => request<any>(`/categories?scopeId=${encodeURIComponent(scopeId)}`),
-  payees: (scopeId: string) => request<any>(`/payees?scopeId=${encodeURIComponent(scopeId)}`),
-  tags: (scopeId: string) => request<any>(`/tags?scopeId=${encodeURIComponent(scopeId)}`),
-  costCenters: (scopeId: string) => request<any>(`/cost-centers?scopeId=${encodeURIComponent(scopeId)}`),
-  create: (path: string, scopeId: string, body: unknown) => request<any>(`${path}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify(body) }),
-  stageCsv: (scopeId: string, filename: string, csv: string) => request<any>(`/imports?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ filename, csv }) }),
-  transition: (scopeId: string, movementId: string, action: 'confirm' | 'reconcile' | 'reverse', body: Record<string, unknown> = {}) => request<any>(`/movements/${encodeURIComponent(movementId)}/${action}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify(body) }),
-  payInstallment: (scopeId: string, installmentId: string, paidDate: string) => request<any>(`/installments/${encodeURIComponent(installmentId)}/pay?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ paidDate }) }),
+  overview: (scopeId: string, from: string, to: string) => request<any>(`/overview?${scopedQuery(scopeId, { from, to })}`),
+  accounts: (scopeId: string) => request<FinanceList<any>>(`/accounts?${scopedQuery(scopeId)}`),
+  categories: (scopeId: string) => request<FinanceList<any>>(`/categories?${scopedQuery(scopeId)}`),
+  payees: (scopeId: string) => request<FinanceList<any>>(`/payees?${scopedQuery(scopeId)}`),
+  tags: (scopeId: string) => request<FinanceList<any>>(`/tags?${scopedQuery(scopeId)}`),
+  costCenters: (scopeId: string) => request<FinanceList<any>>(`/cost-centers?${scopedQuery(scopeId)}`),
+  movements: (scopeId: string, filters: FinanceFilters = {}) => request<FinanceList<any>>(`/movements?${scopedQuery(scopeId, filters)}`),
+  movement: (scopeId: string, movementId: string) => request<any>(`/movements/${encodeURIComponent(movementId)}?${scopedQuery(scopeId)}`),
+  audit: (scopeId: string, filters: { entityId?: string; entityType?: string; page?: number; limit?: number } = {}) => request<FinanceList<any>>(`/audit?${scopedQuery(scopeId, filters)}`),
+  create: (path: string, scopeId: string, body: unknown, idempotencyKey?: string) => request<any>(`${path}?${scopedQuery(scopeId)}`, { method: 'POST', headers: idempotencyHeaders(idempotencyKey), body: JSON.stringify(body) }),
+  stageCsv: (scopeId: string, filename: string, csv: string, mapping?: Record<string, string>) => request<any>(`/imports?${scopedQuery(scopeId)}`, { method: 'POST', headers: idempotencyHeaders(), body: JSON.stringify({ filename, csv, mapping }) }),
+  import: (scopeId: string, batchId: string) => request<any>(`/imports/${encodeURIComponent(batchId)}?${scopedQuery(scopeId)}`),
+  importPreview: (scopeId: string, batchId: string) => request<any>(`/imports/${encodeURIComponent(batchId)}/preview?${scopedQuery(scopeId)}`, { method: 'POST', headers: idempotencyHeaders(), body: '{}' }),
+  importCommit: (scopeId: string, batchId: string, body: { accountId: string; categoryId: string }) => request<any>(`/imports/${encodeURIComponent(batchId)}/commit?${scopedQuery(scopeId)}`, { method: 'POST', headers: idempotencyHeaders(), body: JSON.stringify(body) }),
+  transition: (scopeId: string, movementId: string, action: 'confirm' | 'reconcile' | 'reverse', body: Record<string, unknown> = {}) => request<any>(`/movements/${encodeURIComponent(movementId)}/${action}?${scopedQuery(scopeId)}`, { method: 'POST', headers: idempotencyHeaders(), body: JSON.stringify(body) }),
+  payInstallment: (scopeId: string, installmentId: string, paidDate: string) => request<any>(`/installments/${encodeURIComponent(installmentId)}/pay?${scopedQuery(scopeId)}`, { method: 'POST', headers: idempotencyHeaders(), body: JSON.stringify({ paidDate }) }),
 }
