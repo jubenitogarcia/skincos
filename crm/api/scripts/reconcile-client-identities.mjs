@@ -22,6 +22,7 @@ const schemaStatements = [
         created_at timestamptz not null default now(),
         updated_at timestamptz not null default now()
     )`,
+    `alter table crm_atendimento.canonical_clients add column if not exists merged_into_id uuid references crm_atendimento.canonical_clients(id) on delete restrict`,
     `create table if not exists crm_atendimento.client_aliases (
         id uuid primary key default gen_random_uuid(),
         client_id uuid not null references crm_atendimento.canonical_clients(id) on delete cascade,
@@ -173,7 +174,7 @@ async function persistPlan(client, plan) {
         from jsonb_to_recordset($1::jsonb) as x(client_id text, caixa_customer_id text, method text, confidence numeric, evidence jsonb, status text, run_id text)
         on conflict(client_id, caixa_customer_id) do update set method=excluded.method,
             confidence=excluded.confidence, evidence=excluded.evidence,
-            status=case when crm_atendimento.client_caixa_links.status in ('confirmed','rejected')
+            status=case when crm_atendimento.client_caixa_links.status in ('confirmed','rejected','auto_confirmed_spelling')
                 then crm_atendimento.client_caixa_links.status else excluded.status end,
             run_id=excluded.run_id, updated_at=now()`)
     return runId

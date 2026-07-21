@@ -241,3 +241,75 @@ export function buildClientIdentityPlan({ attendances = [], caixaCustomers = [],
     }
     return { ...attendance, caixaCustomers: caixa, mergeSuggestions, caixaLinks, summary }
 }
+
+export function buildAnchoredSpellingMergePlan({ clients = [], suggestions = [], caixaLinks = [] } = {}) {
+    const clientsById = new Map(clients.map((client) => [client.id, client]))
+    const linksByClient = new Map()
+    for (const link of caixaLinks) {
+        if (!linksByClient.has(link.clientId)) linksByClient.set(link.clientId, [])
+        linksByClient.get(link.clientId).push(link)
+    }
+    const candidates = []
+    const anchorsByClient = new Map()
+    for (const suggestion of suggestions) {
+        if (suggestion.status !== 'pending') continue
+        const leftLinks = linksByClient.get(suggestion.leftClientId) || []
+        const rightLinks = linksByClient.get(suggestion.rightClientId) || []
+        const common = [...new Set(leftLinks.map((link) => link.caixaCustomerId))]
+            .filter((customerId) => rightLinks.some((link) => link.caixaCustomerId === customerId))
+        if (common.length !== 1) continue
+        const caixaCustomerId = common[0]
+        const leftAnchor = leftLinks.some((link) => link.caixaCustomerId === caixaCustomerId && link.status === 'auto_confirmed')
+        const rightAnchor = rightLinks.some((link) => link.caixaCustomerId === caixaCustomerId && link.status === 'auto_confirmed')
+        if (!leftAnchor && !rightAnchor) continue
+        candidates.push({ ...suggestion, caixaCustomerId, leftAnchor, rightAnchor })
+        for (const clientId of [suggestion.leftClientId, suggestion.rightClientId]) {
+            if (!anchorsByClient.has(clientId)) anchorsByClient.set(clientId, new Set())
+            anchorsByClient.get(clientId).add(caixaCustomerId)
+        }
+    }
+    const safe = candidates.filter((candidate) =>
+        anchorsByClient.get(candidate.leftClientId)?.size === 1
+        && anchorsByClient.get(candidate.rightClientId)?.size === 1)
+
+    const byAnchor = new Map()
+    for (const candidate of safe) {
+        if (!byAnchor.has(candidate.caixaCustomerId)) byAnchor.set(candidate.caixaCustomerId, [])
+        byAnchor.get(candidate.caixaCustomerId).push(candidate)
+    }
+    const merges = []
+    const acceptedSuggestionIds = []
+    for (const [caixaCustomerId, edges] of byAnchor) {
+        const memberIds = new Set(edges.flatMap((edge) => [edge.leftClientId, edge.rightClientId]))
+        const ranked = [...memberIds].map((clientId) => ({
+            ...clientsById.get(clientId),
+            id: clientId,
+            anchored: (linksByClient.get(clientId) || []).some((link) =>
+                link.caixaCustomerId === caixaCustomerId && link.status === 'auto_confirmed'),
+        })).sort((left, right) => Number(right.anchored) - Number(left.anchored)
+            || Number(right.attendanceCount || 0) - Number(left.attendanceCount || 0)
+            || String(left.nameKey || '').localeCompare(String(right.nameKey || '')))
+        const target = ranked[0]
+        if (!target) continue
+        for (const source of ranked.slice(1)) {
+            merges.push({
+                sourceClientId: source.id,
+                targetClientId: target.id,
+                caixaCustomerId,
+                method: 'spelling_same_caixa_customer',
+                confidence: Math.max(...edges.filter((edge) =>
+                    [edge.leftClientId, edge.rightClientId].includes(source.id)).map((edge) => Number(edge.similarity || 0))),
+            })
+        }
+        acceptedSuggestionIds.push(...edges.map((edge) => edge.id))
+    }
+    return {
+        merges,
+        acceptedSuggestionIds: [...new Set(acceptedSuggestionIds)],
+        summary: {
+            eligibleSuggestionPairs: safe.length,
+            canonicalClientsMerged: merges.length,
+            caixaAnchors: byAnchor.size,
+        },
+    }
+}
