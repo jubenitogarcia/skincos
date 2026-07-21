@@ -1,7 +1,9 @@
 import { proxyRequestBody, sanitizeProxyRequestHeaders } from '../../_lib/proxy'
 
-// Pages owns browser-origin forwarding only. Authorization remains in the API
-// gateway/Finance handler and the proxy deliberately adds no finance rules.
+// Pages owns browser-origin forwarding only. The three LOCAL_FINANCE_* values
+// are test-only bindings injected by scripts/run-local-finance.sh. They are
+// never configured for Pages deployments and let the local gateway resolve the
+// same D1 CRM user used by the Finance domain.
 export async function onRequest(context: any): Promise<Response> {
   const request: Request = context.request
   const incoming = new URL(request.url)
@@ -11,6 +13,10 @@ export async function onRequest(context: any): Promise<Response> {
   target.pathname = `/finance${rest.startsWith('/') ? '' : '/'}${rest}`
   target.search = incoming.search
   const headers = sanitizeProxyRequestHeaders(request.headers)
+  const localActor = String(context.env?.LOCAL_FINANCE_ACTOR || '').trim()
+  const localCsrf = String(context.env?.LOCAL_FINANCE_CSRF_TOKEN || '').trim()
+  if (localActor) headers.set('x-skincos-local-finance-actor', localActor)
+  if (localCsrf && !headers.has('x-csrf-token')) headers.set('x-csrf-token', localCsrf)
   const method = request.method.toUpperCase()
   const upstream = await fetch(new Request(target, { method, headers, body: proxyRequestBody(method, request), redirect: 'manual' }))
   const out = new Headers(upstream.headers)
