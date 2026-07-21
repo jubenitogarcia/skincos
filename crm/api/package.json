@@ -11,6 +11,7 @@
     "import-atendimento-sheet": "node scripts/import-atendimento-sheet.mjs",
     "import-gerencia-sheet": "node scripts/import-gerencia-sheet.mjs",
     "reconcile-client-identities": "node scripts/reconcile-client-identities.mjs",
+    "reconcile-client-registrations": "node scripts/reconcile-client-registrations.mjs",
     "apply-client-spelling-merges": "node scripts/apply-client-spelling-merges.mjs"
   },
   "dependencies": {
