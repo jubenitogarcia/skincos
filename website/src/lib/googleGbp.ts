@@ -1,3 +1,5 @@
+import { getStoredGoogleGbpRefreshToken } from "@/lib/gbpOAuthAuthorization";
+
 type TokenCache = {
     accessToken: string;
     expiresAtMs: number;
@@ -67,7 +69,7 @@ function requireEnv(name: string): string {
 export async function getGoogleGbpAccessToken(): Promise<string> {
     const clientId = requireEnv("GOOGLE_GBP_CLIENT_ID");
     const clientSecret = requireEnv("GOOGLE_GBP_CLIENT_SECRET");
-    const refreshToken = requireEnv("GOOGLE_GBP_REFRESH_TOKEN");
+    const refreshToken = (await getStoredGoogleGbpRefreshToken().catch(() => null)) ?? requireEnv("GOOGLE_GBP_REFRESH_TOKEN");
 
     const now = Date.now();
     if (tokenCache && tokenCache.expiresAtMs - 30_000 > now) {
@@ -101,6 +103,43 @@ export async function getGoogleGbpAccessToken(): Promise<string> {
     };
 
     return accessToken;
+}
+
+export function createGoogleGbpAuthorizationUrl(params: { state: string; redirectUri: string }): string {
+    const clientId = requireEnv("GOOGLE_GBP_CLIENT_ID");
+    const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", params.redirectUri);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("scope", "https://www.googleapis.com/auth/business.manage");
+    url.searchParams.set("access_type", "offline");
+    url.searchParams.set("prompt", "consent");
+    url.searchParams.set("include_granted_scopes", "true");
+    url.searchParams.set("state", params.state);
+    return url.toString();
+}
+
+export async function exchangeGoogleGbpAuthorizationCode(params: { code: string; redirectUri: string }): Promise<string> {
+    const code = params.code.trim();
+    if (!code) throw new Error("missing_google_authorization_code");
+    const body = new URLSearchParams();
+    body.set("client_id", requireEnv("GOOGLE_GBP_CLIENT_ID"));
+    body.set("client_secret", requireEnv("GOOGLE_GBP_CLIENT_SECRET"));
+    body.set("code", code);
+    body.set("redirect_uri", params.redirectUri);
+    body.set("grant_type", "authorization_code");
+
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+        cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`oauth_authorization_code_exchange_failed:${response.status}`);
+    const json = (await response.json()) as { refresh_token?: string };
+    const refreshToken = (json.refresh_token ?? "").trim();
+    if (!refreshToken) throw new Error("missing_google_refresh_token");
+    return refreshToken;
 }
 
 function parseLocationId(input: string): string {
