@@ -32,6 +32,7 @@ import { createHarmoniaRouter } from './server/harmonia/routes.js'
 import { startHarmoniaWorker } from './server/harmonia/worker.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
+import { createCaixaRouter } from './server/caixa/routes.js'
 import { configuredCorsOrigins, isAllowedCrmCorsOrigin } from './server/corsPolicy.js'
 import { resolveEvolutionMediaUrl } from './server/whatsappMediaUrl.js'
 
@@ -760,6 +761,13 @@ try {
     console.log('✅ Atendimento routes registered')
 } catch (e) {
     console.warn('⚠️  Atendimento routes failed to register:', e?.message || String(e))
+}
+
+try {
+    app.use('/api/caixa', createCaixaRouter({ getDevSession: devAuthSessionResolver }))
+    console.log('✅ Caixa routes registered')
+} catch (e) {
+    console.warn('⚠️  Caixa routes failed to register:', e?.message || String(e))
 }
 
 try {
