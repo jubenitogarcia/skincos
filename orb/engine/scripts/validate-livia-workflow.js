@@ -240,6 +240,9 @@ function validateContracts() {
   const bqBuildPlatformJobGraphCommand = commandOf('BQ - Build Platform Job Graph');
   const bqSeedPublishState = codeOf('BQ - Seed Publish State');
   const bqValidateJobGraph = codeOf('BQ - Validate Job Graph');
+  const liviaPrompt = String(getNode('Livia')?.parameters?.text || '');
+  const buildGraphSource = fs.readFileSync(path.join(__dirname, 'livia', 'build-platform-job-graph.js'), 'utf8');
+  const verifyPublishedSource = fs.readFileSync(path.join(__dirname, 'livia', 'verify-published-artifacts.js'), 'utf8');
   const switchOutput = String(getNode('Switch Publish Route')?.parameters?.output || '');
   const prepareHttp = codeOf('Prepare HTTP Publish Request');
   const processHttp = codeOf('Process HTTP Publish Result');
@@ -402,6 +405,16 @@ function validateContracts() {
   assert(JSON.stringify(getNode('Hydrate Publish Context')?.parameters || {}).includes('version: \\"v25.0\\"'), 'Hydrate Publish Context must use Graph API v25.0');
   assert(!workflowText.includes('v24.0'), 'Workflow must not retain Graph API v24.0 templates');
   assert(!workflowText.includes('"access_token":"EAA'), 'Workflow export must not contain inline Meta access tokens');
+  assert((liviaPrompt.match(/Contrato obrigatório de evidência:/g) || []).length === 1, 'Livia must contain a single authoritative video-evidence contract');
+  assert(!liviaPrompt.includes('chame obrigatoriamente a ferramenta evidência validada de vídeo'), 'Livia must not require a video tool that is not connected to the agent');
+  assert(liviaPrompt.includes('Seleção de capa fail-closed'), 'Livia must require a validated frame rank and timestamp for Reels');
+  for (const required of ['mediaFrameKey', 'editorialFrameForSingleVideo', 'editorial_verified', 'assertInstagramReelCoverContract', 'Reel não pode usar fallback']) {
+    assert(buildGraphSource.includes(required), `build-platform-job-graph.js must enforce per-media fail-closed Reel cover selection (${required})`);
+  }
+  for (const required of ['instagram_reel_cover_failed', 'cover_url_not_canonical', 'cover_not_requested']) {
+    assert(verifyPublishedSource.includes(required), `verify-published-artifacts.js must fail a Reel whose cover cannot be verified (${required})`);
+  }
+  assert(bqValidateJobGraph.includes('cover_url') && bqValidateJobGraph.includes('thumb_offset'), 'BQ - Validate Job Graph must enforce the Instagram Reel cover contract');
 
   assert(!attach.includes('Prepare Request'), 'Attach Uploaded Main Media Metadata must not reference Prepare Request anymore');
   assert(visualAssetReader.includes("kind === 'video'"), 'Visual asset reader must use the generated thumbnail for videos');
