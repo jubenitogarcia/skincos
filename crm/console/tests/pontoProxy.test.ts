@@ -64,6 +64,18 @@ describe('Ponto CRM proxy', () => {
     expect(actor.role).toBe('CONSULTOR')
   })
 
+  it('blocks a Consultor from administrative routes before forwarding upstream', async () => {
+    ;(getInsumosUser as Mock).mockResolvedValue({ id: 'consultor-1', email: 'consultor@example.test', role: 'CONSULTOR', allowedUnits: ['UNIT_A'] })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await onRequest(context('/api/ponto/admin/employees'))
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: 'FORBIDDEN' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('adds a unique replay nonce to protected mutations', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
