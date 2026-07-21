@@ -1056,15 +1056,23 @@ export default {
         // The bypass therefore requires both the dev-only Worker flag and the
         // marker emitted exclusively by the localhost Pages proxy.
         const devBypassActive = devBypassEnabled && proxiedLocalDevAuth;
+        // Keep the Insumos proxy aligned with the Pages local-auth identity.
+        // The local launcher deliberately exercises the Gestor path, including
+        // invite delegation. It therefore needs explicit scopes; an ADMIN with
+        // empty scopes would correctly be denied by the invitation policy.
         const devBypassUser = devBypassActive
             ? {
                 username: 'dev',
                 displayName: 'Dev Local',
-                email: 'dev@local',
-                role: 'ADMIN',
+                email: 'dev@local.test',
+                role: 'GESTOR',
                 ativo: true,
-                allowedUnits: [],
-                allowedModules: [],
+                allowedUnits: UNIDADES,
+                allowedModules: [
+                    'users', 'insumos', 'atendimento', 'ponto', 'faturamento',
+                    'procedimentos', 'leads', 'dashboard', 'conversa',
+                    'ai-automation', 'meta-ads', 'site-tracking', 'escala-profissionais',
+                ],
             }
             : null;
         const auditToken = String(env?.INSUMOS_AUDIT_TOKEN || '').trim();
@@ -1228,6 +1236,7 @@ export default {
                 '/auth/login',
                 '/auth/register',
                 '/auth/signup',
+                '/auth/invite/preview',
                 '/auth/password/request',
                 '/auth/password/verify',
                 '/auth/password/reset',
@@ -1311,7 +1320,7 @@ export default {
             if (!u) return false;
             if (String(u.role || '').toUpperCase() === 'ADMIN') return true;
             const allowed = Array.isArray(u.allowedUnits) ? u.allowedUnits.filter(Boolean) : [];
-            if (!allowed.length) return true;
+            if (!allowed.length) return false;
             return allowed.includes(unit);
         };
 
@@ -1324,7 +1333,7 @@ export default {
             if (!u || !moduleKey) return false;
             if (String(u.role || '').toUpperCase() === 'ADMIN') return true; // override
             const allowed = getAllowedModules(u);
-            if (!allowed.length) return true; // compat: no list means "ALL"
+            if (!allowed.length) return false;
             return allowed.includes(String(moduleKey));
         };
 
