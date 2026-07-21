@@ -1,0 +1,5 @@
+const API_BASE = '/api/caixa'
+async function request<T>(path: string, init?: RequestInit): Promise<T> { const response = await fetch(`${API_BASE}${path}`, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers || {}) } }); const body = await response.json().catch(() => ({})); if (!response.ok || !body?.ok) throw new Error(body?.error || 'CAIXA_REQUEST_FAILED'); return body as T }
+export type CaixaOverview = { summary: { sales: number; total: number; customers: number }; sales: Array<{ id: string; date: string; time?: string; client_name: string; phone_raw?: string; total: number; raw_service: string; unit_name: string; pending_items: number }>; pending: Array<{ raw_name: string; count: number }>; latestImport?: { created_at: string; summary: Record<string, unknown> } | null }
+export const getCaixaOverview = (params = '') => request<CaixaOverview>(`/overview${params}`)
+export const importCaixaGoogleSheet = (dryRun: boolean) => request<any>('/import/google-sheet', { method: 'POST', body: JSON.stringify({ dryRun }) })

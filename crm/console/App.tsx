@@ -233,6 +233,7 @@ const ReportsDashboard = lazy(() => import('@/ReportsDashboard').then(m => ({ de
 const AccountingModule = lazy(() => import('@/AccountingModule').then(m => ({ default: m.AccountingModule })))
 const ConversaModule = lazy(() => import('@/ConversaModule').then(m => ({ default: m.ConversaModule })))
 const AtendimentoModule = lazy(() => import('@/AtendimentoModule').then(m => ({ default: m.AtendimentoModule })))
+const CaixaModule = lazy(() => import('@/CaixaModule').then(m => ({ default: m.CaixaModule })))
 const MetaCampaignControlCenter = lazy(() => import('@/MetaCampaignControlCenter').then(m => ({ default: m.MetaCampaignControlCenter })))
 const MetaCommandCenter = lazy(() => import('@/MetaCommandCenter').then(m => ({ default: m.MetaCommandCenter })))
 const MetaSyncMonitor = lazy(() => import('@/MetaSyncMonitor').then(m => ({ default: m.MetaSyncMonitor })))
@@ -313,6 +314,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
         ),
         component: <AtendimentoModule />
     },
+    { key: 'caixa', label: 'Caixa', icon: '💰', component: <CaixaModule /> },
     {
         key: 'faturamento',
         label: 'Faturamento',
@@ -438,7 +440,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'conversa', 'atendimento', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais', 'ponto']),
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'conversa', 'atendimento', 'caixa', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais', 'ponto']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
