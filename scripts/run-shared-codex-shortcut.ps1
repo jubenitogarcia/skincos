@@ -24,6 +24,7 @@ param(
         "WebsiteReleaseCheck",
         "CrmLocal",
         "CrmConsultor",
+        "CrmConsultorStop",
         "CrmSiteEf",
         "CrmMetaAds",
         "CrmAtendimento",
@@ -161,10 +162,15 @@ function Invoke-ShortcutWsl {
 }
 
 function Resolve-CrmLocalSourceRoot {
+    param(
+        [ValidateSet("Gestor", "Consultor")]
+        [string]$Persona = "Gestor"
+    )
+
     # CRM Local must never inherit uncommitted product work from the checkout
-    # that happens to invoke the Codex action. Keep a private, detached source
-    # worktree on origin/main instead.
-    $sourceRoot = Join-Path $operatorRuntimeRoot "source\crm-local-main"
+    # that happens to invoke the Codex action. Each persona gets an isolated,
+    # detached origin/main worktree so Pages state and local auth never clash.
+    $sourceRoot = Join-Path $operatorRuntimeRoot ("source\crm-local-{0}-main" -f $Persona.ToLowerInvariant())
     $sourceParent = Split-Path -Parent $sourceRoot
 
     if (-not (Test-Path -LiteralPath $sourceRoot)) {
@@ -198,6 +204,23 @@ function Resolve-CrmLocalSourceRoot {
     }
 
     return $sourceRoot
+}
+
+function Assert-GestorSharedServices {
+    param([string]$WorkingProjectRoot)
+
+    Invoke-ShortcutWsl -WorkingProjectRoot $WorkingProjectRoot -SkipBootstrapCheck -Command @'
+for endpoint in \
+  http://127.0.0.1:8791/api/auth/me \
+  http://127.0.0.1:8787/insumos/health \
+  http://127.0.0.1:8801/api/ponto/readiness \
+  http://127.0.0.1:8110/health; do
+  if ! curl -fsS --max-time 5 "$endpoint" >/dev/null; then
+    echo "[crm-consultor] O CRM Local (Gestor) não está pronto em $endpoint. Inicie CRM – Local antes do Consultor." >&2
+    exit 1
+  fi
+done
+'@
 }
 
 function Invoke-RepoPowerShellScript {
@@ -264,8 +287,10 @@ $websiteLog = Join-Path $logRoot "website-local-dev.log"
 $websitePort = Join-Path $tmpRoot "website-local-dev.port"
 $sharedRoot = Split-Path (Split-Path $ProjectRoot -Parent) -Parent
 $websiteSourceRoot = Join-Path $sharedRoot "Worktrees\skincos\shared\website-local-main"
-$crmPid = Join-Path $tmpRoot "crm-local-dev.pid"
-$crmLog = Join-Path $logRoot "crm-local-dev.log"
+$crmGestorPid = Join-Path $tmpRoot "crm-local-gestor.pid"
+$crmGestorLog = Join-Path $logRoot "crm-local-gestor.log"
+$crmConsultorPid = Join-Path $tmpRoot "crm-local-consultor.pid"
+$crmConsultorLog = Join-Path $logRoot "crm-local-consultor.log"
 $atendimentoPid = Join-Path $tmpRoot "crm-atendimento-local.pid"
 $atendimentoLog = Join-Path $logRoot "crm-atendimento-local.log"
 $efAppStateRoot = Join-Path $localStateRoot "espacofacial-app"
@@ -282,8 +307,10 @@ $tmpRootWsl = Convert-WindowsPathToWsl -Path $tmpRoot
 $websitePidWsl = Convert-WindowsPathToWsl -Path $websitePid
 $websiteLogWsl = Convert-WindowsPathToWsl -Path $websiteLog
 $websitePortWsl = Convert-WindowsPathToWsl -Path $websitePort
-$crmPidWsl = Convert-WindowsPathToWsl -Path $crmPid
-$crmLogWsl = Convert-WindowsPathToWsl -Path $crmLog
+$crmGestorPidWsl = Convert-WindowsPathToWsl -Path $crmGestorPid
+$crmGestorLogWsl = Convert-WindowsPathToWsl -Path $crmGestorLog
+$crmConsultorPidWsl = Convert-WindowsPathToWsl -Path $crmConsultorPid
+$crmConsultorLogWsl = Convert-WindowsPathToWsl -Path $crmConsultorLog
 $atendimentoPidWsl = Convert-WindowsPathToWsl -Path $atendimentoPid
 $atendimentoLogWsl = Convert-WindowsPathToWsl -Path $atendimentoLog
 $efAppOutputRootWsl = Convert-WindowsPathToWsl -Path $efAppOutputRoot
@@ -371,34 +398,35 @@ function Invoke-ShortcutActionInternal {
         "WebsiteSiteCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:check" }
         "WebsiteReleaseCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:release-check" }
         "CrmLocal" {
-            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=0 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh" -f `
-                (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl))
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh" -f `
+                (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
+                (Convert-ToBashLiteral -Value $crmGestorLogWsl))
         }
         "CrmConsultor" {
-            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
-            # The runtime manifest proves ownership before --stop can terminate
-            # anything. Starting from a clean local shell avoids reusing the
-            # Gestor process or stale browser persona overrides.
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
-                (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl))
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_ROUTE='/?localAuthReset=1' CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module ponto" -f `
-                (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl))
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Consultor
+            Assert-GestorSharedServices -WorkingProjectRoot $crmLocalSourceRoot
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:8801 PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787 LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110 CRM_ROUTE='/?localAuthReset=1' CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module ponto" -f `
+                (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
+                (Convert-ToBashLiteral -Value $crmConsultorLogWsl))
+        }
+        "CrmConsultorStop" {
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Consultor
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
+                (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
+                (Convert-ToBashLiteral -Value $crmConsultorLogWsl))
         }
         "CrmSiteEf" {
-            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
             Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready" -f `
-                (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl))
+                (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
+                (Convert-ToBashLiteral -Value $crmGestorLogWsl))
         }
         "CrmMetaAds" {
-            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
             Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module meta-ads" -f `
-                (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl))
+                (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
+                (Convert-ToBashLiteral -Value $crmGestorLogWsl))
         }
         "CrmAtendimento" {
             Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh" -f `
@@ -408,13 +436,10 @@ function Invoke-ShortcutActionInternal {
         "CrmAtendimentoMirrorStatus" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-status" }
         "CrmAtendimentoMirrorSync" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-sync -- --apply" }
         "CrmLocalStop" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh --stop" -f `
-                (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
-                (Convert-ToBashLiteral -Value $atendimentoLogWsl))
-            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
-                (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl))
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
+                (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
+                (Convert-ToBashLiteral -Value $crmGestorLogWsl))
         }
         "CrmMemory" { Invoke-ShortcutWsl -Command "bash ./scripts/codex-memory-crm.sh" }
         "CrmSiteSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:site-smoke" }
@@ -592,14 +617,15 @@ function Show-CrmMenu {
         $selection = Read-MenuSelection `
             -Title "Local > CRM" `
             -Options @(
-                (New-MenuOption -Label "CRM Local" -Action "CrmLocal"),
+                (New-MenuOption -Label "CRM – Local (Gestor)" -Action "CrmLocal"),
                 (New-MenuOption -Label "CRM – Consultor (Ponto)" -Action "CrmConsultor"),
+                (New-MenuOption -Label "CRM – Consultor Stop" -Action "CrmConsultorStop"),
                 (New-MenuOption -Label "CRM Site EF" -Action "CrmSiteEf"),
                 (New-MenuOption -Label "CRM Meta Ads" -Action "CrmMetaAds"),
                 (New-MenuOption -Label "CRM Atendimento" -Action "CrmAtendimento"),
                 (New-MenuOption -Label "CRM Atendimento - Status do Clone" -Action "CrmAtendimentoMirrorStatus"),
                 (New-MenuOption -Label "CRM Atendimento - Atualizar Clone" -Action "CrmAtendimentoMirrorSync"),
-                (New-MenuOption -Label "CRM Local Stop" -Action "CrmLocalStop"),
+                (New-MenuOption -Label "CRM Local (Gestor) Stop" -Action "CrmLocalStop"),
                 (New-MenuOption -Label "CRM Memory" -Action "CrmMemory"),
                 (New-MenuOption -Label "CRM Site Smoke" -Action "CrmSiteSmoke"),
                 (New-MenuOption -Label "CRM Meta Ads Smoke" -Action "CrmMetaAdsSmoke"),
