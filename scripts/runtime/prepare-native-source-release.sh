@@ -84,6 +84,16 @@ sudo -n test -d "$STAGING/crm/api/node_modules/express" || { echo 'CRM productio
 sudo -n chown -R root:skincos "$STAGING/crm/api"
 sudo -n test -f "$STAGING/orb/engine/orb-proxy/server.js" || { echo 'Orb proxy source is missing from source release.' >&2; exit 1; }
 sudo -n test -f "$STAGING/integration/ef/requirements.lock" || { echo 'Booking requirements are missing from source release.' >&2; exit 1; }
+sudo -n test -f "$STAGING/orb/engine/compose2-current.js" || { echo 'Livia job-graph source is missing from source release.' >&2; exit 1; }
+sudo -n test -f "$STAGING/orb/engine/scripts/livia/build-platform-job-graph.js" || { echo 'Livia job-graph runtime adapter is missing from source release.' >&2; exit 1; }
+# The BQ node externalizes a legacy n8n Code node. Validate the adapter against
+# image, video and mixed-carousel item fixtures before changing the live link.
+# A release without the $items compatibility bridge would otherwise fail only
+# after media analysis has completed, immediately before publishing.
+sudo -n -u skincos env \
+  LIVIA_BUILD_JOB_GRAPH_SOURCE="$STAGING/orb/engine/compose2-current.js" \
+  N8N_RUNTIME_HOME="${N8N_RUNTIME_HOME:-/var/lib/skincos-runtime/orb}" \
+  node "$STAGING/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-runtime-compatibility >/dev/null
 
 sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$DESTINATION")"
 sudo -n mv "$STAGING" "$DESTINATION"

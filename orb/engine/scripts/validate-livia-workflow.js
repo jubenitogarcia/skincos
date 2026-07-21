@@ -284,6 +284,9 @@ function validateContracts() {
   assert(processMediaAssetCommand.length < 2500, `Process Media Asset command must stay small enough for stable expression parsing (${processMediaAssetCommand.length} chars)`);
   const jobGraphScript = path.join(__dirname, 'livia', 'build-platform-job-graph.js');
   const jobGraphSource = fs.readFileSync(jobGraphScript, 'utf8');
+  for (const required of ['function legacyInputs(', "'$items'", 'assertRuntimeCompatibility', 'referencedLegacyItemNodes']) {
+    assert(jobGraphSource.includes(required), `build-platform-job-graph.js must preserve the native $items compatibility bridge (${required})`);
+  }
   assert(jobGraphSource.includes('invalidateIncompleteCarouselResume'), 'Livia resume logic must invalidate partial Instagram carousel attempts before reusing child containers');
   assert(jobGraphSource.includes('groupResumeContextKey'), 'Livia resume logic must inspect group-scoped carousel container results');
   assert(jobGraphSource.includes('normalizeThreadsCarouselJob'), 'Livia job graph must keep Threads carousel child and parent request contracts distinct');
