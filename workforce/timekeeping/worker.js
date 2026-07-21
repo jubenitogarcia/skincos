@@ -1,5 +1,5 @@
 import { canonicalEventType, calculateDay, calculatePeriod, isoDateInZone } from './domain.js'
-import { biometricDistance, constantTimeEqual, decryptTemplate, encryptTemplate, hashPin, isValidBiometricTemplate, sha256, signHmac, verifyPin } from './security.js'
+import { biometricDistance, constantTimeEqual, decryptSensitiveText, decryptTemplate, encryptSensitiveText, encryptTemplate, hashPin, isValidBiometricTemplate, sha256, signHmac, verifyPin } from './security.js'
 
 const encoder = new TextEncoder()
 const json = (status, payload, requestId) => new Response(JSON.stringify({ ...payload, requestId }), {
@@ -37,10 +37,10 @@ function canManageWorkforce(actor) { return actor?.role === 'SUPERVISOR' || acto
 function isFacePunchEnabled(env) { return String(env?.PONTO_FACE_PUNCH_ENABLED || '').trim().toLowerCase() === 'true' }
 function roleAllows(role, action) {
   const matrix = {
-    CONSULTOR: ['self.read', 'self.punch'], DEVICE: ['device.punch'],
+    CONSULTOR: ['self.read', 'self.punch', 'self.profile.read', 'self.profile.write'], DEVICE: ['device.punch'],
     MANAGER: ['unit.read', 'correction.request', 'device.manage'],
-    SUPERVISOR: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'export.read', 'audit.read'],
-    ADMIN: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'device.manage', 'export.read', 'audit.read'],
+    SUPERVISOR: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'export.read', 'audit.read', 'profile.read', 'profile.manage'],
+    ADMIN: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'device.manage', 'export.read', 'audit.read', 'profile.read', 'profile.manage'],
   }
   return (matrix[normalizeWorkforceRole(role)] || []).includes(action)
 }
@@ -79,6 +79,113 @@ function requireUnit(actor, unitId) {
 
 function publicEmployee(row) {
   return row ? { id: row.id, employeeId: row.canonical_employee_id, name: row.display_name, email: row.login_email || null, status: row.status, terminatedAt: row.terminated_at || null } : null
+}
+
+const profilePrivateFields = ['cpf', 'mobilePhone', 'pis', 'rgNumber', 'rgIssuer', 'rgIssuerState', 'rgIssuedAt', 'motherName', 'fatherName', 'zipCode', 'street', 'addressNumber', 'addressComplement', 'neighborhood']
+const profilePublicFields = ['socialName', 'personalEmail', 'groupName', 'departmentName', 'managerEmployeeId', 'managerCpf', 'admittedAt', 'dismissedAt', 'birthPlace', 'educationLevel', 'city', 'state']
+const profileSelfPublicFields = ['socialName', 'personalEmail', 'birthPlace', 'educationLevel', 'city', 'state']
+const profileSelfPrivateFields = ['mobilePhone', 'zipCode', 'street', 'addressNumber', 'addressComplement', 'neighborhood']
+
+function profileInput(body, allowedPublic = profilePublicFields, allowedPrivate = profilePrivateFields) {
+  const input = body?.profile && typeof body.profile === 'object' && !Array.isArray(body.profile) ? body.profile : body
+  const publicPatch = {}; const privatePatch = {}; const provided = []
+  for (const field of allowedPublic) {
+    if (input?.[field] === undefined) continue
+    provided.push(field)
+    if (field === 'admittedAt' || field === 'dismissedAt') publicPatch[field] = dateOnly(input[field]) || null
+    else if (field === 'managerCpf') publicPatch[field] = String(input[field] || '').replace(/\D/g, '') || null
+    else publicPatch[field] = cleanText(input[field], field === 'personalEmail' ? 240 : 180) || null
+  }
+  for (const field of allowedPrivate) {
+    if (input?.[field] === undefined) continue
+    provided.push(field)
+    const value = cleanText(input[field], 500)
+    privatePatch[field] = field === 'cpf' ? value.replace(/\D/g, '') : value || null
+  }
+  return { publicPatch, privatePatch, provided }
+}
+
+async function profilePrivateData(profile, env) {
+  if (!profile?.private_data_encrypted) return {}
+  if (!env.PONTO_PROFILE_DATA_KEY) return {}
+  const parsed = JSON.parse(await decryptSensitiveText(profile.private_data_encrypted, env.PONTO_PROFILE_DATA_KEY))
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('PROFILE_DATA_INVALID')
+  return Object.fromEntries(profilePrivateFields.map((field) => [field, typeof parsed[field] === 'string' ? parsed[field] : null]))
+}
+
+function profileDocumentStatus(privateData = {}, employee = null) {
+  return {
+    cpf: privateData.cpf || employee?.cpf_hash ? 'CADASTRADO' : 'PENDENTE',
+    pis: privateData.pis ? 'CADASTRADO' : 'PENDENTE',
+    rg: privateData.rgNumber ? 'CADASTRADO' : 'PENDENTE',
+    family: privateData.motherName || privateData.fatherName ? 'CADASTRADO' : 'PENDENTE',
+  }
+}
+
+async function profileResponse(db, env, employee) {
+  const profile = await db.prepare('SELECT * FROM workforce_employee_profiles WHERE employee_id=?').bind(employee.id).first()
+  const privateData = profile ? await profilePrivateData(profile, env) : {}
+  const units = await employeeUnits(db, employee.id)
+  const manager = profile?.manager_employee_id
+    ? await db.prepare('SELECT id, display_name, canonical_employee_id FROM workforce_employees WHERE id=?').bind(profile.manager_employee_id).first()
+    : null
+  const data = {
+    employeeId: employee.canonical_employee_id,
+    legalName: employee.display_name,
+    socialName: profile?.social_name || null,
+    employeeCode: employee.employee_code || null,
+    loginEmail: employee.login_email || null,
+    personalEmail: profile?.personal_email || null,
+    mobilePhone: privateData.mobilePhone || null,
+    jobTitle: employee.job_title || null,
+    status: employee.status,
+    admittedAt: profile?.admitted_at || null,
+    dismissedAt: profile?.dismissed_at || employee.terminated_at || null,
+    groupName: profile?.group_name || null,
+    departmentName: profile?.department_name || null,
+    manager: manager ? { employeeId: manager.canonical_employee_id, name: manager.display_name } : null,
+    units,
+    birthDate: employee.birth_date || null,
+    birthPlace: profile?.birth_place || null,
+    educationLevel: profile?.education_level || null,
+    address: { zipCode: privateData.zipCode || null, street: privateData.street || null, number: privateData.addressNumber || null, complement: privateData.addressComplement || null, neighborhood: privateData.neighborhood || null, city: profile?.city || null, state: profile?.state || null },
+    documents: profileDocumentStatus(privateData, employee),
+  }
+  const required = ['legalName', 'employeeCode', 'jobTitle', 'admittedAt', 'groupName', 'departmentName', 'mobilePhone', 'birthDate', 'birthPlace', 'educationLevel', 'zipCode', 'city', 'state']
+  const missing = required.filter((field) => field === 'zipCode' ? !privateData.zipCode : !data[field])
+  return { profile: data, completeness: { missing, complete: required.filter((field) => !missing.includes(field)), documents: profileDocumentStatus(privateData, employee) } }
+}
+
+async function saveProfile(db, env, actor, employee, patch, requestId) {
+  const current = await db.prepare('SELECT * FROM workforce_employee_profiles WHERE employee_id=?').bind(employee.id).first()
+  let existingPrivate = {}
+  const hasPrivateUpdate = Object.keys(patch.privatePatch).length > 0
+  if (hasPrivateUpdate && !env.PONTO_PROFILE_DATA_KEY) throw new Error('PROFILE_DATA_KEY_NOT_CONFIGURED')
+  if (current?.private_data_encrypted && hasPrivateUpdate) existingPrivate = await profilePrivateData(current, env)
+  const mergedPrivate = { ...existingPrivate, ...patch.privatePatch }
+  const privateDataEncrypted = hasPrivateUpdate
+    ? await encryptSensitiveText(JSON.stringify(mergedPrivate), env.PONTO_PROFILE_DATA_KEY)
+    : current?.private_data_encrypted || null
+  const values = {
+    socialName: patch.publicPatch.socialName === undefined ? current?.social_name || null : patch.publicPatch.socialName,
+    personalEmail: patch.publicPatch.personalEmail === undefined ? current?.personal_email || null : patch.publicPatch.personalEmail,
+    groupName: patch.publicPatch.groupName === undefined ? current?.group_name || null : patch.publicPatch.groupName,
+    departmentName: patch.publicPatch.departmentName === undefined ? current?.department_name || null : patch.publicPatch.departmentName,
+    managerEmployeeId: patch.publicPatch.managerEmployeeId === undefined ? current?.manager_employee_id || null : patch.publicPatch.managerEmployeeId,
+    managerCpfHash: patch.publicPatch.managerCpf === undefined ? current?.manager_cpf_hash || null : (patch.publicPatch.managerCpf ? await sha256(patch.publicPatch.managerCpf) : null),
+    admittedAt: patch.publicPatch.admittedAt === undefined ? current?.admitted_at || null : patch.publicPatch.admittedAt,
+    dismissedAt: patch.publicPatch.dismissedAt === undefined ? current?.dismissed_at || null : patch.publicPatch.dismissedAt,
+    birthPlace: patch.publicPatch.birthPlace === undefined ? current?.birth_place || null : patch.publicPatch.birthPlace,
+    educationLevel: patch.publicPatch.educationLevel === undefined ? current?.education_level || null : patch.publicPatch.educationLevel,
+    city: patch.publicPatch.city === undefined ? current?.city || null : patch.publicPatch.city,
+    state: patch.publicPatch.state === undefined ? current?.state || null : patch.publicPatch.state,
+  }
+  const at = now()
+  await db.batch([
+    db.prepare(`INSERT INTO workforce_employee_profiles (employee_id, social_name, personal_email, group_name, department_name, manager_employee_id, manager_cpf_hash, admitted_at, dismissed_at, birth_place, education_level, city, state, private_data_encrypted, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(employee_id) DO UPDATE SET social_name=excluded.social_name, personal_email=excluded.personal_email, group_name=excluded.group_name, department_name=excluded.department_name, manager_employee_id=excluded.manager_employee_id, manager_cpf_hash=excluded.manager_cpf_hash, admitted_at=excluded.admitted_at, dismissed_at=excluded.dismissed_at, birth_place=excluded.birth_place, education_level=excluded.education_level, city=excluded.city, state=excluded.state, private_data_encrypted=excluded.private_data_encrypted, updated_at=excluded.updated_at, updated_by=excluded.updated_by`)
+      .bind(employee.id, values.socialName, values.personalEmail, values.groupName, values.departmentName, values.managerEmployeeId, values.managerCpfHash, values.admittedAt, values.dismissedAt, values.birthPlace, values.educationLevel, values.city, values.state, privateDataEncrypted, at, at, actor.id),
+    await audit(db, { actor, action: 'EMPLOYEE_PROFILE_UPDATE', entityType: 'workforce_employee_profile', entityId: employee.id, requestId, after: { fields: patch.provided } }),
+  ])
 }
 
 function cleanText(value, max = 240) { return String(value || '').trim().slice(0, max) }
@@ -192,6 +299,7 @@ function canonicalPath(path) {
   return aliases.get(path) || path
     .replace(/^\/api\/ponto\/admin\/employees\/([^/]+)\/pin$/, '/api/ponto/pin/configure/$1')
     .replace(/^\/api\/ponto\/admin\/employees\/([^/]+)\/enroll$/, '/api/ponto/biometrics/enroll/$1')
+    .replace(/^\/api\/ponto\/admin\/employees\/([^/]+)\/profile$/, '/api/ponto/employees/$1/profile')
     .replace(/^\/api\/ponto\/admin\/devices\/([^/]+)\/revoke$/, '/api/ponto/devices/$1/revoke')
     .replace(/^\/api\/ponto\/admin\/employees\/([^/]+)$/, '/api/ponto/employees/$1')
 }
@@ -437,6 +545,24 @@ export async function handleTimekeeping(request, env) {
       return records ? json(200, { ok: true, data: records }, requestId) : failure(404, 'EMPLOYEE_NOT_LINKED', requestId)
     }
 
+    if (path === '/api/ponto/me/profile' && request.method === 'GET') {
+      if (!roleAllows(actor.role, 'self.profile.read')) return failure(403, 'FORBIDDEN', requestId)
+      const employee = await employeeForActor(db, actor)
+      if (!employee) return failure(404, 'EMPLOYEE_NOT_LINKED', requestId)
+      return json(200, { ok: true, data: await profileResponse(db, env, employee) }, requestId)
+    }
+
+    if (path === '/api/ponto/me/profile' && request.method === 'PATCH') {
+      if (!roleAllows(actor.role, 'self.profile.write')) return failure(403, 'FORBIDDEN', requestId)
+      const employee = await employeeForActor(db, actor); const body = await readJson(request)
+      if (!employee) return failure(404, 'EMPLOYEE_NOT_LINKED', requestId)
+      if (!body) return failure(400, 'INVALID_PROFILE', requestId)
+      const patch = profileInput(body, profileSelfPublicFields, profileSelfPrivateFields)
+      if (!patch.provided.length) return failure(400, 'PROFILE_CHANGES_REQUIRED', requestId)
+      await saveProfile(db, env, actor, employee, patch, requestId)
+      return json(200, { ok: true, data: await profileResponse(db, env, employee) }, requestId)
+    }
+
     if (path === '/api/ponto/employees' && request.method === 'GET') {
       if (!roleAllows(actor.role, 'unit.read') && !isConsultor(actor)) return failure(403, 'FORBIDDEN', requestId)
       const employees = await listScopedEmployees(db, actor, url)
@@ -451,6 +577,30 @@ export async function handleTimekeeping(request, env) {
     }
 
     const employeeMatch = path.match(/^\/api\/ponto\/employees\/([^/]+)$/)
+    const employeeProfileMatch = path.match(/^\/api\/ponto\/employees\/([^/]+)\/profile$/)
+    if (employeeProfileMatch && request.method === 'GET') {
+      if (!roleAllows(actor.role, 'profile.read')) return failure(403, 'FORBIDDEN', requestId)
+      const employee = await employeeById(db, actor, decodeURIComponent(employeeProfileMatch[1]))
+      if (!employee) return failure(404, 'EMPLOYEE_NOT_FOUND', requestId)
+      return json(200, { ok: true, data: await profileResponse(db, env, employee) }, requestId)
+    }
+
+    if (employeeProfileMatch && request.method === 'PATCH') {
+      if (!roleAllows(actor.role, 'profile.manage')) return failure(403, 'FORBIDDEN', requestId)
+      const employee = await employeeById(db, actor, decodeURIComponent(employeeProfileMatch[1])); const body = await readJson(request)
+      if (!employee) return failure(404, 'EMPLOYEE_NOT_FOUND', requestId)
+      if (!body) return failure(400, 'INVALID_PROFILE', requestId)
+      const patch = profileInput(body)
+      if (!patch.provided.length) return failure(400, 'PROFILE_CHANGES_REQUIRED', requestId)
+      if (patch.publicPatch.managerEmployeeId) {
+        const manager = await employeeById(db, actor, patch.publicPatch.managerEmployeeId)
+        if (!manager) return failure(400, 'MANAGER_NOT_FOUND', requestId)
+        patch.publicPatch.managerEmployeeId = manager.id
+      }
+      await saveProfile(db, env, actor, employee, patch, requestId)
+      return json(200, { ok: true, data: await profileResponse(db, env, employee) }, requestId)
+    }
+
     if (employeeMatch && request.method === 'GET') {
       if (!roleAllows(actor.role, 'unit.read') && !isConsultor(actor)) return failure(403, 'FORBIDDEN', requestId)
       const employee = await employeeById(db, actor, decodeURIComponent(employeeMatch[1]))
@@ -780,4 +930,4 @@ export async function handleTimekeeping(request, env) {
 }
 
 export default { fetch: handleTimekeeping }
-export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential }
+export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential, profileInput, profileDocumentStatus }

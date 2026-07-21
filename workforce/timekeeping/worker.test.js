@@ -19,6 +19,8 @@ test('readiness fails closed when D1 is unavailable', async () => {
 
 test('role matrix keeps consultor self-service and gives supervisor the former RH/auditor duties', () => {
   assert.equal(__testables.roleAllows('CONSULTOR', 'self.punch'), true)
+  assert.equal(__testables.roleAllows('CONSULTOR', 'self.profile.read'), true)
+  assert.equal(__testables.roleAllows('CONSULTOR', 'profile.manage'), false)
   assert.equal(__testables.roleAllows('CONSULTOR', 'unit.read'), false)
   assert.equal(__testables.roleAllows('MANAGER', 'correction.request'), true)
   assert.equal(__testables.roleAllows('MANAGER', 'correction.approve'), false)
@@ -28,6 +30,14 @@ test('role matrix keeps consultor self-service and gives supervisor the former R
   assert.equal(__testables.normalizeWorkforceRole('RH'), 'SUPERVISOR')
   assert.equal(__testables.normalizeWorkforceRole('AUDITOR'), 'SUPERVISOR')
   assert.equal(__testables.normalizeWorkforceRole('EMPLOYEE'), 'CONSULTOR')
+})
+
+test('profile payload accepts only known fields and keeps document values out of summaries', () => {
+  const patch = __testables.profileInput({ profile: { socialName: 'Pessoa Teste', cpf: '123.456.789-00', mobilePhone: '(11) 99999-0000', ignored: 'do-not-store' } })
+  assert.deepEqual(patch.publicPatch, { socialName: 'Pessoa Teste' })
+  assert.deepEqual(patch.privatePatch, { cpf: '12345678900', mobilePhone: '(11) 99999-0000' })
+  assert.deepEqual(patch.provided, ['socialName', 'cpf', 'mobilePhone'])
+  assert.deepEqual(__testables.profileDocumentStatus({ cpf: '12345678900', pis: '', rgNumber: '42', motherName: '' }), { cpf: 'CADASTRADO', pis: 'PENDENTE', rg: 'CADASTRADO', family: 'PENDENTE' })
 })
 
 test('face punches stay disabled unless the operational flag explicitly enables them', async () => {

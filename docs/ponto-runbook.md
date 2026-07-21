@@ -38,6 +38,7 @@ Mutações same-origin exigem o token CSRF da sessão. A Pages Function envia um
 - `PONTO_ACTOR_HMAC_KEY`: assinatura CRM → Timekeeping;
 - `PONTO_IDEMPOTENCY_KEY`: fingerprint de retries;
 - `PONTO_TEMPLATES_KEY`: A256GCM dos templates biométricos;
+- `PONTO_PROFILE_DATA_KEY`: A256GCM de documentos, filiação, telefone e endereço do perfil canônico;
 - `ESCALA_ACTOR_HMAC_KEY`: autenticação Timekeeping → Escala;
 - `TIMEKEEPING_BACKUP_PASSPHRASE`: cifra o checkpoint D1 criado pelo workflow antes de migrations remotas;
 - `PONTO_FACE_PUNCH_ENABLED`: mantém identificação facial desabilitada por padrão; só use `true` após aprovação operacional explícita. A interface também bloqueia temporariamente novas capturas faciais; as marcações usam PIN;

@@ -13,7 +13,8 @@ import * as QRCode from 'qrcode'
 import { LoadingPercentText } from '@/LoadingPattern'
 import { apiBlob, apiJson, createRequestMeta, errorMetaString, fetchJsonWithMeta, getDevEmployeeActorHeaders, LS_DEV_ACTOR_EMAIL } from './pontoApi'
 import { getNextPunchAction, getPunchConfirmation, getPunchTypeLabel } from './pontoPresentation'
-import type { PontoCorrection, PontoDevicePublic, PontoEmailConflict, PontoEmployeePublic, PontoMeResponse, PontoMonthlyResult, PontoPunchRecord } from './pontoTypes'
+import { profileMissingSummary, profileValue } from './pontoProfilePresentation'
+import type { PontoCorrection, PontoDevicePublic, PontoEmailConflict, PontoEmployeePublic, PontoMeResponse, PontoMonthlyResult, PontoMyProfileResponse, PontoPunchRecord } from './pontoTypes'
 
 type FaceDetectorMode = 'tiny' | 'ssd'
 
@@ -347,8 +348,12 @@ export function PontoModule() {
   const [meRecords, setMeRecords] = useState<PontoPunchRecord[]>([])
   const [meRecordsFrom, setMeRecordsFrom] = useState('')
   const [meRecordsTo, setMeRecordsTo] = useState('')
+  const [myProfile, setMyProfile] = useState<PontoMyProfileResponse['data'] | null>(null)
+  const [myProfileLoading, setMyProfileLoading] = useState(false)
+  const [myProfileError, setMyProfileError] = useState<string | null>(null)
   const meLinked = me && 'linked' in me && me.linked ? me : null
   const nextPunchAction = useMemo(() => getNextPunchAction(meLinked?.lastPunch), [meLinked?.lastPunch])
+  const profile = myProfile?.profile || null
 
   const [adminEmployees, setAdminEmployees] = useState<PontoEmployeePublic[]>([])
   const [adminDevices, setAdminDevices] = useState<PontoDevicePublic[]>([])
@@ -766,6 +771,20 @@ export function PontoModule() {
     }
   }
 
+  async function loadMyProfile() {
+    setMyProfileLoading(true)
+    setMyProfileError(null)
+    try {
+      const res = await apiJson<PontoMyProfileResponse>('/api/ponto/me/profile', { headers: getDevEmployeeActorHeaders(devActorEmail) })
+      setMyProfile(res.data)
+    } catch (e: any) {
+      setMyProfile(null)
+      setMyProfileError(e?.message || 'Perfil indisponível no momento')
+    } finally {
+      setMyProfileLoading(false)
+    }
+  }
+
   function ensureEmployeeUnitSelected() {
     if (!allowedUnits.length) {
       toast.error('Unidade não configurada')
@@ -867,6 +886,16 @@ export function PontoModule() {
     void meRefresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [devActorEmail])
+
+  useEffect(() => {
+    if (!me || !('linked' in me) || !me.linked) {
+      setMyProfile(null)
+      setMyProfileError(null)
+      return
+    }
+    void loadMyProfile()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, devActorEmail])
 
   useEffect(() => {
     if (!selectedEmployee) return
@@ -1648,6 +1677,73 @@ export function PontoModule() {
               </div>
           </CardContent>
         </Card>
+
+        {meLinked ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Meu perfil profissional</CardTitle>
+              <CardDescription>Dados vinculados ao seu cadastro canônico de funcionário. Documentos pessoais permanecem protegidos.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {myProfileLoading ? <div className="text-sm text-muted-foreground">Carregando perfil…</div> : null}
+              {myProfileError ? (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                  <div className="font-medium">Perfil ainda não disponível</div>
+                  <div className="opacity-80">{myProfileError}</div>
+                </div>
+              ) : null}
+              {profile ? (
+                <>
+                  <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
+                    {profileMissingSummary(profile, myProfile?.completeness.missing || [])}
+                  </div>
+                  <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                    <div className="space-y-3 rounded-md border p-4">
+                      <div className="font-medium">Identificação e vínculo</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                        <div><div className="text-xs text-muted-foreground">Nome completo</div><div>{profileValue(profile.legalName)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Nome social</div><div>{profileValue(profile.socialName)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Matrícula</div><div>{profileValue(profile.employeeCode)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Status</div><div>{profileValue(profile.status)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">E-mail de acesso</div><div className="break-all">{profileValue(profile.loginEmail)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Celular</div><div>{profileValue(profile.mobilePhone)}</div></div>
+                      </div>
+                    </div>
+                    <div className="space-y-3 rounded-md border p-4">
+                      <div className="font-medium">Organização</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                        <div><div className="text-xs text-muted-foreground">Cargo</div><div>{profileValue(profile.jobTitle)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Admissão</div><div>{profileValue(profile.admittedAt)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Grupo</div><div>{profileValue(profile.groupName)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Departamento</div><div>{profileValue(profile.departmentName)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Líder imediato</div><div>{profileValue(profile.manager?.name)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Unidades</div><div>{profile.units.length ? profile.units.join(', ') : 'Não informado'}</div></div>
+                      </div>
+                    </div>
+                    <div className="space-y-3 rounded-md border p-4">
+                      <div className="font-medium">Dados pessoais</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                        <div><div className="text-xs text-muted-foreground">Data de nascimento</div><div>{profileValue(profile.birthDate)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Naturalidade</div><div>{profileValue(profile.birthPlace)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Grau de instrução</div><div>{profileValue(profile.educationLevel)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">E-mail pessoal</div><div className="break-all">{profileValue(profile.personalEmail)}</div></div>
+                      </div>
+                    </div>
+                    <div className="space-y-3 rounded-md border p-4">
+                      <div className="font-medium">Endereço e documentos</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                        <div><div className="text-xs text-muted-foreground">CEP</div><div>{profileValue(profile.address.zipCode)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Cidade / Estado</div><div>{[profile.address.city, profile.address.state].filter(Boolean).join(' / ') || 'Não informado'}</div></div>
+                        <div className="sm:col-span-2"><div className="text-xs text-muted-foreground">Endereço</div><div>{[profile.address.street, profile.address.number, profile.address.complement, profile.address.neighborhood].filter(Boolean).join(', ') || 'Não informado'}</div></div>
+                        <div className="sm:col-span-2 text-xs text-muted-foreground">CPF: {profile.documents.cpf.toLowerCase()} • PIS: {profile.documents.pis.toLowerCase()} • RG: {profile.documents.rg.toLowerCase()} • filiação: {profile.documents.family.toLowerCase()}</div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader>
