@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+    buildAnchoredSpellingMergePlan,
     buildClientIdentityPlan,
     formatCanonicalClientName,
     normalizeClientName,
@@ -86,4 +87,35 @@ test('marks exact-name Caixa collisions as ambiguous', () => {
 test('calculates normalized edit similarity', () => {
     assert.equal(normalizedNameSimilarity('Maria', 'Maria'), 1)
     assert.ok(normalizedNameSimilarity('Mariana Oliveira Souza', 'Mariana Oliveira Soza') > 0.9)
+})
+
+test('merges a spelling variant only when both sides share one Caixa customer with an exact anchor', () => {
+    const plan = buildAnchoredSpellingMergePlan({
+        clients: [
+            { id: 'c1', nameKey: 'mariana oliveira souza', attendanceCount: 5 },
+            { id: 'c2', nameKey: 'mariana oliveira soza', attendanceCount: 2 },
+        ],
+        suggestions: [{ id: 's1', leftClientId: 'c1', rightClientId: 'c2', similarity: 0.96, status: 'pending' }],
+        caixaLinks: [
+            { clientId: 'c1', caixaCustomerId: 'cash1', status: 'auto_confirmed' },
+            { clientId: 'c2', caixaCustomerId: 'cash1', status: 'suggested' },
+        ],
+    })
+    assert.deepEqual(plan.merges, [{
+        sourceClientId: 'c2', targetClientId: 'c1', caixaCustomerId: 'cash1',
+        method: 'spelling_same_caixa_customer', confidence: 0.96,
+    }])
+    assert.deepEqual(plan.acceptedSuggestionIds, ['s1'])
+})
+
+test('does not merge spelling candidates without an exact Caixa anchor', () => {
+    const plan = buildAnchoredSpellingMergePlan({
+        clients: [{ id: 'c1' }, { id: 'c2' }],
+        suggestions: [{ id: 's1', leftClientId: 'c1', rightClientId: 'c2', similarity: 0.99, status: 'pending' }],
+        caixaLinks: [
+            { clientId: 'c1', caixaCustomerId: 'cash1', status: 'suggested' },
+            { clientId: 'c2', caixaCustomerId: 'cash1', status: 'suggested' },
+        ],
+    })
+    assert.equal(plan.merges.length, 0)
 })
