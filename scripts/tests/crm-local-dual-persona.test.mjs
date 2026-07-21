@@ -31,6 +31,7 @@ test('Consultor owns only its Pages and Vite runtime', () => {
   assert.match(launcher, /CRM_PERSONA=CONSULTOR/)
   assert.match(launcher, /CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792/)
   assert.match(launcher, /CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0/)
+  assert.doesNotMatch(launcher, /CRM_ROUTE='\/\?localAuthReset=1'/)
 })
 
 test('preflight validates role and each shared dependency', () => {
