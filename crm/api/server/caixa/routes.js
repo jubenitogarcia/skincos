@@ -30,7 +30,7 @@ function allowed(actor) { const modules = Array.isArray(actor?.allowedModules) ?
 
 export function createCaixaRouter(options = {}) {
     const store = options.store || createCaixaStore({ databaseUrl: options.databaseUrl })
-    const actorKey = String(options.actorHmacKey || process.env.ATENDIMENTO_ACTOR_HMAC_KEY || process.env.ESCALA_ACTOR_HMAC_KEY || process.env.CRM_ESCALA_HMAC_KEY || '').trim()
+    const actorKey = String(options.actorHmacKey || process.env.CAIXA_ACTOR_HMAC_KEY || process.env.ATENDIMENTO_ACTOR_HMAC_KEY || process.env.ESCALA_ACTOR_HMAC_KEY || process.env.CRM_ESCALA_HMAC_KEY || '').trim()
     const router = express.Router()
     router.use((req, res, next) => {
         const actor = verifyActor(req, actorKey, options.getDevSession)
