@@ -568,7 +568,24 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
-crm_persona_runtime_acquire_lock
+runtime_lock_status=0
+crm_persona_runtime_acquire_lock || runtime_lock_status=$?
+if [[ "$runtime_lock_status" == "2" ]]; then
+  echo "[crm-local] Aguardando o runtime existente de $CRM_PERSONA ficar pronto..."
+  if wait_for_crm_api "http://127.0.0.1:${CRM_PAGES_PORT}/api/auth/me" 360 && wait_for_http "$DEFAULT_URL" 30; then
+    if [[ "$CRM_OPEN_BROWSER" == "1" ]]; then
+      open_browser
+    fi
+    echo "[crm-local] Runtime existente de $CRM_PERSONA reutilizado em $DEFAULT_URL."
+    exit 0
+  fi
+  echo "[crm-local] O runtime existente de $CRM_PERSONA não ficou pronto dentro do tempo esperado." >&2
+  exit 1
+fi
+if [[ "$runtime_lock_status" != "0" ]]; then
+  echo "[crm-local] Não foi possível adquirir o lock de $CRM_PERSONA." >&2
+  exit "$runtime_lock_status"
+fi
 bootstrap_cleanup() {
   crm_persona_runtime_write_manifest failed 2>/dev/null || true
   crm_persona_runtime_release_lock
