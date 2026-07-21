@@ -1228,6 +1228,7 @@ export default {
                 '/auth/login',
                 '/auth/register',
                 '/auth/signup',
+                '/auth/invite/preview',
                 '/auth/password/request',
                 '/auth/password/verify',
                 '/auth/password/reset',
@@ -1311,7 +1312,7 @@ export default {
             if (!u) return false;
             if (String(u.role || '').toUpperCase() === 'ADMIN') return true;
             const allowed = Array.isArray(u.allowedUnits) ? u.allowedUnits.filter(Boolean) : [];
-            if (!allowed.length) return true;
+            if (!allowed.length) return false;
             return allowed.includes(unit);
         };
 
@@ -1324,7 +1325,7 @@ export default {
             if (!u || !moduleKey) return false;
             if (String(u.role || '').toUpperCase() === 'ADMIN') return true; // override
             const allowed = getAllowedModules(u);
-            if (!allowed.length) return true; // compat: no list means "ALL"
+            if (!allowed.length) return false;
             return allowed.includes(String(moduleKey));
         };
 

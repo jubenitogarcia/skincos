@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { CircleCheck, Eye, EyeOff, KeyRound, Mail, ShieldCheck, UserRound } from 'lucide-react'
 import { Card, CardHeader, CardContent, CardDescription } from '@/card'
 import { Input } from '@/input'
@@ -20,7 +20,7 @@ const normalizeInviteToken = (token: string) => token.replace(/\s+/g, '').trim()
 const normalizeDisplayName = (name: string) => name.trim().replace(/\s+/g, ' ')
 
 export function AuthScreen() {
-    const { signIn, signUp, requestPasswordReset, verifyPasswordResetCode, resetPassword, loading } = useAuth()
+    const { signIn, signUp, previewSignupInvite, requestPasswordReset, verifyPasswordResetCode, resetPassword, loading } = useAuth()
     const [mode, setMode] = useState<'signin' | 'signup' | 'recovery-request' | 'recovery-code' | 'recovery-password'>('signin')
     const [form, setForm] = useState<FormState>({ name: '', email: '', password: '', inviteToken: '', code: '', passwordConfirmation: '' })
     const [resetGrant, setResetGrant] = useState('')
@@ -28,6 +28,9 @@ export function AuthScreen() {
     const [isVisible, setIsVisible] = useState(false)
     const [showPassword, setShowPassword] = useState(false)
     const [capsLock, setCapsLock] = useState(false)
+    const [inviteEmailLocked, setInviteEmailLocked] = useState(false)
+    const handledInviteFragment = useRef(false)
+    const initialModeEffect = useRef(true)
     const currentYear = new Date().getFullYear()
 
     useEffect(() => {
@@ -35,15 +38,34 @@ export function AuthScreen() {
     }, [])
 
     useEffect(() => {
+        if (handledInviteFragment.current || typeof window === 'undefined') return
+        const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+        const token = normalizeInviteToken(params.get('invite') || '')
+        if (!token) return
+        handledInviteFragment.current = true
+        window.history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`)
+        setMode('signup')
+        setForm(current => ({ ...current, inviteToken: token }))
+        void previewSignupInvite(token)
+            .then(({ email }) => {
+                setForm(current => ({ ...current, email }))
+                setInviteEmailLocked(true)
+            })
+            .catch((err: any) => setError(err?.message || 'Não foi possível validar o convite.'))
+    }, [previewSignupInvite])
+
+    useEffect(() => {
         setError(null)
         setShowPassword(false)
         if (mode === 'recovery-request') setResetGrant('')
         setForm(f => {
             const next = { ...f, password: '', passwordConfirmation: '', code: '' }
-            if (mode === 'signin') {
+            if (mode === 'signin' && !initialModeEffect.current) {
                 next.name = ''
                 next.inviteToken = ''
+                setInviteEmailLocked(false)
             }
+            initialModeEffect.current = false
             return next
         })
     }, [mode])
@@ -52,6 +74,7 @@ export function AuthScreen() {
         if (error) setError(null)
         const { name, value } = e.target
         const nextValue = name === 'inviteToken' ? normalizeInviteToken(value) : name === 'code' ? value.replace(/\D/g, '').slice(0, 6) : value
+        if (name === 'inviteToken') setInviteEmailLocked(false)
         setForm(f => ({ ...f, [name]: nextValue }))
     }
 
@@ -192,7 +215,7 @@ export function AuthScreen() {
                                     {mode === 'signin' ? 'Acessar CRM' : mode === 'signup' ? 'Criar conta com convite' : mode === 'recovery-request' ? 'Recuperar senha' : mode === 'recovery-code' ? 'Validar código' : 'Definir nova senha'}
                                 </h2>
                                 <CardDescription className="mt-2 text-sm text-slate-400">
-                                    {mode === 'signin' ? 'Use seu email corporativo e senha cadastrada.' : mode === 'signup' ? 'O token define automaticamente perfil, unidades e módulos.' : mode === 'recovery-request' ? 'Informe o e-mail cadastrado para receber um código.' : mode === 'recovery-code' ? 'Digite o código enviado ao seu e-mail.' : 'Escolha uma senha nova e segura.'}
+                                    {mode === 'signin' ? 'Use seu email corporativo e senha cadastrada.' : mode === 'signup' ? 'O convite pessoal define o e-mail, perfil, unidades e módulos.' : mode === 'recovery-request' ? 'Informe o e-mail cadastrado para receber um código.' : mode === 'recovery-code' ? 'Digite o código enviado ao seu e-mail.' : 'Escolha uma senha nova e segura.'}
                                 </CardDescription>
                             </div>
 
@@ -265,6 +288,7 @@ export function AuthScreen() {
                                             autoComplete={mode === 'signin' ? 'username' : 'email'}
                                             spellCheck={false}
                                             required
+                                            readOnly={mode === 'signup' && inviteEmailLocked}
                                             aria-invalid={(mode === 'signup' && !!identifier && !signupEmailValid) || (recoveryMode && !!identifier && !recoveryEmailValid)}
                                             aria-describedby={mode === 'signup' || recoveryMode ? 'auth-email-help' : undefined}
                                             className={fieldChrome}
@@ -272,7 +296,7 @@ export function AuthScreen() {
                                     </div>
                                     {(mode === 'signup' || mode === 'recovery-request') && (
                                         <p id="auth-email-help" className={`text-xs leading-relaxed ${identifier && !(mode === 'signup' ? signupEmailValid : recoveryEmailValid) ? 'text-amber-200' : 'text-slate-500'}`}>
-                                            {mode === 'signup' ? 'Use o email corporativo que receberá acesso ao CRM.' : 'Se não houver e-mail cadastrado, informe um gestor.'}
+                                            {mode === 'signup' ? inviteEmailLocked ? 'Este convite é pessoal e está vinculado a este e-mail.' : 'Use exatamente o email corporativo que recebeu o convite.' : 'Se não houver e-mail cadastrado, informe um gestor.'}
                                         </p>
                                     )}
                                 </div>}
@@ -297,7 +321,7 @@ export function AuthScreen() {
                                             />
                                         </div>
                                         <p id="auth-token-help" className="text-xs leading-relaxed text-slate-500">
-                                            Espaços colados junto com o token são removidos automaticamente. O convite herda o escopo definido na administração.
+                                            Espaços colados junto com o token são removidos automaticamente. Convites são pessoais, de uso único e herdam o escopo definido pelo gestor.
                                         </p>
                                     </div>
                                 )}

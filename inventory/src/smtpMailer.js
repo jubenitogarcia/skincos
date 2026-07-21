@@ -53,7 +53,7 @@ async function command(writer, reader, state, text, accepted) {
   return expect(reader, state, accepted);
 }
 
-export function hasPasswordResetMailerConfig(env) {
+export function hasAuthMailerConfig(env) {
   return Boolean(
     String(env?.AUTH_RESET_SMTP_HOST || '').trim() &&
     String(env?.AUTH_RESET_SMTP_USERNAME || '').trim() &&
@@ -62,12 +62,14 @@ export function hasPasswordResetMailerConfig(env) {
   );
 }
 
-export async function sendPasswordResetEmail({ env, to, code, expiresAt }) {
-  if (!hasPasswordResetMailerConfig(env)) throw new Error('AUTH_RESET_EMAIL_NOT_CONFIGURED');
+export const hasPasswordResetMailerConfig = hasAuthMailerConfig;
+
+async function sendAuthEmail({ env, to, subject, text, html }) {
+  if (!hasAuthMailerConfig(env)) throw new Error('AUTH_EMAIL_NOT_CONFIGURED');
 
   const recipient = cleanEmail(to);
   const from = cleanEmail(env.AUTH_RESET_EMAIL_FROM);
-  if (!recipient || !from) throw new Error('AUTH_RESET_EMAIL_INVALID');
+  if (!recipient || !from) throw new Error('AUTH_EMAIL_INVALID');
 
   const hostname = String(env.AUTH_RESET_SMTP_HOST).trim();
   const port = Math.max(1, Number.parseInt(String(env.AUTH_RESET_SMTP_PORT || '465'), 10) || 465);
@@ -105,10 +107,6 @@ export async function sendPasswordResetEmail({ env, to, code, expiresAt }) {
     await command(writer, reader, state, `RCPT TO:<${recipient}>`, [250, 251]);
     await command(writer, reader, state, 'DATA', [354]);
 
-    const expiry = new Date(expiresAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
-    const subject = 'Código para redefinir sua senha — Espaço Facial CRM';
-    const text = `Seu código de recuperação é: ${code}\n\nEle expira às ${expiry}. Se você não solicitou esta alteração, ignore esta mensagem.`;
-    const html = `<p>Seu código de recuperação é:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>Ele expira às ${expiry}. Se você não solicitou esta alteração, ignore esta mensagem.</p>`;
     const message = [
       `From: Espaço Facial CRM <${from}>`,
       `To: <${recipient}>`,
@@ -136,4 +134,36 @@ export async function sendPasswordResetEmail({ env, to, code, expiresAt }) {
     try { reader.releaseLock(); } catch {}
     try { socket.close(); } catch {}
   }
+}
+
+export async function sendPasswordResetEmail({ env, to, code, expiresAt }) {
+  const expiry = new Date(expiresAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+  return sendAuthEmail({
+    env,
+    to,
+    subject: 'Código para redefinir sua senha — Espaço Facial CRM',
+    text: `Seu código de recuperação é: ${code}\n\nEle expira às ${expiry}. Se você não solicitou esta alteração, ignore esta mensagem.`,
+    html: `<p>Seu código de recuperação é:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>Ele expira às ${expiry}. Se você não solicitou esta alteração, ignore esta mensagem.</p>`
+  });
+}
+
+export async function sendAccountInviteEmail({ env, to, token, expiresAt, appUrl }) {
+  let baseUrl = 'https://crm.skincos.com.br';
+  try {
+    const candidate = new URL(String(appUrl || baseUrl).trim());
+    if (candidate.protocol === 'https:' || candidate.protocol === 'http:') {
+      baseUrl = candidate.toString().replace(/\/+$/, '');
+    }
+  } catch {
+    // Keep the production CRM URL when an optional local override is malformed.
+  }
+  const inviteUrl = `${baseUrl}/#invite=${encodeURIComponent(String(token || ''))}`;
+  const expiry = new Date(expiresAt).toLocaleDateString('pt-BR', { dateStyle: 'medium', timeZone: 'America/Sao_Paulo' });
+  return sendAuthEmail({
+    env,
+    to,
+    subject: 'Convite para criar sua conta — Espaço Facial CRM',
+    text: `Você foi convidado(a) para acessar o Espaço Facial CRM.\n\nCrie sua conta pelo link abaixo:\n${inviteUrl}\n\nEste convite é pessoal, vale até ${expiry} e só pode ser usado uma vez. Se você não esperava este convite, ignore esta mensagem.`,
+    html: `<p>Você foi convidado(a) para acessar o Espaço Facial CRM.</p><p><a href="${inviteUrl}">Criar minha conta</a></p><p>Este convite é pessoal, vale até ${expiry} e só pode ser usado uma vez.</p><p>Se você não esperava este convite, ignore esta mensagem.</p>`
+  });
 }

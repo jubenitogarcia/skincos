@@ -2,9 +2,11 @@
 
 import { restoreBackupPayload } from '../services/backup.js';
 import { resolveCrmTables } from '../d1Store.js';
+import { sendAccountInviteEmail } from '../smtpMailer.js';
+import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE'];
-const ROLE_INVITES = ['ADMIN', 'GESTOR'];
+const ROLE_INVITES = ['GESTOR'];
 const PASSWORD_MIN_LENGTH = 12;
 
 function slugifyCategory(value) {
@@ -153,6 +155,7 @@ function publicInvite(row) {
   const allowedModules = normalizeAllowedModules(row.allowed_modules_json || row.allowedModulesJson || '');
   return {
     id: row.id,
+    inviteeEmail: row.invitee_email || row.inviteeEmail || '',
     tokenHint: row.token_hint || row.tokenHint || '',
     role: normalizeRole(row.role || 'CONSULTOR'),
     allowedUnits,
@@ -193,14 +196,6 @@ async function sha256Hex(input) {
   return Array.from(new Uint8Array(hash))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
-}
-
-function canIssueRole({ actorRole, targetRole }) {
-  const actor = normalizeRole(actorRole);
-  const target = normalizeRole(targetRole);
-  if (actor === 'ADMIN') return true;
-  if (actor === 'GESTOR') return target !== 'ADMIN';
-  return false;
 }
 
 export async function handleAdminRoutes({
@@ -252,6 +247,7 @@ export async function handleAdminRoutes({
   const { usersTable, invitesTable } = await resolveCrmTables(env);
   const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
   const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
+  const invitesHasInviteeEmail = await tableHasColumn(env, invitesTable, 'invitee_email');
 
   // GET /admin/categories
   if (url.pathname === '/admin/categories' && request.method === 'GET') {
@@ -410,7 +406,7 @@ export async function handleAdminRoutes({
       const limit = Math.max(1, Math.min(200, parseInt(url.searchParams.get('limit') || '50', 10) || 50));
       const where = includeRevoked ? '' : 'WHERE revoked = 0';
       const rows = await env.DB.prepare(
-        `SELECT id, token_hint, role, allowed_units_json${invitesHasModules ? ', allowed_modules_json' : ''}, max_uses, uses_count, expires_at, revoked, note, created_by, created_at
+        `SELECT id, token_hint, role, allowed_units_json${invitesHasModules ? ', allowed_modules_json' : ''}${invitesHasInviteeEmail ? ', invitee_email' : ''}, max_uses, uses_count, expires_at, revoked, note, created_by, created_at
          FROM ${invitesTable}
          ${where}
          ORDER BY created_at DESC
@@ -431,19 +427,48 @@ export async function handleAdminRoutes({
       if (!ROLE_INVITES.includes(normalizeRole(auth?.user?.role))) {
         return withCORS(JSON.stringify({ success: false, error: 'Sem permissão', code: 'RBAC_DENIED' }), { status: 403 }, appOrigin);
       }
+      if (!invitesHasModules || !invitesHasInviteeEmail) {
+        return withCORS(JSON.stringify({ success: false, error: 'Migração de convites pendente', code: 'INVITE_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      }
       const body = await request.json().catch(() => ({}));
-      const role = normalizeRole(body.role || 'OPERADOR');
-      const allowedUnits = normalizeAllowedUnits(body.allowedUnits);
-      const allowedModules = normalizeAllowedModules(body.allowedModules ?? body.allowed_modules ?? body.modules ?? body.scopes);
-      const maxUses = Math.max(1, Math.min(50, parseInt(String(body.maxUses ?? '1'), 10) || 1));
+      const inviteeEmail = normalizeInviteEmail(body.email ?? body.inviteeEmail);
+      const role = normalizeRole(body.role || 'CONSULTOR');
+      const allowedUnits = normalizeInviteScope(body.allowedUnits);
+      const allowedModules = normalizeInviteScope(body.allowedModules ?? body.allowed_modules ?? body.modules ?? body.scopes);
+      const requestedMaxUses = body.maxUses === undefined ? 1 : Number.parseInt(String(body.maxUses), 10);
+      const maxUses = 1;
       const expiresInDays = body.expiresInDays === null || body.expiresInDays === undefined
         ? 30
         : Math.max(1, Math.min(365, parseInt(String(body.expiresInDays), 10) || 30));
       const note = String(body.note || '').trim().slice(0, 200);
 
-      if (!canIssueRole({ actorRole: auth?.user?.role, targetRole: role })) {
-        return withCORS(JSON.stringify({ success: false, error: 'Não permitido criar token para esta hierarquia', code: 'ROLE_DENIED' }), { status: 403 }, appOrigin);
+      if (!inviteeEmail) {
+        return withCORS(JSON.stringify({ success: false, error: 'Informe um e-mail corporativo válido', code: 'INVITEE_EMAIL_INVALID' }), { status: 400 }, appOrigin);
       }
+      if (requestedMaxUses !== 1) return withCORS(JSON.stringify({ success: false, error: 'Convites são pessoais e de uso único', code: 'INVITE_SINGLE_USE_REQUIRED' }), { status: 400 }, appOrigin);
+      const policyError = validateInviteDelegation({
+        actorRole: auth?.user?.role,
+        targetRole: role,
+        actorAllowedUnits: auth?.user?.allowedUnits,
+        actorAllowedModules: auth?.user?.allowedModules,
+        allowedUnits,
+        allowedModules,
+      });
+      if (policyError) {
+        const policyMessages = {
+          RBAC_DENIED: 'Somente gestores podem emitir convites.',
+          ROLE_DENIED: 'O gestor só pode convidar papéis abaixo de gestor.',
+          INVITE_UNITS_REQUIRED: 'Selecione ao menos uma unidade para o convite.',
+          INVITE_MODULES_REQUIRED: 'Selecione ao menos um módulo para o convite.',
+          INVITER_SCOPE_REQUIRED: 'Seu próprio acesso precisa ter unidades e módulos definidos antes de emitir convites.',
+          INVITE_UNITS_DENIED: 'O convite contém uma unidade fora do seu escopo.',
+          INVITE_MODULES_DENIED: 'O convite contém um módulo fora do seu escopo.',
+        };
+        return withCORS(JSON.stringify({ success: false, error: policyMessages[policyError] || 'Convite não permitido.', code: policyError }), { status: policyError === 'RBAC_DENIED' || policyError === 'ROLE_DENIED' || policyError.endsWith('_DENIED') ? 403 : 400 }, appOrigin);
+      }
+
+      const existingUser = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(email) = LOWER(?) LIMIT 1`).bind(inviteeEmail).first();
+      if (existingUser?.username) return withCORS(JSON.stringify({ success: false, error: 'Este e-mail já está cadastrado', code: 'EMAIL_TAKEN' }), { status: 409 }, appOrigin);
 
       const token = randomInviteToken();
       const tokenHash = await sha256Hex(token);
@@ -452,45 +477,21 @@ export async function handleAdminRoutes({
       const createdAt = new Date().toISOString();
       const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString();
 
-      if (invitesHasModules) {
-        await env.DB.prepare(
-          `INSERT INTO ${invitesTable}
-           (id, token_hash, token_hint, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)`
-        )
-          .bind(
-            id,
-            tokenHash,
-            tokenHint,
-            role,
-            JSON.stringify(allowedUnits),
-            JSON.stringify(allowedModules),
-            maxUses,
-            expiresAt,
-            note,
-            String(auth?.user?.username || ''),
-            createdAt
-          )
-          .run();
-      } else {
-        await env.DB.prepare(
-          `INSERT INTO ${invitesTable}
-           (id, token_hash, token_hint, role, allowed_units_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)`
-        )
-          .bind(
-            id,
-            tokenHash,
-            tokenHint,
-            role,
-            JSON.stringify(allowedUnits),
-            maxUses,
-            expiresAt,
-            note,
-            String(auth?.user?.username || ''),
-            createdAt
-          )
-          .run();
+      await env.DB.prepare(
+        `INSERT INTO ${invitesTable}
+         (id, token_hash, token_hint, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, ?)`
+      )
+        .bind(id, tokenHash, tokenHint, inviteeEmail, role, JSON.stringify(allowedUnits), JSON.stringify(allowedModules), expiresAt, note, String(auth?.user?.username || ''), createdAt)
+        .run();
+
+      try {
+        await sendAccountInviteEmail({ env, to: inviteeEmail, token, expiresAt, appUrl: String(env?.AUTH_INVITE_APP_URL || appOrigin) });
+      } catch (mailError) {
+        await env.DB.prepare(`UPDATE ${invitesTable} SET revoked = 1 WHERE id = ? AND uses_count = 0`).bind(id).run();
+        const reason = String(mailError?.message || mailError || 'SMTP_ERROR_UNKNOWN').replace(/[\r\n]+/g, ' ').slice(0, 160);
+        console.error(JSON.stringify({ event: 'AUTH_INVITE_EMAIL_FAILED', invite_id: id, reason }));
+        return withCORS(JSON.stringify({ success: false, error: 'EMAIL_DELIVERY_FAILED' }), { status: 503 }, appOrigin);
       }
 
       try {
@@ -506,13 +507,14 @@ export async function handleAdminRoutes({
           entityId: id,
           unidade: '',
           before: null,
-          after: { role, allowedUnits, allowedModules, maxUses, expiresAt, tokenHint, note }
+          after: { inviteeEmail, role, allowedUnits, allowedModules, maxUses, expiresAt, tokenHint, note, delivery: 'smtp' }
         });
       } catch { }
 
       const invite = publicInvite({
         id,
         token_hint: tokenHint,
+        invitee_email: inviteeEmail,
         role,
         allowed_units_json: JSON.stringify(allowedUnits),
         allowed_modules_json: invitesHasModules ? JSON.stringify(allowedModules) : null,
@@ -525,8 +527,7 @@ export async function handleAdminRoutes({
         created_at: createdAt,
       });
 
-      // IMPORTANT: token is returned only once at creation time
-      return withCORS(JSON.stringify({ success: true, data: invite, token }), { status: 201 }, appOrigin);
+      return withCORS(JSON.stringify({ success: true, data: invite, delivery: 'smtp' }), { status: 201 }, appOrigin);
     } catch (err) {
       const msg = String(err?.message || err);
       if (/UNIQUE constraint failed: (?:insumos_invites|crm_invites)\.token_hash/i.test(msg)) {
@@ -546,7 +547,7 @@ export async function handleAdminRoutes({
       if (!id) return withCORS(JSON.stringify({ success: false, error: 'ID_REQUIRED' }), { status: 400 }, appOrigin);
 
       const existing = await env.DB.prepare(
-        `SELECT id, role, token_hint, allowed_units_json${invitesHasModules ? ', allowed_modules_json' : ''}, max_uses, uses_count, expires_at, revoked, note, created_by, created_at
+        `SELECT id, role, token_hint, allowed_units_json${invitesHasModules ? ', allowed_modules_json' : ''}${invitesHasInviteeEmail ? ', invitee_email' : ''}, max_uses, uses_count, expires_at, revoked, note, created_by, created_at
          FROM ${invitesTable} WHERE id = ? LIMIT 1`
       )
         .bind(id)
@@ -628,6 +629,9 @@ export async function handleAdminRoutes({
   // POST /admin/users
   if (url.pathname === '/admin/users' && request.method === 'POST') {
     try {
+      if (normalizeRole(auth?.user?.role) !== 'ADMIN' || String(env?.ALLOW_ADMIN_USER_PROVISIONING || '').trim().toLowerCase() !== 'true') {
+        return withCORS(JSON.stringify({ success: false, error: 'Criação direta desabilitada. Use um convite autorizado.', code: 'INVITE_REQUIRED' }), { status: 403 }, appOrigin);
+      }
       const body = await request.json().catch(() => ({}));
       const username = String(body.username || '').trim();
       const displayName = String(body.displayName || '').trim();
@@ -729,6 +733,9 @@ export async function handleAdminRoutes({
       const email = body.email !== undefined ? String(body.email || '').trim() : null;
       const displayName = body.displayName !== undefined ? String(body.displayName || '').trim() : null;
       const role = body.role !== undefined ? normalizeRole(body.role || 'CONSULTOR') : null;
+      if (role !== null && normalizeRole(auth?.user?.role) !== 'ADMIN') {
+        return withCORS(JSON.stringify({ success: false, error: 'Somente o provisionamento administrativo pode alterar hierarquia.', code: 'ROLE_MANAGEMENT_DENIED' }), { status: 403 }, appOrigin);
+      }
       const photoUrl = body.photoUrl !== undefined ? String(body.photoUrl || '') : null;
       const allowedUnits = body.allowedUnits !== undefined ? JSON.stringify(normalizeAllowedUnits(body.allowedUnits)) : null;
       const allowedModules = body.allowedModules !== undefined ? JSON.stringify(normalizeAllowedModules(body.allowedModules)) : null;
