@@ -12,6 +12,7 @@ const gateway = createGatewayHandler({
         calls.push(new URL(request.url));
         return new Response(JSON.stringify({ ok: true, service: 'workforce-timekeeping' }), { status: 200, headers: { 'content-type': 'application/json' } });
     },
+    financeHandler: async (request) => new Response(new URL(request.url).pathname === '/overview' ? 'finance-ok' : 'bad-finance-path', { status: 200 }),
 });
 
 test('health is owned by the gateway', async () => {
@@ -36,6 +37,13 @@ test('workforce owns the canonical public Ponto mount', async () => {
     assert.equal((await response.json()).service, 'workforce-timekeeping');
     assert.equal(calls.at(-1).pathname, '/api/ponto/health');
     assert.equal(response.headers.get('x-request-id'), 'ponto-1');
+});
+
+test('finance is mounted by the gateway without taking ownership of domain rules', async () => {
+    const response = await gateway(new Request('https://api.skincos.com.br/finance/overview', { headers: { 'x-request-id': 'finance-1' } }), {}, {});
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'finance-ok');
+    assert.equal(response.headers.get('x-request-id'), 'finance-1');
 });
 
 test('internal paths require a private service identity', async () => {

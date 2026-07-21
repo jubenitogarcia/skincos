@@ -6,6 +6,9 @@ on:
     paths:
       - "api/**"
       - "inventory/**"
+      - "finance/**"
+      - "shared/finance-contracts/**"
+      - "shared/crm-auth/**"
       - "backend/scripts/cloudflare-workers.sh"
       - "backend/pnpm-lock.yaml"
       - "backend/pnpm-workspace.yaml"
