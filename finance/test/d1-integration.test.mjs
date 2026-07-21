@@ -4,7 +4,7 @@ import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
+const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';
@@ -105,10 +105,30 @@ test('D1 local: audit is immutable and CSV reimports are explicitly deduplicated
   const repeat = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'file-two', body: { filename: 'two.csv', csv } });
   assert.equal(first.response.status, 201, JSON.stringify(first.body)); assert.equal(repeat.body.alreadyStaged, true);
   await assert.rejects(ctx.DB.exec(`UPDATE finance_audit_events SET action='tampered'`), /append-only/);
-  const secondFileSameRow = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'file-three', body: { filename: 'three.csv', csv: `data,descricao,valor,tipo,nota\n2026-07-21,Teste,10.00,receita,x\n` } });
+  const secondFileSameRow = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'file-three', body: { filename: 'three.csv', csv: `data,descricao,valor,tipo,conta\n2026-07-21,Teste,10.00,receita,\n` } });
   assert.equal(secondFileSameRow.response.status, 201);
   const duplicates = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_import_duplicate_candidates`).first();
   assert.equal(Number(duplicates.count), 1);
+});
+
+test('D1 local: CSV workflow retains source, maps Brazilian rows, records decisions, commits idempotently and undoes by reversal', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco NH', 'csv-bank'); const clearing = await account(ctx.env, ctx.actor, scopeNh, 'Cartão', 'csv-clearing');
+  const income = await category(ctx.env, ctx.actor, scopeNh, 'Receitas', 'income', 'csv-income'); const expense = await category(ctx.env, ctx.actor, scopeNh, 'Despesas', 'expense', 'csv-expense');
+  const csv = 'Data;Descrição;Valor;Conta;Categoria;Moeda;Observação;Identificador Externo\n01/07/2026;Consulta estética;1.250,50;Banco NH;Receitas;BRL;Pagamento cartão;ef-1001\n02/07/2026;Transferência;-200,00;Cartão;Despesas;BRL;Mover saldo;ef-1002\n02/07/2026;Transferência;-200,00;Cartão;Despesas;BRL;Mover saldo;ef-1002\n';
+  const staged = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'csv-stage', body: { filename: 'extrato-br.csv', csv, encoding: 'utf-8' } });
+  assert.equal(staged.response.status, 201, JSON.stringify(staged.body)); assert.equal(staged.body.analysis.delimiter, ';'); assert.equal(staged.body.analysis.dateFormat, 'DD/MM/YYYY');
+  let loaded = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}?scopeId=${scopeNh}`); assert.equal(loaded.body.batch.source_csv, csv); assert.equal(loaded.body.rows.filter((row) => row.status === 'exact_duplicate').length, 1);
+  const transferRow = loaded.body.rows.find((row) => JSON.parse(row.normalized_json || '{}').description === 'Transferência' && row.status === 'valid');
+  const decision = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/decisions?scopeId=${scopeNh}`, { method: 'POST', key: 'csv-decision', body: { rowId: transferRow.id, decision: 'import', transferAccountId: clearing.id } });
+  assert.equal(decision.response.status, 201, JSON.stringify(decision.body));
+  const committed = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/commit?scopeId=${scopeNh}`, { method: 'POST', key: 'csv-commit', body: { defaultAccountId: bank.id, incomeCategoryId: income.id, expenseCategoryId: expense.id } });
+  assert.equal(committed.response.status, 201, JSON.stringify(committed.body)); assert.equal(committed.body.committed, 2);
+  const replay = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/commit?scopeId=${scopeNh}`, { method: 'POST', key: 'csv-commit', body: { defaultAccountId: bank.id, incomeCategoryId: income.id, expenseCategoryId: expense.id } }); assert.equal(replay.body.replayed, true);
+  loaded = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}?scopeId=${scopeNh}`); assert.equal(loaded.body.decisions.length, 1); assert.equal(loaded.body.rows.filter((row) => row.status === 'committed').length, 2);
+  const undo = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/undo?scopeId=${scopeNh}`, { method: 'POST', key: 'csv-undo', body: { reason: 'Arquivo incorreto' } }); assert.equal(undo.response.status, 201, JSON.stringify(undo.body));
+  const movements = await ctx.DB.prepare(`SELECT operational_status FROM finance_movements WHERE source='csv'`).all(); assert.deepEqual(movements.results.map((row) => row.operational_status), ['cancelled', 'cancelled']);
+  const operations = await ctx.DB.prepare(`SELECT kind FROM finance_import_operations WHERE batch_id=? ORDER BY created_at`).bind(staged.body.batchId).all(); assert.deepEqual(operations.results.map((row) => row.kind), ['commit', 'undo']);
 });
 
 test('D1 local: splits, base currency, installments and operational lifecycle remain traceable', async (t) => {

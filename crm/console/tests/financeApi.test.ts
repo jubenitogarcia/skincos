@@ -35,6 +35,19 @@ describe('Finance transport helpers', () => {
     await expect(financeApi.create('/accounts', 'finance-scope-novo-hamburgo', { name: 'Banco', type: 'bank', currency: 'BRL' }, 'same-key')).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT', status: 409 })
   })
 
+  it('sends staged CSV decisions, idempotent commit and audited undo to server routes', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await financeApi.stageCsv('scope-nh', 'extrato.csv', 'Data;Valor\n01/07/2026;1,00\n', { encoding: 'utf-8', idempotencyKey: 'stage-key' })
+    await financeApi.importAnalyze('scope-nh', 'batch-1', { mapping: { date: 'Data', amount: 'Valor' } }, 'analyze-key')
+    await financeApi.importDecision('scope-nh', 'batch-1', { rowId: 'row-1', decision: 'skip', reason: 'Duplicidade provável' }, 'decision-key')
+    await financeApi.importCommit('scope-nh', 'batch-1', { defaultAccountId: 'account-1', incomeCategoryId: 'income-1', expenseCategoryId: 'expense-1' }, 'commit-key')
+    await financeApi.importUndo('scope-nh', 'batch-1', 'Arquivo incorreto', 'undo-key')
+    const calls = fetchMock.mock.calls.map(([input, init]) => ({ url: String(input), init: init as RequestInit }))
+    expect(calls.map((call) => call.url)).toEqual(expect.arrayContaining(['/api/finance/imports?scopeId=scope-nh', '/api/finance/imports/batch-1/analyze?scopeId=scope-nh', '/api/finance/imports/batch-1/decisions?scopeId=scope-nh', '/api/finance/imports/batch-1/commit?scopeId=scope-nh', '/api/finance/imports/batch-1/undo?scopeId=scope-nh']))
+    expect(new Headers(calls[3].init.headers).get('idempotency-key')).toBe('commit-key')
+  })
+
   it('routes Finance browser requests through the Pages proxy instead of the static shell', () => {
     const routes = JSON.parse(readFileSync(new URL('../public/_routes.json', import.meta.url), 'utf8'))
     expect(routes.include).toContain('/api/finance/*')

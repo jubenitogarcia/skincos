@@ -63,6 +63,40 @@ async function main() {
       const expectedLabels = [...expectedScopes[scenario]].sort()
       if (JSON.stringify(labels) !== JSON.stringify(expectedLabels)) throw new Error(`Grants divergentes: ${JSON.stringify(labels)}`)
       if (grants.some((grant) => grant.kind === 'personal')) throw new Error('Contexto pessoal foi exposto no bootstrap local.')
+
+      // The import smoke creates only ephemeral local domain records through
+      // the same authenticated Pages proxy used by the UI.
+      const seed = await page.evaluate(async (firstScopeId) => {
+        const suffix = Date.now().toString(36)
+        const post = async (path, body, key) => {
+          const response = await fetch(`/api/finance${path}`, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json', 'idempotency-key': key, 'x-csrf-token': 'finance-local-csrf' }, body: JSON.stringify(body) })
+          const payload = await response.json(); if (!response.ok) throw new Error(`${path}: ${response.status} ${payload.message || payload.error}`); return payload
+        }
+        const account = await post(`/accounts?scopeId=${firstScopeId}`, { name: `Smoke Banco ${suffix}`, type: 'bank', currency: 'BRL' }, `smoke-account-${suffix}`)
+        const income = await post(`/categories?scopeId=${firstScopeId}`, { name: `Smoke Receita ${suffix}`, direction: 'income' }, `smoke-income-${suffix}`)
+        const expense = await post(`/categories?scopeId=${firstScopeId}`, { name: `Smoke Despesa ${suffix}`, direction: 'expense' }, `smoke-expense-${suffix}`)
+        return { account: account.account.name, income: income.category.name, expense: expense.category.name }
+      }, bootstrap.body.grants[0].scope_id)
+      await page.getByRole('button', { name: 'Importar CSV' }).click()
+      const csvSuffix = Date.now().toString(36)
+      const csv = `Data;Descrição;Valor;Conta;Categoria;Moeda;Observação;Identificador Externo\n01/07/2026;Consulta São José;1.250,50;Banco;Receitas;BRL;UTF-8;smoke-${csvSuffix}\n01/07/2026;Consulta São José;1.250,50;Banco;Receitas;BRL;UTF-8;smoke-${csvSuffix}\n`
+      await page.getByLabel('Arquivo CSV').setInputFiles({ name: 'extrato-br.csv', mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8') })
+      await page.getByRole('button', { name: 'Criar lote' }).click()
+      await page.getByRole('button', { name: 'Analisar e pré-visualizar' }).waitFor({ state: 'visible', timeout: 30_000 })
+      await page.getByRole('button', { name: 'Analisar e pré-visualizar' }).click()
+      await page.locator('label').filter({ hasText: 'Conta de destino' }).getByRole('combobox').click()
+      await page.getByRole('option', { name: seed.account }).click()
+      await page.locator('label').filter({ hasText: 'Categoria padrão de receita' }).getByRole('combobox').click()
+      await page.getByRole('option', { name: seed.income }).click()
+      await page.locator('label').filter({ hasText: 'Categoria padrão de despesa' }).getByRole('combobox').click()
+      await page.getByRole('option', { name: seed.expense }).click()
+      await page.getByRole('button', { name: 'Importar' }).first().click()
+      await page.getByRole('button', { name: 'Ignorar' }).last().click()
+      await page.getByRole('button', { name: 'Revisar confirmação' }).click()
+      await page.getByRole('button', { name: 'Confirmar importação' }).click()
+      await page.getByText('Resultado auditável').waitFor({ state: 'visible', timeout: 30_000 })
+      await page.getByRole('button', { name: 'Desfazer por estorno auditável' }).click()
+      await page.getByText(/foram estornados por operação compensatória/).waitFor({ state: 'visible', timeout: 30_000 })
     }
     if (consoleErrors.length || apiErrors.length) throw new Error(`Erros de runtime: ${JSON.stringify({ consoleErrors, apiErrors })}`)
     await page.screenshot({ path: shotFile, fullPage: false })

@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/tabs'
 import { Textarea } from '@/textarea'
 import { FinanceApiError, financeApi, minorUnitsFromDisplay, type FinanceBootstrap, type FinanceFilters } from '@/financeApi'
+import { FinanceImportDialog } from '@/FinanceImportDialog'
 
 type MovementType = 'income' | 'expense' | 'transfer'
 type OperationStatus = 'pending' | 'confirmed'
@@ -66,6 +67,7 @@ export function FinanceModule() {
   const [notice, setNotice] = React.useState('')
   const [activeTab, setActiveTab] = React.useState('overview')
   const [movementOpen, setMovementOpen] = React.useState(false)
+  const [importOpen, setImportOpen] = React.useState(false)
   const [movementDraft, setMovementDraft] = React.useState<MovementDraft>(emptyMovement)
   const [entityOpen, setEntityOpen] = React.useState(false)
   const [entityKind, setEntityKind] = React.useState<'account' | 'category' | 'payee' | 'tag' | 'cost-center'>('account')
@@ -186,10 +188,12 @@ export function FinanceModule() {
 
     <section className="flex flex-wrap items-end justify-between gap-4">
       <div><h2 className="text-2xl font-bold tracking-tight">Financeiro</h2><p className="text-muted-foreground">Visão operacional com razão, auditoria e dados separados por escopo.</p></div>
-      <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void refresh(scopeId, filters)} disabled={refreshing}>{refreshing ? 'Atualizando…' : 'Atualizar'}</Button><Button onClick={() => setMovementOpen(true)} disabled={!canOperate}><Plus size={18} /> Novo lançamento</Button></div>
+      <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void refresh(scopeId, filters)} disabled={refreshing}>{refreshing ? 'Atualizando…' : 'Atualizar'}</Button><Button variant="outline" onClick={() => setImportOpen(true)} disabled={!canOperate}>Importar CSV</Button><Button onClick={() => setMovementOpen(true)} disabled={!canOperate}><Plus size={18} /> Novo lançamento</Button></div>
     </section>
 
     <Card className="glass-card"><CardContent className="flex flex-wrap items-end gap-3 p-4"><label className="grid gap-1 text-sm font-medium">De<Input aria-label="Período inicial" type="date" value={String(filters.from)} onChange={(event) => updateFilters({ from: event.target.value })} /></label><label className="grid gap-1 text-sm font-medium">Até<Input aria-label="Período final" type="date" value={String(filters.to)} onChange={(event) => updateFilters({ to: event.target.value })} /></label><label className="grid min-w-56 gap-1 text-sm font-medium">Escopo<Select value={scopeId} onValueChange={(value) => { setScopeId(value); updateFilters({ page: 1 }) }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{boot.grants.map((grant) => <SelectItem key={grant.scope_id} value={grant.scope_id}>{grant.label}</SelectItem>)}</SelectContent></Select></label><p className="ml-auto text-sm text-muted-foreground">{selectedGrant?.permission === 'viewer' ? 'Consulta autorizada' : 'Operação autorizada'}</p></CardContent></Card>
+
+    <FinanceImportDialog open={importOpen} onOpenChange={setImportOpen} scopeId={scopeId} grants={boot.grants} canOperate={canOperate} onCompleted={async () => { await refresh(scopeId, filters) }} />
 
     <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5"><TabsList className="grid w-full grid-cols-3 md:w-[460px]"><TabsTrigger value="overview">Visão geral</TabsTrigger><TabsTrigger value="movements">Movimentações</TabsTrigger><TabsTrigger value="registrations">Cadastros</TabsTrigger></TabsList>
       <TabsContent value="overview" className="space-y-5">
