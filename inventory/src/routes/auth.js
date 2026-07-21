@@ -3,6 +3,7 @@
 
 import { resolveCrmTables } from '../d1Store.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../smtpMailer.js';
+import { hasRequiredInviteScope, normalizeInviteEmail } from '../invitePolicy.js';
 
 export async function handleAuthRoutes({
     request,
@@ -270,6 +271,7 @@ export async function handleAuthRoutes({
 	        const { usersTable, invitesTable, passwordResetsTable } = await resolveCrmTables(env);
 	        const usersHasModules = await tableHasColumn(usersTable, 'allowed_modules_json');
 	        const invitesHasModules = await tableHasColumn(invitesTable, 'allowed_modules_json');
+	        const invitesHasInviteeEmail = await tableHasColumn(invitesTable, 'invitee_email');
 
         const sha256Hex = async (input) => {
 	            const data = new TextEncoder().encode(String(input || ''));
@@ -495,7 +497,30 @@ export async function handleAuthRoutes({
             }
         }
 
-        // POST /auth/register (invite-based signup)
+        // POST /auth/invite/preview - validates a personal invitation without consuming it.
+        if (url.pathname === "/auth/invite/preview" && request.method === "POST") {
+            const body = await request.json().catch(() => ({}));
+            const inviteToken = String(body.token || body.invite || body.inviteToken || '').trim();
+            if (!inviteToken) return withCORS(JSON.stringify({ success: false, error: 'TOKEN_REQUIRED' }), { status: 400 }, appOrigin);
+            if (!invitesHasModules || !invitesHasInviteeEmail) return withCORS(JSON.stringify({ success: false, error: 'INVITE_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+            try {
+                const invite = await env.DB.prepare(
+                    `SELECT invitee_email, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked
+                     FROM ${invitesTable} WHERE token_hash = ? LIMIT 1`
+                ).bind(await sha256Hex(inviteToken)).first();
+                if (!invite) return withCORS(JSON.stringify({ success: false, error: 'TOKEN_INVALID' }), { status: 401 }, appOrigin);
+                if (Number(invite.revoked || 0)) return withCORS(JSON.stringify({ success: false, error: 'TOKEN_REVOKED' }), { status: 403 }, appOrigin);
+                if (Number(invite.max_uses || 0) !== 1 || Number(invite.uses_count || 0) !== 0) return withCORS(JSON.stringify({ success: false, error: 'TOKEN_EXHAUSTED' }), { status: 403 }, appOrigin);
+                const expiresAt = String(invite.expires_at || '');
+                if (!expiresAt || !Number.isFinite(new Date(expiresAt).getTime()) || Date.now() >= new Date(expiresAt).getTime()) return withCORS(JSON.stringify({ success: false, error: 'TOKEN_EXPIRED' }), { status: 403 }, appOrigin);
+                if (!hasRequiredInviteScope({ allowedUnits: normalizeAllowedUnits(invite.allowed_units_json), allowedModules: normalizeAllowedModules(invite.allowed_modules_json) })) return withCORS(JSON.stringify({ success: false, error: 'INVITE_SCOPE_INVALID' }), { status: 403 }, appOrigin);
+                return withCORS(JSON.stringify({ success: true, email: String(invite.invitee_email || ''), expiresAt }), { status: 200 }, appOrigin);
+            } catch (err) {
+                return withCORS(JSON.stringify({ success: false, error: err.message || String(err) }), { status: 500 }, appOrigin);
+            }
+        }
+
+        // POST /auth/register (personal, single-use invite-based signup)
         if ((url.pathname === "/auth/register" || url.pathname === "/auth/signup") && request.method === "POST") {
             try {
                 if (!env?.DB) {
@@ -503,7 +528,7 @@ export async function handleAuthRoutes({
                 }
                 const body = await request.json().catch(() => ({}));
                 const name = String(body.name || '').trim();
-                const email = String(body.email || body.username || '').trim();
+                const email = normalizeInviteEmail(body.email || body.username || '');
                 const password = String(body.password || body.senha || '').toString();
                 const inviteToken = String(body.token || body.invite || body.inviteToken || '').trim();
 
@@ -523,8 +548,12 @@ export async function handleAuthRoutes({
                 const inviteHash = await sha256Hex(inviteToken);
                 const now = new Date().toISOString();
 
+                if (!usersHasModules || !invitesHasModules || !invitesHasInviteeEmail) {
+                    return withCORS(JSON.stringify({ success: false, error: "INVITE_MIGRATION_REQUIRED" }), { status: 503 }, appOrigin);
+                }
+
                 const invite = await env.DB.prepare(
-                    `SELECT id, role, allowed_units_json${invitesHasModules ? ', allowed_modules_json' : ''}, max_uses, uses_count, expires_at, revoked
+                    `SELECT id, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                      LIMIT 1`
@@ -540,7 +569,7 @@ export async function handleAuthRoutes({
                 }
                 const maxUses = Math.max(1, parseInt(String(invite.max_uses || 1), 10) || 1);
                 const usesCount = Math.max(0, parseInt(String(invite.uses_count || 0), 10) || 0);
-                if (usesCount >= maxUses) {
+                if (maxUses !== 1 || usesCount !== 0) {
                     return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXHAUSTED" }), { status: 403 }, appOrigin);
                 }
                 const expiresAt = invite.expires_at ? String(invite.expires_at) : '';
@@ -549,6 +578,9 @@ export async function handleAuthRoutes({
                     if (Number.isFinite(exp) && Date.now() > exp) {
                         return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXPIRED" }), { status: 403 }, appOrigin);
                     }
+                }
+                if (normalizeInviteEmail(invite.invitee_email) !== email) {
+                    return withCORS(JSON.stringify({ success: false, error: "INVITE_EMAIL_MISMATCH" }), { status: 403 }, appOrigin);
                 }
 
                 const existing = await d1.getUserByIdentifier(email);
@@ -564,55 +596,39 @@ export async function handleAuthRoutes({
 
                 const role = normalizeRole(invite.role || 'CONSULTOR');
                 const allowedUnits = normalizeAllowedUnits(invite.allowed_units_json || '');
-                const allowedModules = invitesHasModules ? normalizeAllowedModules(invite.allowed_modules_json || '') : [];
-                const hash = await hashPassword(password);
-
-                if (usersHasModules) {
-                    await env.DB.prepare(
-                        `INSERT INTO ${usersTable}
-                         (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
-                    )
-                        .bind(
-                            candidate,
-                            email,
-                            name,
-                            hash,
-                            role,
-                            '',
-                            JSON.stringify(allowedUnits),
-                            JSON.stringify(allowedModules),
-                            now,
-                            now
-                        )
-                        .run();
-                } else {
-                    await env.DB.prepare(
-                        `INSERT INTO ${usersTable}
-                         (username, email, display_name, password_hash, role, photo_url, allowed_units_json, ativo, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
-                    )
-                        .bind(
-                            candidate,
-                            email,
-                            name,
-                            hash,
-                            role,
-                            '',
-                            JSON.stringify(allowedUnits),
-                            now,
-                            now
-                        )
-                        .run();
+                const allowedModules = normalizeAllowedModules(invite.allowed_modules_json || '');
+                if (!hasRequiredInviteScope({ allowedUnits, allowedModules })) {
+                    return withCORS(JSON.stringify({ success: false, error: "INVITE_SCOPE_INVALID" }), { status: 403 }, appOrigin);
                 }
-
-                await env.DB.prepare(
+                const hash = await hashPassword(password);
+                const currentTime = new Date().toISOString();
+                const registration = env.DB.prepare(
+                    `INSERT INTO ${usersTable}
+                     (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
+                     SELECT ?, invitee_email, ?, ?, role, '', allowed_units_json, allowed_modules_json, 1, ?, ?
+                     FROM ${invitesTable}
+                     WHERE token_hash = ?
+                       AND invitee_email = ?
+                       AND revoked = 0
+                       AND max_uses = 1
+                       AND uses_count = 0
+                       AND expires_at > ?`
+                ).bind(candidate, name, hash, now, now, inviteHash, email, currentTime);
+                const consume = env.DB.prepare(
                     `UPDATE ${invitesTable}
-                     SET uses_count = uses_count + 1
-                     WHERE id = ?`
-                )
-                    .bind(invite.id)
-                    .run();
+                     SET uses_count = 1
+                     WHERE token_hash = ?
+                       AND invitee_email = ?
+                       AND revoked = 0
+                       AND max_uses = 1
+                       AND uses_count = 0
+                       AND expires_at > ?
+                       AND changes() = 1`
+                ).bind(inviteHash, email, currentTime);
+                const changed = await env.DB.batch([registration, consume]);
+                if (!changed?.[0]?.meta?.changes || !changed?.[1]?.meta?.changes) {
+                    return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXHAUSTED" }), { status: 409 }, appOrigin);
+                }
 
                 const userDb = await d1.getUserByUsername(candidate);
                 const user = userDb
