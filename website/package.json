@@ -69,6 +69,7 @@
     "js-yaml": "4.2.0",
     "postcss": "8.5.15",
     "qs": "6.15.2",
+    "sharp": "0.35.0",
     "undici": "7.28.0",
     "ws": "8.21.0",
     "encoding-sniffer": "1.0.2",
