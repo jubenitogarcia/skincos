@@ -289,6 +289,8 @@ function validateContracts() {
   assert(jobGraphSource.includes('normalizeThreadsCarouselJob'), 'Livia job graph must keep Threads carousel child and parent request contracts distinct');
   assert(jobGraphSource.includes('request.video_url') && jobGraphSource.includes("'VIDEO'"), 'Livia Threads carousel children must retain VIDEO for video media and IMAGE for image media');
   assert(jobGraphSource.includes("request.media_type = 'CAROUSEL'"), 'Livia Threads carousel parent must explicitly request media_type=CAROUSEL');
+  assert(jobGraphSource.includes('perdeu alt_text no corpo do item de mídia'), 'Livia must block supported media when generated alt_text is lost before the gateway');
+  assert(jobGraphSource.includes('altTextSupported') && jobGraphSource.includes("platform === 'threads'"), 'Livia must require alt_text on supported Threads image and video media');
   assert(prepareHttp.includes('JSON.stringify(ids)'), 'Prepare HTTP Publish Request must serialize Threads carousel children as a JSON array');
   assert(prepareBatch.includes('uploadEligible'), 'Prepare Media Upload Batch must preserve uploadEligible from the media processor');
   assert(prepareBatch.includes('blockReason'), 'Prepare Media Upload Batch must preserve the media block reason');
@@ -420,7 +422,7 @@ function validateContracts() {
   for (const required of ['mediaFrameKey', 'editorialFrameForSingleVideo', 'editorial_verified', 'assertInstagramReelCoverContract', 'Reel não pode usar fallback']) {
     assert(buildGraphSource.includes(required), `build-platform-job-graph.js must enforce per-media fail-closed Reel cover selection (${required})`);
   }
-  for (const required of ['instagram_reel_cover_failed', 'cover_url_not_canonical', 'cover_not_requested']) {
+  for (const required of ['instagram_reel_cover_failed', 'cover_url_not_canonical', 'cover_not_requested', 'accessibility_failed:']) {
     assert(verifyPublishedSource.includes(required), `verify-published-artifacts.js must fail a Reel whose cover cannot be verified (${required})`);
   }
   assert(bqValidateJobGraph.includes('cover_url') && bqValidateJobGraph.includes('thumb_offset'), 'BQ - Validate Job Graph must enforce the Instagram Reel cover contract');

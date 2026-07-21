@@ -226,6 +226,9 @@ function buildDelivery(target, response) {
     : submitted.altText
       ? { status: 'accepted', reason: 'submitted_to_provider_but_not_readable_from_public_object' }
       : { status: 'failed', reason: 'alt_text_not_submitted' };
+  if (accessibility.status === 'failed') {
+    errors.push(`accessibility_failed:${accessibility.reason}`);
+  }
   const title = platform === 'instagram' || platform === 'threads' || staticFacebook
     ? { status: 'unsupported', reason: `${platform}_${mediaKind || 'media'}_has_no_public_title_contract` }
     : submitted.title

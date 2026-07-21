@@ -703,8 +703,12 @@ function extractFromLivia(liviaNorm, idx, warnings) {
 // --------------------------
 // BUILDERS DE REQUESTS
 // --------------------------
-const ALLOW_IG_ALT_TEXT_ON_CAROUSEL_ITEMS = false;
-const ALLOW_THREADS_ALT_TEXT_ON_CAROUSEL_ITEMS = false;
+// Instagram supports alt_text for static image containers and Threads accepts
+// it on both image and video carousel item containers. Keep this explicit: the
+// job-graph guard rejects any supported media whose generated alt text is lost
+// before it can reach the gateway.
+const ALLOW_IG_ALT_TEXT_ON_CAROUSEL_ITEMS = true;
+const ALLOW_THREADS_ALT_TEXT_ON_CAROUSEL_ITEMS = true;
 
 function buildUploadBodyInstagram({ isVideo, isCarouselItem, url, media_type, caption, alt_text, bestFrameSeconds, selectedFrameUrl }) {
   const body = {};

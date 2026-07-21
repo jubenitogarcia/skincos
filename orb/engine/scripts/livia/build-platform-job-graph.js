@@ -619,7 +619,34 @@ function applyPlatformAccessibilityContract(job) {
     asObject(current.media).mediaKind,
     ...bodies.map((body) => body.media_type),
   ].map((value) => String(value || '').toUpperCase()).join(' ');
-  if (!mediaSignals.includes('VIDEO') && !mediaSignals.includes('REEL')) return current;
+  const isVideo = mediaSignals.includes('VIDEO') || mediaSignals.includes('REEL');
+  const isUpload = String(current.phase || '').trim().toLowerCase() === 'upload';
+  const text = { ...asObject(current.text) };
+  const generatedAltText = String(text.alt_text || text.altText || '').trim();
+  const hasSubmittedAltText = bodies.some((body) =>
+    String(body.alt_text || body.altText || body.alt_text_custom || '').trim(),
+  );
+  const altTextSupported = isUpload && (
+    (!isVideo && (platform === 'instagram' || platform === 'threads')) ||
+    (isVideo && platform === 'threads')
+  );
+
+  if (altTextSupported) {
+    if (!generatedAltText) {
+      fail(`${NODE_NAME}: ${platform} exige alt_text gerado para cada item de mídia suportado antes do gateway.`);
+    }
+    if (!hasSubmittedAltText) {
+      fail(`${NODE_NAME}: ${platform} perdeu alt_text no corpo do item de mídia; publicação bloqueada antes do gateway.`);
+    }
+    text.accessibilityStatus = 'required';
+    text.accessibilityReason = `${platform}_alt_text_submitted`;
+    current.text = removeNulls(text);
+    return current;
+  }
+
+  if (!isVideo) return current;
+  // Instagram does not use the static-image alt-text contract for videos/Reels.
+  // Threads has already returned above because its video containers support it.
 
   const warningSet = new Set(asArray(current.warnings).map((entry) => String(entry)).filter(Boolean));
   let removed = false;
@@ -644,7 +671,6 @@ function applyPlatformAccessibilityContract(job) {
       json: scrubAltText(current.httpRequest.json),
     };
   }
-  const text = { ...asObject(current.text) };
   text.accessibilityStatus = 'unsupported';
   text.accessibilityReason = `${platform}_video_alt_text_not_supported`;
   current.text = removeNulls(text);
