@@ -249,8 +249,9 @@ def _select_unit_if_needed(driver: WebDriver, unit_name: str, *, timeout_seconds
             time.sleep(0.25)
         return False
 
-    # Best-effort: different accounts/tenants have different UIs.
-    # If we can't find a unit selector, assume it's already selected.
+    # Unit selection is a data-integrity boundary for exports. A freshly logged
+    # in profile can briefly render the default unit before the header dropdown
+    # hydrates. Wait for that UI instead of accepting the default silently.
     try:
         # 0) If the UI shows a dropdown unit label, use it (most reliable for this tenant).
         # If unit is already selected, don't touch.
@@ -258,7 +259,14 @@ def _select_unit_if_needed(driver: WebDriver, unit_name: str, *, timeout_seconds
             log("✓ Unit already selected")
             return True
 
-        dropdown_present = bool(driver.find_elements(By.XPATH, '//*[contains(@class,"dropdown__layout")]'))
+        selector_deadline = time.time() + timeout_seconds
+        dropdown_present = False
+        while time.time() < selector_deadline:
+            dropdown_present = bool(driver.find_elements(By.XPATH, '//*[contains(@class,"dropdown__layout")]'))
+            if dropdown_present:
+                break
+            time.sleep(0.25)
+
         if dropdown_present:
             if not _open_unit_dropdown():
                 log("WARNING: Found unit dropdown but could not open it")
@@ -313,11 +321,11 @@ def _select_unit_if_needed(driver: WebDriver, unit_name: str, *, timeout_seconds
             log("✓ Unit selected")
             return True
 
-        log("Unit selector not found; assuming unit already selected")
-        return True
+        log(f"ERROR: Unit selector not found; cannot verify requested unit {unit_name!r}")
+        return False
     except Exception as e:
-        log(f"WARNING: Unit selection failed: {e}")
-        return True
+        log(f"ERROR: Unit selection failed: {e}")
+        return False
 
 
 def login(driver: WebDriver, *, base_url: str, creds: Credentials, timeout_seconds: int = 20) -> bool:
