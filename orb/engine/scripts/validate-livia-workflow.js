@@ -249,6 +249,7 @@ function validateContracts() {
   const bqBuildPlatformJobGraphCommand = commandOf('BQ - Build Platform Job Graph');
   const bqSeedPublishState = codeOf('BQ - Seed Publish State');
   const bqValidateJobGraph = codeOf('BQ - Validate Job Graph');
+  const usesPreparedVisualContract = !!getNode('Prepare Livia Visual Contract') && !!getNode('Merge Livia Visual Asset and Contract');
   const liviaPrompt = String(getNode('Livia')?.parameters?.text || '');
   const buildGraphSource = fs.readFileSync(path.join(__dirname, 'livia', 'build-platform-job-graph.js'), 'utf8');
   const verifyPublishedSource = fs.readFileSync(path.join(__dirname, 'livia', 'verify-published-artifacts.js'), 'utf8');
