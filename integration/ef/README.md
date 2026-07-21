@@ -163,6 +163,7 @@ Observações:
 - O modo `client_registration` percorre todas as unidades configuradas em `EF_UNITS` e atualiza os arquivos parciais durante a execução.
 - `EF_CLIENT_REGISTRATION_MAX_PAGES` e `EF_CLIENT_REGISTRATION_MAX_CLIENTS_PER_UNIT` limitam a execução para smoke tests; sem eles, o export percorre todas as páginas e as duas unidades de `EF_UNITS`.
 - O CSV é um checkpoint de retomada: uma nova execução reutiliza clientes já exportados por unidade+nome (somente quando o nome é único naquela unidade), preserva os dados já lidos e retoma os demais. Quedas de aba do Chrome disparam reinício automático da sessão até o limite de `EF_CLIENT_REGISTRATION_MAX_SESSION_RETRIES`.
+- Para estabilidade em lotes longos, a sessão é reciclada preventivamente a cada 40 novos cadastros (`EF_CLIENT_REGISTRATION_SESSION_MAX_CLIENTS`), depois de atualizar o checkpoint.
 - O extrator lê os campos da aba `Cadastro` por rótulo visível, cobrindo dados pessoais, contatos e endereço.
 - Erros pontuais por cliente vão para `client_errors` no JSON de resumo, sem derrubar o restante do lote. Os arquivos CSV/XLSX/JSON são atualizados após cada página.
 

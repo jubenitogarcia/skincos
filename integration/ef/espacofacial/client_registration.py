@@ -33,6 +33,10 @@ from .procedures import (
 REGISTRATION_TAB_TEXT = "Cadastro"
 
 
+class SessionRecycleRequested(RuntimeError):
+    """Signal a controlled browser restart after a safe checkpoint."""
+
+
 @dataclass(frozen=True)
 class ClientRegistrationRecord:
     unidade: str
@@ -589,6 +593,8 @@ def run_client_registration_export(
     }
     page_limit = _max_pages()
     client_limit = _max_clients_per_unit()
+    session_client_limit = _positive_int_env("EF_CLIENT_REGISTRATION_SESSION_MAX_CLIENTS") or 40
+    session_clients_processed = 0
 
     for unit_name in unit_names:
         log(f"Client registration: starting unit {unit_name}")
@@ -619,6 +625,11 @@ def run_client_registration_export(
             summary["totals"]["pages_processed"] += 1
 
             for client in clients:
+                if session_clients_processed >= session_client_limit:
+                    _flush_checkpoint(output_dir, records_by_key, summary)
+                    raise SessionRecycleRequested(
+                        f"controlled session recycle after {session_clients_processed} newly exported clients"
+                    )
                 existing_key = (unit_name, _normalized_client_name(client.name))
                 if existing_key in existing_by_name:
                     unit_summary["clients_skipped_checkpoint"] = unit_summary.get("clients_skipped_checkpoint", 0) + 1
@@ -657,6 +668,7 @@ def run_client_registration_export(
                     unit_summary["records_exported"] += 1
                     summary["totals"]["clients_processed"] += 1
                     summary["totals"]["records_exported"] += 1
+                    session_clients_processed += 1
                     log(f"Client registration: exported {record.cliente} ({client_id or 'sem_id'})")
                 except Exception as exc:
                     _record_error(
@@ -722,6 +734,9 @@ def run_with_runtime(
                 debug_dir=debug_dir,
                 timeout_seconds=timeout_seconds,
             )
+        except SessionRecycleRequested as exc:
+            log(f"Client registration: {exc}; restarting from checkpoint")
+            time.sleep(1)
         except Exception as exc:
             message = str(exc).lower()
             if "tab crashed" not in message or session_attempt >= max_session_retries:
