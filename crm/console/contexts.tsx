@@ -35,6 +35,7 @@ interface AuthContextValue {
   initProgress: number
   signIn: (email: string, password: string) => Promise<void>
   signUp: (name: string, email: string, password: string, inviteToken: string) => Promise<void>
+  previewSignupInvite: (inviteToken: string) => Promise<{ email: string; expiresAt: string }>
   requestPasswordReset: (email: string) => Promise<{ expiresAt: string }>
   verifyPasswordResetCode: (email: string, code: string) => Promise<{ resetGrant: string; expiresAt: string }>
   resetPassword: (resetGrant: string, password: string) => Promise<void>
@@ -140,6 +141,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       : code === 'TOKEN_REVOKED' ? 'Token revogado.'
       : code === 'TOKEN_EXPIRED' ? 'Token expirado.'
       : code === 'TOKEN_EXHAUSTED' ? 'Token já foi utilizado.'
+      : code === 'INVITE_EMAIL_MISMATCH' ? 'Este convite foi emitido para outro e-mail.'
+      : code === 'INVITE_SCOPE_INVALID' ? 'Este convite não possui permissões válidas. Solicite outro ao gestor.'
+      : code === 'INVITE_MIGRATION_REQUIRED' ? 'O cadastro por convite está sendo atualizado. Tente novamente em instantes.'
       : code === 'EMAIL_TAKEN' ? 'Este email já está cadastrado.'
       : code === 'PASSWORD_TOO_SHORT' ? 'Use uma senha com pelo menos 12 caracteres.'
       : code === 'EMAIL_INVALID' ? 'Email inválido.'
@@ -240,6 +244,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const previewSignupInvite = async (inviteToken: string) => {
+    const res = await fetchWithTimeout(
+      '/api/auth/invite/preview',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token: inviteToken.trim() })
+      },
+      15000
+    ).catch((e: any) => {
+      if (e?.name === 'AbortError') throw new Error('Tempo limite ao validar o convite. Tente novamente.')
+      throw e
+    })
+    const json: any = readJson(await res.text())
+    if (!res.ok) throw new Error(friendlySignupError(res.status, json))
+    const email = String(json?.email || '').trim().toLowerCase()
+    if (!email) throw new Error('O convite não contém um e-mail válido.')
+    return { email, expiresAt: String(json?.expiresAt || '') }
+  }
+
   const passwordResetRequest = async (path: string, body: Record<string, string>) => {
     const res = await fetchWithTimeout(
       path,
@@ -334,6 +359,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initProgress,
     signIn,
     signUp,
+    previewSignupInvite,
     requestPasswordReset,
     verifyPasswordResetCode,
     resetPassword,

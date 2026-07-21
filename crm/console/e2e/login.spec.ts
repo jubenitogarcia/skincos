@@ -44,7 +44,7 @@ test.describe('auth', () => {
     await page.getByRole('tab', { name: /Criar conta/i }).click()
     await expect(page.locator('#auth-name')).toBeVisible()
     await expect(page.locator('#auth-inviteToken')).toBeVisible()
-    await expect(page.getByText(/escopo definido na administração/i)).toBeVisible()
+    await expect(page.getByText(/escopo definido pelo gestor/i)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Criar conta' })).toBeDisabled()
     await page.fill('#auth-name', 'Ana Souza')
     await page.fill('#auth-email', 'email-invalido')
@@ -58,6 +58,22 @@ test.describe('auth', () => {
     await page.fill('#auth-password', '123456789012')
     await expect(page.getByText(/Dados prontos/i)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Criar conta' })).toBeEnabled()
+  })
+
+  test('opens a personal invitation from a URL fragment and locks its email', async ({ page }) => {
+    await page.route('**/api/auth/me', route => route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Not authenticated' }) }))
+    await page.route('**/api/auth/invite/preview', route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, email: 'ana@empresa.com', expiresAt: '2026-08-20T12:00:00.000Z' }),
+    }))
+
+    await page.goto('/#invite=ABCD1234EFGH5678IJKL9012')
+    await expect(page.getByRole('heading', { name: 'Criar conta com convite' })).toBeVisible()
+    await expect(page.locator('#auth-email')).toHaveValue('ana@empresa.com')
+    await expect(page.locator('#auth-email')).toHaveAttribute('readonly', '')
+    await expect(page.locator('#auth-inviteToken')).toHaveValue('ABCD1234EFGH5678IJKL9012')
+    await expect(page.getByText(/convite é pessoal e está vinculado/i)).toBeVisible()
+    await expect(page).not.toHaveURL(/#invite=/)
   })
 
   test('recovery validates the email code before allowing a new password', async ({ page }) => {

@@ -44,6 +44,7 @@ import type { SiteTrackingHeaderState } from '@/siteTrackingTypes'
 import { dispatchAtendimentoHeaderAction, subscribeAtendimentoHeaderState } from '@/atendimentoHeaderBridge'
 import type { AtendimentoHeaderState } from '@/atendimentoHeaderBridge'
 import { hasCrmModuleAccess } from '@/crmRoleAccess'
+import { canManagePonto } from '@/pontoAccess'
 import { BarChart3, CalendarX2, CheckCircle2, ChevronDown, ClipboardList, Download, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Stethoscope, WalletCards, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
@@ -374,14 +375,7 @@ export default function AppFunctionalNeatlab() {
 
     const allowedModulesKey = Array.isArray(user?.allowedModules) ? user.allowedModules.join('|') : ''
     const roleKey = String(user?.role || '').trim().toUpperCase()
-    const isLocalDev = import.meta.env.DEV && (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
-    const devEmail = String(user?.email || '').trim().toLowerCase()
-    const pontoCanAdmin =
-        roleKey === 'GESTOR' ||
-        roleKey === 'GERENTE' ||
-        roleKey === 'SUPERVISOR' ||
-        roleKey === 'ADMIN' ||
-        (isLocalDev && devEmail.endsWith('@local.test'))
+    const pontoCanAdmin = canManagePonto(roleKey)
     const hasModuleAccess = React.useCallback(
         (moduleKey: string) => {
             return hasCrmModuleAccess(roleKey, user?.allowedModules, moduleKey)

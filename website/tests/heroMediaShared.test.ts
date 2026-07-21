@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-    HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS,
-    HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS,
+    HERO_JULHO_2026_DESKTOP_ITEMS,
+    HERO_JULHO_2026_MOBILE_ITEMS,
     composeHeroMediaItems,
     getHeroMediaAspectRatio,
     getLocalHeroItems,
@@ -90,70 +90,64 @@ test("scoped resolver selects global + current unit and defaults missing scope t
     );
 });
 
-test("local hero items use the aniversario 7 anos global campaign for a unit page", () => {
+test("local hero items use the julho 2026 global campaign for a unit page", () => {
     const items = getLocalHeroItems("desktop", { unitSlug: "barrashoppingsul" });
 
-    assert.equal(items.length, 3);
-    assert.ok(items.every((item) => item.src.includes("/images/hero/campaigns/aniversario-7-anos-2026/desktop/")));
+    assert.equal(items.length, 13);
+    assert.ok(items.every((item) => item.src.includes("/images/hero/campaigns/julho-2026/desktop/")));
     assert.ok(items.every((item) => item.scope !== "unit:barrashoppingsul"));
 });
 
-test("Aniversario 7 anos local hero campaign keeps separate desktop and mobile assets", () => {
-    assert.equal(HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS.length, 3);
-    assert.equal(HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS.length, 5);
+test("julho 2026 local hero campaign keeps separate desktop and mobile assets", () => {
+    assert.equal(HERO_JULHO_2026_DESKTOP_ITEMS.length, 13);
+    assert.equal(HERO_JULHO_2026_MOBILE_ITEMS.length, 13);
 
-    assert.ok(HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS.every((item) => item.src.includes("/desktop/")));
-    assert.ok(HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS.every((item) => item.src.endsWith(".png")));
-    assert.ok(HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS.every((item) => item.src.includes("/mobile/")));
-    assert.ok(HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS.every((item) => item.src.endsWith(".png")));
+    assert.ok(HERO_JULHO_2026_DESKTOP_ITEMS.every((item) => item.src.includes("/desktop/")));
+    assert.ok(HERO_JULHO_2026_DESKTOP_ITEMS.every((item) => item.src.endsWith(".png")));
+    assert.ok(HERO_JULHO_2026_MOBILE_ITEMS.every((item) => item.src.includes("/mobile/")));
+    assert.ok(HERO_JULHO_2026_MOBILE_ITEMS.every((item) => item.src.endsWith(".png")));
 
     assert.deepEqual(
-        HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS.map((item) => item.id),
-        [
-            "aniversario-7-anos-2026-desktop-website-01-aniversario-cruzeiro",
-            "aniversario-7-anos-2026-desktop-website-02-compras-cruzeiro",
-            "aniversario-7-anos-2026-desktop-website-03-botox-bioestimulador",
-        ],
+        HERO_JULHO_2026_DESKTOP_ITEMS.map((item) => item.id),
+        Array.from({ length: 13 }, (_, index) => `julho-2026-desktop-banner-${String(index + 1).padStart(2, "0")}`),
     );
 
     assert.deepEqual(
-        HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS.map((item) => item.id),
-        [
-            "aniversario-7-anos-2026-mobile-mobile-01-botox-modelo",
-            "aniversario-7-anos-2026-mobile-mobile-02-bioestimulador-modelo",
-            "aniversario-7-anos-2026-mobile-mobile-03-botox-antes-depois",
-            "aniversario-7-anos-2026-mobile-mobile-04-botox-antes-depois-masculino",
-            "aniversario-7-anos-2026-mobile-mobile-05-bioestimulador-antes-depois",
-        ],
+        HERO_JULHO_2026_MOBILE_ITEMS.map((item) => item.id),
+        Array.from({ length: 13 }, (_, index) => `julho-2026-mobile-banner-${String(index + 1).padStart(2, "0")}`),
     );
 });
 
-test("Aniversario 7 anos local hero campaign exposes dimensions before image load", () => {
+test("julho 2026 local hero campaign exposes dimensions before image load", () => {
     assert.deepEqual(
-        HERO_ANIVERSARIO_7_ANOS_2026_DESKTOP_ITEMS.map((item) => ({
+        HERO_JULHO_2026_DESKTOP_ITEMS.map((item) => ({
             width: item.width,
             height: item.height,
             aspectRatio: getHeroMediaAspectRatio(item),
         })),
         [
-            { width: 1280, height: 504, aspectRatio: "1280 / 504" },
-            { width: 1280, height: 504, aspectRatio: "1280 / 504" },
-            { width: 1280, height: 504, aspectRatio: "1280 / 504" },
+            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
+            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
+            { width: 1731, height: 909, aspectRatio: "1731 / 909" },
+            { width: 1732, height: 908, aspectRatio: "1732 / 908" },
+            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
+            { width: 1731, height: 908, aspectRatio: "1731 / 908" },
+            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
+            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
+            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
+            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
+            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
+            { width: 1733, height: 907, aspectRatio: "1733 / 907" },
+            { width: 1734, height: 907, aspectRatio: "1734 / 907" },
         ],
     );
 
     assert.deepEqual(
-        HERO_ANIVERSARIO_7_ANOS_2026_MOBILE_ITEMS.map((item) => ({
+        HERO_JULHO_2026_MOBILE_ITEMS.map((item) => ({
             width: item.width,
             height: item.height,
             aspectRatio: getHeroMediaAspectRatio(item),
         })),
-        [
-            { width: 941, height: 1672, aspectRatio: "941 / 1672" },
-            { width: 1080, height: 1920, aspectRatio: "1080 / 1920" },
-            { width: 1080, height: 1920, aspectRatio: "1080 / 1920" },
-            { width: 1080, height: 1920, aspectRatio: "1080 / 1920" },
-            { width: 1080, height: 1920, aspectRatio: "1080 / 1920" },
-        ],
+        Array.from({ length: 13 }, () => ({ width: 1080, height: 1920, aspectRatio: "1080 / 1920" })),
     );
 });

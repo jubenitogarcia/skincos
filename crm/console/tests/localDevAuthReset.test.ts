@@ -1,39 +1,37 @@
 import { describe, expect, it, vi } from 'vitest'
 import { consumeLocalAuthReset } from '../localDevAuthReset'
 
-describe('local CRM auth reset', () => {
-  it('clears only the local auth opt-out and removes the one-time query parameter', () => {
-    const removeItem = vi.fn()
-    const clearCookie = vi.fn()
-    const replaceUrl = vi.fn()
-
-    const consumed = consumeLocalAuthReset(
-      { href: 'http://localhost:8791/?module=insumos&localAuthReset=1', hostname: 'localhost' },
-      { removeItem },
-      clearCookie,
-      replaceUrl,
-    )
-
-    expect(consumed).toBe(true)
-    expect(removeItem).toHaveBeenCalledWith('crm.localAuth')
-    expect(clearCookie).toHaveBeenCalledWith('crm.localAuth=; Path=/; Max-Age=0; SameSite=Lax')
-    expect(clearCookie).toHaveBeenCalledWith('crm_local_auth=; Path=/; Max-Age=0; SameSite=Lax')
-    expect(replaceUrl).toHaveBeenCalledWith('/?module=insumos')
-  })
-
-  it('does not affect a non-local URL or a normal launch', () => {
+describe('local auth reset', () => {
+  it('clears every local persona override before opening the requested module', () => {
     const removeItem = vi.fn()
     const clearCookie = vi.fn()
     const replaceUrl = vi.fn()
 
     expect(consumeLocalAuthReset(
-      { href: 'https://crm.skincos.com.br/?localAuthReset=1', hostname: 'crm.skincos.com.br' },
+      { href: 'http://localhost:8791/?module=ponto&localAuthReset=1', hostname: 'localhost' },
       { removeItem },
       clearCookie,
       replaceUrl,
+    )).toBe(true)
+
+    expect(removeItem.mock.calls.map(([key]) => key)).toEqual([
+      'crm.localAuth',
+      'crm.localRole',
+      'crm.localEmail',
+      'crm.localUser',
+      'crm.localName',
+    ])
+    expect(replaceUrl).toHaveBeenCalledWith('/?module=ponto')
+  })
+
+  it('does not clear browser state outside localhost', () => {
+    const removeItem = vi.fn()
+    expect(consumeLocalAuthReset(
+      { href: 'https://crm.skincos.com.br/?localAuthReset=1', hostname: 'crm.skincos.com.br' },
+      { removeItem },
+      vi.fn(),
+      vi.fn(),
     )).toBe(false)
     expect(removeItem).not.toHaveBeenCalled()
-    expect(clearCookie).not.toHaveBeenCalled()
-    expect(replaceUrl).not.toHaveBeenCalled()
   })
 })
