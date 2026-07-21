@@ -1,6 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { units } from "@/data/units";
-import { formatReviewRelativeTimePtBr, type GbpFetchedReview } from "@/lib/googleGbp";
+import { discoverGoogleGbpLocationResourceName, formatReviewRelativeTimePtBr, getGoogleGbpAccessToken, type GbpFetchedReview } from "@/lib/googleGbp";
 
 type D1PreparedStatement = {
     bind: (...values: unknown[]) => D1PreparedStatement;
@@ -543,14 +543,21 @@ export async function createGbpReviewReplyDraft(params: {
 
     const source = await db
         .prepare(
-            `SELECT r.unit_slug, s.location_resource_name
+            `SELECT r.unit_slug, s.location_resource_name, s.gbp_location
              FROM gbp_reviews r
              INNER JOIN gbp_review_summaries s ON s.unit_slug = r.unit_slug
              WHERE r.id = ? LIMIT 1;`,
         )
         .bind(params.reviewId)
-        .first<{ unit_slug: string; location_resource_name: string | null }>();
-    if (!source?.location_resource_name) throw new Error("review_not_available_for_reply");
+        .first<{ unit_slug: string; location_resource_name: string | null; gbp_location: string | null }>();
+    if (!source) throw new Error("review_not_available_for_reply");
+
+    const locationResourceName =
+        source.location_resource_name?.trim() ||
+        (source.gbp_location?.trim()
+            ? await discoverGoogleGbpLocationResourceName(await getGoogleGbpAccessToken(), source.gbp_location)
+            : "");
+    if (!locationResourceName) throw new Error("review_not_available_for_reply");
 
     await db
         .prepare(
@@ -558,7 +565,7 @@ export async function createGbpReviewReplyDraft(params: {
                 id, unit_slug, review_id, location_resource_name, comment, status, created_at_ms, updated_at_ms
             ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?);`,
         )
-        .bind(params.id, source.unit_slug, params.reviewId, source.location_resource_name, params.comment, params.createdAtMs, params.createdAtMs)
+        .bind(params.id, source.unit_slug, params.reviewId, locationResourceName, params.comment, params.createdAtMs, params.createdAtMs)
         .run();
 
     const created = await getReplyDraftRow(params.id);
