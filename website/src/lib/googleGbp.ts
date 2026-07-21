@@ -25,6 +25,12 @@ type GoogleBusinessReviewsPage = {
     totalReviewCount?: number | null;
 };
 
+type GoogleBusinessReviewReply = {
+    comment?: string | null;
+    updateTime?: string | null;
+    reviewReplyState?: string | null;
+};
+
 export type GbpFetchedReview = {
     reviewId: string;
     reviewerName: string;
@@ -42,6 +48,12 @@ export type GbpFetchedLocationReviews = {
     averageRating: number | null;
     totalReviewCount: number;
     reviews: GbpFetchedReview[];
+};
+
+export type GbpPublishedReviewReply = {
+    comment: string;
+    updateTimeMs: number | null;
+    state: string | null;
 };
 
 let tokenCache: TokenCache | null = null;
@@ -253,5 +265,39 @@ export async function fetchAllGoogleGbpReviews(rawLocationId: string): Promise<G
         averageRating,
         totalReviewCount,
         reviews,
+    };
+}
+
+export async function publishGoogleGbpReviewReply(params: {
+    locationResourceName: string;
+    reviewId: string;
+    comment: string;
+}): Promise<GbpPublishedReviewReply> {
+    const locationResourceName = (params.locationResourceName ?? "").trim();
+    const reviewId = (params.reviewId ?? "").trim();
+    const comment = (params.comment ?? "").trim();
+    if (!/^accounts\/\d+\/locations\/\d+$/.test(locationResourceName)) throw new Error("invalid_location_resource_name");
+    if (!reviewId || reviewId.length > 512 || reviewId.includes("/") || /[\u0000-\u001F\u007F]/.test(reviewId)) {
+        throw new Error("invalid_review_id");
+    }
+    if (!comment || new TextEncoder().encode(comment).byteLength > 4096) throw new Error("invalid_reply_comment");
+
+    const accessToken = await getGoogleGbpAccessToken();
+    const response = await fetch(
+        `https://mybusiness.googleapis.com/v4/${locationResourceName}/reviews/${encodeURIComponent(reviewId)}/reply`,
+        {
+            method: "PUT",
+            headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+            body: JSON.stringify({ comment }),
+            cache: "no-store",
+        },
+    );
+    if (!response.ok) throw new Error(`review_reply_publish_failed:${response.status}`);
+
+    const reply = (await response.json()) as GoogleBusinessReviewReply;
+    return {
+        comment: toNullableText(reply.comment) ?? comment,
+        updateTimeMs: parseGoogleTimestampMs(reply.updateTime),
+        state: toNullableText(reply.reviewReplyState),
     };
 }
