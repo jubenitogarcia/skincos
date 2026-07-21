@@ -25,6 +25,7 @@ param(
         "CrmLocal",
         "CrmSiteEf",
         "CrmMetaAds",
+        "CrmFinance",
         "CrmAtendimento",
         "CrmAtendimentoMirrorStatus",
         "CrmAtendimentoMirrorSync",
@@ -32,6 +33,7 @@ param(
         "CrmMemory",
         "CrmSiteSmoke",
         "CrmMetaAdsSmoke",
+        "CrmFinanceSmoke",
         "CrmAtendimentoSmoke",
         "PlatformLocalStart",
         "EfAppSetup",
@@ -354,6 +356,9 @@ function Invoke-ShortcutActionInternal {
                 (Convert-ToBashLiteral -Value $crmLogWsl), `
                 (Convert-ToBashLiteral -Value $playwrightBrowsersRootWsl))
         }
+        "CrmFinance" {
+            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command "npm run crm:local:finance"
+        }
         "CrmAtendimento" {
             Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} bash ./scripts/run-local-atendimento.sh" -f `
                 (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
@@ -363,6 +368,7 @@ function Invoke-ShortcutActionInternal {
         "CrmAtendimentoMirrorStatus" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-status" }
         "CrmAtendimentoMirrorSync" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-sync -- --apply" }
         "CrmLocalStop" {
+            Invoke-ShortcutWsl -Command "npm run crm:local:finance:stop"
             Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl))
@@ -385,6 +391,11 @@ function Invoke-ShortcutActionInternal {
             Invoke-ShortcutWsl `
                 -EnvVar @("CRM_PLAYWRIGHT_BROWSERS_PATH=$playwrightBrowsersRoot") `
                 -Command "npm run codex:crm:atendimento-smoke"
+        }
+        "CrmFinanceSmoke" {
+            Invoke-ShortcutWsl `
+                -EnvVar @("CRM_PLAYWRIGHT_BROWSERS_PATH=$playwrightBrowsersRoot") `
+                -Command "npm run codex:crm:finance-smoke"
         }
         "PlatformLocalStart" { Invoke-ShortcutWsl -Command "OPEN_BROWSER=0 bash ./backend/scripts/dev.sh watch" }
         "EfAppSetup" {
@@ -561,6 +572,7 @@ function Show-CrmMenu {
                 (New-MenuOption -Label "CRM Local" -Action "CrmLocal"),
                 (New-MenuOption -Label "CRM Site EF" -Action "CrmSiteEf"),
                 (New-MenuOption -Label "CRM Meta Ads" -Action "CrmMetaAds"),
+                (New-MenuOption -Label "CRM Financeiro" -Action "CrmFinance"),
                 (New-MenuOption -Label "CRM Atendimento" -Action "CrmAtendimento"),
                 (New-MenuOption -Label "CRM Atendimento - Status do Clone" -Action "CrmAtendimentoMirrorStatus"),
                 (New-MenuOption -Label "CRM Atendimento - Atualizar Clone" -Action "CrmAtendimentoMirrorSync"),
@@ -568,6 +580,7 @@ function Show-CrmMenu {
                 (New-MenuOption -Label "CRM Memory" -Action "CrmMemory"),
                 (New-MenuOption -Label "CRM Site Smoke" -Action "CrmSiteSmoke"),
                 (New-MenuOption -Label "CRM Meta Ads Smoke" -Action "CrmMetaAdsSmoke"),
+                (New-MenuOption -Label "CRM Financeiro Smoke" -Action "CrmFinanceSmoke"),
                 (New-MenuOption -Label "CRM Atendimento Smoke" -Action "CrmAtendimentoSmoke")
             )
         if ($null -eq $selection) {

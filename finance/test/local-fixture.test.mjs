@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+
+const script = fileURLToPath(new URL('../scripts/write-local-fixture.mjs', import.meta.url));
+
+async function fixture(scenario) {
+  const directory = await mkdtemp(join(tmpdir(), 'skincos-finance-fixture-'));
+  const output = join(directory, `${scenario}.sql`);
+  try {
+    return await new Promise((resolve, reject) => {
+      execFile(process.execPath, [script, '--scenario', scenario, '--output', output], (error, stdout, stderr) => {
+        if (error) reject(new Error(stderr || error.message));
+        else resolve(JSON.parse(stdout));
+      });
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test('local Finance fixture exposes only the intended module and business scopes', async () => {
+  const disabled = await fixture('disabled');
+  assert.equal(disabled.moduleEnabled, false);
+  assert.deepEqual(disabled.allowedModules, ['finance']);
+
+  const noModule = await fixture('no-module');
+  assert.equal(noModule.moduleEnabled, true);
+  assert.deepEqual(noModule.allowedModules, []);
+
+  const noGrant = await fixture('no-grant');
+  assert.deepEqual(noGrant.grantedScopes, []);
+
+  const nh = await fixture('nh');
+  assert.deepEqual(nh.allowedUnits, ['novo-hamburgo']);
+  assert.deepEqual(nh.grantedScopes, ['finance-scope-novo-hamburgo']);
+
+  const bss = await fixture('bss');
+  assert.deepEqual(bss.allowedUnits, ['barra-shopping-sul']);
+  assert.deepEqual(bss.grantedScopes, ['finance-scope-barra-shopping-sul']);
+
+  const both = await fixture('both');
+  assert.deepEqual(both.allowedUnits, ['novo-hamburgo', 'barra-shopping-sul']);
+  assert.equal(both.personalScopeGranted, false);
+  assert.equal(both.grantedScopes.includes('finance-scope-personal'), false);
+});
