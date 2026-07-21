@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildAppRegistrationCustomers, buildClientRegistrationIdentityPlan, normalizeClientCpf, normalizeClientPhone } from '../clientRegistrationIdentity.js'
+import { buildAppRegistrationCustomers, buildClientRegistrationIdentityPlan, buildConfirmedGlobalIdentityComponents, normalizeClientCpf, normalizeClientPhone } from '../clientRegistrationIdentity.js'
 
 test('consolidates the same app registration across units and normalizes contacts', () => {
     const customers = buildAppRegistrationCustomers([
@@ -43,4 +43,25 @@ test('uses a unique phone-to-sales-to-attendance anchor without using dates', ()
     })
     assert.deepEqual(plan.registrationAttendanceLinks.map((link) => ({ method: link.method, status: link.status })), [{ method: 'phone_sales_attendance_anchor', status: 'auto_confirmed' }])
     assert.equal(plan.summary.policy.dateDistanceUsed, false)
+})
+
+test('builds one global identity only from confirmed cross-source links', () => {
+    const components = buildConfirmedGlobalIdentityComponents({
+        registrations: [{ id: 'app-1', name: 'Maria da Silva' }],
+        canonicalClients: [{ id: 'attendance-1', name: 'Maria da Silva' }],
+        caixaCustomers: [{ id: 'cash-1', name: 'Maria da Silva' }],
+        registrationCaixaLinks: [{ registrationId: 'app-1', caixaCustomerId: 'cash-1', status: 'auto_confirmed' }],
+        registrationAttendanceLinks: [{ registrationId: 'app-1', attendanceClientId: 'attendance-1', status: 'auto_confirmed' }],
+        attendanceCaixaLinks: [{ attendanceClientId: 'attendance-1', caixaCustomerId: 'cash-1', status: 'suggested' }],
+    })
+    assert.deepEqual(components, [{
+        componentKey: 'app_registration:app-1|attendance_client:attendance-1|caixa_customer:cash-1',
+        preferredName: 'Maria da Silva',
+        members: [
+            { sourceType: 'app_registration', sourceId: 'app-1', name: 'Maria da Silva' },
+            { sourceType: 'attendance_client', sourceId: 'attendance-1', name: 'Maria da Silva' },
+            { sourceType: 'caixa_customer', sourceId: 'cash-1', name: 'Maria da Silva' },
+        ],
+        sourceTypes: ['app_registration', 'attendance_client', 'caixa_customer'],
+    }])
 })

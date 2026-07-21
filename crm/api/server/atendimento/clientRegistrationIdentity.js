@@ -240,3 +240,67 @@ export function buildClientRegistrationIdentityPlan({ registrationRows = [], cai
         },
     }
 }
+
+class UnionFind {
+    constructor() { this.parent = new Map() }
+    add(value) { if (!this.parent.has(value)) this.parent.set(value, value) }
+    find(value) {
+        const parent = this.parent.get(value)
+        if (parent === value) return value
+        const root = this.find(parent)
+        this.parent.set(value, root)
+        return root
+    }
+    join(left, right) {
+        this.add(left); this.add(right)
+        const leftRoot = this.find(left); const rightRoot = this.find(right)
+        if (leftRoot !== rightRoot) this.parent.set(rightRoot, leftRoot)
+    }
+}
+
+function node(type, id) { return `${type}:${id}` }
+
+export function buildConfirmedGlobalIdentityComponents({
+    registrations = [],
+    canonicalClients = [],
+    caixaCustomers = [],
+    registrationCaixaLinks = [],
+    registrationAttendanceLinks = [],
+    attendanceCaixaLinks = [],
+} = {}) {
+    const automatic = new Set(['auto_confirmed', 'auto_confirmed_spelling', 'confirmed'])
+    const union = new UnionFind()
+    const labels = new Map()
+    registrations.forEach((item) => labels.set(node('app_registration', item.id), item.name))
+    canonicalClients.forEach((item) => labels.set(node('attendance_client', item.id), item.name))
+    caixaCustomers.forEach((item) => labels.set(node('caixa_customer', item.id), item.name))
+    registrationCaixaLinks.filter((item) => automatic.has(item.status)).forEach((item) =>
+        union.join(node('app_registration', item.registrationId), node('caixa_customer', item.caixaCustomerId)))
+    registrationAttendanceLinks.filter((item) => automatic.has(item.status)).forEach((item) =>
+        union.join(node('app_registration', item.registrationId), node('attendance_client', item.attendanceClientId)))
+    attendanceCaixaLinks.filter((item) => automatic.has(item.status)).forEach((item) =>
+        union.join(node('attendance_client', item.attendanceClientId), node('caixa_customer', item.caixaCustomerId)))
+
+    const groups = new Map()
+    for (const value of union.parent.keys()) {
+        const root = union.find(value)
+        if (!groups.has(root)) groups.set(root, [])
+        groups.get(root).push(value)
+    }
+    return [...groups.values()].map((members) => {
+        const normalized = members.sort()
+        const parsed = normalized.map((value) => {
+            const [sourceType, ...rest] = value.split(':')
+            return { sourceType, sourceId: rest.join(':'), name: labels.get(value) || '' }
+        })
+        const preferred = parsed.find((item) => item.sourceType === 'attendance_client' && item.name)
+            || parsed.find((item) => item.sourceType === 'app_registration' && item.name)
+            || parsed.find((item) => item.name)
+        return {
+            componentKey: normalized.join('|'),
+            preferredName: preferred?.name || '',
+            members: parsed,
+            sourceTypes: [...new Set(parsed.map((item) => item.sourceType))].sort(),
+        }
+    }).filter((component) => component.sourceTypes.length >= 2)
+}
