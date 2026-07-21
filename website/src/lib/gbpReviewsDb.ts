@@ -566,39 +566,46 @@ export async function createGbpReviewReplyDraft(params: {
     return mapReplyDraft(created);
 }
 
+const replyDraftColumns = `id, unit_slug, review_id, location_resource_name, comment, status, approved_by, approved_at_ms,
+                           published_at_ms, google_reply_update_ms, last_error`;
+
 export async function approveGbpReviewReplyDraft(params: { id: string; approvedBy: string; approvedAtMs: number }): Promise<GbpReviewReplyDraft> {
     const db = await getDb();
     if (!db) throw new Error("gbp_reply_db_unavailable");
-    const current = await getReplyDraftRow(params.id);
-    if (!current) throw new Error("reply_draft_not_found");
-    if (current.status !== "draft") throw new Error(`reply_draft_not_approvable:${current.status}`);
-
-    await db
+    const approved = await db
         .prepare(
             `UPDATE gbp_review_reply_drafts
              SET status = 'approved', approved_by = ?, approved_at_ms = ?, updated_at_ms = ?
-             WHERE id = ? AND status = 'draft';`,
+             WHERE id = ? AND status = 'draft'
+             RETURNING ${replyDraftColumns};`,
         )
         .bind(params.approvedBy, params.approvedAtMs, params.approvedAtMs, params.id)
-        .run();
-    const approved = await getReplyDraftRow(params.id);
-    if (!approved) throw new Error("reply_draft_not_found");
+        .first<GbpReviewReplyDraftRow>();
+    if (!approved) {
+        const current = await getReplyDraftRow(params.id);
+        if (!current) throw new Error("reply_draft_not_found");
+        throw new Error(`reply_draft_not_approvable:${current.status}`);
+    }
     return mapReplyDraft(approved);
 }
 
 export async function reserveGbpReviewReplyDraftForPublish(id: string, nowMs: number): Promise<GbpReviewReplyDraft> {
     const db = await getDb();
     if (!db) throw new Error("gbp_reply_db_unavailable");
-    const current = await getReplyDraftRow(id);
-    if (!current) throw new Error("reply_draft_not_found");
-    if (current.status !== "approved") throw new Error(`reply_draft_not_publishable:${current.status}`);
-
-    await db
-        .prepare("UPDATE gbp_review_reply_drafts SET status = 'publishing', updated_at_ms = ? WHERE id = ? AND status = 'approved';")
+    const reserved = await db
+        .prepare(
+            `UPDATE gbp_review_reply_drafts
+             SET status = 'publishing', updated_at_ms = ?
+             WHERE id = ? AND status = 'approved'
+             RETURNING ${replyDraftColumns};`,
+        )
         .bind(nowMs, id)
-        .run();
-    const reserved = await getReplyDraftRow(id);
-    if (!reserved || reserved.status !== "publishing") throw new Error("reply_draft_publish_reservation_failed");
+        .first<GbpReviewReplyDraftRow>();
+    if (!reserved) {
+        const current = await getReplyDraftRow(id);
+        if (!current) throw new Error("reply_draft_not_found");
+        throw new Error(`reply_draft_not_publishable:${current.status}`);
+    }
     return mapReplyDraft(reserved);
 }
 
