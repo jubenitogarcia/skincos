@@ -7,7 +7,10 @@ export const FINANCE_MODULE_KEY = 'finance';
 export const FINANCE_SCOPE_KINDS = Object.freeze(['unit', 'personal']);
 export const FINANCE_ACCOUNT_TYPES = Object.freeze(['cash', 'bank', 'card', 'clearing']);
 export const FINANCE_MOVEMENT_TYPES = Object.freeze(['income', 'expense', 'transfer']);
+// `status` is the immutable ledger lifecycle; `operationalStatus` is the
+// intentionally simpler state exposed by the operational UI.
 export const FINANCE_MOVEMENT_STATUSES = Object.freeze(['draft', 'posted', 'cancelled']);
+export const FINANCE_OPERATIONAL_STATUSES = Object.freeze(['pending', 'confirmed', 'reconciled', 'cancelled']);
 
 export function asTrimmedString(value, field, { required = true, max = 240 } = {}) {
   const normalized = String(value ?? '').trim();
@@ -22,6 +25,22 @@ export function asMinorAmount(value, field = 'amountMinor') {
     throw new FinanceContractError('VALIDATION_ERROR', `${field} deve ser um inteiro positivo em centavos.`);
   }
   return amount;
+}
+
+export function asNonNegativeMinorAmount(value, field = 'amountMinor') {
+  const amount = Number(value);
+  if (!Number.isSafeInteger(amount) || amount < 0) {
+    throw new FinanceContractError('VALIDATION_ERROR', `${field} deve ser um inteiro não negativo em minor units.`);
+  }
+  return amount;
+}
+
+export function asExchangeRatePpm(value, field = 'exchangeRatePpm') {
+  const rate = Number(value ?? 1_000_000);
+  if (!Number.isSafeInteger(rate) || rate <= 0) {
+    throw new FinanceContractError('VALIDATION_ERROR', `${field} deve ser um inteiro positivo em partes por milhão.`);
+  }
+  return rate;
 }
 
 export function asIsoDate(value, field) {
