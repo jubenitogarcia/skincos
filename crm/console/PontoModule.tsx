@@ -14,7 +14,7 @@ import { LoadingPercentText } from '@/LoadingPattern'
 import { apiBlob, apiJson, createRequestMeta, errorMetaString, fetchJsonWithMeta, getDevEmployeeActorHeaders, LS_DEV_ACTOR_EMAIL } from './pontoApi'
 import { getNextPunchAction, getPunchConfirmation, getPunchTypeLabel } from './pontoPresentation'
 import { profileMissingSummary, profileValue } from './pontoProfilePresentation'
-import type { PontoCorrection, PontoDevicePublic, PontoEmailConflict, PontoEmployeePublic, PontoMeResponse, PontoMonthlyResult, PontoMyProfileResponse, PontoPunchRecord } from './pontoTypes'
+import type { PontoCorrection, PontoDevicePublic, PontoEmailConflict, PontoEmployeePublic, PontoMeResponse, PontoMonthlyResult, PontoMyProfileResponse, PontoPresencePolicy, PontoPunchRecord } from './pontoTypes'
 
 type FaceDetectorMode = 'tiny' | 'ssd'
 
@@ -395,6 +395,11 @@ export function PontoModule() {
   const [newDeviceLabel, setNewDeviceLabel] = useState('')
   const [newDeviceTokenOnce, setNewDeviceTokenOnce] = useState<string | null>(null)
   const [newDeviceTokenQr, setNewDeviceTokenQr] = useState<string | null>(null)
+  const [newDeviceNetworkPolicy, setNewDeviceNetworkPolicy] = useState<'NONE' | 'OBSERVE' | 'REQUIRE'>('OBSERVE')
+  const [newDeviceNetworks, setNewDeviceNetworks] = useState('')
+  const [presencePolicyUnit, setPresencePolicyUnit] = useState('')
+  const [presencePolicy, setPresencePolicy] = useState<PontoPresencePolicy | null>(null)
+  const [presencePolicyLoading, setPresencePolicyLoading] = useState(false)
 
   const [recordsFrom, setRecordsFrom] = useState('')
   const [recordsTo, setRecordsTo] = useState('')
@@ -846,10 +851,24 @@ export function PontoModule() {
     if (allowedUnits.length && !unit) return
     setLoading(true)
     try {
+      const presence = await apiJson<{ ok: boolean; data: { presenceMode: string; locationRequired: boolean; geofenceConfigured: boolean } }>(`/api/ponto/me/presence?unit=${encodeURIComponent(unit)}`, { headers: getDevEmployeeActorHeaders(devActorEmail) })
+      if (presence.data.presenceMode === 'TERMINAL_REQUIRED') {
+        toast.error('Esta unidade usa Terminal de Ponto. Registre no aparelho autorizado da unidade.')
+        return
+      }
+      let location: { latitude: number; longitude: number; accuracyMeters: number; capturedAt: string } | undefined
+      if (presence.data.locationRequired) {
+        if (!presence.data.geofenceConfigured || !navigator.geolocation) {
+          toast.error('A política de trabalho externo desta unidade não está pronta para registrar localização.')
+          return
+        }
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }))
+        location = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracyMeters: position.coords.accuracy, capturedAt: new Date().toISOString() }
+      }
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/me/punch',
-        { method: 'POST', body: { pin, unit, ...meta }, headers: getDevEmployeeActorHeaders(devActorEmail) }
+        { method: 'POST', body: { pin, unit, location, ...meta }, headers: getDevEmployeeActorHeaders(devActorEmail) }
       )
       setMePin('')
       toast.success(getPunchConfirmation(res.data.eventType || res.data.type))
@@ -873,6 +892,12 @@ export function PontoModule() {
         toast.error('Unidade não permitida')
       } else if (code === 'COOLDOWN') {
         toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
+      } else if (code === 'LOCATION_REQUIRED') {
+        toast.error('Permita a localização somente para esta marcação de trabalho externo.')
+      } else if (code === 'LOCATION_INVALID' || code === 'LOCATION_POLICY_UNCONFIGURED') {
+        toast.error('Não foi possível validar a localização para esta unidade.')
+      } else if (code === 'TERMINAL_REQUIRED') {
+        toast.error('Esta unidade exige o Terminal de Ponto autorizado.')
       } else {
         toast.error(e?.message || String(e))
       }
@@ -1329,10 +1354,11 @@ export function PontoModule() {
     try {
       const res = await apiJson<{ ok: boolean; data: PontoDevicePublic & { token: string } }>(
         '/api/ponto/admin/devices',
-        { method: 'POST', body: { unit: newDeviceUnit.trim(), label: newDeviceLabel.trim() } }
+        { method: 'POST', body: { unit: newDeviceUnit.trim(), label: newDeviceLabel.trim(), deviceMode: 'TERMINAL', networkPolicy: newDeviceNetworkPolicy, allowedNetworks: newDeviceNetworks.split(',').map((value) => value.trim()).filter(Boolean) } }
       )
       setNewDeviceTokenOnce(res.data.token)
       setNewDeviceLabel('')
+      setNewDeviceNetworks('')
       await adminRefreshAll()
       toast.success('Dispositivo criado')
     } catch (e: any) {
@@ -1341,6 +1367,32 @@ export function PontoModule() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function loadPresencePolicy(unitId: string) {
+    if (!unitId || !canManageDevices) return
+    setPresencePolicyLoading(true)
+    try {
+      const response = await apiJson<{ ok: boolean; data: PontoPresencePolicy }>('/api/ponto/presence-policies/' + encodeURIComponent(unitId))
+      setPresencePolicyUnit(unitId)
+      setPresencePolicy(response.data)
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível carregar a política de presença')
+      toastErrorMeta(e)
+    } finally { setPresencePolicyLoading(false) }
+  }
+
+  async function savePresencePolicy() {
+    if (!presencePolicy || !presencePolicyUnit || !canManageDevices) return
+    setPresencePolicyLoading(true)
+    try {
+      const response = await apiJson<{ ok: boolean; data: PontoPresencePolicy }>('/api/ponto/presence-policies/' + encodeURIComponent(presencePolicyUnit), { method: 'PATCH', body: presencePolicy })
+      setPresencePolicy(response.data)
+      toast.success('Política de presença atualizada')
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível salvar a política de presença')
+      toastErrorMeta(e)
+    } finally { setPresencePolicyLoading(false) }
   }
 
   async function adminRevokeDevice(deviceId: string) {
@@ -2316,7 +2368,8 @@ export function PontoModule() {
           <div className="space-y-6">
             <div className="space-y-3">
               <div className="font-medium">Novo dispositivo</div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <p className="text-sm text-muted-foreground">O terminal usa PIN, horário do servidor e unidade fixada no próprio dispositivo. Reconhecimento facial permanece bloqueado.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                 <div className="space-y-2">
                   <Label>Unidade</Label>
                   <Input value={newDeviceUnit} onChange={(e) => setNewDeviceUnit(e.target.value)} placeholder="ex: unidade-01" />
@@ -2324,6 +2377,17 @@ export function PontoModule() {
                 <div className="space-y-2">
                   <Label>Rótulo</Label>
                   <Input value={newDeviceLabel} onChange={(e) => setNewDeviceLabel(e.target.value)} placeholder="Recepção, Sala 1..." />
+                </div>
+                <div className="space-y-2">
+                  <Label>Rede</Label>
+                  <Select value={newDeviceNetworkPolicy} onValueChange={(value) => setNewDeviceNetworkPolicy(value as 'NONE' | 'OBSERVE' | 'REQUIRE')}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="OBSERVE">Observar</SelectItem><SelectItem value="REQUIRE">Exigir rede</SelectItem><SelectItem value="NONE">Sem evidência</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2 xl:col-span-2">
+                  <Label>CIDRs IPv4 públicos</Label>
+                  <Input value={newDeviceNetworks} onChange={(e) => setNewDeviceNetworks(e.target.value)} placeholder="ex: 203.0.113.10/32, 198.51.100.0/24" />
                 </div>
                 <div className="flex items-end">
                   <Button onClick={adminCreateDevice} disabled={loading || !canManageDevices}>Criar token</Button>
@@ -2336,7 +2400,7 @@ export function PontoModule() {
                   {newDeviceTokenQr ? (
                     <div className="flex flex-col items-center gap-2">
                       <img src={newDeviceTokenQr} alt="QR do token" className="w-56 h-56 rounded-md border" />
-                      <div className="text-xs text-muted-foreground">Escaneie no telefone do relógio para preencher o token.</div>
+                      <div className="text-xs text-muted-foreground">Use apenas durante o provisionamento físico do terminal; não divulgue este QR.</div>
                     </div>
                   ) : null}
                   <div className="flex gap-2">
@@ -2355,12 +2419,27 @@ export function PontoModule() {
               ) : null}
             </div>
 
+            <div className="rounded-xl border p-4 space-y-3">
+              <div className="font-medium">Política de presença por unidade</div>
+              <p className="text-sm text-muted-foreground">Terminal é o padrão. Trabalho externo pede localização apenas no momento da batida e registra só o resultado da verificação.</p>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="space-y-2"><Label>Unidade</Label><Input value={presencePolicyUnit} onChange={(e) => setPresencePolicyUnit(e.target.value)} placeholder="unidade-01" /></div>
+                <div className="flex items-end"><Button variant="outline" onClick={() => void loadPresencePolicy(presencePolicyUnit)} disabled={presencePolicyLoading || !presencePolicyUnit}>Carregar</Button></div>
+                {presencePolicy ? <>
+                  <div className="space-y-2"><Label>Modo</Label><Select value={presencePolicy.presenceMode} onValueChange={(value) => setPresencePolicy((current) => current ? { ...current, presenceMode: value as PontoPresencePolicy['presenceMode'] } : current)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="TERMINAL_REQUIRED">Terminal obrigatório</SelectItem><SelectItem value="EXTERNAL_REVIEW">Trabalho externo com revisão</SelectItem><SelectItem value="FLEXIBLE">Flexível</SelectItem></SelectContent></Select></div>
+                  <div className="space-y-2"><Label>Raio (m)</Label><Input type="number" min="25" max="5000" value={presencePolicy.geofenceRadiusMeters || 150} onChange={(e) => setPresencePolicy((current) => current ? { ...current, geofenceRadiusMeters: Number(e.target.value) } : current)} /></div>
+                </> : null}
+              </div>
+              {presencePolicy ? <div className="grid grid-cols-1 md:grid-cols-3 gap-3"><div className="space-y-2"><Label>Latitude da geocerca</Label><Input inputMode="decimal" value={presencePolicy.geofenceLatitude ?? ''} onChange={(e) => setPresencePolicy((current) => current ? { ...current, geofenceLatitude: e.target.value === '' ? null : Number(e.target.value) } : current)} /></div><div className="space-y-2"><Label>Longitude da geocerca</Label><Input inputMode="decimal" value={presencePolicy.geofenceLongitude ?? ''} onChange={(e) => setPresencePolicy((current) => current ? { ...current, geofenceLongitude: e.target.value === '' ? null : Number(e.target.value) } : current)} /></div><div className="flex items-end"><Button onClick={() => void savePresencePolicy()} disabled={presencePolicyLoading || !canManageDevices}>Salvar política</Button></div></div> : null}
+            </div>
+
             <div className="border rounded-xl overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Unidade</TableHead>
                     <TableHead>Rótulo</TableHead>
+                    <TableHead>Rede</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Último uso</TableHead>
                     <TableHead></TableHead>
@@ -2371,6 +2450,7 @@ export function PontoModule() {
                     <TableRow key={d.id}>
                       <TableCell className="font-medium">{d.unit || '-'}</TableCell>
                       <TableCell>{d.label || '-'}</TableCell>
+                      <TableCell className="text-sm">{d.networkPolicy === 'REQUIRE' ? `Obrigatória (${d.allowedNetworksCount || 0})` : d.networkPolicy === 'OBSERVE' ? 'Observada' : 'Não usada'}</TableCell>
                       <TableCell>{d.revokedAt ? <Badge variant="secondary">Revogado</Badge> : <Badge>Ativo</Badge>}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(d.lastSeenAt)}</TableCell>
                       <TableCell className="text-right">
@@ -2384,7 +2464,7 @@ export function PontoModule() {
                   ))}
                   {!adminDevices.length ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-sm text-muted-foreground">Nenhum dispositivo.</TableCell>
+                      <TableCell colSpan={6} className="text-sm text-muted-foreground">Nenhum dispositivo.</TableCell>
                     </TableRow>
                   ) : null}
                 </TableBody>

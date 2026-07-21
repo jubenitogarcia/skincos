@@ -23,7 +23,8 @@ export type PontoEmployeePublic = {
   pinSet?: boolean
 }
 
-export type PontoDevicePublic = { id: string; label?: string; unit?: string; unitId?: string; active?: boolean; createdAt?: string; revokedAt?: string | null; lastSeenAt?: string | null }
+export type PontoDevicePublic = { id: string; label?: string; unit?: string; unitId?: string; active?: boolean; createdAt?: string; revokedAt?: string | null; lastSeenAt?: string | null; deviceMode?: 'TERMINAL' | string; networkPolicy?: 'NONE' | 'OBSERVE' | 'REQUIRE' | string; allowedNetworksCount?: number }
+export type PontoPresencePolicy = { unitId: string; presenceMode: 'TERMINAL_REQUIRED' | 'EXTERNAL_REVIEW' | 'FLEXIBLE'; geofenceLatitude?: number | null; geofenceLongitude?: number | null; geofenceRadiusMeters?: number }
 export type PontoEmailConflict = { email: string; count: number; employees: PontoEmployeePublic[] }
 export type PontoPunchRecord = { id: string; kind: 'PUNCH'; employeeId: string; employeeName: string; type: 'IN' | 'OUT' | string; eventType?: string; at: string; unit?: string | null; unitId?: string | null; deviceId?: string | null; deviceLabel?: string | null; method?: 'FACE' | 'PIN' | 'MANUAL' | 'IMPORT' | string; source?: string; note?: string | null; corrected?: { id: string; at: string; reason?: string | null } | null }
 

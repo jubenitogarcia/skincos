@@ -76,6 +76,18 @@ async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+function isIpv4(value: string): boolean {
+  const parts = String(value || '').trim().split('.')
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+}
+
+function cloudflareClientIpv4(request: Request): string | null {
+  // This header is set by Cloudflare and is deliberately not replaced by
+  // X-Forwarded-For or browser-provided data.
+  const ip = String(request.headers.get('cf-connecting-ip') || '').trim()
+  return isIpv4(ip) ? ip : null
+}
+
 async function readBodyLimited(request: Request, maxBytes = 1024 * 1024): Promise<ArrayBuffer | undefined> {
   const declaredLength = Number(request.headers.get('content-length') || 0)
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) throw new Error('PAYLOAD_TOO_LARGE')
@@ -248,6 +260,17 @@ export async function onRequest(context: any): Promise<Response> {
     headers.set('x-skincos-actor-ts', actorTs)
     headers.set('x-skincos-actor-sig', actorSig)
     headers.set('x-skincos-signature-version', '2')
+  }
+  if (isDeviceRoute) {
+    const networkKey = String((env?.PONTO_NETWORK_CONTEXT_KEY as string | undefined) || '').trim()
+    const clientIp = cloudflareClientIpv4(request)
+    if (networkKey && clientIp) {
+      const networkTs = String(Date.now())
+      const networkSignature = await signHmacSha256B64Url(networkKey, [networkTs, method, `${targetUrl.pathname}${targetUrl.search}`, clientIp].join('.'))
+      headers.set('x-skincos-network-ts', networkTs)
+      headers.set('x-skincos-network-ip', clientIp)
+      headers.set('x-skincos-network-sig', networkSignature)
+    }
   }
 
   const upstreamRequest = new Request(targetUrl.toString(), {
