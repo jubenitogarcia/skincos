@@ -12,6 +12,7 @@ import { DEFAULT_UNIT_OPTIONS, type UnitOption } from '@/unitSelection'
 import * as QRCode from 'qrcode'
 import { LoadingPercentText } from '@/LoadingPattern'
 import { apiBlob, apiJson, createRequestMeta, errorMetaString, fetchJsonWithMeta, getDevEmployeeActorHeaders, LS_DEV_ACTOR_EMAIL } from './pontoApi'
+import { getNextPunchAction, getPunchConfirmation, getPunchTypeLabel } from './pontoPresentation'
 import type { PontoCorrection, PontoDevicePublic, PontoEmailConflict, PontoEmployeePublic, PontoMeResponse, PontoMonthlyResult, PontoPunchRecord } from './pontoTypes'
 
 type FaceDetectorMode = 'tiny' | 'ssd'
@@ -20,6 +21,9 @@ type FaceDetectorMode = 'tiny' | 'ssd'
 const FACE_FALLBACK_THRESHOLD = 3
 const FACE_FALLBACK_MESSAGE =
   'Condições ruins detectadas. Estamos melhorando a análise do rosto, aguarde alguns segundos.'
+// Capture and facial identification remain intentionally off until an explicit
+// operational decision enables the feature again. Punches use PIN only.
+const FACE_IDENTIFICATION_ENABLED = false
 
 function formatUnitLabel(u: string) {
   return String(u || '')
@@ -318,11 +322,10 @@ export function PontoModule() {
     try { return localStorage.getItem(LS_DEV_ACTOR_EMAIL) || '' } catch { return '' }
   })
 
-  const employeeVideoRef = useRef<HTMLVideoElement | null>(null)
   const adminVideoRef = useRef<HTMLVideoElement | null>(null)
   const [stream, setStream] = useState<MediaStream | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const [cameraOwner, setCameraOwner] = useState<'employee' | 'admin' | null>(null)
+  const [cameraOwner, setCameraOwner] = useState<'admin' | null>(null)
   const cameraRequestId = useRef(0)
 
   const [modelsReady, setModelsReady] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -339,16 +342,13 @@ export function PontoModule() {
   const [meError, setMeError] = useState<any>(null)
   const [meLoading, setMeLoading] = useState(false)
   const [mePunchOpen, setMePunchOpen] = useState(false)
-  const [meHistoryOpen, setMeHistoryOpen] = useState(false)
-  const [meStep, setMeStep] = useState<'face' | 'pin'>('face')
-  const [meFaceAutoRunning, setMeFaceAutoRunning] = useState(false)
-  const [meFaceStatus, setMeFaceStatus] = useState<string | null>(null)
   const [mePin, setMePin] = useState('')
   const [meUnit, setMeUnit] = useState('')
   const [meRecords, setMeRecords] = useState<PontoPunchRecord[]>([])
   const [meRecordsFrom, setMeRecordsFrom] = useState('')
   const [meRecordsTo, setMeRecordsTo] = useState('')
   const meLinked = me && 'linked' in me && me.linked ? me : null
+  const nextPunchAction = useMemo(() => getNextPunchAction(meLinked?.lastPunch), [meLinked?.lastPunch])
 
   const [adminEmployees, setAdminEmployees] = useState<PontoEmployeePublic[]>([])
   const [adminDevices, setAdminDevices] = useState<PontoDevicePublic[]>([])
@@ -557,6 +557,7 @@ export function PontoModule() {
   }, [canAdmin])
 
   useEffect(() => {
+    if (!FACE_IDENTIFICATION_ENABLED) return
     if (!enrollOpen) return
     if (enrollAutoRunning) return
     let alive = true
@@ -579,6 +580,7 @@ export function PontoModule() {
   }, [enrollOpen])
 
   useEffect(() => {
+    if (!FACE_IDENTIFICATION_ENABLED) return
     if (!enrollOpen) return
     if (!stream || cameraOwner !== 'admin') return
     void autoEnrollFace()
@@ -676,12 +678,12 @@ export function PontoModule() {
   }
 
   async function startCameraFor(
-    owner: 'employee' | 'admin',
+    owner: 'admin',
     opts: { silent?: boolean; waitForVideoMs?: number; suppressMissingVideoToast?: boolean } = {}
   ) {
     const requestId = cameraRequestId.current + 1
     cameraRequestId.current = requestId
-    const getVideoEl = () => (owner === 'employee' ? employeeVideoRef.current : adminVideoRef.current)
+    const getVideoEl = () => adminVideoRef.current
     let videoEl = getVideoEl()
     const waitForVideoMs = Math.max(0, Number(opts.waitForVideoMs || 0))
     if (!videoEl && waitForVideoMs > 0) {
@@ -817,85 +819,6 @@ export function PontoModule() {
     }
   }
 
-  async function mePunchFace(opts: { auto?: boolean } = {}) {
-    const auto = opts.auto === true
-    if (!me || !('linked' in me) || !me.linked) {
-      if (!auto) toast.error('Usuário não vinculado a funcionário')
-      return false
-    }
-    if (!me.hasFace) {
-      if (!auto) toast.error('Biometria facial não cadastrada (use PIN)')
-      return false
-    }
-    if (!stream || cameraOwner !== 'employee') {
-      if (!auto) toast.error('Ative a câmera')
-      return false
-    }
-    const videoEl = employeeVideoRef.current
-    if (!videoEl) {
-      if (!auto) toast.error('Câmera não disponível')
-      return false
-    }
-    const unit = ensureEmployeeUnitSelected()
-    if (allowedUnits.length && !unit) return false
-    const ok = await ensureModelsUI()
-    if (!ok) {
-      setMeStep('pin')
-      if (!auto) toast.error('Modelos faciais indisponíveis (use PIN)')
-      return false
-    }
-
-    setLoading(true)
-    try {
-      const descriptor = await captureDescriptorStable(videoEl, 2, 220, faceDetectorMode)
-      resetFaceFailures()
-      resetFaceFailures()
-      const meta = createRequestMeta()
-      const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
-        '/api/ponto/me/punch',
-        { method: 'POST', body: { descriptor, unit, ...meta }, headers: getDevEmployeeActorHeaders(devActorEmail) }
-      )
-      toast.success(`Ponto registrado (${res.data.type})`)
-      setMePunchOpen(false)
-      setMeStep('face')
-      await stopCameraUI()
-      await meRefresh()
-      await meLoadRecords()
-      return true
-    } catch (e: any) {
-      if (isFaceDetectionError(e)) {
-        noteFaceFailure()
-        if (!auto) {
-          toast.error(e?.message || 'Não foi possível detectar o rosto. Ajuste a posição e tente novamente.')
-          toastErrorMeta(e)
-        }
-        return false
-      }
-      const details = e?.details as any
-      const code = String(details?.error || details?.code || '')
-      if (code === 'COOLDOWN') {
-        if (!auto) toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
-      } else if (code === 'UNIT_ACCESS_NOT_CONFIGURED') {
-        if (!auto) toast.error('Unidade não configurada para este usuário')
-      } else if (code === 'UNIT_REQUIRED') {
-        if (!auto) toast.error('Selecione a unidade')
-      } else if (code === 'UNIT_FORBIDDEN') {
-        if (!auto) toast.error('Unidade não permitida')
-      } else if (code === 'FACE_NOT_RECOGNIZED' || code === 'FACE_NOT_ENROLLED') {
-        if (!auto) toast.error('Rosto não reconhecido. Use PIN.')
-        setMeStep('pin')
-        await stopCameraUI()
-      } else {
-        if (!auto) toast.error(e?.message || String(e))
-        setMeStep('pin')
-      }
-      if (!auto) toastErrorMeta(e)
-      return false
-    } finally {
-      setLoading(false)
-    }
-  }
-
   async function mePunchPin() {
     if (!me || !('linked' in me) || !me.linked) return toast.error('Usuário não vinculado a funcionário')
     const pin = mePin.trim()
@@ -910,9 +833,8 @@ export function PontoModule() {
         { method: 'POST', body: { pin, unit, ...meta }, headers: getDevEmployeeActorHeaders(devActorEmail) }
       )
       setMePin('')
-      toast.success(`Ponto registrado (${res.data.type})`)
+      toast.success(getPunchConfirmation(res.data.eventType || res.data.type))
       setMePunchOpen(false)
-      setMeStep('face')
       await meRefresh()
       await meLoadRecords()
     } catch (e: any) {
@@ -967,69 +889,6 @@ export function PontoModule() {
     void meLoadRecords()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me, meRecordsFrom, meRecordsTo, unitMissing])
-
-  useEffect(() => {
-    if (!mePunchOpen) {
-      setMeFaceAutoRunning(false)
-      setMeFaceStatus(null)
-    }
-  }, [mePunchOpen])
-
-  useEffect(() => {
-    if (!mePunchOpen) return
-    if (meStep !== 'face') return
-    if (meFaceAutoRunning) return
-    let alive = true
-    setMeFaceAutoRunning(true)
-    setMeFaceStatus('Preparando câmera…')
-    void (async () => {
-      if (!me || !('linked' in me) || !me.linked) {
-        setMeFaceStatus('Usuário não vinculado. Use PIN.')
-        setMeStep('pin')
-        return
-      }
-      if (!me.hasFace) {
-        setMeFaceStatus('Biometria não cadastrada. Use PIN.')
-        setMeStep('pin')
-        return
-      }
-      const unit = ensureEmployeeUnitSelected()
-      if (allowedUnits.length && !unit) {
-        setMeFaceStatus('Selecione a unidade para continuar.')
-        return
-      }
-      const camOk = await startCameraFor('employee', { silent: true, waitForVideoMs: 2400, suppressMissingVideoToast: true })
-      if (!alive) return
-      if (!camOk) {
-        setMeFaceStatus('Não foi possível acessar a câmera. Use PIN.')
-        setMeStep('pin')
-        return
-      }
-      setMeFaceStatus('Carregando análise facial…')
-      const modelsOk = await ensureModelsUI(faceDetectorMode, { message: 'Carregando análise facial…' })
-      if (!alive) return
-      if (!modelsOk) {
-        setMeFaceStatus('Não foi possível carregar a análise. Use PIN.')
-        setMeStep('pin')
-        await stopCameraUI({ silent: true })
-        return
-      }
-      setMeFaceStatus('Analisando rosto…')
-      const ok = await mePunchFace({ auto: true })
-      if (!alive) return
-      if (!ok) {
-        setMeFaceStatus('Não foi possível reconhecer. Digite seu PIN.')
-        setMeStep('pin')
-        await stopCameraUI({ silent: true })
-      }
-    })().finally(() => {
-      if (alive) setMeFaceAutoRunning(false)
-    })
-    return () => {
-      alive = false
-      setMeFaceAutoRunning(false)
-    }
-  }, [mePunchOpen, meStep, meFaceAutoRunning, faceDetectorMode, me, allowedUnits, resolvedMeUnit])
 
   async function adminRefreshAll() {
     if (!canAdmin) return toast.error('Acesso restrito')
@@ -1130,7 +989,7 @@ export function PontoModule() {
       setNewEmployeeOpen(false)
       setSelectedEmployeeId(res.data.id)
       await adminRefreshAll()
-      if (opts.enrollAfter) {
+      if (opts.enrollAfter && FACE_IDENTIFICATION_ENABLED) {
         setEnrollOpen(true)
       }
       toast.success('Funcionário criado e configurado')
@@ -1157,6 +1016,7 @@ export function PontoModule() {
   }
 
   async function autoEnrollFace() {
+    if (!FACE_IDENTIFICATION_ENABLED) return
     if (enrollAutoRunning) return
     if (!canManageCanonicalEmployee || !selectedEmployeeId) return
     if (!stream || cameraOwner !== 'admin') return
@@ -1307,6 +1167,10 @@ export function PontoModule() {
   }
 
   function openSelectEmployee(action: 'enroll' | 'edit' | 'records') {
+    if (action === 'enroll' && !FACE_IDENTIFICATION_ENABLED) {
+      toast.error('A identificação facial está temporariamente desativada. Use PIN para marcações.')
+      return
+    }
     if (!adminEmployees.length) void adminRefreshAll()
     setSelectEmployeeAction(action)
     setSelectEmployeeQuery('')
@@ -1317,6 +1181,10 @@ export function PontoModule() {
     setSelectedEmployeeId(id)
     setSelectEmployeeOpen(false)
     if (selectEmployeeAction === 'enroll') {
+      if (!FACE_IDENTIFICATION_ENABLED) {
+        toast.error('A identificação facial está temporariamente desativada. Use PIN para marcações.')
+        return
+      }
       setEnrollOpen(true)
     } else if (selectEmployeeAction === 'edit') {
       setEditOpen(true)
@@ -1667,7 +1535,7 @@ export function PontoModule() {
         <Card>
           <CardHeader>
             <CardTitle>Meu ponto</CardTitle>
-            <CardDescription>Registre sua entrada/saída</CardDescription>
+            <CardDescription>Registre sua jornada usando seu PIN.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -1679,7 +1547,7 @@ export function PontoModule() {
                 {meLinked ? (
                   <>
                     <Badge>Funcionário: {meLinked.employee?.name || '-'}</Badge>
-                    <Badge variant="outline">Face: {meLinked.hasFace ? 'OK' : '—'}</Badge>
+                    <Badge variant="outline">Autenticação: PIN</Badge>
                     <Badge variant="outline">PIN: {meLinked.pinSet ? 'OK' : '—'}</Badge>
                     {meLinked.cooldown?.active ? (
                       <Badge variant="secondary">Cooldown: {meLinked.cooldown.secondsRemaining ?? '?'}s</Badge>
@@ -1718,7 +1586,7 @@ export function PontoModule() {
                   </div>
                   {meLinked.linked ? (
                     <div className="mt-3 text-xs text-muted-foreground">
-                      Última batida: {meLinked.lastPunch ? `${fmtDate(meLinked.lastPunch.at)} • ${meLinked.lastPunch.type} • ${meLinked.lastPunch.method || '-'}` : '—'}
+                      Última batida: {meLinked.lastPunch ? `${fmtDate(meLinked.lastPunch.at)} • ${getPunchTypeLabel(meLinked.lastPunch.eventType || meLinked.lastPunch.type)} • ${meLinked.lastPunch.method || '-'}` : '—'}
                     </div>
                   ) : null}
                 </div>
@@ -1764,25 +1632,72 @@ export function PontoModule() {
                 )
               ) : null}
 
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
+                Próxima ação: <strong>{nextPunchAction.label}</strong>
+              </div>
+
               <div className="flex flex-wrap gap-2">
                 <Button
                   onClick={() => {
-                    if (me && 'linked' in me && me.linked) setMeStep(me.hasFace ? 'face' : 'pin')
-                    else setMeStep('pin')
                     setMePunchOpen(true)
                   }}
                   disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}
                 >
-                  Bater ponto
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setMeHistoryOpen(true)}
-                  disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}
-                >
-                  Ver Histórico
+                  {nextPunchAction.label}
                 </Button>
               </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Meu histórico</CardTitle>
+            <CardDescription>As marcações do período aparecem aqui automaticamente.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="ponto-history-from">De</Label>
+                <Input id="ponto-history-from" type="date" value={meRecordsFrom} onChange={(e) => setMeRecordsFrom(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ponto-history-to">Até</Label>
+                <Input id="ponto-history-to" type="date" value={meRecordsTo} onChange={(e) => setMeRecordsTo(e.target.value)} />
+              </div>
+              <div className="flex items-end">
+                <Button variant="outline" onClick={meLoadRecords} disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}>
+                  Atualizar histórico
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Quando</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Unidade</TableHead>
+                    <TableHead>Método</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {meRecords.map((record) => (
+                    <TableRow key={record.id}>
+                      <TableCell className="text-sm">{fmtDate(record.at)}</TableCell>
+                      <TableCell><Badge variant="outline">{getPunchTypeLabel(record.eventType || record.type)}</Badge></TableCell>
+                      <TableCell className="text-sm">{record.unit || '-'}</TableCell>
+                      <TableCell className="text-sm">{record.method || '-'}</TableCell>
+                    </TableRow>
+                  ))}
+                  {!meRecords.length ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-sm text-muted-foreground">{meLoading ? 'Carregando registros…' : 'Nenhum registro no período.'}</TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
 
@@ -1868,117 +1783,24 @@ export function PontoModule() {
           open={mePunchOpen}
           onOpenChange={(open) => {
             setMePunchOpen(open)
-            if (!open) void stopCameraUI({ silent: true })
+            if (!open) setMePin('')
           }}
         >
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Bater ponto</DialogTitle>
-              <DialogDescription>Prioridade: Face → PIN. O próximo método aparece só se o anterior falhar/indisponível.</DialogDescription>
+              <DialogTitle>{nextPunchAction.label}</DialogTitle>
+              <DialogDescription>Confirme esta marcação com seu PIN. A identificação facial está indisponível neste momento.</DialogDescription>
             </DialogHeader>
-
-            {meStep === 'face' ? (
-              <div className="space-y-3">
-                {meFaceStatus ? (
-                  <div className="text-sm text-muted-foreground">
-                    {meFaceStatus.toLowerCase().includes('carregando') ? (
-                      <LoadingPercentText label={meFaceStatus} className="text-muted-foreground" showPercent={false} />
-                    ) : (
-                      meFaceStatus
-                    )}
-                  </div>
-                ) : null}
-                <div className="rounded-xl overflow-hidden border bg-black">
-                  <video ref={employeeVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
-                </div>
-                {modelsError ? <div className="text-sm text-red-600">Não foi possível carregar a análise facial.</div> : null}
-                {modelsReady === 'loading' ? (
-                  <div className="space-y-1">
-                    <div className="text-sm text-muted-foreground">
-                      <LoadingPercentText label={(modelsMessage || 'Carregando modelos faciais').replace(/[.…]+$/, '')} className="text-muted-foreground" showPercent={false} />
-                    </div>
-                    <div className="h-2 rounded bg-muted/40 overflow-hidden">
-                      <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
-                    </div>
-                    <div className="text-xs text-muted-foreground">{modelsProgress}%</div>
-                  </div>
-                ) : null}
-                <div className="flex justify-end">
-                  <Button variant="outline" onClick={() => setMePunchOpen(false)} disabled={loading}>Fechar</Button>
-                </div>
+            <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void mePunchPin() }}>
+              <div className="space-y-2">
+                <Label htmlFor="ponto-me-pin">PIN</Label>
+                <Input id="ponto-me-pin" value={mePin} onChange={(e) => setMePin(e.target.value)} type="password" inputMode="numeric" autoComplete="one-time-code" maxLength={12} placeholder="••••" autoFocus />
               </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label>PIN</Label>
-                  <Input value={mePin} onChange={(e) => setMePin(e.target.value)} inputMode="numeric" placeholder="••••" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={mePunchPin} disabled={loading}>Registrar por PIN</Button>
-                  {me && 'linked' in me && me.linked && me.hasFace ? (
-                    <Button variant="outline" onClick={() => setMeStep('face')} disabled={loading}>Tentar Face</Button>
-                  ) : null}
-                </div>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-
-        <Dialog
-          open={meHistoryOpen}
-          onOpenChange={(open) => setMeHistoryOpen(open)}
-        >
-          <DialogContent className="max-w-3xl">
-            <DialogHeader>
-              <DialogTitle>Meu histórico</DialogTitle>
-              <DialogDescription>Registros realizados no período selecionado.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="space-y-2">
-                  <Label>De</Label>
-                  <Input type="date" value={meRecordsFrom} onChange={(e) => setMeRecordsFrom(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Até</Label>
-                  <Input type="date" value={meRecordsTo} onChange={(e) => setMeRecordsTo(e.target.value)} />
-                </div>
-                <div className="flex items-end">
-                  <Button onClick={meLoadRecords} disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}>Buscar</Button>
-                </div>
-              </div>
-
-              <div className="border rounded-xl overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Quando</TableHead>
-                      <TableHead>Tipo</TableHead>
-                      <TableHead>Unidade</TableHead>
-                      <TableHead>Método</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {meRecords.map(r => (
-                      <TableRow key={r.id}>
-                        <TableCell className="text-sm">{fmtDate(r.at)}</TableCell>
-                        <TableCell><Badge variant="outline">{r.type}</Badge></TableCell>
-                        <TableCell className="text-sm">{r.unit || '-'}</TableCell>
-                        <TableCell className="text-sm">{r.method || '-'}</TableCell>
-                      </TableRow>
-                    ))}
-                    {!meRecords.length ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-sm text-muted-foreground">Nenhum registro.</TableCell>
-                      </TableRow>
-                  ) : null}
-                </TableBody>
-              </Table>
-              </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setMeHistoryOpen(false)}>Fechar</Button>
-            </DialogFooter>
-            </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setMePunchOpen(false)} disabled={loading}>Cancelar</Button>
+                <Button type="submit" disabled={loading || !mePin.trim()}>{nextPunchAction.label}</Button>
+              </DialogFooter>
+            </form>
           </DialogContent>
         </Dialog>
       </div>
@@ -2079,6 +1901,7 @@ export function PontoModule() {
               onClick={() => adminCreateEmployee({ enrollAfter: true })}
               disabled={
                 loading ||
+                !FACE_IDENTIFICATION_ENABLED ||
                 !canManageCanonicalEmployee ||
                 !newEmployeeName.trim() ||
                 !newEmployeeLoginEmail.trim() ||
@@ -2087,7 +1910,7 @@ export function PontoModule() {
                 !newEmployeeUnit.trim()
               }
             >
-              Salvar e cadastrar biometria
+              Biometria temporariamente desativada
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2140,6 +1963,7 @@ export function PontoModule() {
         open={enrollOpen}
         onOpenChange={(open) => {
           if (!open) return closeEnrollDialog()
+          if (!FACE_IDENTIFICATION_ENABLED) return
           setEnrollOpen(true)
         }}
       >
@@ -2154,6 +1978,11 @@ export function PontoModule() {
           </DialogHeader>
 
           <div className="space-y-3">
+            {!FACE_IDENTIFICATION_ENABLED ? (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-muted-foreground">
+                A identificação facial está temporariamente desativada. As marcações devem ser confirmadas por PIN.
+              </div>
+            ) : null}
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm text-muted-foreground">
                 {selectedEmployee ? (
@@ -2163,9 +1992,11 @@ export function PontoModule() {
               {enrollProgress ? <Badge variant="secondary">{enrollProgress.done}/{enrollProgress.total}</Badge> : null}
             </div>
 
-            <div className="rounded-xl overflow-hidden border bg-black">
-              <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
-            </div>
+            {FACE_IDENTIFICATION_ENABLED ? (
+              <div className="rounded-xl overflow-hidden border bg-black">
+                <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+              </div>
+            ) : null}
 
             <div className="text-sm text-muted-foreground">{enrollHint}</div>
             {enrollAutoRunning ? (
@@ -2260,12 +2091,13 @@ export function PontoModule() {
               variant="secondary"
               onClick={() => {
                 if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+                if (!FACE_IDENTIFICATION_ENABLED) return toast.error('A identificação facial está temporariamente desativada. Use PIN para marcações.')
                 setEditOpen(false)
                 setEnrollOpen(true)
               }}
-              disabled={loading || !selectedEmployeeId || !canManageCanonicalEmployee}
+              disabled={loading || !FACE_IDENTIFICATION_ENABLED || !selectedEmployeeId || !canManageCanonicalEmployee}
             >
-              Cadastrar biometria
+              Biometria temporariamente desativada
             </Button>
             <Button onClick={adminSaveEmployeeEdit} disabled={loading || !selectedEmployeeId || !editUnit.trim() || !canManageCanonicalEmployee}>Salvar</Button>
           </DialogFooter>

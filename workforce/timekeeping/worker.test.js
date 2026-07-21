@@ -30,6 +30,13 @@ test('role matrix keeps consultor self-service and gives supervisor the former R
   assert.equal(__testables.normalizeWorkforceRole('EMPLOYEE'), 'CONSULTOR')
 })
 
+test('face punches stay disabled unless the operational flag explicitly enables them', async () => {
+  assert.equal(__testables.isFacePunchEnabled({}), false)
+  assert.equal(__testables.isFacePunchEnabled({ PONTO_FACE_PUNCH_ENABLED: 'true' }), true)
+  const result = await __testables.verifyPunchCredential({}, {}, {}, { id: 'employee-1' }, { descriptor: [0.1, 0.2] })
+  assert.deepEqual(result, { error: 'FACE_DISABLED' })
+})
+
 test('manager and supervisor scopes are horizontal while admin remains organization-wide', () => {
   assert.equal(__testables.requireUnit({ role: 'MANAGER', allowedUnits: ['UNIT_A'] }, 'UNIT_A'), true)
   assert.equal(__testables.requireUnit({ role: 'MANAGER', allowedUnits: ['UNIT_A'] }, 'UNIT_B'), false)

@@ -40,6 +40,7 @@ Mutações same-origin exigem o token CSRF da sessão. A Pages Function envia um
 - `PONTO_TEMPLATES_KEY`: A256GCM dos templates biométricos;
 - `ESCALA_ACTOR_HMAC_KEY`: autenticação Timekeeping → Escala;
 - `TIMEKEEPING_BACKUP_PASSPHRASE`: cifra o checkpoint D1 criado pelo workflow antes de migrations remotas;
+- `PONTO_FACE_PUNCH_ENABLED`: mantém identificação facial desabilitada por padrão; só use `true` após aprovação operacional explícita. A interface também bloqueia temporariamente novas capturas faciais; as marcações usam PIN;
 - `PONTO_FACE_THRESHOLD`, `PONTO_PIN_ITERATIONS`, `PONTO_COOLDOWN_SECONDS`: ajustes operacionais no servidor;
 - `TIMEKEEPING_D1_STAGING_ID` e `TIMEKEEPING_D1_PRODUCTION_ID`: variables do GitHub, não secrets.
 

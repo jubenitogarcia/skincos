@@ -34,6 +34,7 @@ function normalizeWorkforceRole(value) {
 }
 function isConsultor(actor) { return actor?.role === 'CONSULTOR' }
 function canManageWorkforce(actor) { return actor?.role === 'SUPERVISOR' || actor?.role === 'ADMIN' }
+function isFacePunchEnabled(env) { return String(env?.PONTO_FACE_PUNCH_ENABLED || '').trim().toLowerCase() === 'true' }
 function roleAllows(role, action) {
   const matrix = {
     CONSULTOR: ['self.read', 'self.punch'], DEVICE: ['device.punch'],
@@ -250,6 +251,7 @@ async function verifyPunchCredential(db, env, actor, employee, body) {
   }
   const descriptor = body.descriptor || body.template
   if (descriptor !== undefined) {
+    if (!isFacePunchEnabled(env)) return { error: 'FACE_DISABLED' }
     if (!isValidBiometricTemplate(descriptor) || !env.PONTO_TEMPLATES_KEY) return { error: 'FACE_UNAVAILABLE' }
     const templates = await db.prepare(`SELECT encrypted_template FROM timekeeping_biometric_templates WHERE employee_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)`).bind(employee.id, now()).all()
     if (!(templates.results || []).length) return { error: 'FACE_NOT_ENROLLED' }
@@ -426,7 +428,7 @@ export async function handleTimekeeping(request, env) {
       const last = employee ? await db.prepare('SELECT * FROM timekeeping_events WHERE employee_id=? ORDER BY occurred_at_utc DESC LIMIT 1').bind(employee.id).first() : null
       const biometrics = employee ? await db.prepare('SELECT COUNT(*) AS total, MAX(created_at) AS last_enrolled_at FROM timekeeping_biometric_templates WHERE employee_id=? AND revoked_at IS NULL').bind(employee.id).first() : null
       const pin = employee ? await db.prepare('SELECT employee_id FROM timekeeping_pin_credentials WHERE employee_id=?').bind(employee.id).first() : null
-      const data = { linked: !!employee, actorEmail: actor.email, allowedUnits: actor.allowedUnits.length ? actor.allowedUnits : units, employee: publicEmployee(employee), hasFace: Number(biometrics?.total || 0) > 0, pinSet: !!pin, lastPunch: last ? { id: last.id, kind: 'PUNCH', employeeId: last.employee_id, employeeName: employee.display_name, type: last.event_type === 'WORK_START' ? 'IN' : last.event_type === 'WORK_END' ? 'OUT' : last.event_type, at: last.occurred_at_utc, unit: last.unit_id, method: last.source } : null, suggestedNextMethod: Number(biometrics?.total || 0) > 0 ? 'FACE' : 'PIN', capabilities: Object.values({ selfRead: 'self.read', selfPunch: 'self.punch', unitRead: 'unit.read', approve: 'correction.approve', close: 'period.close', reopen: 'period.reopen', audit: 'audit.read' }).filter((capability) => roleAllows(actor.role, capability)) }
+      const data = { linked: !!employee, actorEmail: actor.email, allowedUnits: actor.allowedUnits.length ? actor.allowedUnits : units, employee: publicEmployee(employee), hasFace: Number(biometrics?.total || 0) > 0, pinSet: !!pin, lastPunch: last ? { id: last.id, kind: 'PUNCH', employeeId: last.employee_id, employeeName: employee.display_name, type: last.event_type === 'WORK_START' ? 'IN' : last.event_type === 'WORK_END' ? 'OUT' : last.event_type, at: last.occurred_at_utc, unit: last.unit_id, method: last.source } : null, suggestedNextMethod: isFacePunchEnabled(env) && Number(biometrics?.total || 0) > 0 ? 'FACE' : 'PIN', capabilities: Object.values({ selfRead: 'self.read', selfPunch: 'self.punch', unitRead: 'unit.read', approve: 'correction.approve', close: 'period.close', reopen: 'period.reopen', audit: 'audit.read' }).filter((capability) => roleAllows(actor.role, capability)) }
       return json(200, { ok: true, ...data, data }, requestId)
     }
 
@@ -778,4 +780,4 @@ export async function handleTimekeeping(request, env) {
 }
 
 export default { fetch: handleTimekeeping }
-export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate }
+export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential }
