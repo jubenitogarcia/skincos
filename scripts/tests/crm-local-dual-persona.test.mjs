@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { decideRuntimeAction } from '../crm-local-runtime-policy.mjs'
+
+const require = createRequire(import.meta.url)
+const { partitionModuleErrors } = require('../../crm/console/scripts/crm-local-smoke-policy.cjs')
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8')
@@ -127,4 +131,27 @@ crm_persona_runtime_write_manifest ready`
   assert.equal(manifest.version, 2)
   assert.equal(manifest.targetCommit, target)
   assert.equal(manifest.buildCommit, built)
+})
+
+test('local smoke downgrades only the exact optional Google chart credential failure', () => {
+  const optional = {
+    status: 500,
+    url: 'http://localhost:8791/api/atendimento/management/charts?tab=Comercial',
+    body: '{"ok":false,"error":"No key or keyFile set."}',
+  }
+  const genericConsole = 'Failed to load resource: the server responded with a status of 500 (Internal Server Error)'
+  const accepted = partitionModuleErrors('faturamento', [optional], [genericConsole])
+  assert.equal(accepted.apiErrors.length, 0)
+  assert.equal(accepted.apiWarnings.length, 1)
+  assert.equal(accepted.consoleErrors.length, 0)
+  assert.equal(accepted.consoleWarnings.length, 1)
+
+  for (const changed of [
+    { ...optional, status: 502 },
+    { ...optional, url: 'http://localhost:8791/api/atendimento/management/finance' },
+    { ...optional, body: '{"ok":false,"error":"DATABASE_URL missing"}' },
+  ]) {
+    assert.equal(partitionModuleErrors('faturamento', [changed], []).apiErrors.length, 1)
+  }
+  assert.equal(partitionModuleErrors('atendimento', [optional], []).apiErrors.length, 1)
 })
