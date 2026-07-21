@@ -23,6 +23,7 @@ param(
         "WebsiteSiteCheck",
         "WebsiteReleaseCheck",
         "CrmLocal",
+        "CrmConsultor",
         "CrmSiteEf",
         "CrmMetaAds",
         "CrmAtendimento",
@@ -371,7 +372,19 @@ function Invoke-ShortcutActionInternal {
         "WebsiteReleaseCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:release-check" }
         "CrmLocal" {
             $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
-            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=0 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh" -f `
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=0 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh" -f `
+                (Convert-ToBashLiteral -Value $crmPidWsl), `
+                (Convert-ToBashLiteral -Value $crmLogWsl))
+        }
+        "CrmConsultor" {
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            # The runtime manifest proves ownership before --stop can terminate
+            # anything. Starting from a clean local shell avoids reusing the
+            # Gestor process or stale browser persona overrides.
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
+                (Convert-ToBashLiteral -Value $crmPidWsl), `
+                (Convert-ToBashLiteral -Value $crmLogWsl))
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_ROUTE='/?localAuthReset=1' CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module ponto" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl))
         }
@@ -580,6 +593,7 @@ function Show-CrmMenu {
             -Title "Local > CRM" `
             -Options @(
                 (New-MenuOption -Label "CRM Local" -Action "CrmLocal"),
+                (New-MenuOption -Label "CRM – Consultor (Ponto)" -Action "CrmConsultor"),
                 (New-MenuOption -Label "CRM Site EF" -Action "CrmSiteEf"),
                 (New-MenuOption -Label "CRM Meta Ads" -Action "CrmMetaAds"),
                 (New-MenuOption -Label "CRM Atendimento" -Action "CrmAtendimento"),

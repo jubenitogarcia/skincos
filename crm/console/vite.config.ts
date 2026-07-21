@@ -1151,6 +1151,11 @@ function attachDevMiddleware(server: any) {
 }
 
 export default defineConfig({
+  define: {
+    // .dev.vars is intentionally not a Vite .env file. Inject this non-secret
+    // local-only flag so the client fallback matches the Pages auth persona.
+    'import.meta.env.VITE_LOCAL_AUTH_TEST_USER_ADMIN': JSON.stringify(String(localTestUserAdmin)),
+  },
   plugins: [
     tailwindcss(),
     react(),

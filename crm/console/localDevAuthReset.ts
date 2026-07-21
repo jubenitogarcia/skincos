@@ -13,6 +13,10 @@ export function consumeLocalAuthReset(
   if (!isLocalHost || url.searchParams.get(LOCAL_AUTH_RESET_PARAM) !== '1') return false
 
   storage.removeItem('crm.localAuth')
+  storage.removeItem('crm.localRole')
+  storage.removeItem('crm.localEmail')
+  storage.removeItem('crm.localUser')
+  storage.removeItem('crm.localName')
   clearCookie('crm.localAuth=; Path=/; Max-Age=0; SameSite=Lax')
   clearCookie('crm_local_auth=; Path=/; Max-Age=0; SameSite=Lax')
 
