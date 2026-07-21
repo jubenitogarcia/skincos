@@ -11,6 +11,10 @@ export function hasCrmModuleAccess(role: unknown, allowedModules: unknown, modul
   const key = String(moduleKey || '').trim()
   const roleKey = String(role || '').trim().toUpperCase()
   if (!key) return false
+  // Every authenticated CRM user can access the self-service timekeeping area.
+  // Data and administrative operations remain authorized by the Ponto proxy and
+  // Workforce service; this function only governs sidebar navigation.
+  if (key === 'ponto') return true
   if (roleKey === 'GESTOR' || roleKey === 'ADMIN') return true
   if (roleKey === 'CONSULTOR' || roleKey === 'EMPLOYEE') return CONSULTOR_MODULE_KEYS.has(key)
   if (key === 'escala-profissionais') return roleKey === 'GERENTE'
