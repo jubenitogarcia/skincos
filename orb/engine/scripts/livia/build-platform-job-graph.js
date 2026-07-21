@@ -107,12 +107,67 @@ function loadSource() {
   fail(`Could not find a ${NODE_NAME} Code-node source in ${WORKFLOW_PATH} or ${CHECKPOINT_DIR}.`);
 }
 
+function n8nItems(values) {
+  return asArray(values).map((value) => {
+    if (value && typeof value === 'object' && value.json && typeof value.json === 'object') return value;
+    return { json: asObject(value) };
+  });
+}
+
+function firstNonEmptyArray(...values) {
+  for (const value of values) {
+    const current = asArray(value);
+    if (current.length) return current;
+  }
+  return [];
+}
+
+function firstNonEmptyObject(...values) {
+  for (const value of values) {
+    const current = asObject(value);
+    if (Object.keys(current).length) return current;
+  }
+  return {};
+}
+
+function legacyInputs(payload) {
+  const tokenContext = firstNonEmptyObject(payload.normalizedTokenVaultContext, payload.tokenVaultContext);
+  const bootstrapItems = n8nItems(payload.bootstrapItems);
+  let composeItems = bootstrapItems.filter((item) => String(item?.json?.groupKey || '').trim());
+
+  if (!composeItems.length) {
+    composeItems = n8nItems(firstNonEmptyArray(payload.normalizedCombinedMediaItems, payload.combinedMediaItems))
+      .map((item) => ({
+        ...item,
+        json: {
+          ...item.json,
+          facebook: firstNonEmptyObject(item.json.facebook, tokenContext.facebook),
+          instagram: firstNonEmptyObject(item.json.instagram, tokenContext.instagram),
+          threads: firstNonEmptyObject(item.json.threads, tokenContext.threads),
+        },
+      }));
+  }
+
+  const uploadItems = n8nItems(firstNonEmptyArray(payload.normalizedCombinedMediaItems, payload.combinedMediaItems));
+  const liviaItems = n8nItems(firstNonEmptyArray(payload.normalizedLiviaOutput, payload.liviaOutput));
+  const aggregateItems = n8nItems(payload.aggregateCandidateUploads || []);
+
+  return {
+    'Compose (1)': composeItems,
+    'Upload File': uploadItems.length ? uploadItems : composeItems,
+    'Aggregate (2)': aggregateItems,
+    Livia: liviaItems,
+  };
+}
+
 function executeSource(jsCode, payload) {
   const inputItems = [{ json: payload }];
   const staticData = {};
+  const legacy = legacyInputs(payload);
   const fn = new Function(
     '$json',
     '$input',
+    '$items',
     '$execution',
     '$getWorkflowStaticData',
     `"use strict";\n${jsCode}`,
@@ -120,6 +175,7 @@ function executeSource(jsCode, payload) {
   return fn(
     payload,
     { all: () => inputItems },
+    (nodeName) => asArray(legacy[nodeName]),
     { id: String(process.env.LIVIA_EXECUTION_ID || Date.now()) },
     () => staticData,
   );
@@ -256,15 +312,26 @@ function asNumber(value, fallback = undefined) {
 function selectedTechnicalFrame(media) {
   const current = asObject(media);
   const bestFrame = asObject(current.bestFrame);
-  const candidates = [
+  const candidateByKey = new Map();
+  for (const rawCandidate of [
     ...asArray(bestFrame.candidateThumbs),
     ...asArray(bestFrame.candidates),
     ...asArray(current.frameCandidates),
     ...asArray(current.technicalFrameCandidates),
     ...asArray(current.candidateThumbs),
-  ]
-    .map((candidate) => asObject(candidate))
-    .filter((candidate) => Object.keys(candidate).length)
+  ]) {
+    const candidate = asObject(rawCandidate);
+    if (!Object.keys(candidate).length) continue;
+    const rank = asNumber(candidate.rank, Number.MAX_SAFE_INTEGER);
+    const timestampSeconds = asNumber(
+      candidate.timestampSeconds ?? candidate.bestTimestampSeconds ?? candidate.bestFrameSeconds,
+      undefined,
+    );
+    if (timestampSeconds === undefined || timestampSeconds < 0) continue;
+    const key = `${rank}|${timestampSeconds.toFixed(3)}`;
+    if (!candidateByKey.has(key)) candidateByKey.set(key, candidate);
+  }
+  const candidates = [...candidateByKey.values()]
     .sort((a, b) => {
       const rankA = asNumber(a.rank, Number.MAX_SAFE_INTEGER);
       const rankB = asNumber(b.rank, Number.MAX_SAFE_INTEGER);
@@ -294,6 +361,58 @@ function selectedTechnicalFrame(media) {
     selectedFrameSource: String(bestFrame.selectedFrameSource || selected.source || 'process_media_asset'),
     confidence: asNumber(bestFrame.confidence ?? selected.confidence, undefined),
     candidateCount: candidates.length,
+    candidates,
+  };
+}
+
+function mediaFrameKey(media, groupKeyFallback = '') {
+  const current = asObject(media);
+  const groupKey = String(current.groupKey || groupKeyFallback || '').trim();
+  const mediaId = String(current.id || current.mediaId || current.finalUrl || current.secure_url || current.url || '').trim();
+  return groupKey && mediaId ? `${groupKey}\n${mediaId}` : '';
+}
+
+function normalizedLiviaVideoItems(payload) {
+  const rows = [];
+  for (const output of asArray(payload.normalizedLiviaOutput || payload.liviaOutput)) {
+    for (const item of asArray(asObject(output).items)) {
+      const current = asObject(item);
+      if (String(current.mediaType || '').trim().toLowerCase() === 'video') rows.push(current);
+    }
+  }
+  return rows;
+}
+
+function editorialFrameForSingleVideo(payload, technicalFrame, media) {
+  const candidates = asArray(technicalFrame.candidates);
+  if (!candidates.length) {
+    fail(`${NODE_NAME}: vídeo ${String(asObject(media).id || 'sem-id')} sem candidatos técnicos de frame.`);
+  }
+  const editorialItems = normalizedLiviaVideoItems(payload);
+  if (editorialItems.length !== 1) {
+    fail(`${NODE_NAME}: Reel exige exatamente uma seleção editorial de frame; recebidos ${editorialItems.length}.`);
+  }
+  const bestFrame = asObject(editorialItems[0].bestFrame);
+  const rank = asNumber(bestFrame.selectedFrameRank, undefined);
+  const seconds = asNumber(bestFrame.bestTimestampSeconds ?? bestFrame.bestFrameSeconds, undefined);
+  if (!Number.isInteger(rank) || rank < 1 || seconds === undefined || seconds < 0 || !String(bestFrame.reason || '').trim()) {
+    fail(`${NODE_NAME}: seleção editorial de capa inválida para Reel (rank, timestamp e motivo são obrigatórios).`);
+  }
+  const candidate = candidates.find((entry) =>
+    asNumber(entry.rank, undefined) === rank &&
+    Math.abs(asNumber(entry.timestampSeconds, -1) - seconds) <= 0.01,
+  );
+  if (!candidate) {
+    fail(`${NODE_NAME}: seleção editorial de Reel não corresponde a um candidato técnico do vídeo atual.`);
+  }
+  return {
+    ...technicalFrame,
+    selectedFrameUrl: String(candidate.url || candidate.thumbPath || '').trim(),
+    bestFrameSeconds: asNumber(candidate.timestampSeconds, undefined),
+    selectedFrameRank: rank,
+    selectedFrameSource: 'editorial_verified',
+    confidence: asNumber(candidate.confidence, technicalFrame.confidence),
+    editorialReason: String(bestFrame.reason).trim(),
   };
 }
 
@@ -302,15 +421,29 @@ function technicalFrameContext(payload) {
     ...asArray(payload.normalizedCombinedMediaItems),
     ...asArray(payload.combinedMediaItems),
   ];
-  const byGroup = {};
+  const byMedia = {};
   for (const media of entries) {
     const current = asObject(media);
-    const groupKey = String(current.groupKey || current.id || '').trim();
-    if (!groupKey || byGroup[groupKey]) continue;
-    const frame = selectedTechnicalFrame(current);
-    if (frame.selectedFrameUrl || frame.bestFrameSeconds !== undefined) byGroup[groupKey] = frame;
+    if (String(current.mediaKind || current.mediaType || '').toLowerCase() !== 'video') continue;
+    const key = mediaFrameKey(current);
+    if (!key || byMedia[key]) continue;
+    const technical = selectedTechnicalFrame(current);
+    if (!technical.candidates.length || technical.bestFrameSeconds === undefined) {
+      fail(`${NODE_NAME}: vídeo ${String(current.id || 'sem-id')} sem contrato técnico de frames válido.`);
+    }
+    const durationSeconds = asNumber(
+      current.videoDurationSeconds ?? asObject(current.processedMedia).videoDurationSeconds ?? asObject(current.processedMedia).probe?.duration,
+      undefined,
+    );
+    if (durationSeconds !== undefined && technical.candidates.some((candidate) => asNumber(candidate.timestampSeconds, -1) >= durationSeconds)) {
+      fail(`${NODE_NAME}: candidato de frame fora da duração do vídeo atual.`);
+    }
+    const quantity = Number(current.quantity || 1);
+    byMedia[key] = quantity === 1
+      ? editorialFrameForSingleVideo(payload, technical, current)
+      : technical;
   }
-  return byGroup;
+  return byMedia;
 }
 
 function dedupeHashtagArray(value) {
@@ -376,9 +509,9 @@ function applyCaptionHygiene(job) {
   return current;
 }
 
-function applyTechnicalFrame(job, framesByGroup) {
+function applyTechnicalFrame(job, framesByMedia) {
   const current = { ...job };
-  const frame = framesByGroup[String(current.groupKey || '').trim()];
+  const frame = framesByMedia[mediaFrameKey(asObject(current.media), current.groupKey)];
   if (!frame) return current;
 
   const warningSet = new Set(asArray(current.warnings).map((entry) => String(entry)).filter(Boolean));
@@ -405,19 +538,17 @@ function applyTechnicalFrame(job, framesByGroup) {
       body.thumbnail_url = frame.selectedFrameUrl;
     }
 
-    if (platform === 'instagram' && String(body.media_type || '').toUpperCase() === 'REELS') {
+    const isCarouselItem = body.is_carousel_item === true || String(body.is_carousel_item || '').toLowerCase() === 'true';
+    if (platform === 'instagram' && String(body.media_type || '').toUpperCase() === 'REELS' && !isCarouselItem) {
       const media = asObject(current.media);
       const mainVideoUrl = String(media.finalUrl || media.secure_url || media.url || '').trim();
       const coverUrl = cloudinaryVideoCoverUrl(mainVideoUrl, frame.bestFrameSeconds);
-      if (coverUrl) {
-        body.cover_url = coverUrl;
-        delete body.thumb_offset;
-        text.coverUrl = coverUrl;
-        text.coverStatus = 'requested';
-      } else if (frame.bestFrameSeconds !== undefined) {
-        body.thumb_offset = Math.max(0, Math.round(frame.bestFrameSeconds * 1000));
-        text.coverStatus = 'requested_fallback';
-      }
+      if (!coverUrl) fail(`${NODE_NAME}: Reel sem cover_url canônica gerável a partir do vídeo e frame selecionado.`);
+      body.cover_url = coverUrl;
+      delete body.thumb_offset;
+      delete body.thumbnail_url;
+      text.coverUrl = coverUrl;
+      text.coverStatus = 'required';
     }
 
     if (
@@ -433,6 +564,31 @@ function applyTechnicalFrame(job, framesByGroup) {
   }
 
   current.warnings = [...warningSet];
+  return current;
+}
+
+function assertInstagramReelCoverContract(job) {
+  const current = { ...job };
+  const body = asObject(current.jsonRequest);
+  const isCarouselItem = body.is_carousel_item === true || String(body.is_carousel_item || '').toLowerCase() === 'true';
+  if (
+    String(current.platform || '').toLowerCase() !== 'instagram' ||
+    String(body.media_type || '').toUpperCase() !== 'REELS' ||
+    isCarouselItem
+  ) return current;
+
+  const media = asObject(current.media);
+  const seconds = asNumber(asObject(current.text).bestFrameSeconds, undefined);
+  const expectedCoverUrl = cloudinaryVideoCoverUrl(
+    String(media.finalUrl || media.secure_url || media.url || '').trim(),
+    seconds,
+  );
+  if (!expectedCoverUrl || String(body.cover_url || '') !== expectedCoverUrl) {
+    fail(`${NODE_NAME}: contrato de capa do Reel inválido; cover_url canônica obrigatória antes do gateway.`);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'thumb_offset') || Object.prototype.hasOwnProperty.call(body, 'thumbnail_url')) {
+    fail(`${NODE_NAME}: Reel não pode usar fallback de thumbnail_url ou thumb_offset.`);
+  }
   return current;
 }
 
@@ -554,7 +710,7 @@ function normalizeThreadsCarouselJob(job) {
   if (carouselChild) {
     // Threads requires the concrete media type for every child. CAROUSEL is
     // accepted only by the parent container that references these children.
-    request.media_type = 'IMAGE';
+    request.media_type = String(request.video_url || '').trim() ? 'VIDEO' : 'IMAGE';
   }
   if (phase === 'uploadcontainer') request.media_type = 'CAROUSEL';
   current.jsonRequest = request;
@@ -660,14 +816,19 @@ function loadResumeCompleted(jobs) {
 }
 
 function compactResult(result, payload, sourceFile) {
-  const firstJson = asObject(asArray(result)[0]?.json);
+  const resultItems = asArray(result);
+  const firstJson = asObject(resultItems[0]?.json);
   const facebookCredentials = facebookCredentialContext(payload);
   const credentialRefs = credentialReferences(payload);
   const frameContext = technicalFrameContext(payload);
-  const jobs = asArray(firstJson.jobs)
+  const sourceJobs = asArray(firstJson.jobs).length
+    ? asArray(firstJson.jobs)
+    : resultItems.map((entry) => asObject(entry?.json));
+  const jobs = sourceJobs
     .map((entry) => asObject(entry))
     .map((entry) => applyCaptionHygiene(entry))
     .map((entry) => applyTechnicalFrame(entry, frameContext))
+    .map((entry) => assertInstagramReelCoverContract(entry))
     .map((entry) => applyPlatformAccessibilityContract(entry))
     .map((entry) => normalizeGraphApiVersionJob(entry))
     .map((entry) => normalizeFacebookJob(entry, facebookCredentials))

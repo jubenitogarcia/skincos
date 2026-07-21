@@ -403,6 +403,7 @@ function analyzeVideo(inputFile, paths, warnings) {
   copyFilePortable(candidateThumbs[0].path, paths.thumbPath);
   return {
     applicable: true,
+    durationSeconds: duration,
     bestTimestamp: candidateThumbs[0].timestamp,
     bestTimestampSeconds: candidateThumbs[0].timestampSeconds,
     bestFrameSeconds: candidateThumbs[0].timestampSeconds,
@@ -481,6 +482,7 @@ function main() {
     safeUploadBytes: SAFE_UPLOAD_BYTES,
     probe: optimized.probe,
     analysisApplicable: kind.isVideo,
+    videoDurationSeconds: kind.isVideo ? Number(bestFrame.durationSeconds || optimized.probe?.duration || 0) : 0,
     thumbPath: bestFrame.thumbPath || '',
     candidateThumbs,
     bestFrame,

@@ -236,12 +236,17 @@ function buildDelivery(target, response) {
   const cover = mediaKind !== 'video'
     ? { status: 'unsupported', reason: 'not_applicable_for_static_image' }
     : platform === 'instagram'
-    ? submitted.coverUrl || Number.isFinite(Number(submitted.thumbOffset))
-      ? str(body.thumbnail_url)
-        ? { status: 'accepted', requested: submitted.coverUrl ? 'cover_url' : 'thumb_offset', thumbnailUrl: str(body.thumbnail_url) }
-        : { status: 'failed', reason: 'instagram_thumbnail_missing' }
+    ? submitted.coverUrl
+      ? /^https:\/\/res\.cloudinary\.com\/[^/]+\/video\/upload\/so_[0-9.]+,f_jpg\//i.test(submitted.coverUrl)
+        ? str(body.thumbnail_url)
+          ? { status: 'accepted', requested: 'cover_url', thumbnailUrl: str(body.thumbnail_url) }
+          : { status: 'failed', reason: 'instagram_thumbnail_missing' }
+        : { status: 'failed', reason: 'cover_url_not_canonical' }
       : { status: 'failed', reason: 'cover_not_requested' }
     : { status: 'unsupported', reason: `${platform}_video_cover_not_configurable_in_this_flow` };
+  if (platform === 'instagram' && mediaKind === 'video' && cover.status === 'failed') {
+    errors.push(`instagram_reel_cover_failed:${cover.reason}`);
+  }
 
   return {
     platform,
