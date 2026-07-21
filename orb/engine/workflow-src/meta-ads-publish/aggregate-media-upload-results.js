@@ -19,6 +19,7 @@ const buckets = new Map([...planByJob.keys()].map((jobKey) => [jobKey, {
   image_skips: [],
   video_skips: [],
   seen: new Set(),
+  receiptsByKey: new Map(),
 }]));
 
 for (const item of $input.all()) {
@@ -44,8 +45,22 @@ for (const item of $input.all()) {
     throw new Error(`Resultado de upload incompleto em ${jobKey}; account_id/source_file_id ausente.`);
   }
   const dedupeKey = [uploadKind, accountId, sourceFileId].join('::');
-  if (bucket.seen.has(dedupeKey)) throw new Error(`Resultado de upload duplicado em ${jobKey}; key=${dedupeKey}.`);
+  if (bucket.seen.has(dedupeKey)) {
+    const previous = bucket.receiptsByKey.get(dedupeKey) || {};
+    // Polling a video until it is ready can surface the exact same terminal
+    // receipt more than once through the loop/merge graph. It is safe to
+    // collapse only an identical ready receipt; any different video result
+    // remains an ambiguity and stops publication.
+    const identicalReadyVideo = uploadKind === 'video' &&
+      text(previous.video_id) === text(receipt.video_id) &&
+      text(previous.video_status).toLowerCase() === 'ready' &&
+      text(receipt.video_status).toLowerCase() === 'ready' &&
+      previous.ready === true && receipt.ready === true;
+    if (identicalReadyVideo) continue;
+    throw new Error(`Resultado de upload duplicado em ${jobKey}; key=${dedupeKey}.`);
+  }
   bucket.seen.add(dedupeKey);
+  bucket.receiptsByKey.set(dedupeKey, clone(receipt));
 
   if (uploadKind === 'image' || uploadKind === 'video_thumbnail') {
     const imageEntries = Object.values(receipt.images || {});

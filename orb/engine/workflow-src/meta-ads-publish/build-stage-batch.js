@@ -1,6 +1,7 @@
 function text(value) { return String(value ?? '').trim(); }
 function object(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function key(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_.:-]+/g, '_').slice(0, 190); }
+function targetNameKey(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_.:-]+/g, '_'); }
 
 const inputs = $input.all();
 if (!inputs.length) throw new Error('Build Stage Batch recebeu zero creatives verificados.');
@@ -17,7 +18,10 @@ const jobs = inputs.map((item, index) => {
   if (!['create_new', 'replace_existing'].includes(action)) throw new Error(`Acao invalida no job ${job.job_key || index}.`);
   const target = action === 'replace_existing'
     ? `ad:${text(job.source_ad_id)}`
-    : `adset:${text(job.destination_adset_id)}:name:${key(object(job.adPayload).name)}`;
+    // This is an in-memory duplicate detector, not a Meta operation key.
+    // Do not shorten it: static/video names differ in their intentional tail
+    // (`[STATIC]` / `[VIDEO]`) after a common long descriptive prefix.
+    : `adset:${text(job.destination_adset_id)}:name:${targetNameKey(object(job.adPayload).name)}`;
   if (targets.has(target)) throw new Error(`Target Meta duplicado no mesmo lote: ${target}`);
   targets.add(target);
   const adPayload = {

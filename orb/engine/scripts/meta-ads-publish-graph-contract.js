@@ -187,12 +187,26 @@ function ensureVideoStagingPath(workflow, changes) {
   }
 }
 
+function ensureVisualGroupingRetries(workflow, changes) {
+  const agent = nodeByName(workflow, 'Visual Grouping Agent');
+  if (!agent || agent.type !== '@n8n/n8n-nodes-langchain.agent') {
+    throw new Error('Visual Grouping Agent obrigatorio ausente ou com tipo invalido.');
+  }
+  if (agent.retryOnFail !== true || Number(agent.maxTries) !== 3 || Number(agent.waitBetweenTries) !== 5000) {
+    agent.retryOnFail = true;
+    agent.maxTries = 3;
+    agent.waitBetweenTries = 5000;
+    changes.push('retry:Visual Grouping Agent');
+  }
+}
+
 function applyGraphContract(workflow) {
   const changes = [];
   workflow.nodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
   workflow.connections = workflow.connections && typeof workflow.connections === 'object' ? workflow.connections : {};
   for (const template of MANAGED_NODES) ensureNode(workflow, template, changes);
   ensureVideoStagingPath(workflow, changes);
+  ensureVisualGroupingRetries(workflow, changes);
 
   const mergeUploads = nodeByName(workflow, 'Merge Media Upload Results');
   const mergeAi = nodeByName(workflow, 'Merge (2)');
@@ -272,6 +286,8 @@ function validateGraphContract(workflow) {
   }
   const buildJobs = nodeByName(workflow, 'Build Jobs');
   if (buildJobs?.retryOnFail !== true || Number(buildJobs?.maxTries) !== 3) failures.push('build_jobs_retry_missing');
+  const visualGroupingAgent = nodeByName(workflow, 'Visual Grouping Agent');
+  if (visualGroupingAgent?.retryOnFail !== true || Number(visualGroupingAgent?.maxTries) !== 3) failures.push('visual_grouping_retry_missing');
   const runnerHealth = nodeByName(workflow, 'Check Task Runner Health');
   if (runnerHealth?.parameters?.url !== 'http://127.0.0.1:5681/health') failures.push('runner_health_endpoint_invalid');
   const classifier = nodeByName(workflow, 'Classify Media');

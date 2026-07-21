@@ -3,8 +3,14 @@
 
 const fs = require('fs');
 const path = require('path');
+const dns = require('dns');
 const { validateGraphContract } = require('./meta-ads-publish-graph-contract');
 const { validateOfferFingerprintContract } = require('./meta-ads-publish-offer-fingerprint-contract');
+
+// The privileged WSL resolver can return an unreachable IPv6 Cloudflare edge
+// before IPv4. Keep live sync deterministic without requiring an operator to
+// remember a NODE_OPTIONS override.
+dns.setDefaultResultOrder('ipv4first');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const WORKFLOW_FILE = path.resolve(__dirname, '..', 'workflows', 'meta-ads-publish.current.json');

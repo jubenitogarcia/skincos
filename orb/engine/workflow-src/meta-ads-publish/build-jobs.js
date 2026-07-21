@@ -1074,22 +1074,44 @@ function buildCanonicalAdName(sourceAdName, destinationGroup, offerFingerprintTa
   const source = safeString(sourceAdName).replace(/\s*\[OFV1:[A-Z0-9]+\]/ig, '').trim();
   const destination = safeString(destinationGroup);
   const tag = safeString(offerFingerprintTag);
+  const tagToken = tag ? `[${tag}]` : '';
+  const preserveTag = (name) => {
+    const normalizedName = safeString(name);
+    if (!tagToken) return normalizedName.slice(0, 255);
+    if (!normalizedName) return tagToken.slice(0, 255);
+    const availableNameLength = Math.max(0, 255 - tagToken.length - 1);
+    return `${normalizedName.slice(0, availableNameLength).trimEnd()} ${tagToken}`.trim();
+  };
 
-  if (!source) return [destination, tag].filter(Boolean).join(' ');
-  if (!destination) return [source, tag].filter(Boolean).join(' ');
+  if (!source) return preserveTag(destination);
+  if (!destination) return preserveTag(source);
 
   const sourceParts = source
     .split('|')
     .map((part) => safeString(part))
     .filter(Boolean);
 
-  if (!sourceParts.length) return [destination, tag].filter(Boolean).join(' ');
+  if (!sourceParts.length) return preserveTag(destination);
 
   const lastPart = sourceParts[sourceParts.length - 1];
   const canonical = normalizeNameSegment(lastPart) === normalizeNameSegment(destination)
     ? sourceParts.join(' | ')
     : [...sourceParts, destination].join(' | ');
-  return [canonical, tag].filter(Boolean).join(' ').slice(0, 255);
+  // The offer tag is a replacement-safety guard, not decorative metadata.
+  // Trim the descriptive prefix first so the tag survives the Meta name cap.
+  return preserveTag(canonical);
+}
+
+function buildVariantAdName(canonicalAdName, variantSuffix, offerFingerprintTag) {
+  const base = safeString(canonicalAdName).replace(/\s*\[OFV1:[A-Z0-9]+\]/ig, '').trim();
+  const suffix = safeString(variantSuffix);
+  const tag = safeString(offerFingerprintTag);
+  const tagToken = tag ? `[${tag}]` : '';
+  const fixedTail = [suffix, tagToken].filter(Boolean).join(' ');
+  if (!fixedTail) return base.slice(0, 255);
+  if (!base) return fixedTail.slice(0, 255);
+  const availableBaseLength = Math.max(0, 255 - fixedTail.length - 1);
+  return `${base.slice(0, availableBaseLength).trimEnd()} ${fixedTail}`.trim();
 }
 
 function parseMetaTimestamp(value) {
@@ -2001,7 +2023,10 @@ for (const entry of jobEntries) {
     }
 
     for (const variant of creativeVariants) {
-      const variantAdName = `${finalAdName || sourceAdName} ${variant.name_suffix}`.slice(0, 255);
+      // Static and video variants must never collapse to the same name when a
+      // long source name reaches Meta's 255-character cap. Keep the variant
+      // discriminator and the commercial offer tag as the non-truncatable tail.
+      const variantAdName = buildVariantAdName(finalAdName || sourceAdName, variant.name_suffix, offerFingerprintTag);
       const variantAdPayload = { ...adMutationPayload, name: variantAdName };
       const reportedAdvantage = variant.advantagePlusEnabled ? advantagePlusRequest : {
         desiredFeatures: [], requestedFeatures: [], eligibleFeatures: [],

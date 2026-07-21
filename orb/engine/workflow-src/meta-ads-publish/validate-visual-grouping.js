@@ -113,7 +113,7 @@ for (const rawAssignment of assignments) {
   const groupKey = text(assignment.group_key).toUpperCase();
   const ratio = text(assignment.ratio).toLowerCase();
   const mediaType = text(assignment.media_type || manifestEntry?.media_type || 'image').toLowerCase();
-  const role = text(assignment.role || assignment.slot).toLowerCase();
+  const declaredRole = text(assignment.role || assignment.slot).toLowerCase();
   const confidence = Number(assignment.confidence);
   if (!manifestEntry) throw new Error(`Agente visual retornou referencia desconhecida: ${mediaRef}.`);
   if (assignmentByRef.has(mediaRef)) throw new Error(`Midia atribuida mais de uma vez: ${mediaRef}.`);
@@ -121,14 +121,19 @@ for (const rawAssignment of assignments) {
   if (mediaType !== text(manifestEntry.media_type || 'image')) throw new Error(`Tipo de midia divergente em ${mediaRef}.`);
   if (!supportedRatios.has(ratio)) throw new Error(`Proporcao visual nao suportada para ${mediaRef}: ${ratio}.`);
   const expectedRole = version === '2' ? v2RoleFor(mediaType, ratio) : legacyRole(ratio);
-  if (!expectedRole || expectedRole !== role) throw new Error(`Papel ${role} incompativel com ${mediaType}/${ratio} em ${mediaRef}; esperado=${expectedRole}.`);
+  if (!expectedRole) throw new Error(`Papel sem mapeamento para ${mediaType}/${ratio} em ${mediaRef}.`);
+  // Group membership is the visual model's responsibility. The media role is
+  // not: it is mechanically determined by type and aspect ratio. Normalize
+  // an occasional model label error (for example, 2:1 called feed_image)
+  // instead of rejecting a group whose visual association is otherwise sound.
+  const role = expectedRole;
   if (!Number.isFinite(confidence) || confidence < 0.75 || confidence > 1) throw new Error(`Confianca insuficiente para ${mediaRef}: ${assignment.confidence}.`);
   const evidence = list(assignment.evidence).map(text).filter(Boolean);
   const forbiddenEvidence = [text(manifestEntry.source_file_id), text(manifestEntry.source_json?.name)].filter(Boolean);
   if (evidence.some((entry) => forbiddenEvidence.some((forbidden) => entry.toLowerCase().includes(forbidden.toLowerCase())))) {
     throw new Error(`Nome ou id de arquivo usado como evidencia em ${mediaRef}.`);
   }
-  assignmentByRef.set(mediaRef, { media_ref: mediaRef, media_type: mediaType, group_key: groupKey, ratio, role, confidence, evidence });
+  assignmentByRef.set(mediaRef, { media_ref: mediaRef, media_type: mediaType, group_key: groupKey, ratio, role, declared_role: declaredRole, confidence, evidence });
 }
 
 const missing = [...manifestByRef.keys()].filter((ref) => !assignmentByRef.has(ref));

@@ -128,6 +128,65 @@ test('mixed and video-only groups count video thumbnails as image gateway operat
   assert.equal(planned[1].json.media_upload_plan.expected.videos, 1);
 });
 
+test('video upload start key is stable for replays and changes with its request contract', async () => {
+  const source = item({
+    run_id: 'RUN_1',
+    job_key: 'MIXED',
+    videos: [{ id: 'video-drive-id', original_name: 'vertical.mp4' }],
+    media_inventory: [{
+      source_file_id: 'video-drive-id',
+      media_processing: {
+        output_bytes: 1024,
+        normalized_file: '/tmp/video.mp4',
+        output_checksum_sha256: 'a'.repeat(64),
+      },
+    }],
+    destinations: [{ destination_ad_account_id: '100', token_id: 'token-a', destination_api_version: 'v25.0' }],
+  });
+  const [first] = await runCode('prepare-video-upload-starts.js', { input: [source] });
+  const [replay] = await runCode('prepare-video-upload-starts.js', { input: [source] });
+  const changedToken = item({
+    ...source.json,
+    destinations: [{ destination_ad_account_id: '100', token_id: 'token-b', destination_api_version: 'v25.0' }],
+  });
+  const [changed] = await runCode('prepare-video-upload-starts.js', { input: [changedToken] });
+
+  assert.match(first.json.gateway_request.operation_key, /^video-start:v3:[a-z0-9]+$/);
+  assert.equal(replay.json.gateway_request.operation_key, first.json.gateway_request.operation_key);
+  assert.notEqual(changed.json.gateway_request.operation_key, first.json.gateway_request.operation_key);
+
+  const duplicateAccount = item({
+    ...source.json,
+    destinations: [
+      ...source.json.destinations,
+      { destination_ad_account_id: '100', token_id: 'token-b', destination_api_version: 'v25.0' },
+    ],
+  });
+  const deduplicated = await runCode('prepare-video-upload-starts.js', { input: [duplicateAccount] });
+  assert.equal(deduplicated.length, 1, 'same Meta account receives one video upload regardless of destination count');
+});
+
+test('image upload keys distinguish the gateway request contract while preserving exact replays', async () => {
+  const source = item({
+    run_id: 'RUN_1',
+    job_key: 'MIXED',
+    imagens: [{ id: 'image-drive-id', binary_key: 'data', proporcao: '3x4', original_name: 'feed.jpg' }],
+    videos: [],
+    destinations: [{ destination_ad_account_id: '100', token_id: 'token-a', destination_api_version: 'v25.0' }],
+  }, { data: { fileName: 'feed.jpg', fileSize: '1024', mimeType: 'image/jpeg' } });
+  const [first] = await runCode('prepare-gateway-uploads.js', { input: [source] });
+  const [replay] = await runCode('prepare-gateway-uploads.js', { input: [source] });
+  const changedToken = item({
+    ...source.json,
+    destinations: [{ destination_ad_account_id: '100', token_id: 'token-b', destination_api_version: 'v25.0' }],
+  }, source.binary);
+  const [changed] = await runCode('prepare-gateway-uploads.js', { input: [changedToken] });
+
+  assert.match(first.json.gateway_request.operation_key, /^upload:v3:[a-z0-9]+$/);
+  assert.equal(replay.json.gateway_request.operation_key, first.json.gateway_request.operation_key);
+  assert.notEqual(changed.json.gateway_request.operation_key, first.json.gateway_request.operation_key);
+});
+
 test('multiple media modes aggregate independently in the same batch', async () => {
   const staticGroup = mediaGroup({ jobKey: 'A', groupKey: 'GA', images: 3, mediaMode: 'static_only' });
   const mixedGroup = mediaGroup({ jobKey: 'B', groupKey: 'GB', images: 3, videos: 1, mediaMode: 'mixed' });
@@ -175,6 +234,18 @@ test('missing, duplicate, or non-ready uploads fail closed', async () => {
       itemsByNode: { 'Prepare Media Upload Plan': plans },
     }),
     /ainda nao ready/,
+  );
+  const [deduped] = await runCode('aggregate-media-upload-results.js', {
+    input: [image, thumb, videoReceipt('FAIL', group.json.videos[0].id), videoReceipt('FAIL', group.json.videos[0].id)],
+    itemsByNode: { 'Prepare Media Upload Plan': plans },
+  });
+  assert.deepEqual(deduped.json.completed, { images: 2, videos: 1 });
+  await assert.rejects(
+    runCode('aggregate-media-upload-results.js', {
+      input: [image, thumb, videoReceipt('FAIL', group.json.videos[0].id), item({ ...videoReceipt('FAIL', group.json.videos[0].id).json, video_id: 'different-video' })],
+      itemsByNode: { 'Prepare Media Upload Plan': plans },
+    }),
+    /duplicado/,
   );
 });
 
@@ -265,6 +336,39 @@ test('visual grouping keeps an ambiguous offer publishable but marks it non-repl
   assert.equal(output[0].json.visual_grouping.offer_fingerprint.replacement_eligible, false);
 });
 
+test('visual grouping normalizes a model role typo from immutable media type and ratio', async () => {
+  const prepared = item({
+    visual_grouping_batch_version: '2',
+    media: [
+      { media_ref: 'MEDIA_001', media_type: 'image', source_item_index: 0, source_file_id: 'drive-media-001' },
+      { media_ref: 'MEDIA_002', media_type: 'image', source_item_index: 1, source_file_id: 'drive-media-002' },
+      { media_ref: 'MEDIA_003', media_type: 'image', source_item_index: 2, source_file_id: 'drive-media-003' },
+      { media_ref: 'MEDIA_004', media_type: 'video', source_item_index: 3, source_file_id: 'drive-media-004' },
+    ],
+  });
+  const originals = [
+    item({ id: 'drive-media-001' }, { data: { mimeType: 'image/jpeg' } }),
+    item({ id: 'drive-media-002' }, { data: { mimeType: 'image/jpeg' } }),
+    item({ id: 'drive-media-003' }, { data: { mimeType: 'image/jpeg' } }),
+    item({ id: 'drive-media-004' }, { data: { mimeType: 'video/mp4' }, thumbnail: {}, analysis: {} }),
+  ];
+  const agent = item({
+    groups: [{ group_key: 'VISUAL_GROUP_01', visual_concept: 'oferta', confidence: 0.9, evidence: ['mesma oferta'], offer_fingerprint: { confidence: 0.8, procedures: [{ key: 'botox', quantity: '', unit: '' }], evidence: ['botox'] } }],
+    assignments: [
+      { media_ref: 'MEDIA_001', media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '2x1', role: 'feed_image', confidence: 0.9, evidence: ['mesma oferta'] },
+      { media_ref: 'MEDIA_002', media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '3x4', role: 'feed_image', confidence: 0.9, evidence: ['mesma oferta'] },
+      { media_ref: 'MEDIA_003', media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '9x16', role: 'vertical_image', confidence: 0.9, evidence: ['mesma oferta'] },
+      { media_ref: 'MEDIA_004', media_type: 'video', group_key: 'VISUAL_GROUP_01', ratio: '9x16', role: 'vertical_video', confidence: 0.9, evidence: ['mesma oferta'] },
+    ],
+  });
+  const output = await runCode('validate-visual-grouping.js', {
+    input: [agent],
+    itemsByNode: { 'Prepare Visual Grouping Batch': [prepared], 'Prepare Media Inventory': originals },
+  });
+  assert.equal(output[0].json.visual_grouping.role, 'banner_image');
+  assert.equal(output[0].json.visual_grouping.media_mode, 'mixed_group');
+});
+
 test('Build Jobs refuses raw merge items and accepts only assembled v2 inputs', async () => {
   const group = mediaGroup({ jobKey: 'STRICT', groupKey: 'GSTRICT', images: 3, mediaMode: 'static_only' });
   await assert.rejects(
@@ -278,6 +382,26 @@ test('Build Jobs refuses raw merge items and accepts only assembled v2 inputs', 
     }),
     /somente itens produzidos por Assemble Job Inputs v2/,
   );
+});
+
+test('stage batch preserves distinct static and video names beyond the operation-key length', async () => {
+  const prefix = 'Nome de anuncio muito longo '.repeat(12);
+  const makeJob = (variant) => item({
+    run_id: 'RUN_STAGE',
+    job_key: `JOB_${variant}`,
+    media_variant: variant,
+    action: 'create_new',
+    destination_adset_id: '300',
+    creative_group_key: 'GROUP',
+    destination_group: 'UNIT',
+    creative_id: `creative-${variant}`,
+    token_id: 'token', account_id: '100', api_version: 'v25.0',
+    adPayload: { name: `${prefix} [OFV1:TAG] ${variant === 'video_single' ? '[VIDEO]' : '[STATIC]'}`, status: 'ACTIVE', adset_id: '300' },
+    asset_ids: {}, asset_names: {},
+  });
+  const [batch] = await runCode('build-stage-batch.js', { input: [makeJob('static_flexible'), makeJob('video_single')] });
+  assert.equal(batch.json.job_count, 2);
+  assert.notEqual(batch.json.gateway_request.jobs[0].ad_payload.name, batch.json.gateway_request.jobs[1].ad_payload.name);
 });
 
 test('Token Vault destination contract survives normalization without exposing credentials', async () => {
@@ -320,6 +444,26 @@ test('creative validator source requires the destination-contract workflow revis
   assert.match(buildJobs, /destination_whatsapp_url_config_missing_or_invalid/);
 });
 
+test('canonical ad names retain the verified offer tag at the Meta length limit', () => {
+  const source = fs.readFileSync(path.join(sourceRoot, 'build-jobs.js'), 'utf8');
+  const match = source.match(/function buildCanonicalAdName[\s\S]*?\n}\n\nfunction parseMetaTimestamp/);
+  assert.ok(match, 'canonical ad-name builder should be extractable');
+  const functionSource = match[0].replace(/\nfunction parseMetaTimestamp$/, '');
+  const safeString = (value) => String(value ?? '').trim();
+  const normalizeNameSegment = (value) => safeString(value).replace(/[^a-z0-9]+/gi, '').toLowerCase();
+  const builders = new Function('safeString', 'normalizeNameSegment', `${functionSource}; return { buildCanonicalAdName, buildVariantAdName };`)(safeString, normalizeNameSegment);
+  const tag = 'OFV1:GT301F53ENBB';
+  const name = builders.buildCanonicalAdName('Oferta comercial muito longa '.repeat(20), 'Novo Hamburgo', tag);
+  assert.ok(name.length <= 255);
+  assert.match(name, new RegExp(`\\[${tag}\\]$`));
+  const staticName = builders.buildVariantAdName(name, '[STATIC]', tag);
+  const videoName = builders.buildVariantAdName(name, '[VIDEO]', tag);
+  assert.ok(staticName.length <= 255 && videoName.length <= 255);
+  assert.notEqual(staticName, videoName);
+  assert.match(staticName, /\[STATIC\] \[OFV1:GT301F53ENBB\]$/);
+  assert.match(videoName, /\[VIDEO\] \[OFV1:GT301F53ENBB\]$/);
+});
+
 test('feed media prefers a real 4:5 source and preserves non-4:5 fallback aspects', () => {
   const buildPayload = fs.readFileSync(path.join(sourceRoot, 'build-payload.js'), 'utf8');
   const buildJobs = fs.readFileSync(path.join(sourceRoot, 'build-jobs.js'), 'utf8');
@@ -339,6 +483,7 @@ test('graph contract makes optional branches explicit and retries Build Jobs', (
       baseNode('Restore Publish Groups'), baseNode('Resume Drive Only?'), baseNode('Build Drive Finalization'),
       baseNode('Prepare Gateway Uploads'), baseNode('Normalize Gateway Upload'), baseNode('Prepare Video Upload Starts'),
       baseNode('Video Ready?'), baseNode('Wait Video Processing'), baseNode('Livia'),
+      baseNode('Visual Grouping Agent', '@n8n/n8n-nodes-langchain.agent'),
       baseNode('Merge Media Upload Results', 'n8n-nodes-base.merge'), baseNode('Merge (2)', 'n8n-nodes-base.merge'),
       baseNode('Build Jobs', 'n8n-nodes-base.code'), baseNode('Validate Meta Creative Payload'),
     ],
@@ -354,6 +499,7 @@ test('graph contract makes optional branches explicit and retries Build Jobs', (
   assert.match(workflow.nodes.find((node) => node.name === 'Classify Media').parameters.jsCode, /\/tmp\/meta-ads-publish/);
   assert.deepEqual(workflow.nodes.find((node) => node.name === 'Merge (2)').parameters, { mode: 'append', numberInputs: 2 });
   assert.equal(workflow.nodes.find((node) => node.name === 'Build Jobs').maxTries, 3);
+  assert.equal(workflow.nodes.find((node) => node.name === 'Visual Grouping Agent').maxTries, 3);
 });
 
 test('visual agent contract requires offer fingerprint evidence and is idempotent', () => {
