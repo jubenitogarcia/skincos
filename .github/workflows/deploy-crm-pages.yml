@@ -5,7 +5,6 @@ on:
     branches: [ main, staging ]
     paths:
       - "crm/console/**"
-      - ".github/workflows/deploy-crm-pages.yml"
   workflow_dispatch: {}
 
 concurrency:
@@ -67,25 +66,47 @@ jobs:
           cache: "npm"
           cache-dependency-path: crm/console/package-lock.json
 
-      - name: Install frontend deps
+      - name: Hold Finance UI from production until an explicit release
+        id: finance_production_gate
         if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          ALLOW_FINANCE_PRODUCTION: ${{ vars.ENABLE_FINANCE_PRODUCTION_DEPLOY }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          GITHUB_BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$BRANCH_NAME" != "main" || "${ALLOW_FINANCE_PRODUCTION:-}" == "true" ]]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$GITHUB_BEFORE_SHA" "$GITHUB_SHA" 2>/dev/null || true)"
+          if grep -Eq '^crm/console/(App\.tsx|Finance|financeApi|functions/api/finance/|public/_routes\.json|scripts/finance-)' <<< "$changed"; then
+            echo "Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true; Pages deploy held."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install frontend deps
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         run: npm ci
         working-directory: crm/console
 
       - name: Fetch face models
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         run: npm run fetch-face-models
         working-directory: crm/console
 
       - name: Build frontend
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         env:
           VITE_BUILD_SHA: ${{ github.sha }}
         run: npm run build
         working-directory: crm/console
 
       - name: Deploy to Cloudflare Pages (wrangler)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -107,7 +128,7 @@ jobs:
         working-directory: crm/console
 
       - name: Smoke check Ponto (production)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' }}
         env:
           BASE_URL: https://crm.skincos.com.br
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
