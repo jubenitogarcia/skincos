@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OPERATOR_ROOT="${CRM_OPERATOR_RUNTIME_ROOT:-/mnt/c/CodexRuntime/operator/admin/skincos}"
 RUNTIME_ROOT="${FINANCE_LOCAL_RUNTIME_ROOT:-$OPERATOR_ROOT/runtime/finance-local}"
-FRONTEND_RUNTIME_DIR="${CRM_LOCAL_FRONTEND_RUNTIME_DIR:-/home/$(id -un)/.cache/skincos/finance-local-console}"
+FRONTEND_RUNTIME_DIR="${FINANCE_CRM_CONSOLE_DIR:-$ROOT_DIR/crm/console}"
 INVENTORY_DEPS_DIR="$RUNTIME_ROOT/inventory-deps"
 INVENTORY_NODE_MODULES_LINK="$ROOT_DIR/inventory/node_modules"
 D1_STATE_DIR="$RUNTIME_ROOT/d1"
@@ -15,10 +15,11 @@ LOG_FILE="$RUNTIME_ROOT/finance-local.log"
 STATE_FILE="$RUNTIME_ROOT/current.env"
 GATEWAY_ENV_FILE="$RUNTIME_ROOT/gateway.dev.vars"
 API_DEV_VARS_LINK="$ROOT_DIR/api/.dev.vars"
-CRM_RUNTIME_ROOT="$RUNTIME_ROOT/crm"
 CRM_PID_FILE="$RUNTIME_ROOT/crm-launcher.pid"
 CRM_LOG_FILE="$RUNTIME_ROOT/crm-local.log"
 GATEWAY_PORT="${FINANCE_GATEWAY_PORT:-8792}"
+CRM_VITE_PORT="${FINANCE_CRM_VITE_PORT:-5182}"
+CRM_PAGES_PORT="${FINANCE_CRM_PAGES_PORT:-8793}"
 SCENARIO="${FINANCE_LOCAL_SCENARIO:-both}"
 OPEN_BROWSER="${FINANCE_OPEN_BROWSER:-1}"
 RUN_SMOKE=0
@@ -109,21 +110,18 @@ runtime_status() {
   local finance_pid='' crm_url='' actual_port actual_scenario
   [[ -f "$PID_FILE" ]] && finance_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   actual_port="$(state_value gateway_port)"; actual_scenario="$(state_value scenario)"
-  if [[ -f "$CRM_RUNTIME_ROOT/current.json" ]]; then crm_url="$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(process.argv[1])).url)}catch{}" "$CRM_RUNTIME_ROOT/current.json" 2>/dev/null || true)"; fi
+  crm_url="$(state_value crm_url)"
   printf 'FINANCE_LOCAL_SCENARIO=%s\nFINANCE_LOCAL_GATEWAY=http://127.0.0.1:%s\nFINANCE_LOCAL_CRM_URL=%s\nFINANCE_LOCAL_PID=%s\nFINANCE_LOCAL_LOG=%s\n' "${actual_scenario:-$SCENARIO}" "${actual_port:-$GATEWAY_PORT}" "$crm_url" "$finance_pid" "$LOG_FILE"
 }
 
 diagnose_ports() {
-  local actual_port
+  local actual_port crm_port
   actual_port="$(state_value gateway_port)"
+  crm_port="$(state_value crm_pages_port)"
   echo "[finance-local] Gateway esperado: ${actual_port:-$GATEWAY_PORT}"
   lsof -nP -iTCP:"${actual_port:-$GATEWAY_PORT}" -sTCP:LISTEN 2>/dev/null || true
-  if [[ -f "$CRM_RUNTIME_ROOT/current.json" ]]; then
-    node - "$CRM_RUNTIME_ROOT/current.json" <<'NODE'
-const fs = require('fs')
-try { const x = JSON.parse(fs.readFileSync(process.argv[2])); for (const [name, port] of Object.entries(x.ports || {})) if (port) console.log(`[finance-local] ${name}: ${port}`) } catch {}
-NODE
-  fi
+  echo "[finance-local] CRM Pages esperado: ${crm_port:-$CRM_PAGES_PORT}"
+  lsof -nP -iTCP:"${crm_port:-$CRM_PAGES_PORT}" -sTCP:LISTEN 2>/dev/null || true
 }
 
 if [[ "$STATUS_ONLY" == 1 ]]; then runtime_status; exit 0; fi
@@ -137,7 +135,7 @@ if [[ "$STOP_ONLY" == 1 ]]; then
   gateway_pid="$(state_value gateway_pid)"
   if [[ "$gateway_pid" =~ ^[0-9]+$ ]] && belongs_to_finance_gateway "$gateway_pid"; then terminate_tree "$gateway_pid"; fi
   rm -f "$STATE_FILE"
-  CRM_RUNTIME_ROOT="$CRM_RUNTIME_ROOT" CRM_PID_FILE="$CRM_PID_FILE" CRM_LOG_FILE="$CRM_LOG_FILE" "$ROOT_DIR/scripts/run-local-crm.sh" --stop || true
+  CRM_VITE_PORT="${CRM_VITE_PORT}" CRM_PAGES_PORT="${CRM_PAGES_PORT}" CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE="$CRM_PID_FILE" CRM_LOG_FILE="$CRM_LOG_FILE" "$ROOT_DIR/scripts/run-local-crm.sh" --stop || true
   echo 'Financeiro local finalizado.'
   exit 0
 fi
@@ -152,10 +150,8 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 prepare_frontend_runtime() {
-  mkdir -p "$FRONTEND_RUNTIME_DIR"
   if [[ ! -x "$(wrangler_bin)" ]]; then
-    echo '[finance-local] Instalando dependências do CRM no runtime privado...'
-    rsync -a --delete --exclude node_modules "$ROOT_DIR/crm/console/" "$FRONTEND_RUNTIME_DIR/"
+    echo '[finance-local] Instalando dependências bloqueadas do CRM...'
     npm --prefix "$FRONTEND_RUNTIME_DIR" ci
   fi
 }
@@ -222,6 +218,11 @@ case "$SCENARIO" in
 esac
 
 GATEWAY_PORT="$(select_port "$GATEWAY_PORT")"
+CRM_VITE_PORT="$(select_port "$CRM_VITE_PORT")"
+CRM_PAGES_PORT="$(select_port "$CRM_PAGES_PORT")"
+if [[ "$CRM_PAGES_PORT" == "$GATEWAY_PORT" ]]; then
+  CRM_PAGES_PORT="$(select_port "$((CRM_PAGES_PORT + 1))")"
+fi
 umask 077
 {
   printf 'LOCAL_FINANCE_AUTH_BYPASS=true\n'
@@ -249,7 +250,7 @@ echo "[finance-local] Iniciando gateway Financeiro em :$GATEWAY_PORT"
 ) >>"$LOG_FILE" 2>&1 &
 GATEWAY_PID=$!
 echo "$$" > "$PID_FILE"
-printf 'scenario=%s\ngateway_port=%s\ngateway_pid=%s\n' "$SCENARIO" "$GATEWAY_PORT" "$GATEWAY_PID" > "$STATE_FILE"
+printf 'scenario=%s\ngateway_port=%s\ngateway_pid=%s\ncrm_vite_port=%s\ncrm_pages_port=%s\n' "$SCENARIO" "$GATEWAY_PORT" "$GATEWAY_PID" "$CRM_VITE_PORT" "$CRM_PAGES_PORT" > "$STATE_FILE"
 
 cleanup() {
   [[ -n "${CRM_PID:-}" ]] && terminate_tree "$CRM_PID"
@@ -267,23 +268,10 @@ if ! wait_for_http "http://127.0.0.1:${GATEWAY_PORT}/health"; then echo "Gateway
 case "$SCENARIO" in nh) LOCAL_UNITS='novo-hamburgo';; bss) LOCAL_UNITS='barra-shopping-sul';; both) LOCAL_UNITS='novo-hamburgo,barra-shopping-sul';; *) LOCAL_UNITS='';; esac
 
 echo "[finance-local] Iniciando CRM Pages local para cenário $SCENARIO"
-# A previous interrupted launcher can leave a `ready` manifest behind even
-# though its Pages process no longer owns the recorded port. Do not let that
-# stale marker race the fresh CRM bootstrap below: retain a genuinely healthy
-# reusable runtime, otherwise remove only this private runtime's manifest.
-if [[ -f "$CRM_RUNTIME_ROOT/current.json" ]]; then
-  stale_crm_url="$(node -e "try{const x=JSON.parse(require('fs').readFileSync(process.argv[1]));if(x.state==='ready'&&x.url)process.stdout.write(x.url)}catch{}" "$CRM_RUNTIME_ROOT/current.json")"
-  if [[ -n "$stale_crm_url" ]] && ! wait_for_http "${stale_crm_url%\?*}/api/auth/me" 1; then
-    echo '[finance-local] Removendo manifesto CRM privado obsoleto.'
-    rm -f "$CRM_RUNTIME_ROOT/current.json"
-  fi
-fi
 (
   cd "$ROOT_DIR"
-  CRM_LOCAL_FRONTEND_RUNTIME_DIR="$FRONTEND_RUNTIME_DIR" \
-  CRM_OPERATOR_RUNTIME_ROOT="$OPERATOR_ROOT" \
-  CRM_RUNTIME_ROOT="$CRM_RUNTIME_ROOT" CRM_PID_FILE="$CRM_PID_FILE" CRM_LOG_FILE="$CRM_LOG_FILE" \
-  CRM_WITH_WHATSAPP=0 CRM_WITH_INSUMOS=0 CRM_GATE_STRICT=0 CRM_BUILD_BEFORE_START=auto \
+  CRM_VITE_PORT="$CRM_VITE_PORT" CRM_PAGES_PORT="$CRM_PAGES_PORT" CRM_PID_FILE="$CRM_PID_FILE" CRM_LOG_FILE="$CRM_LOG_FILE" \
+  CRM_WITH_WHATSAPP=0 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_GATE_STRICT=0 CRM_BUILD_BEFORE_START=1 \
   LOCAL_AUTH_USERNAME=finance-local LOCAL_AUTH_EMAIL=finance-local@localhost LOCAL_AUTH_NAME='Finance Local' \
   LOCAL_AUTH_ALLOWED_MODULES="$LOCAL_MODULES" LOCAL_AUTH_ALLOWED_UNITS="$LOCAL_UNITS" \
   LOCAL_FINANCE_API_TARGET="http://127.0.0.1:${GATEWAY_PORT}" LOCAL_FINANCE_ACTOR=finance-local LOCAL_FINANCE_CSRF_TOKEN=finance-local-csrf \
@@ -291,14 +279,9 @@ fi
 ) >>"$CRM_LOG_FILE" 2>&1 &
 CRM_PID=$!
 
-for _ in $(seq 1 120); do
-  if [[ -f "$CRM_RUNTIME_ROOT/current.json" ]]; then
-    CRM_URL="$(node -e "try{const x=JSON.parse(require('fs').readFileSync(process.argv[1]));if(x.state==='ready'&&x.url)process.stdout.write(x.url)}catch{}" "$CRM_RUNTIME_ROOT/current.json")"
-    [[ -n "${CRM_URL:-}" ]] && wait_for_http "${CRM_URL%\?*}/api/auth/me" 1 && break
-  fi
-  sleep 1
-done
-[[ -n "${CRM_URL:-}" ]] || { echo "CRM Financeiro não ficou pronto. Veja $CRM_LOG_FILE" >&2; exit 1; }
+CRM_URL="http://localhost:${CRM_PAGES_PORT}/?module=finance"
+wait_for_http "http://localhost:${CRM_PAGES_PORT}/api/auth/me" 120 || { echo "CRM Financeiro não ficou pronto. Veja $CRM_LOG_FILE" >&2; exit 1; }
+printf 'crm_url=%s\n' "$CRM_URL" >> "$STATE_FILE"
 
 echo "[finance-local] Pronto: $CRM_URL"
 echo "[finance-local] Gateway: http://127.0.0.1:${GATEWAY_PORT}/finance/bootstrap"
@@ -307,7 +290,7 @@ echo "[finance-local] Fixture: $fixture"
 if [[ "$RUN_SMOKE" == 1 ]]; then
   echo "[finance-local] Executando smoke headless do Financeiro..."
   PLAYWRIGHT_BROWSERS_PATH="${CRM_PLAYWRIGHT_BROWSERS_PATH:-$OPERATOR_ROOT/playwright-browsers}" CRM_URL="$CRM_URL" FINANCE_SCENARIO="$SCENARIO" \
-    node "$FRONTEND_RUNTIME_DIR/scripts/finance-local-smoke.cjs"
+    node "$ROOT_DIR/crm/console/scripts/finance-local-smoke.cjs"
 fi
 
 if [[ "$OPEN_BROWSER" == 1 ]]; then
