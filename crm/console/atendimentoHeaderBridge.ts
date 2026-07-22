@@ -7,6 +7,7 @@ export type AtendimentoHeaderOption = {
 
 export type AtendimentoHeaderState = {
   loading: boolean
+  canManage: boolean
   filters: AtendimentoFilters
   units: AtendimentoHeaderOption[]
   procedures: AtendimentoHeaderOption[]
@@ -63,6 +64,7 @@ export function normalizeAtendimentoHeaderState(detail: unknown): AtendimentoHea
   if (!filters) return null
   return {
     loading: Boolean(payload.loading),
+    canManage: Boolean(payload.canManage),
     filters,
     units: normalizeOptions(payload.units),
     procedures: normalizeOptions(payload.procedures),

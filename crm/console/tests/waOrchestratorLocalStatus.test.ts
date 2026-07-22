@@ -72,7 +72,8 @@ describe('WhatsApp Orchestrator local proxy', () => {
     })
 
     expect(response.status).toBe(200)
-    expect((fetchMock.mock.calls[0]?.[0] as Request).url).toBe('http://127.0.0.1:8110/api/wa-orchestrator/status')
+    const [firstRequest] = (fetchMock.mock.calls as unknown as Array<[Request]>)[0] || []
+    expect(firstRequest.url).toBe('http://127.0.0.1:8110/api/wa-orchestrator/status')
   })
 
   it('reports real mode and reachability without disclosing credentials', async () => {

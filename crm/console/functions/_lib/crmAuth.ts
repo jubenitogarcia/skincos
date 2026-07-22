@@ -1,3 +1,5 @@
+import { effectiveAllowedModules, normalizeCrmRole } from '../../authPolicy'
+
 export type CrmAuthUser = {
   id: string
   username?: string
@@ -16,11 +18,7 @@ const json = (status: number, body: any) =>
   })
 
 function normalizeRole(value: unknown): string {
-  const raw = String(value || '').trim().toUpperCase()
-  if (!raw) return ''
-  if (raw === 'ADMIN') return 'GESTOR'
-  if (raw === 'OPERADOR') return 'INJETOR'
-  return raw
+  return normalizeCrmRole(value)
 }
 
 function parseBoolean(value: unknown): boolean | null {
@@ -111,7 +109,7 @@ export function getLocalDevAuthUser(context: any): CrmAuthUser {
     email,
     role,
     allowedUnits,
-    allowedModules,
+    allowedModules: effectiveAllowedModules(role, allowedModules),
   }
 }
 
@@ -184,7 +182,7 @@ export async function getCrmUser(context: any): Promise<CrmAuthUser | null> {
     email: email ? String(email) : undefined,
     role: normalizeRole(raw?.role || undefined) || undefined,
     allowedUnits: Array.isArray(raw?.allowedUnits) ? raw.allowedUnits : undefined,
-    allowedModules: Array.isArray(raw?.allowedModules) ? raw.allowedModules : undefined,
+    allowedModules: effectiveAllowedModules(raw?.role, raw?.allowedModules),
   }
 }
 

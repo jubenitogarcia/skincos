@@ -17,6 +17,7 @@ describe('Atendimento proxy helpers', () => {
     expect(__testables.hasModuleAccess({ role: 'GESTOR', allowedModules: [] })).toBe(true)
     expect(__testables.hasModuleAccess({ role: 'INJETOR', allowedModules: ['atendimento'] })).toBe(true)
     expect(__testables.hasModuleAccess({ role: 'INJETOR', allowedModules: ['insumos'] })).toBe(false)
+    expect(__testables.hasModuleAccess({ role: 'CONSULTOR', allowedModules: [] })).toBe(true)
   })
 
   it('normalizes legacy roles', () => {
@@ -63,6 +64,14 @@ describe('Atendimento proxy helpers', () => {
       allowedUnits: ['Novo Hamburgo'],
       allowedModules: ['atendimento'],
     })
+  })
+
+  it('narrows legacy consultant accounts to Atendimento before signing the actor', () => {
+    expect(__testables.toAtendimentoActor({
+      id: 'consultor-1',
+      role: 'CONSULTOR',
+      allowedModules: [],
+    }).allowedModules).toEqual(['atendimento'])
   })
 
   it('falls back to escala keys when the dedicated atendimento key is absent', () => {

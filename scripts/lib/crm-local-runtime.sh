@@ -66,11 +66,21 @@ crm_runtime_acquire_lock() {
 
 crm_runtime_port_is_free() {
   local port="$1"
+  # WSL can expose a Windows-owned localhost listener through wslrelay without
+  # showing an owning Linux PID in lsof/ss. Every CRM-local dependency is HTTP,
+  # so probe the loopback endpoint as a final guard before choosing a port.
   if command -v lsof >/dev/null 2>&1; then
-    ! lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
-    return
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 1
+    fi
   fi
-  ! ss -ltn "sport = :$port" 2>/dev/null | grep -q ":$port"
+  if ss -ltn "sport = :$port" 2>/dev/null | grep -q ":$port"; then
+    return 1
+  fi
+  if curl --connect-timeout 1 --max-time 1 -sS "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
 }
 
 crm_runtime_select_port() {
@@ -355,23 +365,41 @@ NODE
 
 crm_runtime_safe_stop() {
   [[ -f "$CRM_RUNTIME_MANIFEST" ]] || { echo '[crm-local] Não existe manifesto de runtime para encerrar.'; return 0; }
-  local candidate
+  local candidate session_id
   candidate="$(node - "$CRM_RUNTIME_MANIFEST" "$ROOT_DIR" <<'NODE'
 const fs = require('fs')
 try { const x = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')); if (x.worktree === process.argv[3] && Number.isInteger(x.launcherPid)) process.stdout.write(String(x.launcherPid)) } catch {}
 NODE
   )"
+  session_id="$(node - "$CRM_RUNTIME_MANIFEST" "$ROOT_DIR" <<'NODE'
+const fs = require('fs')
+try { const x = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')); if (x.worktree === process.argv[3] && /^[a-z0-9-]+$/i.test(String(x.sessionId || ''))) process.stdout.write(x.sessionId) } catch {}
+NODE
+  )"
   if [[ ! "$candidate" =~ ^[0-9]+$ ]] || ! kill -0 "$candidate" 2>/dev/null; then
+    candidate=""
+  fi
+  if [[ -n "$candidate" ]]; then
+    local command_line process_cwd
+    command_line="$(ps -p "$candidate" -o args= 2>/dev/null || true)"
+    process_cwd="$(readlink "/proc/$candidate/cwd" 2>/dev/null || true)"
+    if [[ "$command_line" != *"run-local-crm.sh"* || ( "$command_line" != *"$ROOT_DIR"* && "$process_cwd" != "$ROOT_DIR" ) ]]; then
+      candidate=""
+    fi
+  fi
+  if [[ -z "$candidate" && -n "$session_id" ]] && command -v pgrep >/dev/null 2>&1; then
+    while IFS= read -r discovered_pid; do
+      local discovered_command
+      discovered_command="$(ps -p "$discovered_pid" -o args= 2>/dev/null || true)"
+      if [[ "$discovered_command" == *"LOCAL_RUNTIME_SESSION_ID=$session_id"* && "$discovered_command" == *"LOCAL_RUNTIME_WORKTREE=$ROOT_DIR"* ]]; then
+        candidate="$discovered_pid"
+        break
+      fi
+    done < <(pgrep -f "LOCAL_RUNTIME_SESSION_ID=$session_id" 2>/dev/null || true)
+  fi
+  if [[ -z "$candidate" ]]; then
     echo '[crm-local] Manifesto está obsoleto; nenhum processo identificado foi encerrado.'
     return 0
-  fi
-  local command_line
-  local process_cwd
-  command_line="$(ps -p "$candidate" -o args= 2>/dev/null || true)"
-  process_cwd="$(readlink "/proc/$candidate/cwd" 2>/dev/null || true)"
-  if [[ "$command_line" != *"run-local-crm.sh"* || ( "$command_line" != *"$ROOT_DIR"* && "$process_cwd" != "$ROOT_DIR" ) ]]; then
-    echo '[crm-local] O PID do manifesto não prova pertencer a este worktree; não foi encerrado.' >&2
-    return 1
   fi
   echo "[crm-local] Encerrando runtime identificado (PID $candidate)."
   crm_runtime_terminate_tree "$candidate"

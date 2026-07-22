@@ -10,7 +10,7 @@ async function mockAuth(page: Page, role = 'GESTOR') {
   })
 }
 
-async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: boolean; duplicateDoctorAlias?: boolean; duplicateProfessionalAlias?: boolean; invalidDoctorRows?: boolean } = {}) {
+async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: boolean; duplicateDoctorAlias?: boolean; duplicateProfessionalAlias?: boolean; invalidDoctorRows?: boolean; consultantBinding?: boolean } = {}) {
   const references = {
     ok: true,
     units: [{ slug: 'novo-hamburgo', name: 'Novo Hamburgo' }],
@@ -86,7 +86,33 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
     const url = new URL(route.request().url())
     const method = route.request().method()
     if (url.pathname.endsWith('/references')) {
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(references) })
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...references,
+          ...(options.consultantBinding ? {
+            actorConsultantByUnit: {
+              'novo-hamburgo': { canonicalId: 'p2', name: 'Consultora Sintética', origin: 'actor' },
+            },
+          } : {}),
+        }),
+      })
+    }
+    if (url.pathname.endsWith('/doctor-suggestion')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          unitSlug: 'novo-hamburgo',
+          unitName: 'Novo Hamburgo',
+          date: url.searchParams.get('date'),
+          doctorId: 'p1',
+          doctorName: 'Dra. Sintética',
+          assignmentOrigin: 'schedule',
+        }),
+      })
     }
     if (url.pathname.endsWith('/clients')) {
       const query = String(url.searchParams.get('q') || '').toLocaleLowerCase('pt-BR')
@@ -520,5 +546,20 @@ test.describe('atendimento', () => {
       await expect(page.getByRole('tab', { name: tabName })).toHaveCount(0)
     }
     await expect(page.getByText('FORBIDDEN')).not.toBeVisible()
+  })
+
+  test('locks consultant assignments while filling injector from Escala', async ({ page }) => {
+    await mockAuth(page, 'CONSULTOR')
+    await mockAtendimentoApi(page, { restrictedManagement: true, consultantBinding: true })
+    await page.goto('/?module=atendimento')
+
+    const inlineInjector = page.getByTestId('atendimento-inline-injector-locked')
+    await expect(inlineInjector).toBeVisible({ timeout: 30000 })
+    await expect(inlineInjector).toContainText('Dra. Sintética')
+    await expect(page.getByTestId('atendimento-inline-injector')).toHaveCount(0)
+    await expect(page.getByTestId('atendimento-inline-consultant-locked')).toContainText('Consultora Sintética')
+    await expect(page.getByTestId('atendimento-inline-consultant')).toHaveCount(0)
+    await expect(page.getByTestId('atendimento-row-injector-locked-row-1')).toContainText('Dra. Sintética')
+    await expect(page.getByTestId('atendimento-row-consultant-locked-row-1')).toContainText('Consultora Sintética')
   })
 })

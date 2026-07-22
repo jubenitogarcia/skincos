@@ -3,6 +3,7 @@ import React, { useState, Suspense, lazy, useMemo } from 'react'
 import { ContextDebugger } from './ContextDebugger'
 import { ErrorBoundary } from '@/ErrorBoundary'
 import { NotificationProvider, useAuth, useNotifications } from '@/contexts'
+import { effectiveAllowedModules, normalizeCrmRole } from '@/authPolicy'
 import { LoadingPercentText, LoadingScreen } from '@/LoadingPattern'
 import { AuthScreen } from '@/AuthScreen'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
@@ -374,8 +375,9 @@ export default function AppFunctionalNeatlab() {
 
     const DEFAULT_MODULE_KEY = 'insumos'
 
-    const allowedModulesKey = Array.isArray(user?.allowedModules) ? user.allowedModules.join('|') : ''
-    const roleKey = String(user?.role || '').trim().toUpperCase()
+    const allowedModules = useMemo(() => effectiveAllowedModules(user?.role, user?.allowedModules), [user?.allowedModules, user?.role])
+    const allowedModulesKey = allowedModules.join('|')
+    const roleKey = normalizeCrmRole(user?.role)
     const isLocalDev = import.meta.env.DEV && (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
     const devEmail = String(user?.email || '').trim().toLowerCase()
     const pontoCanAdmin =
@@ -386,11 +388,10 @@ export default function AppFunctionalNeatlab() {
         (moduleKey: string) => {
             const key = String(moduleKey || '').trim()
             if (!key) return false
+            if (roleKey === 'CONSULTOR') return key === 'atendimento'
             if (key === 'escala-profissionais') return roleKey === 'GESTOR' || roleKey === 'GERENTE'
             if (roleKey === 'GESTOR') return true
-            const allowed = Array.isArray(user?.allowedModules)
-                ? user.allowedModules.map(String).map((s) => s.trim()).filter(Boolean)
-                : []
+            const allowed = allowedModules
             if (!allowed.length) return true // compat: vazio/ausente => ALL
             if (allowed.includes(key)) return true
             if (key === 'procedimentos') {
@@ -407,7 +408,7 @@ export default function AppFunctionalNeatlab() {
             }
             return false
         },
-        [allowedModulesKey, roleKey]
+        [allowedModules, allowedModulesKey, roleKey]
     )
 
 	    const [profileOpen, setProfileOpen] = useState(false)
@@ -778,14 +779,14 @@ export default function AppFunctionalNeatlab() {
                 params.has('shareText') ||
                 params.has('shareUrl') ||
                 params.has('shareFiles')
-            if (requested && UNLOCKED_MODULE_KEYS.has(requested) && modules.some((m) => m.key === requested)) {
+            if (requested && UNLOCKED_MODULE_KEYS.has(requested) && modules.some((m) => m.key === requested) && hasModuleAccess(requested)) {
                 setActive(requested)
             } else if (wantsInsumosShortcut && UNLOCKED_MODULE_KEYS.has('insumos')) {
                 setActive('insumos')
             }
         } catch { /* ignore */ }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [hasModuleAccess])
 
 	    // Save active module selection
 	    React.useEffect(() => {
@@ -843,9 +844,9 @@ export default function AppFunctionalNeatlab() {
     React.useEffect(() => {
         if (!hasModuleAccess(active)) {
             const next = permittedUnlockedModules[0]?.key || null
-            if (next && next !== active) setActive(next)
+            if (next && next !== active) selectModule(next)
         }
-    }, [active, hasModuleAccess, permittedUnlockedModules])
+    }, [active, hasModuleAccess, permittedUnlockedModules, selectModule])
 
     const filteredModules = useMemo(
         () =>
@@ -2058,7 +2059,7 @@ export default function AppFunctionalNeatlab() {
                                                         Relatório
                                                     </TooltipContent>
                                                 </Tooltip>
-                                                <Tooltip>
+                                                {atendimentoHeaderState?.canManage ? <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <Button
                                                             size="icon"
@@ -2074,7 +2075,7 @@ export default function AppFunctionalNeatlab() {
                                                     <TooltipContent>
                                                         Importar Gerência
                                                     </TooltipContent>
-                                                </Tooltip>
+                                                </Tooltip> : null}
                                             </div>
                                         </div>
                                     ) : null}

@@ -95,7 +95,8 @@ $powershellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powe
 $shortcuts = @(
     @{ Name = "Workspace"; Action = "WorkspaceMenu"; Description = "Menu de bootstrap, validacao, WSL e GitHub do workspace Skincos." },
     @{ Name = "Contexto"; Action = "ContextMenu"; Description = "Menu de status, contexto e bootstrap de thread do Skincos." },
-    @{ Name = "CRM – Local"; Action = "CrmLocal"; Description = "Inicia o CRM local completo: build atual, Insumos local, gate do shell e navegador." },
+    @{ Name = "CRM – Local (Gestor)"; Action = "CrmLocal"; Description = "Inicia o Gestor e os serviços locais compartilhados em http://localhost:8791." },
+    @{ Name = "CRM – Consultor (Ponto)"; Action = "CrmConsultor"; Description = "Inicia somente a interface de Consultor em http://localhost:8792/?module=ponto." },
     @{ Name = "EF App"; Action = "EfAppMenu"; Description = "Menu das automacoes do app.espacofacial.com.br." },
     @{ Name = "Orb"; Action = "OrbMenu"; Description = "Menu do runtime live do orb/n8n e utilitarios de suporte." }
 )

@@ -23,6 +23,8 @@ param(
         "WebsiteSiteCheck",
         "WebsiteReleaseCheck",
         "CrmLocal",
+        "CrmConsultor",
+        "CrmConsultorStop",
         "CrmSiteEf",
         "CrmMetaAds",
         "CrmAtendimento",
@@ -56,7 +58,9 @@ param(
         "OrbImportClinicWorkflowsLive"
     )]
     [string]$Action,
-    [string]$ProjectRoot
+    [string]$ProjectRoot,
+    [ValidateSet("Current", "Reviewed")]
+    [string]$CrmSource = "Current"
 )
 
 $ErrorActionPreference = "Stop"
@@ -139,6 +143,7 @@ function Convert-ToBashLiteral {
 function Invoke-ShortcutWsl {
     param(
         [string]$Command,
+        [string]$WorkingProjectRoot = $ProjectRoot,
         [string[]]$EnvVar = @(),
         [int[]]$AcceptedExitCode = @(0),
         [switch]$SkipBootstrapCheck,
@@ -149,7 +154,7 @@ function Invoke-ShortcutWsl {
     )
 
     & $wslInvoker `
-        -ProjectRoot $ProjectRoot `
+        -ProjectRoot $WorkingProjectRoot `
         -RepoCommand $Command `
         -EnvVar $EnvVar `
         -SkipBootstrapCheck:$SkipBootstrapCheck `
@@ -160,6 +165,118 @@ function Invoke-ShortcutWsl {
 
     if ($AcceptedExitCode -notcontains $LASTEXITCODE) {
         throw "The WSL command failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Resolve-CrmLocalSourceRoot {
+    param(
+        [ValidateSet("Current", "Reviewed")]
+        [string]$SourceMode = $CrmSource
+    )
+
+    # During development, the shortcut must render the checkout that invoked
+    # it, including intentionally uncommitted UI work. run-local-crm copies the
+    # console into the native WSL runtime before it starts Vite/Pages, so this
+    # does not execute the frontend from DrvFS. Reviewed remains an explicit
+    # opt-in for a clean origin/main smoke check.
+    if ($SourceMode -eq "Current") {
+        return $ProjectRoot
+    }
+
+    # Reviewed source: isolated, clean and pinned to origin/main.
+    $sourceRoot = Join-Path $operatorRuntimeRoot "source\crm-local-main"
+    $sourceParent = Split-Path -Parent $sourceRoot
+
+    & git -C $ProjectRoot fetch origin main | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Não foi possível atualizar origin/main antes de iniciar o CRM Local." }
+
+    if (-not (Test-Path -LiteralPath $sourceRoot)) {
+        New-Item -ItemType Directory -Path $sourceParent -Force | Out-Null
+        & git -C $ProjectRoot worktree add --detach $sourceRoot origin/main | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Não foi possível criar o worktree limpo do CRM Local em '$sourceRoot'." }
+        return $sourceRoot
+    }
+
+    $trackedChanges = @(& git -C $sourceRoot status --porcelain --untracked-files=no)
+    if ($LASTEXITCODE -ne 0) { throw "O worktree privado do CRM Local não está íntegro: '$sourceRoot'." }
+    if ($trackedChanges.Count -gt 0) {
+        # Preserve a diagnostic or in-progress reviewed checkout. A new,
+        # commit-addressed worktree is immutable from this launcher's point of
+        # view, so an old dirty source can never block the local CRM.
+        $reviewedCommit = (& git -C $ProjectRoot rev-parse --short=12 origin/main).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($reviewedCommit)) {
+            throw "Não foi possível identificar o commit revisado do CRM Local."
+        }
+        $recoverySourceRoot = Join-Path $sourceParent ("crm-local-main-{0}" -f $reviewedCommit)
+        Write-Host "[crm-local] Worktree revisado anterior preservado com alterações; usando '$recoverySourceRoot'."
+        if (-not (Test-Path -LiteralPath $recoverySourceRoot)) {
+            & git -C $ProjectRoot worktree add --detach $recoverySourceRoot origin/main | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "Não foi possível criar o worktree revisado recuperado do CRM Local em '$recoverySourceRoot'." }
+            return $recoverySourceRoot
+        }
+        $recoveryChanges = @(& git -C $recoverySourceRoot status --porcelain --untracked-files=no)
+        if ($LASTEXITCODE -ne 0 -or $recoveryChanges.Count -gt 0) {
+            throw "O worktree revisado recuperado contém alterações rastreadas e não será sobrescrito: '$recoverySourceRoot'."
+        }
+        & git -C $recoverySourceRoot checkout --detach origin/main | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Não foi possível alinhar o worktree revisado recuperado ao origin/main." }
+        return $recoverySourceRoot
+    }
+
+    & git -C $sourceRoot checkout --detach origin/main | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Não foi possível alinhar o worktree privado do CRM Local ao origin/main." }
+    return $sourceRoot
+}
+
+function Resolve-CrmPersonaSourceRoot {
+    param([ValidateSet("Gestor", "Consultor")][string]$Persona)
+
+    $sourceRoot = Join-Path $operatorRuntimeRoot ("source\crm-local-{0}-main" -f $Persona.ToLowerInvariant())
+    if (-not (Test-Path -LiteralPath $sourceRoot)) {
+        New-Item -ItemType Directory -Path (Split-Path -Parent $sourceRoot) -Force | Out-Null
+        & git -C $ProjectRoot worktree add --detach $sourceRoot origin/main | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Não foi possível criar o worktree local do CRM $Persona." }
+        return $sourceRoot
+    }
+    if ((@(& git -C $sourceRoot status --porcelain --untracked-files=no)).Count -gt 0) {
+        throw "O worktree local do CRM $Persona contém alterações rastreadas e não será sobrescrito: '$sourceRoot'."
+    }
+    & git -C $sourceRoot checkout --detach origin/main | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Não foi possível atualizar o worktree local do CRM $Persona." }
+    return $sourceRoot
+}
+
+function Assert-GestorSharedServices {
+    param([string]$WorkingProjectRoot)
+    Invoke-ShortcutWsl -WorkingProjectRoot $WorkingProjectRoot -SkipBootstrapCheck -Command @'
+if ! curl -fsS --max-time 5 http://127.0.0.1:8791/api/auth/me >/dev/null || \
+   ! curl -fsS --max-time 5 http://127.0.0.1:8787/insumos/health >/dev/null || \
+   ! curl -fsS --max-time 5 http://127.0.0.1:8801/api/ponto/readiness >/dev/null || \
+   ! curl -fsS --max-time 5 http://127.0.0.1:8110/health >/dev/null; then
+  echo crm_consultor_depende_do_gestor >&2
+  exit 1
+fi
+'@
+}
+
+function Stop-ReviewedCrmRuntimeIfNeeded {
+    param([string]$NextSourceRoot)
+
+    $reviewedSourceRoot = Join-Path $operatorRuntimeRoot "source\crm-local-main"
+    $reviewedSourceParent = Split-Path -Parent $reviewedSourceRoot
+    $reviewedSources = @($reviewedSourceRoot)
+    if (Test-Path -LiteralPath $reviewedSourceParent) {
+        $reviewedSources += @(Get-ChildItem -LiteralPath $reviewedSourceParent -Directory -Filter "crm-local-main-*").FullName
+    }
+    foreach ($candidateSourceRoot in ($reviewedSources | Select-Object -Unique)) {
+        if ($candidateSourceRoot -eq $NextSourceRoot -or -not (Test-Path -LiteralPath $candidateSourceRoot)) {
+            continue
+        }
+        # The stop script validates the manifest identity and process command
+        # line before sending signals. It cannot terminate an unrelated app.
+        Invoke-ShortcutWsl -WorkingProjectRoot $candidateSourceRoot -SkipBootstrapCheck -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
+            (Convert-ToBashLiteral -Value $crmPidWsl), `
+            (Convert-ToBashLiteral -Value $crmLogWsl))
     }
 }
 
@@ -229,6 +346,10 @@ $sharedRoot = Split-Path (Split-Path $ProjectRoot -Parent) -Parent
 $websiteSourceRoot = Join-Path $sharedRoot "Worktrees\skincos\shared\website-local-main"
 $crmPid = Join-Path $tmpRoot "crm-local-dev.pid"
 $crmLog = Join-Path $logRoot "crm-local-dev.log"
+$crmGestorPid = Join-Path $tmpRoot "crm-local-gestor.pid"
+$crmGestorLog = Join-Path $logRoot "crm-local-gestor.log"
+$crmConsultorPid = Join-Path $tmpRoot "crm-local-consultor.pid"
+$crmConsultorLog = Join-Path $logRoot "crm-local-consultor.log"
 $atendimentoPid = Join-Path $tmpRoot "crm-atendimento-local.pid"
 $atendimentoLog = Join-Path $logRoot "crm-atendimento-local.log"
 $efAppStateRoot = Join-Path $localStateRoot "espacofacial-app"
@@ -247,6 +368,10 @@ $websiteLogWsl = Convert-WindowsPathToWsl -Path $websiteLog
 $websitePortWsl = Convert-WindowsPathToWsl -Path $websitePort
 $crmPidWsl = Convert-WindowsPathToWsl -Path $crmPid
 $crmLogWsl = Convert-WindowsPathToWsl -Path $crmLog
+$crmGestorPidWsl = Convert-WindowsPathToWsl -Path $crmGestorPid
+$crmGestorLogWsl = Convert-WindowsPathToWsl -Path $crmGestorLog
+$crmConsultorPidWsl = Convert-WindowsPathToWsl -Path $crmConsultorPid
+$crmConsultorLogWsl = Convert-WindowsPathToWsl -Path $crmConsultorLog
 $playwrightBrowsersRootWsl = Convert-WindowsPathToWsl -Path $playwrightBrowsersRoot
 $crmBuildStateWsl = Convert-WindowsPathToWsl -Path $crmBuildState
 $atendimentoPidWsl = Convert-WindowsPathToWsl -Path $atendimentoPid
@@ -336,20 +461,42 @@ function Invoke-ShortcutActionInternal {
         "WebsiteSiteCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:check" }
         "WebsiteReleaseCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:release-check" }
         "CrmLocal" {
-            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command ("CRM_BUILD_BEFORE_START=auto CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} CRM_BUILD_STATE_FILE={3} bash ./scripts/run-local-crm.sh --module conversa" -f `
+            # O atalho CRM Local deve servir exatamente o checkout que o
+            # invocou. O modo Reviewed continua sendo uma escolha explícita;
+            # nunca substitua alterações locais por um snapshot de persona.
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            Invoke-ShortcutWsl -SkipBootstrapCheck -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
-                (Convert-ToBashLiteral -Value $crmLogWsl), `
-                (Convert-ToBashLiteral -Value $playwrightBrowsersRootWsl), `
-                (Convert-ToBashLiteral -Value $crmBuildStateWsl))
+                (Convert-ToBashLiteral -Value $crmLogWsl))
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -AcceptedExitCode @(0, 130, 143) -Command ("LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh" -f `
+                (Convert-ToBashLiteral -Value $crmPidWsl), `
+                (Convert-ToBashLiteral -Value $crmLogWsl))
+        }
+        "CrmConsultor" {
+            $crmLocalSourceRoot = Resolve-CrmPersonaSourceRoot -Persona Consultor
+            Assert-GestorSharedServices -WorkingProjectRoot $crmLocalSourceRoot
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -AcceptedExitCode @(0, 130, 143) -Command ("LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:8801 PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787 LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110 CRM_ROUTE='/?localAuthReset=1' CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --module ponto" -f `
+                (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
+                (Convert-ToBashLiteral -Value $crmConsultorLogWsl))
+        }
+        "CrmConsultorStop" {
+            $crmLocalSourceRoot = Resolve-CrmPersonaSourceRoot -Persona Consultor
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
+                (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
+                (Convert-ToBashLiteral -Value $crmConsultorLogWsl))
         }
         "CrmSiteEf" {
-            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready" -f `
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            Stop-ReviewedCrmRuntimeIfNeeded -NextSourceRoot $crmLocalSourceRoot
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -AcceptedExitCode @(0, 130, 143) -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl), `
                 (Convert-ToBashLiteral -Value $playwrightBrowsersRootWsl))
         }
         "CrmMetaAds" {
-            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} bash ./scripts/run-local-crm.sh --module meta-ads" -f `
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            Stop-ReviewedCrmRuntimeIfNeeded -NextSourceRoot $crmLocalSourceRoot
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -AcceptedExitCode @(0, 130, 143) -Command ("CRM_BUILD_BEFORE_START=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} CRM_PLAYWRIGHT_BROWSERS_PATH={2} bash ./scripts/run-local-crm.sh --module meta-ads" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl), `
                 (Convert-ToBashLiteral -Value $playwrightBrowsersRootWsl))
@@ -363,9 +510,11 @@ function Invoke-ShortcutActionInternal {
         "CrmAtendimentoMirrorStatus" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-status" }
         "CrmAtendimentoMirrorSync" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-sync -- --apply" }
         "CrmLocalStop" {
-            Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
+            $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot
+            Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
                 (Convert-ToBashLiteral -Value $crmPidWsl), `
                 (Convert-ToBashLiteral -Value $crmLogWsl))
+            Stop-ReviewedCrmRuntimeIfNeeded -NextSourceRoot $crmLocalSourceRoot
             Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh --stop" -f `
                 (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
                 (Convert-ToBashLiteral -Value $atendimentoLogWsl))
@@ -559,6 +708,7 @@ function Show-CrmMenu {
             -Title "Local > CRM" `
             -Options @(
                 (New-MenuOption -Label "CRM Local" -Action "CrmLocal"),
+                (New-MenuOption -Label "CRM – Consultor (Ponto)" -Action "CrmConsultor"),
                 (New-MenuOption -Label "CRM Site EF" -Action "CrmSiteEf"),
                 (New-MenuOption -Label "CRM Meta Ads" -Action "CrmMetaAds"),
                 (New-MenuOption -Label "CRM Atendimento" -Action "CrmAtendimento"),

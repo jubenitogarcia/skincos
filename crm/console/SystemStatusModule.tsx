@@ -881,6 +881,11 @@ function AdminUserForm({
   const [ativo, setAtivo] = React.useState(initial?.ativo ?? true)
   const [password, setPassword] = React.useState('')
   const isCreate = mode === 'create'
+  const isConsultant = role === 'CONSULTOR'
+
+  React.useEffect(() => {
+    if (isConsultant) setAllowedModules('atendimento')
+  }, [isConsultant])
 
   const submit = async () => {
     setLoading(true)
@@ -893,7 +898,7 @@ function AdminUserForm({
           .split(/[,;|]/g)
           .map((s) => s.trim())
           .filter(Boolean),
-        allowedModules: allowedModules
+        allowedModules: (isConsultant ? 'atendimento' : allowedModules)
           .split(/[,;|]/g)
           .map((s) => s.trim())
           .filter(Boolean),
@@ -958,8 +963,10 @@ function AdminUserForm({
           <Input
             value={allowedModules}
             onChange={(e) => setAllowedModules(e.target.value)}
-            placeholder="vazio = todos • ex: insumos, status, users"
+            disabled={isConsultant}
+            placeholder={isConsultant ? 'atendimento' : 'vazio = todos • ex: insumos, status, users'}
           />
+          {isConsultant ? <div className="text-xs text-blue-200/60">Consultores acessam somente Atendimento.</div> : null}
         </div>
         {isCreate ? (
           <div className="space-y-1 sm:col-span-2">
