@@ -32,4 +32,11 @@ describe('CRM role module navigation', () => {
     expect(hasCrmModuleAccess('CONSULTOR', ['insumos'], 'users')).toBe(false)
     expect(hasCrmModuleAccess('custom-authenticated-role', ['insumos'], 'users')).toBe(false)
   })
+
+  it('reserves commercial customer intelligence for managers', () => {
+    expect(hasCrmModuleAccess('GESTOR', [], 'clientes')).toBe(true)
+    expect(hasCrmModuleAccess('ADMIN', [], 'clientes')).toBe(true)
+    expect(hasCrmModuleAccess('GERENTE', ['clientes'], 'clientes')).toBe(false)
+    expect(hasCrmModuleAccess('CONSULTOR', ['clientes'], 'clientes')).toBe(false)
+  })
 })

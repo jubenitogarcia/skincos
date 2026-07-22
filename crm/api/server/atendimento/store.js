@@ -24,6 +24,7 @@ import {
     splitList,
     stableConfigHash,
 } from './domain.js'
+import { segmentCommercialProfiles, summarizeCommercialProfiles } from './clientCommercial.js'
 
 let pool = null
 
@@ -318,6 +319,49 @@ export function atendimentoMigrationStatements() {
             add column if not exists selection_reason text;`,
         `alter table crm_atendimento.doctor_conversion_results
             add column if not exists optimal_plateau jsonb;`,
+        `create table if not exists crm_atendimento.commercial_policy_config (
+            singleton boolean primary key default true check (singleton),
+            active_contact_cooldown_days int not null default 30 check(active_contact_cooldown_days between 1 and 180),
+            return_risk_thresholds int[] not null default array[90,180,365] check(array_length(return_risk_thresholds, 1) = 3),
+            updated_by text,
+            updated_at timestamptz not null default now()
+        );`,
+        `create table if not exists crm_atendimento.commercial_procedure_cadences (
+            id uuid primary key default gen_random_uuid(),
+            procedure_id uuid not null references crm_atendimento.procedures(id) on delete cascade,
+            unit_id uuid references crm_atendimento.units(id) on delete cascade,
+            cadence_days int not null check(cadence_days between 1 and 1095),
+            status text not null default 'draft' check(status in ('draft','approved','disabled')),
+            notes text,
+            approved_by text,
+            approved_at timestamptz,
+            updated_by text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique nulls not distinct(procedure_id, unit_id)
+        );`,
+        `create table if not exists crm_atendimento.commercial_actions (
+            id uuid primary key default gen_random_uuid(),
+            identity_id uuid not null,
+            unit_id uuid references crm_atendimento.units(id) on delete set null,
+            segment_key text not null,
+            action_type text not null check(action_type in ('contact','follow_up','appointment','relationship')),
+            status text not null default 'open' check(status in ('open','contacted','responded','scheduled','won_sale','returned','closed','cancelled')),
+            owner text,
+            due_date date,
+            notes text,
+            outcome_notes text,
+            created_by text not null,
+            updated_by text,
+            completed_at timestamptz,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );`,
+        `create index if not exists crm_atendimento_commercial_actions_identity_idx
+            on crm_atendimento.commercial_actions(identity_id, created_at desc);`,
+        `create index if not exists crm_atendimento_commercial_actions_active_idx
+            on crm_atendimento.commercial_actions(status, created_at desc)
+            where status in ('open','contacted','responded','scheduled');`,
     ]
 }
 
@@ -358,6 +402,12 @@ export async function migrateAtendimento(client) {
             defaultOptimizationConfig.unstableJumpThreshold,
             defaultConfigHash,
         ],
+    )
+    await client.query(
+        `insert into crm_atendimento.commercial_policy_config(
+            singleton, active_contact_cooldown_days, return_risk_thresholds, updated_by)
+         values (true, 30, array[90,180,365], 'migration')
+         on conflict(singleton) do nothing`,
     )
 }
 
@@ -1799,6 +1849,230 @@ const ATTENDANCE_SELECT = `
     left join crm_atendimento.professionals con on con.id = a.consultant_id
 `
 
+const COMMERCIAL_ACTION_STATUSES = new Set(['open', 'contacted', 'responded', 'scheduled', 'won_sale', 'returned', 'closed', 'cancelled'])
+const COMMERCIAL_ACTION_TYPES = new Set(['contact', 'follow_up', 'appointment', 'relationship'])
+const COMMERCIAL_ACTIVE_ACTION_STATUSES = ['open', 'contacted', 'responded', 'scheduled']
+
+function commercialAsOf(value) {
+    const raw = String(value || '').trim()
+    if (!raw) return new Date().toISOString().slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        const error = new Error('INVALID_COMMERCIAL_AS_OF')
+        error.statusCode = 400
+        throw error
+    }
+    return raw
+}
+
+function commercialUnit(value) {
+    const raw = String(value || '').trim()
+    return !raw || raw === 'all' ? '' : normalizeUnit(raw).slug
+}
+
+function commercialThresholds(value) {
+    const thresholds = Array.isArray(value) ? value.map(Number) : []
+    if (thresholds.length !== 3 || thresholds.some((item) => !Number.isInteger(item) || item < 30 || item > 730)
+        || thresholds.some((item, index) => index > 0 && item <= thresholds[index - 1])) {
+        const error = new Error('INVALID_RETURN_RISK_THRESHOLDS')
+        error.statusCode = 400
+        throw error
+    }
+    return thresholds
+}
+
+function mapCommercialAction(row) {
+    return {
+        id: row.id,
+        identityId: row.identity_id,
+        unitSlug: row.unit_slug || '',
+        unitName: row.unit_name || '',
+        segmentKey: row.segment_key,
+        actionType: row.action_type,
+        status: row.status,
+        owner: row.owner || '',
+        dueDate: row.due_date ? String(row.due_date).slice(0, 10) : null,
+        notes: row.notes || '',
+        outcomeNotes: row.outcome_notes || '',
+        createdBy: row.created_by || '',
+        completedAt: row.completed_at || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    }
+}
+
+async function assertCommercialIdentitySource(pgPool) {
+    const tables = await pgPool.query(
+        `select to_regclass('crm_atendimento.global_client_identities') as identities,
+                to_regclass('crm_atendimento.global_client_identity_members') as members,
+                to_regclass('crm_atendimento.attendance_client_links') as attendance_links,
+                to_regclass('crm_caixa.sales') as sales`,
+    )
+    const row = tables.rows[0] || {}
+    if (!row.identities || !row.members || !row.attendance_links || !row.sales) {
+        const error = new Error('CLIENT_COMMERCIAL_SOURCE_NOT_READY')
+        error.statusCode = 409
+        throw error
+    }
+}
+
+async function readCommercialPolicy(pgPool) {
+    const result = await pgPool.query(
+        `select active_contact_cooldown_days, return_risk_thresholds, updated_by, updated_at
+         from crm_atendimento.commercial_policy_config where singleton = true`,
+    )
+    const row = result.rows[0] || {}
+    return {
+        activeContactCooldownDays: Number(row.active_contact_cooldown_days || 30),
+        returnRiskThresholds: Array.isArray(row.return_risk_thresholds) ? row.return_risk_thresholds.map(Number) : [90, 180, 365],
+        updatedBy: row.updated_by || '',
+        updatedAt: row.updated_at || null,
+    }
+}
+
+async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
+    const result = await pgPool.query(
+        `with identities as (
+            select gi.id as identity_id, gi.canonical_name, gi.source_types
+            from crm_atendimento.global_client_identities gi
+            where exists (select 1 from crm_atendimento.global_client_identity_members gm where gm.identity_id = gi.id)
+         ), attendance_members as (
+            select distinct gm.identity_id, coalesce(cc.merged_into_id, cc.id) as client_id
+            from crm_atendimento.global_client_identity_members gm
+            join crm_atendimento.canonical_clients cc on cc.id = gm.source_id::uuid
+            where gm.source_type = 'attendance_client'
+         ), attendance_core as (
+            select am.identity_id, a.id, a.service_date, p.name as procedure_name, u.name as unit_name
+            from attendance_members am
+            join crm_atendimento.attendance_client_links acl on acl.client_id = am.client_id
+            join crm_atendimento.attendances a on a.id = acl.attendance_id
+            join crm_atendimento.procedures p on p.id = a.procedure_id
+            join crm_atendimento.units u on u.id = a.unit_id
+            where a.deleted_at is null and a.service_date <= $1::date and ($2 = '' or u.slug = $2)
+         ), attendance_aggregate as (
+            select identity_id, max(service_date)::text as last_attendance,
+                count(distinct service_date)::int as visit_count, count(*)::int as procedure_count,
+                array_agg(distinct procedure_name order by procedure_name) as completed_procedures,
+                array_agg(distinct unit_name order by unit_name) as attendance_units
+            from attendance_core group by identity_id
+         ), future_attendance as (
+            select am.identity_id, count(*)::int as future_attendance_count
+            from attendance_members am
+            join crm_atendimento.attendance_client_links acl on acl.client_id = am.client_id
+            join crm_atendimento.attendances a on a.id = acl.attendance_id
+            join crm_atendimento.units u on u.id = a.unit_id
+            where a.deleted_at is null and a.service_date > $1::date and ($2 = '' or u.slug = $2)
+            group by am.identity_id
+         ), sale_members as (
+            select distinct gm.identity_id, gm.source_id::uuid as customer_id
+            from crm_atendimento.global_client_identity_members gm
+            where gm.source_type = 'caixa_customer'
+         ), sale_core as (
+            select sm.identity_id, s.id, s.occurred_on, s.total, s.phone_raw, u.name as unit_name
+            from sale_members sm
+            join crm_caixa.sales s on s.customer_id = sm.customer_id
+            join crm_atendimento.units u on u.id = s.unit_id
+            where s.occurred_on <= $1::date and ($2 = '' or u.slug = $2)
+         ), sales_aggregate as (
+            select identity_id, count(*)::int as sale_count, coalesce(sum(total), 0) as lifetime_sales,
+                coalesce(sum(total) filter (where occurred_on >= ($1::date - interval '12 months')), 0) as sales_12m,
+                array_agg(distinct unit_name order by unit_name) as sales_units,
+                (array_agg(phone_raw order by occurred_on desc) filter (where nullif(trim(phone_raw), '') is not null))[1] as phone
+            from sale_core group by identity_id
+         ), purchased_procedures as (
+            select sc.identity_id, array_agg(distinct p.name order by p.name) as purchased_procedures
+            from sale_core sc
+            join crm_caixa.sale_items si on si.sale_id = sc.id and si.mapping_status = 'mapped' and si.procedure_id is not null
+            join crm_atendimento.procedures p on p.id = si.procedure_id
+            group by sc.identity_id
+         ), pending_items as (
+            select sc.identity_id, count(*)::int as pending_sale_items
+            from sale_core sc
+            join crm_caixa.sale_items si on si.sale_id = sc.id and si.mapping_status = 'pending'
+            group by sc.identity_id
+         ), active_actions as (
+            select identity_id, count(*)::int as active_action_count, max(created_at) as last_action_at
+            from crm_atendimento.commercial_actions
+            where status = any($3::text[]) group by identity_id
+         )
+         select i.identity_id, i.canonical_name, i.source_types,
+             a.last_attendance, a.visit_count, a.procedure_count, a.completed_procedures, a.attendance_units,
+             f.future_attendance_count, s.sale_count, s.lifetime_sales, s.sales_12m, s.sales_units, s.phone,
+             p.purchased_procedures, pending.pending_sale_items, actions.active_action_count, actions.last_action_at
+         from identities i
+         left join attendance_aggregate a on a.identity_id = i.identity_id
+         left join future_attendance f on f.identity_id = i.identity_id
+         left join sales_aggregate s on s.identity_id = i.identity_id
+         left join purchased_procedures p on p.identity_id = i.identity_id
+         left join pending_items pending on pending.identity_id = i.identity_id
+         left join active_actions actions on actions.identity_id = i.identity_id
+         order by i.canonical_name`,
+        [asOf, unitSlug, COMMERCIAL_ACTIVE_ACTION_STATUSES],
+    )
+    return segmentCommercialProfiles(result.rows.map((row) => ({
+        ...row,
+        identityId: row.identity_id,
+        name: row.canonical_name,
+        sourceTypes: row.source_types,
+        lastAttendance: row.last_attendance,
+        visitCount: row.visit_count,
+        procedureCount: row.procedure_count,
+        completedProcedures: row.completed_procedures,
+        futureAttendanceCount: row.future_attendance_count,
+        saleCount: row.sale_count,
+        lifetimeSales: row.lifetime_sales,
+        sales12m: row.sales_12m,
+        units: [...(row.attendance_units || []), ...(row.sales_units || [])],
+        purchasedProcedures: row.purchased_procedures,
+        pendingSaleItems: row.pending_sale_items,
+    })), { asOf, thresholds }).map((profile) => ({
+        ...profile,
+        activeActionCount: Number(result.rows.find((row) => row.identity_id === profile.identityId)?.active_action_count || 0),
+        lastActionAt: result.rows.find((row) => row.identity_id === profile.identityId)?.last_action_at || null,
+    }))
+}
+
+function filterCommercialProfiles(profiles, query) {
+    const segment = String(query?.segment || '').trim()
+    const priority = String(query?.priority || '').trim()
+    const search = normalizeText(query?.q || query?.search || '')
+    return profiles.filter((profile) => {
+        if (segment && !profile.segments.some((item) => item.key === segment)) return false
+        if (priority && profile.priority !== priority) return false
+        if (search && !normalizeText(`${profile.name} ${profile.phone} ${profile.email}`).includes(search)) return false
+        return true
+    })
+}
+
+async function queryCommercialActionMetrics(pgPool) {
+    const metrics = await pgPool.query(
+        `with actions as (
+            select id, identity_id, created_at::date as action_date
+            from crm_atendimento.commercial_actions
+         ), action_sales as (
+            select distinct action.id, action.identity_id
+            from actions action
+            join crm_atendimento.global_client_identity_members gm on gm.identity_id = action.identity_id and gm.source_type = 'caixa_customer'
+            join crm_caixa.sales sale on sale.customer_id = gm.source_id::uuid and sale.occurred_on >= action.action_date
+         ), action_returns as (
+            select distinct action.id, action.identity_id
+            from actions action
+            join crm_atendimento.global_client_identity_members gm on gm.identity_id = action.identity_id and gm.source_type = 'attendance_client'
+            join crm_atendimento.attendance_client_links acl on acl.client_id = gm.source_id::uuid
+            join crm_atendimento.attendances attendance on attendance.id = acl.attendance_id
+            where attendance.deleted_at is null and attendance.service_date >= action.action_date
+         )
+         select (select count(*)::int from actions) as actions,
+                (select count(distinct identity_id)::int from action_sales) as recovered_sales_clients,
+                (select count(distinct identity_id)::int from action_returns) as clinical_return_clients`,
+    )
+    const row = metrics.rows[0] || {}
+    return {
+        actions: Number(row.actions || 0),
+        recoveredSalesClients: Number(row.recovered_sales_clients || 0),
+        clinicalReturnClients: Number(row.clinical_return_clients || 0),
+    }
+}
+
 export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
 
@@ -1958,6 +2232,280 @@ export function createAtendimentoStore(options = {}) {
                     codes: Array.isArray(row.codes) ? row.codes : [],
                 })),
             }
+        },
+
+        async commercialOverview(query, actor) {
+            await ensureReady()
+            assertManager(actor)
+            await assertCommercialIdentitySource(pgPool)
+            const asOf = commercialAsOf(query?.asOf)
+            const policy = await readCommercialPolicy(pgPool)
+            const profiles = await queryCommercialProfiles(pgPool, {
+                asOf,
+                unitSlug: commercialUnit(query?.unit),
+                thresholds: policy.returnRiskThresholds,
+            })
+            const filtered = filterCommercialProfiles(profiles, query)
+            const limit = sanitizeLimit(query?.limit, 100, 250)
+            const offset = sanitizeOffset(query?.offset, 0)
+            const [quality, mappedItems, allItems, actions] = await Promise.all([
+                pgPool.query(`select count(*)::int as future_attendances from crm_atendimento.attendances where deleted_at is null and service_date > $1::date`, [asOf]),
+                pgPool.query(`select count(*)::int as count from crm_caixa.sale_items where mapping_status = 'mapped'`),
+                pgPool.query(`select count(*)::int as count from crm_caixa.sale_items`),
+                queryCommercialActionMetrics(pgPool),
+            ])
+            return {
+                asOf,
+                policy,
+                summary: summarizeCommercialProfiles(profiles),
+                actions,
+                coverage: {
+                    confirmedIdentities: profiles.length,
+                    classifiedSaleItems: Number(mappedItems.rows[0]?.count || 0),
+                    saleItems: Number(allItems.rows[0]?.count || 0),
+                },
+                dataQuality: {
+                    futureAttendancesExcluded: Number(quality.rows[0]?.future_attendances || 0),
+                    recencySource: 'completed_attendance_only',
+                    saleItemsWithoutClassification: Math.max(0, Number(allItems.rows[0]?.count || 0) - Number(mappedItems.rows[0]?.count || 0)),
+                },
+                total: filtered.length,
+                limit,
+                offset,
+                profiles: filtered.slice(offset, offset + limit),
+            }
+        },
+
+        async commercialProfile(identityId, query, actor) {
+            await ensureReady()
+            assertManager(actor)
+            await assertCommercialIdentitySource(pgPool)
+            const id = String(identityId || '').trim()
+            if (!id) {
+                const error = new Error('COMMERCIAL_IDENTITY_REQUIRED')
+                error.statusCode = 400
+                throw error
+            }
+            const asOf = commercialAsOf(query?.asOf)
+            const policy = await readCommercialPolicy(pgPool)
+            const profiles = await queryCommercialProfiles(pgPool, {
+                asOf,
+                unitSlug: commercialUnit(query?.unit),
+                thresholds: policy.returnRiskThresholds,
+            })
+            const profile = profiles.find((item) => item.identityId === id)
+            if (!profile) {
+                const error = new Error('COMMERCIAL_IDENTITY_NOT_FOUND')
+                error.statusCode = 404
+                throw error
+            }
+            const [actions, cadences] = await Promise.all([
+                pgPool.query(
+                    `select action.*, unit.slug as unit_slug, unit.name as unit_name
+                     from crm_atendimento.commercial_actions action
+                     left join crm_atendimento.units unit on unit.id = action.unit_id
+                     where action.identity_id = $1 order by action.created_at desc limit 100`,
+                    [id],
+                ),
+                pgPool.query(
+                    `select procedure.id, procedure.name, cadence.cadence_days, cadence.status, cadence.notes,
+                            unit.slug as unit_slug, unit.name as unit_name, cadence.approved_at, cadence.approved_by
+                     from crm_atendimento.procedures procedure
+                     left join crm_atendimento.commercial_procedure_cadences cadence
+                        on cadence.procedure_id = procedure.id and cadence.status = 'approved'
+                     left join crm_atendimento.units unit on unit.id = cadence.unit_id
+                     where procedure.name = any($1::text[])
+                     order by procedure.name`,
+                    [profile.completedProcedures],
+                ),
+            ])
+            return {
+                asOf,
+                policy,
+                profile,
+                actions: actions.rows.map(mapCommercialAction),
+                clinicalCadences: cadences.rows.map((row) => ({
+                    procedureId: row.id,
+                    procedureName: row.name,
+                    cadenceDays: row.cadence_days == null ? null : Number(row.cadence_days),
+                    status: row.status || 'not_configured',
+                    notes: row.notes || '',
+                    unitSlug: row.unit_slug || '',
+                    unitName: row.unit_name || '',
+                    approvedAt: row.approved_at || null,
+                    approvedBy: row.approved_by || '',
+                })),
+            }
+        },
+
+        async commercialPolicy(actor) {
+            await ensureReady()
+            assertManager(actor)
+            return { policy: await readCommercialPolicy(pgPool) }
+        },
+
+        async updateCommercialPolicy(payload, actor) {
+            await ensureReady()
+            assertManager(actor)
+            const cooldown = Number(payload?.activeContactCooldownDays)
+            if (!Number.isInteger(cooldown) || cooldown < 1 || cooldown > 180) {
+                const error = new Error('INVALID_ACTIVE_CONTACT_COOLDOWN')
+                error.statusCode = 400
+                throw error
+            }
+            const thresholds = commercialThresholds(payload?.returnRiskThresholds)
+            const result = await pgPool.query(
+                `update crm_atendimento.commercial_policy_config
+                 set active_contact_cooldown_days = $1, return_risk_thresholds = $2::int[], updated_by = $3, updated_at = now()
+                 where singleton = true
+                 returning active_contact_cooldown_days, return_risk_thresholds, updated_by, updated_at`,
+                [cooldown, thresholds, actorLabel(actor)],
+            )
+            await audit(pgPool, 'commercial.policy.updated', actor, null, { cooldown, thresholds })
+            const row = result.rows[0] || {}
+            return { policy: {
+                activeContactCooldownDays: Number(row.active_contact_cooldown_days || cooldown),
+                returnRiskThresholds: row.return_risk_thresholds || thresholds,
+                updatedBy: row.updated_by || actorLabel(actor),
+                updatedAt: row.updated_at || null,
+            } }
+        },
+
+        async commercialCadences(actor) {
+            await ensureReady()
+            assertManager(actor)
+            const result = await pgPool.query(
+                `select cadence.id, cadence.procedure_id, procedure.name as procedure_name, cadence.cadence_days, cadence.status,
+                        cadence.notes, cadence.approved_by, cadence.approved_at, cadence.updated_by, cadence.updated_at,
+                        unit.slug as unit_slug, unit.name as unit_name
+                 from crm_atendimento.commercial_procedure_cadences cadence
+                 join crm_atendimento.procedures procedure on procedure.id = cadence.procedure_id
+                 left join crm_atendimento.units unit on unit.id = cadence.unit_id
+                 order by procedure.name, unit.name nulls first`,
+            )
+            return { cadences: result.rows.map((row) => ({
+                id: row.id, procedureId: row.procedure_id, procedureName: row.procedure_name,
+                cadenceDays: Number(row.cadence_days), status: row.status, notes: row.notes || '',
+                approvedBy: row.approved_by || '', approvedAt: row.approved_at || null,
+                updatedBy: row.updated_by || '', updatedAt: row.updated_at || null,
+                unitSlug: row.unit_slug || '', unitName: row.unit_name || '',
+            })) }
+        },
+
+        async upsertCommercialCadence(payload, actor) {
+            await ensureReady()
+            assertManager(actor)
+            const procedureId = String(payload?.procedureId || '').trim()
+            const status = String(payload?.status || 'draft').trim()
+            const cadenceDays = Number(payload?.cadenceDays)
+            if (!procedureId || !['draft', 'approved', 'disabled'].includes(status) || !Number.isInteger(cadenceDays) || cadenceDays < 1 || cadenceDays > 1095) {
+                const error = new Error('INVALID_CLINICAL_CADENCE')
+                error.statusCode = 400
+                throw error
+            }
+            const unitSlug = commercialUnit(payload?.unit)
+            const unit = unitSlug ? await pgPool.query(`select id from crm_atendimento.units where slug = $1`, [unitSlug]) : { rows: [] }
+            if (unitSlug && !unit.rows[0]?.id) {
+                const error = new Error('COMMERCIAL_UNIT_NOT_FOUND')
+                error.statusCode = 404
+                throw error
+            }
+            const result = await pgPool.query(
+                `insert into crm_atendimento.commercial_procedure_cadences(
+                    procedure_id, unit_id, cadence_days, status, notes, approved_by, approved_at, updated_by)
+                 values ($1, $2, $3, $4, $5, $6, case when $4 = 'approved' then now() else null end, $6)
+                 on conflict(procedure_id, unit_id) do update set cadence_days = excluded.cadence_days, status = excluded.status,
+                    notes = excluded.notes, approved_by = case when excluded.status = 'approved' then excluded.approved_by else null end,
+                    approved_at = case when excluded.status = 'approved' then now() else null end,
+                    updated_by = excluded.updated_by, updated_at = now()
+                 returning id`,
+                [procedureId, unit.rows[0]?.id || null, cadenceDays, status, String(payload?.notes || '').trim() || null, actorLabel(actor)],
+            )
+            await audit(pgPool, 'commercial.cadence.upserted', actor, null, { cadenceId: result.rows[0]?.id, procedureId, unitSlug, status, cadenceDays })
+            return { id: result.rows[0]?.id }
+        },
+
+        async createCommercialAction(payload, actor) {
+            await ensureReady()
+            assertManager(actor)
+            await assertCommercialIdentitySource(pgPool)
+            const identityId = String(payload?.identityId || '').trim()
+            const segmentKey = String(payload?.segmentKey || '').trim()
+            const actionType = String(payload?.actionType || 'contact').trim()
+            const owner = String(payload?.owner || '').trim()
+            const dueDate = String(payload?.dueDate || '').trim() || null
+            if (!identityId || !segmentKey || !COMMERCIAL_ACTION_TYPES.has(actionType) || (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) {
+                const error = new Error('INVALID_COMMERCIAL_ACTION')
+                error.statusCode = 400
+                throw error
+            }
+            const unitSlug = commercialUnit(payload?.unit)
+            return withPgTransaction(pgPool, async (client) => {
+                const [identity, policy, unit] = await Promise.all([
+                    client.query(`select id from crm_atendimento.global_client_identities where id = $1`, [identityId]),
+                    client.query(`select active_contact_cooldown_days from crm_atendimento.commercial_policy_config where singleton = true`),
+                    unitSlug ? client.query(`select id from crm_atendimento.units where slug = $1`, [unitSlug]) : Promise.resolve({ rows: [] }),
+                ])
+                if (!identity.rows[0]?.id) {
+                    const error = new Error('COMMERCIAL_IDENTITY_NOT_FOUND')
+                    error.statusCode = 404
+                    throw error
+                }
+                if (unitSlug && !unit.rows[0]?.id) {
+                    const error = new Error('COMMERCIAL_UNIT_NOT_FOUND')
+                    error.statusCode = 404
+                    throw error
+                }
+                const cooldown = Number(policy.rows[0]?.active_contact_cooldown_days || 30)
+                const active = await client.query(
+                    `select id from crm_atendimento.commercial_actions
+                     where identity_id = $1 and status = any($2::text[]) and created_at >= now() - ($3::int * interval '1 day')
+                     limit 1`,
+                    [identityId, COMMERCIAL_ACTIVE_ACTION_STATUSES, cooldown],
+                )
+                if (active.rows[0]?.id) {
+                    const error = new Error('COMMERCIAL_CONTACT_COOLDOWN_ACTIVE')
+                    error.statusCode = 409
+                    throw error
+                }
+                const created = await client.query(
+                    `insert into crm_atendimento.commercial_actions(
+                        identity_id, unit_id, segment_key, action_type, owner, due_date, notes, created_by, updated_by)
+                     values ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+                     returning id`,
+                    [identityId, unit.rows[0]?.id || null, segmentKey, actionType, owner || null, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor)],
+                )
+                await audit(client, 'commercial.action.created', actor, null, { actionId: created.rows[0]?.id, identityId, segmentKey, actionType, unitSlug })
+                return { id: created.rows[0]?.id }
+            })
+        },
+
+        async updateCommercialAction(actionId, payload, actor) {
+            await ensureReady()
+            assertManager(actor)
+            const id = String(actionId || '').trim()
+            const status = String(payload?.status || '').trim()
+            if (!id || !COMMERCIAL_ACTION_STATUSES.has(status)) {
+                const error = new Error('INVALID_COMMERCIAL_ACTION_STATUS')
+                error.statusCode = 400
+                throw error
+            }
+            const result = await pgPool.query(
+                `update crm_atendimento.commercial_actions
+                 set status = $2, owner = coalesce(nullif($3, ''), owner), outcome_notes = coalesce(nullif($4, ''), outcome_notes),
+                     completed_at = case when $2 in ('won_sale','returned','closed','cancelled') then now() else completed_at end,
+                     updated_by = $5, updated_at = now()
+                 where id = $1
+                 returning id`,
+                [id, status, String(payload?.owner || '').trim(), String(payload?.outcomeNotes || '').trim(), actorLabel(actor)],
+            )
+            if (!result.rows[0]?.id) {
+                const error = new Error('COMMERCIAL_ACTION_NOT_FOUND')
+                error.statusCode = 404
+                throw error
+            }
+            await audit(pgPool, 'commercial.action.updated', actor, null, { actionId: id, status })
+            return { id, status }
         },
 
         async overview(query, actor) {
