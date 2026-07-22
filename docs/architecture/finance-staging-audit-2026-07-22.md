@@ -108,6 +108,13 @@ terminou com a flag novamente em `false`, zero grants e zero identidades de
 teste ativas. A consulta usa somente o escopo concedido e separa valores por
 moeda; não cria movimentos de caixa.
 
+A migration aditiva `0012_finance_obligation_recurrences.sql` foi aplicada ao
+D1 de staging pelo journal Financeiro antes da validação das rotas de
+recorrência. A conferência remota registrou a migration como `applied`, com a
+flag ainda desligada e zero grants. Regras recorrentes continuam sendo somente
+templates de títulos; não há execução automática, nem escrita no razão nesta
+etapa.
+
 O shell atual também disparou seis `503` de superfícies não Financeiras
 (`instagram/status` e referências/relatórios de Atendimento). Eles não
 afetaram nenhuma rota Financeiro e não autorizam ignorar a dívida do ambiente:
