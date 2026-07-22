@@ -76,6 +76,26 @@ A janela foi encerrada no mesmo ciclo: `module_enabled=false`, zero linhas em
 partidas e auditoria foram preservados como evidência de staging; o escopo
 pessoal continuou inativo e sem grant.
 
+## Importações controladas pela API de staging
+
+O comando `npm run finance:staging:import-smoke -- --source <tipo> --fixture
+<arquivo>` executa login CRM real, propaga cookie e CSRF ao gateway e faz
+somente o staging normalizado por padrão. Ele exige confirmação explícita
+`FINANCE_STAGING_SMOKE_ACK=1`, destino fixo
+`https://api-staging.skincos.com.br` e credenciais/escopo fornecidos apenas no
+ambiente privado do operador. `--commit --undo` exige também IDs de conta e
+categorias do cenário controlado; não há valor padrão, secret, cookie ou alvo
+de produção no script.
+
+Na segunda janela de 2026-07-22, o CSV genérico passou por staging,
+reimportação exata, decisão de transferência, commit idempotente e undo: duas
+linhas committed, uma `exact_duplicate`, duas reversões e operações `commit`/
+`undo`. O MoneyWiz criou um lote `moneywiz/v1` com candidatos de transferência
+e nenhuma linha de razão. O Caixa EF criou um lote `ef-caixa/v1`; uma linha
+válida foi committed e compensada, enquanto duas permaneceram em revisão. A
+consulta ao D1 confirmou que o único movimento EF terminou `cancelled` e que as
+operações `commit` e `undo` são append-only.
+
 ## Condição para smokes autenticados da versão atual
 
 1. Reconfirmar flag desligada e zero grants antes de criar identidades de teste
