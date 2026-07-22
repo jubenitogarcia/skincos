@@ -91,6 +91,15 @@ movimentações e resumos) retornaram `200`. Após o teste, a flag retornou a
 `false`, os dois grants temporários foram removidos e todas as identidades
 `finstage*` permaneceram inativas.
 
+Após a publicação da aba **Títulos**, o smoke foi reforçado para não aceitar
+apenas o cabeçalho estático: ele aguarda explicitamente `GET
+/api/finance/obligations` e exige `200`. A repetição controlada confirmou a
+sessão CRM, os dois grants empresariais, a troca para BarraShoppingSul e as
+abas Visão geral, Movimentações, Títulos e Cadastros. O trace registrou `200`
+para `bootstrap`, contas, cadastros, resumo, movimentações e títulos. A limpeza
+posterior confirmou novamente `module_enabled=false`, zero grants e a identidade
+temporária desativada com `session_version` incrementado.
+
 O shell atual também disparou seis `503` de superfícies não Financeiras
 (`instagram/status` e referências/relatórios de Atendimento). Eles não
 afetaram nenhuma rota Financeiro e não autorizam ignorar a dívida do ambiente:
