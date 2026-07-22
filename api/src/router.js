@@ -3,6 +3,7 @@ const json = (status, payload, requestId) =>
         status,
         headers: {
             'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
             'x-request-id': requestId,
         },
     });

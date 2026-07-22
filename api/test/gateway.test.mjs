@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createGatewayHandler } from '../src/router.js';
+import { createApiGateway } from '../src/gateway.js';
 
 const calls = [];
 const gateway = createGatewayHandler({
@@ -55,4 +56,31 @@ test('internal paths require a private service identity', async () => {
     const permitted = await gateway(new Request(request, { headers: { 'x-request-id': 'internal-2', 'x-skincos-service-token': 'private-token' } }), { INTERNAL_API_TOKEN: 'private-token' }, {});
     assert.equal(permitted.status, 404);
     assert.equal((await permitted.json()).error, 'internal_route_not_found');
+});
+
+test('finance gateway enforces CSRF before the domain and fails closed when its distributed limiter rejects', async () => {
+  let domainCalls = 0;
+  const rateLimited = createApiGateway({
+    inventoryHandler: async () => new Response('inventory'),
+    financeDomainHandler: async () => { domainCalls += 1; return new Response('finance'); },
+    resolveActor: async () => ({ actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' }),
+  });
+  const csrfDenied = await rateLimited(new Request('https://api.skincos.com.br/finance/accounts', { method: 'POST', headers: { 'idempotency-key': 'x' } }), {}, {});
+  assert.equal(csrfDenied.status, 403); assert.equal(domainCalls, 0);
+
+  const limiter = { idFromName: () => 'finance-limiter', get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: false }), { headers: { 'content-type': 'application/json' } }) }) };
+  const blocked = await rateLimited(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), { RATE_LIMITER: limiter }, {});
+  assert.equal(blocked.status, 429); assert.equal((await blocked.json()).error, 'FINANCE_RATE_LIMITED'); assert.equal(domainCalls, 0);
+});
+
+test('finance gateway passes only an authenticated, CSRF-valid request after the limiter allows it', async () => {
+  let seenPath = null;
+  const gateway = createApiGateway({
+    inventoryHandler: async () => new Response('inventory'),
+    financeDomainHandler: async (request) => { seenPath = new URL(request.url).pathname; return new Response('finance-ok'); },
+    resolveActor: async () => ({ actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' }),
+  });
+  const limiter = { idFromName: () => 'finance-limiter', get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: true }), { headers: { 'content-type': 'application/json' } }) }) };
+  const allowed = await gateway(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), { RATE_LIMITER: limiter }, {});
+  assert.equal(allowed.status, 200); assert.equal(seenPath, '/imports');
 });
