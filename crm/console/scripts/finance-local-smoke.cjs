@@ -19,9 +19,13 @@ async function main() {
   const consoleErrors = []
   const apiErrors = []
   const financeResponses = []
+  const clientErrorResponses = []
   let recoveredFinanceRateLimits = 0
   page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })
   page.on('response', async (response) => {
+    if (response.status() >= 400 && response.url().startsWith('http://localhost:')) {
+      clientErrorResponses.push(`${response.status()} ${response.url()}`)
+    }
     if (response.url().includes('/api/finance')) {
       financeResponses.push(`${response.status()} ${response.url()}`)
       if (response.status() >= 500) apiErrors.push(`${response.status()} ${response.url()}`)
@@ -130,22 +134,37 @@ async function main() {
       }
       await undoResult.waitFor({ state: 'visible', timeout: 30_000 })
     }
+    // The Finance-focused local launcher deliberately does not start the
+    // Atendimento service. The CRM shell still prefetches its dashboard
+    // resources, so these six authenticated requests correctly receive 401.
+    // Keep them in the artifact, but make unexpected client errors (including
+    // any Finance 4xx) fail this smoke.
+    const expectedOfflineClientErrors = clientErrorResponses.filter((entry) => /^401 http:\/\/localhost:\d+\/api\/atendimento\//.test(entry))
+    // A no-module actor must receive an explicit fail-closed bootstrap 403.
+    // It is the sole Finance client error accepted by this negative scenario.
+    const expectedNoModuleClientErrors = scenario === 'no-module'
+      ? clientErrorResponses.filter((entry) => /^403 http:\/\/localhost:\d+\/api\/finance\/bootstrap$/.test(entry))
+      : []
+    const expectedClientErrors = [...expectedOfflineClientErrors, ...expectedNoModuleClientErrors]
+    const unexpectedClientErrors = clientErrorResponses.filter((entry) => !expectedClientErrors.includes(entry))
     let toleratedRateLimitWarnings = recoveredFinanceRateLimits
+    let toleratedOfflineUnauthorizedWarnings = expectedOfflineClientErrors.length
     const relevantConsoleErrors = consoleErrors.filter((message) => {
       if (toleratedRateLimitWarnings > 0 && /server responded with a status of 429/i.test(message)) { toleratedRateLimitWarnings -= 1; return false }
+      if (toleratedOfflineUnauthorizedWarnings > 0 && /server responded with a status of 401/i.test(message)) { toleratedOfflineUnauthorizedWarnings -= 1; return false }
       // A user without the explicit module grant receives a deliberately
       // fail-closed bootstrap response. Browsers log that expected 403 as a
       // resource error even though the shell correctly hides the module.
       if (scenario === 'no-module' && /server responded with a status of 403/i.test(message)) return false
       return true
     })
-    if (relevantConsoleErrors.length || apiErrors.length) throw new Error(`Erros de runtime: ${JSON.stringify({ consoleErrors: relevantConsoleErrors, apiErrors })}`)
+    if (relevantConsoleErrors.length || apiErrors.length || unexpectedClientErrors.length) throw new Error(`Erros de runtime: ${JSON.stringify({ consoleErrors: relevantConsoleErrors, apiErrors, unexpectedClientErrors })}`)
     await page.screenshot({ path: shotFile, fullPage: false })
-    fs.writeFileSync(reportFile, `${JSON.stringify({ ok: true, url, scenario, bootstrap, financeResponses, screenshot: shotFile }, null, 2)}\n`)
+    fs.writeFileSync(reportFile, `${JSON.stringify({ ok: true, url, scenario, bootstrap, financeResponses, clientErrorResponses, screenshot: shotFile }, null, 2)}\n`)
     console.log(`[finance-local-smoke] OK (${scenario}): ${url}`)
   } catch (error) {
     await page.screenshot({ path: shotFile, fullPage: false }).catch(() => {})
-    fs.writeFileSync(reportFile, `${JSON.stringify({ ok: false, url, scenario, error: String(error?.message || error), consoleErrors, apiErrors, financeResponses, screenshot: shotFile }, null, 2)}\n`)
+    fs.writeFileSync(reportFile, `${JSON.stringify({ ok: false, url, scenario, error: String(error?.message || error), consoleErrors, apiErrors, financeResponses, clientErrorResponses, screenshot: shotFile }, null, 2)}\n`)
     throw error
   } finally {
     await context.close().catch(() => {})

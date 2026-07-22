@@ -135,5 +135,8 @@ describe('Finance transport helpers', () => {
     expect(smoke).toContain("financeNav.waitFor({ state: 'hidden', timeout: 30_000 })")
     expect(smoke).toContain('bootstrap.body.moduleEnabled !== false || bootstrap.body.canAccess !== false')
     expect(smoke).toContain("scenario === 'no-module' && /server responded with a status of 403/i.test(message)")
+    expect(smoke).toContain('expectedOfflineClientErrors')
+    expect(smoke).toContain('expectedNoModuleClientErrors')
+    expect(smoke).toContain('unexpectedClientErrors.length')
   })
 })
