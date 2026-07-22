@@ -111,4 +111,19 @@ describe('Ponto CRM proxy', () => {
     expect(upstream.headers.get('x-skincos-network-sig')).toBeTruthy()
     expect(upstream.headers.get('cookie')).toBeNull()
   })
+
+  it('returns structured JSON without stack details when Timekeeping is unavailable', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED secret-upstream')))
+
+    const response = await onRequest(context('/api/ponto/readiness'))
+
+    expect(response.status).toBe(503)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    expect(response.headers.get('x-request-id')).toBeTruthy()
+    const body = await response.json()
+    expect(body).toMatchObject({ ok: false, error: 'UPSTREAM_UNAVAILABLE' })
+    expect(JSON.stringify(body)).not.toContain('ECONNREFUSED')
+    expect(JSON.stringify(body)).not.toContain('secret-upstream')
+  })
 })

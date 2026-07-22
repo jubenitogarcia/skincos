@@ -2,6 +2,7 @@
 const fs = require('fs')
 const path = require('path')
 const { chromium } = require('playwright')
+const { partitionModuleErrors } = require('./crm-local-smoke-policy.cjs')
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..')
 const ARTIFACT_DIR = process.env.SMOKE_ARTIFACT_DIR
@@ -262,8 +263,13 @@ async function main() {
         .catch(() => false)
 
       await Promise.allSettled(pendingResponseReads.splice(0))
-      const apiErrors = responseMap.get(key) || []
-      const consoleErrors = consoleMap.get(key) || []
+      const capturedApiErrors = responseMap.get(key) || []
+      const capturedConsoleErrors = consoleMap.get(key) || []
+      const { apiErrors, apiWarnings, consoleErrors, consoleWarnings } = partitionModuleErrors(
+        key,
+        capturedApiErrors,
+        capturedConsoleErrors,
+      )
       const pageErrors = pageErrorMap.get(key) || []
       const requestCounts = Object.fromEntries(requestCountMap.get(key) || [])
       const requestStorms = Object.entries(requestCounts)
@@ -282,7 +288,9 @@ async function main() {
         activationError,
         runtimeScreenVisible,
         apiErrors,
+        apiWarnings,
         consoleErrors: consoleErrors.slice(0, 5),
+        consoleWarnings: consoleWarnings.slice(0, 5),
         pageErrors: pageErrors.slice(0, 5),
         requestCounts,
         requestStorms,
