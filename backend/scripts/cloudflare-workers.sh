@@ -148,7 +148,7 @@ deploy_by_changes() {
       finance/*|shared/finance-contracts/*|shared/crm-auth/*)
         do_api="true"
         ;;
-      backend/pnpm-lock.yaml|backend/pnpm-workspace.yaml|backend/scripts/cloudflare-workers.sh|.github/workflows/deploy-insumos-worker.yml)
+      backend/pnpm-lock.yaml|backend/pnpm-workspace.yaml)
         do_api="true"
         do_insumos="true"
         ;;
