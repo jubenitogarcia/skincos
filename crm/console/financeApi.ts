@@ -6,6 +6,7 @@ export type FinanceGrant = { scope_id: string; permission: string; label: string
 export type FinanceBootstrap = { ok: boolean; moduleEnabled: boolean; canAccess: boolean; grants: FinanceGrant[] }
 export type FinanceList<T> = { ok: boolean; page: number; limit: number; total?: number; movements?: T[]; events?: T[]; accounts?: T[]; categories?: T[]; payees?: T[]; tags?: T[]; costCenters?: T[] }
 export type FinanceFilters = { from?: string; to?: string; accountId?: string; categoryId?: string; payeeId?: string; costCenterId?: string; status?: string; q?: string; page?: number; limit?: number }
+export type FinanceObligationFilters = { kind?: 'payable' | 'receivable'; status?: 'open' | 'partially_settled' | 'settled' | 'cancelled'; from?: string; to?: string; q?: string; page?: number; limit?: number }
 
 export class FinanceApiError extends Error {
   code?: string
@@ -54,6 +55,11 @@ export const financeApi = {
   tags: (scopeId: string) => request<FinanceList<any>>(`/tags?${scopedQuery(scopeId)}`),
   costCenters: (scopeId: string) => request<FinanceList<any>>(`/cost-centers?${scopedQuery(scopeId)}`),
   movements: (scopeId: string, filters: FinanceFilters = {}) => request<FinanceList<any>>(`/movements?${scopedQuery(scopeId, filters)}`),
+  obligations: (scopeId: string, filters: FinanceObligationFilters = {}) => request<any>(`/obligations?${scopedQuery(scopeId, filters)}`),
+  obligation: (scopeId: string, obligationId: string) => request<any>(`/obligations/${encodeURIComponent(obligationId)}?${scopedQuery(scopeId)}`),
+  createObligation: (scopeId: string, body: Record<string, unknown>, idempotencyKey?: string) => request<any>(`/obligations?${scopedQuery(scopeId)}`, { method: 'POST', headers: idempotencyHeaders(idempotencyKey), body: JSON.stringify(body) }),
+  settleObligation: (scopeId: string, obligationId: string, body: { movementId: string; principalAmountMinor: number; interestMinor?: number; penaltyMinor?: number; discountMinor?: number; allowanceMinor?: number; paidDate?: string }, idempotencyKey?: string) => request<any>(`/obligations/${encodeURIComponent(obligationId)}/settlements?${scopedQuery(scopeId)}`, { method: 'POST', headers: idempotencyHeaders(idempotencyKey), body: JSON.stringify(body) }),
+  cancelObligation: (scopeId: string, obligationId: string, reason: string, idempotencyKey?: string) => request<any>(`/obligations/${encodeURIComponent(obligationId)}/cancel?${scopedQuery(scopeId)}`, { method: 'POST', headers: idempotencyHeaders(idempotencyKey), body: JSON.stringify({ reason }) }),
   movement: (scopeId: string, movementId: string) => request<any>(`/movements/${encodeURIComponent(movementId)}?${scopedQuery(scopeId)}`),
   reviseDraft: (scopeId: string, movementId: string, body: Record<string, unknown>, idempotencyKey?: string) => request<any>(`/movements/${encodeURIComponent(movementId)}?${scopedQuery(scopeId)}`, { method: 'PUT', headers: idempotencyHeaders(idempotencyKey), body: JSON.stringify(body) }),
   audit: (scopeId: string, filters: { entityId?: string; entityType?: string; page?: number; limit?: number } = {}) => request<FinanceList<any>>(`/audit?${scopedQuery(scopeId, filters)}`),

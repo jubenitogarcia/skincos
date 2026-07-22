@@ -16,11 +16,22 @@ controlados e o contexto pessoal continua inativo.
 | CSV, MoneyWiz e Caixa EF | Pipeline de staging implementado | adapters normalizam para staging, decisão, commit, undo e D1 tests | histórico de lotes na UI e revisão operacional ampliada |
 | Conciliação manual | Implementada para vínculo 1:1 | `/reconciliation/lines`, sugestões exatas, confirmação auditada e diálogo no detalhe | importação de extrato, divergência parcial e ações em lote |
 | Filtros, paginação, busca e auditoria | Implementado para movimentações | filtros enviados à API, paginação, detalhes/auditoria no CRM | persistência de filtros e ações em lote |
-| Regras de cartão, recorrência e contas a pagar/receber | Estruturado parcialmente | tipo `card`, parcelas, vencimento, pagamento | modelo e endpoints próprios de fatura, recorrência, aging e liquidação |
+| Contas a pagar/receber e liquidação | Núcleo implementado e testado localmente | migration `0011`, títulos sem segundo ledger, baixa append-only ligada a lançamento confirmado, desconto/juros/multa em minor units, idempotência e auditoria | recorrência, fatura de cartão, aging, calendário e fluxo projetado na UI |
+| Regras de cartão e recorrência | Estruturado parcialmente | tipo `card`, parcelas, vencimento, pagamento | fechamento/fatura, regra de recorrência versionada e geração controlada de títulos |
 | Relatórios gerenciais | Visão geral inicial | `/overview`, saldos, entradas, saídas e período anterior | DRE, fluxo de caixa, competência/caixa e exportações seguras |
 | Backup, recuperação e observabilidade de produção | Não concluído | docs de segurança registram a dependência | exercício de backup/restauração D1, alertas e runbook |
 
-## Decisão deste ciclo
+## Decisão do ciclo AP/AR
+
+Um título de conta a pagar ou receber é uma obrigação gerencial, não um novo
+lançamento de caixa. `finance_obligations` portanto não escreve no razão. A
+liquidação é uma evidência append-only (`finance_obligation_settlements`) que
+referencia um único lançamento confirmado ou conciliado, do mesmo escopo,
+moeda e sentido financeiro. O principal reduz o saldo do título; desconto,
+abatimento, juros e multa explicam a diferença para o valor efetivamente pago.
+Não há exclusão nem cancelamento de título parcialmente liquidado.
+
+## Decisão anterior do ciclo
 
 O rascunho pendente é dado operacional transitório; por isso pode ser
 substituído somente como uma revisão integral, versionada e idempotente. Depois
