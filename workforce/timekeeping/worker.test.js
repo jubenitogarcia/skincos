@@ -19,6 +19,8 @@ test('readiness fails closed when D1 is unavailable', async () => {
 
 test('role matrix keeps consultor self-service and gives supervisor the former RH/auditor duties', () => {
   assert.equal(__testables.roleAllows('CONSULTOR', 'self.punch'), true)
+  assert.equal(__testables.roleAllows('CONSULTOR', 'self.profile.read'), true)
+  assert.equal(__testables.roleAllows('CONSULTOR', 'profile.manage'), false)
   assert.equal(__testables.roleAllows('CONSULTOR', 'unit.read'), false)
   assert.equal(__testables.roleAllows('MANAGER', 'correction.request'), true)
   assert.equal(__testables.roleAllows('MANAGER', 'correction.approve'), false)
@@ -28,6 +30,36 @@ test('role matrix keeps consultor self-service and gives supervisor the former R
   assert.equal(__testables.normalizeWorkforceRole('RH'), 'SUPERVISOR')
   assert.equal(__testables.normalizeWorkforceRole('AUDITOR'), 'SUPERVISOR')
   assert.equal(__testables.normalizeWorkforceRole('EMPLOYEE'), 'CONSULTOR')
+})
+
+test('profile payload accepts only known fields and keeps document values out of summaries', () => {
+  const patch = __testables.profileInput({ profile: { socialName: 'Pessoa Teste', cpf: '123.456.789-00', mobilePhone: '(11) 99999-0000', ignored: 'do-not-store' } })
+  assert.deepEqual(patch.publicPatch, { socialName: 'Pessoa Teste' })
+  assert.deepEqual(patch.privatePatch, { cpf: '12345678900', mobilePhone: '(11) 99999-0000' })
+  assert.deepEqual(patch.provided, ['socialName', 'cpf', 'mobilePhone'])
+  assert.deepEqual(__testables.profileDocumentStatus({ cpf: '12345678900', pis: '', rgNumber: '42', motherName: '' }), { cpf: 'CADASTRADO', pis: 'PENDENTE', rg: 'CADASTRADO', family: 'PENDENTE' })
+})
+
+test('face punches stay disabled unless the operational flag explicitly enables them', async () => {
+  assert.equal(__testables.isFacePunchEnabled({}), false)
+  assert.equal(__testables.isFacePunchEnabled({ PONTO_FACE_PUNCH_ENABLED: 'true' }), true)
+  const result = await __testables.verifyPunchCredential({}, {}, {}, { id: 'employee-1' }, { descriptor: [0.1, 0.2] })
+  assert.deepEqual(result, { error: 'FACE_DISABLED' })
+})
+
+test('terminal network parsing only accepts valid IPv4 CIDRs and matches without trusting a browser header', () => {
+  assert.deepEqual(__testables.normalizeNetworks(['203.0.113.10/32', 'bad', '198.51.100.0/24', '203.0.113.10/32']), ['203.0.113.10/32', '198.51.100.0/24'])
+  assert.equal(__testables.ipInNetwork('203.0.113.10', '203.0.113.10/32'), true)
+  assert.equal(__testables.ipInNetwork('203.0.113.11', '203.0.113.10/32'), false)
+  assert.equal(__testables.ipInNetwork('198.51.100.42', '198.51.100.0/24'), true)
+})
+
+test('external location stores a derived result rather than coordinates and rejects stale or malformed evidence', () => {
+  const policy = { geofence_latitude: -23.5505, geofence_longitude: -46.6333, geofence_radius_meters: 150 }
+  const result = __testables.locationEvidence({ latitude: -23.5505, longitude: -46.6333, accuracyMeters: 12, capturedAt: new Date().toISOString() }, policy)
+  assert.equal(result.status, 'WITHIN_GEOFENCE')
+  assert.equal(Object.hasOwn(result.payload, 'latitude'), false)
+  assert.equal(__testables.locationEvidence({ latitude: 0, longitude: 0, accuracyMeters: 5, capturedAt: '2000-01-01T00:00:00.000Z' }, policy).error, 'LOCATION_INVALID')
 })
 
 test('manager and supervisor scopes are horizontal while admin remains organization-wide', () => {

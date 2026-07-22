@@ -12,7 +12,9 @@ import { DEFAULT_UNIT_OPTIONS, type UnitOption } from '@/unitSelection'
 import * as QRCode from 'qrcode'
 import { LoadingPercentText } from '@/LoadingPattern'
 import { apiBlob, apiJson, createRequestMeta, errorMetaString, fetchJsonWithMeta, getDevEmployeeActorHeaders, LS_DEV_ACTOR_EMAIL } from './pontoApi'
-import type { PontoCorrection, PontoDevicePublic, PontoEmailConflict, PontoEmployeePublic, PontoMeResponse, PontoMonthlyResult, PontoPunchRecord } from './pontoTypes'
+import { getNextPunchAction, getPunchConfirmation, getPunchTypeLabel } from './pontoPresentation'
+import { profileMissingSummary, profileValue } from './pontoProfilePresentation'
+import type { PontoCorrection, PontoDevicePublic, PontoEmailConflict, PontoEmployeePublic, PontoMeResponse, PontoMonthlyResult, PontoMyProfileResponse, PontoPresencePolicy, PontoPunchRecord } from './pontoTypes'
 
 type FaceDetectorMode = 'tiny' | 'ssd'
 
@@ -20,6 +22,9 @@ type FaceDetectorMode = 'tiny' | 'ssd'
 const FACE_FALLBACK_THRESHOLD = 3
 const FACE_FALLBACK_MESSAGE =
   'Condições ruins detectadas. Estamos melhorando a análise do rosto, aguarde alguns segundos.'
+// Capture and facial identification remain intentionally off until an explicit
+// operational decision enables the feature again. Punches use PIN only.
+const FACE_IDENTIFICATION_ENABLED = false
 
 function formatUnitLabel(u: string) {
   return String(u || '')
@@ -318,11 +323,10 @@ export function PontoModule() {
     try { return localStorage.getItem(LS_DEV_ACTOR_EMAIL) || '' } catch { return '' }
   })
 
-  const employeeVideoRef = useRef<HTMLVideoElement | null>(null)
   const adminVideoRef = useRef<HTMLVideoElement | null>(null)
   const [stream, setStream] = useState<MediaStream | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const [cameraOwner, setCameraOwner] = useState<'employee' | 'admin' | null>(null)
+  const [cameraOwner, setCameraOwner] = useState<'admin' | null>(null)
   const cameraRequestId = useRef(0)
 
   const [modelsReady, setModelsReady] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -339,16 +343,17 @@ export function PontoModule() {
   const [meError, setMeError] = useState<any>(null)
   const [meLoading, setMeLoading] = useState(false)
   const [mePunchOpen, setMePunchOpen] = useState(false)
-  const [meHistoryOpen, setMeHistoryOpen] = useState(false)
-  const [meStep, setMeStep] = useState<'face' | 'pin'>('face')
-  const [meFaceAutoRunning, setMeFaceAutoRunning] = useState(false)
-  const [meFaceStatus, setMeFaceStatus] = useState<string | null>(null)
   const [mePin, setMePin] = useState('')
   const [meUnit, setMeUnit] = useState('')
   const [meRecords, setMeRecords] = useState<PontoPunchRecord[]>([])
   const [meRecordsFrom, setMeRecordsFrom] = useState('')
   const [meRecordsTo, setMeRecordsTo] = useState('')
+  const [myProfile, setMyProfile] = useState<PontoMyProfileResponse['data'] | null>(null)
+  const [myProfileLoading, setMyProfileLoading] = useState(false)
+  const [myProfileError, setMyProfileError] = useState<string | null>(null)
   const meLinked = me && 'linked' in me && me.linked ? me : null
+  const nextPunchAction = useMemo(() => getNextPunchAction(meLinked?.lastPunch), [meLinked?.lastPunch])
+  const profile = myProfile?.profile || null
 
   const [adminEmployees, setAdminEmployees] = useState<PontoEmployeePublic[]>([])
   const [adminDevices, setAdminDevices] = useState<PontoDevicePublic[]>([])
@@ -390,6 +395,11 @@ export function PontoModule() {
   const [newDeviceLabel, setNewDeviceLabel] = useState('')
   const [newDeviceTokenOnce, setNewDeviceTokenOnce] = useState<string | null>(null)
   const [newDeviceTokenQr, setNewDeviceTokenQr] = useState<string | null>(null)
+  const [newDeviceNetworkPolicy, setNewDeviceNetworkPolicy] = useState<'NONE' | 'OBSERVE' | 'REQUIRE'>('OBSERVE')
+  const [newDeviceNetworks, setNewDeviceNetworks] = useState('')
+  const [presencePolicyUnit, setPresencePolicyUnit] = useState('')
+  const [presencePolicy, setPresencePolicy] = useState<PontoPresencePolicy | null>(null)
+  const [presencePolicyLoading, setPresencePolicyLoading] = useState(false)
 
   const [recordsFrom, setRecordsFrom] = useState('')
   const [recordsTo, setRecordsTo] = useState('')
@@ -557,6 +567,7 @@ export function PontoModule() {
   }, [canAdmin])
 
   useEffect(() => {
+    if (!FACE_IDENTIFICATION_ENABLED) return
     if (!enrollOpen) return
     if (enrollAutoRunning) return
     let alive = true
@@ -579,6 +590,7 @@ export function PontoModule() {
   }, [enrollOpen])
 
   useEffect(() => {
+    if (!FACE_IDENTIFICATION_ENABLED) return
     if (!enrollOpen) return
     if (!stream || cameraOwner !== 'admin') return
     void autoEnrollFace()
@@ -676,12 +688,12 @@ export function PontoModule() {
   }
 
   async function startCameraFor(
-    owner: 'employee' | 'admin',
+    owner: 'admin',
     opts: { silent?: boolean; waitForVideoMs?: number; suppressMissingVideoToast?: boolean } = {}
   ) {
     const requestId = cameraRequestId.current + 1
     cameraRequestId.current = requestId
-    const getVideoEl = () => (owner === 'employee' ? employeeVideoRef.current : adminVideoRef.current)
+    const getVideoEl = () => adminVideoRef.current
     let videoEl = getVideoEl()
     const waitForVideoMs = Math.max(0, Number(opts.waitForVideoMs || 0))
     if (!videoEl && waitForVideoMs > 0) {
@@ -764,6 +776,20 @@ export function PontoModule() {
     }
   }
 
+  async function loadMyProfile() {
+    setMyProfileLoading(true)
+    setMyProfileError(null)
+    try {
+      const res = await apiJson<PontoMyProfileResponse>('/api/ponto/me/profile', { headers: getDevEmployeeActorHeaders(devActorEmail) })
+      setMyProfile(res.data)
+    } catch (e: any) {
+      setMyProfile(null)
+      setMyProfileError(e?.message || 'Perfil indisponível no momento')
+    } finally {
+      setMyProfileLoading(false)
+    }
+  }
+
   function ensureEmployeeUnitSelected() {
     if (!allowedUnits.length) {
       toast.error('Unidade não configurada')
@@ -780,7 +806,7 @@ export function PontoModule() {
     setMeLoading(true)
     try {
       const unit = ensureEmployeeUnitSelected()
-      if (allowedUnits.length && !unit) {
+      if (!unit) {
         setMeLoading(false)
         return
       }
@@ -817,102 +843,36 @@ export function PontoModule() {
     }
   }
 
-  async function mePunchFace(opts: { auto?: boolean } = {}) {
-    const auto = opts.auto === true
-    if (!me || !('linked' in me) || !me.linked) {
-      if (!auto) toast.error('Usuário não vinculado a funcionário')
-      return false
-    }
-    if (!me.hasFace) {
-      if (!auto) toast.error('Biometria facial não cadastrada (use PIN)')
-      return false
-    }
-    if (!stream || cameraOwner !== 'employee') {
-      if (!auto) toast.error('Ative a câmera')
-      return false
-    }
-    const videoEl = employeeVideoRef.current
-    if (!videoEl) {
-      if (!auto) toast.error('Câmera não disponível')
-      return false
-    }
-    const unit = ensureEmployeeUnitSelected()
-    if (allowedUnits.length && !unit) return false
-    const ok = await ensureModelsUI()
-    if (!ok) {
-      setMeStep('pin')
-      if (!auto) toast.error('Modelos faciais indisponíveis (use PIN)')
-      return false
-    }
-
-    setLoading(true)
-    try {
-      const descriptor = await captureDescriptorStable(videoEl, 2, 220, faceDetectorMode)
-      resetFaceFailures()
-      resetFaceFailures()
-      const meta = createRequestMeta()
-      const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
-        '/api/ponto/me/punch',
-        { method: 'POST', body: { descriptor, unit, ...meta }, headers: getDevEmployeeActorHeaders(devActorEmail) }
-      )
-      toast.success(`Ponto registrado (${res.data.type})`)
-      setMePunchOpen(false)
-      setMeStep('face')
-      await stopCameraUI()
-      await meRefresh()
-      await meLoadRecords()
-      return true
-    } catch (e: any) {
-      if (isFaceDetectionError(e)) {
-        noteFaceFailure()
-        if (!auto) {
-          toast.error(e?.message || 'Não foi possível detectar o rosto. Ajuste a posição e tente novamente.')
-          toastErrorMeta(e)
-        }
-        return false
-      }
-      const details = e?.details as any
-      const code = String(details?.error || details?.code || '')
-      if (code === 'COOLDOWN') {
-        if (!auto) toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
-      } else if (code === 'UNIT_ACCESS_NOT_CONFIGURED') {
-        if (!auto) toast.error('Unidade não configurada para este usuário')
-      } else if (code === 'UNIT_REQUIRED') {
-        if (!auto) toast.error('Selecione a unidade')
-      } else if (code === 'UNIT_FORBIDDEN') {
-        if (!auto) toast.error('Unidade não permitida')
-      } else if (code === 'FACE_NOT_RECOGNIZED' || code === 'FACE_NOT_ENROLLED') {
-        if (!auto) toast.error('Rosto não reconhecido. Use PIN.')
-        setMeStep('pin')
-        await stopCameraUI()
-      } else {
-        if (!auto) toast.error(e?.message || String(e))
-        setMeStep('pin')
-      }
-      if (!auto) toastErrorMeta(e)
-      return false
-    } finally {
-      setLoading(false)
-    }
-  }
-
   async function mePunchPin() {
     if (!me || !('linked' in me) || !me.linked) return toast.error('Usuário não vinculado a funcionário')
     const pin = mePin.trim()
     if (!pin) return toast.error('Informe o PIN')
     const unit = ensureEmployeeUnitSelected()
-    if (allowedUnits.length && !unit) return
+    if (!unit) return
     setLoading(true)
     try {
+      const presence = await apiJson<{ ok: boolean; data: { presenceMode: string; locationRequired: boolean; geofenceConfigured: boolean } }>(`/api/ponto/me/presence?unit=${encodeURIComponent(unit)}`, { headers: getDevEmployeeActorHeaders(devActorEmail) })
+      if (presence.data.presenceMode === 'TERMINAL_REQUIRED') {
+        toast.error('Esta unidade usa Terminal de Ponto. Registre no aparelho autorizado da unidade.')
+        return
+      }
+      let location: { latitude: number; longitude: number; accuracyMeters: number; capturedAt: string } | undefined
+      if (presence.data.locationRequired) {
+        if (!presence.data.geofenceConfigured || !navigator.geolocation) {
+          toast.error('A política de trabalho externo desta unidade não está pronta para registrar localização.')
+          return
+        }
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }))
+        location = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracyMeters: position.coords.accuracy, capturedAt: new Date().toISOString() }
+      }
       const meta = createRequestMeta()
       const res = await apiJson<{ ok: boolean; data: PontoPunchRecord }>(
         '/api/ponto/me/punch',
-        { method: 'POST', body: { pin, unit, ...meta }, headers: getDevEmployeeActorHeaders(devActorEmail) }
+        { method: 'POST', body: { pin, unit, location, ...meta }, headers: getDevEmployeeActorHeaders(devActorEmail) }
       )
       setMePin('')
-      toast.success(`Ponto registrado (${res.data.type})`)
+      toast.success(getPunchConfirmation(res.data.eventType || res.data.type))
       setMePunchOpen(false)
-      setMeStep('face')
       await meRefresh()
       await meLoadRecords()
     } catch (e: any) {
@@ -932,6 +892,12 @@ export function PontoModule() {
         toast.error('Unidade não permitida')
       } else if (code === 'COOLDOWN') {
         toast.error(`Aguarde ${details?.secondsRemaining || '?'}s para registrar novamente.`)
+      } else if (code === 'LOCATION_REQUIRED') {
+        toast.error('Permita a localização somente para esta marcação de trabalho externo.')
+      } else if (code === 'LOCATION_INVALID' || code === 'LOCATION_POLICY_UNCONFIGURED') {
+        toast.error('Não foi possível validar a localização para esta unidade.')
+      } else if (code === 'TERMINAL_REQUIRED') {
+        toast.error('Esta unidade exige o Terminal de Ponto autorizado.')
       } else {
         toast.error(e?.message || String(e))
       }
@@ -945,6 +911,16 @@ export function PontoModule() {
     void meRefresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [devActorEmail])
+
+  useEffect(() => {
+    if (!me || !('linked' in me) || !me.linked) {
+      setMyProfile(null)
+      setMyProfileError(null)
+      return
+    }
+    void loadMyProfile()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, devActorEmail])
 
   useEffect(() => {
     if (!selectedEmployee) return
@@ -967,69 +943,6 @@ export function PontoModule() {
     void meLoadRecords()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me, meRecordsFrom, meRecordsTo, unitMissing])
-
-  useEffect(() => {
-    if (!mePunchOpen) {
-      setMeFaceAutoRunning(false)
-      setMeFaceStatus(null)
-    }
-  }, [mePunchOpen])
-
-  useEffect(() => {
-    if (!mePunchOpen) return
-    if (meStep !== 'face') return
-    if (meFaceAutoRunning) return
-    let alive = true
-    setMeFaceAutoRunning(true)
-    setMeFaceStatus('Preparando câmera…')
-    void (async () => {
-      if (!me || !('linked' in me) || !me.linked) {
-        setMeFaceStatus('Usuário não vinculado. Use PIN.')
-        setMeStep('pin')
-        return
-      }
-      if (!me.hasFace) {
-        setMeFaceStatus('Biometria não cadastrada. Use PIN.')
-        setMeStep('pin')
-        return
-      }
-      const unit = ensureEmployeeUnitSelected()
-      if (allowedUnits.length && !unit) {
-        setMeFaceStatus('Selecione a unidade para continuar.')
-        return
-      }
-      const camOk = await startCameraFor('employee', { silent: true, waitForVideoMs: 2400, suppressMissingVideoToast: true })
-      if (!alive) return
-      if (!camOk) {
-        setMeFaceStatus('Não foi possível acessar a câmera. Use PIN.')
-        setMeStep('pin')
-        return
-      }
-      setMeFaceStatus('Carregando análise facial…')
-      const modelsOk = await ensureModelsUI(faceDetectorMode, { message: 'Carregando análise facial…' })
-      if (!alive) return
-      if (!modelsOk) {
-        setMeFaceStatus('Não foi possível carregar a análise. Use PIN.')
-        setMeStep('pin')
-        await stopCameraUI({ silent: true })
-        return
-      }
-      setMeFaceStatus('Analisando rosto…')
-      const ok = await mePunchFace({ auto: true })
-      if (!alive) return
-      if (!ok) {
-        setMeFaceStatus('Não foi possível reconhecer. Digite seu PIN.')
-        setMeStep('pin')
-        await stopCameraUI({ silent: true })
-      }
-    })().finally(() => {
-      if (alive) setMeFaceAutoRunning(false)
-    })
-    return () => {
-      alive = false
-      setMeFaceAutoRunning(false)
-    }
-  }, [mePunchOpen, meStep, meFaceAutoRunning, faceDetectorMode, me, allowedUnits, resolvedMeUnit])
 
   async function adminRefreshAll() {
     if (!canAdmin) return toast.error('Acesso restrito')
@@ -1130,7 +1043,7 @@ export function PontoModule() {
       setNewEmployeeOpen(false)
       setSelectedEmployeeId(res.data.id)
       await adminRefreshAll()
-      if (opts.enrollAfter) {
+      if (opts.enrollAfter && FACE_IDENTIFICATION_ENABLED) {
         setEnrollOpen(true)
       }
       toast.success('Funcionário criado e configurado')
@@ -1157,6 +1070,7 @@ export function PontoModule() {
   }
 
   async function autoEnrollFace() {
+    if (!FACE_IDENTIFICATION_ENABLED) return
     if (enrollAutoRunning) return
     if (!canManageCanonicalEmployee || !selectedEmployeeId) return
     if (!stream || cameraOwner !== 'admin') return
@@ -1307,6 +1221,10 @@ export function PontoModule() {
   }
 
   function openSelectEmployee(action: 'enroll' | 'edit' | 'records') {
+    if (action === 'enroll' && !FACE_IDENTIFICATION_ENABLED) {
+      toast.error('A identificação facial está temporariamente desativada. Use PIN para marcações.')
+      return
+    }
     if (!adminEmployees.length) void adminRefreshAll()
     setSelectEmployeeAction(action)
     setSelectEmployeeQuery('')
@@ -1317,6 +1235,10 @@ export function PontoModule() {
     setSelectedEmployeeId(id)
     setSelectEmployeeOpen(false)
     if (selectEmployeeAction === 'enroll') {
+      if (!FACE_IDENTIFICATION_ENABLED) {
+        toast.error('A identificação facial está temporariamente desativada. Use PIN para marcações.')
+        return
+      }
       setEnrollOpen(true)
     } else if (selectEmployeeAction === 'edit') {
       setEditOpen(true)
@@ -1432,10 +1354,11 @@ export function PontoModule() {
     try {
       const res = await apiJson<{ ok: boolean; data: PontoDevicePublic & { token: string } }>(
         '/api/ponto/admin/devices',
-        { method: 'POST', body: { unit: newDeviceUnit.trim(), label: newDeviceLabel.trim() } }
+        { method: 'POST', body: { unit: newDeviceUnit.trim(), label: newDeviceLabel.trim(), deviceMode: 'TERMINAL', networkPolicy: newDeviceNetworkPolicy, allowedNetworks: newDeviceNetworks.split(',').map((value) => value.trim()).filter(Boolean) } }
       )
       setNewDeviceTokenOnce(res.data.token)
       setNewDeviceLabel('')
+      setNewDeviceNetworks('')
       await adminRefreshAll()
       toast.success('Dispositivo criado')
     } catch (e: any) {
@@ -1444,6 +1367,32 @@ export function PontoModule() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function loadPresencePolicy(unitId: string) {
+    if (!unitId || !canManageDevices) return
+    setPresencePolicyLoading(true)
+    try {
+      const response = await apiJson<{ ok: boolean; data: PontoPresencePolicy }>('/api/ponto/presence-policies/' + encodeURIComponent(unitId))
+      setPresencePolicyUnit(unitId)
+      setPresencePolicy(response.data)
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível carregar a política de presença')
+      toastErrorMeta(e)
+    } finally { setPresencePolicyLoading(false) }
+  }
+
+  async function savePresencePolicy() {
+    if (!presencePolicy || !presencePolicyUnit || !canManageDevices) return
+    setPresencePolicyLoading(true)
+    try {
+      const response = await apiJson<{ ok: boolean; data: PontoPresencePolicy }>('/api/ponto/presence-policies/' + encodeURIComponent(presencePolicyUnit), { method: 'PATCH', body: presencePolicy })
+      setPresencePolicy(response.data)
+      toast.success('Política de presença atualizada')
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível salvar a política de presença')
+      toastErrorMeta(e)
+    } finally { setPresencePolicyLoading(false) }
   }
 
   async function adminRevokeDevice(deviceId: string) {
@@ -1667,7 +1616,7 @@ export function PontoModule() {
         <Card>
           <CardHeader>
             <CardTitle>Meu ponto</CardTitle>
-            <CardDescription>Registre sua entrada/saída</CardDescription>
+            <CardDescription>Registre sua jornada usando seu PIN.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -1679,7 +1628,7 @@ export function PontoModule() {
                 {meLinked ? (
                   <>
                     <Badge>Funcionário: {meLinked.employee?.name || '-'}</Badge>
-                    <Badge variant="outline">Face: {meLinked.hasFace ? 'OK' : '—'}</Badge>
+                    <Badge variant="outline">Autenticação: PIN</Badge>
                     <Badge variant="outline">PIN: {meLinked.pinSet ? 'OK' : '—'}</Badge>
                     {meLinked.cooldown?.active ? (
                       <Badge variant="secondary">Cooldown: {meLinked.cooldown.secondsRemaining ?? '?'}s</Badge>
@@ -1718,7 +1667,7 @@ export function PontoModule() {
                   </div>
                   {meLinked.linked ? (
                     <div className="mt-3 text-xs text-muted-foreground">
-                      Última batida: {meLinked.lastPunch ? `${fmtDate(meLinked.lastPunch.at)} • ${meLinked.lastPunch.type} • ${meLinked.lastPunch.method || '-'}` : '—'}
+                      Última batida: {meLinked.lastPunch ? `${fmtDate(meLinked.lastPunch.at)} • ${getPunchTypeLabel(meLinked.lastPunch.eventType || meLinked.lastPunch.type)} • ${meLinked.lastPunch.method || '-'}` : '—'}
                     </div>
                   ) : null}
                 </div>
@@ -1764,25 +1713,139 @@ export function PontoModule() {
                 )
               ) : null}
 
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
+                Próxima ação: <strong>{nextPunchAction.label}</strong>
+              </div>
+
               <div className="flex flex-wrap gap-2">
                 <Button
                   onClick={() => {
-                    if (me && 'linked' in me && me.linked) setMeStep(me.hasFace ? 'face' : 'pin')
-                    else setMeStep('pin')
                     setMePunchOpen(true)
                   }}
                   disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}
                 >
-                  Bater ponto
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setMeHistoryOpen(true)}
-                  disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}
-                >
-                  Ver Histórico
+                  {nextPunchAction.label}
                 </Button>
               </div>
+          </CardContent>
+        </Card>
+
+        {meLinked ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Meu perfil profissional</CardTitle>
+              <CardDescription>Dados vinculados ao seu cadastro canônico de funcionário. Documentos pessoais permanecem protegidos.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {myProfileLoading ? <div className="text-sm text-muted-foreground">Carregando perfil…</div> : null}
+              {myProfileError ? (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                  <div className="font-medium">Perfil ainda não disponível</div>
+                  <div className="opacity-80">{myProfileError}</div>
+                </div>
+              ) : null}
+              {profile ? (
+                <>
+                  <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
+                    {profileMissingSummary(profile, myProfile?.completeness.missing || [])}
+                  </div>
+                  <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                    <div className="space-y-3 rounded-md border p-4">
+                      <div className="font-medium">Identificação e vínculo</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                        <div><div className="text-xs text-muted-foreground">Nome completo</div><div>{profileValue(profile.legalName)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Nome social</div><div>{profileValue(profile.socialName)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Matrícula</div><div>{profileValue(profile.employeeCode)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Status</div><div>{profileValue(profile.status)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">E-mail de acesso</div><div className="break-all">{profileValue(profile.loginEmail)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Celular</div><div>{profileValue(profile.mobilePhone)}</div></div>
+                      </div>
+                    </div>
+                    <div className="space-y-3 rounded-md border p-4">
+                      <div className="font-medium">Organização</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                        <div><div className="text-xs text-muted-foreground">Cargo</div><div>{profileValue(profile.jobTitle)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Admissão</div><div>{profileValue(profile.admittedAt)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Grupo</div><div>{profileValue(profile.groupName)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Departamento</div><div>{profileValue(profile.departmentName)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Líder imediato</div><div>{profileValue(profile.manager?.name)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Unidades</div><div>{profile.units.length ? profile.units.join(', ') : 'Não informado'}</div></div>
+                      </div>
+                    </div>
+                    <div className="space-y-3 rounded-md border p-4">
+                      <div className="font-medium">Dados pessoais</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                        <div><div className="text-xs text-muted-foreground">Data de nascimento</div><div>{profileValue(profile.birthDate)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Naturalidade</div><div>{profileValue(profile.birthPlace)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Grau de instrução</div><div>{profileValue(profile.educationLevel)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">E-mail pessoal</div><div className="break-all">{profileValue(profile.personalEmail)}</div></div>
+                      </div>
+                    </div>
+                    <div className="space-y-3 rounded-md border p-4">
+                      <div className="font-medium">Endereço e documentos</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                        <div><div className="text-xs text-muted-foreground">CEP</div><div>{profileValue(profile.address.zipCode)}</div></div>
+                        <div><div className="text-xs text-muted-foreground">Cidade / Estado</div><div>{[profile.address.city, profile.address.state].filter(Boolean).join(' / ') || 'Não informado'}</div></div>
+                        <div className="sm:col-span-2"><div className="text-xs text-muted-foreground">Endereço</div><div>{[profile.address.street, profile.address.number, profile.address.complement, profile.address.neighborhood].filter(Boolean).join(', ') || 'Não informado'}</div></div>
+                        <div className="sm:col-span-2 text-xs text-muted-foreground">CPF: {profile.documents.cpf.toLowerCase()} • PIS: {profile.documents.pis.toLowerCase()} • RG: {profile.documents.rg.toLowerCase()} • filiação: {profile.documents.family.toLowerCase()}</div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Meu histórico</CardTitle>
+            <CardDescription>As marcações do período aparecem aqui automaticamente.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="ponto-history-from">De</Label>
+                <Input id="ponto-history-from" type="date" value={meRecordsFrom} onChange={(e) => setMeRecordsFrom(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ponto-history-to">Até</Label>
+                <Input id="ponto-history-to" type="date" value={meRecordsTo} onChange={(e) => setMeRecordsTo(e.target.value)} />
+              </div>
+              <div className="flex items-end">
+                <Button variant="outline" onClick={meLoadRecords} disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}>
+                  Atualizar histórico
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Quando</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Unidade</TableHead>
+                    <TableHead>Método</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {meRecords.map((record) => (
+                    <TableRow key={record.id}>
+                      <TableCell className="text-sm">{fmtDate(record.at)}</TableCell>
+                      <TableCell><Badge variant="outline">{getPunchTypeLabel(record.eventType || record.type)}</Badge></TableCell>
+                      <TableCell className="text-sm">{record.unit || '-'}</TableCell>
+                      <TableCell className="text-sm">{record.method || '-'}</TableCell>
+                    </TableRow>
+                  ))}
+                  {!meRecords.length ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-sm text-muted-foreground">{meLoading ? 'Carregando registros…' : 'Nenhum registro no período.'}</TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
 
@@ -1868,117 +1931,24 @@ export function PontoModule() {
           open={mePunchOpen}
           onOpenChange={(open) => {
             setMePunchOpen(open)
-            if (!open) void stopCameraUI({ silent: true })
+            if (!open) setMePin('')
           }}
         >
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Bater ponto</DialogTitle>
-              <DialogDescription>Prioridade: Face → PIN. O próximo método aparece só se o anterior falhar/indisponível.</DialogDescription>
+              <DialogTitle>{nextPunchAction.label}</DialogTitle>
+              <DialogDescription>Confirme esta marcação com seu PIN. A identificação facial está indisponível neste momento.</DialogDescription>
             </DialogHeader>
-
-            {meStep === 'face' ? (
-              <div className="space-y-3">
-                {meFaceStatus ? (
-                  <div className="text-sm text-muted-foreground">
-                    {meFaceStatus.toLowerCase().includes('carregando') ? (
-                      <LoadingPercentText label={meFaceStatus} className="text-muted-foreground" showPercent={false} />
-                    ) : (
-                      meFaceStatus
-                    )}
-                  </div>
-                ) : null}
-                <div className="rounded-xl overflow-hidden border bg-black">
-                  <video ref={employeeVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
-                </div>
-                {modelsError ? <div className="text-sm text-red-600">Não foi possível carregar a análise facial.</div> : null}
-                {modelsReady === 'loading' ? (
-                  <div className="space-y-1">
-                    <div className="text-sm text-muted-foreground">
-                      <LoadingPercentText label={(modelsMessage || 'Carregando modelos faciais').replace(/[.…]+$/, '')} className="text-muted-foreground" showPercent={false} />
-                    </div>
-                    <div className="h-2 rounded bg-muted/40 overflow-hidden">
-                      <div className="h-full bg-primary transition-all" style={{ width: `${modelsProgress}%` }} />
-                    </div>
-                    <div className="text-xs text-muted-foreground">{modelsProgress}%</div>
-                  </div>
-                ) : null}
-                <div className="flex justify-end">
-                  <Button variant="outline" onClick={() => setMePunchOpen(false)} disabled={loading}>Fechar</Button>
-                </div>
+            <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void mePunchPin() }}>
+              <div className="space-y-2">
+                <Label htmlFor="ponto-me-pin">PIN</Label>
+                <Input id="ponto-me-pin" value={mePin} onChange={(e) => setMePin(e.target.value)} type="password" inputMode="numeric" autoComplete="one-time-code" maxLength={12} placeholder="••••" autoFocus />
               </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label>PIN</Label>
-                  <Input value={mePin} onChange={(e) => setMePin(e.target.value)} inputMode="numeric" placeholder="••••" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={mePunchPin} disabled={loading}>Registrar por PIN</Button>
-                  {me && 'linked' in me && me.linked && me.hasFace ? (
-                    <Button variant="outline" onClick={() => setMeStep('face')} disabled={loading}>Tentar Face</Button>
-                  ) : null}
-                </div>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-
-        <Dialog
-          open={meHistoryOpen}
-          onOpenChange={(open) => setMeHistoryOpen(open)}
-        >
-          <DialogContent className="max-w-3xl">
-            <DialogHeader>
-              <DialogTitle>Meu histórico</DialogTitle>
-              <DialogDescription>Registros realizados no período selecionado.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="space-y-2">
-                  <Label>De</Label>
-                  <Input type="date" value={meRecordsFrom} onChange={(e) => setMeRecordsFrom(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Até</Label>
-                  <Input type="date" value={meRecordsTo} onChange={(e) => setMeRecordsTo(e.target.value)} />
-                </div>
-                <div className="flex items-end">
-                  <Button onClick={meLoadRecords} disabled={meLoading || !(me && 'linked' in me && me.linked) || unitMissing}>Buscar</Button>
-                </div>
-              </div>
-
-              <div className="border rounded-xl overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Quando</TableHead>
-                      <TableHead>Tipo</TableHead>
-                      <TableHead>Unidade</TableHead>
-                      <TableHead>Método</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {meRecords.map(r => (
-                      <TableRow key={r.id}>
-                        <TableCell className="text-sm">{fmtDate(r.at)}</TableCell>
-                        <TableCell><Badge variant="outline">{r.type}</Badge></TableCell>
-                        <TableCell className="text-sm">{r.unit || '-'}</TableCell>
-                        <TableCell className="text-sm">{r.method || '-'}</TableCell>
-                      </TableRow>
-                    ))}
-                    {!meRecords.length ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-sm text-muted-foreground">Nenhum registro.</TableCell>
-                      </TableRow>
-                  ) : null}
-                </TableBody>
-              </Table>
-              </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setMeHistoryOpen(false)}>Fechar</Button>
-            </DialogFooter>
-            </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setMePunchOpen(false)} disabled={loading}>Cancelar</Button>
+                <Button type="submit" disabled={loading || !mePin.trim()}>{nextPunchAction.label}</Button>
+              </DialogFooter>
+            </form>
           </DialogContent>
         </Dialog>
       </div>
@@ -2079,6 +2049,7 @@ export function PontoModule() {
               onClick={() => adminCreateEmployee({ enrollAfter: true })}
               disabled={
                 loading ||
+                !FACE_IDENTIFICATION_ENABLED ||
                 !canManageCanonicalEmployee ||
                 !newEmployeeName.trim() ||
                 !newEmployeeLoginEmail.trim() ||
@@ -2087,7 +2058,7 @@ export function PontoModule() {
                 !newEmployeeUnit.trim()
               }
             >
-              Salvar e cadastrar biometria
+              Biometria temporariamente desativada
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2140,6 +2111,7 @@ export function PontoModule() {
         open={enrollOpen}
         onOpenChange={(open) => {
           if (!open) return closeEnrollDialog()
+          if (!FACE_IDENTIFICATION_ENABLED) return
           setEnrollOpen(true)
         }}
       >
@@ -2154,6 +2126,11 @@ export function PontoModule() {
           </DialogHeader>
 
           <div className="space-y-3">
+            {!FACE_IDENTIFICATION_ENABLED ? (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-muted-foreground">
+                A identificação facial está temporariamente desativada. As marcações devem ser confirmadas por PIN.
+              </div>
+            ) : null}
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm text-muted-foreground">
                 {selectedEmployee ? (
@@ -2163,9 +2140,11 @@ export function PontoModule() {
               {enrollProgress ? <Badge variant="secondary">{enrollProgress.done}/{enrollProgress.total}</Badge> : null}
             </div>
 
-            <div className="rounded-xl overflow-hidden border bg-black">
-              <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
-            </div>
+            {FACE_IDENTIFICATION_ENABLED ? (
+              <div className="rounded-xl overflow-hidden border bg-black">
+                <video ref={adminVideoRef} className="w-full aspect-video object-cover" playsInline muted autoPlay />
+              </div>
+            ) : null}
 
             <div className="text-sm text-muted-foreground">{enrollHint}</div>
             {enrollAutoRunning ? (
@@ -2260,12 +2239,13 @@ export function PontoModule() {
               variant="secondary"
               onClick={() => {
                 if (!selectedEmployeeId) return toast.error('Selecione um funcionário')
+                if (!FACE_IDENTIFICATION_ENABLED) return toast.error('A identificação facial está temporariamente desativada. Use PIN para marcações.')
                 setEditOpen(false)
                 setEnrollOpen(true)
               }}
-              disabled={loading || !selectedEmployeeId || !canManageCanonicalEmployee}
+              disabled={loading || !FACE_IDENTIFICATION_ENABLED || !selectedEmployeeId || !canManageCanonicalEmployee}
             >
-              Cadastrar biometria
+              Biometria temporariamente desativada
             </Button>
             <Button onClick={adminSaveEmployeeEdit} disabled={loading || !selectedEmployeeId || !editUnit.trim() || !canManageCanonicalEmployee}>Salvar</Button>
           </DialogFooter>
@@ -2388,7 +2368,8 @@ export function PontoModule() {
           <div className="space-y-6">
             <div className="space-y-3">
               <div className="font-medium">Novo dispositivo</div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <p className="text-sm text-muted-foreground">O terminal usa PIN, horário do servidor e unidade fixada no próprio dispositivo. Reconhecimento facial permanece bloqueado.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                 <div className="space-y-2">
                   <Label>Unidade</Label>
                   <Input value={newDeviceUnit} onChange={(e) => setNewDeviceUnit(e.target.value)} placeholder="ex: unidade-01" />
@@ -2396,6 +2377,17 @@ export function PontoModule() {
                 <div className="space-y-2">
                   <Label>Rótulo</Label>
                   <Input value={newDeviceLabel} onChange={(e) => setNewDeviceLabel(e.target.value)} placeholder="Recepção, Sala 1..." />
+                </div>
+                <div className="space-y-2">
+                  <Label>Rede</Label>
+                  <Select value={newDeviceNetworkPolicy} onValueChange={(value) => setNewDeviceNetworkPolicy(value as 'NONE' | 'OBSERVE' | 'REQUIRE')}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="OBSERVE">Observar</SelectItem><SelectItem value="REQUIRE">Exigir rede</SelectItem><SelectItem value="NONE">Sem evidência</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2 xl:col-span-2">
+                  <Label>CIDRs IPv4 públicos</Label>
+                  <Input value={newDeviceNetworks} onChange={(e) => setNewDeviceNetworks(e.target.value)} placeholder="ex: 203.0.113.10/32, 198.51.100.0/24" />
                 </div>
                 <div className="flex items-end">
                   <Button onClick={adminCreateDevice} disabled={loading || !canManageDevices}>Criar token</Button>
@@ -2408,7 +2400,7 @@ export function PontoModule() {
                   {newDeviceTokenQr ? (
                     <div className="flex flex-col items-center gap-2">
                       <img src={newDeviceTokenQr} alt="QR do token" className="w-56 h-56 rounded-md border" />
-                      <div className="text-xs text-muted-foreground">Escaneie no telefone do relógio para preencher o token.</div>
+                      <div className="text-xs text-muted-foreground">Use apenas durante o provisionamento físico do terminal; não divulgue este QR.</div>
                     </div>
                   ) : null}
                   <div className="flex gap-2">
@@ -2427,12 +2419,27 @@ export function PontoModule() {
               ) : null}
             </div>
 
+            <div className="rounded-xl border p-4 space-y-3">
+              <div className="font-medium">Política de presença por unidade</div>
+              <p className="text-sm text-muted-foreground">Terminal é o padrão. Trabalho externo pede localização apenas no momento da batida e registra só o resultado da verificação.</p>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="space-y-2"><Label>Unidade</Label><Input value={presencePolicyUnit} onChange={(e) => setPresencePolicyUnit(e.target.value)} placeholder="unidade-01" /></div>
+                <div className="flex items-end"><Button variant="outline" onClick={() => void loadPresencePolicy(presencePolicyUnit)} disabled={presencePolicyLoading || !presencePolicyUnit}>Carregar</Button></div>
+                {presencePolicy ? <>
+                  <div className="space-y-2"><Label>Modo</Label><Select value={presencePolicy.presenceMode} onValueChange={(value) => setPresencePolicy((current) => current ? { ...current, presenceMode: value as PontoPresencePolicy['presenceMode'] } : current)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="TERMINAL_REQUIRED">Terminal obrigatório</SelectItem><SelectItem value="EXTERNAL_REVIEW">Trabalho externo com revisão</SelectItem><SelectItem value="FLEXIBLE">Flexível</SelectItem></SelectContent></Select></div>
+                  <div className="space-y-2"><Label>Raio (m)</Label><Input type="number" min="25" max="5000" value={presencePolicy.geofenceRadiusMeters || 150} onChange={(e) => setPresencePolicy((current) => current ? { ...current, geofenceRadiusMeters: Number(e.target.value) } : current)} /></div>
+                </> : null}
+              </div>
+              {presencePolicy ? <div className="grid grid-cols-1 md:grid-cols-3 gap-3"><div className="space-y-2"><Label>Latitude da geocerca</Label><Input inputMode="decimal" value={presencePolicy.geofenceLatitude ?? ''} onChange={(e) => setPresencePolicy((current) => current ? { ...current, geofenceLatitude: e.target.value === '' ? null : Number(e.target.value) } : current)} /></div><div className="space-y-2"><Label>Longitude da geocerca</Label><Input inputMode="decimal" value={presencePolicy.geofenceLongitude ?? ''} onChange={(e) => setPresencePolicy((current) => current ? { ...current, geofenceLongitude: e.target.value === '' ? null : Number(e.target.value) } : current)} /></div><div className="flex items-end"><Button onClick={() => void savePresencePolicy()} disabled={presencePolicyLoading || !canManageDevices}>Salvar política</Button></div></div> : null}
+            </div>
+
             <div className="border rounded-xl overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Unidade</TableHead>
                     <TableHead>Rótulo</TableHead>
+                    <TableHead>Rede</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Último uso</TableHead>
                     <TableHead></TableHead>
@@ -2443,6 +2450,7 @@ export function PontoModule() {
                     <TableRow key={d.id}>
                       <TableCell className="font-medium">{d.unit || '-'}</TableCell>
                       <TableCell>{d.label || '-'}</TableCell>
+                      <TableCell className="text-sm">{d.networkPolicy === 'REQUIRE' ? `Obrigatória (${d.allowedNetworksCount || 0})` : d.networkPolicy === 'OBSERVE' ? 'Observada' : 'Não usada'}</TableCell>
                       <TableCell>{d.revokedAt ? <Badge variant="secondary">Revogado</Badge> : <Badge>Ativo</Badge>}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(d.lastSeenAt)}</TableCell>
                       <TableCell className="text-right">
@@ -2456,7 +2464,7 @@ export function PontoModule() {
                   ))}
                   {!adminDevices.length ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-sm text-muted-foreground">Nenhum dispositivo.</TableCell>
+                      <TableCell colSpan={6} className="text-sm text-muted-foreground">Nenhum dispositivo.</TableCell>
                     </TableRow>
                   ) : null}
                 </TableBody>

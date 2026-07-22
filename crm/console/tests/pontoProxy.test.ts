@@ -99,6 +99,19 @@ describe('Ponto CRM proxy', () => {
     expect(upstream.headers.get('cookie')).toBeNull(); expect(upstream.headers.get('x-custom-secret')).toBeNull()
   })
 
+  it('signs Cloudflare-observed network context only for explicit device routes', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const ctx = context('/api/ponto/device/context', { headers: { authorization: 'Device terminal-token', 'cf-connecting-ip': '203.0.113.10' } })
+    ;(ctx.env as any).PONTO_NETWORK_CONTEXT_KEY = 'network-test-key'
+    await onRequest(ctx)
+    const upstream = fetchMock.mock.calls[0][0] as Request
+    expect(upstream.headers.get('authorization')).toBe('Device terminal-token')
+    expect(upstream.headers.get('x-skincos-network-ip')).toBe('203.0.113.10')
+    expect(upstream.headers.get('x-skincos-network-sig')).toBeTruthy()
+    expect(upstream.headers.get('cookie')).toBeNull()
+  })
+
   it('returns structured JSON without stack details when Timekeeping is unavailable', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED secret-upstream')))

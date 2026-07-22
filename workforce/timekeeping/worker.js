@@ -1,5 +1,5 @@
 import { canonicalEventType, calculateDay, calculatePeriod, isoDateInZone } from './domain.js'
-import { biometricDistance, constantTimeEqual, decryptTemplate, encryptTemplate, hashPin, isValidBiometricTemplate, sha256, signHmac, verifyPin } from './security.js'
+import { biometricDistance, constantTimeEqual, decryptSensitiveText, decryptTemplate, encryptSensitiveText, encryptTemplate, hashPin, isValidBiometricTemplate, sha256, signHmac, verifyPin } from './security.js'
 
 const encoder = new TextEncoder()
 const json = (status, payload, requestId) => new Response(JSON.stringify({ ...payload, requestId }), {
@@ -34,12 +34,55 @@ function normalizeWorkforceRole(value) {
 }
 function isConsultor(actor) { return actor?.role === 'CONSULTOR' }
 function canManageWorkforce(actor) { return actor?.role === 'SUPERVISOR' || actor?.role === 'ADMIN' }
+function isFacePunchEnabled(env) { return String(env?.PONTO_FACE_PUNCH_ENABLED || '').trim().toLowerCase() === 'true' }
+function normalizeNetworkPolicy(value) { return ['NONE', 'OBSERVE', 'REQUIRE'].includes(String(value || '').trim().toUpperCase()) ? String(value).trim().toUpperCase() : 'NONE' }
+function normalizePresenceMode(value) { return ['TERMINAL_REQUIRED', 'EXTERNAL_REVIEW', 'FLEXIBLE'].includes(String(value || '').trim().toUpperCase()) ? String(value).trim().toUpperCase() : 'FLEXIBLE' }
+function ipv4ToInt(value) {
+  const parts = String(value || '').trim().split('.')
+  if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) return null
+  return parts.reduce((out, part) => ((out << 8) | Number(part)) >>> 0, 0)
+}
+function normalizeNetworks(value) {
+  const values = Array.isArray(value) ? value : String(value || '').split(',')
+  const output = []
+  for (const raw of values.slice(0, 16)) {
+    const [ip, bitsRaw] = String(raw || '').trim().split('/')
+    const bits = Number(bitsRaw)
+    if (ipv4ToInt(ip) === null || !Number.isInteger(bits) || bits < 0 || bits > 32) continue
+    output.push(`${ip}/${bits}`)
+  }
+  return Array.from(new Set(output))
+}
+function storedNetworks(value) { try { return normalizeNetworks(JSON.parse(String(value || '[]'))) } catch { return [] } }
+function ipInNetwork(ip, cidr) {
+  const candidate = ipv4ToInt(ip); const [network, bitsRaw] = String(cidr || '').split('/'); const base = ipv4ToInt(network); const bits = Number(bitsRaw)
+  if (candidate === null || base === null || !Number.isInteger(bits) || bits < 0 || bits > 32) return false
+  if (bits === 0) return true
+  const mask = (0xffffffff << (32 - bits)) >>> 0
+  return (candidate & mask) === (base & mask)
+}
+function metersBetween(left, right) {
+  const rad = (value) => Number(value) * Math.PI / 180
+  const latitude = rad(Number(right.latitude) - Number(left.latitude)); const longitude = rad(Number(right.longitude) - Number(left.longitude))
+  const a = Math.sin(latitude / 2) ** 2 + Math.cos(rad(left.latitude)) * Math.cos(rad(right.latitude)) * Math.sin(longitude / 2) ** 2
+  return Math.round(6371008.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))
+}
+function locationEvidence(location, policy) {
+  if (!location || typeof location !== 'object') return { error: 'LOCATION_REQUIRED' }
+  const latitude = Number(location.latitude); const longitude = Number(location.longitude); const accuracy = Number(location.accuracyMeters)
+  const capturedAt = Date.parse(String(location.capturedAt || ''))
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180 || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 10000 || !Number.isFinite(capturedAt) || Math.abs(Date.now() - capturedAt) > 5 * 60 * 1000) return { error: 'LOCATION_INVALID' }
+  if (!Number.isFinite(Number(policy.geofence_latitude)) || !Number.isFinite(Number(policy.geofence_longitude))) return { error: 'LOCATION_POLICY_UNCONFIGURED' }
+  const distanceMeters = metersBetween({ latitude, longitude }, { latitude: policy.geofence_latitude, longitude: policy.geofence_longitude })
+  const within = distanceMeters <= Number(policy.geofence_radius_meters || 150) + accuracy
+  return { status: within ? 'WITHIN_GEOFENCE' : 'OUTSIDE_GEOFENCE_REVIEW', payload: { accuracyMeters: Math.round(accuracy), distanceMeters, geofenceRadiusMeters: Number(policy.geofence_radius_meters || 150) } }
+}
 function roleAllows(role, action) {
   const matrix = {
-    CONSULTOR: ['self.read', 'self.punch'], DEVICE: ['device.punch'],
+    CONSULTOR: ['self.read', 'self.punch', 'self.profile.read', 'self.profile.write'], DEVICE: ['device.punch'],
     MANAGER: ['unit.read', 'correction.request', 'device.manage'],
-    SUPERVISOR: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'export.read', 'audit.read'],
-    ADMIN: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'device.manage', 'export.read', 'audit.read'],
+    SUPERVISOR: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'export.read', 'audit.read', 'profile.read', 'profile.manage'],
+    ADMIN: ['unit.read', 'correction.request', 'correction.approve', 'period.close', 'period.reopen', 'device.manage', 'export.read', 'audit.read', 'profile.read', 'profile.manage'],
   }
   return (matrix[normalizeWorkforceRole(role)] || []).includes(action)
 }
@@ -48,10 +91,11 @@ async function actorFor(request, env, db, bodyHash) {
   const authorization = String(request.headers.get('authorization') || '')
   if (/^Device\s+/i.test(authorization)) {
     const tokenHash = await sha256(authorization.replace(/^Device\s+/i, '').trim())
-    const device = await db.prepare('SELECT id, unit_id, label FROM timekeeping_devices WHERE token_hash=? AND active=1 AND revoked_at IS NULL LIMIT 1').bind(tokenHash).first()
+    const device = await db.prepare('SELECT id, unit_id, label, device_mode, network_policy, allowed_networks_json FROM timekeeping_devices WHERE token_hash=? AND active=1 AND revoked_at IS NULL LIMIT 1').bind(tokenHash).first()
     if (!device) return null
     await db.prepare('UPDATE timekeeping_devices SET last_seen_at=? WHERE id=?').bind(now(), device.id).run()
-    return { id: device.id, email: `device:${device.id}@internal`, role: 'DEVICE', allowedUnits: [device.unit_id], name: device.label || device.id, deviceId: device.id }
+    const networks = storedNetworks(device.allowed_networks_json)
+    return { id: device.id, email: `device:${device.id}@internal`, role: 'DEVICE', allowedUnits: [device.unit_id], name: device.label || device.id, deviceId: device.id, deviceMode: String(device.device_mode || 'TERMINAL'), networkPolicy: normalizeNetworkPolicy(device.network_policy), allowedNetworks: networks }
   }
   const raw = String(request.headers.get('x-skincos-actor') || '')
   const timestamp = String(request.headers.get('x-skincos-actor-ts') || '')
@@ -78,6 +122,113 @@ function requireUnit(actor, unitId) {
 
 function publicEmployee(row) {
   return row ? { id: row.id, employeeId: row.canonical_employee_id, name: row.display_name, email: row.login_email || null, status: row.status, terminatedAt: row.terminated_at || null } : null
+}
+
+const profilePrivateFields = ['cpf', 'mobilePhone', 'pis', 'rgNumber', 'rgIssuer', 'rgIssuerState', 'rgIssuedAt', 'motherName', 'fatherName', 'zipCode', 'street', 'addressNumber', 'addressComplement', 'neighborhood']
+const profilePublicFields = ['socialName', 'personalEmail', 'groupName', 'departmentName', 'managerEmployeeId', 'managerCpf', 'admittedAt', 'dismissedAt', 'birthPlace', 'educationLevel', 'city', 'state']
+const profileSelfPublicFields = ['socialName', 'personalEmail', 'birthPlace', 'educationLevel', 'city', 'state']
+const profileSelfPrivateFields = ['mobilePhone', 'zipCode', 'street', 'addressNumber', 'addressComplement', 'neighborhood']
+
+function profileInput(body, allowedPublic = profilePublicFields, allowedPrivate = profilePrivateFields) {
+  const input = body?.profile && typeof body.profile === 'object' && !Array.isArray(body.profile) ? body.profile : body
+  const publicPatch = {}; const privatePatch = {}; const provided = []
+  for (const field of allowedPublic) {
+    if (input?.[field] === undefined) continue
+    provided.push(field)
+    if (field === 'admittedAt' || field === 'dismissedAt') publicPatch[field] = dateOnly(input[field]) || null
+    else if (field === 'managerCpf') publicPatch[field] = String(input[field] || '').replace(/\D/g, '') || null
+    else publicPatch[field] = cleanText(input[field], field === 'personalEmail' ? 240 : 180) || null
+  }
+  for (const field of allowedPrivate) {
+    if (input?.[field] === undefined) continue
+    provided.push(field)
+    const value = cleanText(input[field], 500)
+    privatePatch[field] = field === 'cpf' ? value.replace(/\D/g, '') : value || null
+  }
+  return { publicPatch, privatePatch, provided }
+}
+
+async function profilePrivateData(profile, env) {
+  if (!profile?.private_data_encrypted) return {}
+  if (!env.PONTO_PROFILE_DATA_KEY) return {}
+  const parsed = JSON.parse(await decryptSensitiveText(profile.private_data_encrypted, env.PONTO_PROFILE_DATA_KEY))
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('PROFILE_DATA_INVALID')
+  return Object.fromEntries(profilePrivateFields.map((field) => [field, typeof parsed[field] === 'string' ? parsed[field] : null]))
+}
+
+function profileDocumentStatus(privateData = {}, employee = null) {
+  return {
+    cpf: privateData.cpf || employee?.cpf_hash ? 'CADASTRADO' : 'PENDENTE',
+    pis: privateData.pis ? 'CADASTRADO' : 'PENDENTE',
+    rg: privateData.rgNumber ? 'CADASTRADO' : 'PENDENTE',
+    family: privateData.motherName || privateData.fatherName ? 'CADASTRADO' : 'PENDENTE',
+  }
+}
+
+async function profileResponse(db, env, employee) {
+  const profile = await db.prepare('SELECT * FROM workforce_employee_profiles WHERE employee_id=?').bind(employee.id).first()
+  const privateData = profile ? await profilePrivateData(profile, env) : {}
+  const units = await employeeUnits(db, employee.id)
+  const manager = profile?.manager_employee_id
+    ? await db.prepare('SELECT id, display_name, canonical_employee_id FROM workforce_employees WHERE id=?').bind(profile.manager_employee_id).first()
+    : null
+  const data = {
+    employeeId: employee.canonical_employee_id,
+    legalName: employee.display_name,
+    socialName: profile?.social_name || null,
+    employeeCode: employee.employee_code || null,
+    loginEmail: employee.login_email || null,
+    personalEmail: profile?.personal_email || null,
+    mobilePhone: privateData.mobilePhone || null,
+    jobTitle: employee.job_title || null,
+    status: employee.status,
+    admittedAt: profile?.admitted_at || null,
+    dismissedAt: profile?.dismissed_at || employee.terminated_at || null,
+    groupName: profile?.group_name || null,
+    departmentName: profile?.department_name || null,
+    manager: manager ? { employeeId: manager.canonical_employee_id, name: manager.display_name } : null,
+    units,
+    birthDate: employee.birth_date || null,
+    birthPlace: profile?.birth_place || null,
+    educationLevel: profile?.education_level || null,
+    address: { zipCode: privateData.zipCode || null, street: privateData.street || null, number: privateData.addressNumber || null, complement: privateData.addressComplement || null, neighborhood: privateData.neighborhood || null, city: profile?.city || null, state: profile?.state || null },
+    documents: profileDocumentStatus(privateData, employee),
+  }
+  const required = ['legalName', 'employeeCode', 'jobTitle', 'admittedAt', 'groupName', 'departmentName', 'mobilePhone', 'birthDate', 'birthPlace', 'educationLevel', 'zipCode', 'city', 'state']
+  const missing = required.filter((field) => field === 'zipCode' ? !privateData.zipCode : !data[field])
+  return { profile: data, completeness: { missing, complete: required.filter((field) => !missing.includes(field)), documents: profileDocumentStatus(privateData, employee) } }
+}
+
+async function saveProfile(db, env, actor, employee, patch, requestId) {
+  const current = await db.prepare('SELECT * FROM workforce_employee_profiles WHERE employee_id=?').bind(employee.id).first()
+  let existingPrivate = {}
+  const hasPrivateUpdate = Object.keys(patch.privatePatch).length > 0
+  if (hasPrivateUpdate && !env.PONTO_PROFILE_DATA_KEY) throw new Error('PROFILE_DATA_KEY_NOT_CONFIGURED')
+  if (current?.private_data_encrypted && hasPrivateUpdate) existingPrivate = await profilePrivateData(current, env)
+  const mergedPrivate = { ...existingPrivate, ...patch.privatePatch }
+  const privateDataEncrypted = hasPrivateUpdate
+    ? await encryptSensitiveText(JSON.stringify(mergedPrivate), env.PONTO_PROFILE_DATA_KEY)
+    : current?.private_data_encrypted || null
+  const values = {
+    socialName: patch.publicPatch.socialName === undefined ? current?.social_name || null : patch.publicPatch.socialName,
+    personalEmail: patch.publicPatch.personalEmail === undefined ? current?.personal_email || null : patch.publicPatch.personalEmail,
+    groupName: patch.publicPatch.groupName === undefined ? current?.group_name || null : patch.publicPatch.groupName,
+    departmentName: patch.publicPatch.departmentName === undefined ? current?.department_name || null : patch.publicPatch.departmentName,
+    managerEmployeeId: patch.publicPatch.managerEmployeeId === undefined ? current?.manager_employee_id || null : patch.publicPatch.managerEmployeeId,
+    managerCpfHash: patch.publicPatch.managerCpf === undefined ? current?.manager_cpf_hash || null : (patch.publicPatch.managerCpf ? await sha256(patch.publicPatch.managerCpf) : null),
+    admittedAt: patch.publicPatch.admittedAt === undefined ? current?.admitted_at || null : patch.publicPatch.admittedAt,
+    dismissedAt: patch.publicPatch.dismissedAt === undefined ? current?.dismissed_at || null : patch.publicPatch.dismissedAt,
+    birthPlace: patch.publicPatch.birthPlace === undefined ? current?.birth_place || null : patch.publicPatch.birthPlace,
+    educationLevel: patch.publicPatch.educationLevel === undefined ? current?.education_level || null : patch.publicPatch.educationLevel,
+    city: patch.publicPatch.city === undefined ? current?.city || null : patch.publicPatch.city,
+    state: patch.publicPatch.state === undefined ? current?.state || null : patch.publicPatch.state,
+  }
+  const at = now()
+  await db.batch([
+    db.prepare(`INSERT INTO workforce_employee_profiles (employee_id, social_name, personal_email, group_name, department_name, manager_employee_id, manager_cpf_hash, admitted_at, dismissed_at, birth_place, education_level, city, state, private_data_encrypted, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(employee_id) DO UPDATE SET social_name=excluded.social_name, personal_email=excluded.personal_email, group_name=excluded.group_name, department_name=excluded.department_name, manager_employee_id=excluded.manager_employee_id, manager_cpf_hash=excluded.manager_cpf_hash, admitted_at=excluded.admitted_at, dismissed_at=excluded.dismissed_at, birth_place=excluded.birth_place, education_level=excluded.education_level, city=excluded.city, state=excluded.state, private_data_encrypted=excluded.private_data_encrypted, updated_at=excluded.updated_at, updated_by=excluded.updated_by`)
+      .bind(employee.id, values.socialName, values.personalEmail, values.groupName, values.departmentName, values.managerEmployeeId, values.managerCpfHash, values.admittedAt, values.dismissedAt, values.birthPlace, values.educationLevel, values.city, values.state, privateDataEncrypted, at, at, actor.id),
+    await audit(db, { actor, action: 'EMPLOYEE_PROFILE_UPDATE', entityType: 'workforce_employee_profile', entityId: employee.id, requestId, after: { fields: patch.provided } }),
+  ])
 }
 
 function cleanText(value, max = 240) { return String(value || '').trim().slice(0, max) }
@@ -191,6 +342,7 @@ function canonicalPath(path) {
   return aliases.get(path) || path
     .replace(/^\/api\/ponto\/admin\/employees\/([^/]+)\/pin$/, '/api/ponto/pin/configure/$1')
     .replace(/^\/api\/ponto\/admin\/employees\/([^/]+)\/enroll$/, '/api/ponto/biometrics/enroll/$1')
+    .replace(/^\/api\/ponto\/admin\/employees\/([^/]+)\/profile$/, '/api/ponto/employees/$1/profile')
     .replace(/^\/api\/ponto\/admin\/devices\/([^/]+)\/revoke$/, '/api/ponto/devices/$1/revoke')
     .replace(/^\/api\/ponto\/admin\/employees\/([^/]+)$/, '/api/ponto/employees/$1')
 }
@@ -217,6 +369,42 @@ async function activeUnitForEmployee(db, employeeId, requestedUnit, date) {
   const unitId = cleanText(requestedUnit, 120)
   if (!unitId) return null
   return db.prepare(`SELECT unit_id FROM timekeeping_employee_units WHERE employee_id=? AND unit_id=? AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY effective_from DESC LIMIT 1`).bind(employeeId, unitId, date, date).first()
+}
+
+async function employeeForTerminal(db, actor, employeeCode) {
+  const code = cleanText(employeeCode, 80)
+  if (!code) return null
+  const rows = await db.prepare('SELECT * FROM workforce_employees WHERE employee_code=? AND status=\'ACTIVE\' LIMIT 2').bind(code).all()
+  const candidates = rows.results || []
+  if (candidates.length !== 1) return null
+  return await employeeVisible(db, actor, candidates[0], actor.allowedUnits[0]) ? candidates[0] : null
+}
+
+async function presencePolicyFor(db, unitId) {
+  const policy = await db.prepare('SELECT * FROM timekeeping_unit_presence_policies WHERE unit_id=?').bind(unitId).first()
+  return policy || { unit_id: unitId, presence_mode: 'FLEXIBLE', geofence_latitude: null, geofence_longitude: null, geofence_radius_meters: 150 }
+}
+
+async function networkEvidence(request, env, actor) {
+  const policy = normalizeNetworkPolicy(actor.networkPolicy)
+  if (policy === 'NONE') return { status: 'NOT_CONFIGURED', payload: { policy } }
+  const timestamp = String(request.headers.get('x-skincos-network-ts') || '')
+  const ip = String(request.headers.get('x-skincos-network-ip') || '')
+  const signature = String(request.headers.get('x-skincos-network-sig') || '')
+  const secret = String(env.PONTO_NETWORK_CONTEXT_KEY || '')
+  const url = new URL(request.url)
+  const validTime = Number.isFinite(Number(timestamp)) && Math.abs(Date.now() - Number(timestamp)) <= 5 * 60 * 1000
+  const validIp = ipv4ToInt(ip) !== null
+  const expected = secret && validTime && validIp ? await hmac(secret, [timestamp, request.method.toUpperCase(), `${url.pathname}${url.search}`, ip].join('.')) : ''
+  const validSignature = !!expected && equal(expected, signature)
+  if (!validSignature) return policy === 'REQUIRE' ? { error: 'NETWORK_CONTEXT_REQUIRED' } : { status: 'UNAVAILABLE', payload: { policy } }
+  const matched = actor.allowedNetworks.some((network) => ipInNetwork(ip, network))
+  if (!matched && policy === 'REQUIRE') return { error: 'NETWORK_FORBIDDEN' }
+  return { status: matched ? 'MATCHED' : 'OUTSIDE', payload: { policy, matched, allowedNetworksCount: actor.allowedNetworks.length } }
+}
+
+function evidenceStatement(db, eventId, type, evidence) {
+  return db.prepare('INSERT INTO timekeeping_punch_evidence (id, event_id, evidence_type, status, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(crypto.randomUUID(), eventId, type, evidence.status, JSON.stringify(evidence.payload || {}), now())
 }
 
 function nextEventType(previous) {
@@ -250,6 +438,7 @@ async function verifyPunchCredential(db, env, actor, employee, body) {
   }
   const descriptor = body.descriptor || body.template
   if (descriptor !== undefined) {
+    if (!isFacePunchEnabled(env)) return { error: 'FACE_DISABLED' }
     if (!isValidBiometricTemplate(descriptor) || !env.PONTO_TEMPLATES_KEY) return { error: 'FACE_UNAVAILABLE' }
     const templates = await db.prepare(`SELECT encrypted_template FROM timekeeping_biometric_templates WHERE employee_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)`).bind(employee.id, now()).all()
     if (!(templates.results || []).length) return { error: 'FACE_NOT_ENROLLED' }
@@ -420,19 +609,50 @@ export async function handleTimekeeping(request, env) {
   if (!await enforceReplayProtection(request, db, requestId, actor)) return failure(409, 'REPLAY_DETECTED', requestId)
 
   try {
+    if (path === '/api/ponto/device/context' && request.method === 'GET') {
+      if (actor.role !== 'DEVICE' || actor.deviceMode !== 'TERMINAL') return failure(403, 'DEVICE_TERMINAL_REQUIRED', requestId)
+      return json(200, { ok: true, data: { deviceId: actor.deviceId, label: actor.name, unitId: actor.allowedUnits[0], serverTime: now(), pinOnly: true, networkPolicy: actor.networkPolicy, allowedNetworksCount: actor.allowedNetworks.length } }, requestId)
+    }
+
+    if (path === '/api/ponto/me/presence' && request.method === 'GET') {
+      if (!roleAllows(actor.role, 'self.punch')) return failure(403, 'FORBIDDEN', requestId)
+      const employee = await employeeForActor(db, actor); const unitId = cleanText(url.searchParams.get('unit') || url.searchParams.get('unitId'), 120)
+      if (!employee || !unitId || !await activeUnitForEmployee(db, employee.id, unitId, now().slice(0, 10))) return failure(403, 'UNIT_FORBIDDEN', requestId)
+      const policy = await presencePolicyFor(db, unitId)
+      return json(200, { ok: true, data: { unitId, presenceMode: normalizePresenceMode(policy.presence_mode), locationRequired: normalizePresenceMode(policy.presence_mode) === 'EXTERNAL_REVIEW', geofenceConfigured: Number.isFinite(Number(policy.geofence_latitude)) && Number.isFinite(Number(policy.geofence_longitude)), geofenceRadiusMeters: Number(policy.geofence_radius_meters || 150) } }, requestId)
+    }
+
     if ((path === '/api/ponto/me' || path === '/api/ponto/context') && request.method === 'GET') {
       const employee = await employeeForActor(db, actor)
       const units = employee ? await employeeUnits(db, employee.id) : []
       const last = employee ? await db.prepare('SELECT * FROM timekeeping_events WHERE employee_id=? ORDER BY occurred_at_utc DESC LIMIT 1').bind(employee.id).first() : null
       const biometrics = employee ? await db.prepare('SELECT COUNT(*) AS total, MAX(created_at) AS last_enrolled_at FROM timekeeping_biometric_templates WHERE employee_id=? AND revoked_at IS NULL').bind(employee.id).first() : null
       const pin = employee ? await db.prepare('SELECT employee_id FROM timekeeping_pin_credentials WHERE employee_id=?').bind(employee.id).first() : null
-      const data = { linked: !!employee, actorEmail: actor.email, allowedUnits: actor.allowedUnits.length ? actor.allowedUnits : units, employee: publicEmployee(employee), hasFace: Number(biometrics?.total || 0) > 0, pinSet: !!pin, lastPunch: last ? { id: last.id, kind: 'PUNCH', employeeId: last.employee_id, employeeName: employee.display_name, type: last.event_type === 'WORK_START' ? 'IN' : last.event_type === 'WORK_END' ? 'OUT' : last.event_type, at: last.occurred_at_utc, unit: last.unit_id, method: last.source } : null, suggestedNextMethod: Number(biometrics?.total || 0) > 0 ? 'FACE' : 'PIN', capabilities: Object.values({ selfRead: 'self.read', selfPunch: 'self.punch', unitRead: 'unit.read', approve: 'correction.approve', close: 'period.close', reopen: 'period.reopen', audit: 'audit.read' }).filter((capability) => roleAllows(actor.role, capability)) }
+      const data = { linked: !!employee, actorEmail: actor.email, allowedUnits: actor.allowedUnits.length ? actor.allowedUnits : units, employee: publicEmployee(employee), hasFace: Number(biometrics?.total || 0) > 0, pinSet: !!pin, lastPunch: last ? { id: last.id, kind: 'PUNCH', employeeId: last.employee_id, employeeName: employee.display_name, type: last.event_type === 'WORK_START' ? 'IN' : last.event_type === 'WORK_END' ? 'OUT' : last.event_type, at: last.occurred_at_utc, unit: last.unit_id, method: last.source } : null, suggestedNextMethod: isFacePunchEnabled(env) && Number(biometrics?.total || 0) > 0 ? 'FACE' : 'PIN', capabilities: Object.values({ selfRead: 'self.read', selfPunch: 'self.punch', unitRead: 'unit.read', approve: 'correction.approve', close: 'period.close', reopen: 'period.reopen', audit: 'audit.read' }).filter((capability) => roleAllows(actor.role, capability)) }
       return json(200, { ok: true, ...data, data }, requestId)
     }
 
     if (path === '/api/ponto/me/records' && request.method === 'GET') {
       const records = await listRecords(db, actor, url, (await employeeForActor(db, actor))?.id)
       return records ? json(200, { ok: true, data: records }, requestId) : failure(404, 'EMPLOYEE_NOT_LINKED', requestId)
+    }
+
+    if (path === '/api/ponto/me/profile' && request.method === 'GET') {
+      if (!roleAllows(actor.role, 'self.profile.read')) return failure(403, 'FORBIDDEN', requestId)
+      const employee = await employeeForActor(db, actor)
+      if (!employee) return failure(404, 'EMPLOYEE_NOT_LINKED', requestId)
+      return json(200, { ok: true, data: await profileResponse(db, env, employee) }, requestId)
+    }
+
+    if (path === '/api/ponto/me/profile' && request.method === 'PATCH') {
+      if (!roleAllows(actor.role, 'self.profile.write')) return failure(403, 'FORBIDDEN', requestId)
+      const employee = await employeeForActor(db, actor); const body = await readJson(request)
+      if (!employee) return failure(404, 'EMPLOYEE_NOT_LINKED', requestId)
+      if (!body) return failure(400, 'INVALID_PROFILE', requestId)
+      const patch = profileInput(body, profileSelfPublicFields, profileSelfPrivateFields)
+      if (!patch.provided.length) return failure(400, 'PROFILE_CHANGES_REQUIRED', requestId)
+      await saveProfile(db, env, actor, employee, patch, requestId)
+      return json(200, { ok: true, data: await profileResponse(db, env, employee) }, requestId)
     }
 
     if (path === '/api/ponto/employees' && request.method === 'GET') {
@@ -449,6 +669,30 @@ export async function handleTimekeeping(request, env) {
     }
 
     const employeeMatch = path.match(/^\/api\/ponto\/employees\/([^/]+)$/)
+    const employeeProfileMatch = path.match(/^\/api\/ponto\/employees\/([^/]+)\/profile$/)
+    if (employeeProfileMatch && request.method === 'GET') {
+      if (!roleAllows(actor.role, 'profile.read')) return failure(403, 'FORBIDDEN', requestId)
+      const employee = await employeeById(db, actor, decodeURIComponent(employeeProfileMatch[1]))
+      if (!employee) return failure(404, 'EMPLOYEE_NOT_FOUND', requestId)
+      return json(200, { ok: true, data: await profileResponse(db, env, employee) }, requestId)
+    }
+
+    if (employeeProfileMatch && request.method === 'PATCH') {
+      if (!roleAllows(actor.role, 'profile.manage')) return failure(403, 'FORBIDDEN', requestId)
+      const employee = await employeeById(db, actor, decodeURIComponent(employeeProfileMatch[1])); const body = await readJson(request)
+      if (!employee) return failure(404, 'EMPLOYEE_NOT_FOUND', requestId)
+      if (!body) return failure(400, 'INVALID_PROFILE', requestId)
+      const patch = profileInput(body)
+      if (!patch.provided.length) return failure(400, 'PROFILE_CHANGES_REQUIRED', requestId)
+      if (patch.publicPatch.managerEmployeeId) {
+        const manager = await employeeById(db, actor, patch.publicPatch.managerEmployeeId)
+        if (!manager) return failure(400, 'MANAGER_NOT_FOUND', requestId)
+        patch.publicPatch.managerEmployeeId = manager.id
+      }
+      await saveProfile(db, env, actor, employee, patch, requestId)
+      return json(200, { ok: true, data: await profileResponse(db, env, employee) }, requestId)
+    }
+
     if (employeeMatch && request.method === 'GET') {
       if (!roleAllows(actor.role, 'unit.read') && !isConsultor(actor)) return failure(403, 'FORBIDDEN', requestId)
       const employee = await employeeById(db, actor, decodeURIComponent(employeeMatch[1]))
@@ -496,17 +740,27 @@ export async function handleTimekeeping(request, env) {
     if (path === '/api/ponto/punches' && request.method === 'POST') {
       const body = await readJson(request)
       if (!body) return failure(400, 'INVALID_PUNCH_REQUEST', requestId)
-      let employee = isConsultor(actor) ? await employeeForActor(db, actor) : await employeeById(db, actor, cleanText(body.employeeId, 120))
+      const isTerminal = actor.role === 'DEVICE'
+      if (isTerminal && actor.deviceMode !== 'TERMINAL') return failure(403, 'DEVICE_TERMINAL_REQUIRED', requestId)
+      if (isTerminal && (body.descriptor !== undefined || body.template !== undefined || body.pin === undefined)) return failure(400, 'TERMINAL_PIN_REQUIRED', requestId)
+      let employee = isTerminal ? await employeeForTerminal(db, actor, body.employeeCode) : isConsultor(actor) ? await employeeForActor(db, actor) : await employeeById(db, actor, cleanText(body.employeeId, 120))
       if (!employee) return failure(404, 'EMPLOYEE_NOT_LINKED', requestId)
       if (employee.status !== 'ACTIVE') return failure(409, 'EMPLOYEE_NOT_ACTIVE', requestId)
-      const occurredAt = body.occurredAt ? new Date(body.occurredAt).toISOString() : now()
-      const unitId = actor.role === 'DEVICE' ? actor.allowedUnits[0] : cleanText(body.unitId || body.unit, 120)
+      const occurredAt = isTerminal ? now() : body.occurredAt ? new Date(body.occurredAt).toISOString() : now()
+      const unitId = isTerminal ? actor.allowedUnits[0] : cleanText(body.unitId || body.unit, 120)
       const initialWorkDate = isoDateInZone(occurredAt, 'America/Sao_Paulo')
       const punchRule = await resolveRule(db, employee.id, unitId, initialWorkDate)
       const workDate = isoDateInZone(occurredAt, punchRule.timeZone || 'America/Sao_Paulo')
       if (!unitId || !await activeUnitForEmployee(db, employee.id, unitId, workDate)) return failure(403, 'UNIT_FORBIDDEN', requestId)
       if (!isConsultor(actor) && !requireUnit(actor, unitId)) return failure(403, 'UNIT_FORBIDDEN', requestId)
       if (await isPeriodClosed(db, employee.id, unitId, workDate)) return failure(409, 'PERIOD_CLOSED', requestId)
+      const presencePolicy = await presencePolicyFor(db, unitId)
+      const presenceMode = normalizePresenceMode(presencePolicy.presence_mode)
+      if (!isTerminal && presenceMode === 'TERMINAL_REQUIRED') return failure(409, 'TERMINAL_REQUIRED', requestId)
+      const network = isTerminal ? await networkEvidence(request, env, actor) : null
+      if (network?.error) return failure(403, network.error, requestId)
+      const location = !isTerminal && presenceMode === 'EXTERNAL_REVIEW' ? locationEvidence(body.location, presencePolicy) : null
+      if (location?.error) return failure(409, location.error, requestId)
       const credential = await verifyPunchCredential(db, env, actor, employee, body)
       if (credential.error) return failure(credential.error === 'PIN_LOCKED' ? 429 : 401, credential.error, requestId, credential.secondsRemaining ? { secondsRemaining: credential.secondsRemaining } : {})
       const manualReason = credential.source === 'MANUAL' ? cleanText(body.reason, 500) : ''
@@ -524,18 +778,22 @@ export async function handleTimekeeping(request, env) {
       if (previous && Date.parse(occurredAt) - Date.parse(previous.occurred_at_utc) < Number(env.PONTO_COOLDOWN_SECONDS || 15) * 1000) return failure(429, 'COOLDOWN', requestId, { secondsRemaining: Number(env.PONTO_COOLDOWN_SECONDS || 15) })
       const id = crypto.randomUUID()
       try {
-        await db.batch([
+        const statements = [
           db.prepare('INSERT INTO timekeeping_events (id, employee_id, unit_id, device_id, event_type, source, occurred_at_utc, work_date, idempotency_scope, idempotency_key, request_fingerprint, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, employee.id, unitId, actor.deviceId || null, eventType, credential.source, occurredAt, workDate, scope, idempotencyKey, fingerprint, actor.id, now()),
           await audit(db, { actor, action: 'EVENT_CREATE', entityType: 'timekeeping_event', entityId: id, unitId, requestId, reason: manualReason, after: { employeeId: employee.id, eventType, source: credential.source, occurredAt } }),
-        ])
+        ]
+        if (isTerminal) statements.push(evidenceStatement(db, id, 'TERMINAL_DEVICE', { status: 'REGISTERED', payload: { deviceId: actor.deviceId, deviceMode: actor.deviceMode } }))
+        if (network) statements.push(evidenceStatement(db, id, 'NETWORK_CONTEXT', network))
+        if (location) statements.push(evidenceStatement(db, id, 'LOCATION', location))
+        await db.batch(statements)
       } catch (error) {
         if (String(error?.message || '').includes('PERIOD_CLOSED')) return failure(409, 'PERIOD_CLOSED', requestId)
         const existing = await db.prepare('SELECT * FROM timekeeping_events WHERE idempotency_scope=? AND idempotency_key=?').bind(scope, idempotencyKey).first()
         if (existing && constantTimeEqual(existing.request_fingerprint, fingerprint)) return json(200, { ok: true, idempotent: true, data: { id: existing.id, operationId: existing.id, employeeId: employee.id, employeeName: employee.display_name, type: existing.event_type === 'WORK_START' ? 'IN' : existing.event_type === 'WORK_END' ? 'OUT' : existing.event_type, eventType: existing.event_type, at: existing.occurred_at_utc, occurredAtUtc: existing.occurred_at_utc, unit: existing.unit_id, unitId: existing.unit_id, method: existing.source } }, requestId)
         return failure(409, 'IDEMPOTENCY_CONFLICT', requestId)
       }
-      logEvent('punch_success', { requestId, employeeId: employee.id, unitId, source: credential.source, latencyMs: Date.now() - startedAt })
-      return json(201, { ok: true, data: { id, operationId: id, employeeId: employee.id, employeeName: employee.display_name, type: eventType === 'WORK_START' ? 'IN' : eventType === 'WORK_END' ? 'OUT' : eventType, eventType, at: occurredAt, occurredAtUtc: occurredAt, unit: unitId, unitId, deviceId: actor.deviceId || null, method: credential.source, source: credential.source } }, requestId)
+      logEvent('punch_success', { requestId, employeeId: employee.id, unitId, source: credential.source, terminal: isTerminal, presenceMode, latencyMs: Date.now() - startedAt })
+      return json(201, { ok: true, data: { id, operationId: id, employeeId: employee.id, employeeName: employee.display_name, type: eventType === 'WORK_START' ? 'IN' : eventType === 'WORK_END' ? 'OUT' : eventType, eventType, at: occurredAt, occurredAtUtc: occurredAt, unit: unitId, unitId, deviceId: actor.deviceId || null, method: credential.source, source: credential.source, presence: { mode: presenceMode, network: network?.status || null, location: location?.status || null } } }, requestId)
     }
 
     if (path === '/api/ponto/mirror' && request.method === 'GET') {
@@ -617,8 +875,8 @@ export async function handleTimekeeping(request, env) {
     if (path === '/api/ponto/devices' && request.method === 'GET') {
       if (!roleAllows(actor.role, 'unit.read') && !roleAllows(actor.role, 'device.manage')) return failure(403, 'FORBIDDEN', requestId)
       const unitId = cleanText(url.searchParams.get('unitId') || url.searchParams.get('unit'), 120)
-      const rows = await db.prepare(`SELECT id, unit_id, label, active, revoked_at, created_at, last_seen_at FROM timekeeping_devices WHERE (?='' OR unit_id=?) ORDER BY created_at DESC LIMIT ?`).bind(unitId, unitId, limitFor(url)).all()
-      const data = (rows.results || []).filter((row) => requireUnit(actor, row.unit_id)).map((row) => ({ id: row.id, unit: row.unit_id, unitId: row.unit_id, label: row.label, active: !!row.active, revokedAt: row.revoked_at, createdAt: row.created_at, lastSeenAt: row.last_seen_at }))
+      const rows = await db.prepare(`SELECT id, unit_id, label, active, revoked_at, created_at, last_seen_at, device_mode, network_policy, allowed_networks_json FROM timekeeping_devices WHERE (?='' OR unit_id=?) ORDER BY created_at DESC LIMIT ?`).bind(unitId, unitId, limitFor(url)).all()
+      const data = (rows.results || []).filter((row) => requireUnit(actor, row.unit_id)).map((row) => ({ id: row.id, unit: row.unit_id, unitId: row.unit_id, label: row.label, active: !!row.active, revokedAt: row.revoked_at, createdAt: row.created_at, lastSeenAt: row.last_seen_at, deviceMode: row.device_mode, networkPolicy: row.network_policy, allowedNetworksCount: storedNetworks(row.allowed_networks_json).length }))
       return json(200, { ok: true, data }, requestId)
     }
 
@@ -626,12 +884,37 @@ export async function handleTimekeeping(request, env) {
       if (!roleAllows(actor.role, 'device.manage')) return failure(403, 'FORBIDDEN', requestId)
       const body = await readJson(request); const unitId = cleanText(body?.unitId || body?.unit, 120); const label = cleanText(body?.label, 180)
       if (!unitId || !label || !requireUnit(actor, unitId)) return failure(400, 'INVALID_DEVICE', requestId)
+      const deviceMode = String(body?.deviceMode || 'TERMINAL').trim().toUpperCase()
+      if (deviceMode !== 'TERMINAL') return failure(400, 'TERMINAL_DEVICE_REQUIRED', requestId)
+      const networkPolicy = normalizeNetworkPolicy(body?.networkPolicy)
+      const networks = normalizeNetworks(body?.allowedNetworks)
+      if (networkPolicy === 'REQUIRE' && !networks.length) return failure(400, 'NETWORKS_REQUIRED', requestId)
       const token = `ptd_${crypto.randomUUID().replace(/-/g, '')}${crypto.randomUUID().replace(/-/g, '')}`; const id = crypto.randomUUID(); const at = now()
       await db.batch([
-        db.prepare('INSERT INTO timekeeping_devices (id, unit_id, label, token_hash, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(id, unitId, label, await sha256(token), actor.id, at),
-        await audit(db, { actor, action: 'DEVICE_CREATE', entityType: 'timekeeping_device', entityId: id, unitId, requestId, after: { label } }),
+        db.prepare('INSERT INTO timekeeping_devices (id, unit_id, label, token_hash, device_mode, network_policy, allowed_networks_json, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, unitId, label, await sha256(token), deviceMode, networkPolicy, JSON.stringify(networks), actor.id, at),
+        await audit(db, { actor, action: 'DEVICE_CREATE', entityType: 'timekeeping_device', entityId: id, unitId, requestId, after: { label, deviceMode, networkPolicy, allowedNetworksCount: networks.length } }),
       ])
-      return json(201, { ok: true, data: { id, unitId, label, active: true, token } }, requestId)
+      return json(201, { ok: true, data: { id, unitId, label, active: true, deviceMode, networkPolicy, allowedNetworksCount: networks.length, token } }, requestId)
+    }
+
+    const presencePolicyPath = path.match(/^\/api\/ponto\/presence-policies\/([^/]+)$/)
+    if (presencePolicyPath && ['GET', 'PATCH'].includes(request.method)) {
+      if (!roleAllows(actor.role, 'device.manage')) return failure(403, 'FORBIDDEN', requestId)
+      const unitId = decodeURIComponent(presencePolicyPath[1])
+      if (!requireUnit(actor, unitId)) return failure(403, 'UNIT_FORBIDDEN', requestId)
+      if (request.method === 'GET') {
+        const policy = await presencePolicyFor(db, unitId)
+        return json(200, { ok: true, data: { unitId, presenceMode: normalizePresenceMode(policy.presence_mode), geofenceLatitude: policy.geofence_latitude, geofenceLongitude: policy.geofence_longitude, geofenceRadiusMeters: Number(policy.geofence_radius_meters || 150) } }, requestId)
+      }
+      const body = await readJson(request); const presenceMode = normalizePresenceMode(body?.presenceMode); const latitude = body?.geofenceLatitude === null || body?.geofenceLatitude === '' ? null : Number(body?.geofenceLatitude); const longitude = body?.geofenceLongitude === null || body?.geofenceLongitude === '' ? null : Number(body?.geofenceLongitude); const radius = Math.round(Number(body?.geofenceRadiusMeters || 150))
+      const hasLocation = latitude !== null || longitude !== null
+      if ((hasLocation && (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180)) || !Number.isFinite(radius) || radius < 25 || radius > 5000 || (presenceMode === 'EXTERNAL_REVIEW' && !hasLocation)) return failure(400, 'INVALID_PRESENCE_POLICY', requestId)
+      const at = now()
+      await db.batch([
+        db.prepare(`INSERT INTO timekeeping_unit_presence_policies (unit_id, presence_mode, geofence_latitude, geofence_longitude, geofence_radius_meters, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(unit_id) DO UPDATE SET presence_mode=excluded.presence_mode, geofence_latitude=excluded.geofence_latitude, geofence_longitude=excluded.geofence_longitude, geofence_radius_meters=excluded.geofence_radius_meters, updated_at=excluded.updated_at, updated_by=excluded.updated_by`).bind(unitId, presenceMode, latitude, longitude, radius, at, at, actor.id),
+        await audit(db, { actor, action: 'PRESENCE_POLICY_UPDATE', entityType: 'timekeeping_unit_presence_policy', entityId: unitId, unitId, requestId, after: { presenceMode, geofenceConfigured: hasLocation, geofenceRadiusMeters: radius } }),
+      ])
+      return json(200, { ok: true, data: { unitId, presenceMode, geofenceLatitude: latitude, geofenceLongitude: longitude, geofenceRadiusMeters: radius } }, requestId)
     }
 
     const deviceRevoke = path.match(/^\/api\/ponto\/devices\/([^/]+)\/revoke$/)
@@ -778,4 +1061,4 @@ export async function handleTimekeeping(request, env) {
 }
 
 export default { fetch: handleTimekeeping }
-export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate }
+export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential, profileInput, profileDocumentStatus, normalizeNetworks, ipInNetwork, locationEvidence, normalizePresenceMode, normalizeNetworkPolicy }

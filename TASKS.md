@@ -9,6 +9,7 @@
 - [x] Motor diário/mensal, banco de horas, inconsistências, fechamento e reabertura.
 - [x] Matriz de permissões, PIN protegido, biometria cifrada, rate limit, replay e idempotência.
 - [x] Cliente/tipos centralizados e gestão funcional na aba CRM.
+- [x] Perfil canônico preparado a partir do modelo de Pessoas, com campos privados cifrados, CNPJ por unidade e tela de perfil no Ponto.
 - [x] Testes locais do domínio, gateway, proxy, cliente, D1 e integração HTTP.
 - [x] Executar todos os gates finais (lint completo, testes completos e build de produção).
 - [x] Publicar e validar staging com D1/secrets próprios (workflow `29700256254`).

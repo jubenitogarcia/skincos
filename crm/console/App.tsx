@@ -494,6 +494,10 @@ export default function AppFunctionalNeatlab() {
 	    // Persist active module to survive remounts/reloads and avoid accidental resets
 	    const [active, setActive] = useState<string>(() => {
 		        try {
+		            const requested = new URLSearchParams(window.location.search).get('module') || new URLSearchParams(window.location.search).get('tab')
+		            if (requested && UNLOCKED_MODULE_KEYS.has(requested) && modules.some((module) => module.key === requested)) {
+		                return requested
+		            }
 		            const saved = localStorage.getItem('app.activeModule')
 		            const candidate = saved || DEFAULT_MODULE_KEY
 		            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : DEFAULT_MODULE_KEY
@@ -756,6 +760,10 @@ export default function AppFunctionalNeatlab() {
 
 	    // Allow forcing a module via URL, e.g. http://localhost:5173/?module=capabilities
 	    React.useEffect(() => {
+	        // The local auth bootstrap can mount the console before the user role
+	        // is resolved. Re-apply the explicit URL module once it is ready so
+	        // `?module=ponto` never falls back to the previously saved module.
+	        if (initializing) return
 	        try {
             const params = new URLSearchParams(window.location.search)
             const requested = params.get('module') || params.get('tab')
@@ -776,7 +784,7 @@ export default function AppFunctionalNeatlab() {
             }
         } catch { /* ignore */ }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [initializing])
 
 	    // Save active module selection
 	    React.useEffect(() => {
