@@ -107,12 +107,126 @@ function loadSource() {
   fail(`Could not find a ${NODE_NAME} Code-node source in ${WORKFLOW_PATH} or ${CHECKPOINT_DIR}.`);
 }
 
+function n8nItems(values) {
+  return asArray(values).map((value) => {
+    if (value && typeof value === 'object' && value.json && typeof value.json === 'object') return value;
+    return { json: asObject(value) };
+  });
+}
+
+function firstNonEmptyArray(...values) {
+  for (const value of values) {
+    const current = asArray(value);
+    if (current.length) return current;
+  }
+  return [];
+}
+
+function firstNonEmptyObject(...values) {
+  for (const value of values) {
+    const current = asObject(value);
+    if (Object.keys(current).length) return current;
+  }
+  return {};
+}
+
+function legacyInputs(payload) {
+  const tokenContext = firstNonEmptyObject(payload.normalizedTokenVaultContext, payload.tokenVaultContext);
+  const bootstrapItems = n8nItems(payload.bootstrapItems);
+  let composeItems = bootstrapItems.filter((item) => String(item?.json?.groupKey || '').trim());
+
+  if (!composeItems.length) {
+    composeItems = n8nItems(firstNonEmptyArray(payload.normalizedCombinedMediaItems, payload.combinedMediaItems))
+      .map((item) => ({
+        ...item,
+        json: {
+          ...item.json,
+          facebook: firstNonEmptyObject(item.json.facebook, tokenContext.facebook),
+          instagram: firstNonEmptyObject(item.json.instagram, tokenContext.instagram),
+          threads: firstNonEmptyObject(item.json.threads, tokenContext.threads),
+        },
+      }));
+  }
+
+  const uploadItems = n8nItems(firstNonEmptyArray(payload.normalizedCombinedMediaItems, payload.combinedMediaItems));
+  const liviaItems = n8nItems(firstNonEmptyArray(payload.normalizedLiviaOutput, payload.liviaOutput));
+  const aggregateItems = n8nItems(payload.aggregateCandidateUploads || []);
+
+  return {
+    'Compose (1)': composeItems,
+    'Upload File': uploadItems.length ? uploadItems : composeItems,
+    'Aggregate (2)': aggregateItems,
+    Livia: liviaItems,
+  };
+}
+
+function referencedLegacyItemNodes(jsCode) {
+  const nodes = new Set();
+  const matcher = /\$items\(\s*(['"])([^'"]+)\1\s*\)/g;
+  for (const match of String(jsCode || '').matchAll(matcher)) {
+    const nodeName = String(match[2] || '').trim();
+    if (nodeName) nodes.add(nodeName);
+  }
+  return [...nodes];
+}
+
+function assertRuntimeCompatibility(jsCode) {
+  const referencedNodes = referencedLegacyItemNodes(jsCode);
+  const supportedNodes = new Set(['Compose (1)', 'Upload File', 'Aggregate (2)', 'Livia']);
+  const unsupported = referencedNodes.filter((nodeName) => !supportedNodes.has(nodeName));
+  if (unsupported.length) {
+    throw new Error(
+      `${NODE_NAME}: source requires unsupported legacy $items inputs (${unsupported.join(', ')}). `
+      + 'Refuse promotion before a media job can reach the gateway.',
+    );
+  }
+
+  const fixtureMedia = [
+    { groupKey: 'single-image', groupOrder: 0, sourceMediaKind: 'image', finalUrl: 'https://example.invalid/image.jpg' },
+    { groupKey: 'single-video', groupOrder: 0, sourceMediaKind: 'video', finalUrl: 'https://example.invalid/reel.mp4' },
+    { groupKey: 'mixed-carousel', groupOrder: 0, sourceMediaKind: 'image', finalUrl: 'https://example.invalid/carousel-1.jpg' },
+    { groupKey: 'mixed-carousel', groupOrder: 1, sourceMediaKind: 'video', finalUrl: 'https://example.invalid/carousel-2.mp4' },
+  ];
+  const fixturePayload = {
+    bootstrapItems: fixtureMedia.map((json) => ({ json })),
+    normalizedCombinedMediaItems: fixtureMedia.map((json) => ({ json })),
+    aggregateCandidateUploads: fixtureMedia.map((json) => ({ json })),
+    normalizedLiviaOutput: fixtureMedia.map((json) => ({ json: { ...json, alt_text: `Evidence for ${json.sourceMediaKind}` } })),
+  };
+  const expectedByNode = legacyInputs(fixturePayload);
+  const probe = `
+    const requested = ${JSON.stringify(referencedNodes)};
+    for (const nodeName of requested) {
+      const items = $items(nodeName);
+      if (!Array.isArray(items) || items.length === 0) throw new Error('missing legacy input: ' + nodeName);
+      if (!items.every((item) => item && item.json && typeof item.json === 'object')) {
+        throw new Error('invalid legacy item envelope: ' + nodeName);
+      }
+    }
+    return requested.map((nodeName) => ({ json: { nodeName, count: $items(nodeName).length } }));
+  `;
+  const result = executeSource(probe, fixturePayload);
+  const counts = Object.fromEntries(asArray(result).map((item) => [item?.json?.nodeName, Number(item?.json?.count || 0)]));
+  for (const nodeName of referencedNodes) {
+    if (counts[nodeName] !== expectedByNode[nodeName].length) {
+      throw new Error(`${NODE_NAME}: legacy $items compatibility mismatch for ${nodeName}.`);
+    }
+  }
+  return {
+    checked: true,
+    referencedNodes,
+    fixtureMediaKinds: ['image', 'video', 'mixed-carousel'],
+  };
+}
+
 function executeSource(jsCode, payload) {
   const inputItems = [{ json: payload }];
   const staticData = {};
+  const legacy = legacyInputs(payload);
   const fn = new Function(
     '$json',
     '$input',
+    '$items',
     '$execution',
     '$getWorkflowStaticData',
     `"use strict";\n${jsCode}`,
@@ -120,6 +234,7 @@ function executeSource(jsCode, payload) {
   return fn(
     payload,
     { all: () => inputItems },
+    (nodeName) => asArray(legacy[nodeName]),
     { id: String(process.env.LIVIA_EXECUTION_ID || Date.now()) },
     () => staticData,
   );
@@ -710,8 +825,16 @@ function compactResult(result, payload, sourceFile) {
 }
 
 function main() {
-  const payload = parsePayload();
   const source = loadSource();
+  if (process.argv.includes('--assert-runtime-compatibility')) {
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      sourceFile: source.filePath,
+      compatibility: assertRuntimeCompatibility(source.jsCode),
+    }));
+    return;
+  }
+  const payload = parsePayload();
   const result = executeSource(source.jsCode, payload);
   process.stdout.write(JSON.stringify(compactResult(result, payload, source.filePath)));
 }
