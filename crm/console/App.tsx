@@ -233,6 +233,7 @@ const ReportsDashboard = lazy(() => import('@/ReportsDashboard').then(m => ({ de
 const ConversaModule = lazy(() => import('@/ConversaModule').then(m => ({ default: m.ConversaModule })))
 const AtendimentoModule = lazy(() => import('@/AtendimentoModule').then(m => ({ default: m.AtendimentoModule })))
 const CaixaModule = lazy(() => import('@/CaixaModule').then(m => ({ default: m.CaixaModule })))
+const ClientCommercialModule = lazy(() => import('@/ClientCommercialModule').then(m => ({ default: m.ClientCommercialModule })))
 const MetaCampaignControlCenter = lazy(() => import('@/MetaCampaignControlCenter').then(m => ({ default: m.MetaCampaignControlCenter })))
 const MetaCommandCenter = lazy(() => import('@/MetaCommandCenter').then(m => ({ default: m.MetaCommandCenter })))
 const MetaSyncMonitor = lazy(() => import('@/MetaSyncMonitor').then(m => ({ default: m.MetaSyncMonitor })))
@@ -300,6 +301,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'users', label: 'Usuários', icon: '👤', component: <UsersModule /> },
     { key: 'dashboard', label: 'Analítica', icon: <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />, component: <ReportsDashboard /> },
     { key: 'leads', label: 'Leads', icon: '💎', component: <LeadsManager /> },
+    { key: 'clientes', label: 'Clientes', icon: '👥', component: <ClientCommercialModule /> },
     { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
     { key: 'conversa', label: 'Conversa', icon: '💬', component: <ConversaModule /> },
     {
@@ -443,7 +445,7 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'conversa', 'atendimento', 'caixa', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais', 'ponto', 'finance']),
+                () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'conversa', 'atendimento', 'caixa', 'clientes', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais', 'ponto', 'finance']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)

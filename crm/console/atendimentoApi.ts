@@ -442,6 +442,7 @@ function normalizeApiError(res: Response, json: ApiErrorPayload | null, text: st
   if (json?.error) return String(json.error)
   if (json?.message) return String(json.message)
   const compact = String(text || '').replace(/\s+/g, ' ').trim()
+  if (/<!doctype html|<html\b/i.test(compact)) return `O serviço de Atendimento não está disponível nesta instância (HTTP ${res.status}).`
   return compact ? compact.slice(0, 180) : `HTTP ${res.status}`
 }
 
@@ -664,6 +665,149 @@ export async function importGerenciaGoogleSheet(dryRun = true) {
     '/admin/import/google-sheet/gerencia',
     { method: 'POST', body: { dryRun } },
   )
+}
+
+export type CommercialPriority = 'high' | 'medium' | 'normal'
+
+export type CommercialSegment = {
+  key: string
+  label: string
+  priority: CommercialPriority
+  nextAction: string
+  evidence: Record<string, number>
+}
+
+export type CommercialProfile = {
+  identityId: string
+  name: string
+  phone: string
+  email: string
+  sourceTypes: string[]
+  identityQuality: string
+  units: string[]
+  lastAttendance: string | null
+  recencyDays: number | null
+  visitCount: number
+  procedureCount: number
+  completedProcedures: string[]
+  saleCount: number
+  lifetimeSales: number
+  sales12m: number
+  ticketAverage: number
+  purchasedProcedures: string[]
+  pendingSaleItems: number
+  hasRecordedAttendance: boolean
+  dataWarnings: string[]
+  segments: CommercialSegment[]
+  priority: CommercialPriority
+  recommendedAction: string
+  activeActionCount: number
+  lastActionAt: string | null
+}
+
+export type CommercialAction = {
+  id: string
+  identityId: string
+  unitSlug: string
+  unitName: string
+  segmentKey: string
+  actionType: 'contact' | 'follow_up' | 'appointment' | 'relationship'
+  status: 'open' | 'contacted' | 'responded' | 'scheduled' | 'won_sale' | 'returned' | 'closed' | 'cancelled'
+  owner: string
+  dueDate: string | null
+  notes: string
+  outcomeNotes: string
+  createdBy: string
+  completedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type CommercialPolicy = {
+  activeContactCooldownDays: number
+  returnRiskThresholds: number[]
+  updatedBy: string
+  updatedAt: string | null
+}
+
+export type CommercialOverview = {
+  asOf: string
+  policy: CommercialPolicy
+  summary: { profiles: number; returnAtRisk: number; highValueInactive: number; frequent: number; balancedVip: number; reactivationPotential: number; averageTicket: number }
+  actions: { actions: number; recoveredSalesClients: number; clinicalReturnClients: number }
+  coverage: { confirmedIdentities: number; classifiedSaleItems: number; saleItems: number }
+  dataQuality: { futureAttendancesExcluded: number; recencySource: 'completed_attendance_only'; saleItemsWithoutClassification: number }
+  total: number
+  limit: number
+  offset: number
+  profiles: CommercialProfile[]
+}
+
+export type CommercialProfileDetail = {
+  asOf: string
+  policy: CommercialPolicy
+  profile: CommercialProfile
+  actions: CommercialAction[]
+  clinicalCadences: Array<{ procedureId: string; procedureName: string; cadenceDays: number | null; status: 'approved' | 'not_configured'; notes: string; unitSlug: string; unitName: string; approvedAt: string | null; approvedBy: string }>
+}
+
+export type ClientIdentityReviewItem = {
+  id: string
+  type: 'attendance_name_merge' | 'attendance_caixa' | 'app_attendance' | 'app_caixa' | 'lead_app' | 'lead_caixa'
+  status: 'pending' | 'suggested' | 'ambiguous'
+  confidence: number
+  primaryName: string
+  secondaryName: string
+  evidence: Record<string, unknown>
+  context: Record<string, unknown>
+}
+
+export type ClientIdentityReviewQueue = { total: number; limit: number; offset: number; items: ClientIdentityReviewItem[] }
+
+export function fetchCommercialOverview(filters: { asOf?: string; unit?: string; segment?: string; priority?: string; q?: string; limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '' && value !== 'all') params.set(key, String(value)) })
+  const qs = params.toString()
+  return api<CommercialOverview>(`/commercial/overview${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityReviewItem['type']; q?: string; limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)) })
+  const qs = params.toString()
+  return api<ClientIdentityReviewQueue>(`/commercial/review${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchCommercialProfile(identityId: string, filters: { asOf?: string; unit?: string } = {}) {
+  const params = new URLSearchParams()
+  if (filters.asOf) params.set('asOf', filters.asOf)
+  if (filters.unit && filters.unit !== 'all') params.set('unit', filters.unit)
+  const qs = params.toString()
+  return api<CommercialProfileDetail>(`/commercial/profiles/${encodeURIComponent(identityId)}${qs ? `?${qs}` : ''}`)
+}
+
+export function createCommercialAction(payload: { identityId: string; segmentKey: string; actionType: CommercialAction['actionType']; owner?: string; unit?: string; dueDate?: string; notes?: string }) {
+  return api<{ id: string }>('/commercial/actions', { method: 'POST', body: payload })
+}
+
+export function updateCommercialAction(id: string, payload: { status: CommercialAction['status']; owner?: string; outcomeNotes?: string }) {
+  return api<{ id: string; status: CommercialAction['status'] }>(`/commercial/actions/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload })
+}
+
+export function fetchCommercialPolicy() {
+  return api<{ policy: CommercialPolicy }>('/commercial/policy')
+}
+
+export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'>) {
+  return api<{ policy: CommercialPolicy }>('/commercial/policy', { method: 'PUT', body: payload })
+}
+
+export function fetchCommercialCadences() {
+  return api<{ cadences: Array<{ id: string; procedureId: string; procedureName: string; cadenceDays: number; status: string; notes: string; approvedBy: string; approvedAt: string | null; updatedBy: string; updatedAt: string | null; unitSlug: string; unitName: string }> }>('/commercial/cadences')
+}
+
+export function upsertCommercialCadence(payload: { procedureId: string; unit?: string; cadenceDays: number; status: 'draft' | 'approved' | 'disabled'; notes?: string }) {
+  return api<{ id: string }>('/commercial/cadences', { method: 'PUT', body: payload })
 }
 
 export const __testables = {
