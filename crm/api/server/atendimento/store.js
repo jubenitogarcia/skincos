@@ -2073,6 +2073,77 @@ async function queryCommercialActionMetrics(pgPool) {
     }
 }
 
+async function assertIdentityReviewSource(pgPool) {
+    const result = await pgPool.query(`select to_regclass('crm_atendimento.client_merge_suggestions') as merges,
+        to_regclass('crm_atendimento.client_caixa_links') as attendance_caixa,
+        to_regclass('crm_atendimento.app_client_registrations') as app,
+        to_regclass('crm_atendimento.supplemental_lead_profiles') as leads`)
+    if (!Object.values(result.rows[0] || {}).every(Boolean)) {
+        const error = new Error('CLIENT_IDENTITY_REVIEW_SOURCE_NOT_READY')
+        error.statusCode = 409
+        throw error
+    }
+}
+
+async function queryIdentityReviewQueue(pgPool, query = {}) {
+    const type = String(query.type || '').trim()
+    const search = normalizeText(query.q || query.search || '')
+    const limit = sanitizeLimit(query.limit, 100, 250)
+    const offset = sanitizeOffset(query.offset, 0)
+    const result = await pgPool.query(
+        `with review_items as (
+            select 'attendance_name_merge'::text as type, m.id::text as id, m.status, m.similarity::numeric as confidence,
+                left_client.canonical_name as primary_name, right_client.canonical_name as secondary_name,
+                m.evidence, jsonb_build_object('leftAttendanceCount', left_client.attendance_count, 'rightAttendanceCount', right_client.attendance_count,
+                    'leftAliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=left_client.id), '[]'::jsonb),
+                    'rightAliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=right_client.id), '[]'::jsonb)) as context
+            from crm_atendimento.client_merge_suggestions m
+            join crm_atendimento.canonical_clients left_client on left_client.id=m.left_client_id
+            join crm_atendimento.canonical_clients right_client on right_client.id=m.right_client_id
+            where m.status='pending'
+            union all
+            select 'attendance_caixa'::text, link.id::text, link.status, link.confidence::numeric, client.canonical_name, customer.name, link.evidence,
+                jsonb_build_object('attendanceCount', client.attendance_count, 'aliases', coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=client.id), '[]'::jsonb),
+                    'phoneKey', customer.phone_key, 'sales', coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),
+                    'salesTotal', coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0))
+            from crm_atendimento.client_caixa_links link join crm_atendimento.canonical_clients client on client.id=link.client_id join crm_caixa.customers customer on customer.id=link.caixa_customer_id
+            where link.status in ('suggested','ambiguous')
+            union all
+            select 'app_attendance'::text, app_link.app_registration_id||':'||app_link.client_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, client.canonical_name, app_link.evidence,
+                jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs,'attendanceCount',client.attendance_count,
+                    'aliases',coalesce((select jsonb_agg(alias_name order by usage_count desc) from crm_atendimento.client_aliases where client_id=client.id),'[]'::jsonb))
+            from crm_atendimento.app_registration_attendance_links app_link join crm_atendimento.app_client_registrations app on app.source_client_id=app_link.app_registration_id join crm_atendimento.canonical_clients client on client.id=app_link.client_id
+            where app_link.status in ('suggested','ambiguous')
+            union all
+            select 'app_caixa'::text, app_link.app_registration_id||':'||app_link.caixa_customer_id::text, app_link.status, app_link.confidence::numeric, app.canonical_name, customer.name, app_link.evidence,
+                jsonb_build_object('appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs,'phoneKey',customer.phone_key,
+                    'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0))
+            from crm_atendimento.app_registration_caixa_links app_link join crm_atendimento.app_client_registrations app on app.source_client_id=app_link.app_registration_id join crm_caixa.customers customer on customer.id=app_link.caixa_customer_id
+            where app_link.status in ('suggested','ambiguous')
+            union all
+            select 'lead_app'::text, link.source_profile_id||':'||link.app_registration_id, link.status, link.confidence::numeric, lead.canonical_name, app.canonical_name, link.evidence,
+                jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,'leadBirthdays',lead.birthdays,
+                    'appPhones',app.phone_keys,'appEmails',app.email_keys,'appUnits',app.unit_slugs)
+            from crm_atendimento.supplemental_lead_profile_app_links link join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id join crm_atendimento.app_client_registrations app on app.source_client_id=link.app_registration_id
+            where link.status in ('suggested','ambiguous')
+            union all
+            select 'lead_caixa'::text, link.source_profile_id||':'||link.caixa_customer_id::text, link.status, link.confidence::numeric, lead.canonical_name, customer.name, link.evidence,
+                jsonb_build_object('leadPhones',lead.phone_keys,'leadEmails',lead.email_keys,'leadUnits',lead.unit_slugs,'leadBirthdays',lead.birthdays,
+                    'phoneKey',customer.phone_key,'sales',coalesce((select count(*) from crm_caixa.sales where customer_id=customer.id),0),'salesTotal',coalesce((select sum(total) from crm_caixa.sales where customer_id=customer.id),0))
+            from crm_atendimento.supplemental_lead_profile_caixa_links link join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id=link.source_profile_id join crm_caixa.customers customer on customer.id=link.caixa_customer_id
+            where link.status in ('suggested','ambiguous')
+        ), filtered as (
+            select *, count(*) over()::int as total from review_items
+            where ($1='' or type=$1) and ($2='' or lower(primary_name||' '||secondary_name||' '||coalesce(evidence::text,'')||' '||coalesce(context::text,'')) like '%'||$2||'%')
+        ) select * from filtered order by case status when 'ambiguous' then 0 else 1 end, confidence desc nulls last, primary_name, secondary_name limit $3 offset $4`,
+        [type, search, limit, offset],
+    )
+    return { total: Number(result.rows[0]?.total || 0), limit, offset, items: result.rows.map((row) => ({
+        id: row.id, type: row.type, status: row.status, confidence: Number(row.confidence || 0), primaryName: row.primary_name,
+        secondaryName: row.secondary_name, evidence: row.evidence || {}, context: row.context || {},
+    })) }
+}
+
 export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
 
@@ -2274,6 +2345,13 @@ export function createAtendimentoStore(options = {}) {
                 offset,
                 profiles: filtered.slice(offset, offset + limit),
             }
+        },
+
+        async identityReviewQueue(query, actor) {
+            await ensureReady()
+            assertManager(actor)
+            await assertIdentityReviewSource(pgPool)
+            return queryIdentityReviewQueue(pgPool, query)
         },
 
         async commercialProfile(identityId, query, actor) {

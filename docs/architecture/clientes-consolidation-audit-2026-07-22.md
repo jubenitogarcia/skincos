@@ -51,9 +51,11 @@ em ambiente remoto.
 
 ### Incompleto ou propositalmente bloqueado
 
-- A seção de revisão humana de sugestões/ambiguidade ainda não foi exposta no
-  módulo Clientes. As sugestões existem no banco local, mas não há interface
-  de aprovação nesta entrega.
+- A seção de revisão humana está exposta no módulo Clientes com contexto de
+  Atendimento, Caixa, cadastro do app e planilha complementar. Nesta fase ela
+  é deliberadamente somente leitura: mostra as evidências sem transformar uma
+  decisão visual em fusão irreversível; a aprovação transacional ainda precisa
+  de uma política de resolução e de trilha de auditoria específica.
 - Não há fonte canônica ligada às identidades para consentimento, não-contato e
   descadastro. A fila não envia WhatsApp/e-mail automaticamente, mas também não
   pode ainda bloquear a criação de uma ação com base nessas preferências.
@@ -69,8 +71,9 @@ em ambiente remoto.
    executar as importações/reconciliações de forma auditada naquele ambiente.
 2. Definir uma fonte única e verificável de consentimento e não-contato, além
    da regra de precedência para conflitos entre canais.
-3. Disponibilizar a revisão humana das sugestões antes de qualquer nova fusão
-   fora das regras automáticas conservadoras.
+3. Definir a política de resolução para a revisão humana (aprovar, rejeitar,
+   desfazer e reprocessar), antes de qualquer nova fusão fora das regras
+   automáticas conservadoras.
 4. Aprovar por procedimento/unidade as cadências clínicas e, separadamente,
    as regras comerciais de oportunidade de ticket.
 5. Antes de um piloto, definir unidade, responsável, grupo de comparação,

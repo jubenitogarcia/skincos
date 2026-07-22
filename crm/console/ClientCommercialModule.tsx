@@ -4,6 +4,7 @@ import { Button } from '@/button'
 import {
   createCommercialAction,
   fetchAtendimentoReferences,
+  fetchClientIdentityReviewQueue,
   fetchCommercialOverview,
   fetchCommercialProfile,
   updateCommercialAction,
@@ -13,6 +14,7 @@ import {
   type CommercialOverview,
   type CommercialProfile,
   type CommercialProfileDetail,
+  type ClientIdentityReviewItem,
 } from '@/atendimentoApi'
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -121,6 +123,28 @@ function ProfilePanel({ detail, units, professionals, onRefresh }: { detail: Com
 function Fact({ label, value }: { label: string; value: string }) { return <div className="rounded-xl border border-slate-800/80 bg-slate-900/45 p-2.5"><div className="text-[11px] text-slate-500">{label}</div><div className="mt-1 truncate text-sm font-medium text-slate-100">{value}</div></div> }
 function List({ label, values, empty }: { label: string; values: string[]; empty: string }) { return <div className="mt-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-sm text-slate-200">{values.length ? values.join(', ') : empty}</div></div> }
 
+const reviewTypeLabel: Record<ClientIdentityReviewItem['type'], string> = { attendance_name_merge: 'Grafia no Atendimento', attendance_caixa: 'Atendimento ↔ Caixa', app_attendance: 'Cadastro app ↔ Atendimento', app_caixa: 'Cadastro app ↔ Caixa', lead_app: 'Planilha ↔ Cadastro app', lead_caixa: 'Planilha ↔ Caixa' }
+function reviewValue(value: unknown) { return Array.isArray(value) ? value.filter(Boolean).join(', ') : typeof value === 'string' || typeof value === 'number' ? String(value) : '' }
+
+function IdentityReviewQueue() {
+  const [items, setItems] = useState<ClientIdentityReviewItem[]>([])
+  const [total, setTotal] = useState(0)
+  const [type, setType] = useState('')
+  const [search, setSearch] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const load = useCallback(async () => {
+    try { setBusy(true); setError(''); const result = await fetchClientIdentityReviewQueue({ type: type as ClientIdentityReviewItem['type'] || undefined, q: search, limit: 100 }); if (!result.ok) throw new Error(result.error || 'Não foi possível carregar a revisão.'); setItems(result.items); setTotal(result.total) } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível carregar a revisão.') } finally { setBusy(false) }
+  }, [search, type])
+  useEffect(() => { void load() }, [load])
+  return <section className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 shadow-[0_20px_60px_rgba(2,6,23,0.28)]">
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="text-lg font-semibold text-white">Revisão de correspondências</h2><p className="mt-1 text-sm text-slate-500">{total} sugestão(ões) pendente(s), com evidências de cada fonte. Nenhuma unificação é disparada por esta tela.</p></div><Button size="sm" variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className={`mr-2 h-4 w-4 ${busy ? 'animate-spin' : ''}`} />Atualizar</Button></div>
+    <div className="mt-4 flex flex-wrap gap-2"><select aria-label="Origem da correspondência" value={type} onChange={(event) => setType(event.target.value)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"><option value="">Todas as origens</option>{Object.entries(reviewTypeLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><input aria-label="Buscar correspondência" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, telefone ou evidência" className="min-w-64 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500" /><Button size="sm" onClick={() => void load()} disabled={busy}>Aplicar</Button></div>
+    {error ? <div className="mt-3 rounded-lg border border-rose-300/30 bg-rose-500/10 p-3 text-sm text-rose-100">{error}</div> : null}
+    <div className="mt-4 space-y-3">{items.map((item) => <article key={`${item.type}:${item.id}`} className="rounded-xl border border-slate-800/80 bg-slate-900/35 p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><div className="text-xs text-sky-300">{reviewTypeLabel[item.type]}</div><div className="mt-1 text-sm font-semibold text-white">{item.primaryName} <span className="mx-1 text-slate-600">↔</span> {item.secondaryName}</div></div><div className="text-xs text-slate-400">{item.status === 'ambiguous' ? 'Ambíguo' : 'Sugestão'} · confiança {Math.round(item.confidence * 100)}%</div></div><div className="mt-3 grid gap-2 text-xs text-slate-400 md:grid-cols-2"><div><span className="text-slate-500">Contexto: </span>{Object.entries(item.context).map(([key, value]) => { const shown = reviewValue(value); return shown ? <span key={key} className="mr-3 inline-block">{key}: <span className="text-slate-200">{shown}</span></span> : null })}</div><div><span className="text-slate-500">Evidência: </span>{Object.entries(item.evidence).map(([key, value]) => { const shown = reviewValue(value); return shown ? <span key={key} className="mr-3 inline-block">{key}: <span className="text-slate-200">{shown}</span></span> : null })}</div></div></article>)}{!busy && !items.length ? <p className="py-6 text-center text-sm text-slate-500">Nenhuma sugestão encontrada para estes filtros.</p> : null}</div>
+  </section>
+}
+
 export function ClientCommercialModule() {
   const [overview, setOverview] = useState<CommercialOverview | null>(null)
   const [detail, setDetail] = useState<CommercialProfileDetail | null>(null)
@@ -211,6 +235,7 @@ export function ClientCommercialModule() {
       </section>
       <ProfilePanel detail={detail} units={units} professionals={professionals} onRefresh={refreshDetail} />
     </div>
+    <IdentityReviewQueue />
     <footer className="flex items-center gap-2 text-xs text-slate-500"><CheckCircle2 className="h-4 w-4 text-emerald-400" />Recência = último procedimento realizado. Vendas e procedimentos continuam separados no perfil comercial.</footer>
   </section>
 }

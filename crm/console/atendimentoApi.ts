@@ -751,11 +751,31 @@ export type CommercialProfileDetail = {
   clinicalCadences: Array<{ procedureId: string; procedureName: string; cadenceDays: number | null; status: 'approved' | 'not_configured'; notes: string; unitSlug: string; unitName: string; approvedAt: string | null; approvedBy: string }>
 }
 
+export type ClientIdentityReviewItem = {
+  id: string
+  type: 'attendance_name_merge' | 'attendance_caixa' | 'app_attendance' | 'app_caixa' | 'lead_app' | 'lead_caixa'
+  status: 'pending' | 'suggested' | 'ambiguous'
+  confidence: number
+  primaryName: string
+  secondaryName: string
+  evidence: Record<string, unknown>
+  context: Record<string, unknown>
+}
+
+export type ClientIdentityReviewQueue = { total: number; limit: number; offset: number; items: ClientIdentityReviewItem[] }
+
 export function fetchCommercialOverview(filters: { asOf?: string; unit?: string; segment?: string; priority?: string; q?: string; limit?: number; offset?: number } = {}) {
   const params = new URLSearchParams()
   Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '' && value !== 'all') params.set(key, String(value)) })
   const qs = params.toString()
   return api<CommercialOverview>(`/commercial/overview${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchClientIdentityReviewQueue(filters: { type?: ClientIdentityReviewItem['type']; q?: string; limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)) })
+  const qs = params.toString()
+  return api<ClientIdentityReviewQueue>(`/commercial/review${qs ? `?${qs}` : ''}`)
 }
 
 export function fetchCommercialProfile(identityId: string, filters: { asOf?: string; unit?: string } = {}) {

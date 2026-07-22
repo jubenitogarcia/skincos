@@ -228,6 +228,15 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    expressRouter.get('/commercial/review', async (req, res) => {
+        try {
+            if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.identityReviewQueue(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.get('/commercial/profiles/:identityId', async (req, res) => {
         try {
             if (!isCommercialManager(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
