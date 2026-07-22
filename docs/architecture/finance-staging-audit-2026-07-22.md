@@ -100,6 +100,14 @@ para `bootstrap`, contas, cadastros, resumo, movimentações e títulos. A limpe
 posterior confirmou novamente `module_enabled=false`, zero grants e a identidade
 temporária desativada com `session_version` incrementado.
 
+O resumo gerencial de títulos foi publicado no SHA `d6b8d86e`, com os deploys
+de Worker e Pages concluídos. Em uma janela posterior, o smoke autenticado
+confirmou a aba **Títulos**, a mensagem “Posição e previsão de 30 dias” e
+`GET /api/finance/obligations/summary` com `200` pelo proxy Pages. A execução
+terminou com a flag novamente em `false`, zero grants e zero identidades de
+teste ativas. A consulta usa somente o escopo concedido e separa valores por
+moeda; não cria movimentos de caixa.
+
 O shell atual também disparou seis `503` de superfícies não Financeiras
 (`instagram/status` e referências/relatórios de Atendimento). Eles não
 afetaram nenhuma rota Financeiro e não autorizam ignorar a dívida do ambiente:
