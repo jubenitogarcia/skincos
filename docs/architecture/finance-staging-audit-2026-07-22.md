@@ -25,8 +25,8 @@ e respectivos checksums em `finance_release_migrations`.
 Uma primeira execução do workflow falhou após a escrita porque o script
 identificava entries do JSON por formatação textual. O journal foi corrigido
 para ser lido estruturalmente com Node; a aplicação repetida foi validada em D1
-local e remoto, sem reaplicar migrations. O Worker ainda precisa ser publicado
-por um workflow verde antes dos smokes autenticados.
+local e remoto, sem reaplicar migrations. O Worker foi publicado com sucesso
+no workflow `29931079252` antes dos smokes autenticados.
 
 O workflow também continha uma etapa opcional de recuperação de senha que,
 quando acionada por `staging`, escrevia os segredos genéricos de CI no Worker
@@ -50,12 +50,42 @@ o `session_version` da identidade de controle, o cookie anterior retornou
 credencial paralela. A identidade permanece desprovida de grants e será
 desativada ao fim da matriz autenticada.
 
+## Matriz autenticada controlada — primeira execução
+
+Durante uma janela com a flag habilitada exclusivamente em staging, foram
+criadas identidades de controle sem qualquer vínculo pessoal. O resultado da
+matriz de API foi:
+
+| Cenário | NH | BSS | Pessoal | Resultado |
+| --- | --- | --- | --- | --- |
+| Sem módulo `finance` | 403 | 403 | 403 | bloqueado antes do domínio |
+| Com módulo, sem grant | 403 | 403 | 403 | bootstrap sem acesso |
+| Grant NH | 200 | 403 | 403 | isolamento de unidade confirmado |
+| Grant BSS | 403 | 200 | 403 | isolamento de unidade confirmado |
+| Grants NH e BSS | 200 | 200 | 403 | consolidação somente dos escopos concedidos |
+
+No cenário NH foram exercitados conta caixa, conta de compensação, categorias,
+favorecido, tag, centro de custo, receita, despesa e transferência. Todas as
+criações retornaram `201`; a repetição da mesma chave de idempotência retornou
+o resultado reaproveitado e a mesma chave com payload diferente retornou `409`.
+Uma consulta ao D1 não encontrou desequilíbrio nas três partidas de razão
+criadas; a API de auditoria devolveu seis eventos de movimento.
+
+A janela foi encerrada no mesmo ciclo: `module_enabled=false`, zero linhas em
+`finance_access_grants` e zero identidades de controle ativas. Lançamentos,
+partidas e auditoria foram preservados como evidência de staging; o escopo
+pessoal continuou inativo e sem grant.
+
 ## Condição para smokes autenticados da versão atual
 
 1. Reconfirmar flag desligada e zero grants antes de criar identidades de teste
    temporárias.
-2. Executar a matriz autenticada de módulos, grants e escopos empresariais.
-3. Manter o contexto pessoal inativo em todos os cenários.
+2. Reexecutar a matriz completa pela interface, incluindo estados de vazio,
+   erro, navegação e bloqueio de URL direta.
+3. Cobrir em staging CSV, MoneyWiz, Caixa EF, splits, parcelas, estornos,
+   conciliação, anexos por metadados e AP/AR antes de considerar a validação
+   integral concluída.
+4. Manter o contexto pessoal inativo em todos os cenários.
 
 ## Procedimento de migrations
 
