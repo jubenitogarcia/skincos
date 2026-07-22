@@ -57,6 +57,21 @@ args=(d1 execute "$DB_NAME" "$MODE" --config "$ROOT_DIR/api/wrangler.toml")
 [[ -n "$PERSIST_TO" ]] && args+=(--persist-to "$PERSIST_TO")
 run_sql() { local sql="$1"; shift; "${WRANGLER[@]}" "${args[@]}" --command "$sql" "$@"; }
 run_file() { "${WRANGLER[@]}" "${args[@]}" --file "$1"; }
+# Wrangler emits a JSON envelope (not a stable pretty-printed string).  Parse
+# it structurally so a formatting change cannot turn an already recorded
+# migration into an attempted duplicate insert.
+journal_checksum_for() {
+  local migration_id="$1"
+  printf '%s' "$journal" | node -e '
+    const fs = require("node:fs");
+    const wanted = process.argv[1];
+    const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+    if (!Array.isArray(payload)) throw new Error("unexpected D1 journal response");
+    const row = payload.flatMap((entry) => entry && Array.isArray(entry.results) ? entry.results : [])
+      .find((entry) => entry.id === wanted);
+    if (row && typeof row.checksum === "string") process.stdout.write(row.checksum);
+  ' "$migration_id"
+}
 
 run_sql "CREATE TABLE IF NOT EXISTS finance_release_migrations (id TEXT PRIMARY KEY, checksum TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('applied','adopted')), applied_at TEXT NOT NULL);" >/dev/null
 journal="$(run_sql 'SELECT id,checksum,source FROM finance_release_migrations ORDER BY id;' --json 2>/dev/null || true)"
@@ -77,8 +92,9 @@ fi
 tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
 for file in "$ROOT_DIR"/finance/migrations/*.sql; do
   id="$(basename "$file")"; checksum="$(sha256sum "$file" | awk '{print $1}')"
-  if grep -Fq "\"id\": \"$id\"" <<<"$journal"; then
-    grep -Fq "$checksum" <<<"$journal" || { echo "Checksum drift for applied migration: $id" >&2; exit 1; }
+  applied_checksum="$(journal_checksum_for "$id")"
+  if [[ -n "$applied_checksum" ]]; then
+    [[ "$applied_checksum" == "$checksum" ]] || { echo "Checksum drift for applied migration: $id" >&2; exit 1; }
     continue
   fi
   combined="$tmpdir/$id"
