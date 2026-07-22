@@ -8,6 +8,7 @@ binding = "SHARE_BUCKET"
 bucket_name = "skincos-share"
 
 [env.production.vars]
+ATENDIMENTO_API_TARGET = "https://cs-api.skincos.com.br"
 INSUMOS_API_TARGET = "https://api.skincos.com.br"
 ESCALA_API_TARGET = "https://escala-api.skincos.com.br"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "true"
