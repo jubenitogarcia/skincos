@@ -257,7 +257,24 @@ export async function onRequest(context: any): Promise<Response> {
     redirect: 'manual',
   })
 
-  const upstream = await fetch(upstreamRequest)
+  let upstream: Response
+  try {
+    upstream = await fetch(upstreamRequest)
+  } catch {
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'ponto_upstream_unavailable',
+      requestId,
+      method,
+      path: targetUrl.pathname,
+    }))
+    return json(503, {
+      ok: false,
+      error: 'UPSTREAM_UNAVAILABLE',
+      hint: 'O serviço de Controle de Ponto está temporariamente indisponível.',
+      requestId,
+    }, { 'x-request-id': requestId })
+  }
 
   const outHeaders = new Headers(upstream.headers)
   outHeaders.set('Cache-Control', 'no-store')
