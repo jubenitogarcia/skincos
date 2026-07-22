@@ -18,6 +18,7 @@
     "smoke:meta-ads:local": "node ./scripts/meta-ads-local-smoke.cjs",
     "smoke:site-tracking:local": "node ./scripts/site-tracking-local-smoke.cjs",
     "smoke:atendimento:local": "node ./scripts/atendimento-local-smoke.cjs",
+    "smoke:finance:local": "node ./scripts/finance-local-smoke.cjs",
     "smoke:bundle-deferred:local": "node ./scripts/bundle-deferred-assets-smoke.cjs",
     "optimize": "vite optimize",
     "preview": "vite preview",

@@ -21,8 +21,8 @@ Commands:
       Deploy all workers regardless of changes.
 
 Notes:
-  - skincos-api shares implementation with apps/insumos/src, so changes under
-    inventory/** will deploy BOTH workers.
+  - Finance migrations are never applied by this command. Apply them through a
+    reviewed staging release before deploying an API that requires them.
   - Requires CLOUDFLARE_API_TOKEN (+ optional CLOUDFLARE_ACCOUNT_ID) in env.
 
 Examples:
@@ -144,7 +144,9 @@ deploy_by_changes() {
         ;;
       inventory/*)
         do_insumos="true"
-        do_api="true" # shared implementation
+        ;;
+      finance/*|shared/finance-contracts/*|shared/crm-auth/*)
+        do_api="true"
         ;;
       backend/pnpm-lock.yaml|backend/pnpm-workspace.yaml|backend/scripts/cloudflare-workers.sh|.github/workflows/deploy-insumos-worker.yml)
         do_api="true"
