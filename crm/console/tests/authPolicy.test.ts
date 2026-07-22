@@ -10,6 +10,7 @@ describe('CRM effective role policy', () => {
 
   it('keeps role aliases and management permissions explicit', () => {
     expect(normalizeCrmRole('ADMIN')).toBe('GESTOR')
+    expect(normalizeCrmRole('EMPLOYEE')).toBe('CONSULTOR')
     expect(isAtendimentoManager('GERENTE')).toBe(true)
     expect(isAtendimentoManager('CONSULTOR')).toBe(false)
   })

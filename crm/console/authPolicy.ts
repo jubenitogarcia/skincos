@@ -3,6 +3,8 @@ export function normalizeCrmRole(value: unknown): string {
   const raw = String(value || '').trim().toUpperCase()
   if (raw === 'ADMIN') return 'GESTOR'
   if (raw === 'OPERADOR') return 'INJETOR'
+  if (raw === 'RH' || raw === 'AUDITOR') return 'SUPERVISOR'
+  if (raw === 'EMPLOYEE') return 'CONSULTOR'
   return raw
 }
 
