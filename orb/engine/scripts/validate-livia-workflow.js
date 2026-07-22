@@ -256,6 +256,7 @@ function validateContracts() {
   const usesPreparedVisualContract = !!getNode('Prepare Livia Visual Contract') && !!getNode('Merge Livia Visual Asset and Contract');
   const liviaPrompt = String(getNode('Livia')?.parameters?.text || '');
   const buildGraphSource = fs.readFileSync(path.join(__dirname, 'livia', 'build-platform-job-graph.js'), 'utf8');
+  const compose2Source = fs.readFileSync(path.join(__dirname, '..', 'compose2-current.js'), 'utf8');
   const verifyPublishedSource = fs.readFileSync(path.join(__dirname, 'livia', 'verify-published-artifacts.js'), 'utf8');
   const switchOutput = String(getNode('Switch Publish Route')?.parameters?.output || '');
   const prepareHttp = codeOf('Prepare HTTP Publish Request');
@@ -391,7 +392,7 @@ function validateContracts() {
   assert(processHttp.includes('scheduleFacebookReelsFinishRetry'), 'Process HTTP Publish Result must perform one bounded idempotent Facebook Reel finish retry after a terminal provider status');
   assert(bqValidateJobGraph.includes('postPublishFromRunIndex'), 'BQ - Validate Job Graph must require the Facebook Reel post-publication status dependency');
   for (const required of ['fb_reels_upload_ready', 'fb_reels_published', 'postPublishFromRunIndex', 'recoveryAttempt']) {
-    assert(buildGraphSource.includes(required), `build-platform-job-graph source must require Facebook Reel post-publication confirmation (${required})`);
+    assert(compose2Source.includes(required), `Compose (2) must require Facebook Reel post-publication confirmation (${required})`);
   }
   for (const required of ['semanticJobKey', 'remapResumeCompleted', 'resumedFromPublishRunIndex']) {
     assert(buildGraphSource.includes(required), `build-platform-job-graph source must reconcile durable resume by semantic identity (${required})`);
