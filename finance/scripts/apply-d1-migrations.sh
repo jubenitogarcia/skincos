@@ -61,12 +61,14 @@ run_file() { "${WRANGLER[@]}" "${args[@]}" --file "$1"; }
 run_sql "CREATE TABLE IF NOT EXISTS finance_schema_migrations (id TEXT PRIMARY KEY, checksum TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('applied','adopted')), applied_at TEXT NOT NULL);" >/dev/null
 journal="$(run_sql 'SELECT id,checksum,source FROM finance_schema_migrations ORDER BY id;' --json 2>/dev/null || true)"
 if [[ "$ADOPT_EXISTING" -eq 1 && "$journal" != *'0001_finance_foundation.sql'* ]]; then
-  # This check is deliberately narrow but covers every historical release
-  # boundary which introduced non-idempotent ALTER TABLE statements.
-  for object in finance_settings finance_movements finance_import_batches finance_draft_revision_requests finance_reconciliation_lines; do
+  # The staging D1 predates the Finance journal. Its proven baseline is v7:
+  # v8-v10 added workflow evidence and must still execute normally. Checking
+  # the v7 trigger prevents silently adopting a pre-integrity schema.
+  for object in finance_settings finance_movements finance_movement_splits finance_movement_revisions finance_import_batches finance_import_operations; do
     run_sql "SELECT 1 FROM $object LIMIT 1;" >/dev/null || { echo "Cannot adopt: expected baseline object missing: $object" >&2; exit 1; }
   done
-  for file in "$ROOT_DIR"/finance/migrations/000{1,2,3,4,5,6,7,8,9}_*.sql "$ROOT_DIR"/finance/migrations/0010_*.sql; do
+  run_sql "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='finance_movements_no_delete' LIMIT 1;" | grep -q 'finance_movements_no_delete' || { echo 'Cannot adopt: Finance v7 integrity trigger is missing.' >&2; exit 1; }
+  for file in "$ROOT_DIR"/finance/migrations/000{1,2,3,4,5,6,7}_*.sql; do
     id="$(basename "$file")"; checksum="$(sha256sum "$file" | awk '{print $1}')"
     run_sql "INSERT OR IGNORE INTO finance_schema_migrations(id,checksum,source,applied_at) VALUES('$id','$checksum','adopted',CURRENT_TIMESTAMP);" >/dev/null
   done
