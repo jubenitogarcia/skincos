@@ -3,6 +3,7 @@ import React, { useState, Suspense, lazy, useMemo } from 'react'
 import { ContextDebugger } from './ContextDebugger'
 import { ErrorBoundary } from '@/ErrorBoundary'
 import { NotificationProvider, useAuth, useNotifications } from '@/contexts'
+import { isOnlineCrmRuntime, unlockedModuleKeys } from '@/moduleAvailability'
 import { LoadingPercentText, LoadingScreen } from '@/LoadingPattern'
 import { AuthScreen } from '@/AuthScreen'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
@@ -444,10 +445,10 @@ export default function AppFunctionalNeatlab() {
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
-		    const UNLOCKED_MODULE_KEYS = useMemo(
-                () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'conversa', 'atendimento', 'caixa', 'clientes', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais', 'ponto', 'finance']),
-		        [DEFAULT_MODULE_KEY]
-		    )
+	    const UNLOCKED_MODULE_KEYS = useMemo(
+	        () => unlockedModuleKeys(DEFAULT_MODULE_KEY, isOnlineCrmRuntime(window.location.hostname)),
+	        [DEFAULT_MODULE_KEY]
+	    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    React.useEffect(() => {
 	        if (!Array.isArray(user?.allowedModules) || !user.allowedModules.map(String).includes('finance')) { setFinanceEnabled(false); return }
