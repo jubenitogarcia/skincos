@@ -34,7 +34,7 @@ staging.
 ## Procedimento de migrations
 
 `finance/scripts/apply-d1-migrations.sh` mantém um journal próprio em
-`finance_schema_migrations`, com checksum e origem (`applied` ou `adopted`).
+`finance_release_migrations`, com checksum e origem (`applied` ou `adopted`).
 Em uma base Financeiro existente e sem journal, a adoção é uma ação explícita:
 ela verifica os objetos das versões históricas antes de registrar `0001` a
 `0010`, então aplica somente as migrations novas. Em uma base vazia, o comando

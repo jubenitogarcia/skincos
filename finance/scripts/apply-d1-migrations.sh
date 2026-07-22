@@ -58,21 +58,20 @@ args=(d1 execute "$DB_NAME" "$MODE" --config "$ROOT_DIR/api/wrangler.toml")
 run_sql() { local sql="$1"; shift; "${WRANGLER[@]}" "${args[@]}" --command "$sql" "$@"; }
 run_file() { "${WRANGLER[@]}" "${args[@]}" --file "$1"; }
 
-run_sql "CREATE TABLE IF NOT EXISTS finance_schema_migrations (id TEXT PRIMARY KEY, checksum TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('applied','adopted')), applied_at TEXT NOT NULL);" >/dev/null
-journal="$(run_sql 'SELECT id,checksum,source FROM finance_schema_migrations ORDER BY id;' --json 2>/dev/null || true)"
+run_sql "CREATE TABLE IF NOT EXISTS finance_release_migrations (id TEXT PRIMARY KEY, checksum TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('applied','adopted')), applied_at TEXT NOT NULL);" >/dev/null
+journal="$(run_sql 'SELECT id,checksum,source FROM finance_release_migrations ORDER BY id;' --json 2>/dev/null || true)"
 if [[ "$ADOPT_EXISTING" -eq 1 && "$journal" != *'0001_finance_foundation.sql'* ]]; then
-  # The staging D1 predates the Finance journal. Its proven baseline is v7:
-  # v8-v10 added workflow evidence and must still execute normally. Checking
-  # the v7 trigger prevents silently adopting a pre-integrity schema.
+  # The staging D1 predates this Finance-owned release journal. Its proven
+  # baseline is v6; v7-v10 must still execute normally.
   for object in finance_settings finance_movements finance_movement_splits finance_movement_revisions finance_import_batches finance_import_operations; do
     run_sql "SELECT 1 FROM $object LIMIT 1;" >/dev/null || { echo "Cannot adopt: expected baseline object missing: $object" >&2; exit 1; }
   done
-  run_sql "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='finance_movements_no_delete' LIMIT 1;" | grep -q 'finance_movements_no_delete' || { echo 'Cannot adopt: Finance v7 integrity trigger is missing.' >&2; exit 1; }
-  for file in "$ROOT_DIR"/finance/migrations/000{1,2,3,4,5,6,7}_*.sql; do
+  run_sql "SELECT source_adapter FROM finance_import_batches LIMIT 1;" >/dev/null || { echo 'Cannot adopt: Finance v6 import adapter columns are missing.' >&2; exit 1; }
+  for file in "$ROOT_DIR"/finance/migrations/000{1,2,3,4,5,6}_*.sql; do
     id="$(basename "$file")"; checksum="$(sha256sum "$file" | awk '{print $1}')"
-    run_sql "INSERT OR IGNORE INTO finance_schema_migrations(id,checksum,source,applied_at) VALUES('$id','$checksum','adopted',CURRENT_TIMESTAMP);" >/dev/null
+    run_sql "INSERT OR IGNORE INTO finance_release_migrations(id,checksum,source,applied_at) VALUES('$id','$checksum','adopted',CURRENT_TIMESTAMP);" >/dev/null
   done
-  journal="$(run_sql 'SELECT id,checksum,source FROM finance_schema_migrations ORDER BY id;' --json 2>/dev/null || true)"
+  journal="$(run_sql 'SELECT id,checksum,source FROM finance_release_migrations ORDER BY id;' --json 2>/dev/null || true)"
 fi
 
 tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
@@ -83,7 +82,7 @@ for file in "$ROOT_DIR"/finance/migrations/*.sql; do
     continue
   fi
   combined="$tmpdir/$id"
-  { cat "$file"; printf "\nINSERT INTO finance_schema_migrations(id,checksum,source,applied_at) VALUES('%s','%s','applied',CURRENT_TIMESTAMP);\n" "$id" "$checksum"; } > "$combined"
+  { cat "$file"; printf "\nINSERT INTO finance_release_migrations(id,checksum,source,applied_at) VALUES('%s','%s','applied',CURRENT_TIMESTAMP);\n" "$id" "$checksum"; } > "$combined"
   echo "[finance-migrate] applying $id to $DB_NAME${ENV_NAME:+ ($ENV_NAME)}"
   run_file "$combined" >/dev/null
 done
