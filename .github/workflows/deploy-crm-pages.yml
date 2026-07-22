@@ -33,11 +33,9 @@ jobs:
           if [[ "$BRANCH_NAME" == "staging" ]]; then
             ENABLE="$ENABLE_STAGING"
             PROJECT="${PROJECT_STAGING:-skincos-staging}"
-            WRANGLER_CWD=".wrangler-staging"
           else
             ENABLE="$ENABLE_PROD"
             PROJECT="${PROJECT_PROD:-skincos}"
-            WRANGLER_CWD=""
           fi
           if [[ "${ENABLE:-}" != "true" ]]; then
             echo "Deploy flag not enabled; skipping deploy."
@@ -51,7 +49,6 @@ jobs:
           fi
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
-          echo "wrangler_cwd=$WRANGLER_CWD" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
@@ -114,17 +111,11 @@ jobs:
           BRANCH_NAME: ${{ steps.guard.outputs.branch }}
           GIT_SHA: ${{ github.sha }}
           GIT_MESSAGE: ${{ github.event.head_commit.message || github.sha }}
-          WRANGLER_CWD: ${{ steps.guard.outputs.wrangler_cwd }}
         run: |
           set -euo pipefail
           PROJECT="${PAGES_PROJECT:-skincos}"
-          if [[ -n "${WRANGLER_CWD:-}" ]]; then
-            echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME (wrangler cwd=$WRANGLER_CWD)"
-            npx --yes wrangler@3 --cwd "$WRANGLER_CWD" pages deploy ../dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
-          else
-            echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
-            npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
-          fi
+          echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
+          npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
         working-directory: crm/console
 
       - name: Smoke check Ponto (production)
