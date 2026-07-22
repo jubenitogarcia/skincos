@@ -94,6 +94,7 @@ function validateStructure() {
 
   for (const name of [
     'Prepare Media Items',
+    'List Livia Source Folders',
     'List Files',
     'Get Credential Tokens',
     'Download File',
@@ -165,7 +166,8 @@ function validateStructure() {
       connectionExists('Get Credential Tokens', 'Validate Publish Token Health'),
     'Get Credential Tokens must feed the media preparation chain',
   );
-  assert(connectionExists('Validate Publish Token Health', 'List Files'), 'Token preflight must feed List Files');
+  assert(connectionExists('Validate Publish Token Health', 'List Livia Source Folders'), 'Token preflight must feed the scoped Livia Drive folder listing');
+  assert(connectionExists('List Livia Source Folders', 'List Files'), 'Scoped Livia Drive folders must feed List Files');
   assert(connectionExists('Prepare Media Items', 'Download File'), 'Prepare Media Items must feed Download File');
   assert(connectionExists('Download File', 'Write File'), 'Download File must feed Write File');
   assert(connectionExists('Write File', 'Process Media Asset'), 'Write File must feed Process Media Asset');
@@ -239,6 +241,8 @@ function validateSyntax() {
 
 function validateContracts() {
   const prepareMediaItems = codeOf('Prepare Media Items');
+  const listLiviaSourceFolders = getNode('List Livia Source Folders')?.parameters || {};
+  const listFiles = getNode('List Files')?.parameters || {};
   const processMediaAssetCommand = commandOf('Process Media Asset');
   const prepareBatch = String(getNode('Prepare Media Upload Batch')?.parameters?.jsonOutput || '');
   const readMediaAssetFileSelector = String(getNode('Read Media Asset')?.parameters?.fileSelector || '');
@@ -276,6 +280,12 @@ function validateContracts() {
   const telegramText = String(getNode('Inform Success (2)')?.parameters?.text || '');
   const updateOptions = JSON.stringify(getNode('Update File')?.parameters?.options || {});
   const workflowText = JSON.stringify(workflow);
+
+  assert(getNode('List Livia Source Folders')?.type === 'n8n-nodes-base.googleDrive', 'Livia source-folder listing must use Google Drive');
+  assert(String(listLiviaSourceFolders.queryString || '').includes("1GjYuzzzXRTdYv_9WAHPKdq3FoX5g3jvk"), 'Livia source-folder listing must be scoped to the configured 2026 Drive folder');
+  assert(String(listLiviaSourceFolders.queryString || '').includes('application/vnd.google-apps.folder'), 'Livia source-folder listing must return only direct child folders');
+  assert(String(listFiles.queryString || '').includes('$json.id'), 'List Files must scope every media query to the current Livia source subfolder');
+  assert(!String(listFiles.queryString || '').includes("not properties has { key='published' and value='true' } and trashed = false and name contains"), 'List Files must not run an unscoped global Drive query');
 
   assert(prepareMediaItems.includes('__liviaCompose1'), 'Prepare Media Items must repopulate __liviaCompose1');
   assert(!prepareMediaItems.includes('waitUntil'), 'Prepare Media Items must not emit waitUntil');
