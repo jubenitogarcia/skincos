@@ -6,17 +6,17 @@ function context(env: Record<string, string | undefined>) {
 }
 
 describe('local CRM test user', () => {
-  it('uses Gestor and no module restriction by default', () => {
+  it('keeps the configured Consultor profile restricted by default', () => {
     const user = getLocalDevAuthUser(context({
       LOCAL_AUTH_ROLE: 'CONSULTOR',
       LOCAL_AUTH_ALLOWED_MODULES: 'atendimento,ponto',
     }))
 
-    expect(user.role).toBe('GESTOR')
-    expect(user.allowedModules).toBeUndefined()
+    expect(user.role).toBe('CONSULTOR')
+    expect(user.allowedModules).toEqual(['atendimento'])
   })
 
-  it('permits an explicit opt-out for restricted-role checks', () => {
+  it('does not expand Consultor modules when the local admin compatibility flag is disabled', () => {
     const user = getLocalDevAuthUser(context({
       LOCAL_AUTH_TEST_USER_ADMIN: 'false',
       LOCAL_AUTH_ROLE: 'CONSULTOR',
@@ -24,7 +24,7 @@ describe('local CRM test user', () => {
     }))
 
     expect(user.role).toBe('CONSULTOR')
-    expect(user.allowedModules).toEqual(['atendimento', 'ponto'])
+    expect(user.allowedModules).toEqual(['atendimento'])
   })
 
   it('keeps the synthetic Consultor identity stable for local validation', () => {
@@ -43,7 +43,7 @@ describe('local CRM test user', () => {
       email: 'consultor.local@local.test',
       displayName: 'Consultor Local',
       role: 'CONSULTOR',
-      allowedModules: ['atendimento', 'ponto'],
+      allowedModules: ['atendimento'],
     })
   })
 })

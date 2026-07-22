@@ -17,6 +17,7 @@ describe('Atendimento proxy helpers', () => {
     expect(__testables.hasModuleAccess({ role: 'GESTOR', allowedModules: [] })).toBe(true)
     expect(__testables.hasModuleAccess({ role: 'INJETOR', allowedModules: ['atendimento'] })).toBe(true)
     expect(__testables.hasModuleAccess({ role: 'INJETOR', allowedModules: ['insumos'] })).toBe(false)
+    expect(__testables.hasModuleAccess({ role: 'CONSULTOR', allowedModules: [] })).toBe(true)
   })
 
   it('normalizes legacy roles', () => {
@@ -31,12 +32,14 @@ describe('Atendimento proxy helpers', () => {
         authorization: 'Bearer secret',
         cookie: 'sid=secret',
         'content-type': 'application/json',
+        'idempotency-key': 'att-123',
         'x-custom': 'drop-me',
       },
     })
     const headers = __testables.buildUpstreamHeaders(request, 'req-1')
     expect(headers.get('accept')).toBe('application/json')
     expect(headers.get('content-type')).toBe('application/json')
+    expect(headers.get('idempotency-key')).toBe('att-123')
     expect(headers.get('x-request-id')).toBe('req-1')
     expect(headers.has('authorization')).toBe(false)
     expect(headers.has('cookie')).toBe(false)
@@ -61,6 +64,14 @@ describe('Atendimento proxy helpers', () => {
       allowedUnits: ['Novo Hamburgo'],
       allowedModules: ['atendimento'],
     })
+  })
+
+  it('narrows legacy consultant accounts to Atendimento before signing the actor', () => {
+    expect(__testables.toAtendimentoActor({
+      id: 'consultor-1',
+      role: 'CONSULTOR',
+      allowedModules: [],
+    }).allowedModules).toEqual(['atendimento'])
   })
 
   it('falls back to escala keys when the dedicated atendimento key is absent', () => {
@@ -96,5 +107,12 @@ describe('Atendimento proxy helpers', () => {
       request: new Request('http://localhost:8791/api/atendimento/overview'),
       env: { LOCAL_AUTH_BYPASS: 'true' },
     }, 'real-secret')).toBe(false)
+  })
+
+  it('does not expose upstream transport details to the browser', async () => {
+    const response = __testables.upstreamUnavailableResponse('req-safe')
+    expect(response.status).toBe(502)
+    expect(response.headers.get('x-request-id')).toBe('req-safe')
+    expect(await response.json()).toEqual({ ok: false, error: 'UPSTREAM_UNREACHABLE' })
   })
 })

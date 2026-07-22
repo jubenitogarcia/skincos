@@ -9,13 +9,16 @@ import {
     calculateConversionHomogeneity,
     calculateDoctorConversionDiagnostics,
     calculateDoctorConversionRanking,
+    calculateAttendanceRemuneration,
     calculateAttendanceValue,
+    ATTENDANCE_REMUNERATION_POLICY,
     consolidateConversionProfessionals,
     calculatePreviousWeek,
     calculateWeekOfMonth,
     classifyDoctorConversionValue,
     convertColorCodesToScores,
     getDoctorConversionIntervalMultiplier,
+    getCanonicalProfessionalName,
     getFilteredBackgroundColorsFromMatrix,
     getReportPeriod,
     normalizeAttendanceRow,
@@ -41,6 +44,45 @@ test('calculates the sheet value formula with 3 percent discount and rounding', 
     assert.equal(calculateAttendanceValue({ code: '#0599', quantity: 1, discount: false, otherValue: 66, roundValue: false }), 533)
     assert.equal(calculateAttendanceValue({ code: '#0499', quantity: 2, discount: true, otherValue: 0, roundValue: false }), 968.06)
     assert.equal(calculateAttendanceValue({ code: '#0499', quantity: 1, discount: false, otherValue: 0, roundValue: true }), 500)
+})
+
+test('versions the legacy remuneration preview without treating it as payroll', () => {
+    assert.deepEqual(calculateAttendanceRemuneration(0), {
+        amount: 0,
+        formulaVersion: ATTENDANCE_REMUNERATION_POLICY.version,
+        applicable: false,
+    })
+    assert.equal(calculateAttendanceRemuneration(1000).amount, 212.5)
+    assert.equal(calculateAttendanceRemuneration(3000).amount, 300)
+    assert.throws(
+        () => calculateAttendanceRemuneration(1000, { version: 'invalid', percentage: -1, minimum: 0 }),
+        /INVALID_REMUNERATION_POLICY/,
+    )
+})
+
+test('uses only confirmed roster aliases when canonicalizing professionals', () => {
+    assert.equal(getCanonicalProfessionalName('Raul Júnior'), 'Raul Rosário Júnior')
+    assert.equal(getCanonicalProfessionalName('Rafaela Ferreira'), 'Rafaela Machado Ferreira')
+    assert.equal(getCanonicalProfessionalName('Dóris Moisyn'), 'Dóris Moisyn')
+})
+
+test('consolidates confirmed duplicate professionals before ranking and keeps ties deterministic', () => {
+    const result = calculateDoctorConversionRanking({
+        dailyGoal: 0,
+        doctors: [
+            { id: 'raul-short', name: 'Raul Júnior', realized: 100 },
+            { id: 'raul-full', name: 'Raul Rosário Júnior', realized: 200 },
+            { id: 'ana', name: 'Ana', realized: 300 },
+            { id: 'bia', name: 'Bia', realized: 300 },
+        ],
+    })
+    assert.equal(result.eligibleDoctorCount, 3)
+    assert.equal(result.rankedDoctorTotal, 900)
+    assert.deepEqual(result.ranking.map((doctor) => `${doctor.rank}:${doctor.name}:${doctor.realized}`), [
+        '1:Ana:300',
+        '2:Bia:300',
+        '3:Raul Rosário Júnior:300',
+    ])
 })
 
 test('calculates internal doctor conversion metrics using CRM values and weighted ratios', () => {

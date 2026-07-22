@@ -7,12 +7,14 @@ export type AtendimentoHeaderOption = {
 
 export type AtendimentoHeaderState = {
   loading: boolean
+  canManage: boolean
   filters: AtendimentoFilters
   units: AtendimentoHeaderOption[]
   procedures: AtendimentoHeaderOption[]
   injectors: AtendimentoHeaderOption[]
   activeUnitLabel: string
   periodLabel: string
+  periodOperationalDays: number | null
   latestImportLabel: string
   localMirrorSummary: string
   localMirrorDetail: string
@@ -62,12 +64,16 @@ export function normalizeAtendimentoHeaderState(detail: unknown): AtendimentoHea
   if (!filters) return null
   return {
     loading: Boolean(payload.loading),
+    canManage: Boolean(payload.canManage),
     filters,
     units: normalizeOptions(payload.units),
     procedures: normalizeOptions(payload.procedures),
     injectors: normalizeOptions(payload.injectors),
     activeUnitLabel: String(payload.activeUnitLabel || 'Todas unidades'),
     periodLabel: String(payload.periodLabel || 'Todos os períodos'),
+    periodOperationalDays: payload.periodOperationalDays == null || !Number.isFinite(Number(payload.periodOperationalDays))
+      ? null
+      : Number(payload.periodOperationalDays),
     latestImportLabel: String(payload.latestImportLabel || 'Sem import recente'),
     localMirrorSummary: String(payload.localMirrorSummary || ''),
     localMirrorDetail: String(payload.localMirrorDetail || ''),

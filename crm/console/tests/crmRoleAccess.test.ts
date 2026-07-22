@@ -2,16 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { hasCrmModuleAccess } from '../crmRoleAccess'
 
 describe('CRM role module navigation', () => {
-  it('keeps Consultor limited to Atendimento and Ponto even without an allowedModules list', () => {
+  it('keeps Consultor limited to Atendimento even without an allowedModules list', () => {
     expect(hasCrmModuleAccess('CONSULTOR', [], 'atendimento')).toBe(true)
-    expect(hasCrmModuleAccess('CONSULTOR', [], 'ponto')).toBe(true)
+    expect(hasCrmModuleAccess('CONSULTOR', [], 'ponto')).toBe(false)
     expect(hasCrmModuleAccess('CONSULTOR', [], 'faturamento')).toBe(false)
     expect(hasCrmModuleAccess('CONSULTOR', ['insumos'], 'insumos')).toBe(false)
   })
 
   it('keeps the legacy Employee spelling constrained during the transition', () => {
     expect(hasCrmModuleAccess('EMPLOYEE', [], 'atendimento')).toBe(true)
-    expect(hasCrmModuleAccess('EMPLOYEE', [], 'ponto')).toBe(true)
+    expect(hasCrmModuleAccess('EMPLOYEE', [], 'ponto')).toBe(false)
     expect(hasCrmModuleAccess('EMPLOYEE', [], 'users')).toBe(false)
   })
 
@@ -20,8 +20,6 @@ describe('CRM role module navigation', () => {
     ['GESTOR'],
     ['GERENTE'],
     ['SUPERVISOR'],
-    ['CONSULTOR'],
-    ['EMPLOYEE'],
     ['custom-authenticated-role'],
   ])('always exposes Ponto to the authenticated %s role even when it is not assigned', (role) => {
     expect(hasCrmModuleAccess(role, ['insumos'], 'ponto')).toBe(true)

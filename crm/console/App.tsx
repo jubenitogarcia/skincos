@@ -90,15 +90,18 @@ const ATENDIMENTO_QUICK_PRESETS: Array<{
     tooltipDescription?: string
     icon?: 'currentWeek' | 'currentMonth'
 }> = [
-    { key: 'last7', label: '7d', tooltip: 'Últimos 7 dias' },
-    { key: 'last30', label: '30d', tooltip: 'Últimos 30 dias' },
     { key: 'currentWeek', label: 'Semana atual', tooltip: 'Semana atual', tooltipDescription: 'Da segunda-feira até hoje.', icon: 'currentWeek' },
     { key: 'currentMonth', label: 'Mês atual', tooltip: 'Mês atual', tooltipDescription: 'Do primeiro dia do mês até hoje.', icon: 'currentMonth' },
 ]
 
+const ATENDIMENTO_PERIOD_PICKER_PRESETS: Array<Pick<(typeof ATENDIMENTO_QUICK_PRESETS)[number], 'key' | 'label' | 'tooltip'>> = [
+    { key: 'last7', label: '7d', tooltip: 'Últimos 7 dias' },
+    { key: 'last30', label: '30d', tooltip: 'Últimos 30 dias' },
+]
+
 function AtendimentoCurrentWeekIcon() {
     return (
-        <svg viewBox="0 0 24 24" fill="none" className="size-4" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden="true">
             <rect x="2.25" y="3.25" width="19.5" height="17.5" rx="3" stroke="currentColor" strokeWidth="1.6" />
             <path d="M2.75 7.5H21.25" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             {[0, 1, 2, 3, 4, 5, 6].map((day) => (
@@ -110,7 +113,7 @@ function AtendimentoCurrentWeekIcon() {
 
 function AtendimentoCurrentMonthIcon() {
     return (
-        <svg viewBox="0 0 24 24" fill="none" className="size-4" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden="true">
             <rect x="2.25" y="3.25" width="19.5" height="17.5" rx="3" stroke="currentColor" strokeWidth="1.6" />
             <path d="M2.75 7.5H21.25" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             {[0, 1, 2, 3].flatMap((week) => [0, 1, 2, 3, 4, 5, 6].map((day) => (
@@ -662,6 +665,11 @@ export default function AppFunctionalNeatlab() {
                     if (quickPreset || (!filters.from && !filters.to)) return ''
                     return formatAtendimentoPeriodRange(filters.from, filters.to)
                 }, [atendimentoHeaderState?.filters])
+                const atendimentoOperationalPeriodLabel = React.useMemo(() => {
+                    const days = atendimentoHeaderState?.periodOperationalDays
+                    if ((atendimentoQuickWindow !== 'currentWeek' && atendimentoQuickWindow !== 'currentMonth') || days == null) return ''
+                    return `${days}d laborais`
+                }, [atendimentoHeaderState?.periodOperationalDays, atendimentoQuickWindow])
                 const setAtendimentoQuickWindow = React.useCallback((preset: AtendimentoQuickPreset) => {
                     const { from, to } = buildAtendimentoQuickRange(preset)
                     dispatchAtendimentoHeaderAction({
@@ -1879,13 +1887,14 @@ export default function AppFunctionalNeatlab() {
                                                 <div className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] p-1">
                                                     {ATENDIMENTO_QUICK_PRESETS.map((preset) => (
                                                         preset.icon ? (
-                                                            <Tooltip key={preset.key}>
+                                                            <React.Fragment key={preset.key}>
+                                                            <Tooltip>
                                                                 <TooltipTrigger asChild>
                                                                     <button
                                                                         type="button"
                                                                         aria-label={preset.tooltip}
                                                                         title={preset.tooltip}
-                                                                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-xs transition ${
+                                                                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-xs transition ${
                                                                             atendimentoQuickWindow === preset.key
                                                                                 ? 'bg-white/16 text-white'
                                                                                 : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
@@ -1902,30 +1911,17 @@ export default function AppFunctionalNeatlab() {
                                                                     </div>
                                                                 </TooltipContent>
                                                             </Tooltip>
-                                                        ) : (
-                                                            <button
-                                                                key={preset.key}
-                                                                type="button"
-                                                                title={preset.tooltip}
-                                                                className={`h-6 rounded-full px-2.5 text-xs transition ${
-                                                                    atendimentoQuickWindow === preset.key
-                                                                        ? 'bg-white/16 text-white'
-                                                                        : 'text-blue-100/80 hover:bg-white/[0.08] hover:text-white'
-                                                                }`}
-                                                                onClick={() => setAtendimentoQuickWindow(preset.key)}
-                                                            >
-                                                                {preset.label}
-                                                            </button>
-                                                        )
+                                                            {atendimentoQuickWindow === preset.key && atendimentoOperationalPeriodLabel ? (
+                                                                <span
+                                                                    className="inline-flex h-7 animate-in fade-in-0 zoom-in-95 items-center rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2.5 text-[11px] font-medium text-emerald-100 duration-200"
+                                                                    data-testid="atendimento-operational-period-label"
+                                                                >
+                                                                    {atendimentoOperationalPeriodLabel}
+                                                                </span>
+                                                            ) : null}
+                                                            </React.Fragment>
+                                                        ) : null
                                                     ))}
-                                                    {atendimentoCustomPeriodLabel ? (
-                                                        <span
-                                                            className="inline-flex h-7 items-center rounded-full border border-sky-300/35 bg-sky-400/10 px-2.5 text-[11px] font-medium text-sky-100"
-                                                            data-testid="atendimento-custom-period-label"
-                                                        >
-                                                            {atendimentoCustomPeriodLabel}
-                                                        </span>
-                                                    ) : null}
                                                     <DropdownMenu open={atendimentoPeriodPickerOpen} onOpenChange={openAtendimentoPeriodPicker}>
                                                         <DropdownMenuTrigger asChild>
                                                             <button
@@ -1955,6 +1951,30 @@ export default function AppFunctionalNeatlab() {
                                                             </div>
                                                             <DropdownMenuSeparator className="-mx-3 bg-slate-800" />
                                                             <div className="grid gap-3 pt-3">
+                                                                <div className="space-y-1.5">
+                                                                    <div className="text-[10px] font-medium uppercase tracking-[0.1em] text-slate-500">Atalhos</div>
+                                                                    <div className="grid grid-cols-2 gap-2">
+                                                                        {ATENDIMENTO_PERIOD_PICKER_PRESETS.map((preset) => (
+                                                                            <button
+                                                                                key={preset.key}
+                                                                                type="button"
+                                                                                aria-label={preset.tooltip}
+                                                                                className={`rounded-lg border px-2.5 py-2 text-left text-xs transition ${
+                                                                                    atendimentoQuickWindow === preset.key
+                                                                                        ? 'border-sky-300/45 bg-sky-400/12 text-sky-100'
+                                                                                        : 'border-slate-700 bg-slate-900/55 text-slate-200 hover:border-slate-600 hover:bg-slate-800'
+                                                                                }`}
+                                                                                onClick={() => {
+                                                                                    setAtendimentoQuickWindow(preset.key)
+                                                                                    setAtendimentoPeriodPickerOpen(false)
+                                                                                }}
+                                                                            >
+                                                                                <span className="block font-semibold">{preset.label}</span>
+                                                                                <span className="mt-0.5 block text-[10px] text-slate-400">{preset.tooltip}</span>
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
                                                                 <div className="grid grid-cols-2 gap-2">
                                                                     <Input
                                                                         type="date"
@@ -1982,6 +2002,14 @@ export default function AppFunctionalNeatlab() {
                                                             </div>
                                                         </DropdownMenuContent>
                                                     </DropdownMenu>
+                                                    {atendimentoCustomPeriodLabel ? (
+                                                        <span
+                                                            className="inline-flex h-7 animate-in fade-in-0 zoom-in-95 items-center rounded-full border border-sky-300/35 bg-sky-400/10 px-2.5 text-[11px] font-medium text-sky-100 duration-200"
+                                                            data-testid="atendimento-custom-period-label"
+                                                        >
+                                                            {atendimentoCustomPeriodLabel}
+                                                        </span>
+                                                    ) : null}
                                                 </div>
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>

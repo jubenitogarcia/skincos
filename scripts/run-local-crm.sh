@@ -322,16 +322,19 @@ assert_port_free() {
   local port="$1"
   local label="$2"
   local line
-  if ! command -v lsof >/dev/null 2>&1; then
+  if crm_runtime_port_is_free "$port"; then
     return 0
   fi
   line="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | tail -n +2 | head -n 1 || true)"
   if [[ -n "$line" ]]; then
     echo "[crm-local] Porta $port já está em uso por outro processo ($label)." >&2
     echo "$line" >&2
-    echo "Use --${label}-port para outra porta ou finalize manualmente o processo atual." >&2
-    exit 1
   fi
+  if [[ -z "$line" ]]; then
+    echo "[crm-local] Porta $port já responde no loopback por um listener externo ao WSL ($label)." >&2
+  fi
+  echo "Use --${label}-port para outra porta ou finalize manualmente o processo atual." >&2
+  exit 1
 }
 
 wait_for_http() {

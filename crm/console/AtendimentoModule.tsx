@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { DragDropContext, Draggable, Droppable, type DraggableProvidedDragHandleProps, type DropResult } from '@hello-pangea/dnd'
 import {
   AlertTriangle,
@@ -8,6 +9,8 @@ import {
   BarChart3,
   Calculator,
   CalendarRange,
+  ChevronDown,
+  ChevronUp,
   Crosshair,
   Divide,
   Download,
@@ -51,14 +54,9 @@ import { Button } from '@/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
 import { Input } from '@/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Switch } from '@/switch'
 import { TooltipLabel } from '@/tooltip'
-import {
-  emitAtendimentoHeaderState,
-  subscribeAtendimentoHeaderAction,
-} from '@/atendimentoHeaderBridge'
 import {
   calculateAtendimentoValue,
   DEFAULT_ATENDIMENTO_FILTERS,
@@ -94,6 +92,13 @@ import {
   type AtendimentoManagementConversionReport,
   type AtendimentoLocalMirrorStatus,
 } from '@/atendimentoApi'
+import { AtendimentoChartsPanel } from '@/atendimentoCharts'
+import { AtendimentoClientAutocomplete } from '@/atendimentoClientAutocomplete'
+import { AtendimentoDatePicker } from '@/AtendimentoDatePicker'
+import { atendimentoColorWithAlpha, atendimentoProfessionalColor } from '@/atendimentoVisuals'
+import { useAtendimentoHeaderBridge } from '@/useAtendimentoHeaderBridge'
+import { useAuth } from '@/contexts'
+import { isAtendimentoManager, normalizeCrmRole } from '@/authPolicy'
 
 function monthLabel(value: string) {
   const [year, month] = String(value || '').split('-').map(Number)
@@ -105,6 +110,7 @@ function monthLabel(value: string) {
 function asForm(row: AtendimentoAttendance): AtendimentoForm {
   return {
     id: row.id,
+    revision: row.revision,
     unitSlug: row.unitSlug,
     unitName: row.unitName,
     date: row.date,
@@ -116,15 +122,28 @@ function asForm(row: AtendimentoAttendance): AtendimentoForm {
     otherValue: row.otherValue,
     roundValue: row.roundValue,
     value: row.value,
+    injectorId: row.injectorId || null,
+    consultantId: row.consultantId || null,
     injectorName: row.injectorName,
     consultantName: row.consultantName,
     observation: row.observation || '',
   }
 }
 
+function professionalIdentityPatch(
+  professionals: AtendimentoReferences['professionals'],
+  field: 'injector' | 'consultant',
+  name: string,
+) {
+  const professional = professionals.find((item) => item.name === name)
+  const id = professional?.canonicalId || professional?.id || null
+  return field === 'injector'
+    ? { injectorName: name, injectorId: id }
+    : { consultantName: name, consultantId: id }
+}
+
 function hasAtendimentoInlineDraft(form: AtendimentoForm) {
   return Boolean(
-    form.date ||
     form.clientName ||
     form.procedureName ||
     form.injectorName ||
@@ -137,9 +156,15 @@ function hasAtendimentoInlineDraft(form: AtendimentoForm) {
   )
 }
 
+function createIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return `atendimento-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 const panelClass = 'border-slate-800/80 bg-slate-950/60 shadow-[0_20px_80px_rgba(2,6,23,0.35)] backdrop-blur-xl'
 const ATENDIMENTO_METRIC_LAYOUT_KEY = 'skincos.atendimento.layout.metrics.v2'
 const ATENDIMENTO_CHART_LAYOUT_KEY = 'skincos.atendimento.layout.charts.v3'
+const ATENDIMENTO_ANALYSIS_EXPANDED_KEY = 'skincos.atendimento.analysis.expanded.v1'
 const ATTENDANCE_PAGE_SIZE = 50
 const DEFAULT_UNIT_LEGEND = [
   { slug: 'novo-hamburgo', name: 'Novo Hamburgo' },
@@ -168,9 +193,16 @@ type AtendimentoMetricGroupRow = {
   label: string
   value: string
   detail?: string
+  calculation?: string
   tooltip?: MetricTooltipSpec
   icon: LucideIcon
   tone: AtendimentoMetricTone
+  avatarUrl?: string | null
+  presentation?: 'detail'
+}
+type AtendimentoMetricHierarchyNode = {
+  key: string
+  children?: AtendimentoMetricHierarchyNode[]
 }
 type MetricTooltipSpec = {
   what: string
@@ -286,7 +318,8 @@ function parseAtendimentoChartSlots(raw: string | null): AtendimentoChartSlot[] 
       const metric: AtendimentoChartMetric = item?.metric === 'count' ? 'count' : 'value'
       const view = validViews.has(item?.view) ? item.view as AtendimentoChartView : (presetId === 'monthly' ? 'area' : 'bar')
       const topN = Math.max(3, Math.min(12, Number(item?.topN) || fallback.topN))
-      return { presetId, metric, view, topN }
+      const layout = item?.layout === 'compact' || item?.layout === 'wide' ? item.layout : 'standard'
+      return { presetId, metric, view, topN, layout, collapsed: item?.collapsed === true }
     })
     return cleaned.length ? cleaned : DEFAULT_ATENDIMENTO_CHART_SLOTS
   } catch {
@@ -322,26 +355,24 @@ const IconOnlyAction = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttri
 }>(({
   label,
   description,
-  tooltipAlign = 'left',
+  tooltipAlign: _tooltipAlign = 'left',
   children,
   className = '',
   type = 'button',
   ...buttonProps
 }, ref) => {
   return (
-    <button
-      ref={ref}
-      type={type}
-      aria-label={label}
-      className={`group relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-700 bg-slate-900/60 text-slate-100 transition hover:border-sky-400/40 hover:bg-slate-800/80 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/55 ${className}`}
-      {...buttonProps}
-    >
-      {children}
-      <span className={`pointer-events-none absolute top-[calc(100%+0.55rem)] z-50 hidden w-max max-w-64 rounded-xl border border-white/12 bg-slate-950/96 px-3 py-2 text-left text-[11px] text-slate-50 shadow-[0_16px_36px_rgba(15,23,42,0.34)] backdrop-blur-xl group-hover:block group-focus-visible:block ${tooltipAlign === 'right' ? 'right-0' : 'left-0'}`}>
-        <span className="block font-medium leading-tight text-white">{label}</span>
-        {description ? <span className="mt-1 block text-[10px] leading-snug text-slate-300/92">{description}</span> : null}
-      </span>
-    </button>
+    <TooltipLabel label={label} description={description}>
+      <button
+        ref={ref}
+        type={type}
+        aria-label={label}
+        className={`inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-700 bg-slate-900/60 text-slate-100 transition hover:border-sky-400/40 hover:bg-slate-800/80 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/55 ${className}`}
+        {...buttonProps}
+      >
+        {children}
+      </button>
+    </TooltipLabel>
   )
 })
 IconOnlyAction.displayName = 'IconOnlyAction'
@@ -349,7 +380,7 @@ IconOnlyAction.displayName = 'IconOnlyAction'
 function SortableAttendanceHead({
   sortKey,
   label,
-  align = 'left',
+  align = 'center',
   activeKey,
   sortDir,
   onSort,
@@ -357,10 +388,11 @@ function SortableAttendanceHead({
   className = '',
   stickyLeft = false,
   testId,
+  action,
 }: {
   sortKey: AtendimentoSortKey
   label: string
-  align?: 'left' | 'right'
+  align?: 'left' | 'center' | 'right'
   activeKey: AtendimentoSortKey
   sortDir: AtendimentoSortDir
   onSort: (key: AtendimentoSortKey) => void
@@ -368,35 +400,39 @@ function SortableAttendanceHead({
   className?: string
   stickyLeft?: boolean
   testId?: string
+  action?: React.ReactNode
 }) {
   const isActive = activeKey === sortKey
   return (
     <th
-      className={`${stickyLeft ? 'sticky left-0 top-0 z-40 shadow-[1px_0_0_rgba(30,41,59,0.9)]' : 'sticky top-0 z-30'} h-12 border-b border-slate-800 bg-slate-950 px-3 align-middle font-medium text-slate-300 ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}
+      className={`${stickyLeft ? 'sticky left-0 top-0 z-40 shadow-[1px_0_0_rgba(30,41,59,0.9)]' : 'sticky top-0 z-30'} h-12 border-b border-slate-800 bg-slate-950 px-3 align-middle font-medium text-slate-300 ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'} ${className}`}
       data-testid={testId}
     >
-      <button
-        type="button"
-        className={`inline-flex max-w-full select-none items-center gap-1.5 rounded-sm px-0.5 text-xs leading-tight focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 ${align === 'right' ? 'justify-end' : 'justify-start'} ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline`}
-        onClick={() => onSort(sortKey)}
-        aria-label={`Ordenar ${label}`}
-      >
-        <span className="min-w-0">
-          <span className="block truncate">{label}</span>
-          {children}
-        </span>
-        <span className={`inline-flex shrink-0 items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
-          {isActive && sortDir === 'asc' ? (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          ) : (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
-        </span>
-      </button>
+      <div className={`flex min-w-0 items-center gap-1 ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'}`}>
+        <button
+          type="button"
+          className={`inline-flex max-w-full select-none items-center gap-1.5 rounded-sm px-0.5 text-xs leading-tight focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/40 ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'} ${isActive ? 'text-white' : 'text-blue-100/80'} hover:underline`}
+          onClick={() => onSort(sortKey)}
+          aria-label={`Ordenar ${label}`}
+        >
+          <span className="min-w-0">
+            <span className="block truncate">{label}</span>
+            {children}
+          </span>
+          <span className={`inline-flex shrink-0 items-center justify-center ${isActive ? 'text-white' : 'text-blue-100/30'}`} aria-hidden>
+            {isActive && sortDir === 'asc' ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </span>
+        </button>
+        {action}
+      </div>
     </th>
   )
 }
@@ -452,12 +488,10 @@ function MetricTooltip({
   )
 }
 
-function ConversionMultiplierPopover({
+function ConversionMultiplierDetails({
   optimization,
-  value,
 }: {
   optimization: NonNullable<ConversionRankingSection['optimization']>
-  value: string
 }) {
   const curve = Array.isArray(optimization.homogeneityCurve) ? optimization.homogeneityCurve : []
   const chartData = curve.map((segment) => ({
@@ -485,38 +519,73 @@ function ConversionMultiplierPopover({
     not_applicable: 'Não há dados ou variância suficientes para definir um multiplicador.',
   }
   const selectedCounts = optimization.optimalPlateau?.counts || { level0: 0, level1: 0, level2: 0, level3: 0 }
-
+  const status = CONVERSION_STATUS_COPY[optimization.statusCode || ''] || CONVERSION_STATUS_COPY.BEST_EFFORT
+  const selectedTotal = Math.max(0, selectedCounts.level0 + selectedCounts.level1 + selectedCounts.level2 + selectedCounts.level3)
+  const selectedHomogeneity = Number(optimization.optimalPlateau?.homogeneityScore ?? optimization.homogeneityScore ?? 0)
+  const groupedDistribution = CONVERSION_DISTRIBUTION_GROUP_VISUAL.map((group) => ({
+    ...group,
+    count: group.levels.reduce((total, level) => total + selectedCounts[`level${level}` as keyof typeof selectedCounts], 0),
+  }))
+  const calculationBasis = (
+    <div className="mt-2 border-t border-slate-700/80 pt-2 text-[10px] text-slate-300">
+      <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-500">Base da seleção</div>
+      <div className="grid gap-1">
+        <div className="flex items-center justify-between gap-3"><span>Homogeneidade</span><span className="font-semibold tabular-nums text-emerald-200">{new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(selectedHomogeneity)}</span></div>
+        <div className="flex items-center justify-between gap-3"><span>Platô ótimo</span><span className="font-semibold tabular-nums text-sky-200">{optimization.optimalPlateau ? `${formatK(optimization.optimalPlateau.start, 3)}–${formatK(optimization.optimalPlateau.end, 3)}` : '—'}</span></div>
+        <div className="flex items-center justify-between gap-3"><span>k anterior</span><span className="font-semibold tabular-nums text-slate-100">{formatK(optimization.previousIntervalMultiplier)}</span></div>
+      </div>
+    </div>
+  )
+  const selectedDistributionCopy = (
+    <div className="space-y-1.5">
+      <div><span className="font-medium text-slate-100">{status.label}.</span> {status.description}</div>
+      <div>{reasonCopy[optimization.selectionReason] || optimization.selectionReason}</div>
+      {optimization.optimalPlateau ? <div className="text-slate-400">Platô: {formatK(optimization.optimalPlateau.start, 5)} até {formatK(optimization.optimalPlateau.end, 5)}{optimization.optimalPlateau.endInclusive ? ' (inclusivo)' : ' (fim exclusivo)'}.</div> : null}
+      {calculationBasis}
+    </div>
+  )
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-md border border-sky-400/20 bg-sky-400/8 px-1.5 py-0.5 text-[11px] font-semibold text-sky-100 transition hover:border-sky-300/45 hover:bg-sky-400/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60"
-          aria-label={`Analisar multiplicador otimizado: ${value}`}
-          data-testid="atendimento-multiplier-popover-trigger"
-        >
-          {value}
-          <LineChartIcon className="h-3 w-3" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        sideOffset={8}
-        className="w-[min(34rem,calc(100vw-2rem))] border-slate-700/90 bg-slate-950/98 p-0 text-slate-100 shadow-[0_24px_80px_rgba(2,6,23,0.72)]"
-        data-testid="atendimento-multiplier-popover"
-      >
-        <div className="space-y-3 p-4">
+    <section
+      className="min-w-0 rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"
+      data-testid="atendimento-multiplier-details"
+      aria-label="Detalhes do multiplicador por homogeneidade"
+    >
+      <div className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-white">Multiplicador por homogeneidade</div>
-              <div className="mt-0.5 max-w-md text-[11px] leading-relaxed text-slate-400">
-                A curva em degraus mostra como cada intervalo de k distribui os doutores entre N0, N1, N2 e N3.
+              <div className="inline-flex items-center gap-1 text-sm font-semibold text-white">
+                <span>Multiplicador por homogeneidade</span>
+                <TooltipLabel
+                  pinOnClick
+                  label="Como funciona o multiplicador por homogeneidade"
+                  description={(
+                    <div className="space-y-1.5">
+                      <p>k regula a largura simétrica das faixas em torno da linha de corte: limite inferior = corte − desvio padrão × k; limite superior = corte + desvio padrão × k.</p>
+                      <p>A curva avalia cada intervalo que muda a classificação dos doutores e escolhe o platô com a distribuição mais homogênea entre quatro níveis. O desempate preserva o k anterior quando ele ainda pertence ao platô ótimo.</p>
+                      <p className="text-slate-400">Faixa configurada para esta análise: k de {formatK(optimization.intervalMultiplierMin, 2)} a {formatK(optimization.intervalMultiplierMax, 2)}. O limite é uma política versionada do backend; alterar a faixa requer validação da regra, não uma edição visual.</p>
+                      {calculationBasis}
+                    </div>
+                  )}
+                  contentClassName="max-w-[24rem]"
+                >
+                    <button
+                      type="button"
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-500 transition hover:bg-sky-400/10 hover:text-sky-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
+                      aria-label="Como funciona o multiplicador por homogeneidade"
+                      data-testid="atendimento-multiplier-info-trigger"
+                      data-tooltip-pin="true"
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </button>
+                </TooltipLabel>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-500">Selecionado</div>
-              <div className="text-base font-semibold tabular-nums text-sky-200">{formatK(optimization.selectedMultiplier, 5)}</div>
-            </div>
+            <TooltipLabel label={`Multiplicador selecionado: ${formatK(optimization.selectedMultiplier, 5)}`} description={selectedDistributionCopy} contentClassName="max-w-sm">
+              <div className="rounded-lg px-1.5 py-1 text-right" data-testid="atendimento-multiplier-selected-value" aria-label="Detalhes da seleção do multiplicador">
+                <span className="block text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-500">Selecionado</span>
+                <span className="block text-base font-semibold tabular-nums text-sky-200">{formatK(optimization.selectedMultiplier, 5)}</span>
+              </div>
+            </TooltipLabel>
           </div>
           {chartData.length > 0 ? (
             <div className="h-48 rounded-xl border border-slate-800 bg-slate-900/45 p-2" aria-label="Curva do multiplicador pela homogeneidade">
@@ -555,6 +624,7 @@ function ConversionMultiplierPopover({
                           <div className="font-semibold text-white">k {formatK(point.k, 5)} até {formatK(point.end, 5)}</div>
                           <div className="mt-1 text-emerald-200">H {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(point.homogeneity)}</div>
                           <div className="mt-1 text-slate-400">N0 {counts.level0 || 0} · N1 {counts.level1 || 0} · N2 {counts.level2 || 0} · N3 {counts.level3 || 0}</div>
+                          {calculationBasis}
                         </div>
                       )
                     }}
@@ -566,88 +636,126 @@ function ConversionMultiplierPopover({
           ) : (
             <div className="rounded-xl border border-amber-400/20 bg-amber-400/8 px-3 py-4 text-xs text-amber-100">Multiplicador não aplicável para este período.</div>
           )}
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
-            <div className="text-[11px] leading-relaxed text-slate-300">
-              {reasonCopy[optimization.selectionReason] || optimization.selectionReason}
-              {optimization.optimalPlateau ? (
-                <span className="mt-1 block text-slate-500">
-                  Platô escolhido: {formatK(optimization.optimalPlateau.start, 5)} até {formatK(optimization.optimalPlateau.end, 5)}{optimization.optimalPlateau.endInclusive ? ' (inclusivo)' : ' (fim exclusivo)'}.
-                </span>
-              ) : null}
-            </div>
-            <div className="flex gap-1 text-[9px] font-semibold tabular-nums text-slate-300" aria-label="Composição das faixas no platô escolhido">
-              {[selectedCounts.level0, selectedCounts.level1, selectedCounts.level2, selectedCounts.level3].map((count, level) => (
-                <span key={level} className="rounded-md border border-slate-700 bg-slate-900 px-1.5 py-1">N{level} {count}</span>
-              ))}
+          <div className="border-t border-slate-800 pt-3">
+            <div className="grid grid-cols-2 gap-1.5" data-testid="atendimento-multiplier-distribution-groups">
+              {groupedDistribution.map((group) => {
+                const proportion = selectedTotal > 0 ? group.count / selectedTotal : 0
+                const GroupIcon = group.icon
+                return (
+                  <TooltipLabel key={group.key} label={group.label} description={`${group.levels.map((level) => conversionLevelVisual(level).label).join(' + ')}: ${formatNumberBR(group.count)} de ${formatNumberBR(selectedTotal)} doutores (${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(proportion)}).`}>
+                    <span className="cursor-help rounded-lg border border-slate-800 bg-slate-900/45 px-2 py-1.5">
+                      <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500"><GroupIcon className="h-3 w-3" aria-hidden="true" />{group.label}</span>
+                      <span className={`flex items-center gap-1.5 ${group.tone}`} data-testid={`atendimento-multiplier-group-${group.key}-levels`} aria-label={`${group.levels.map((level) => conversionLevelVisual(level).label).join(' e ')} · ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}`}>
+                        <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+                          {group.levels.map((level) => {
+                            const LevelIcon = CONVERSION_METRIC_ICON_BY_KEY[`level${level}` as ConversionMetricKey]
+                            return <span key={level} className="inline-flex h-4 w-4 items-center justify-center rounded-md border border-current/30 bg-slate-950/35"><LevelIcon className="h-2.5 w-2.5" /></span>
+                          })}
+                        </span>
+                        <span className="text-[11px] font-semibold tabular-nums">{formatNumberBR(group.count)}/{formatNumberBR(selectedTotal)} · {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}</span>
+                      </span>
+                    </span>
+                  </TooltipLabel>
+                )
+              })}
             </div>
           </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+      </div>
+    </section>
   )
 }
 
 function MetricGroupContent({
   rows,
-  optimization,
+  hierarchy,
 }: {
   rows: AtendimentoMetricGroupRow[]
-  optimization?: ConversionRankingSection['optimization']
+  hierarchy?: AtendimentoMetricHierarchyNode[]
 }) {
-  return (
-    <div className="grid gap-1.5 pt-0.5">
-      {rows.map((row) => {
-        const RowIcon = row.icon
-        return (
-          <div key={row.key} className="flex min-w-0 items-center gap-2">
-            <MetricTooltip label={row.label} info={row.tooltip}>
-              <span
-                className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${metricToneClass(row.tone)}`}
-                aria-label={`Detalhes de ${row.label}`}
-              >
-                <RowIcon className="h-3 w-3" />
-              </span>
-            </MetricTooltip>
-            <div className="min-w-0 flex-1">
-              <MetricTooltip label={row.label} info={row.tooltip}>
-                <span className="inline-flex max-w-full items-center gap-1 truncate text-[11px] font-medium leading-tight text-slate-300">
-                  <span className="truncate">{row.label}</span>
-                  {row.tooltip ? <Info className="h-2.5 w-2.5 shrink-0 text-slate-500" /> : null}
-                </span>
-              </MetricTooltip>
-            </div>
-            <div className="shrink-0 text-[11px] font-semibold text-white">
-              {row.key === 'intervalMultiplier' && optimization
-                ? <ConversionMultiplierPopover optimization={optimization} value={row.value} />
-                : row.value}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
+  const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({})
+  const rowsByKey = new Map(rows.map((row) => [row.key, row]))
+  const hierarchyKeys = new Set<string>()
+  const registerHierarchyKeys = (nodesToRegister: AtendimentoMetricHierarchyNode[] = []) => {
+    for (const node of nodesToRegister) {
+      hierarchyKeys.add(node.key)
+      registerHierarchyKeys(node.children)
+    }
+  }
+  registerHierarchyKeys(hierarchy)
+  const nodes = hierarchy?.length
+    ? [...hierarchy, ...rows.filter((row) => !hierarchyKeys.has(row.key)).map((row) => ({ key: row.key }))]
+    : rows.map((row) => ({ key: row.key }))
 
-function ConversionGoalSummary({ rows }: { rows: AtendimentoMetricGroupRow[] }) {
-  if (!rows.length) return null
-  return (
-    <div className="flex items-center gap-3" data-testid="atendimento-conversion-goals">
-      {rows.map((row) => {
-        const GoalIcon = row.icon
-        return (
-          <MetricTooltip key={row.key} label={row.label} info={row.tooltip}>
-            <span className="inline-flex min-w-0 items-center gap-1.5 text-right">
-              <GoalIcon className={`h-3.5 w-3.5 shrink-0 ${row.tone === 'emerald' ? 'text-emerald-300' : 'text-sky-300'}`} />
-              <span className="min-w-0 leading-tight">
-                <span className="block whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">{row.label}</span>
-                <span className="block whitespace-nowrap text-xs font-semibold text-slate-100">{row.value}</span>
-              </span>
-            </span>
-          </MetricTooltip>
-        )
-      })}
-    </div>
-  )
+  const renderRow = (row: AtendimentoMetricGroupRow, isChild = false, toggle?: React.ReactNode) => {
+    const RowIcon = row.icon
+    const isDetail = row.presentation === 'detail'
+    const rowContent = (
+      <div className={`flex min-w-0 items-center gap-2 ${isChild ? 'py-0.5' : ''}`}>
+        {row.avatarUrl ? (
+          <img
+            src={row.avatarUrl}
+            alt=""
+            className="h-5 w-5 shrink-0 rounded-full border border-slate-600/90 object-cover"
+            onError={(event) => { event.currentTarget.style.display = 'none' }}
+          />
+        ) : (
+          <span
+            className={`inline-flex ${isDetail ? 'h-4 w-4' : 'h-5 w-5'} shrink-0 items-center justify-center rounded-md border ${metricToneClass(row.tone)}`}
+            aria-hidden="true"
+          >
+            <RowIcon className={isDetail ? 'h-2.5 w-2.5' : 'h-3 w-3'} />
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <span className={`inline-flex max-w-full items-center gap-1 truncate ${isDetail ? 'text-[10px] font-medium text-slate-500' : `text-[11px] ${isChild ? 'font-medium text-slate-400' : 'font-semibold text-slate-200'}`} leading-tight`}>
+            <span className="truncate">{row.label}</span>
+            {row.tooltip ? <Info className="h-2.5 w-2.5 shrink-0 text-slate-500" /> : null}
+          </span>
+        </div>
+        <div className={`shrink-0 ${isDetail ? 'text-[10px] font-medium text-slate-400' : `text-[11px] font-semibold ${isChild ? 'text-slate-200' : 'text-white'}`}`}>{row.value}</div>
+      </div>
+    )
+    return (
+      <div key={row.key} className="min-w-0">
+        <div className="flex min-w-0 items-center gap-1">
+          <div className="min-w-0 flex-1">{row.tooltip ? <MetricTooltip label={row.label} info={row.tooltip}>{rowContent}</MetricTooltip> : rowContent}</div>
+          {toggle}
+        </div>
+        {row.calculation ? <div className="ml-7 mt-0.5 text-[9px] leading-snug text-slate-500">{row.calculation.split('=')[0].trim()}</div> : null}
+      </div>
+    )
+  }
+
+  const renderNode = (node: AtendimentoMetricHierarchyNode, depth = 0): React.ReactNode => {
+    const row = rowsByKey.get(node.key)
+    if (!row) return null
+    const children = (node.children || []).filter((child) => rowsByKey.has(child.key))
+    const isCollapsed = Boolean(collapsedNodes[node.key])
+    const toggle = children.length ? (
+      <button
+        type="button"
+        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-slate-800 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60"
+        aria-label={`${isCollapsed ? 'Expandir' : 'Recolher'} componentes de ${row.label}`}
+        aria-expanded={!isCollapsed}
+        onClick={() => setCollapsedNodes((current) => ({ ...current, [node.key]: !current[node.key] }))}
+      >
+        {isCollapsed ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+      </button>
+    ) : null
+    return (
+      <div key={node.key} className={children.length ? 'rounded-lg border border-slate-800/75 bg-slate-900/20 px-2 py-1.5' : ''}>
+        {renderRow(row, depth > 0, toggle)}
+        {children.length && !isCollapsed ? (
+          <div className="mt-1.5 ml-2 border-l border-slate-700/75 pl-2.5">
+            <div className="mb-1 text-[8px] font-semibold uppercase tracking-[0.12em] text-slate-600">Componentes do cálculo</div>
+            <div className="grid gap-1">{children.map((child) => renderNode(child, depth + 1))}</div>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  return <div className="grid gap-1.5 pt-0.5">{nodes.map((node) => renderNode(node))}</div>
 }
 
 function MetricTile({
@@ -690,7 +798,7 @@ function MetricTile({
     </span>
   )
   const labelContent = (
-    <div className="min-w-0 truncate text-[11px] font-medium leading-tight text-slate-400">
+    <div className={`min-w-0 truncate leading-tight ${content ? 'text-sm font-semibold text-white' : 'text-[11px] font-medium text-slate-400'}`}>
       {label}
     </div>
   )
@@ -731,7 +839,7 @@ function MetricTile({
                   {labelContent}
                 </TooltipLabel>
               ) : labelContent}
-              {subtitle ? <div className="truncate text-[10px] leading-tight text-slate-500">{subtitle}</div> : null}
+              {subtitle ? <div className={`truncate leading-tight text-slate-500 ${content ? 'mt-0.5 text-[11px]' : 'text-[10px]'}`}>{subtitle}</div> : null}
             </div>
             {badge ? <div className="ml-auto flex shrink-0 items-center gap-1">{badge}</div> : null}
           </div>
@@ -758,6 +866,56 @@ function FormField({ label, children }: { label: string; children: React.ReactNo
       <span>{label}</span>
       {children}
     </label>
+  )
+}
+
+function LockedConsultantValue({
+  name,
+  unresolved = false,
+  testId,
+  ariaLabel,
+  compact = false,
+}: {
+  name?: string | null
+  unresolved?: boolean
+  testId?: string
+  ariaLabel: string
+  compact?: boolean
+}) {
+  return (
+    <div
+      className={`${compact ? 'h-8 text-sm' : 'min-h-10 text-sm'} flex w-full items-center justify-center rounded-md border border-slate-700/80 bg-slate-950/45 px-2 text-center ${unresolved ? 'text-amber-100' : 'text-slate-200'}`}
+      data-testid={testId}
+      aria-label={ariaLabel}
+    >
+      {unresolved ? <AlertTriangle className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
+      <span className="truncate">{name || (unresolved ? 'Sem consultor vinculado' : 'Sem consultor')}</span>
+    </div>
+  )
+}
+
+function LockedInjectorValue({
+  name,
+  unresolved = false,
+  testId,
+  ariaLabel,
+  compact = false,
+}: {
+  name?: string | null
+  unresolved?: boolean
+  testId?: string
+  ariaLabel: string
+  compact?: boolean
+}) {
+  return (
+    <div
+      className={`${compact ? 'h-8 text-sm' : 'min-h-10 text-sm'} flex w-full items-center justify-center rounded-md border border-slate-700/80 bg-slate-950/45 px-2 text-center ${unresolved ? 'text-amber-100' : 'text-slate-200'}`}
+      data-testid={testId}
+      aria-label={ariaLabel}
+    >
+      {unresolved ? <AlertTriangle className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
+      <span className="truncate">{name || (unresolved ? 'Sem injetor escalado' : 'Sem injetor')}</span>
+    </div>
   )
 }
 
@@ -912,53 +1070,48 @@ const CONVERSION_METRIC_TONE_BY_KEY: Record<ConversionMetricKey, AtendimentoMetr
   level3: 'emerald',
 }
 
-const CONVERSION_GOAL_METRIC_KEYS: ConversionMetricKey[] = ['dailyGoal', 'periodGoal', 'periodOperationalDays']
+const CONVERSION_DISTRIBUTION_GROUP_VISUAL: Array<{
+  key: 'lower' | 'upper' | 'center' | 'extremes'
+  label: string
+  levels: number[]
+  icon: LucideIcon
+  tone: string
+}> = [
+  { key: 'lower', label: 'Lado inferior', levels: [0, 1], icon: CONVERSION_METRIC_ICON_BY_KEY.lowerSide, tone: 'text-amber-200' },
+  { key: 'upper', label: 'Lado superior', levels: [2, 3], icon: CONVERSION_METRIC_ICON_BY_KEY.upperSide, tone: 'text-emerald-200' },
+  { key: 'center', label: 'Faixas centrais', levels: [1, 2], icon: CONVERSION_METRIC_ICON_BY_KEY.centerShare, tone: 'text-sky-200' },
+  { key: 'extremes', label: 'Faixas extremas', levels: [0, 3], icon: CONVERSION_METRIC_ICON_BY_KEY.extremesShare, tone: 'text-violet-200' },
+]
 
 const CONVERSION_DISTRIBUTION_DETAIL_GROUPS: Array<{
   key: string
   label: string
   tooltip: MetricTooltipSpec
   metricKeys: ConversionMetricKey[]
+  hierarchy?: AtendimentoMetricHierarchyNode[]
 }> = [
   {
     key: 'conversion:stats',
     label: 'Resumo',
     tooltip: {
-      what: 'Síntese do resultado financeiro e da dispersão entre os doutores no período filtrado.',
-      calculation: 'Reúne total do período, média, mediana e desvio padrão dos valores realizados.',
-      usage: 'Permite conferir a base financeira usada na leitura do ranking e das faixas.',
+      what: 'Síntese financeira organizada do resultado derivado para os insumos de cada fórmula.',
+      calculation: 'Os limites usam linha de corte mais ou menos intervalo. A linha de corte usa meta diária, média e mediana; o intervalo usa desvio padrão e multiplicador k. A meta diária usa meta do período e dias operacionais.',
+      usage: 'Expõe a origem de cada referência e a produção individual dos doutores sem recalcular fórmulas no navegador.',
     },
-    metricKeys: ['periodAttendanceTotal', 'average', 'median', 'standardDeviation'],
-  },
-  {
-    key: 'conversion:cut',
-    label: 'Faixas',
-    tooltip: {
-      what: 'Referências financeiras que separam os níveis de desempenho no gráfico.',
-      calculation: 'A linha de corte combina média, mediana e meta; o intervalo define os limites inferior e superior.',
-      usage: 'Mostra em qual faixa cada doutor está e a distância até a próxima classificação.',
-    },
-    metricKeys: ['upperLimit', 'cutLine', 'lowerLimit', 'interval', 'intervalMultiplier', 'homogeneityScore'],
-  },
-  {
-    key: 'conversion:levels',
-    label: 'Níveis',
-    tooltip: {
-      what: 'Distribuição dos doutores entre os níveis 3, 2, 1 e 0.',
-      calculation: 'Cada doutor é contado conforme seu realizado em relação aos limites e à linha de corte.',
-      usage: 'Resume quantos profissionais estão acima, dentro ou abaixo das faixas esperadas.',
-    },
-    metricKeys: ['level3', 'level2', 'level1', 'level0'],
-  },
-  {
-    key: 'conversion:ratios',
-    label: 'Razões',
-    tooltip: {
-      what: 'Partes simétricas da distribuição real dos doutores nas quatro faixas.',
-      calculation: 'Soma diretamente as proporções p0 a p3 nos lados inferior/superior e nas faixas centrais/extremas.',
-      usage: 'Facilita comparar períodos sem a distorção das razões ponderadas legadas.',
-    },
-    metricKeys: ['lowerSide', 'upperSide', 'centerShare', 'extremesShare'],
+    metricKeys: ['upperLimit', 'lowerLimit', 'cutLine', 'dailyGoal', 'periodGoal', 'periodOperationalDays', 'average', 'rankedDoctorTotal', 'median', 'interval', 'standardDeviation', 'intervalMultiplier'],
+    hierarchy: [
+      { key: 'upperLimit' },
+      { key: 'lowerLimit' },
+      {
+        key: 'cutLine',
+        children: [
+          { key: 'dailyGoal', children: [{ key: 'periodGoal' }, { key: 'periodOperationalDays' }] },
+          { key: 'average', children: [{ key: 'rankedDoctorTotal' }] },
+          { key: 'median' },
+        ],
+      },
+      { key: 'interval', children: [{ key: 'standardDeviation' }, { key: 'intervalMultiplier' }] },
+    ],
   },
 ]
 
@@ -987,13 +1140,11 @@ function formatGoalPlanSegments(goalPlan?: ConversionGoalPlan) {
 
 function buildGoalPlanTooltip(
   definition: typeof CONVERSION_METRIC_DEFINITIONS[number],
-  formula: string | undefined,
   goalPlan?: ConversionGoalPlan
 ) {
   const segmentSummary = formatGoalPlanSegments(goalPlan)
-  return buildMetricTooltip(definition, formula, {
-    calculation: segmentSummary ? `${formula || definition.calculation}; segmentos = ${segmentSummary}` : formula || definition.calculation,
-    usage: `${definition.usage} Todas as métricas visíveis deste bloco consideram somente o período filtrado; os dias do mês ficam apenas como insumo técnico da proporcionalização.`,
+  return buildMetricTooltip(definition, definition.calculation, {
+    usage: `${definition.usage} ${segmentSummary ? `Base atual: ${segmentSummary}. ` : ''}Todas as métricas visíveis deste bloco consideram somente o período filtrado; os dias do mês ficam apenas como insumo técnico da proporcionalização.`,
   })
 }
 
@@ -1092,6 +1243,18 @@ function getDoctorIdentityKey(name: string) {
   return normalizeDoctorName(getCanonicalDoctorName(name))
 }
 
+function canonicalProfessionalOptions(names: string[]) {
+  const seen = new Set<string>()
+  return names.reduce<string[]>((options, name) => {
+    const canonical = getCanonicalDoctorName(name)
+    const key = getDoctorIdentityKey(canonical)
+    if (!key || seen.has(key)) return options
+    seen.add(key)
+    options.push(canonical)
+    return options
+  }, [])
+}
+
 function isRenderableConversionDoctor(name: string) {
   const key = normalizeDoctorName(name)
   return Boolean(key) && !HIDDEN_CONVERSION_DOCTOR_KEYS.has(key)
@@ -1167,17 +1330,17 @@ const CONVERSION_STATUS_COPY: Record<string, { label: string; description: strin
 function ConversionDoctorBandsContent({
   unitName,
   doctors,
+  professionals,
   metrics,
   optimization,
-  history,
   detailGroups,
 }: {
   unitName: string
   doctors: ConversionDoctorMetric[]
+  professionals: AtendimentoReferences['professionals']
   metrics: ConversionRankingSection['metrics']
   optimization?: ConversionRankingSection['optimization']
-  history?: ConversionRankingSection['history']
-  detailGroups: Array<{ key: string; label: string; tooltip: MetricTooltipSpec; rows: AtendimentoMetricGroupRow[] }>
+  detailGroups: Array<{ key: string; label: string; tooltip: MetricTooltipSpec; rows: AtendimentoMetricGroupRow[]; hierarchy?: AtendimentoMetricHierarchyNode[] }>
 }) {
   const cutLine = Number(metrics.cutLine?.weekValue || 0)
   const interval = Number(metrics.interval?.weekValue || 0)
@@ -1191,7 +1354,6 @@ function ConversionDoctorBandsContent({
       value: number
       score: number
       sourceNames: string[]
-      modifiedZ: number
     }>()
     for (const doctor of doctors) {
       if (!isRenderableConversionDoctor(doctor.name)) continue
@@ -1202,7 +1364,6 @@ function ConversionDoctorBandsContent({
       if (existing) {
         existing.value += value
         existing.score += Number(doctor.score || 0)
-        existing.modifiedZ = Number(doctor.modifiedZ ?? existing.modifiedZ ?? 0)
         if (!existing.sourceNames.includes(String(doctor.name || '').trim())) existing.sourceNames.push(String(doctor.name || '').trim())
         continue
       }
@@ -1213,7 +1374,6 @@ function ConversionDoctorBandsContent({
         value,
         score: Number(doctor.score || 0),
         sourceNames: [String(doctor.name || '').trim()].filter(Boolean),
-        modifiedZ: Number(doctor.modifiedZ || 0),
       })
     }
     return [...byIdentity.values()]
@@ -1228,14 +1388,11 @@ function ConversionDoctorBandsContent({
         rank: index + 1,
         level,
         levelLabel: visual.label,
-        fill: visual.fill,
+        fill: atendimentoProfessionalColor(doctor.name, professionals),
         badgeClassName: visual.badgeClassName,
         ringClassName: visual.ringClassName,
         chartName: getDoctorChartName(doctor.name),
         avatarUrl: getDoctorAvatarUrl(doctor.name),
-        distanceToCutOff: doctor.value - cutLine,
-        distanceToLowerLimit: doctor.value - lowerLimit,
-        distanceToUpperLimit: doctor.value - upperLimit,
       }
     })
   })()
@@ -1243,6 +1400,47 @@ function ConversionDoctorBandsContent({
   const maxValue = Math.max(cutLine, upperLimit, ...yValues, 0)
   const yMax = maxValue > 0 ? maxValue * 1.12 : 100
   const hasBands = Number.isFinite(lowerLimit) && Number.isFinite(cutLine) && Number.isFinite(upperLimit) && upperLimit >= lowerLimit
+  const [activeBandLevel, setActiveBandLevel] = useState<number | null>(null)
+  const [activeBandTooltipPosition, setActiveBandTooltipPosition] = useState<{ x: number; y: number } | null>(null)
+  const bandDetails = [
+    { level: 0, y1: 0, y2: lowerLimit, reason: 'Abaixo do limite inferior.', proportion: Number(metrics.level0?.proportion || 0) },
+    { level: 1, y1: lowerLimit, y2: cutLine, reason: 'Entre o limite inferior e a linha de corte.', proportion: Number(metrics.level1?.proportion || 0) },
+    { level: 2, y1: cutLine, y2: upperLimit, reason: 'Da linha de corte até o limite superior.', proportion: Number(metrics.level2?.proportion || 0) },
+    { level: 3, y1: upperLimit, y2: yMax, reason: 'Acima do limite superior.', proportion: Number(metrics.level3?.proportion || 0) },
+  ].map((band) => ({ ...band, visual: conversionLevelVisual(band.level) }))
+  const activeBand = bandDetails.find((band) => band.level === activeBandLevel) || null
+  const [activeDoctorId, setActiveDoctorId] = useState<string | null>(null)
+  const [activeDoctorTooltipPosition, setActiveDoctorTooltipPosition] = useState<{ x: number; y: number } | null>(null)
+  const [activeReferenceTooltip, setActiveReferenceTooltip] = useState<{
+    key: string
+    label: string
+    subtitle: string
+    description: string
+    position: { x: number; y: number }
+  } | null>(null)
+  const chartHoverRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const hasPointerTooltip = Boolean(activeBandTooltipPosition || activeDoctorTooltipPosition || activeReferenceTooltip)
+    if (!hasPointerTooltip) return undefined
+
+    const closeTooltipOutsideChart = (event: PointerEvent) => {
+      const chart = chartHoverRef.current
+      const target = event.target
+      if (chart && target instanceof Node && chart.contains(target)) return
+
+      setActiveBandLevel(null)
+      setActiveBandTooltipPosition(null)
+      setActiveDoctorId(null)
+      setActiveDoctorTooltipPosition(null)
+      setActiveReferenceTooltip(null)
+    }
+
+    document.addEventListener('pointermove', closeTooltipOutsideChart, true)
+    return () => document.removeEventListener('pointermove', closeTooltipOutsideChart, true)
+  }, [activeBandTooltipPosition, activeDoctorTooltipPosition, activeReferenceTooltip])
+
+  const activeDoctor = chartDoctors.find((doctor) => doctor.id === activeDoctorId) || null
   const podiumDoctors = new Set(chartDoctors.filter((doctor) => doctor.rank >= 1 && doctor.rank <= 3).map((doctor) => doctor.id))
   // Recharts reserves both chart margin and axis height, so these must remain separate.
   const chartHeightPx = 492
@@ -1255,48 +1453,66 @@ function ConversionDoctorBandsContent({
   const plotInsetLeft = yAxisWidth + chartMarginLeft
   const plotInsetRight = chartMarginRight
   const chartMinWidthPx = plotInsetLeft + plotInsetRight + Math.max(chartDoctors.length, 1) * 172
-  const status = CONVERSION_STATUS_COPY[optimization?.statusCode || ''] || CONVERSION_STATUS_COPY.BEST_EFFORT
-  const objectiveLabel = optimization?.objectiveName === 'sse_uniform' ? 'equilíbrio uniforme' : optimization?.objectiveName
-  const statusToneClass = status.tone === 'success'
-    ? 'border-emerald-400/25 bg-emerald-400/8 text-emerald-100'
-    : status.tone === 'danger'
-      ? 'border-rose-400/30 bg-rose-400/10 text-rose-100'
-      : 'border-amber-400/25 bg-amber-400/8 text-amber-100'
+  const activateDoctorTooltip = useCallback((doctorId: string, event: React.SyntheticEvent<SVGGElement>) => {
+    const targetBounds = event.currentTarget.getBoundingClientRect()
+    setActiveBandLevel(null)
+    setActiveBandTooltipPosition(null)
+    setActiveReferenceTooltip(null)
+    setActiveDoctorId(doctorId)
+
+    const mouseEvent = event as React.MouseEvent<SVGGElement>
+    const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
+    const viewportHeight = typeof window === 'undefined' ? 720 : window.innerHeight
+    const x = Number.isFinite(mouseEvent.clientX) && mouseEvent.clientX > 0
+      ? mouseEvent.clientX
+      : targetBounds.left + (targetBounds.width / 2)
+    const y = Number.isFinite(mouseEvent.clientY) && mouseEvent.clientY > 0
+      ? mouseEvent.clientY - 14
+      : targetBounds.top - 8
+    setActiveDoctorTooltipPosition({
+      x: Math.min(Math.max(x, 132), Math.max(132, viewportWidth - 132)),
+      y: Math.min(Math.max(y, 72), Math.max(72, viewportHeight - 20)),
+    })
+  }, [])
+  const clearDoctorTooltip = useCallback(() => {
+    setActiveDoctorId(null)
+    setActiveDoctorTooltipPosition(null)
+  }, [])
   const lineBadges = [
     {
       key: 'upper',
       value: upperLimit,
       label: 'Limite Superior',
-      horizontalPosition: 'right',
       verticalPosition: 'above',
       stroke: '#34d399',
       fill: '#064e3b',
       text: '#d1fae5',
-      iconPath: 'M5 11V3M2 6l3-3 3 3M1 11h8',
+      icon: CONVERSION_METRIC_ICON_BY_KEY.upperLimit,
+      subtitle: formatCurrencyBRL(upperLimit),
       description: `Maior limite operacional: ${formatCurrencyBRL(upperLimit)}. Ajuda a identificar quem está acima da faixa de corte ampliada.`,
     },
     {
       key: 'cut',
       value: cutLine,
       label: 'Linha de corte',
-      horizontalPosition: 'center',
       verticalPosition: 'center',
       stroke: '#a78bfa',
       fill: '#2e1065',
       text: '#ede9fe',
-      iconPath: 'M2 9 9 2M4 2h5v5',
+      icon: CONVERSION_METRIC_ICON_BY_KEY.cutLine,
+      subtitle: formatCurrencyBRL(cutLine),
       description: `Linha central de corte: ${formatCurrencyBRL(cutLine)}, com intervalo operacional de ${formatCurrencyBRL(interval)}.`,
     },
     {
       key: 'lower',
       value: lowerLimit,
       label: 'Limite Inferior',
-      horizontalPosition: 'left',
       verticalPosition: 'below',
       stroke: '#f59e0b',
       fill: '#78350f',
       text: '#fef3c7',
-      iconPath: 'M5 3v8M2 8l3 3 3-3M1 3h8',
+      icon: CONVERSION_METRIC_ICON_BY_KEY.lowerLimit,
+      subtitle: formatCurrencyBRL(lowerLimit),
       description: `Menor limite operacional: ${formatCurrencyBRL(lowerLimit)}. Mostra o piso usado para separar níveis inferiores.`,
     },
   ]
@@ -1306,27 +1522,60 @@ function ConversionDoctorBandsContent({
     const y = Number(shapeProps.y1)
     if (![x1, x2, y].every(Number.isFinite)) return <g />
 
-    const badgeWidth = badge.key === 'cut' ? 106 : 112
+    const badgeWidth = 20
     const badgeHeight = 18
-    const badgeX = badge.horizontalPosition === 'right'
-      ? x2 - badgeWidth - 8
-      : badge.horizontalPosition === 'center'
-        ? ((x1 + x2) / 2) - (badgeWidth / 2)
-        : x1 + 8
+    const badgeX = x2 - badgeWidth - 8
     const badgeY = badge.verticalPosition === 'above'
       ? y - badgeHeight - 5
       : badge.verticalPosition === 'below'
         ? y + 5
         : y - (badgeHeight / 2)
+    const BadgeIcon = badge.icon
+
+    const activateReferenceTooltip = (event: React.SyntheticEvent<SVGGElement>) => {
+      const targetBounds = event.currentTarget.getBoundingClientRect()
+      setActiveBandLevel(null)
+      setActiveBandTooltipPosition(null)
+      clearDoctorTooltip()
+
+      const mouseEvent = event as React.MouseEvent<SVGGElement>
+      const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
+      const viewportHeight = typeof window === 'undefined' ? 720 : window.innerHeight
+      const x = Number.isFinite(mouseEvent.clientX) && mouseEvent.clientX > 0
+        ? mouseEvent.clientX
+        : targetBounds.left + (targetBounds.width / 2)
+      const y = Number.isFinite(mouseEvent.clientY) && mouseEvent.clientY > 0
+        ? mouseEvent.clientY - 14
+        : targetBounds.top - 8
+      setActiveReferenceTooltip({
+        key: badge.key,
+        label: badge.label,
+        subtitle: badge.subtitle,
+        description: badge.description,
+        position: {
+          x: Math.min(Math.max(x, 132), Math.max(132, viewportWidth - 132)),
+          y: Math.min(Math.max(y, 72), Math.max(72, viewportHeight - 20)),
+        },
+      })
+    }
+    const clearReferenceTooltip = () => setActiveReferenceTooltip(null)
 
     return (
       <g className="atendimento-reference-line" data-testid={`atendimento-reference-badge-${badge.key}`}>
         <line x1={x1} x2={x2} y1={y} y2={y} stroke={badge.stroke} strokeWidth={badge.key === 'cut' ? 1.5 : 1} strokeDasharray={badge.key === 'cut' ? undefined : '4 4'} />
-        <g transform={`translate(${badgeX}, ${badgeY})`} aria-label={`${badge.label}: ${badge.description}`}>
-          <title>{badge.description}</title>
+        <g
+          transform={`translate(${badgeX}, ${badgeY})`}
+          role="img"
+          tabIndex={0}
+          aria-label={`${badge.label}: ${badge.subtitle}. ${badge.description}`}
+          onMouseEnter={activateReferenceTooltip}
+          onMouseMove={activateReferenceTooltip}
+          onMouseLeave={clearReferenceTooltip}
+          onFocus={activateReferenceTooltip}
+          onBlur={clearReferenceTooltip}
+        >
           <rect width={badgeWidth} height={badgeHeight} rx="6" fill={badge.fill} fillOpacity="0.98" stroke={badge.stroke} strokeOpacity="0.62" />
-          <path d={badge.iconPath} transform="translate(6 4)" fill="none" stroke={badge.text} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-          <text x="20" y="12.3" fill={badge.text} fontSize="9" fontWeight="600">{badge.label}</text>
+          <BadgeIcon x={3} y={2} width={14} height={14} color={badge.text} strokeWidth={1.7} aria-hidden="true" />
         </g>
       </g>
     )
@@ -1334,54 +1583,43 @@ function ConversionDoctorBandsContent({
 
   return (
     <div className="space-y-3 pt-0.5" data-testid="atendimento-conversion-distribution">
-      {optimization ? (
-        <div className={`space-y-2 rounded-xl border px-3 py-2 ${statusToneClass}`} data-testid="atendimento-conversion-optimization-status">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <TooltipLabel label={status.label} description={status.description}>
-              <span className="inline-flex cursor-help items-center gap-2 text-xs font-semibold">
-                {status.tone === 'success' ? <Gauge className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-                {status.label}
-                <Info className="h-3 w-3 opacity-70" />
-              </span>
-            </TooltipLabel>
-            <TooltipLabel label={objectiveLabel || 'Objetivo'} description={`Objetivo técnico: ${optimization.objectiveName}. Configuração ${optimization.configHash || 'sem hash'}; calendário ${optimization.calendarHash || 'sem hash'}.`}>
-              <span className="cursor-help text-[11px] text-slate-300">
-                k {optimization.selectedMultiplier == null ? 'Não aplicável' : `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(optimization.selectedMultiplier)}x`} · H {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(optimization.homogeneityScore)} · {objectiveLabel}
-              </span>
-            </TooltipLabel>
-          </div>
-          {history?.length ? (
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5 border-t border-current/10 pt-2 text-[10px]" data-testid="atendimento-conversion-k-history" aria-label="Histórico recente do multiplicador">
-              <span className="mr-0.5 font-semibold uppercase tracking-[0.12em] opacity-70">Histórico k</span>
-              {history.slice(0, 6).map((item) => (
-                <TooltipLabel
-                  key={item.id || `${item.periodStart}-${item.periodEnd}-${item.configHash}-${item.calendarHash}`}
-                  label={formatIsoDateBR(item.periodEnd)}
-                  description={`k ${item.selectedMultiplier == null ? 'não aplicável' : `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(item.selectedMultiplier)}x`}; homogeneidade ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(item.homogeneityScore)}; ${CONVERSION_STATUS_COPY[item.statusCode]?.label || item.statusCode}.`}
-                >
-                  <span className="cursor-help rounded-md border border-current/15 bg-slate-950/20 px-1.5 py-0.5 tabular-nums">
-                    {formatIsoDateBR(item.periodEnd)} · {item.selectedMultiplier == null ? 'N/A' : `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(item.selectedMultiplier)}x`}
-                  </span>
-                </TooltipLabel>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
       <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-3">
         <div className="overflow-x-auto pb-1">
-          <div className="relative" style={{ minWidth: `${chartMinWidthPx}px`, height: `${chartHeightPx}px` }}>
+          <div
+            ref={chartHoverRef}
+            className="relative"
+            style={{ minWidth: `${chartMinWidthPx}px`, height: `${chartHeightPx}px` }}
+            onMouseMove={(event) => {
+              const target = event.target as Element
+              if (target.closest('[data-testid^="atendimento-doctor-"], [data-testid^="atendimento-reference-badge-"]')) return
+              const bounds = event.currentTarget.getBoundingClientRect()
+              const relativeY = event.clientY - bounds.top
+              const plotTop = chartMarginTop
+              const plotBottom = chartHeightPx - chartMarginBottom - chartXAxisHeight
+              if (relativeY < plotTop || relativeY > plotBottom || plotBottom <= plotTop) {
+                clearDoctorTooltip()
+                setActiveReferenceTooltip(null)
+                setActiveBandLevel(null)
+                setActiveBandTooltipPosition(null)
+                return
+              }
+              const value = ((plotBottom - relativeY) / (plotBottom - plotTop)) * yMax
+              const band = bandDetails.find((item) => value >= item.y1 && (item.level === 3 ? value <= item.y2 : value < item.y2))
+              clearDoctorTooltip()
+              setActiveReferenceTooltip(null)
+              setActiveBandLevel(band?.level ?? null)
+              setActiveBandTooltipPosition(band ? { x: event.clientX, y: event.clientY - 14 } : null)
+            }}
+            onMouseLeave={() => {
+              clearDoctorTooltip()
+              setActiveReferenceTooltip(null)
+              setActiveBandLevel(null)
+              setActiveBandTooltipPosition(null)
+            }}
+          >
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartDoctors} margin={{ top: chartMarginTop, right: chartMarginRight, left: chartMarginLeft, bottom: chartMarginBottom }}>
                 <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.12)" />
-                {hasBands ? (
-                  <>
-                    <ReferenceArea y1={0} y2={lowerLimit} fill={conversionLevelVisual(0).bandFill} ifOverflow="extendDomain" />
-                    <ReferenceArea y1={lowerLimit} y2={cutLine} fill={conversionLevelVisual(1).bandFill} ifOverflow="extendDomain" />
-                    <ReferenceArea y1={cutLine} y2={upperLimit} fill={conversionLevelVisual(2).bandFill} ifOverflow="extendDomain" />
-                    <ReferenceArea y1={upperLimit} y2={yMax} fill={conversionLevelVisual(3).bandFill} ifOverflow="extendDomain" />
-                  </>
-                ) : null}
                 <XAxis
                   dataKey="chartName"
                   interval={0}
@@ -1391,9 +1629,23 @@ function ConversionDoctorBandsContent({
                   tick={(tickProps: any) => {
                     const doctor = chartDoctors.find((item) => item.id === tickProps.payload?.payload?.id) || chartDoctors[tickProps.index || 0]
                     if (!doctor) return <g />
+                    const isDoctorActive = activeDoctorId === doctor.id
+                    const isDoctorDimmed = Boolean(activeDoctorId && !isDoctorActive)
                     return (
-                      <g transform={`translate(${tickProps.x},${tickProps.y})`}>
-                        <circle cx="0" cy="40" r="36" fill="#0f172a" stroke="rgba(148,163,184,0.72)" strokeWidth="1.5" />
+                      <g
+                        transform={`translate(${tickProps.x},${tickProps.y})`}
+                        data-testid={`atendimento-doctor-label-target-${doctor.id}`}
+                        tabIndex={0}
+                        aria-label={`Detalhes do perfil de ${doctor.name}: ${formatCurrencyBRL(doctor.value)}, ${doctor.levelLabel}, posição ${doctor.rank}.`}
+                        onMouseEnter={(event) => activateDoctorTooltip(doctor.id, event)}
+                        onMouseMove={(event) => activateDoctorTooltip(doctor.id, event)}
+                        onMouseLeave={clearDoctorTooltip}
+                        onFocus={(event) => activateDoctorTooltip(doctor.id, event)}
+                        onBlur={clearDoctorTooltip}
+                        opacity={isDoctorDimmed ? 0.48 : 1}
+                        className="transition-opacity duration-150"
+                      >
+                        <circle cx="0" cy="40" r="36" fill="#0f172a" stroke={isDoctorActive ? doctor.fill : 'rgba(148,163,184,0.72)'} strokeWidth={isDoctorActive ? 2.8 : 1.5} />
                         {doctor.avatarUrl ? (
                           <image
                             data-testid={`atendimento-doctor-avatar-${doctor.id}`}
@@ -1410,16 +1662,6 @@ function ConversionDoctorBandsContent({
                         )}
                         <text textAnchor="middle" fill="#cbd5e1" fontSize="11.5" fontWeight="600">
                           <tspan x="0" dy="96">{doctor.chartName}</tspan>
-                          <tspan
-                            data-testid={`atendimento-doctor-score-${doctor.id}`}
-                            x="0"
-                            dy="18"
-                            fill="#94a3b8"
-                            fontSize="10.5"
-                            fontWeight="500"
-                          >
-                            {formatNumberBR(doctor.score)} pts
-                          </tspan>
                         </text>
                       </g>
                     )
@@ -1433,66 +1675,34 @@ function ConversionDoctorBandsContent({
                   tickFormatter={(value: number) => formatCurrencyBRL(Number(value || 0))}
                   domain={[0, yMax]}
                 />
-                <RechartsTooltip
-                  cursor={{ fill: 'rgba(148,163,184,0.08)' }}
-                  content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null
-                    const doctor = payload[0]?.payload as (typeof chartDoctors)[number] | undefined
-                    if (!doctor) return null
-                    return (
-                      <div className="min-w-[13rem] rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl">
-                        <div className="flex items-center gap-2">
-                          {doctor.avatarUrl ? (
-                            <img
-                              src={doctor.avatarUrl}
-                              alt=""
-                              className="h-8 w-8 rounded-full border border-slate-600/80 object-cover"
-                              onError={(event) => { event.currentTarget.style.display = 'none' }}
-                            />
-                          ) : null}
-                          <div className="font-semibold text-white">{doctor.name}</div>
-                        </div>
-                        {doctor.sourceNames.length > 1 ? (
-                          <div className="mt-1 text-[10px] text-slate-400">Cadastros equivalentes consolidados.</div>
-                        ) : null}
-                        <div className="mt-2 space-y-1">
-                          <div className="flex items-center justify-between gap-3">
-                            <span>Realizado</span>
-                            <span className="font-semibold text-white">{formatCurrencyBRL(doctor.value)}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span>Nível</span>
-                            <span className="font-semibold text-white">{doctor.levelLabel}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span>Ranking</span>
-                            <span className="font-semibold text-white">#{doctor.rank || '-'}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span>Pontuação</span>
-                            <span className="font-semibold text-white">{formatNumberBR(doctor.score)} pts</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span>Z modificado</span>
-                            <span className="font-semibold text-white">{new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(doctor.modifiedZ)}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span>Distância ao corte</span>
-                            <span className="font-semibold text-white">{formatCurrencyBRL(doctor.distanceToCutOff)}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span>Distância ao limite inferior</span>
-                            <span className="font-semibold text-white">{formatCurrencyBRL(doctor.distanceToLowerLimit)}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span>Distância ao limite superior</span>
-                            <span className="font-semibold text-white">{formatCurrencyBRL(doctor.distanceToUpperLimit)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  }}
-                />
+                {hasBands ? (
+                  <>
+                  {bandDetails.map((band) => (
+                      <ReferenceArea
+                        key={band.level}
+                        y1={band.y1}
+                        y2={band.y2}
+                        ifOverflow="extendDomain"
+                        shape={(shapeProps: any) => (
+                          <rect
+                            x={shapeProps.x}
+                            y={shapeProps.y}
+                            width={shapeProps.width}
+                            height={shapeProps.height}
+                            fill={band.visual.fill}
+                            fillOpacity={activeBandLevel === band.level ? 0.3 : 0.08}
+                            className="pointer-events-none transition-opacity"
+                            aria-label={`${band.visual.label}. ${band.reason} Razão da faixa: ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(band.proportion)}.`}
+                            data-testid={`atendimento-conversion-band-${band.level}`}
+                            tabIndex={0}
+                            onFocus={() => { clearDoctorTooltip(); setActiveReferenceTooltip(null); setActiveBandLevel(band.level) }}
+                            onBlur={() => setActiveBandLevel(null)}
+                          />
+                        )}
+                      />
+                    ))}
+                  </>
+                ) : null}
                 {lineBadges.map((badge) => (
                   <ReferenceLine key={badge.key} y={badge.value} ifOverflow="extendDomain" shape={renderReferenceLine(badge)} />
                 ))}
@@ -1508,8 +1718,29 @@ function ConversionDoctorBandsContent({
                     const badgeX = Number(x) + (Number(width) / 2)
                     const badgeY = Math.max(chartMarginTop + 13, Number(y) - 16)
                     return (
-                      <g>
-                        <rect x={x} y={y} width={width} height={height} rx={8} ry={8} fill={fill} fillOpacity={0.9} stroke={fill} />
+                      <g
+                        data-testid={`atendimento-doctor-bar-target-${payload.id}`}
+                        tabIndex={0}
+                        aria-label={`Detalhes da coluna de ${payload.name}: ${formatCurrencyBRL(payload.value)}, ${payload.levelLabel}, posição ${payload.rank}.`}
+                        onMouseEnter={(event) => activateDoctorTooltip(payload.id, event)}
+                        onMouseMove={(event) => activateDoctorTooltip(payload.id, event)}
+                        onMouseLeave={clearDoctorTooltip}
+                        onFocus={(event) => activateDoctorTooltip(payload.id, event)}
+                        onBlur={clearDoctorTooltip}
+                      >
+                        <rect
+                          x={x}
+                          y={y}
+                          width={width}
+                          height={height}
+                          rx={8}
+                          ry={8}
+                          fill={fill}
+                          fillOpacity={activeDoctorId && activeDoctorId !== payload.id ? 0.38 : activeDoctorId === payload.id ? 1 : 0.9}
+                          stroke={fill}
+                          strokeWidth={activeDoctorId === payload.id ? 2.5 : 1}
+                          className="transition-[fill-opacity,stroke-width] duration-150"
+                        />
                         {rankBadge ? (
                           <g data-testid={`atendimento-rank-trophy-${rankBadge}`} aria-label={`${rankBadge}º lugar`}>
                             <title>{rankBadge === 1 ? '1º lugar - ouro' : rankBadge === 2 ? '2º lugar - prata' : '3º lugar - bronze'}</title>
@@ -1536,10 +1767,58 @@ function ConversionDoctorBandsContent({
                 </Bar>
               </ComposedChart>
             </ResponsiveContainer>
+            {activeDoctor && activeDoctorTooltipPosition ? createPortal(
+              <div
+                role="tooltip"
+                data-testid="atendimento-doctor-tooltip"
+                className="pointer-events-none fixed z-[1000] min-w-[13rem] -translate-x-1/2 -translate-y-full rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl"
+                style={{ left: `${activeDoctorTooltipPosition.x}px`, top: `${activeDoctorTooltipPosition.y}px` }}
+              >
+                <div className="flex items-center gap-2">
+                  {activeDoctor.avatarUrl ? (
+                    <img
+                      src={activeDoctor.avatarUrl}
+                      alt=""
+                      className="h-8 w-8 rounded-full border border-slate-600/80 object-cover"
+                      onError={(event) => { event.currentTarget.style.display = 'none' }}
+                    />
+                  ) : null}
+                  <div className="font-semibold text-white">{activeDoctor.name}</div>
+                </div>
+                {activeDoctor.sourceNames.length > 1 ? <div className="mt-1 text-[10px] text-slate-400">Cadastros equivalentes consolidados.</div> : null}
+                <div className="mt-2 space-y-1">
+                  <div className="flex items-center justify-between gap-3"><span>Realizado</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.value)}</span></div>
+                  <div className="flex items-center justify-between gap-3"><span>Nível</span><span className="font-semibold text-white">{activeDoctor.levelLabel}</span></div>
+                  <div className="flex items-center justify-between gap-3"><span>Ranking</span><span className="font-semibold text-white">{activeDoctor.rank ? `${activeDoctor.rank}º` : '-'}</span></div>
+                </div>
+              </div>
+            , document.body) : activeReferenceTooltip ? createPortal(
+              <div
+                role="tooltip"
+                data-testid={`atendimento-reference-tooltip-${activeReferenceTooltip.key}`}
+                className="pointer-events-none fixed z-[1000] min-w-[13rem] -translate-x-1/2 -translate-y-full rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl"
+                style={{ left: `${activeReferenceTooltip.position.x}px`, top: `${activeReferenceTooltip.position.y}px` }}
+              >
+                <div className="font-semibold text-white">{activeReferenceTooltip.label}</div>
+                <div className="mt-1 text-sm font-semibold text-sky-100">{activeReferenceTooltip.subtitle}</div>
+                <div className="mt-1.5 text-[11px] leading-relaxed text-slate-300">{activeReferenceTooltip.description}</div>
+              </div>
+            , document.body) : activeBand && activeBandTooltipPosition ? createPortal(
+              <div
+                role="tooltip"
+                data-testid="atendimento-conversion-band-tooltip"
+                className="pointer-events-none fixed z-[1000] max-w-[15rem] -translate-x-1/2 -translate-y-full rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 text-[10px] text-slate-200 shadow-xl"
+                style={{ left: `${activeBandTooltipPosition.x}px`, top: `${activeBandTooltipPosition.y}px` }}
+              >
+                <div className="font-semibold text-white">{activeBand.visual.label}</div>
+                <div className="mt-0.5 text-slate-300">{activeBand.reason}</div>
+                <div className="mt-1 text-sky-200">Razão da faixa: {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(activeBand.proportion)}</div>
+              </div>
+            , document.body) : null}
           </div>
         </div>
       </div>
-      <div className="grid gap-2 lg:grid-cols-4">
+      <div className="grid gap-2 lg:grid-cols-[minmax(20rem,0.9fr)_minmax(0,1.7fr)]">
         {detailGroups.map((group) => (
           <div key={group.key} className="min-w-0 rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
             <div className="mb-2">
@@ -1554,248 +1833,20 @@ function ConversionDoctorBandsContent({
                 </button>
               </MetricTooltip>
             </div>
-            <MetricGroupContent rows={group.rows} optimization={optimization} />
+            <MetricGroupContent rows={group.rows} hierarchy={group.hierarchy} />
           </div>
         ))}
+        {optimization ? <ConversionMultiplierDetails optimization={optimization} /> : null}
       </div>
     </div>
   )
 }
 
-function resolveAtendimentoChartPreset(id: AtendimentoChartPreset) {
-  return ATENDIMENTO_CHART_PRESETS.find((preset) => preset.id === id) || ATENDIMENTO_CHART_PRESETS[0]
-}
-
-function getAtendimentoChartData(slot: AtendimentoChartSlot, overview: AtendimentoOverview | null) {
-  if (slot.presetId === 'monthly') {
-    return (overview?.monthly || []).slice(-Math.max(3, slot.topN)).map((item) => ({
-      label: monthLabel(item.month),
-      value: Number(item.value || 0),
-      count: Number(item.count || 0),
-    }))
-  }
-  if (slot.presetId === 'ticket') {
-    return (overview?.monthly || []).slice(-Math.max(3, slot.topN)).map((item) => {
-      const count = Number(item.count || 0)
-      const totalValue = Number(item.value || 0)
-      return {
-        label: monthLabel(item.month),
-        value: count > 0 ? totalValue / count : 0,
-        count,
-      }
-    })
-  }
-  const rows = slot.presetId === 'injectors'
-    ? overview?.rankings.injectors || []
-    : slot.presetId === 'consultants'
-      ? overview?.rankings.consultants || []
-      : overview?.rankings.procedures || []
-  return rows.slice(0, slot.topN).map((item) => ({
-    label: item.label,
-    value: Number(item.value || 0),
-    count: Number(item.count || 0),
-  }))
-}
-
-function AtendimentoChartCard({
-  slot,
-  overview,
-  onChange,
-  onRemove,
-  canRemove,
-}: {
-  slot: AtendimentoChartSlot
-  overview: AtendimentoOverview | null
-  onChange: (patch: Partial<AtendimentoChartSlot>) => void
-  onRemove: () => void
-  canRemove: boolean
-}) {
-  const preset = resolveAtendimentoChartPreset(slot.presetId)
-  const PresetIcon = preset.icon
-  const data = getAtendimentoChartData(slot, overview)
-  const metric = slot.presetId === 'ticket' ? 'value' : slot.metric
-  const dataKey = metric === 'count' ? 'count' : 'value'
-  const labelFormatter = (value: unknown) => String(value || '')
-  const valueFormatter = (value: unknown) => metric === 'count'
-    ? formatNumberBR(Number(value || 0))
-    : formatCurrencyBRL(Number(value || 0))
-  const view = slot.presetId === 'monthly' || slot.presetId === 'ticket'
-    ? slot.view
-    : slot.view === 'area' ? 'bar' : slot.view
-  const height = slot.presetId === 'monthly' || slot.presetId === 'ticket' ? 250 : 220
-  return (
-    <Card className={`${panelClass} min-w-0`}>
-      <CardHeader className="flex flex-col gap-3 pb-2">
-        <div className="flex min-w-0 items-center justify-between gap-3">
-          <CardTitle className="flex min-w-0 items-center gap-2 text-base text-white">
-            <PresetIcon className="h-4.5 w-4.5 shrink-0 text-sky-300" />
-            <span className="truncate">{preset.label}</span>
-          </CardTitle>
-          {canRemove ? (
-            <IconOnlyAction label="Remover gráfico" description="Retirar este gráfico do painel." onClick={onRemove} tooltipAlign="right">
-              <Trash2 className="h-4 w-4" />
-            </IconOnlyAction>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Select value={slot.presetId} onValueChange={(value) => onChange({ presetId: value as AtendimentoChartPreset, view: value === 'monthly' ? 'area' : value === 'ticket' ? 'line' : 'bar', metric: value === 'ticket' ? 'value' : slot.metric })}>
-            <SelectTrigger className="h-8 min-w-[9rem] border-slate-700 bg-slate-900/70 text-xs text-slate-100">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ATENDIMENTO_CHART_PRESETS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          {slot.presetId === 'ticket' ? (
-            <span className="inline-flex h-8 items-center rounded-md border border-slate-700 bg-slate-900/70 px-2.5 text-xs text-slate-300">
-              Média por registro
-            </span>
-          ) : (
-            <Select value={slot.metric} onValueChange={(value) => onChange({ metric: value as AtendimentoChartMetric })}>
-              <SelectTrigger className="h-8 w-24 border-slate-700 bg-slate-900/70 text-xs text-slate-100">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="value">R$</SelectItem>
-                <SelectItem value="count">Qtd</SelectItem>
-              </SelectContent>
-            </Select>
-          )}
-          <Select value={view} onValueChange={(value) => onChange({ view: value as AtendimentoChartView })}>
-            <SelectTrigger className="h-8 w-28 border-slate-700 bg-slate-900/70 text-xs text-slate-100">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ATENDIMENTO_CHART_VIEWS.filter((item) => slot.presetId === 'monthly' || slot.presetId === 'ticket' || item.id !== 'area').map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={String(slot.topN)} onValueChange={(value) => onChange({ topN: Number(value) })}>
-            <SelectTrigger className="h-8 w-24 border-slate-700 bg-slate-900/70 text-xs text-slate-100">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {[5, 8, 10, 12].map((value) => <SelectItem key={value} value={String(value)}>Top {value}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {data.length ? (
-          <div className="w-full" style={{ height }}>
-            <ResponsiveContainer width="100%" height="100%">
-              {view === 'line' ? (
-                <LineChart data={data} margin={{ left: 0, right: 8, top: 12, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.14)" />
-                  <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => String(value).slice(0, 14)} />
-                  <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
-                  <RechartsTooltip
-                    contentStyle={{ background: 'rgba(2,6,23,0.94)', border: '1px solid rgba(51,65,85,0.8)', borderRadius: 14, color: '#e2e8f0' }}
-                    formatter={(value) => valueFormatter(value)}
-                    labelFormatter={labelFormatter}
-                    labelStyle={{ color: '#bae6fd' }}
-                  />
-                  <Line type="monotone" dataKey={dataKey} stroke="#38bdf8" strokeWidth={2} dot={false} />
-                </LineChart>
-              ) : view === 'bar' ? (
-                <BarChart data={data} layout={slot.presetId === 'monthly' || slot.presetId === 'ticket' ? 'horizontal' : 'vertical'} margin={{ left: 8, right: 12, top: 12, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" />
-                  {slot.presetId === 'monthly' || slot.presetId === 'ticket' ? (
-                    <>
-                      <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                      <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
-                    </>
-                  ) : (
-                    <>
-                      <XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
-                      <YAxis type="category" dataKey="label" width={120} tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => String(value).slice(0, 18)} />
-                    </>
-                  )}
-                  <RechartsTooltip
-                    contentStyle={{ background: 'rgba(2,6,23,0.94)', border: '1px solid rgba(51,65,85,0.8)', borderRadius: 14, color: '#e2e8f0' }}
-                    formatter={(value) => valueFormatter(value)}
-                    labelFormatter={labelFormatter}
-                    labelStyle={{ color: '#bae6fd' }}
-                  />
-                  <Bar dataKey={dataKey} fill="#38bdf8" radius={slot.presetId === 'monthly' || slot.presetId === 'ticket' ? [6, 6, 0, 0] : [0, 6, 6, 0]} />
-                </BarChart>
-              ) : (
-                <AreaChart data={data} margin={{ left: 0, right: 8, top: 12, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id={`atendimentoChartFill-${slot.presetId}-${metric}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.32} />
-                      <stop offset="95%" stopColor="#38bdf8" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                  <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(value) => metric === 'count' ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0)).replace(',00', '')} />
-                  <RechartsTooltip
-                    contentStyle={{ background: 'rgba(2,6,23,0.94)', border: '1px solid rgba(51,65,85,0.8)', borderRadius: 14, color: '#e2e8f0' }}
-                    formatter={(value) => valueFormatter(value)}
-                    labelFormatter={labelFormatter}
-                    labelStyle={{ color: '#bae6fd' }}
-                  />
-                  <Area type="monotone" dataKey={dataKey} stroke="#38bdf8" strokeWidth={2} fill={`url(#atendimentoChartFill-${slot.presetId}-${metric})`} />
-                </AreaChart>
-              )}
-            </ResponsiveContainer>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/35 p-4 text-sm text-slate-400">Sem dados para este gráfico.</div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function AtendimentoChartsPanel({
-  overview,
-  slots,
-  onSlotsChange,
-}: {
-  overview: AtendimentoOverview | null
-  slots: AtendimentoChartSlot[]
-  onSlotsChange: React.Dispatch<React.SetStateAction<AtendimentoChartSlot[]>>
-}) {
-  const updateSlot = (index: number, patch: Partial<AtendimentoChartSlot>) => {
-    onSlotsChange((prev) => prev.map((slot, current) => current === index ? { ...slot, ...patch } : slot))
-  }
-  const addChart = () => {
-    onSlotsChange((prev) => prev.length >= 6 ? prev : [...prev, { presetId: 'injectors', metric: 'value', view: 'bar', topN: 5 }])
-  }
-  const resetCharts = () => onSlotsChange(DEFAULT_ATENDIMENTO_CHART_SLOTS)
-  return (
-    <section className="space-y-3 border-t border-slate-800/70 pt-3" data-testid="atendimento-charts-panel" aria-label="Gráficos">
-      <div className="flex items-center justify-between gap-3 px-1">
-        <h2 className="flex items-center gap-2 text-base font-semibold text-white">
-          <AreaChartIcon className="h-5 w-5 text-emerald-300" />
-          Gráficos
-        </h2>
-        <div className="flex shrink-0 items-center gap-2">
-          <IconOnlyAction label="Adicionar gráfico" description="Criar outro gráfico configurável no painel." onClick={addChart} disabled={slots.length >= 6} tooltipAlign="right" data-testid="atendimento-chart-add">
-            <Plus className="h-4 w-4" />
-          </IconOnlyAction>
-          <IconOnlyAction label="Resetar gráficos" description="Restaurar a seleção padrão de gráficos." onClick={resetCharts} tooltipAlign="right" data-testid="atendimento-chart-reset">
-            <RefreshCw className="h-4 w-4" />
-          </IconOnlyAction>
-        </div>
-      </div>
-      <div className={`grid gap-3 ${slots.length <= 1 ? 'grid-cols-1' : slots.length === 2 ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1 lg:grid-cols-2 xl:grid-cols-3'}`}>
-        {slots.map((slot, index) => (
-          <AtendimentoChartCard
-            key={`${index}-${slot.presetId}-${slot.metric}-${slot.view}`}
-            slot={slot}
-            overview={overview}
-            onChange={(patch) => updateSlot(index, patch)}
-            onRemove={() => onSlotsChange((prev) => prev.filter((_, current) => current !== index))}
-            canRemove={slots.length > 1}
-          />
-        ))}
-      </div>
-    </section>
-  )
-}
-
 export function AtendimentoModule() {
+  const { user } = useAuth()
+  const userRole = normalizeCrmRole(user?.role)
+  const canManageConsultant = isAtendimentoManager(userRole)
+  const isConsultant = userRole === 'CONSULTOR'
   const [filters, setFilters] = useState<AtendimentoFilters>(() => buildCurrentMonthFilters())
   const [references, setReferences] = useState<AtendimentoReferences | null>(null)
   const [overview, setOverview] = useState<AtendimentoOverview | null>(null)
@@ -1816,6 +1867,7 @@ export function AtendimentoModule() {
   const [rowSavingId, setRowSavingId] = useState('')
   const [attendanceSortKey, setAttendanceSortKey] = useState<AtendimentoSortKey>('date')
   const [attendanceSortDir, setAttendanceSortDir] = useState<AtendimentoSortDir>('desc')
+  const [assignmentIssueFilter, setAssignmentIssueFilter] = useState<'injector' | 'consultant' | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState('')
@@ -1823,8 +1875,19 @@ export function AtendimentoModule() {
   const [reportPreview, setReportPreview] = useState<AtendimentoReportPreview | null>(null)
   const [managementCatalog, setManagementCatalog] = useState<AtendimentoManagementCatalog | null>(null)
   const [managementConversionReport, setManagementConversionReport] = useState<AtendimentoManagementConversionReport | null>(null)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [analysisExpanded, setAnalysisExpanded] = useState(() => {
+    try {
+      return typeof window !== 'undefined' && window.localStorage.getItem(ATENDIMENTO_ANALYSIS_EXPANDED_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
   const [localMirrorStatus, setLocalMirrorStatus] = useState<AtendimentoLocalMirrorStatus | null>(null)
   const loadingMoreRowsRef = React.useRef(false)
+  const conversionReportCacheRef = React.useRef(new Map<string, AtendimentoManagementConversionReport>())
+  const inlineScheduleRequestKeyRef = React.useRef('')
+  const formScheduleRequestKeyRef = React.useRef('')
   const [metricLayout, setMetricLayout] = useState<AtendimentoMetricLayoutItem[]>(() => {
     try {
       if (typeof window === 'undefined') return DEFAULT_ATENDIMENTO_METRIC_LAYOUT
@@ -1858,6 +1921,14 @@ export function AtendimentoModule() {
     }
   }, [chartSlots])
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ATENDIMENTO_ANALYSIS_EXPANDED_KEY, String(analysisExpanded))
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [analysisExpanded])
+
   const load = useCallback(async () => {
     setLoading(true)
     loadingMoreRowsRef.current = false
@@ -1873,7 +1944,14 @@ export function AtendimentoModule() {
     if (!refs.ok) setError(refs.error || 'Não foi possível carregar referências.')
     if (!ov.ok) setError(ov.error || 'Não foi possível carregar indicadores.')
     if (!list.ok) setError(list.error || 'Não foi possível carregar atendimentos.')
-    if (refs.ok) setReferences({ units: refs.units || [], professionals: refs.professionals || [], procedures: refs.procedures || [] })
+    if (refs.ok) {
+      setReferences({
+        units: refs.units || [],
+        professionals: refs.professionals || [],
+        procedures: refs.procedures || [],
+        actorConsultantByUnit: refs.actorConsultantByUnit || {},
+      })
+    }
     if (ov.ok) setOverview({ summary: ov.summary, monthly: ov.monthly || [], rankings: ov.rankings })
     if (list.ok) {
       setRows(list.data || [])
@@ -1913,15 +1991,34 @@ export function AtendimentoModule() {
 
   const selectedGoalMonth = useMemo(() => inferGoalMonth(filters), [filters])
 
-  const loadManagement = useCallback(async () => {
+  const loadManagement = useCallback(async ({ force = false }: { force?: boolean } = {}) => {
     const conversionDate = filters.to || filters.from || `${selectedGoalMonth}-15`
+    const cacheKey = `${filters.unit}|${filters.from}|${filters.to}|${conversionDate}`
+    const cached = conversionReportCacheRef.current.get(cacheKey)
+    const catalogPromise = managementCatalog ? Promise.resolve(null) : fetchAtendimentoManagementCatalog()
+    if (!analysisExpanded) {
+      const catalog = await catalogPromise
+      if (catalog?.ok) setManagementCatalog(catalog)
+      return
+    }
+    if (cached && !force) {
+      setManagementConversionReport(cached)
+      const catalog = await catalogPromise
+      if (catalog?.ok) setManagementCatalog(catalog)
+      return
+    }
+    setAnalysisLoading(true)
     const [catalog, conversionReport] = await Promise.all([
-      fetchAtendimentoManagementCatalog(),
+      catalogPromise,
       fetchAtendimentoManagementConversionReport(conversionDate, { unit: filters.unit, from: filters.from, to: filters.to }),
     ])
-    if (catalog.ok) setManagementCatalog(catalog)
-    if (conversionReport.ok) setManagementConversionReport(conversionReport)
-  }, [filters.from, filters.to, filters.unit, selectedGoalMonth])
+    if (catalog?.ok) setManagementCatalog(catalog)
+    if (conversionReport.ok) {
+      conversionReportCacheRef.current.set(cacheKey, conversionReport)
+      setManagementConversionReport(conversionReport)
+    }
+    setAnalysisLoading(false)
+  }, [analysisExpanded, filters.from, filters.to, filters.unit, managementCatalog, selectedGoalMonth])
 
   useEffect(() => {
     void loadManagement()
@@ -1934,6 +2031,15 @@ export function AtendimentoModule() {
   const allowedCodes = procedure?.codes || []
   const formUnitName = form.unitName || references?.units.find((unit) => unit.slug === form.unitSlug)?.name || form.unitSlug
   const formShift = determineAtendimentoShift(formUnitName)
+  const consultantBindingForUnit = useCallback((unitSlug: string) => {
+    if (!isConsultant) return null
+    return references?.actorConsultantByUnit?.[String(unitSlug || '').trim()] || null
+  }, [isConsultant, references?.actorConsultantByUnit])
+  const consultantDisplayForUnit = useCallback((unitSlug: string, fallbackName = '') => {
+    if (canManageConsultant || !isConsultant) return { name: fallbackName, unresolved: false }
+    const binding = consultantBindingForUnit(unitSlug)
+    return { name: binding?.name || '', unresolved: !binding?.canonicalId }
+  }, [canManageConsultant, consultantBindingForUnit, isConsultant])
   const injectors = useMemo(
     () => filterProfessionalsByUnitRole(references?.professionals || [], formUnitName, 'Injetor'),
     [formUnitName, references?.professionals],
@@ -1948,17 +2054,94 @@ export function AtendimentoModule() {
     const selectedUnit = filters.unit !== 'all'
       ? references?.units.find((unit) => unit.slug === filters.unit)
       : references?.units[0]
+    const consultantBinding = isConsultant ? consultantBindingForUnit(selectedUnit?.slug || '') : null
     return {
       ...EMPTY_ATENDIMENTO_FORM,
-      date: '',
+      date: formatLocalIsoDate(new Date()),
       unitSlug: selectedUnit?.slug || EMPTY_ATENDIMENTO_FORM.unitSlug,
       unitName: selectedUnit?.name || EMPTY_ATENDIMENTO_FORM.unitName,
+      consultantId: consultantBinding?.canonicalId || null,
+      consultantName: consultantBinding?.name || '',
     }
-  }, [filters.unit, references?.units])
+  }, [consultantBindingForUnit, filters.unit, isConsultant, references?.units])
 
   useEffect(() => {
-    setInlineForm((prev) => (hasAtendimentoInlineDraft(prev) ? prev : buildInlineForm()))
+    setInlineForm((prev) => {
+      const defaultForm = buildInlineForm()
+      // A pessoa pode começar a preencher antes de as referências terminarem de
+      // carregar. Nesse caso, complete apenas a unidade ausente para que a
+      // busca de clientes fique limitada corretamente, sem apagar o rascunho.
+      if (!prev.unitSlug && defaultForm.unitSlug) {
+        return {
+          ...prev,
+          date: prev.date || defaultForm.date,
+          unitSlug: defaultForm.unitSlug,
+          unitName: defaultForm.unitName,
+        }
+      }
+      return hasAtendimentoInlineDraft(prev) ? prev : defaultForm
+    })
   }, [buildInlineForm])
+
+  useEffect(() => {
+    if (!isConsultant) return
+    setInlineForm((previous) => {
+      const binding = consultantBindingForUnit(previous.unitSlug)
+      const consultantId = binding?.canonicalId || null
+      const consultantName = binding?.name || ''
+      if (previous.consultantId === consultantId && previous.consultantName === consultantName) return previous
+      return { ...previous, consultantId, consultantName }
+    })
+  }, [consultantBindingForUnit, isConsultant])
+
+  useEffect(() => {
+    if (!isConsultant || !formOpen || form.id) return
+    setForm((previous) => {
+      const binding = consultantBindingForUnit(previous.unitSlug)
+      const consultantId = binding?.canonicalId || null
+      const consultantName = binding?.name || ''
+      if (previous.consultantId === consultantId && previous.consultantName === consultantName) return previous
+      return { ...previous, consultantId, consultantName }
+    })
+  }, [consultantBindingForUnit, form.id, form.unitSlug, formOpen, isConsultant])
+
+  useEffect(() => {
+    if (!formOpen) formScheduleRequestKeyRef.current = ''
+  }, [formOpen])
+
+  const scheduledInjectorPatch = useCallback((doctorId?: string | null, doctorName?: string | null): Partial<AtendimentoForm> => {
+    if (!doctorName) return { injectorId: null, injectorName: '' }
+    if (doctorId) return { injectorId: doctorId, injectorName: doctorName }
+    return professionalIdentityPatch(references?.professionals || [], 'injector', doctorName)
+  }, [references?.professionals])
+
+  useEffect(() => {
+    const unitSlug = inlineForm.unitSlug
+    const date = inlineForm.date
+    if (!unitSlug || !date) return
+    const requestKey = `${unitSlug}:${date}`
+    if (inlineScheduleRequestKeyRef.current === requestKey) return
+    inlineScheduleRequestKeyRef.current = requestKey
+    void fetchAtendimentoDoctorSuggestion(unitSlug, date).then((result) => {
+      if (inlineScheduleRequestKeyRef.current !== requestKey || !result.ok) return
+      setInlineForm((previous) => previous.unitSlug === unitSlug && previous.date === date
+        ? { ...previous, ...scheduledInjectorPatch(result.doctorId, result.doctorName) }
+        : previous)
+    })
+  }, [inlineForm.date, inlineForm.unitSlug, scheduledInjectorPatch])
+
+  useEffect(() => {
+    if (!formOpen || form.id || !form.unitSlug || !form.date) return
+    const requestKey = `${form.unitSlug}:${form.date}`
+    if (formScheduleRequestKeyRef.current === requestKey) return
+    formScheduleRequestKeyRef.current = requestKey
+    void fetchAtendimentoDoctorSuggestion(form.unitSlug, form.date).then((result) => {
+      if (formScheduleRequestKeyRef.current !== requestKey || !result.ok) return
+      setForm((previous) => previous.unitSlug === form.unitSlug && previous.date === form.date && !previous.id
+        ? { ...previous, ...scheduledInjectorPatch(result.doctorId, result.doctorName) }
+        : previous)
+    })
+  }, [form.date, form.id, form.unitSlug, formOpen, scheduledInjectorPatch])
 
   const inlineProcedure = useMemo(
     () => (references?.procedures || []).find((item) => item.name === inlineForm.procedureName) || null,
@@ -1968,11 +2151,11 @@ export function AtendimentoModule() {
   const inlineUnitName = inlineForm.unitName || references?.units.find((unit) => unit.slug === inlineForm.unitSlug)?.name || inlineForm.unitSlug
   const inlineShift = determineAtendimentoShift(inlineUnitName)
   const inlineInjectors = useMemo(
-    () => filterProfessionalsByUnitRole(references?.professionals || [], inlineUnitName, 'Injetor'),
+    () => canonicalProfessionalOptions(filterProfessionalsByUnitRole(references?.professionals || [], inlineUnitName, 'Injetor')),
     [inlineUnitName, references?.professionals],
   )
   const inlineConsultants = useMemo(
-    () => filterProfessionalsByUnitRole(references?.professionals || [], inlineUnitName, 'Consultor', inlineShift),
+    () => canonicalProfessionalOptions(filterProfessionalsByUnitRole(references?.professionals || [], inlineUnitName, 'Consultor', inlineShift)),
     [inlineShift, inlineUnitName, references?.professionals],
   )
   const inlinePreviewValue = calculateAtendimentoValue(inlineForm)
@@ -1981,8 +2164,8 @@ export function AtendimentoModule() {
     const unitName = filters.unit === 'all'
       ? ''
       : references?.units.find((unit) => unit.slug === filters.unit)?.name || filters.unit
-    if (unitName) return filterProfessionalsByUnitRole(references?.professionals || [], unitName, 'Injetor')
-    return [...new Set((references?.professionals || [])
+    if (unitName) return canonicalProfessionalOptions(filterProfessionalsByUnitRole(references?.professionals || [], unitName, 'Injetor'))
+    return canonicalProfessionalOptions((references?.professionals || [])
       .filter((professional) => {
         if (professional.status && professional.status !== 'Ativo') return false
         const roles = [
@@ -1992,7 +2175,7 @@ export function AtendimentoModule() {
         return roles.some((role) => role.includes('injetor') || role.includes('medico') || role.includes('médico'))
       })
       .map((professional) => professional.name)
-      .filter(Boolean))]
+      .filter(Boolean))
   }, [filters.unit, references?.professionals, references?.units])
 
   const latestImportDate = managementCatalog?.latestImport?.created_at || null
@@ -2039,33 +2222,130 @@ export function AtendimentoModule() {
       })
     }
     const conversionDefinitions = new Map(CONVERSION_METRIC_DEFINITIONS.map((definition) => [definition.key, definition]))
+    const conversionMetricValue = (key: ConversionMetricKey) => Number(conversionMetrics[key]?.weekValue || 0)
+    const currentMetricCalculation = (key: ConversionMetricKey, value: number) => {
+      const currency = (metricKey: ConversionMetricKey) => formatCurrencyBRL(conversionMetricValue(metricKey))
+      const number = (metricKey: ConversionMetricKey) => formatNumberBR(conversionMetricValue(metricKey))
+      const periodDays = conversionMetricValue('periodOperationalDays')
+      const periodDaysLabel = `${formatNumberBR(periodDays)} ${periodDays === 1 ? 'dia' : 'dias'}`
+      switch (key) {
+        case 'periodAttendanceTotal':
+          return 'Σ valores do período'
+        case 'rankedDoctorTotal':
+          return 'Σ produção dos doutores elegíveis'
+        case 'dailyGoal':
+          return `${currency('periodGoal')} ÷ ${periodDaysLabel}`
+        case 'periodGoal':
+          return 'Meta proporcional dos dias selecionados'
+        case 'periodOperationalDays':
+          return 'Dias usados para proporcionalizar a meta'
+        case 'average':
+          return `Σ produção dos doutores ÷ ${number('eligibleDoctorCount')} doutores`
+        case 'median':
+          return `mediana de ${number('eligibleDoctorCount')} realizados`
+        case 'standardDeviation':
+          return `DP amostral de ${number('eligibleDoctorCount')} realizados`
+        case 'upperLimit':
+          return `${currency('cutLine')} + ${currency('interval')}`
+        case 'cutLine':
+          return `30% × ${currency('average')} + 20% × ${currency('median')} + 50% × ${currency('dailyGoal')}`
+        case 'interval':
+          return `${currency('standardDeviation')} × ${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 5 }).format(conversionMetricValue('intervalMultiplier'))}x`
+        case 'lowerLimit':
+          return `${currency('cutLine')} − ${currency('interval')}`
+        default:
+          return `${formatConversionMetricValue(key, value)} no período selecionado`
+      }
+    }
     const buildConversionRows = (metricKeys: ConversionMetricKey[]) => metricKeys
       .flatMap((key): AtendimentoMetricGroupRow[] => {
         const metric = conversionMetrics[key]
         const definition = conversionDefinitions.get(key)
         if (!metric || !definition) return []
         const tooltip = key === 'dailyGoal' || key === 'periodGoal' || key === 'periodOperationalDays'
-          ? buildGoalPlanTooltip(definition, metric.formula, goalPlan)
-          : buildMetricTooltip(definition, metric.formula, {
+          ? buildGoalPlanTooltip(definition, goalPlan)
+          : buildMetricTooltip(definition, definition.calculation, {
             usage: `${definition.usage} Todas as métricas exibidas aqui usam o período filtrado.`,
           })
         return [{
           key,
-          label: definition.label,
+          label: key === 'rankedDoctorTotal' ? 'Total produzido' : definition.label,
           value: key === 'intervalMultiplier' && conversionSection?.optimization?.selectedMultiplier == null
             ? 'Não aplicável'
             : key === 'level0' || key === 'level1' || key === 'level2' || key === 'level3'
             ? `${formatNumberBR(Number(metric.weekValue || 0))} · ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(Number(metric.proportion || 0))}`
             : formatConversionMetricValue(key, Number(metric.weekValue || 0)),
           detail: metric.position || '',
+          calculation: currentMetricCalculation(key, Number(metric.weekValue || 0)),
           tooltip,
           icon: CONVERSION_METRIC_ICON_BY_KEY[key],
           tone: CONVERSION_METRIC_TONE_BY_KEY[key],
+          presentation: key === 'rankedDoctorTotal' ? 'detail' : undefined,
         }]
       })
-    const goalRows = buildConversionRows(CONVERSION_GOAL_METRIC_KEYS)
+    const buildDoctorProductionRows = (parentKey: 'average' | 'median') => (conversionSection?.doctors || [])
+      .filter((doctor) => isRenderableConversionDoctor(doctor.name))
+      .map((doctor, index): AtendimentoMetricGroupRow => {
+        const rank = Number(doctor.rank || index + 1)
+        const canonicalName = getCanonicalDoctorName(doctor.name)
+        return {
+          key: `${parentKey}:doctor:${rank}:${canonicalName}`,
+          label: canonicalName,
+          value: formatCurrencyBRL(Number(doctor.weekValue || 0)),
+          tooltip: {
+            what: `Produção de ${canonicalName} usada nas estatísticas do ranking.`,
+            calculation: 'Soma dos atendimentos atribuídos ao profissional elegível no período e na unidade ativos.',
+            usage: parentKey === 'average'
+              ? 'Esta produção compõe o total dividido pela quantidade de doutores para obter a média.'
+              : 'Os valores ordenados dos doutores determinam a posição central da mediana.',
+          },
+          icon: Stethoscope,
+          tone: 'sky',
+          avatarUrl: getDoctorAvatarUrl(doctor.name),
+        }
+      })
+    const buildGoalSegmentRows = () => (goalPlan?.segments || [])
+      .filter((segment) => (goalPlan?.segments || []).length > 1)
+      .map((segment): AtendimentoMetricGroupRow => ({
+        key: `dailyGoal:segment:${segment.monthKey}`,
+        label: monthLabel(segment.monthKey),
+        value: formatCurrencyBRL(Number(segment.periodGoal || 0)),
+        calculation: `${formatCurrencyBRL(Number(segment.dailyGoal || 0))} × ${formatNumberBR(Number(segment.periodOperationalDays || 0))} dias`,
+        tooltip: {
+          what: `Parcela da meta do período em ${monthLabel(segment.monthKey)}.`,
+          calculation: 'Meta diária daquele mês × dias operacionais do mês presentes no filtro.',
+          usage: 'As parcelas dos meses são somadas no backend para formar a meta do período antes da meta diária média.',
+        },
+        icon: Target,
+        tone: 'emerald',
+      }))
+    const buildStatsHierarchy = (averageDoctorRows: AtendimentoMetricGroupRow[], medianDoctorRows: AtendimentoMetricGroupRow[], goalSegmentRows: AtendimentoMetricGroupRow[]): AtendimentoMetricHierarchyNode[] => [
+      { key: 'upperLimit' },
+      { key: 'lowerLimit' },
+      {
+        key: 'cutLine',
+        children: [
+          { key: 'dailyGoal', children: [{ key: 'periodGoal' }, { key: 'periodOperationalDays' }, ...goalSegmentRows.map((row) => ({ key: row.key }))] },
+          { key: 'average', children: [...averageDoctorRows.map((row) => ({ key: row.key })), { key: 'rankedDoctorTotal' }] },
+          { key: 'median', children: medianDoctorRows.map((row) => ({ key: row.key })) },
+        ],
+      },
+      { key: 'interval', children: [{ key: 'standardDeviation' }, { key: 'intervalMultiplier' }] },
+    ]
     const distributionGroups = CONVERSION_DISTRIBUTION_DETAIL_GROUPS
-      .map((group) => ({ ...group, rows: buildConversionRows(group.metricKeys) }))
+      .map((group) => {
+        const averageDoctorRows = buildDoctorProductionRows('average')
+        const medianDoctorRows = buildDoctorProductionRows('median')
+        const goalSegmentRows = buildGoalSegmentRows()
+        const rows = [...buildConversionRows(group.metricKeys), ...averageDoctorRows, ...medianDoctorRows, ...goalSegmentRows]
+        return {
+          ...group,
+          rows,
+          hierarchy: group.key === 'conversion:stats'
+            ? buildStatsHierarchy(averageDoctorRows, medianDoctorRows, goalSegmentRows)
+            : group.hierarchy,
+        }
+      })
       .filter((group) => group.rows.length)
     if (!aggregateNotice && conversionSection?.doctors?.length && distributionGroups.length) {
       tiles.push({
@@ -2078,14 +2358,13 @@ export function AtendimentoModule() {
         tone: 'violet',
         description: 'Cada coluna mostra o total do período por doutor. As faixas horizontais mantêm os níveis 0 a 3 na mesma escala para facilitar a leitura do corte e do ranking.',
         wrapperClassName: 'col-span-full',
-        badge: <ConversionGoalSummary rows={goalRows} />,
         content: (
           <ConversionDoctorBandsContent
             unitName={conversionSection.unitName}
             doctors={conversionSection.doctors}
+            professionals={references?.professionals || []}
             metrics={conversionMetrics}
             optimization={conversionSection.optimization}
-            history={conversionSection.history}
             detailGroups={distributionGroups}
           />
         ),
@@ -2096,6 +2375,7 @@ export function AtendimentoModule() {
   }, [
     filters.unit,
     managementConversionReport,
+    references?.professionals,
   ])
 
   const metricDisplayLayout = useMemo(() => {
@@ -2180,15 +2460,19 @@ export function AtendimentoModule() {
     }
     setSaving(true)
     setFormError('')
-    const payload = { ...form, code: normalizeCode(form.code), value: previewValue }
-    const result = form.id ? await updateAtendimentoAttendance(form.id, payload) : await createAtendimentoAttendance(payload)
+    const { value: _value, ...payload } = { ...form, code: normalizeCode(form.code) }
+    const result = form.id
+      ? await updateAtendimentoAttendance(form.id, payload)
+      : await createAtendimentoAttendance(payload, createIdempotencyKey())
     setSaving(false)
     if (!result.ok) {
       setFormError(result.error || 'Não foi possível salvar.')
       return
     }
     setFormOpen(false)
+    conversionReportCacheRef.current.clear()
     await load()
+    await loadManagement({ force: true })
   }
 
   const updateInlineForm = (patch: Partial<AtendimentoForm>) => setInlineForm((prev) => ({ ...prev, ...patch }))
@@ -2207,25 +2491,19 @@ export function AtendimentoModule() {
     }
     setSaving(true)
     setInlineError('')
-    const payload = { ...inlineForm, code: normalizeCode(inlineForm.code), value: inlinePreviewValue }
-    const result = await createAtendimentoAttendance(payload)
+    const { value: _value, ...payload } = { ...inlineForm, code: normalizeCode(inlineForm.code) }
+    const result = await createAtendimentoAttendance(payload, createIdempotencyKey())
     setSaving(false)
     if (!result.ok) {
       setInlineError(result.error || 'Não foi possível salvar.')
       return
     }
+    inlineScheduleRequestKeyRef.current = ''
     setInlineForm(buildInlineForm())
+    conversionReportCacheRef.current.clear()
     await load()
-  }, [buildInlineForm, inlineAllowedCodes, inlineForm, inlinePreviewValue, load])
-
-  useEffect(() => {
-    if (saving) return
-    if (!inlineForm.date || !inlineForm.clientName.trim() || !inlineForm.procedureName || !inlineForm.code || !inlineForm.injectorName) return
-    const timer = window.setTimeout(() => {
-      void saveInlineForm()
-    }, 550)
-    return () => window.clearTimeout(timer)
-  }, [inlineForm.clientName, inlineForm.code, inlineForm.date, inlineForm.injectorName, inlineForm.procedureName, saveInlineForm, saving])
+    await loadManagement({ force: true })
+  }, [buildInlineForm, inlineAllowedCodes, inlineForm, load, loadManagement])
 
   const rowFormFor = useCallback((row: AtendimentoAttendance) => rowDrafts[row.id] || asForm(row), [rowDrafts])
 
@@ -2249,20 +2527,22 @@ export function AtendimentoModule() {
       delete next[row.id]
       return next
     })
-    const payload = { ...normalized, code: normalizeCode(normalized.code), value: calculateAtendimentoValue(normalized) }
+    const { value: _value, ...payload } = { ...normalized, code: normalizeCode(normalized.code), revision: row.revision }
     const result = await updateAtendimentoAttendance(row.id, payload)
     setRowSavingId('')
     if (!result.ok) {
       setRowErrors((prev) => ({ ...prev, [row.id]: result.error || 'Não foi possível salvar.' }))
       return
     }
-    setRows((prev) => prev.map((item) => item.id === row.id ? { ...item, ...payload } : item))
+    if (result.data) setRows((prev) => prev.map((item) => item.id === row.id ? result.data : item))
     setRowDrafts((prev) => {
       const next = { ...prev }
       delete next[row.id]
       return next
     })
-  }, [references?.procedures, rowDrafts])
+    conversionReportCacheRef.current.clear()
+    void loadManagement({ force: true })
+  }, [loadManagement, references?.procedures, rowDrafts])
 
   const commitRowPatch = (row: AtendimentoAttendance, patch: Partial<AtendimentoForm>) => {
     updateRowDraft(row, patch)
@@ -2287,21 +2567,68 @@ export function AtendimentoModule() {
       return leftValue.localeCompare(rightValue, 'pt-BR', { numeric: true, sensitivity: 'base' }) * multiplier
     })
   }, [attendanceSortDir, attendanceSortKey, rows])
+  const clientSuggestionsByUnit = useMemo(() => {
+    const byUnit = new Map<string, Map<string, { name: string; usageCount: number }>>()
+    const loadedClients = new Map<string, { name: string; usageCount: number }>()
+    for (const row of rows) {
+      const unitSlug = String(row.unitSlug || '').trim()
+      const clientName = String(row.clientName || '').trim()
+      if (!clientName) continue
+      const key = clientName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR')
+      const loaded = loadedClients.get(key)
+      loadedClients.set(key, { name: loaded?.name || clientName, usageCount: (loaded?.usageCount || 0) + 1 })
+      if (unitSlug) {
+        const clients = byUnit.get(unitSlug) || new Map<string, { name: string; usageCount: number }>()
+        const existing = clients.get(key)
+        clients.set(key, { name: existing?.name || clientName, usageCount: (existing?.usageCount || 0) + 1 })
+        byUnit.set(unitSlug, clients)
+      }
+    }
+    const suggestions = new Map([...byUnit.entries()].map(([unitSlug, clients]) => [unitSlug, [...clients.values()]]))
+    // Legacy rows without unit_slug cannot be used to broaden a server query.
+    // They remain only as a visible, read-only fallback until the local API is
+    // refreshed, and are restricted to data already present in this table.
+    suggestions.set('__loaded__', [...loadedClients.values()])
+    return suggestions
+  }, [rows])
+
+  const isMissingAssignment = useCallback((value: string | null | undefined, emptyOption: string) => {
+    const normalized = String(value || '').trim().toLowerCase()
+    return !normalized || normalized === 'none' || normalized === emptyOption
+  }, [])
+  const hasMissingInjector = useCallback((row: AtendimentoAttendance) => isMissingAssignment(rowFormFor(row).injectorName, 'sem injetor'), [isMissingAssignment, rowFormFor])
+  const hasMissingConsultant = useCallback((row: AtendimentoAttendance) => isMissingAssignment(rowFormFor(row).consultantName, 'sem consultor'), [isMissingAssignment, rowFormFor])
+  const incompleteInjectorCount = useMemo(() => rows.filter(hasMissingInjector).length, [hasMissingInjector, rows])
+  const incompleteConsultantCount = useMemo(() => rows.filter(hasMissingConsultant).length, [hasMissingConsultant, rows])
+  const visibleSortedRows = useMemo(
+    () => assignmentIssueFilter === 'injector'
+      ? sortedRows.filter(hasMissingInjector)
+      : assignmentIssueFilter === 'consultant'
+        ? sortedRows.filter(hasMissingConsultant)
+        : sortedRows,
+    [assignmentIssueFilter, hasMissingConsultant, hasMissingInjector, sortedRows]
+  )
 
   const confirmDelete = async () => {
     if (!deleteTarget) return
     setSaving(true)
-    const result = await deleteAtendimentoAttendance(deleteTarget.id)
+    const result = await deleteAtendimentoAttendance(deleteTarget.id, deleteTarget.revision)
     setSaving(false)
     if (!result.ok) {
       setError(result.error || 'Não foi possível excluir.')
       return
     }
     setDeleteTarget(null)
+    conversionReportCacheRef.current.clear()
     await load()
+    await loadManagement({ force: true })
   }
 
   const runGerenciaImport = async (dryRun: boolean) => {
+    if (!canManageConsultant) {
+      setImportResult('A importação é restrita a gestores e gerentes.')
+      return
+    }
     setImporting(true)
     setImportResult('')
     const result = await importGerenciaGoogleSheet(dryRun)
@@ -2314,8 +2641,9 @@ export function AtendimentoModule() {
       ? `Gerência dry-run: ${formatNumberBR(result.tabCount || result.tabs?.length || 0)} abas, ${formatNumberBR(result.rawRows || 0)} linhas brutas, ${formatNumberBR(result.schedules || 0)} dias de escala.`
       : `Gerência importada: ${formatNumberBR(result.tabCount || result.tabs?.length || 0)} abas, ${formatNumberBR(result.rawRows || 0)} linhas brutas, ${formatNumberBR(result.inventory || 0)} itens de inventário.`)
     if (!dryRun) {
+      conversionReportCacheRef.current.clear()
       await load()
-      await loadManagement()
+      await loadManagement({ force: true })
     }
   }
 
@@ -2331,7 +2659,7 @@ export function AtendimentoModule() {
       setFormError('Não há injetor na escala para esta unidade/data.')
       return
     }
-    updateForm({ injectorName: result.doctorName })
+    updateForm(scheduledInjectorPatch(result.doctorId, result.doctorName))
   }
 
   const loadReportPreview = useCallback(async () => {
@@ -2350,7 +2678,19 @@ export function AtendimentoModule() {
   }, [filters.from, filters.to, filters.unit])
 
   const updateFilter = useCallback((patch: Partial<AtendimentoFilters>) => setFilters((prev) => ({ ...prev, ...patch })), [])
+  const openImport = useCallback(() => {
+    if (canManageConsultant) setImportOpen(true)
+  }, [canManageConsultant])
   const updateForm = (patch: Partial<AtendimentoForm>) => setForm((prev) => ({ ...prev, ...patch }))
+  const headerPeriodOperationalDays = useMemo(() => {
+    const sections = managementConversionReport?.doctorRanking?.sections || []
+    const unitSections = sections.filter((item) => !item.isAggregate && item.unitSlug !== 'all')
+    const section = filters.unit === 'all'
+      ? unitSections.length === 1 ? unitSections[0] : null
+      : sections.find((item) => item.unitSlug === filters.unit)
+    const value = Number(section?.goalPlan?.periodOperationalDays ?? section?.metrics?.periodOperationalDays?.weekValue)
+    return Number.isFinite(value) && value >= 0 ? value : null
+  }, [filters.unit, managementConversionReport])
   const localMirrorSummary = localMirrorStatus
     ? `${localMirrorStatus.mode.startsWith('google-sheets') ? 'Google Sheets' : 'Origem histórica'}${localMirrorStatus.syncedAt ? ` - sincronizado em ${new Date(localMirrorStatus.syncedAt).toLocaleString('pt-BR')}` : ' - ainda não sincronizado'}`
     : ''
@@ -2358,49 +2698,56 @@ export function AtendimentoModule() {
     ? `${formatNumberBR(localMirrorStatus.attendances)} atendimentos${localMirrorStatus.minServiceDate && localMirrorStatus.maxServiceDate ? `, de ${localMirrorStatus.minServiceDate} a ${localMirrorStatus.maxServiceDate}` : ''}`
     : ''
 
-  useEffect(() => {
-    emitAtendimentoHeaderState({
-      loading,
-      filters,
-      units: (references?.units || []).map((unit) => ({ value: unit.slug, label: unit.name })),
-      procedures: (references?.procedures || []).map((procedure) => ({ value: procedure.name, label: procedure.name })),
-      injectors: filterInjectors.map((name) => ({ value: name, label: name })),
-      activeUnitLabel,
-      periodLabel: periodLabel(filters),
-      latestImportLabel,
-      localMirrorSummary,
-      localMirrorDetail,
-      total,
-    })
-    return () => emitAtendimentoHeaderState(null)
-  }, [activeUnitLabel, filterInjectors, filters, latestImportLabel, loading, localMirrorDetail, localMirrorSummary, references?.procedures, references?.units, total])
-
-  useEffect(() => {
-    return subscribeAtendimentoHeaderAction((action) => {
-      if (action.type === 'refresh') {
-        void load()
-        void loadManagement()
-        return
-      }
-      if (action.type === 'open-import') {
-        setImportOpen(true)
-        return
-      }
-      if (action.type === 'report') {
-        void loadReportPreview()
-        return
-      }
-      if (action.type === 'set-filter') {
-        updateFilter(action.patch)
-      }
-    })
-  }, [load, loadManagement, loadReportPreview, updateFilter])
+  useAtendimentoHeaderBridge({
+    loading,
+    canManage: canManageConsultant,
+    filters,
+    units: (references?.units || []).map((unit) => ({ value: unit.slug, label: unit.name })),
+    procedures: (references?.procedures || []).map((procedure) => ({ value: procedure.name, label: procedure.name })),
+    injectors: filterInjectors.map((name) => ({ value: name, label: name })),
+    activeUnitLabel,
+    periodLabel: periodLabel(filters),
+    periodOperationalDays: headerPeriodOperationalDays,
+    latestImportLabel,
+    localMirrorSummary,
+    localMirrorDetail,
+    total,
+    refresh: load,
+    refreshManagement: loadManagement,
+    openImport,
+    openReport: loadReportPreview,
+    updateFilters: updateFilter,
+  })
 
   return (
     <div className="atendimento-surface flex min-h-full flex-col gap-5 px-3 pb-6 pt-3 text-white sm:px-6">
       {error ? <ErrorBanner message={error} /> : null}
 
-      <div className="space-y-2" data-testid="atendimento-kpis">
+      <section className="rounded-2xl border border-slate-800/80 bg-slate-950/35 p-2 shadow-[0_16px_48px_rgba(2,6,23,0.16)]" data-testid="atendimento-analysis">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-900/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70"
+          aria-expanded={analysisExpanded}
+          aria-controls="atendimento-analysis-content"
+          data-testid="atendimento-analysis-toggle"
+          onClick={() => setAnalysisExpanded((current) => !current)}
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-slate-100">Análise do período</span>
+            <span className="block text-[11px] text-slate-400">Ranking, metas e faixas são carregados somente quando necessários.</span>
+          </span>
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">
+            {analysisExpanded ? 'Recolher' : 'Ver análise'}
+            {analysisExpanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+          </span>
+        </button>
+        {analysisExpanded ? (
+      <div id="atendimento-analysis-content" className="space-y-2 pt-2" data-testid="atendimento-kpis">
+        {analysisLoading ? (
+          <div className="rounded-xl border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs text-sky-100" role="status" data-testid="atendimento-analysis-loading">
+            Carregando análise do período…
+          </div>
+        ) : null}
         <span className="sr-only" data-testid="atendimento-conversion-ranking">
           {conversionRankingText}
         </span>
@@ -2489,16 +2836,17 @@ export function AtendimentoModule() {
           </Droppable>
         </DragDropContext>
       </div>
+        ) : (
+          <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs leading-relaxed text-slate-400" data-testid="atendimento-analysis-collapsed">
+            A análise detalhada está recolhida. Abra-a para calcular conversão, ranking, metas e faixas para os filtros atuais.
+          </div>
+        )}
+      </section>
 
       <div className="grid min-h-0 flex-1 gap-4">
         <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" aria-label="Atendimentos">
-          <div className="flex items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2">
-            <TooltipLabel label="Linhas carregadas" description="Quantidade carregada na tabela sobre o total filtrado. Mais linhas são carregadas automaticamente ao chegar ao fim da lista.">
-              <span className="rounded-full border border-slate-800 bg-slate-950/65 px-2.5 py-1 text-[11px] font-medium text-slate-300" data-testid="atendimento-loaded-count">
-                {formatNumberBR(rows.length)}/{formatNumberBR(total)}
-              </span>
-            </TooltipLabel>
-            {filters.unit === 'all' ? (
+          {filters.unit === 'all' ? (
+            <div className="flex items-center justify-end gap-3 border-b border-slate-800/75 px-3 py-2">
               <div className="flex flex-wrap items-center justify-end gap-1.5" data-testid="atendimento-unit-legend" aria-label="Legenda de unidades">
                 {unitLegend.map((unit) => (
                   <TooltipLabel key={unit.slug} label={unit.name} description="Cor aplicada nas linhas da tabela para identificar a unidade quando todas estão selecionadas.">
@@ -2509,90 +2857,151 @@ export function AtendimentoModule() {
                   </TooltipLabel>
                 ))}
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
           {reportPreview ? (
             <div className="mx-3 mt-3 grid gap-2 lg:grid-cols-2">
               {reportPreview ? (
                 <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-50">
-                  Prévia: {formatNumberBR(reportPreview.summary.attendances)} registros, {formatNumberBR(reportPreview.summary.quantityTotal || 0)} em quantidade, {formatCurrencyBRL(reportPreview.summary.totalValue)} total, {formatCurrencyBRL(reportPreview.summary.remuneration)} remuneração.
+                  Prévia: {formatNumberBR(reportPreview.summary.attendances)} registros, {formatNumberBR(reportPreview.summary.quantityTotal || 0)} em quantidade, {formatCurrencyBRL(reportPreview.summary.totalValue)} total, {formatCurrencyBRL(reportPreview.summary.remuneration)} remuneração estimada (política legada em validação).
                 </div>
               ) : null}
             </div>
           ) : null}
           <div className="min-h-0">
-            <div className="max-h-[56vh] overflow-auto" data-testid="atendimento-table-scroll" onScroll={handleAttendanceScroll}>
-              <table data-testid="atendimento-table" className="w-full min-w-[58rem] table-fixed caption-bottom border-separate border-spacing-0 text-sm">
+            <div className="max-h-[56vh] overflow-y-auto overflow-x-hidden" data-testid="atendimento-table-scroll" onScroll={handleAttendanceScroll}>
+              <table data-testid="atendimento-table" className="w-full min-w-0 table-fixed caption-bottom border-separate border-spacing-0 text-sm">
                 <colgroup>
-                  <col className="w-[10rem]" />
-                  <col className="w-[15rem]" />
-                  <col className="w-[14rem]" />
-                  <col className="w-[14rem]" />
-                  <col className="w-[14rem]" />
-                  <col className="w-[9rem]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[24%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[13%]" />
                 </colgroup>
                 <thead>
                   <tr className="border-b border-white/10">
-                    <SortableAttendanceHead sortKey="date" label="Data" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort} stickyLeft testId="atendimento-table-head-date" />
-                    <SortableAttendanceHead sortKey="clientName" label="Cliente" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort}>
+                    <SortableAttendanceHead sortKey="date" label="Data" align="center" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort} stickyLeft testId="atendimento-table-head-date" />
+                    <SortableAttendanceHead sortKey="clientName" label="Cliente" align="center" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort}>
                       <span className="block text-[10px] font-normal leading-tight text-slate-500" data-testid="atendimento-distinct-clients">
                         {formatNumberBR(overview?.summary.distinctClients || 0)} distintos
                       </span>
                     </SortableAttendanceHead>
-                    <SortableAttendanceHead sortKey="procedureName" label="Procedimento" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort} />
-                    <SortableAttendanceHead sortKey="injectorName" label="Injetor" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort} />
-                    <SortableAttendanceHead sortKey="consultantName" label="Consultor" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort} />
-                    <SortableAttendanceHead sortKey="value" label="Valor" align="right" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort} />
+                    <SortableAttendanceHead sortKey="procedureName" label="Procedimento" align="center" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort} />
+                    <SortableAttendanceHead
+                      sortKey="injectorName"
+                      label="Injetor"
+                      align="center"
+                      activeKey={attendanceSortKey}
+                      sortDir={attendanceSortDir}
+                      onSort={handleAttendanceSort}
+                      action={incompleteInjectorCount ? (
+                        <TooltipLabel label={assignmentIssueFilter === 'injector' ? 'Mostrar todos os atendimentos' : 'Filtrar injetores pendentes'} description={`${formatNumberBR(incompleteInjectorCount)} atendimento${incompleteInjectorCount === 1 ? '' : 's'} sem injetor definido.`}>
+                          <button type="button" className={`inline-flex h-5 w-5 items-center justify-center rounded-full border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 ${assignmentIssueFilter === 'injector' ? 'border-rose-300/80 bg-rose-400/20 text-rose-100' : 'border-rose-300/35 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20'}`} onClick={() => setAssignmentIssueFilter((current) => current === 'injector' ? null : 'injector')} aria-pressed={assignmentIssueFilter === 'injector'} aria-label="Filtrar atendimentos sem injetor" data-testid="atendimento-incomplete-filter">
+                            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                        </TooltipLabel>
+                      ) : null}
+                    />
+                    <SortableAttendanceHead
+                      sortKey="consultantName"
+                      label="Consultor"
+                      align="center"
+                      activeKey={attendanceSortKey}
+                      sortDir={attendanceSortDir}
+                      onSort={handleAttendanceSort}
+                      action={incompleteConsultantCount ? (
+                        <TooltipLabel label={assignmentIssueFilter === 'consultant' ? 'Mostrar todos os atendimentos' : 'Filtrar consultores pendentes'} description={`${formatNumberBR(incompleteConsultantCount)} atendimento${incompleteConsultantCount === 1 ? '' : 's'} sem consultor definido.`}>
+                          <button type="button" className={`inline-flex h-5 w-5 items-center justify-center rounded-full border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 ${assignmentIssueFilter === 'consultant' ? 'border-rose-300/80 bg-rose-400/20 text-rose-100' : 'border-rose-300/35 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20'}`} onClick={() => setAssignmentIssueFilter((current) => current === 'consultant' ? null : 'consultant')} aria-pressed={assignmentIssueFilter === 'consultant'} aria-label="Filtrar atendimentos sem consultor" data-testid="atendimento-incomplete-consultant-filter">
+                            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                        </TooltipLabel>
+                      ) : null}
+                    />
+                    <SortableAttendanceHead sortKey="value" label="Valor" align="center" activeKey={attendanceSortKey} sortDir={attendanceSortDir} onSort={handleAttendanceSort} />
                   </tr>
                 </thead>
                 <tbody>
                   <tr className="border-b border-sky-400/20 bg-sky-400/[0.035] text-slate-100">
-                    <td className="sticky left-0 z-10 border-b border-slate-800 bg-slate-950 px-2 py-2 align-middle shadow-[1px_0_0_rgba(30,41,59,0.65)]">
-                      <Input
-                        type="date"
+                    <td className="sticky left-0 z-10 border-b border-slate-800 bg-slate-950 px-2 py-2 text-center align-middle shadow-[1px_0_0_rgba(30,41,59,0.65)]">
+                      <AtendimentoDatePicker
                         value={inlineForm.date}
-                        onChange={(event) => updateInlineForm({ date: event.target.value })}
-                        className="h-8 min-w-[8.5rem] border-slate-700 bg-slate-950/80 px-2 text-xs text-white"
-                        data-testid="atendimento-inline-date"
-                        aria-label="Data do novo atendimento"
+                        onValueChange={(date) => updateInlineForm({ date })}
+                        className="h-8 min-w-0 w-full"
+                        testId="atendimento-inline-date"
+                        ariaLabel="Data do novo atendimento"
                       />
                     </td>
-                    <td className="border-b border-slate-800 px-2 py-2 align-middle">
-                      <Input
+                    <td className="border-b border-slate-800 px-2 py-2 text-center align-middle">
+                      <AtendimentoClientAutocomplete
                         value={inlineForm.clientName}
-                        onChange={(event) => updateInlineForm({ clientName: event.target.value })}
-                        className="h-8 min-w-[12rem] border-slate-700 bg-slate-950/70 px-2 text-xs text-white placeholder:text-slate-500"
+                        unitSlug={inlineForm.unitSlug}
+                        fallbackSuggestions={clientSuggestionsByUnit.get(inlineForm.unitSlug) || clientSuggestionsByUnit.get('__loaded__')}
+                        onValueChange={(clientName) => updateInlineForm({ clientName })}
+                        className="h-8 min-w-0 w-full border-slate-700 bg-slate-950/70 px-2 text-center text-xs text-white placeholder:text-slate-500"
                         placeholder="Cliente"
                         data-testid="atendimento-inline-client"
                         aria-label="Cliente do novo atendimento"
                       />
                     </td>
-                    <td className="border-b border-slate-800 px-2 py-2 align-middle">
+                    <td className="border-b border-slate-800 px-2 py-2 text-center align-middle">
                       <Select value={inlineForm.procedureName} onValueChange={updateInlineProcedure}>
-                        <SelectTrigger className="h-8 min-w-[11rem] border-slate-700 bg-slate-950/70 px-2 text-xs text-white" data-testid="atendimento-inline-procedure" aria-label="Procedimento do novo atendimento">
+                        <SelectTrigger className="h-8 min-w-0 w-full justify-center border-slate-700 bg-slate-950/70 px-2 text-center text-xs text-white" data-testid="atendimento-inline-procedure" aria-label="Procedimento do novo atendimento">
                           <SelectValue placeholder="Procedimento" />
                         </SelectTrigger>
                         <SelectContent>{(references?.procedures || []).map((item) => <SelectItem key={item.name} value={item.name}>{item.name}</SelectItem>)}</SelectContent>
                       </Select>
                     </td>
-                    <td className="border-b border-slate-800 px-2 py-2 align-middle">
-                      <Select value={inlineForm.injectorName || 'none'} onValueChange={(injectorName) => updateInlineForm({ injectorName: injectorName === 'none' ? '' : injectorName })}>
-                        <SelectTrigger className="h-8 min-w-[11rem] border-slate-700 bg-slate-950/70 px-2 text-xs text-white" data-testid="atendimento-inline-injector" aria-label="Injetor do novo atendimento">
-                          <SelectValue placeholder="Injetor" />
-                        </SelectTrigger>
-                        <SelectContent><SelectItem value="none">Sem injetor</SelectItem>{inlineInjectors.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
-                      </Select>
+                    <td className="border-b border-slate-800 px-2 py-2 text-center align-middle">
+                      {isConsultant ? (
+                        <LockedInjectorValue
+                          name={inlineForm.injectorName}
+                          unresolved={!inlineForm.injectorId}
+                          compact
+                          testId="atendimento-inline-injector-locked"
+                          ariaLabel="Injetor definido pela Escala; alteração restrita a gestão"
+                        />
+                      ) : (
+                        <Select value={inlineForm.injectorName || 'none'} onValueChange={(injectorName) => updateInlineForm(injectorName === 'none' ? { injectorName: '', injectorId: null } : professionalIdentityPatch(references?.professionals || [], 'injector', injectorName))}>
+                          <SelectTrigger className="h-8 min-w-0 w-full justify-center border-slate-700 bg-slate-950/70 px-2 text-center text-xs text-white" data-testid="atendimento-inline-injector" aria-label="Injetor do novo atendimento">
+                            <SelectValue placeholder="Injetor" />
+                          </SelectTrigger>
+                          <SelectContent><SelectItem value="none">Sem injetor</SelectItem>{inlineInjectors.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
+                        </Select>
+                      )}
                     </td>
-                    <td className="border-b border-slate-800 px-2 py-2 align-middle">
-                      <Select value={inlineForm.consultantName || 'none'} onValueChange={(consultantName) => updateInlineForm({ consultantName: consultantName === 'none' ? '' : consultantName })}>
-                        <SelectTrigger className="h-8 min-w-[11rem] border-slate-700 bg-slate-950/70 px-2 text-xs text-white" data-testid="atendimento-inline-consultant" aria-label="Consultor do novo atendimento">
-                          <SelectValue placeholder="Consultor" />
-                        </SelectTrigger>
-                        <SelectContent><SelectItem value="none">Sem consultor</SelectItem>{inlineConsultants.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
-                      </Select>
+                    <td className="border-b border-slate-800 px-2 py-2 text-center align-middle">
+                      {canManageConsultant ? (
+                        <Select value={inlineForm.consultantName || 'none'} onValueChange={(consultantName) => updateInlineForm(consultantName === 'none' ? { consultantName: '', consultantId: null } : professionalIdentityPatch(references?.professionals || [], 'consultant', consultantName))}>
+                          <SelectTrigger className="h-8 min-w-0 w-full justify-center border-slate-700 bg-slate-950/70 px-2 text-center text-xs text-white" data-testid="atendimento-inline-consultant" aria-label="Consultor do novo atendimento">
+                            <SelectValue placeholder="Consultor" />
+                          </SelectTrigger>
+                          <SelectContent><SelectItem value="none">Sem consultor</SelectItem>{inlineConsultants.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
+                        </Select>
+                      ) : (
+                        <LockedConsultantValue
+                          name={consultantDisplayForUnit(inlineForm.unitSlug, inlineForm.consultantName).name}
+                          unresolved={consultantDisplayForUnit(inlineForm.unitSlug, inlineForm.consultantName).unresolved}
+                          compact
+                          testId="atendimento-inline-consultant-locked"
+                          ariaLabel="Consultor atribuído automaticamente"
+                        />
+                      )}
                     </td>
-                    <td className="border-b border-slate-800 px-3 py-2 text-right align-middle text-xs font-semibold whitespace-nowrap text-emerald-100" data-testid="atendimento-inline-preview">
-                      {formatCurrencyBRL(inlinePreviewValue)}
+                    <td className="border-b border-slate-800 px-3 py-2 text-center align-middle text-xs font-semibold whitespace-nowrap text-emerald-100" data-testid="atendimento-inline-preview">
+                      <div className="flex items-center justify-center gap-2">
+                        <span>{formatCurrencyBRL(inlinePreviewValue)}</span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-7 px-2 text-[11px]"
+                          disabled={saving || !hasAtendimentoInlineDraft(inlineForm)}
+                          onClick={() => void saveInlineForm()}
+                          data-testid="atendimento-inline-save"
+                        >
+                          {saving ? 'Salvando…' : 'Salvar'}
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                   {inlineError ? (
@@ -2602,73 +3011,116 @@ export function AtendimentoModule() {
                       </td>
                     </tr>
                   ) : null}
-                  {sortedRows.map((row) => {
+                  {visibleSortedRows.map((row) => {
                     const rowForm = rowFormFor(row)
                     const rowUnitName = rowForm.unitName || references?.units.find((unit) => unit.slug === rowForm.unitSlug)?.name || rowForm.unitSlug
                     const rowShift = determineAtendimentoShift(rowUnitName)
-                    const rowInjectors = filterProfessionalsByUnitRole(references?.professionals || [], rowUnitName, 'Injetor')
-                    const rowConsultants = filterProfessionalsByUnitRole(references?.professionals || [], rowUnitName, 'Consultor', rowShift)
+                    // Registros históricos podem apontar para um profissional que já não está
+                    // ativo na escala atual. Mantemos esse valor visível e editável sem
+                    // reintroduzi-lo como opção para novos lançamentos.
+                    const rowInjectors = canonicalProfessionalOptions([
+                      ...filterProfessionalsByUnitRole(references?.professionals || [], rowUnitName, 'Injetor'),
+                      rowForm.injectorName,
+                    ])
+                    const rowConsultants = canonicalProfessionalOptions([
+                      ...filterProfessionalsByUnitRole(references?.professionals || [], rowUnitName, 'Consultor', rowShift),
+                      rowForm.consultantName,
+                    ])
                     const rowProcedure = (references?.procedures || []).find((item) => item.name === rowForm.procedureName)
                     const rowValue = calculateAtendimentoValue(rowForm)
                     const unitVisual = filters.unit === 'all' ? atendimentoUnitVisual(row.unitSlug || row.unitName) : null
+                    const assignmentIsMissing = (value: string | null | undefined, emptyOption: string) => {
+                      const normalized = String(value || '').trim().toLowerCase()
+                      return !normalized || normalized === 'none' || normalized === emptyOption
+                    }
+                    const missingInjector = assignmentIsMissing(rowForm.injectorName, 'sem injetor')
+                    const missingConsultant = assignmentIsMissing(rowForm.consultantName, 'sem consultor')
+                    const hasMissingProfessional = missingInjector || missingConsultant
+                    const rowColor = atendimentoProfessionalColor(rowForm.injectorName, references?.professionals || [])
+                    const rowStyle = hasMissingProfessional
+                      ? { backgroundColor: 'rgba(127, 29, 29, 0.22)', boxShadow: 'inset 3px 0 0 rgba(251, 113, 133, 0.82)' }
+                      : { background: `linear-gradient(90deg, ${atendimentoColorWithAlpha(rowColor, 0.2)}, ${atendimentoColorWithAlpha(rowColor, 0.06)})`, boxShadow: `inset 3px 0 0 ${atendimentoColorWithAlpha(rowColor, 0.72)}` }
                     return (
                       <React.Fragment key={row.id}>
-                        <tr className={`group border-b border-slate-800/80 text-slate-200 transition ${unitVisual?.rowClassName || 'hover:bg-slate-900/70'}`} data-unit={row.unitSlug || row.unitName}>
-                          <td className={`sticky left-0 z-10 border-b border-slate-800 px-2 py-2 align-middle shadow-[1px_0_0_rgba(30,41,59,0.65)] ${unitVisual ? 'relative' : ''} ${unitVisual?.stickyClassName || 'bg-slate-950/95'}`}>
+                        <tr className={`group border-b border-slate-800/80 text-slate-200 transition hover:brightness-110 ${unitVisual ? 'relative' : ''}`} style={rowStyle} data-unit={row.unitSlug || row.unitName}>
+                          <td className={`sticky left-0 z-10 border-b border-slate-800 bg-transparent px-2 py-2 text-center align-middle shadow-[1px_0_0_rgba(30,41,59,0.65)] ${unitVisual ? 'relative' : ''}`}>
                             {unitVisual ? <span className={`absolute left-0 top-0 h-full w-1 ${unitVisual.stripeClassName}`} aria-hidden="true" /> : null}
-                            <Input
-                              type="date"
+                            <AtendimentoDatePicker
                               value={rowForm.date}
-                              onChange={(event) => updateRowDraft(row, { date: event.target.value })}
-                              onBlur={() => void commitRowForm(row)}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter') event.currentTarget.blur()
-                              }}
-                              className="h-8 border-transparent bg-transparent px-1 text-xs font-medium text-slate-100 hover:border-slate-700 hover:bg-slate-950/70 focus:border-sky-400/40 focus:bg-slate-950/80"
-                              aria-label={`Data de ${row.clientName}`}
+                              onValueChange={(date) => commitRowPatch(row, { date })}
+                              className="h-8 min-w-0 w-full"
+                              ariaLabel={`Data de ${row.clientName}`}
                             />
                           </td>
-                          <td className={`border-b border-slate-800 px-2 py-2 align-middle ${unitVisual?.cellClassName || ''}`}>
-                            <Input
+                          <td className="border-b border-slate-800 bg-transparent px-2 py-2 text-center align-middle">
+                            <AtendimentoClientAutocomplete
                               value={rowForm.clientName}
-                              onChange={(event) => updateRowDraft(row, { clientName: event.target.value })}
+                              unitSlug={rowForm.unitSlug}
+                              fallbackSuggestions={clientSuggestionsByUnit.get(rowForm.unitSlug) || clientSuggestionsByUnit.get('__loaded__')}
+                              onValueChange={(clientName) => updateRowDraft(row, { clientName })}
+                              onClientSelected={(clientName) => commitRowPatch(row, { clientName })}
                               onBlur={() => void commitRowForm(row)}
                               onKeyDown={(event) => {
                                 if (event.key === 'Enter') event.currentTarget.blur()
                               }}
-                              className="h-8 border-transparent bg-transparent px-1 text-sm font-medium text-white hover:border-slate-700 hover:bg-slate-950/70 focus:border-sky-400/40 focus:bg-slate-950/80"
+                              className="h-8 min-w-0 w-full border-transparent bg-transparent px-1 text-center text-sm font-medium text-white hover:border-slate-700 hover:bg-slate-950/70 focus:border-sky-400/40 focus:bg-slate-950/80"
                               aria-label={`Cliente ${row.clientName}`}
                               data-testid={`atendimento-row-client-${row.id}`}
                             />
                           </td>
-                          <td className={`border-b border-slate-800 px-2 py-2 align-middle ${unitVisual?.cellClassName || ''}`}>
+                          <td className="border-b border-slate-800 bg-transparent px-2 py-2 text-center align-middle">
                             <Select value={rowForm.procedureName} onValueChange={(procedureName) => {
                               const selectedProcedure = (references?.procedures || []).find((item) => item.name === procedureName)
                               commitRowPatch(row, { procedureName, code: selectedProcedure?.codes?.[0] || rowProcedure?.codes?.[0] || rowForm.code })
                             }}>
-                              <SelectTrigger className="h-8 border-transparent bg-transparent px-1 text-sm text-slate-200 hover:border-slate-700 hover:bg-slate-950/70 focus:border-sky-400/40" aria-label={`Procedimento de ${row.clientName}`}>
+                              <SelectTrigger className="h-8 min-w-0 w-full justify-center border-transparent bg-transparent px-1 text-center text-sm text-slate-200 hover:border-slate-700 hover:bg-slate-950/70 focus:border-sky-400/40" aria-label={`Procedimento de ${row.clientName}`}>
                                 <SelectValue placeholder="Procedimento" />
                               </SelectTrigger>
                               <SelectContent>{(references?.procedures || []).map((item) => <SelectItem key={item.name} value={item.name}>{item.name}</SelectItem>)}</SelectContent>
                             </Select>
                           </td>
-                          <td className={`border-b border-slate-800 px-2 py-2 align-middle ${unitVisual?.cellClassName || ''}`}>
-                            <Select value={rowForm.injectorName || 'none'} onValueChange={(injectorName) => commitRowPatch(row, { injectorName: injectorName === 'none' ? '' : injectorName })}>
-                              <SelectTrigger className="h-8 border-transparent bg-transparent px-1 text-sm text-slate-200 hover:border-slate-700 hover:bg-slate-950/70 focus:border-sky-400/40" aria-label={`Injetor de ${row.clientName}`}>
-                                <SelectValue placeholder="Injetor" />
-                              </SelectTrigger>
-                              <SelectContent><SelectItem value="none">Sem injetor</SelectItem>{rowInjectors.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
-                            </Select>
+                          <td className="border-b border-slate-800 bg-transparent px-2 py-2 text-center align-middle">
+                            <div className="relative">
+                              {isConsultant ? (
+                                <LockedInjectorValue
+                                  name={rowForm.injectorName}
+                                  unresolved={missingInjector}
+                                  compact
+                                  testId={`atendimento-row-injector-locked-${row.id}`}
+                                  ariaLabel={`Injetor de ${row.clientName}; definido pela Escala`}
+                                />
+                              ) : (
+                                <Select value={rowForm.injectorName || 'none'} onValueChange={(injectorName) => commitRowPatch(row, injectorName === 'none' ? { injectorName: '', injectorId: null } : professionalIdentityPatch(references?.professionals || [], 'injector', injectorName))}>
+                                  <SelectTrigger className={`h-8 min-w-0 w-full justify-center border-transparent bg-transparent px-1 text-center text-sm text-slate-200 hover:border-slate-700 hover:bg-slate-950/70 focus:border-sky-400/40 ${missingInjector ? 'border-rose-400/50 bg-rose-950/35 pr-7 text-rose-100' : ''}`} aria-label={`Injetor de ${row.clientName}`}>
+                                    <SelectValue placeholder="Injetor" />
+                                  </SelectTrigger>
+                                  <SelectContent><SelectItem value="none">Sem injetor</SelectItem>{rowInjectors.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
+                                </Select>
+                              )}
+                              {missingInjector ? <TooltipLabel label="Injetor ausente" description="Este atendimento não possui um profissional responsável. Selecione um injetor antes de validar o lançamento."><span className="pointer-events-auto absolute right-2 top-1/2 -translate-y-1/2 text-rose-200"><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" /></span></TooltipLabel> : null}
+                            </div>
                           </td>
-                          <td className={`border-b border-slate-800 px-2 py-2 align-middle ${unitVisual?.cellClassName || ''}`}>
-                            <Select value={rowForm.consultantName || 'none'} onValueChange={(consultantName) => commitRowPatch(row, { consultantName: consultantName === 'none' ? '' : consultantName })}>
-                              <SelectTrigger className="h-8 border-transparent bg-transparent px-1 text-sm text-slate-200 hover:border-slate-700 hover:bg-slate-950/70 focus:border-sky-400/40" aria-label={`Consultor de ${row.clientName}`}>
-                                <SelectValue placeholder="Consultor" />
-                              </SelectTrigger>
-                              <SelectContent><SelectItem value="none">Sem consultor</SelectItem>{rowConsultants.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
-                            </Select>
+                          <td className="border-b border-slate-800 bg-transparent px-2 py-2 text-center align-middle">
+                            <div className="relative">
+                              {canManageConsultant ? (
+                                <Select value={rowForm.consultantName || 'none'} onValueChange={(consultantName) => commitRowPatch(row, consultantName === 'none' ? { consultantName: '', consultantId: null } : professionalIdentityPatch(references?.professionals || [], 'consultant', consultantName))}>
+                                  <SelectTrigger className={`h-8 min-w-0 w-full justify-center border-transparent bg-transparent px-1 text-center text-sm text-slate-200 hover:border-slate-700 hover:bg-slate-950/70 focus:border-sky-400/40 ${missingConsultant ? 'border-rose-400/50 bg-rose-950/35 pr-7 text-rose-100' : ''}`} aria-label={`Consultor de ${row.clientName}`}>
+                                    <SelectValue placeholder="Consultor" />
+                                  </SelectTrigger>
+                                  <SelectContent><SelectItem value="none">Sem consultor</SelectItem>{rowConsultants.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
+                                </Select>
+                              ) : (
+                                <LockedConsultantValue
+                                  name={rowForm.consultantName}
+                                  compact
+                                  testId={`atendimento-row-consultant-locked-${row.id}`}
+                                  ariaLabel={`Consultor de ${row.clientName}; alteração restrita a gestão`}
+                                />
+                              )}
+                              {missingConsultant ? <TooltipLabel label="Consultor ausente" description="Este atendimento não possui a pessoa que lançou o registro. Selecione um consultor antes de validar o lançamento."><span className="pointer-events-auto absolute right-2 top-1/2 -translate-y-1/2 text-rose-200"><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" /></span></TooltipLabel> : null}
+                            </div>
                           </td>
-                          <td className={`border-b border-slate-800 px-3 py-2 text-right align-middle text-sm font-semibold whitespace-nowrap text-white ${unitVisual?.cellClassName || ''}`}>
+                          <td className="border-b border-slate-800 bg-transparent px-3 py-2 text-center align-middle text-sm font-semibold whitespace-nowrap text-white">
                             {rowSavingId === row.id ? <span className="text-[11px] text-sky-200">Salvando...</span> : formatCurrencyBRL(rowValue)}
                           </td>
                         </tr>
@@ -2682,8 +3134,8 @@ export function AtendimentoModule() {
                       </React.Fragment>
                     )
                   })}
-                  {!rows.length ? (
-                    <tr><td colSpan={6} className="py-8 text-center text-slate-400">Nenhum atendimento encontrado.</td></tr>
+                  {!visibleSortedRows.length ? (
+                    <tr><td colSpan={6} className="py-8 text-center text-slate-400">{assignmentIssueFilter ? 'Nenhum atendimento com essa pendência encontrado.' : 'Nenhum atendimento encontrado.'}</td></tr>
                   ) : null}
                   {loadingMoreRows ? (
                     <tr><td colSpan={6} className="py-4 text-center text-xs text-sky-200">Carregando mais atendimentos...</td></tr>
@@ -2691,8 +3143,15 @@ export function AtendimentoModule() {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={5} className="sticky bottom-0 z-30 border-t border-slate-800 bg-slate-950 px-3 py-2 text-right text-xs font-medium text-slate-400">
-                      Faturamento filtrado
+                    <td colSpan={5} className="sticky bottom-0 z-30 border-t border-slate-800 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-400">
+                      <div className="flex items-center gap-2">
+                        <TooltipLabel label="Linhas carregadas" description="Quantidade carregada na tabela sobre o total filtrado. Mais linhas são carregadas automaticamente ao chegar ao fim da lista.">
+                          <span className="rounded-full border border-slate-700 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200" data-testid="atendimento-loaded-count">
+                            {formatNumberBR(rows.length)}/{formatNumberBR(total)}
+                          </span>
+                        </TooltipLabel>
+                        <span className="ml-auto pr-1 text-right">Total</span>
+                      </div>
                     </td>
                     <td className="sticky bottom-0 z-30 border-t border-slate-800 bg-slate-950 px-3 py-2 text-right text-sm font-bold text-emerald-100" data-testid="atendimento-table-revenue">
                       {formatCurrencyBRL(overview?.summary.totalValue || 0)}
@@ -2704,7 +3163,7 @@ export function AtendimentoModule() {
           </div>
         </section>
 
-        <AtendimentoChartsPanel overview={overview} slots={chartSlots} onSlotsChange={setChartSlots} />
+        <AtendimentoChartsPanel overview={overview} professionals={references?.professionals || []} slots={chartSlots} onSlotsChange={setChartSlots} />
       </div>
 
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
@@ -2765,19 +3224,37 @@ export function AtendimentoModule() {
             <FormField label="Quantidade"><Input type="number" min="0" step="1" value={form.quantity} onChange={(e) => updateForm({ quantity: Number(e.target.value) })} data-testid="atendimento-field-quantity" /></FormField>
             <FormField label="Outro"><Input value={String(form.otherValue)} onChange={(e) => updateForm({ otherValue: parseBrazilCurrency(e.target.value) })} data-testid="atendimento-field-other" /></FormField>
             <FormField label="Injetor">
-              <div className="flex gap-2">
-                <Select value={form.injectorName || 'none'} onValueChange={(injectorName) => updateForm({ injectorName: injectorName === 'none' ? '' : injectorName })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="none">Sem injetor</SelectItem>{injectors.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
-                </Select>
-                <Button type="button" variant="outline" className="shrink-0" onClick={suggestDoctor}>Escala</Button>
-              </div>
+              {isConsultant ? (
+                <LockedInjectorValue
+                  name={form.injectorName}
+                  unresolved={!form.injectorId}
+                  testId="atendimento-field-injector-locked"
+                  ariaLabel="Injetor definido pela Escala; alteração restrita a gestão"
+                />
+              ) : (
+                <div className="flex gap-2">
+                  <Select value={form.injectorName || 'none'} onValueChange={(injectorName) => updateForm(injectorName === 'none' ? { injectorName: '', injectorId: null } : professionalIdentityPatch(references?.professionals || [], 'injector', injectorName))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="none">Sem injetor</SelectItem>{injectors.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Button type="button" variant="outline" className="shrink-0" onClick={suggestDoctor}>Escala</Button>
+                </div>
+              )}
             </FormField>
             <FormField label="Consultor">
-              <Select value={form.consultantName || 'none'} onValueChange={(consultantName) => updateForm({ consultantName: consultantName === 'none' ? '' : consultantName })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="none">Sem consultor</SelectItem>{consultants.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
-              </Select>
+              {canManageConsultant ? (
+                <Select value={form.consultantName || 'none'} onValueChange={(consultantName) => updateForm(consultantName === 'none' ? { consultantName: '', consultantId: null } : professionalIdentityPatch(references?.professionals || [], 'consultant', consultantName))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="none">Sem consultor</SelectItem>{consultants.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
+                </Select>
+              ) : (
+                <LockedConsultantValue
+                  name={form.id ? form.consultantName : consultantDisplayForUnit(form.unitSlug, form.consultantName).name}
+                  unresolved={!form.id && consultantDisplayForUnit(form.unitSlug, form.consultantName).unresolved}
+                  testId="atendimento-field-consultant-locked"
+                  ariaLabel="Consultor atribuído automaticamente; alteração restrita a gestão"
+                />
+              )}
             </FormField>
             <div className="flex items-center gap-3 rounded-lg border border-white/10 p-3">
               <Switch checked={form.discount} onCheckedChange={(discount) => updateForm({ discount })} />
