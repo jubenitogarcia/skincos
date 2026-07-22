@@ -69,6 +69,7 @@ function buildAttendanceClients(attendances) {
                 variants: new Map(),
                 attendanceCount: 0,
                 units: new Set(),
+                unitSlugs: new Set(),
                 unitProcedures: new Set(),
             }
             clientsByKey.set(nameKey, client)
@@ -79,6 +80,7 @@ function buildAttendanceClients(attendances) {
         client.variants.set(rawName, variant)
         client.attendanceCount += 1
         if (attendance.unitId) client.units.add(attendance.unitId)
+        if (attendance.unitSlug) client.unitSlugs.add(attendance.unitSlug)
         if (attendance.unitId && attendance.procedureId) {
             client.unitProcedures.add(`${attendance.unitId}|${attendance.procedureId}`)
         }

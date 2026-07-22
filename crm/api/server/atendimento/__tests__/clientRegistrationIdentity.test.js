@@ -45,6 +45,16 @@ test('uses a unique phone-to-sales-to-attendance anchor without using dates', ()
     assert.equal(plan.summary.policy.dateDistanceUsed, false)
 })
 
+test('confirms an exact app, sales and attendance name when the unit also agrees', () => {
+    const plan = buildClientRegistrationIdentityPlan({
+        registrationRows: [{ 'Cliente ID': 'app-1', Cliente: 'Maria da Silva', Unidade: 'BarraShoppingSul', Telefone: '51999991111' }],
+        caixaCustomers: [{ id: 'cash-1', name: 'Maria da Silva', phoneKey: '5551999991111' }],
+        caixaSales: [{ customerId: 'cash-1', unitId: 'u1', unitSlug: 'barra-shopping-sul' }],
+        attendances: [{ id: 'attendance-1', clientName: 'Maria da Silva', unitId: 'u1', unitSlug: 'barra-shopping-sul', procedureId: 'p1' }],
+    })
+    assert.deepEqual(plan.registrationAttendanceLinks.map((link) => ({ method: link.method, status: link.status })), [{ method: 'exact_name_phone_sales_unit', status: 'auto_confirmed' }])
+})
+
 test('builds one global identity only from confirmed cross-source links', () => {
     const components = buildConfirmedGlobalIdentityComponents({
         registrations: [{ id: 'app-1', name: 'Maria da Silva' }],

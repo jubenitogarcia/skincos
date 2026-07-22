@@ -184,14 +184,15 @@ function linkRegistrationsToAttendance(registrations, attendanceClients, caixaLi
         const anchoredClients = [...new Set(attendanceByCaixa.get(anchoredCaixa) || [])]
         if (anchoredClients.length === 1) {
             const attendance = attendanceClients.find((client) => client.nameKey === anchoredClients[0])
-            links.push({ registrationId: registration.id, attendanceNameKey: attendance.nameKey, method: 'phone_sales_attendance_anchor', confidence: 1, status: 'auto_confirmed', evidence: { caixaCustomerId: anchoredCaixa, sharedUnits: sameValues(new Set(registration.units), attendance.units) } })
+            links.push({ registrationId: registration.id, attendanceNameKey: attendance.nameKey, method: 'phone_sales_attendance_anchor', confidence: 1, status: 'auto_confirmed', evidence: { caixaCustomerId: anchoredCaixa, sharedUnits: sameValues(new Set(registration.units), new Set(attendance.unitSlugs?.size ? attendance.unitSlugs : attendance.units)) } })
             continue
         }
         const exact = [...new Set(registration.nameKeys.flatMap((nameKey) => byName.get(nameKey) || []))]
         if (exact.length === 1) {
             const attendance = exact[0]
-            const sharedUnits = sameValues(new Set(registration.units), attendance.units)
-            links.push({ registrationId: registration.id, attendanceNameKey: attendance.nameKey, method: sharedUnits.length ? 'exact_name_unit' : 'exact_name', confidence: sharedUnits.length ? 0.9 : 0.84, status: 'suggested', evidence: { sharedUnits } })
+            const sharedUnits = sameValues(new Set(registration.units), new Set(attendance.unitSlugs?.size ? attendance.unitSlugs : attendance.units))
+            const status = anchoredCaixa && sharedUnits.length ? 'auto_confirmed' : 'suggested'
+            links.push({ registrationId: registration.id, attendanceNameKey: attendance.nameKey, method: status === 'auto_confirmed' ? 'exact_name_phone_sales_unit' : sharedUnits.length ? 'exact_name_unit' : 'exact_name', confidence: status === 'auto_confirmed' ? 0.98 : sharedUnits.length ? 0.9 : 0.84, status, evidence: { caixaCustomerId: anchoredCaixa || null, sharedUnits } })
         } else if (exact.length > 1) {
             for (const attendance of exact) links.push({ registrationId: registration.id, attendanceNameKey: attendance.nameKey, method: 'exact_name_collision', confidence: 0.84, status: 'ambiguous', evidence: {} })
         }
@@ -262,16 +263,20 @@ function node(type, id) { return `${type}:${id}` }
 
 export function buildConfirmedGlobalIdentityComponents({
     registrations = [],
+    leadProfiles = [],
     canonicalClients = [],
     caixaCustomers = [],
     registrationCaixaLinks = [],
     registrationAttendanceLinks = [],
     attendanceCaixaLinks = [],
+    leadProfileRegistrationLinks = [],
+    leadProfileCaixaLinks = [],
 } = {}) {
     const automatic = new Set(['auto_confirmed', 'auto_confirmed_spelling', 'confirmed'])
     const union = new UnionFind()
     const labels = new Map()
     registrations.forEach((item) => labels.set(node('app_registration', item.id), item.name))
+    leadProfiles.forEach((item) => labels.set(node('lead_profile', item.id), item.name))
     canonicalClients.forEach((item) => labels.set(node('attendance_client', item.id), item.name))
     caixaCustomers.forEach((item) => labels.set(node('caixa_customer', item.id), item.name))
     registrationCaixaLinks.filter((item) => automatic.has(item.status)).forEach((item) =>
@@ -280,6 +285,10 @@ export function buildConfirmedGlobalIdentityComponents({
         union.join(node('app_registration', item.registrationId), node('attendance_client', item.attendanceClientId)))
     attendanceCaixaLinks.filter((item) => automatic.has(item.status)).forEach((item) =>
         union.join(node('attendance_client', item.attendanceClientId), node('caixa_customer', item.caixaCustomerId)))
+    leadProfileRegistrationLinks.filter((item) => automatic.has(item.status)).forEach((item) =>
+        union.join(node('lead_profile', item.profileId), node('app_registration', item.registrationId)))
+    leadProfileCaixaLinks.filter((item) => automatic.has(item.status)).forEach((item) =>
+        union.join(node('lead_profile', item.profileId), node('caixa_customer', item.caixaCustomerId)))
 
     const groups = new Map()
     for (const value of union.parent.keys()) {
@@ -295,6 +304,7 @@ export function buildConfirmedGlobalIdentityComponents({
         })
         const preferred = parsed.find((item) => item.sourceType === 'attendance_client' && item.name)
             || parsed.find((item) => item.sourceType === 'app_registration' && item.name)
+            || parsed.find((item) => item.sourceType === 'lead_profile' && item.name)
             || parsed.find((item) => item.name)
         return {
             componentKey: normalized.join('|'),
