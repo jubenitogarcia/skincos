@@ -89,8 +89,9 @@ const schemaStatements = [
 
 async function loadInputs(pool) {
     const [attendances, customers, sales, saleCount, canonicalClients] = await Promise.all([
-        pool.query(`select id, client_name as "clientName", unit_id as "unitId", procedure_id as "procedureId"
-            from crm_atendimento.attendances where deleted_at is null and nullif(trim(client_name), '') is not null`),
+        pool.query(`select a.id, a.client_name as "clientName", a.unit_id as "unitId", u.slug as "unitSlug", a.procedure_id as "procedureId"
+            from crm_atendimento.attendances a join crm_atendimento.units u on u.id=a.unit_id
+            where a.deleted_at is null and nullif(trim(a.client_name), '') is not null`),
         pool.query(`select id, name, phone_key as "phoneKey" from crm_caixa.customers`),
         pool.query(`select s.customer_id as "customerId", s.unit_id as "unitId", u.slug as "unitSlug",
                 coalesce(array_agg(distinct i.procedure_id) filter (where i.procedure_id is not null), '{}') as "procedureIds"
