@@ -1,7 +1,7 @@
 # Auditoria do staging Financeiro — 2026-07-22
 
-Esta é evidência de infraestrutura publicada, obtida sem escrever no ambiente.
-Não é validação de uma nova versão do Financeiro.
+Este documento reúne evidências de infraestrutura publicada e de janelas
+controladas de validação no staging. Ele não autoriza produção.
 
 ## Recursos confirmados
 
@@ -75,6 +75,27 @@ A janela foi encerrada no mesmo ciclo: `module_enabled=false`, zero linhas em
 `finance_access_grants` e zero identidades de controle ativas. Lançamentos,
 partidas e auditoria foram preservados como evidência de staging; o escopo
 pessoal continuou inativo e sem grant.
+
+## Smoke autenticado do Pages — Financeiro
+
+O comando `npm run finance:staging:ui-smoke` é deliberadamente travado para
+`https://skincos-staging.pages.dev` e exige confirmação explícita do operador
+e credenciais fornecidas apenas em ambiente. Ele autentica pela tela real do
+CRM, confirma o bootstrap, a navegação Financeiro, as três abas principais e
+a troca de escopo para BarraShoppingSul. Não faz mutações financeiras.
+
+Na execução controlada de 2026-07-22, o bootstrap devolveu exclusivamente os
+grants empresariais Novo Hamburgo e BarraShoppingSul; as requisições Financeiro
+(`bootstrap`, contas, categorias, favorecidos, tags, centros de custo,
+movimentações e resumos) retornaram `200`. Após o teste, a flag retornou a
+`false`, os dois grants temporários foram removidos e todas as identidades
+`finstage*` permaneceram inativas.
+
+O shell atual também disparou seis `503` de superfícies não Financeiras
+(`instagram/status` e referências/relatórios de Atendimento). Eles não
+afetaram nenhuma rota Financeiro e não autorizam ignorar a dívida do ambiente:
+o smoke registra esses endpoints na evidência privada para acompanhamento dos
+respectivos módulos.
 
 ## Importações controladas pela API de staging
 

@@ -219,7 +219,7 @@ export function FinanceModule() {
   const selectedCategories = categories.filter((category) => category.direction === movementDraft.type)
   const accountBalances = overview?.accounts || []
 
-  return <div className="space-y-6" data-finance-module="true">
+  return <div className="finance-surface space-y-6" data-finance-module="true">
     {notice ? <div role="status" className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${notice.includes('concluída') ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}><CheckCircle size={18} className="mt-0.5 shrink-0" />{notice}</div> : null}
     {error ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"><span>{error}</span><Button variant="outline" size="sm" onClick={() => void refresh(scopeId, filters)}>Tentar novamente</Button></div> : null}
 

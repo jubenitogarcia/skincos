@@ -552,6 +552,17 @@ body {
   border-color: rgba(71, 85, 105, 0.45);
 }
 
+.finance-surface .glass-card {
+  background: rgba(10, 18, 32, 0.74);
+  border-color: rgba(71, 85, 105, 0.66);
+  box-shadow: 0 20px 80px rgba(2, 6, 23, 0.30);
+}
+
+.finance-surface .glass-morphism {
+  background: rgba(15, 23, 42, 0.48);
+  border-color: rgba(71, 85, 105, 0.42);
+}
+
 .meta-ads-main {
   background-color: rgba(5, 12, 24, 0.18);
 }
