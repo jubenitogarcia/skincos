@@ -1,7 +1,7 @@
 import {
   FINANCE_ACCOUNT_TYPES, FINANCE_CONTRACT_VERSION, FINANCE_MODULE_KEY,
   FINANCE_MOVEMENT_TYPES, FinanceContractError, asCurrency, asExchangeRatePpm, asIsoDate,
-  asMinorAmount, asTrimmedString,
+  asMinorAmount, asSignedMinorAmount, asTrimmedString,
 } from '../../shared/finance-contracts/index.js';
 import { analyseCsvImport, importNameKey as nameKey, normalizeImportRow } from '../../shared/finance-contracts/csv.js';
 import { prepareMoneyWizImport } from '../../shared/finance-contracts/moneywiz.js';
@@ -20,7 +20,7 @@ const ATTACHMENT_CONTENT_TYPES = new Set(['application/pdf', 'image/jpeg', 'imag
 const SCOPED_TABLES = Object.freeze({
   'finance_accounts': 'finance_accounts', 'finance_categories': 'finance_categories', 'finance_payees': 'finance_payees',
   'finance_tags': 'finance_tags', 'finance_cost_centers': 'finance_cost_centers', 'finance_movements': 'finance_movements',
-  'finance_import_batches': 'finance_import_batches',
+  'finance_import_batches': 'finance_import_batches', 'finance_reconciliation_lines': 'finance_reconciliation_lines',
 });
 
 function explicitFinanceModule(actor) { return Array.isArray(actor?.allowedModules) && actor.allowedModules.map(String).includes(FINANCE_MODULE_KEY); }
@@ -117,6 +117,16 @@ export function createFinanceHandler() {
         if (!trustedTable) throw new FinanceContractError('VALIDATION_ERROR', 'Tabela financeira inválida.');
         return env.DB.prepare(`SELECT * FROM ${trustedTable} WHERE id=? AND scope_id=?`).bind(entityId, scopeId).first();
       };
+      const movementImpact = (movement, accountId) => {
+        if (!movement || !accountId) return null;
+        if (movement.type === 'income' && movement.account_id === accountId) return Number(movement.amount_minor);
+        if (movement.type === 'expense' && movement.account_id === accountId) return -Number(movement.amount_minor);
+        if (movement.type === 'transfer') {
+          if (movement.account_id === accountId) return -Number(movement.amount_minor);
+          if (movement.destination_account_id === accountId) return Number(movement.amount_minor);
+        }
+        return null;
+      };
 
       if (path === '/bootstrap' && request.method === 'GET') return json(200, { ok: true, moduleEnabled, grants, canAccess: moduleEnabled && grants.length > 0 }, requestId);
       if (!moduleEnabled) return json(423, { ok: false, error: 'FINANCE_DISABLED' }, requestId);
@@ -141,6 +151,38 @@ export function createFinanceHandler() {
         if (record.ledger_account_id) statements.push(env.DB.prepare(`UPDATE finance_ledger_accounts SET active=? WHERE id=? AND scope_id=?`).bind(active, record.ledger_account_id, scopeId));
         statements.push(auditStatement(`${entityType.replace(/([A-Z])/g, '_$1').toUpperCase()}_${action === 'restore' ? 'RESTORED' : 'ARCHIVED'}`, entityType, entityId, { active: Number(record.active) }, { active }));
         return { data: { ok: true, id: entityId, active: Boolean(active), changed }, statements };
+      }); return json(result.status, { ...result.data, replayed: result.replayed }, requestId); }
+
+      if (path === '/reconciliation/lines' && request.method === 'GET') {
+        requireScope(); const { page, limit, offset } = pageOf(url); const accountId = url.searchParams.get('accountId'); if (accountId && !await scoped('finance_accounts', accountId)) throw new FinanceContractError('NOT_FOUND', 'Conta não encontrada.');
+        const clauses = ['scope_id=?']; const values = [scopeId]; if (accountId) { clauses.push('account_id=?'); values.push(accountId); } const where = clauses.join(' AND ');
+        const total = await env.DB.prepare(`SELECT COUNT(*) count FROM finance_reconciliation_lines WHERE ${where}`).bind(...values).first(); const lines = (await env.DB.prepare(`SELECT * FROM finance_reconciliation_lines WHERE ${where} ORDER BY posted_date DESC,created_at DESC LIMIT ? OFFSET ?`).bind(...values, limit, offset).all()).results || [];
+        const ids = lines.map((line) => line.id); const matches = ids.length ? ((await env.DB.prepare(`SELECT rm.*,m.description,m.operational_status,m.amount_minor,m.currency FROM finance_reconciliation_matches rm JOIN finance_movements m ON m.id=rm.movement_id WHERE rm.statement_line_id IN (${placeholders(ids)}) ORDER BY rm.created_at`).bind(...ids).all()).results || []) : [];
+        return json(200, { ok: true, page, limit, total: Number(total?.count || 0), lines: lines.map((line) => ({ ...line, matches: matches.filter((match) => match.statement_line_id === line.id) })) }, requestId);
+      }
+      if (path === '/reconciliation/lines' && request.method === 'POST') { requireScope(true); const payload = await body(); const result = await mutate(payload, async () => {
+        const account = await scoped('finance_accounts', asTrimmedString(payload.accountId, 'accountId')); if (!account) throw new FinanceContractError('VALIDATION_ERROR', 'Conta fora do escopo.'); const externalId = payload.externalId ? asTrimmedString(payload.externalId, 'externalId') : null;
+        if (externalId && await env.DB.prepare(`SELECT id FROM finance_reconciliation_lines WHERE scope_id=? AND account_id=? AND external_id=?`).bind(scopeId, account.id, externalId).first()) throw new FinanceContractError('DUPLICATE_EXTERNAL_ID', 'A linha de extrato já foi registrada para esta conta.');
+        const line = { id: id(), accountId: account.id, postedDate: asIsoDate(payload.postedDate, 'postedDate'), amountMinor: asSignedMinorAmount(payload.amountMinor), currency: asCurrency(payload.currency), description: asTrimmedString(payload.description || '', 'description', { required: false, max: 1000 }) || null, externalId };
+        return { data: { ok: true, line }, statements: [env.DB.prepare(`INSERT INTO finance_reconciliation_lines(id,scope_id,account_id,posted_date,amount_minor,currency,description,external_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(line.id, scopeId, line.accountId, line.postedDate, line.amountMinor, line.currency, line.description, line.externalId, now()), auditStatement('RECONCILIATION_LINE_CREATED', 'reconciliation_line', line.id, null, line)] };
+      }); return json(result.status, { ...result.data, replayed: result.replayed }, requestId); }
+      const reconciliationLineMatch = path.match(/^\/reconciliation\/lines\/([^/]+)\/(suggestions|matches)$/);
+      if (reconciliationLineMatch && reconciliationLineMatch[2] === 'suggestions' && request.method === 'POST') { requireScope(true); const payload = await body(); const result = await mutate(payload, async () => {
+        const line = await scoped('finance_reconciliation_lines', reconciliationLineMatch[1]); if (!line) throw new FinanceContractError('NOT_FOUND', 'Linha de extrato não encontrada.');
+        const candidates = (await env.DB.prepare(`SELECT * FROM finance_movements WHERE scope_id=? AND operational_status='confirmed' AND currency=? AND (account_id=? OR destination_account_id=?) ORDER BY competence_date DESC LIMIT 100`).bind(scopeId, line.currency, line.account_id, line.account_id).all()).results || []; const existing = (await env.DB.prepare(`SELECT movement_id FROM finance_reconciliation_matches WHERE statement_line_id=?`).bind(line.id).all()).results || []; const known = new Set(existing.map((row) => row.movement_id));
+        const suggested = candidates.filter((movement) => !known.has(movement.id) && movementImpact(movement, line.account_id) === Number(line.amount_minor)); const statements = [];
+        for (const movement of suggested) statements.push(env.DB.prepare(`INSERT INTO finance_reconciliation_matches(id,statement_line_id,movement_id,status,created_by,created_at) VALUES(?,?,?,?,?,?)`).bind(id(), line.id, movement.id, 'suggested', actor.username, now()));
+        statements.push(auditStatement('RECONCILIATION_SUGGESTIONS_GENERATED', 'reconciliation_line', line.id, null, { candidates: suggested.map((movement) => movement.id) }));
+        return { data: { ok: true, lineId: line.id, suggestedMovementIds: suggested.map((movement) => movement.id) }, statements };
+      }); return json(result.status, { ...result.data, replayed: result.replayed }, requestId); }
+      if (reconciliationLineMatch && reconciliationLineMatch[2] === 'matches' && request.method === 'POST') { requireScope(true); const payload = await body(); const result = await mutate(payload, async () => {
+        const line = await scoped('finance_reconciliation_lines', reconciliationLineMatch[1]); if (!line) throw new FinanceContractError('NOT_FOUND', 'Linha de extrato não encontrada.'); const movement = await scoped('finance_movements', asTrimmedString(payload.movementId, 'movementId')); if (!movement) throw new FinanceContractError('NOT_FOUND', 'Lançamento não encontrado.'); const decision = asTrimmedString(payload.decision, 'decision'); if (!['confirm','reject'].includes(decision)) throw new FinanceContractError('VALIDATION_ERROR', 'Decisão de conciliação inválida.');
+        const existing = await env.DB.prepare(`SELECT * FROM finance_reconciliation_matches WHERE statement_line_id=? AND movement_id=?`).bind(line.id, movement.id).first();
+        if (decision === 'reject') { if (!existing || existing.status !== 'suggested') throw new FinanceContractError('VALIDATION_ERROR', 'Somente uma sugestão pendente pode ser rejeitada.'); return { data: { ok: true, lineId: line.id, movementId: movement.id, status: 'rejected' }, statements: [env.DB.prepare(`UPDATE finance_reconciliation_matches SET status='rejected' WHERE id=?`).bind(existing.id), auditStatement('RECONCILIATION_MATCH_REJECTED', 'reconciliation_match', existing.id, { status: 'suggested' }, { status: 'rejected' })] }; }
+        if (movement.operational_status !== 'confirmed') throw new FinanceContractError('VALIDATION_ERROR', 'Somente lançamento confirmado pode ser conciliado com extrato.'); const impact = movementImpact(movement, line.account_id); if (impact === null || impact !== Number(line.amount_minor) || movement.currency !== line.currency) throw new FinanceContractError('VALIDATION_ERROR', 'Conta, valor ou moeda não correspondem à linha de extrato.'); if (existing && existing.status !== 'suggested') throw new FinanceContractError('VALIDATION_ERROR', 'Este vínculo de conciliação já foi resolvido.');
+        const matchId = existing?.id || id(); const statements = []; if (existing) statements.push(env.DB.prepare(`UPDATE finance_reconciliation_matches SET status='confirmed' WHERE id=?`).bind(existing.id)); else statements.push(env.DB.prepare(`INSERT INTO finance_reconciliation_matches(id,statement_line_id,movement_id,status,created_by,created_at) VALUES(?,?,?,?,?,?)`).bind(matchId, line.id, movement.id, 'confirmed', actor.username, now()));
+        statements.push(env.DB.prepare(`UPDATE finance_movements SET operational_status='reconciled',updated_by=?,updated_at=? WHERE id=? AND scope_id=?`).bind(actor.username, now(), movement.id, scopeId), env.DB.prepare(`INSERT INTO finance_movement_revisions(id,scope_id,movement_id,kind,reason,actor,request_id,created_at) VALUES(?,?,?,?,?,?,?,?)`).bind(id(), scopeId, movement.id, 'reconciled', `Conciliação com linha de extrato ${line.id}`, actor.username, requestId, now()), auditStatement('RECONCILIATION_MATCH_CONFIRMED', 'reconciliation_match', matchId, { status: existing?.status || null }, { status: 'confirmed', lineId: line.id, movementId: movement.id }), auditStatement('MOVEMENT_RECONCILED', 'movement', movement.id, { operationalStatus: 'confirmed' }, { operationalStatus: 'reconciled', statementLineId: line.id }));
+        return { data: { ok: true, lineId: line.id, movementId: movement.id, matchId, status: 'confirmed' }, statements };
       }); return json(result.status, { ...result.data, replayed: result.replayed }, requestId); }
 
       if (path === '/movements' && request.method === 'GET') {
@@ -291,6 +333,6 @@ export function createFinanceHandler() {
       if (path === '/attachments' && request.method === 'POST') { requireScope(true); const payload = await body(); const result = await mutate(payload, async () => { const movementId = payload.movementId || null; if (movementId && !await scoped('finance_movements', movementId, 'id')) throw new FinanceContractError('VALIDATION_ERROR', 'Lançamento fora do escopo.'); const attachment = { id: id(), movementId, objectKey: safeAttachmentObjectKey(payload.objectKey, scopeId), filename: asTrimmedString(payload.filename, 'filename'), contentType: asTrimmedString(payload.contentType || '', 'contentType', { required: false }).toLowerCase(), sizeBytes: Number(payload.sizeBytes || 0) }; if (!Number.isSafeInteger(attachment.sizeBytes) || attachment.sizeBytes < 0 || attachment.sizeBytes > MAX_ATTACHMENT_METADATA_BYTES) throw new FinanceContractError('VALIDATION_ERROR', 'sizeBytes inválido ou excede o limite de 25 MiB.'); if (attachment.contentType && !ATTACHMENT_CONTENT_TYPES.has(attachment.contentType)) throw new FinanceContractError('VALIDATION_ERROR', 'contentType de anexo não permitido.'); return { data: { ok: true, attachment }, statements: [env.DB.prepare(`INSERT INTO finance_attachments(id,scope_id,movement_id,object_key,filename,content_type,size_bytes,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(attachment.id, scopeId, movementId, attachment.objectKey, attachment.filename, attachment.contentType || null, attachment.sizeBytes, actor.username, now()), auditStatement('ATTACHMENT_METADATA_CREATED', 'attachment', attachment.id, null, attachment)] }; }); return json(result.status, { ...result.data, replayed: result.replayed }, requestId); }
       if (path === '/attachments' && request.method === 'GET') { requireScope(); const { page, limit, offset } = pageOf(url); const attachments = (await env.DB.prepare(`SELECT * FROM finance_attachments WHERE scope_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(scopeId, limit, offset).all()).results || []; return json(200, { ok: true, page, limit, attachments }, requestId); }
       return json(404, { ok: false, error: 'FINANCE_ROUTE_NOT_FOUND' }, requestId);
-    } catch (error) { if (error instanceof FinanceContractError) { const status = error.code === 'SCOPE_DENIED' ? 403 : ['IDEMPOTENCY_CONFLICT','DRAFT_REVISION_CONFLICT'].includes(error.code) ? 409 : error.code === 'NOT_FOUND' ? 404 : error.code === 'PAYLOAD_TOO_LARGE' ? 413 : 400; return json(status, { ok: false, error: error.code, message: error.message }, requestId); } return json(500, { ok: false, error: 'FINANCE_INTERNAL_ERROR', message: 'Não foi possível concluir a operação financeira.' }, requestId); }
+    } catch (error) { if (error instanceof FinanceContractError) { const status = error.code === 'SCOPE_DENIED' ? 403 : ['IDEMPOTENCY_CONFLICT','DRAFT_REVISION_CONFLICT','DUPLICATE_EXTERNAL_ID'].includes(error.code) ? 409 : error.code === 'NOT_FOUND' ? 404 : error.code === 'PAYLOAD_TOO_LARGE' ? 413 : 400; return json(status, { ok: false, error: error.code, message: error.message }, requestId); } return json(500, { ok: false, error: 'FINANCE_INTERNAL_ERROR', message: 'Não foi possível concluir a operação financeira.' }, requestId); }
   };
 }

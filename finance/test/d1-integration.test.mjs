@@ -4,7 +4,7 @@ import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql', '0008_finance_draft_revision.sql', '0009_finance_registration_lifecycle.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
+const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql', '0008_finance_draft_revision.sql', '0009_finance_registration_lifecycle.sql', '0010_finance_reconciliation_workflow.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';
@@ -98,6 +98,23 @@ test('D1 local: registrations are archived instead of deleted and stay isolated 
   await assert.rejects(ctx.DB.prepare(`DELETE FROM finance_accounts WHERE id=?`).bind(archived.id).run(), /archived, not deleted/);
   const restored = await request(ctx.env, ctx.actor, `/accounts/${archived.id}/restore?scopeId=${scopeNh}`, { method: 'POST', key: 'restore-account', body: {} }); assert.equal(restored.response.status, 201); assert.equal(restored.body.active, true);
   const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${archived.id}&entityType=account`); assert.equal(audit.body.events.some((event) => event.action === 'ACCOUNT_ARCHIVED'), true); assert.equal(audit.body.events.some((event) => event.action === 'ACCOUNT_RESTORED'), true);
+});
+
+test('D1 local: reconciliation lines, exact suggestions and confirmations are scoped, balanced and auditable', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco conciliado', 'reconciliation-bank'); const income = await category(ctx.env, ctx.actor, scopeNh, 'Receita conciliada', 'income', 'reconciliation-income'); const expense = await category(ctx.env, ctx.actor, scopeNh, 'Despesa conciliada', 'expense', 'reconciliation-expense');
+  const incoming = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-income-movement', body: { type: 'income', accountId: bank.id, categoryId: income.id, description: 'Recebimento extrato', amountMinor: 1250, currency: 'BRL', competenceDate: '2026-08-01' } }); assert.equal(incoming.response.status, 201, JSON.stringify(incoming.body));
+  const outgoing = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-expense-movement', body: { type: 'expense', accountId: bank.id, categoryId: expense.id, description: 'Pagamento extrato', amountMinor: 700, currency: 'BRL', competenceDate: '2026-08-02' } }); assert.equal(outgoing.response.status, 201, JSON.stringify(outgoing.body));
+  const line = await request(ctx.env, ctx.actor, `/reconciliation/lines?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-line', body: { accountId: bank.id, postedDate: '2026-08-01', amountMinor: 1250, currency: 'BRL', description: 'Recebimento no banco', externalId: 'statement-001' } }); assert.equal(line.response.status, 201, JSON.stringify(line.body));
+  const duplicate = await request(ctx.env, ctx.actor, `/reconciliation/lines?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-line-duplicate', body: { accountId: bank.id, postedDate: '2026-08-01', amountMinor: 1250, currency: 'BRL', externalId: 'statement-001' } }); assert.equal(duplicate.response.status, 409);
+  const suggestions = await request(ctx.env, ctx.actor, `/reconciliation/lines/${line.body.line.id}/suggestions?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-suggest', body: {} }); assert.equal(suggestions.response.status, 201, JSON.stringify(suggestions.body)); assert.deepEqual(suggestions.body.suggestedMovementIds, [incoming.body.movement.id]);
+  const mismatch = await request(ctx.env, ctx.actor, `/reconciliation/lines/${line.body.line.id}/matches?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-mismatch', body: { movementId: outgoing.body.movement.id, decision: 'confirm' } }); assert.equal(mismatch.response.status, 400);
+  const confirmed = await request(ctx.env, ctx.actor, `/reconciliation/lines/${line.body.line.id}/matches?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-confirm', body: { movementId: incoming.body.movement.id, decision: 'confirm' } }); assert.equal(confirmed.response.status, 201, JSON.stringify(confirmed.body));
+  const movement = await request(ctx.env, ctx.actor, `/movements/${incoming.body.movement.id}?scopeId=${scopeNh}`); assert.equal(movement.body.movement.operational_status, 'reconciled');
+  const listed = await request(ctx.env, ctx.actor, `/reconciliation/lines?scopeId=${scopeNh}&accountId=${bank.id}`); assert.equal(listed.body.lines[0].matches[0].status, 'confirmed');
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${confirmed.body.matchId}&entityType=reconciliation_match`); assert.equal(audit.body.events.some((event) => event.action === 'RECONCILIATION_MATCH_CONFIRMED'), true);
+  assert.equal((await request(ctx.env, ctx.actor, `/reconciliation/lines/${line.body.line.id}/suggestions?scopeId=${scopeBss}`, { method: 'POST', key: 'reconciliation-cross-scope', body: {} })).response.status, 404);
+  await assert.rejects(ctx.DB.prepare(`DELETE FROM finance_reconciliation_lines WHERE id=?`).bind(line.body.line.id).run(), /append-only/);
 });
 
 test('D1 local: concurrent identical idempotency keys converge on one persisted operation', async (t) => {

@@ -38,6 +38,14 @@ export function asNonNegativeMinorAmount(value, field = 'amountMinor') {
   return amount;
 }
 
+export function asSignedMinorAmount(value, field = 'amountMinor') {
+  const amount = Number(value);
+  if (!Number.isSafeInteger(amount) || amount === 0) {
+    throw new FinanceContractError('VALIDATION_ERROR', `${field} deve ser um inteiro diferente de zero em minor units.`);
+  }
+  return amount;
+}
+
 export function asExchangeRatePpm(value, field = 'exchangeRatePpm') {
   const rate = Number(value ?? 1_000_000);
   if (!Number.isSafeInteger(rate) || rate <= 0) {

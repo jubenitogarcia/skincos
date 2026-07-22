@@ -11,9 +11,10 @@ controlados e o contexto pessoal continua inativo.
 | Receita, despesa e transferência | Implementado e testado | `finance_movements`, `buildPostedJournal`, D1 para balanceamento | regras específicas de fechamento/fatura de cartão |
 | Splits, parcelas, competência e moedas | Implementado e testado | `finance_movement_splits`, `finance_installments`, minor units, ppm | calendário operacional e fluxo completo de contas a pagar/receber |
 | Rascunho editável sem alterar evidência | Implementado neste ciclo | migration `0008`, `PUT /movements/:id`, revisão otimista, auditoria e testes D1/CRM | teste visual headless do diálogo de revisão |
-| Confirmar, conciliar, estornar e auditar | Implementado e testado | transições auditadas e razão/estorno append-only | conciliação manual por linha de extrato e sugestão de match |
+| Confirmar, conciliar, estornar e auditar | Implementado e testado | transições auditadas, razão/estorno append-only, linha de extrato e match 1:1 | conciliação parcial, lote de extrato e regras de divergência/AP-AR |
 | Anexos | Apenas metadados | `finance_attachments`, validação de chave/tipo/tamanho | upload privado R2, antivírus, leitura assinada e UI |
 | CSV, MoneyWiz e Caixa EF | Pipeline de staging implementado | adapters normalizam para staging, decisão, commit, undo e D1 tests | histórico de lotes na UI e revisão operacional ampliada |
+| Conciliação manual | Implementada para vínculo 1:1 | `/reconciliation/lines`, sugestões exatas, confirmação auditada e diálogo no detalhe | importação de extrato, divergência parcial e ações em lote |
 | Filtros, paginação, busca e auditoria | Implementado para movimentações | filtros enviados à API, paginação, detalhes/auditoria no CRM | persistência de filtros e ações em lote |
 | Regras de cartão, recorrência e contas a pagar/receber | Estruturado parcialmente | tipo `card`, parcelas, vencimento, pagamento | modelo e endpoints próprios de fatura, recorrência, aging e liquidação |
 | Relatórios gerenciais | Visão geral inicial | `/overview`, saldos, entradas, saídas e período anterior | DRE, fluxo de caixa, competência/caixa e exportações seguras |

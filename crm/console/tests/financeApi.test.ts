@@ -56,6 +56,18 @@ describe('Finance transport helpers', () => {
     expect(new Headers(init.headers).get('idempotency-key')).toBe('archive-key')
   })
 
+  it('keeps reconciliation lines, suggestions and confirmation in the Finance API', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 201, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await financeApi.reconciliationLines('scope-nh', 'account-1')
+    await financeApi.createReconciliationLine('scope-nh', { accountId: 'account-1', postedDate: '2026-08-01', amountMinor: 1250, currency: 'BRL', externalId: 'statement-1' }, 'line-key')
+    await financeApi.reconciliationSuggestions('scope-nh', 'line-1', 'suggest-key')
+    await financeApi.reconciliationMatch('scope-nh', 'line-1', 'movement-1', 'confirm', 'match-key')
+    const calls = fetchMock.mock.calls.map(([input, init]) => ({ url: String(input), init: init as RequestInit }))
+    expect(calls.map((call) => call.url)).toEqual(expect.arrayContaining(['/api/finance/reconciliation/lines?scopeId=scope-nh&accountId=account-1', '/api/finance/reconciliation/lines?scopeId=scope-nh', '/api/finance/reconciliation/lines/line-1/suggestions?scopeId=scope-nh', '/api/finance/reconciliation/lines/line-1/matches?scopeId=scope-nh']))
+    expect(JSON.parse(String(calls[3].init.body))).toEqual({ movementId: 'movement-1', decision: 'confirm' })
+  })
+
   it('sends staged CSV decisions, idempotent commit and audited undo to server routes', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
