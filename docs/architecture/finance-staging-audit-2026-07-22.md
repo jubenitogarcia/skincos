@@ -12,6 +12,7 @@ Não é validação de uma nova versão do Financeiro.
 | Pages | projeto `skincos-staging`, branch `staging`, deployment `7b311683-cd93-42f4-b33f-bf5fc2956039` | Publicado, mas em commit anterior |
 | Proxy | `GET /api/finance/bootstrap` no Pages e no gateway retornou `401` com `Cache-Control: no-store` e `x-request-id` | Encaminhamento autenticado, sem fallback público |
 | Configuração de deploy | workflow copia `crm/console/.wrangler-staging/wrangler.toml`; este aponta ambos `FINANCE_API_TARGET` e `INSUMOS_API_TARGET` para `https://api-staging.skincos.com.br` | Isolamento configurado no artefato de staging |
+| Worker | workflow `29931079252` publicou `skincos-api-staging` e `skincos-insumos-staging`; o smoke de produção foi ignorado | Recursos de staging somente |
 
 ## Estado das migrations após a reconciliação
 
@@ -34,15 +35,27 @@ segredos preprovisionados e não exerce entrega de e-mail neste ciclo. A execuç
 anterior confirmou o risco pelo nome-base exibido pelo Wrangler; valores nunca
 foram lidos ou registrados e a correção evita qualquer nova escrita cruzada.
 
+## Autenticação e fronteiras verificadas
+
+Uma identidade de controle criada somente no D1 de staging, com módulo
+explícito `finance` e sem grant, passou pelo login normal do Worker de
+Inventário e foi aceita pelo gateway Financeiro. O mesmo teste pelo proxy
+Pages confirmou `200` em `/api/auth/login` e `/api/finance/bootstrap`, com
+`moduleEnabled=false`, zero grants e `canAccess=false`.
+
+No gateway, uma mutação sem `X-CSRF-Token` retornou `403`; com o token válido
+ela chegou ao domínio e retornou `423 FINANCE_DISABLED`. Depois de incrementar
+o `session_version` da identidade de controle, o cookie anterior retornou
+`401`. Isso comprova sessão, CSRF e invalidação de sessão sem introduzir uma
+credencial paralela. A identidade permanece desprovida de grants e será
+desativada ao fim da matriz autenticada.
+
 ## Condição para smokes autenticados da versão atual
 
-1. Integrar a branch Financeiro revisada no branch `staging`.
-2. Publicar o Worker de staging pelo workflow que usa o diário Financeiro já
-   validado e confirmar a versão exposta.
-3. Publicar Pages de staging pelo workflow que usa a configuração
-   isolada.
-4. Reconfirmar flag desligada e zero grants antes de criar identidades de teste
+1. Reconfirmar flag desligada e zero grants antes de criar identidades de teste
    temporárias.
+2. Executar a matriz autenticada de módulos, grants e escopos empresariais.
+3. Manter o contexto pessoal inativo em todos os cenários.
 
 ## Procedimento de migrations
 
