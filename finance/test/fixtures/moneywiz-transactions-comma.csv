@@ -1,0 +1,8 @@
+Date,Description,Amount,Account,Category,Payee,Tags,Memo,Status,Currency,Transfers,Transaction ID
+2026-07-01,Consulta estética,1250.50,Conta Principal,Receitas > Procedimentos,Paciente Ana,"clínica;recorrente",Recebimento confirmado,cleared,BRL,,mw-1001
+2026-07-02,Aluguel,-3500.00,Conta Principal,Despesas > Estrutura,Imobiliária São José,fixo,Competência julho,pending,BRL,,mw-1002
+2026-07-03,Reserva para cartão,-500.00,Conta Principal,,,,,cleared,BRL,Cartão Corporativo,mw-1003
+2026-07-03,Reserva para cartão,500.00,Cartão Corporativo,,,,,cleared,BRL,Conta Principal,mw-1004
+2026-07-04,Compra internacional,-12.34,Conta USD,Despesas > Software,Cloud Vendor,saas,USD original,cleared,USD,,mw-1005
+2026-07-05,Sem valor,,Conta Principal,,,,,cleared,BRL,,mw-1006
+2026-07-01,Consulta estética,1250.50,Conta Principal,Receitas > Procedimentos,Paciente Ana,"clínica;recorrente",Recebimento confirmado,cleared,BRL,,mw-1001

@@ -1,0 +1,11 @@
+{
+  "contractVersion": "ef-caixa/v1",
+  "source": { "system": "integration/ef", "executionId": "ef-run-20260731-nh", "artifactId": "caixa_recebimentos_completo_20260701_a_20260731.xlsx", "artifactSha256": "fixture-sha-256" },
+  "unit": { "slug": "novo-hamburgo", "name": "Novo Hamburgo" },
+  "period": { "from": "2026-07-01", "to": "2026-07-31" },
+  "records": [
+    { "occurredOn": "2026-07-03", "occurredAt": "10:30", "clientName": "Ana Silva", "status": "Confirmado", "grossAmountMinor": 120000, "clientCreditMinor": 0, "paidAmountMinor": 60000, "installmentCount": 2, "paymentMethod": "Crédito", "paymentMethodRaw": "Cartão de Crédito 2x", "currency": "BRL", "externalId": "ef-sale-1001" },
+    { "occurredOn": "2026-07-04", "occurredAt": "15:00", "clientName": "Bruno Lima", "status": "Cancelado", "grossAmountMinor": 30000, "clientCreditMinor": 0, "paidAmountMinor": 30000, "installmentCount": 1, "paymentMethod": "PIX", "currency": "BRL", "externalId": "ef-sale-cancelled" },
+    { "occurredOn": "2026-07-05", "clientName": "Carla Souza", "status": "Estornado", "grossAmountMinor": 50000, "clientCreditMinor": 0, "paidAmountMinor": 50000, "feeAmountMinor": 500, "installmentCount": 1, "paymentMethod": "Link de pagamento", "currency": "BRL", "externalId": "ef-sale-refund", "refundOfExternalId": "ef-sale-1000" }
+  ]
+}

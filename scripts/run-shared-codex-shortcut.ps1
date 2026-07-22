@@ -27,6 +27,7 @@ param(
         "CrmConsultorStop",
         "CrmSiteEf",
         "CrmMetaAds",
+        "CrmFinance",
         "CrmAtendimento",
         "CrmAtendimentoMirrorStatus",
         "CrmAtendimentoMirrorSync",
@@ -34,6 +35,7 @@ param(
         "CrmMemory",
         "CrmSiteSmoke",
         "CrmMetaAdsSmoke",
+        "CrmFinanceSmoke",
         "CrmAtendimentoSmoke",
         "PlatformLocalStart",
         "EfAppSetup",
@@ -428,6 +430,9 @@ function Invoke-ShortcutActionInternal {
                 (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
                 (Convert-ToBashLiteral -Value $crmGestorLogWsl))
         }
+        "CrmFinance" {
+            Invoke-ShortcutWsl -AcceptedExitCode @(0, 130, 143) -Command "npm run crm:local:finance"
+        }
         "CrmAtendimento" {
             Invoke-ShortcutWsl -Command ("CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-atendimento.sh" -f `
                 (Convert-ToBashLiteral -Value $atendimentoPidWsl), `
@@ -436,6 +441,7 @@ function Invoke-ShortcutActionInternal {
         "CrmAtendimentoMirrorStatus" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-status" }
         "CrmAtendimentoMirrorSync" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-mirror-sync -- --apply" }
         "CrmLocalStop" {
+            Invoke-ShortcutWsl -Command "npm run crm:local:finance:stop"
             $crmLocalSourceRoot = Resolve-CrmLocalSourceRoot -Persona Gestor
             Invoke-ShortcutWsl -WorkingProjectRoot $crmLocalSourceRoot -SkipBootstrapCheck -Command ("CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_PID_FILE={0} CRM_LOG_FILE={1} bash ./scripts/run-local-crm.sh --stop" -f `
                 (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
@@ -444,6 +450,7 @@ function Invoke-ShortcutActionInternal {
         "CrmMemory" { Invoke-ShortcutWsl -Command "bash ./scripts/codex-memory-crm.sh" }
         "CrmSiteSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:site-smoke" }
         "CrmMetaAdsSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:meta-ads-smoke" }
+        "CrmFinanceSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:finance-smoke" }
         "CrmAtendimentoSmoke" { Invoke-ShortcutWsl -Command "npm run codex:crm:atendimento-smoke" }
         "PlatformLocalStart" { Invoke-ShortcutWsl -Command "OPEN_BROWSER=0 bash ./backend/scripts/dev.sh watch" }
         "EfAppSetup" {
@@ -622,6 +629,7 @@ function Show-CrmMenu {
                 (New-MenuOption -Label "CRM – Consultor Stop" -Action "CrmConsultorStop"),
                 (New-MenuOption -Label "CRM Site EF" -Action "CrmSiteEf"),
                 (New-MenuOption -Label "CRM Meta Ads" -Action "CrmMetaAds"),
+                (New-MenuOption -Label "CRM Financeiro" -Action "CrmFinance"),
                 (New-MenuOption -Label "CRM Atendimento" -Action "CrmAtendimento"),
                 (New-MenuOption -Label "CRM Atendimento - Status do Clone" -Action "CrmAtendimentoMirrorStatus"),
                 (New-MenuOption -Label "CRM Atendimento - Atualizar Clone" -Action "CrmAtendimentoMirrorSync"),
@@ -629,6 +637,7 @@ function Show-CrmMenu {
                 (New-MenuOption -Label "CRM Memory" -Action "CrmMemory"),
                 (New-MenuOption -Label "CRM Site Smoke" -Action "CrmSiteSmoke"),
                 (New-MenuOption -Label "CRM Meta Ads Smoke" -Action "CrmMetaAdsSmoke"),
+                (New-MenuOption -Label "CRM Financeiro Smoke" -Action "CrmFinanceSmoke"),
                 (New-MenuOption -Label "CRM Atendimento Smoke" -Action "CrmAtendimentoSmoke")
             )
         if ($null -eq $selection) {

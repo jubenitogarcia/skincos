@@ -3,6 +3,7 @@ const json = (status, payload, requestId) =>
         status,
         headers: {
             'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
             'x-request-id': requestId,
         },
     });
@@ -31,7 +32,7 @@ function isInternalServiceRequest(request, env) {
  * selection, request tracing and the human/service access boundary; it must
  * not grow domain persistence or business rules.
  */
-export function createGatewayHandler({ inventoryHandler, timekeepingHandler }) {
+export function createGatewayHandler({ inventoryHandler, timekeepingHandler, financeHandler }) {
     if (typeof inventoryHandler !== 'function') throw new TypeError('inventoryHandler is required');
 
     return async function handleGatewayRequest(request, env, ctx) {
@@ -54,6 +55,14 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler }) {
 
         if (url.pathname === '/inventory' || url.pathname.startsWith('/inventory/')) {
             const response = await inventoryHandler(mountedRequest(request, '/inventory'), env, ctx);
+            const headers = new Headers(response.headers);
+            headers.set('x-request-id', requestId);
+            return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+        }
+
+        if (url.pathname === '/finance' || url.pathname.startsWith('/finance/')) {
+            if (typeof financeHandler !== 'function') return json(503, { ok: false, error: 'finance_handler_unavailable', requestId }, requestId);
+            const response = await financeHandler(mountedRequest(request, '/finance'), env, ctx);
             const headers = new Headers(response.headers);
             headers.set('x-request-id', requestId);
             return new Response(response.body, { status: response.status, statusText: response.statusText, headers });

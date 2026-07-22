@@ -6,10 +6,11 @@ on:
     paths:
       - "api/**"
       - "inventory/**"
-      - "backend/scripts/cloudflare-workers.sh"
+      - "finance/**"
+      - "shared/finance-contracts/**"
+      - "shared/crm-auth/**"
       - "backend/pnpm-lock.yaml"
       - "backend/pnpm-workspace.yaml"
-      - ".github/workflows/deploy-insumos-worker.yml"
   workflow_dispatch: {}
 
 jobs:
@@ -56,14 +57,36 @@ jobs:
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
 
-      - name: Install Worker dependencies
+      - name: Hold Finance changes from production until an explicit release
+        id: finance_production_gate
         if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          ALLOW_FINANCE_PRODUCTION: ${{ vars.ENABLE_FINANCE_PRODUCTION_DEPLOY }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          GITHUB_BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$BRANCH_NAME" != "main" || "${ALLOW_FINANCE_PRODUCTION:-}" == "true" ]]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$GITHUB_BEFORE_SHA" "$GITHUB_SHA" 2>/dev/null || true)"
+          if grep -Eq '^(finance/|shared/finance-contracts/|shared/crm-auth/|api/src/(gateway|router)\.js$)' <<< "$changed"; then
+            echo "Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true; Worker deploy held."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Worker dependencies
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         run: |
           npm --prefix api ci
           pnpm -C inventory install --frozen-lockfile
 
       - name: Sync password-recovery secrets (optional)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         working-directory: inventory
         env:
           AUTH_RESET_SMTP_HOST: ${{ secrets.AUTH_RESET_SMTP_HOST }}
@@ -91,7 +114,7 @@ jobs:
           put_secret AUTH_RESET_CODE_PEPPER "$AUTH_RESET_CODE_PEPPER"
 
       - name: Deploy changed Workers
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -109,7 +132,7 @@ jobs:
           fi
 
       - name: Smoke check API + Inventory Workers (production)
-        if: ${{ steps.guard.outputs.skip != 'true' && github.ref_name == 'main' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && github.ref_name == 'main' }}
         run: |
           set -euo pipefail
           python3 .github/scripts/workers_smoke.py \

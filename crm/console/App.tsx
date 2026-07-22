@@ -230,7 +230,6 @@ async function insumosApiJson<T>(
 const LeadsManager = lazy(() => import('@/LeadsManager').then(m => ({ default: m.LeadsManager })))
 const NotificationCenter = lazy(() => import('@/NotificationCenter').then(m => ({ default: m.NotificationCenter })))
 const ReportsDashboard = lazy(() => import('@/ReportsDashboard').then(m => ({ default: m.ReportsDashboard })))
-const AccountingModule = lazy(() => import('@/AccountingModule').then(m => ({ default: m.AccountingModule })))
 const ConversaModule = lazy(() => import('@/ConversaModule').then(m => ({ default: m.ConversaModule })))
 const AtendimentoModule = lazy(() => import('@/AtendimentoModule').then(m => ({ default: m.AtendimentoModule })))
 const CaixaModule = lazy(() => import('@/CaixaModule').then(m => ({ default: m.CaixaModule })))
@@ -264,7 +263,7 @@ const AssetManagement = lazy(() => import('@/AssetManagement').then(m => ({ defa
 const ManufacturingModule = lazy(() => import('@/ManufacturingModule').then(m => ({ default: m.ManufacturingModule })))
 const HRModule = lazy(() => import('@/HRModule').then(m => ({ default: m.HRModule })))
 const ProcurementModule = lazy(() => import('@/ProcurementModule').then(m => ({ default: m.ProcurementModule })))
-const Financeiro = lazy(() => import('@/AccountingModule').then(m => ({ default: m.AccountingModule })))
+const Financeiro = lazy(() => import('@/FinanceModule').then(m => ({ default: m.FinanceModule })))
 const ProductCatalog = lazy(() => import('@/ProductCatalog').then(m => ({ default: m.ProductCatalog })))
 const PipelineManager = lazy(() => import('@/PipelineManager').then(m => ({ default: m.PipelineManager })))
 const LeadScoringSystem = lazy(() => import('@/LeadScoringSystem').then(m => ({ default: m.LeadScoringSystem })))
@@ -359,7 +358,7 @@ const modules: { key: string; label: string; icon: React.ReactNode; component: R
     { key: 'hr', label: 'RH', icon: '👥', component: <HRModule /> },
     { key: 'ponto', label: 'Ponto', icon: '⏱️', component: <PontoModule /> },
     { key: 'procurement', label: 'Compras', icon: '🛒', component: <ProcurementModule /> },
-    { key: 'accounting', label: 'Financeiro', icon: <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />, component: <Financeiro /> },
+    { key: 'finance', label: 'Financeiro', icon: <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />, component: <Financeiro /> },
     { key: 'products', label: 'Produtos', icon: '📂', component: <ProductCatalog /> },
     { key: 'pipelines', label: 'Pipelines', icon: '🔀', component: <PipelineManager /> },
     { key: 'lead-scoring', label: 'Lead Scoring', icon: '⭐', component: <LeadScoringSystem /> },
@@ -377,12 +376,16 @@ export default function AppFunctionalNeatlab() {
 
     const allowedModulesKey = Array.isArray(user?.allowedModules) ? user.allowedModules.join('|') : ''
     const roleKey = String(user?.role || '').trim().toUpperCase()
+    const [financeEnabled, setFinanceEnabled] = React.useState(false)
     const pontoCanAdmin = canManagePonto(roleKey)
     const hasModuleAccess = React.useCallback(
         (moduleKey: string) => {
-            return hasCrmModuleAccess(roleKey, user?.allowedModules, moduleKey)
+            const key = String(moduleKey || '').trim()
+            if (!key) return false
+            if (key === 'finance') return financeEnabled && Array.isArray(user?.allowedModules) && user.allowedModules.map(String).includes('finance')
+            return hasCrmModuleAccess(roleKey, user?.allowedModules, key)
         },
-        [allowedModulesKey, roleKey]
+        [allowedModulesKey, financeEnabled, roleKey, user?.allowedModules]
     )
 
 	    const [profileOpen, setProfileOpen] = useState(false)
@@ -440,10 +443,17 @@ export default function AppFunctionalNeatlab() {
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
 		    const UNLOCKED_MODULE_KEYS = useMemo(
-		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'conversa', 'atendimento', 'caixa', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais', 'ponto']),
+		        () => new Set([DEFAULT_MODULE_KEY, 'insumos', 'conversa', 'atendimento', 'caixa', 'faturamento', 'procedimentos', 'unit-monitor', 'instagram-studio', 'meta-pages-review', 'meta-ads', 'site-tracking', 'escala-profissionais', 'ponto', 'finance']),
 		        [DEFAULT_MODULE_KEY]
 		    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
+	    React.useEffect(() => {
+	        if (!Array.isArray(user?.allowedModules) || !user.allowedModules.map(String).includes('finance')) { setFinanceEnabled(false); return }
+	        fetch(`${String(import.meta.env.VITE_FINANCE_API_ORIGIN || '/api').replace(/\/$/, '')}/finance/bootstrap`, { credentials: 'include' })
+	            .then((res) => res.ok ? res.json() : null)
+	            .then((payload) => setFinanceEnabled(Boolean(payload?.moduleEnabled && payload?.canAccess)))
+	            .catch(() => setFinanceEnabled(false))
+	    }, [allowedModulesKey, user?.allowedModules])
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
 	            return window.matchMedia('(hover: hover) and (pointer: fine)').matches

@@ -7,6 +7,7 @@
         "/api/tracking/*",
         "/api/meta-ads/*",
         "/api/insumos/*",
+        "/api/finance/*",
         "/api/atendimento/*",
         "/api/placeholder/*",
         "/api/share/*",
