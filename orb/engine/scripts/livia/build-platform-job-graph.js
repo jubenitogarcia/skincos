@@ -826,6 +826,74 @@ function groupResumeContextKey(groupKey) {
   return crypto.createHash('sha256').update(`${currentGroupKey}\n__group__`).digest('hex');
 }
 
+// publishRunIndex is deliberately ephemeral: a new safety check may be inserted
+// between releases without changing which provider operation has already been
+// accepted. Resume only when the durable operation identity still matches.
+function semanticJobKey(job, includeCheckKind = true) {
+  const current = asObject(job);
+  const media = asObject(current.media);
+  const groupKey = String(current.groupKey || '').trim();
+  const unit = normalizeUnit(current.unit);
+  const platform = String(current.platform || '').trim().toLowerCase();
+  const phase = String(current.phase || '').trim().toLowerCase();
+  const step = String(current.step || '').trim().toLowerCase();
+  const checkKind = String(current.checkKind || '').trim().toLowerCase();
+  const mediaId = String(media.id || current.mediaId || '__group__').trim() || '__group__';
+  return [groupKey, unit, platform, phase, step, includeCheckKind ? checkKind : '', mediaId].join('\n');
+}
+
+function remapResumeCompleted(jobs, completed) {
+  const currentJobsByKey = new Map();
+  const currentJobsByLegacyKey = new Map();
+  for (const job of jobs) {
+    const key = semanticJobKey(job);
+    if (!key || currentJobsByKey.has(key)) continue;
+    const current = asObject(job);
+    currentJobsByKey.set(key, current);
+    const legacyKey = semanticJobKey(current, false);
+    const existing = currentJobsByLegacyKey.get(legacyKey);
+    // Historical records predate checkKind. Only use that compatibility path
+    // when phase/step/media still identify one and only one current operation.
+    currentJobsByLegacyKey.set(legacyKey, existing === undefined ? current : null);
+  }
+
+  const durableByKey = new Map();
+  for (const row of completed) {
+    const current = asObject(row);
+    let key = semanticJobKey(current);
+    let currentJob = currentJobsByKey.get(key);
+    if (!currentJob && !String(current.checkKind || '').trim()) {
+      const legacyKey = semanticJobKey(current, false);
+      currentJob = currentJobsByLegacyKey.get(legacyKey);
+      key = currentJob ? semanticJobKey(currentJob) : '';
+    }
+    if (!key || !currentJob) continue;
+    const previous = durableByKey.get(key);
+    if (!previous || String(current.recordedAt || '') >= String(previous.recordedAt || '')) {
+      durableByKey.set(key, current);
+    }
+  }
+
+  return [...durableByKey.entries()]
+    .map(([key, row]) => {
+      const currentJob = currentJobsByKey.get(key);
+      return removeNulls({
+        ...row,
+        groupKey: currentJob.groupKey,
+        unit: currentJob.unit,
+        platform: currentJob.platform,
+        phase: currentJob.phase,
+        step: currentJob.step,
+        checkKind: currentJob.checkKind,
+        media: Object.keys(asObject(currentJob.media)).length ? currentJob.media : row.media,
+        publishRunIndex: currentJob.publishRunIndex,
+        resumedFromPublishRunIndex: row.publishRunIndex,
+        resumeSemanticKey: key,
+      });
+    })
+    .sort((left, right) => Number(left.publishRunIndex) - Number(right.publishRunIndex));
+}
+
 function isInstagramCarouselJob(job) {
   const current = asObject(job);
   const media = asObject(current.media);
@@ -901,8 +969,9 @@ function loadResumeCompleted(jobs) {
       completed.push(...rows);
     }
   }
+  const remapped = remapResumeCompleted(jobs, completed);
   const byRun = new Map();
-  for (const row of completed) byRun.set(Number(row.publishRunIndex), row);
+  for (const row of remapped) byRun.set(Number(row.publishRunIndex), row);
   return invalidateIncompleteCarouselResume(
     jobs,
     [...byRun.values()].sort((left, right) => Number(left.publishRunIndex) - Number(right.publishRunIndex)),

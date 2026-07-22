@@ -836,8 +836,16 @@ function assertPlatformPhaseIntegrity(results) {
       throw new Error(`Compose (2): publish ausente para platform=${platform}, groupKey=${groupKey}, unit=${unit}; fases geradas=${phases.join(",")}`);
     }
 
-    if (checks.length !== publishes.length) {
+    const isFacebookReels = platform === "facebook" && publishes.some(j => j.facebookPublishMode === "reels");
+    const prePublishChecks = checks.filter(j => j.checkKind !== "fb_reels_published");
+    const postPublishChecks = checks.filter(j => j.checkKind === "fb_reels_published");
+
+    if (!isFacebookReels && checks.length !== publishes.length) {
       throw new Error(`Compose (2): quantidade inconsistente de checkStatus/publish para platform=${platform}, groupKey=${groupKey}, unit=${unit}; checks=${checks.length}; publishes=${publishes.length}`);
+    }
+
+    if (isFacebookReels && (prePublishChecks.length !== publishes.length || postPublishChecks.length !== publishes.length)) {
+      throw new Error(`Compose (2): Facebook Reels exige checkStatus antes e depois da publicação para platform=${platform}, groupKey=${groupKey}, unit=${unit}`);
     }
 
     for (const chk of checks) {
@@ -1391,7 +1399,7 @@ for (const group of groups) {
         } else if (isFb && firstIsVideo) {
           statusFromPublishRunIndex = uploadRunIndexes[0] ?? null;
           checkFields = "status";
-          checkKind = "fb_reels_video";
+          checkKind = "fb_reels_upload_ready";
         } else if (isFb) {
           statusFromPublishRunIndex = lastUploadRun;
           checkFields = "id";
@@ -1525,6 +1533,44 @@ for (const group of groups) {
         };
 
         results.push({ json: removeNulls(out) });
+
+        // Meta aceita o comando de finalização antes que o Reel esteja público.
+        // O segundo polling é obrigatório: impede que HTTP 200 seja tratado como
+        // publicação concluída e preserva o mesmo video_id para uma recuperação
+        // idempotente quando o provedor termina assíncronamente em erro.
+        if (isFb && firstIsVideo) {
+          const postPublishStatusRunIndex = publishRunIndex++;
+          results.push({
+            json: removeNulls({
+              groupKey: group.groupKey,
+              groupOrder: group.groupOrder,
+              unit: unitKey,
+              platform,
+              phase: "checkStatus",
+              step: "reels_publish_status",
+              index: 1,
+              method: "GET",
+              url: "CHECK_STATUS_URL_FROM_ID",
+              params: { access_token: token },
+              jsonRequest: {},
+              requestSkipBody: true,
+              requestBinary: false,
+              requestHeaders: {},
+              checkKind: "fb_reels_published",
+              checkFields: "status",
+              statusFromPublishRunIndex: uploadRunIndexes[0] ?? null,
+              postPublishFromRunIndex: myRun,
+              reelsStartFromPublishRunIndex: uploadRunIndexes[0] ?? null,
+              attempt: 0,
+              maxAttempts: 20,
+              waitSeconds: 20,
+              recoveryAttempt: 0,
+              maxRecoveryAttempts: 1,
+              publishRunIndex: postPublishStatusRunIndex,
+              warnings,
+            })
+          });
+        }
       }
     }
   }

@@ -387,6 +387,15 @@ function validateContracts() {
   assert(processHttp.includes('id: simulatedRemoteId'), 'Codex dry-run response body must include a synthetic Graph-compatible ID');
   assert(processHttp.includes('compactResumeRecord'), 'Process HTTP Publish Result must emit a sanitized durable progress record');
   assert(processHttp.includes('facebook_static_photo_already_posted_recovery'), 'Process HTTP Publish Result must recover an already-published Facebook static photo without duplicating it');
+  assert(processHttp.includes('fb_reels_published'), 'Process HTTP Publish Result must distinguish Facebook Reel publication confirmation from upload readiness');
+  assert(processHttp.includes('scheduleFacebookReelsFinishRetry'), 'Process HTTP Publish Result must perform one bounded idempotent Facebook Reel finish retry after a terminal provider status');
+  assert(bqValidateJobGraph.includes('postPublishFromRunIndex'), 'BQ - Validate Job Graph must require the Facebook Reel post-publication status dependency');
+  for (const required of ['fb_reels_upload_ready', 'fb_reels_published', 'postPublishFromRunIndex', 'recoveryAttempt']) {
+    assert(buildGraphSource.includes(required), `build-platform-job-graph source must require Facebook Reel post-publication confirmation (${required})`);
+  }
+  for (const required of ['semanticJobKey', 'remapResumeCompleted', 'resumedFromPublishRunIndex']) {
+    assert(buildGraphSource.includes(required), `build-platform-job-graph source must reconcile durable resume by semantic identity (${required})`);
+  }
   assert(codeOf('BQ - Seed Publish State').includes('resumeRecords'), 'BQ - Seed Publish State must restore durable completed jobs before retrying');
   assert(codeOf('BQ - Validate Job Graph').includes('resumeCompleted: asArray(payload.resumeCompleted)'), 'BQ - Validate Job Graph must preserve durable completed jobs');
   assert(commandOf('Record Publish Progress').includes('publish-progress-ledger.js'), 'Record Publish Progress must call the private runtime ledger script');

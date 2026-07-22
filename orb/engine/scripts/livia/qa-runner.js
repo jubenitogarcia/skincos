@@ -533,6 +533,14 @@ function validateWorkflow() {
   if (!String(nodeByName.get('Process HTTP Publish Result')?.parameters?.jsCode || '').includes('facebook_static_photo_already_posted_recovery')) {
     errors.push('Process HTTP Publish Result must recover already-published Facebook static photos without duplication.');
   }
+  for (const required of ['fb_reels_published', 'scheduleFacebookReelsFinishRetry']) {
+    if (!String(nodeByName.get('Process HTTP Publish Result')?.parameters?.jsCode || '').includes(required)) {
+      errors.push(`Process HTTP Publish Result must enforce Facebook Reel post-publication confirmation (${required}).`);
+    }
+  }
+  if (!String(nodeByName.get('BQ - Validate Job Graph')?.parameters?.jsCode || '').includes('postPublishFromRunIndex')) {
+    errors.push('BQ - Validate Job Graph must validate the Facebook Reel post-publication status dependency.');
+  }
   const progressScript = fs.existsSync(PUBLISH_PROGRESS_LEDGER_SCRIPT)
     ? fs.readFileSync(PUBLISH_PROGRESS_LEDGER_SCRIPT, 'utf8')
     : '';
