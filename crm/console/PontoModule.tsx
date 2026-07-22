@@ -806,7 +806,7 @@ export function PontoModule() {
     setMeLoading(true)
     try {
       const unit = ensureEmployeeUnitSelected()
-      if (allowedUnits.length && !unit) {
+      if (!unit) {
         setMeLoading(false)
         return
       }
@@ -848,7 +848,7 @@ export function PontoModule() {
     const pin = mePin.trim()
     if (!pin) return toast.error('Informe o PIN')
     const unit = ensureEmployeeUnitSelected()
-    if (allowedUnits.length && !unit) return
+    if (!unit) return
     setLoading(true)
     try {
       const presence = await apiJson<{ ok: boolean; data: { presenceMode: string; locationRequired: boolean; geofenceConfigured: boolean } }>(`/api/ponto/me/presence?unit=${encodeURIComponent(unit)}`, { headers: getDevEmployeeActorHeaders(devActorEmail) })

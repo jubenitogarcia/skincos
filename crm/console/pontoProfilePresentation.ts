@@ -23,7 +23,7 @@ export function profileFieldLabel(field: string): string {
 export function profileMissingSummary(profile: Pick<PontoProfile, 'documents'>, missing: string[]): string {
   const missingLabels = missing.map(profileFieldLabel)
   const pendingDocuments = Object.values(profile.documents).filter((status) => status === 'PENDENTE').length
-  const parts = []
+  const parts: string[] = []
   if (missingLabels.length) parts.push(missingLabels.join(', '))
   if (pendingDocuments) parts.push(`${pendingDocuments} documento(s) pendente(s)`)
   return parts.length ? `Cadastros pendentes: ${parts.join(' • ')}.` : 'Perfil cadastrado e pronto para uso.'
