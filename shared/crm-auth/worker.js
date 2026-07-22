@@ -24,6 +24,12 @@ function safeEqual(left, right) {
   return result === 0;
 }
 
+export function isCurrentSessionVersion(session, user) {
+  const sessionVersion = Number(session?.sv);
+  const userVersion = Number(user?.sessionVersion || 0);
+  return Number.isSafeInteger(sessionVersion) && Number.isSafeInteger(userVersion) && sessionVersion === userVersion;
+}
+
 export async function resolveCrmActor(request, env) {
   const secret = String(env?.SESSION_SECRET || '').trim();
   const token = cookies(request.headers.get('cookie') || '').session;
@@ -34,7 +40,7 @@ export async function resolveCrmActor(request, env) {
     const session = JSON.parse(new TextDecoder().decode(decodeBytes(payload)));
     if (!session?.username || (Number(session.exp) && Date.now() > Number(session.exp))) return { actor: null, csrf: null };
     const user = await d1GetUserByUsername(env, String(session.username));
-    if (!user?.ativo) return { actor: null, csrf: null };
+    if (!user?.ativo || !isCurrentSessionVersion(session, user)) return { actor: null, csrf: null };
     return { actor: { ...user, role: String(user.role || 'CONSULTOR').toUpperCase() }, csrf: String(session.csrf || '') };
   } catch { return { actor: null, csrf: null }; }
 }
