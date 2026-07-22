@@ -4,7 +4,7 @@ import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
+const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql', '0008_finance_draft_revision.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';
@@ -200,6 +200,31 @@ test('D1 local: splits, base currency, installments and operational lifecycle re
   await assert.rejects(ctx.DB.exec(`UPDATE finance_movement_revisions SET kind='tampered'`), /append-only/);
 });
 
+test('D1 local: only a pending draft can be revised atomically with an optimistic revision and audit trail', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco revisável', 'draft-revision-bank');
+  const originalCategory = await category(ctx.env, ctx.actor, scopeNh, 'Receita original', 'income', 'draft-revision-original');
+  const revisedCategory = await category(ctx.env, ctx.actor, scopeNh, 'Receita revisada', 'income', 'draft-revision-revised');
+  const created = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'draft-revision-create', body: { type: 'income', operationalStatus: 'pending', accountId: bank.id, categoryId: originalCategory.id, description: 'Rascunho original', amountMinor: 1_000, currency: 'BRL', competenceDate: '2026-07-21', installments: [{ dueDate: '2026-08-01', amountMinor: 1_000 }] } });
+  assert.equal(created.response.status, 201, JSON.stringify(created.body));
+  const movementId = created.body.movement.id;
+  const revisedPayload = { expectedRevision: 1, type: 'income', accountId: bank.id, categoryId: revisedCategory.id, description: 'Rascunho revisado', amountMinor: 2_500, currency: 'BRL', competenceDate: '2026-07-22', dueDate: '2026-08-02', installments: [{ dueDate: '2026-08-02', amountMinor: 2_500 }] };
+  const revised = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`, { method: 'PUT', key: 'draft-revision-save', body: revisedPayload });
+  assert.equal(revised.response.status, 201, JSON.stringify(revised.body)); assert.equal(revised.body.revision, 2);
+  const replay = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`, { method: 'PUT', key: 'draft-revision-save', body: revisedPayload });
+  assert.equal(replay.response.status, 201); assert.equal(replay.body.replayed, true);
+  const detail = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`);
+  assert.equal(detail.body.movement.description, 'Rascunho revisado'); assert.equal(detail.body.movement.amount_minor, 2_500); assert.equal(detail.body.movement.revision, 2); assert.equal(detail.body.splits[0].category_id, revisedCategory.id); assert.equal(detail.body.installments[0].amount_minor, 2_500);
+  const stale = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`, { method: 'PUT', key: 'draft-revision-stale', body: revisedPayload });
+  assert.equal(stale.response.status, 409); assert.equal(stale.body.error, 'DRAFT_REVISION_CONFLICT');
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${movementId}&entityType=movement`);
+  assert.equal(audit.body.events.some((event) => event.action === 'MOVEMENT_DRAFT_REVISED'), true);
+  const confirmed = await request(ctx.env, ctx.actor, `/movements/${movementId}/confirm?scopeId=${scopeNh}`, { method: 'POST', key: 'draft-revision-confirm', body: {} }); assert.equal(confirmed.response.status, 201);
+  const prohibited = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`, { method: 'PUT', key: 'draft-revision-posted', body: { ...revisedPayload, expectedRevision: 2 } });
+  assert.equal(prohibited.response.status, 400);
+  await assert.rejects(ctx.DB.prepare(`UPDATE finance_movements SET description='alteração indevida' WHERE id=?`).bind(movementId).run(), /immutable/);
+});
+
 test('D1 local: scope and monetary safeguards reject cross-scope, unbalanced and reused cross-scope operations', async (t) => {
   const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
   const nhAccount = await account(ctx.env, ctx.actor, scopeNh, 'NH Banco', 'nh-account'); const bssAccount = await account(ctx.env, ctx.actor, scopeBss, 'BSS Banco', 'bss-account');
@@ -249,13 +274,17 @@ test('D1 local: movement search and audit details remain scoped and paginated', 
   const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
   const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco', 'search-bank');
   const categoryRow = await category(ctx.env, ctx.actor, scopeNh, 'Procedimentos', 'income', 'search-category');
+  const costCenter = await request(ctx.env, ctx.actor, `/cost-centers?scopeId=${scopeNh}`, { method: 'POST', key: 'search-center', body: { name: 'Unidade clínica' } });
   const payee = await request(ctx.env, ctx.actor, `/payees?scopeId=${scopeNh}`, { method: 'POST', key: 'search-payee', body: { name: 'Paciente Ana' } });
-  const created = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'search-movement', body: { type: 'income', accountId: bank.id, categoryId: categoryRow.id, payeeId: payee.body.payee.id, description: 'Procedimento facial', amountMinor: 12000, currency: 'BRL', competenceDate: '2026-07-21' } });
+  const created = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'search-movement', body: { type: 'income', accountId: bank.id, categoryId: categoryRow.id, costCenterId: costCenter.body.costCenter.id, payeeId: payee.body.payee.id, description: 'Procedimento facial', amountMinor: 12000, currency: 'BRL', competenceDate: '2026-07-21' } });
   assert.equal(created.response.status, 201, JSON.stringify(created.body));
   const byDescription = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&q=facial&limit=1`);
   assert.equal(byDescription.response.status, 200); assert.equal(byDescription.body.total, 1); assert.equal(byDescription.body.movements[0].id, created.body.movement.id);
   const byPayee = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&q=ana`);
   assert.equal(byPayee.body.movements.length, 1); assert.equal(byPayee.body.movements[0].payee_name, 'Paciente Ana');
+  const byCategory = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&categoryId=${categoryRow.id}`);
+  const byCostCenter = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&costCenterId=${costCenter.body.costCenter.id}`);
+  assert.equal(byCategory.body.movements[0].id, created.body.movement.id); assert.equal(byCostCenter.body.movements[0].id, created.body.movement.id);
   const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${created.body.movement.id}&entityType=movement`);
   assert.equal(audit.response.status, 200); assert.equal(audit.body.total, 1); assert.equal(audit.body.events[0].action, 'MOVEMENT_CREATED');
   const denied = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeBss}&entityId=${created.body.movement.id}`);

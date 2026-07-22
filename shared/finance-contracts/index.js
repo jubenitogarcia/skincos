@@ -11,6 +11,9 @@ export const FINANCE_MOVEMENT_TYPES = Object.freeze(['income', 'expense', 'trans
 // intentionally simpler state exposed by the operational UI.
 export const FINANCE_MOVEMENT_STATUSES = Object.freeze(['draft', 'posted', 'cancelled']);
 export const FINANCE_OPERATIONAL_STATUSES = Object.freeze(['pending', 'confirmed', 'reconciled', 'cancelled']);
+// A pending draft is the only mutable operational record.  The client sends
+// its last observed revision so the API can reject a stale save atomically.
+export const FINANCE_DRAFT_REVISION_CONTRACT = Object.freeze({ method: 'PUT', path: '/movements/:id', requiredField: 'expectedRevision' });
 
 export function asTrimmedString(value, field, { required = true, max = 240 } = {}) {
   const normalized = String(value ?? '').trim();

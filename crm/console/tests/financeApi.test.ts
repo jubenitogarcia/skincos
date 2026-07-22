@@ -35,6 +35,17 @@ describe('Finance transport helpers', () => {
     await expect(financeApi.create('/accounts', 'finance-scope-novo-hamburgo', { name: 'Banco', type: 'bank', currency: 'BRL' }, 'same-key')).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT', status: 409 })
   })
 
+  it('sends a draft revision with the observed revision and an idempotency key', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true, revision: 2 }), { status: 201, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await financeApi.reviseDraft('scope-nh', 'movement-1', { expectedRevision: 1, type: 'income', accountId: 'account-1', categoryId: 'category-1', description: 'Rascunho revisado', amountMinor: 1500, currency: 'BRL', competenceDate: '2026-07-22' }, 'draft-revision-key')
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(String(url)).toBe('/api/finance/movements/movement-1?scopeId=scope-nh')
+    expect(init.method).toBe('PUT')
+    expect(new Headers(init.headers).get('idempotency-key')).toBe('draft-revision-key')
+    expect(JSON.parse(String(init.body))).toMatchObject({ expectedRevision: 1, description: 'Rascunho revisado' })
+  })
+
   it('sends staged CSV decisions, idempotent commit and audited undo to server routes', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
