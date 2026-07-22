@@ -66,6 +66,7 @@ export type AtendimentoAttendance = AtendimentoForm & {
 export type AtendimentoReferences = {
   units: Array<{ slug: string; name: string }>
   professionals: Array<{ id: string; canonicalId?: string; name: string; role?: string; status?: string; units?: string[]; shift?: string; roles?: string[]; turnos?: string[]; backgroundColor?: string; fontColor?: string; fontFamily?: string; fontSize?: number | null; fontWeight?: string; fontStyle?: string; alias?: string; phone?: string; email?: string; instagram?: string }>
+  actorConsultantByUnit?: Record<string, { canonicalId: string | null; name: string | null; origin: 'actor' | 'unresolved'; reason?: string }>
   procedures: Array<{ id: string; name: string; codes: string[] }>
 }
 
@@ -365,28 +366,6 @@ export type AtendimentoManagementConversionReport = {
         configHash?: string
         calendarHash?: string
       }
-      history?: Array<{
-        id?: string | null
-        unitSlug: string
-        unitName: string
-        periodStart: string
-        periodEnd: string
-        reportDate?: string
-        weekOfMonth?: number | null
-        selectedMultiplier: number | null
-        previousIntervalMultiplier?: number | null
-        selectionReason?: string | null
-        optimalPlateau?: AtendimentoDoctorConversionPlateau | null
-        homogeneityScore: number
-        homogeneityLoss: number
-        statusCode: string
-        optimizationStatusCode: string
-        counts: { N0?: number; N1?: number; N2?: number; N3?: number }
-        proportions: { p0?: number; p1?: number; p2?: number; p3?: number }
-        configHash: string
-        calendarHash: string
-        computedAt?: string | null
-      }>
       doctors: Array<{ name: string; unitName?: string; unitSlug?: string; weekValue: number; totalValue: number; score: number; position?: string; rank: number; classification?: string; level?: number; modifiedZ?: number; distanceToCutOff?: number; distanceToLowerLimit?: number; distanceToUpperLimit?: number }>
     }>
     topDoctors: Array<{ name: string; unitName: string; unitSlug: string; weekValue: number; totalValue: number; score: number; position?: string; rank: number; classification?: string; level?: number }>
@@ -537,9 +516,28 @@ export type AtendimentoDoctorConversionPlateau = {
   isOptimal: boolean
 }
 
-export type AtendimentoDoctorConversionHistoryItem = NonNullable<
-  NonNullable<AtendimentoManagementConversionReport['doctorRanking']>['sections'][number]['history']
->[number]
+export type AtendimentoDoctorConversionHistoryItem = {
+  id?: string | null
+  unitSlug: string
+  unitName: string
+  periodStart: string
+  periodEnd: string
+  reportDate?: string
+  weekOfMonth?: number | null
+  selectedMultiplier: number | null
+  previousIntervalMultiplier?: number | null
+  selectionReason?: string | null
+  optimalPlateau?: AtendimentoDoctorConversionPlateau | null
+  homogeneityScore: number
+  homogeneityLoss: number
+  statusCode: string
+  optimizationStatusCode: string
+  counts: { N0?: number; N1?: number; N2?: number; N3?: number }
+  proportions: { p0?: number; p1?: number; p2?: number; p3?: number }
+  configHash: string
+  calendarHash: string
+  computedAt?: string | null
+}
 
 export async function fetchAtendimentoLocalMirrorStatus() {
   return api<AtendimentoLocalMirrorStatus>('/local-mirror/status')
@@ -557,7 +555,15 @@ export async function fetchAtendimentoAttendances(filters: AtendimentoFilters, p
 
 export async function fetchAtendimentoDoctorSuggestion(unit: string, date: string) {
   const params = new URLSearchParams({ unit, date })
-  return api<{ unitSlug: string; unitName: string; date: string; doctorName: string }>(`/doctor-suggestion?${params.toString()}`)
+  return api<{
+    unitSlug: string
+    unitName: string
+    date: string
+    doctorId?: string | null
+    doctorName: string
+    assignmentOrigin?: 'schedule' | 'manager' | 'preserved' | 'unresolved'
+    reason?: string | null
+  }>(`/doctor-suggestion?${params.toString()}`)
 }
 
 export async function fetchAtendimentoReportPreview(filters: { unit?: string; date?: string; from?: string; to?: string }) {

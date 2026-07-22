@@ -1,5 +1,6 @@
 import { isLocalDevAuthBypassEnabled, requireCrmUser } from '../../_lib/crmAuth'
 import { sanitizeEnvSecret } from '../../_lib/envPlaceholders'
+import { effectiveAllowedModules, normalizeCrmRole } from '../../../authPolicy'
 
 type JsonBody = Record<string, unknown>
 
@@ -47,10 +48,7 @@ function newRequestId(): string {
 }
 
 function normalizeRole(value: unknown): string {
-  const raw = String(value || '').trim().toUpperCase()
-  if (raw === 'ADMIN') return 'GESTOR'
-  if (raw === 'OPERADOR') return 'INJETOR'
-  return raw
+  return normalizeCrmRole(value)
 }
 
 function b64UrlEncodeBytes(bytes: ArrayBuffer): string {
@@ -114,14 +112,15 @@ function toAtendimentoActor(user: CrmUserLike): AtendimentoActorHeader {
     name: user.displayName ? String(user.displayName) : undefined,
     role: normalizeRole(user.role),
     allowedUnits: stringArray(user.allowedUnits),
-    allowedModules: stringArray(user.allowedModules),
+    allowedModules: effectiveAllowedModules(user.role, user.allowedModules),
   }
 }
 
 function hasModuleAccess(user: CrmUserLike): boolean {
   const role = normalizeRole(user?.role)
+  if (role === 'CONSULTOR') return true
   if (role === 'GESTOR' || role === 'GERENTE') return true
-  const allowed = stringArray(user?.allowedModules) || []
+  const allowed = effectiveAllowedModules(user?.role, user?.allowedModules)
   if (!allowed.length) return true
   return allowed.includes('atendimento')
 }

@@ -7,6 +7,7 @@ import { fetchInstagramAccountMetrics } from '@/instagramIntegration'
 import { useWebSocket } from '@/useWebSocket'
 import { useKV } from '@/spark-mock'
 import { csrfHeader } from '@/csrf'
+import { effectiveAllowedModules, normalizeCrmRole } from '@/authPolicy'
 
 const LOCAL_CRM_FOCUS_MODULE = (import.meta as any).env?.VITE_LOCAL_CRM_FOCUS_MODULE || ''
 const SKIP_INSTAGRAM_PREFLIGHT = LOCAL_CRM_FOCUS_MODULE === 'meta-ads'
@@ -106,9 +107,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: displayName,
       displayName,
       email,
-      role: insumosUser.role ? String(insumosUser.role) : undefined,
+      role: insumosUser.role ? normalizeCrmRole(insumosUser.role) : undefined,
       allowedUnits: Array.isArray(insumosUser.allowedUnits) ? insumosUser.allowedUnits : undefined,
-      allowedModules: Array.isArray(insumosUser.allowedModules) ? insumosUser.allowedModules : undefined,
+      allowedModules: effectiveAllowedModules(insumosUser.role, insumosUser.allowedModules),
       createdAt: String(insumosUser.createdAt || new Date().toISOString()),
       avatarUrl: insumosUser.photoUrl ? String(insumosUser.photoUrl) : undefined,
     }

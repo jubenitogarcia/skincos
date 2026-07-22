@@ -58,6 +58,9 @@ test('enforces unit scope for mutations and includes revision, formula and idemp
 })
 
 test('scopes atendimento router access by consuming module', () => {
+    const legacyConsultant = { role: 'CONSULTOR', allowedModules: [] }
+    assert.equal(canAccessAtendimento(legacyConsultant, '/attendances', 'POST'), true)
+    assert.equal(canAccessAtendimento({ role: 'ADMIN', allowedModules: [] }, '/attendances', 'POST'), true)
     const procedimentosActor = { role: 'INJETOR', allowedModules: ['procedimentos'] }
     assert.equal(canAccessAtendimento(procedimentosActor, '/management/catalog', 'GET'), true)
     assert.equal(canAccessAtendimento(procedimentosActor, '/references', 'GET'), true)
@@ -69,6 +72,62 @@ test('scopes atendimento router access by consuming module', () => {
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/commercial', 'GET'), true)
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/finance', 'GET'), true)
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/catalog', 'GET'), false)
+})
+
+test('rejects a direct non-manager attempt to replace the persisted consultant before any write', async () => {
+    const queries = []
+    const fakePool = createFakePool([
+        (sql) => {
+            queries.push(sql)
+            if (!sql.includes('from crm_atendimento.attendances a') || !sql.includes('where a.id = $1')) return null
+            return {
+                rows: [{
+                    id: 'attendance-1', unit_slug: 'novo-hamburgo', unit_name: 'Novo Hamburgo',
+                    service_date: '2026-07-10', client_name: 'Cliente', procedure_name: 'Botox', code: '#0799',
+                    quantity: 1, discount: false, other_value: 0, round_value: false, value: 799, revision: 1,
+                    injector_canonical_id: 'injector-1', injector_name: 'Dra. A',
+                    consultant_canonical_id: 'consultant-1', consultant_name: 'Vitória Silva',
+                }], rowCount: 1,
+            }
+        },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+
+    await assert.rejects(
+        () => store.updateAttendance('attendance-1', { revision: 1, consultantId: 'consultant-2' }, {
+            id: 'injector-user', role: 'INJETOR', allowedUnits: ['novo-hamburgo'],
+        }),
+        { message: 'CONSULTANT_ASSIGNMENT_FORBIDDEN', statusCode: 403 },
+    )
+    assert.equal(queries.some((sql) => sql.startsWith('update crm_atendimento.attendances set')), false)
+})
+
+test('rejects a consultant attempt to replace the injector before any write', async () => {
+    const queries = []
+    const fakePool = createFakePool([
+        (sql) => {
+            queries.push(sql)
+            if (!sql.includes('from crm_atendimento.attendances a') || !sql.includes('where a.id = $1')) return null
+            return {
+                rows: [{
+                    id: 'attendance-1', unit_slug: 'novo-hamburgo', unit_name: 'Novo Hamburgo',
+                    service_date: '2026-07-10', client_name: 'Cliente', procedure_name: 'Botox', code: '#0799',
+                    quantity: 1, discount: false, other_value: 0, round_value: false, value: 799, revision: 1,
+                    injector_canonical_id: 'injector-1', injector_name: 'Dra. A',
+                    consultant_canonical_id: 'consultant-1', consultant_name: 'Vitória Silva',
+                }], rowCount: 1,
+            }
+        },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+
+    await assert.rejects(
+        () => store.updateAttendance('attendance-1', { revision: 1, injectorId: 'injector-2' }, {
+            id: 'consultant-user', role: 'CONSULTOR', allowedUnits: ['novo-hamburgo'],
+        }),
+        { message: 'INJECTOR_ASSIGNMENT_FORBIDDEN', statusCode: 403 },
+    )
+    assert.equal(queries.some((sql) => sql.startsWith('update crm_atendimento.attendances set')), false)
 })
 
 test('exposes a single canonical professional reference for confirmed aliases', async () => {
@@ -362,8 +421,7 @@ test('persists nullable conversion results idempotently and never reuses a non-a
     assert.deepEqual(secondSection.optimization.homogeneityCurve, [])
     assert.match(secondSection.optimization.configHash, /^fnv1a-/)
     assert.match(secondSection.optimization.calendarHash, /^calendar-fnv1a-/)
-    assert.equal(secondSection.history.length, 2)
-    assert.equal(secondSection.history[0].periodEnd, '2026-06-14')
+    assert.equal(Object.hasOwn(secondSection, 'history'), false)
     assert.equal(persisted.size, 2)
 })
 

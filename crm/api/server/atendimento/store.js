@@ -40,6 +40,20 @@ import {
     professionalIdentityFromRow,
     buildProfessionalIdentityDiagnosis,
 } from './professionalIdentity.js'
+import {
+    actorConsultantReferenceByUnit,
+    CONSULTANT_ASSIGNMENT_ORIGIN,
+    consultantPatchMatchesAttendance,
+    hasConsultantPatch,
+    isConsultantActor,
+    resolveActorConsultant,
+} from './consultantAssignment.js'
+import {
+    hasInjectorPatch,
+    INJECTOR_ASSIGNMENT_ORIGIN,
+    injectorPatchMatchesAttendance,
+    resolveScheduledInjector,
+} from './injectorAssignment.js'
 
 let pool = null
 
@@ -500,7 +514,9 @@ export function actorIdentityForMutation(actor) {
 
 function roleCanManage(actor) {
     const role = String(actor?.role || '').trim().toUpperCase()
-    return role === 'GESTOR' || role === 'GERENTE'
+    // Most requests are normalized by the Pages auth adapter, but retaining
+    // ADMIN here keeps direct/local API consumers aligned with that contract.
+    return role === 'GESTOR' || role === 'GERENTE' || role === 'ADMIN'
 }
 
 function normalizeAllowedUnitKeys(actor) {
@@ -528,6 +544,9 @@ function professionalMatchesAllowedUnits(row, actor) {
 
 export function canAccessAtendimento(actor, requestPath = '', requestMethod = 'GET') {
     if (roleCanManage(actor)) return true
+    // Legacy consultant accounts may have no module list. Their effective
+    // capability is Atendimento only; this router is that capability.
+    if (isConsultantActor(actor)) return true
     const allowed = Array.isArray(actor?.allowedModules) ? actor.allowedModules.map(String) : []
     if (!allowed.length) return true
     if (allowed.includes('atendimento')) return true
@@ -1491,7 +1510,6 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
                 calendarHash,
             })
         }
-        section.history = await queryDoctorConversionHistory(pgPool, { unit: unit.slug, limit: 8 }, actor)
         sections.push(section)
     }
 
@@ -1774,13 +1792,9 @@ export async function upsertProfessional(client, input) {
     return { ...professional, canonical_id: professional.canonical_id || professional.id, identity_version: PROFESSIONAL_IDENTITY_VERSION }
 }
 
-async function resolveAttendanceProfessional(client, input, unit, expectedRole, { allowTextResolution = false, allowInactive = false } = {}) {
-    const professionalId = String(input?.id || input?.professionalId || '').trim()
-    const professionalName = String(input?.name || input?.professionalName || '').trim()
-    if (!professionalId && !professionalName) return null
-    if (professionalName && !isValidProfessionalIdentityName(professionalName)) throw mutationError('INVALID_PROFESSIONAL')
+async function readProfessionalIdentityRows(client) {
     const result = await client.query(
-        `select p.id, p.canonical_id, p.name, p.role, p.status, p.units, p.roles, p.identity_version,
+        `select p.id, p.canonical_id, p.name, p.role, p.status, p.units, p.roles, p.identity_version, p.email, p.alias,
                 canonical.name as canonical_name,
                 coalesce(array_agg(distinct pa.alias) filter (where pa.active), '{}') as aliases
          from crm_atendimento.professionals p
@@ -1789,6 +1803,15 @@ async function resolveAttendanceProfessional(client, input, unit, expectedRole, 
          group by p.id, canonical.id
          order by p.created_at asc`,
     )
+    return result.rows
+}
+
+async function resolveAttendanceProfessional(client, input, unit, expectedRole, { allowTextResolution = false, allowInactive = false } = {}) {
+    const professionalId = String(input?.id || input?.professionalId || '').trim()
+    const professionalName = String(input?.name || input?.professionalName || '').trim()
+    if (!professionalId && !professionalName) return null
+    if (professionalName && !isValidProfessionalIdentityName(professionalName)) throw mutationError('INVALID_PROFESSIONAL')
+    const rows = await readProfessionalIdentityRows(client)
     try {
         return resolveProfessionalIdentity({
             professionalId,
@@ -1797,7 +1820,7 @@ async function resolveAttendanceProfessional(client, input, unit, expectedRole, 
             expectedRole,
             allowTextResolution,
             allowInactive,
-        }, result.rows)
+        }, rows)
     } catch (error) {
         throw mutationError(error?.code || error?.message || 'UNKNOWN_PROFESSIONAL', error?.statusCode || 400)
     }
@@ -1997,6 +2020,79 @@ function assertManager(actor) {
     const err = new Error('FORBIDDEN')
     err.statusCode = 403
     throw err
+}
+
+async function resolveConsultantForCreate(client, input, actor, unit) {
+    if (roleCanManage(actor)) {
+        return {
+            professional: await resolveAttendanceProfessional(client, { id: input.consultantId, name: input.consultantName }, unit, 'Consultor'),
+            origin: CONSULTANT_ASSIGNMENT_ORIGIN.MANAGER,
+            reason: null,
+        }
+    }
+    if (!isConsultantActor(actor)) {
+        return {
+            professional: null,
+            origin: CONSULTANT_ASSIGNMENT_ORIGIN.UNRESOLVED,
+            reason: 'ACTOR_NOT_CONSULTANT',
+        }
+    }
+    const resolved = resolveActorConsultant(actor, unit, await readProfessionalIdentityRows(client))
+    return {
+        professional: resolved.professional,
+        origin: resolved.origin,
+        reason: resolved.reason || null,
+        match: resolved.match || null,
+    }
+}
+
+async function resolveScheduledInjectorForUnit(client, unit, date) {
+    const scheduled = await client.query(
+        `select s.professional_id, s.doctor_name
+         from crm_atendimento.schedule_days s
+         where s.unit_id = $1 and s.service_date = $2::date
+         limit 1`,
+        [unit.id, date],
+    )
+    const schedule = scheduled.rows[0]
+    return resolveScheduledInjector({
+        professionalId: schedule?.professional_id,
+        doctorName: schedule?.doctor_name,
+    }, unit, await readProfessionalIdentityRows(client), GERENCIA_APPS_SCRIPT_CONFIG.noServiceLabel)
+}
+
+async function resolveInjectorForCreate(client, input, actor, unit) {
+    // A consultant cannot choose the professional responsible for the
+    // procedure. The persisted Escala assignment is the authoritative source.
+    if (isConsultantActor(actor)) return resolveScheduledInjectorForUnit(client, unit, input.date)
+    // Other profiles receive the Escala professional as the safe default when
+    // the client did not choose one. Managers may still make an explicit,
+    // auditable manual correction for an exceptional procedure.
+    if (!input.injectorId && !input.injectorName) {
+        const scheduled = await resolveScheduledInjectorForUnit(client, unit, input.date)
+        if (scheduled.professional) return scheduled
+    }
+    return {
+        professional: await resolveAttendanceProfessional(client, { id: input.injectorId, name: input.injectorName }, unit, 'Injetor'),
+        origin: INJECTOR_ASSIGNMENT_ORIGIN.MANAGER,
+        reason: null,
+    }
+}
+
+function effectiveInjectorAuditInput(input, injector) {
+    return {
+        ...input,
+        injectorId: injector?.canonicalId || null,
+        injectorName: injector?.canonicalName || '',
+    }
+}
+
+function effectiveConsultantAuditInput(input, consultant) {
+    return {
+        ...input,
+        consultantId: consultant?.canonicalId || null,
+        consultantName: consultant?.canonicalName || '',
+    }
 }
 
 function mapProfessional(row, includeSensitive = false) {
@@ -2695,11 +2791,7 @@ export function createAtendimentoStore(options = {}) {
         async references(actor) {
             await ensureReady()
             const units = await pgPool.query(`select slug, name from crm_atendimento.units order by name`)
-            const professionals = await pgPool.query(
-            `select id, canonical_id, identity_version, name, role, status, units, shift, roles, turnos, background_color, font_color, font_family, font_size, font_weight, font_style, alias
-                 from crm_atendimento.professionals
-                 order by name`,
-            )
+            const professionals = { rows: await readProfessionalIdentityRows(pgPool) }
             const procedures = await pgPool.query(
                 `select p.id, p.name, coalesce(json_agg(c.code order by c.code) filter (where c.code is not null), '[]'::json) as codes
                  from crm_atendimento.procedures p
@@ -2707,14 +2799,16 @@ export function createAtendimentoStore(options = {}) {
                  group by p.id, p.name
                  order by p.name`,
             )
-            return {
-                units: units.rows
+            const visibleUnits = units.rows
                     .filter((row) => actorCanReadUnit(actor, row.slug))
-                    .map((row) => ({ slug: row.slug, name: row.name })),
+                    .map((row) => ({ slug: row.slug, name: row.name }))
+            return {
+                units: visibleUnits,
                 professionals: consolidateProfessionalReferences(
                     professionals.rows.filter((row) => professionalMatchesAllowedUnits(row, actor)),
                     false,
                 ),
+                actorConsultantByUnit: actorConsultantReferenceByUnit(actor, visibleUnits, professionals.rows),
                 procedures: procedures.rows.map((row) => ({
                     id: row.id,
                     name: row.name,
@@ -3222,26 +3316,22 @@ export function createAtendimentoStore(options = {}) {
                 err.statusCode = 403
                 throw err
             }
-            const row = await pgPool.query(
-                `select s.service_date::text as date,
-                        coalesce(canonical.name, p.name, s.doctor_name) as doctor_name,
-                        u.slug as unit_slug, u.name as unit_name
-                 from crm_atendimento.schedule_days s
-                 join crm_atendimento.units u on u.id = s.unit_id
-                 left join crm_atendimento.professionals p on p.id = s.professional_id
-                 left join crm_atendimento.professionals canonical on canonical.id = coalesce(p.canonical_id, p.id)
-                 where u.slug = $1 and s.service_date = $2::date
-                 limit 1`,
-                [unit.slug, date],
+            const unitRow = await pgPool.query(
+                `select id, slug, name from crm_atendimento.units where slug = $1 limit 1`,
+                [unit.slug],
             )
-            const doctorName = String(row.rows[0]?.doctor_name || '').trim()
-            const normalizedDoctorName = normalizeText(doctorName)
-            const noService = normalizeText(GERENCIA_APPS_SCRIPT_CONFIG.noServiceLabel)
+            const persistedUnit = unitRow.rows[0]
+            const assignment = persistedUnit
+                ? await resolveScheduledInjectorForUnit(pgPool, persistedUnit, date)
+                : { professional: null, origin: INJECTOR_ASSIGNMENT_ORIGIN.UNRESOLVED, reason: 'NO_SCHEDULED_INJECTOR' }
             return {
                 unitSlug: unit.slug,
-                unitName: row.rows[0]?.unit_name || unit.name,
+                unitName: persistedUnit?.name || unit.name,
                 date,
-                doctorName: doctorName && normalizedDoctorName !== noService ? doctorName : '',
+                doctorId: assignment.professional?.canonicalId || null,
+                doctorName: assignment.professional?.canonicalName || '',
+                assignmentOrigin: assignment.origin,
+                reason: assignment.reason || null,
             }
         },
 
@@ -3331,8 +3421,10 @@ export function createAtendimentoStore(options = {}) {
                 const procedure = await resolveAttendanceProcedure(client, input.procedureName)
                 const codeOk = await validateProcedureCode(client, procedure.id, input.code)
                 if (!codeOk) throw mutationError('PROCEDURE_CODE_NOT_ALLOWED')
-                const injector = await resolveAttendanceProfessional(client, { id: input.injectorId, name: input.injectorName }, unit, 'Injetor')
-                const consultant = await resolveAttendanceProfessional(client, { id: input.consultantId, name: input.consultantName }, unit, 'Consultor')
+                const injectorAssignment = await resolveInjectorForCreate(client, input, actor, unit)
+                const injector = injectorAssignment.professional
+                const consultantAssignment = await resolveConsultantForCreate(client, input, actor, unit)
+                const consultant = consultantAssignment.professional
                 const attendanceClient = await upsertClient(client, unit.id, input.clientName)
                 const inserted = await client.query(
                     `insert into crm_atendimento.attendances(
@@ -3375,10 +3467,21 @@ export function createAtendimentoStore(options = {}) {
                 }
                 if (!attendanceId) throw mutationError('ATTENDANCE_CREATE_FAILED', 409)
                 await audit(client, 'attendance.create', actor, attendanceId, {
-                    after: input,
+                    after: effectiveConsultantAuditInput(effectiveInjectorAuditInput(input, injector), consultant),
                     formulaVersion: ATTENDANCE_VALUE_FORMULA_VERSION,
                     clientValueIgnored: payload?.value !== undefined,
                     idempotencyKey,
+                    consultantAssignment: {
+                        origin: consultantAssignment.origin,
+                        reason: consultantAssignment.reason || undefined,
+                        match: consultantAssignment.match || undefined,
+                        clientValueIgnored: !roleCanManage(actor) && hasConsultantPatch(payload),
+                    },
+                    injectorAssignment: {
+                        origin: injectorAssignment.origin,
+                        reason: injectorAssignment.reason || undefined,
+                        clientValueIgnored: isConsultantActor(actor) && hasInjectorPatch(payload),
+                    },
                 })
                 const row = await client.query(`${ATTENDANCE_SELECT} where a.id = $1`, [attendanceId])
                 return mapAttendance(row.rows[0])
@@ -3398,14 +3501,32 @@ export function createAtendimentoStore(options = {}) {
                 assertActorCanMutateUnit(actor, { slug: before.unitSlug, name: before.unitName })
                 const revision = expectedRevision(payload)
                 if (revision !== before.revision) throw mutationError('REVISION_CONFLICT', 409)
-                const input = normalizeAttendanceMutation({ ...before, ...payload })
+                const canManageConsultant = roleCanManage(actor)
+                const injectorLockedToSchedule = isConsultantActor(actor)
+                if (injectorLockedToSchedule && hasInjectorPatch(payload) && !injectorPatchMatchesAttendance(payload, before)) {
+                    throw mutationError('INJECTOR_ASSIGNMENT_FORBIDDEN', 403)
+                }
+                if (!canManageConsultant && hasConsultantPatch(payload) && !consultantPatchMatchesAttendance(payload, before)) {
+                    throw mutationError('CONSULTANT_ASSIGNMENT_FORBIDDEN', 403)
+                }
+                const input = normalizeAttendanceMutation(canManageConsultant
+                    ? { ...before, ...payload, ...(injectorLockedToSchedule ? { injectorId: before.injectorId, injectorName: before.injectorName } : {}) }
+                    : {
+                        ...before,
+                        ...payload,
+                        consultantId: before.consultantId,
+                        consultantName: before.consultantName,
+                        ...(injectorLockedToSchedule ? { injectorId: before.injectorId, injectorName: before.injectorName } : {}),
+                    })
                 assertActorCanMutateUnit(actor, input.unit)
                 const unit = await resolveAttendanceUnit(client, input.unit)
                 const procedure = await resolveAttendanceProcedure(client, input.procedureName)
                 const codeOk = await validateProcedureCode(client, procedure.id, input.code)
                 if (!codeOk) throw mutationError('PROCEDURE_CODE_NOT_ALLOWED')
                 const injector = await resolveAttendanceProfessional(client, { id: input.injectorId, name: input.injectorName }, unit, 'Injetor')
-                const consultant = await resolveAttendanceProfessional(client, { id: input.consultantId, name: input.consultantName }, unit, 'Consultor')
+                const consultant = canManageConsultant
+                    ? await resolveAttendanceProfessional(client, { id: input.consultantId, name: input.consultantName }, unit, 'Consultor')
+                    : (before.consultantId ? { canonicalId: before.consultantId, canonicalName: before.consultantName } : null)
                 const attendanceClient = await upsertClient(client, unit.id, input.clientName)
                 const updated = await client.query(
                     `update crm_atendimento.attendances set
@@ -3438,9 +3559,17 @@ export function createAtendimentoStore(options = {}) {
                 if (!updated.rows[0]) throw mutationError('REVISION_CONFLICT', 409)
                 await audit(client, 'attendance.update', actor, id, {
                     before,
-                    after: input,
+                    after: effectiveConsultantAuditInput(effectiveInjectorAuditInput(input, injector), consultant),
                     formulaVersion: ATTENDANCE_VALUE_FORMULA_VERSION,
                     clientValueIgnored: payload?.value !== undefined,
+                    consultantAssignment: {
+                        origin: canManageConsultant ? CONSULTANT_ASSIGNMENT_ORIGIN.MANAGER : CONSULTANT_ASSIGNMENT_ORIGIN.PRESERVED,
+                        clientValueIgnored: !canManageConsultant && hasConsultantPatch(payload),
+                    },
+                    injectorAssignment: {
+                        origin: injectorLockedToSchedule ? INJECTOR_ASSIGNMENT_ORIGIN.PRESERVED : INJECTOR_ASSIGNMENT_ORIGIN.MANAGER,
+                        clientValueIgnored: injectorLockedToSchedule && hasInjectorPatch(payload),
+                    },
                 })
                 const row = await client.query(`${ATTENDANCE_SELECT} where a.id = $1`, [id])
                 return mapAttendance(row.rows[0])

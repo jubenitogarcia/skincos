@@ -6,6 +6,7 @@ type HeaderOption = { value: string; label: string }
 
 type UseAtendimentoHeaderBridgeOptions = {
   loading: boolean
+  canManage: boolean
   filters: AtendimentoFilters
   units: HeaderOption[]
   procedures: HeaderOption[]
@@ -27,6 +28,7 @@ type UseAtendimentoHeaderBridgeOptions = {
 /** Owns the bridge subscription so the page component stays focused on domain state. */
 export function useAtendimentoHeaderBridge({
   loading,
+  canManage,
   filters,
   units,
   procedures,
@@ -47,6 +49,7 @@ export function useAtendimentoHeaderBridge({
   useEffect(() => {
     emitAtendimentoHeaderState({
       loading,
+      canManage,
       filters,
       units,
       procedures,
@@ -60,7 +63,7 @@ export function useAtendimentoHeaderBridge({
       total,
     })
     return () => emitAtendimentoHeaderState(null)
-  }, [activeUnitLabel, filters, injectors, latestImportLabel, loading, localMirrorDetail, localMirrorSummary, periodLabel, periodOperationalDays, procedures, total, units])
+  }, [activeUnitLabel, canManage, filters, injectors, latestImportLabel, loading, localMirrorDetail, localMirrorSummary, periodLabel, periodOperationalDays, procedures, total, units])
 
   useEffect(() => subscribeAtendimentoHeaderAction((action) => {
     if (action.type === 'refresh') {
@@ -69,7 +72,7 @@ export function useAtendimentoHeaderBridge({
       return
     }
     if (action.type === 'open-import') {
-      openImport()
+      if (canManage) openImport()
       return
     }
     if (action.type === 'report') {
@@ -77,5 +80,5 @@ export function useAtendimentoHeaderBridge({
       return
     }
     if (action.type === 'set-filter') updateFilters(action.patch)
-  }), [openImport, openReport, refresh, refreshManagement, updateFilters])
+  }), [canManage, openImport, openReport, refresh, refreshManagement, updateFilters])
 }
