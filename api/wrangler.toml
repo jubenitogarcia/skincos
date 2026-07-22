@@ -35,6 +35,14 @@ bucket_name = "skincos-backups"
 name = "skincos-api-staging"
 routes = ["api-staging.skincos.com.br/*"]
 
+[[env.staging.durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+[[env.staging.durable_objects.bindings]]
+name = "JOB_QUEUE"
+class_name = "JobQueue"
+
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "skincos-db-staging"

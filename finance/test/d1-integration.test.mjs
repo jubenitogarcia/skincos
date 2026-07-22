@@ -4,7 +4,7 @@ import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
+const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';
@@ -73,6 +73,8 @@ test('D1 local: a one-unit grant cannot read another unit or the inactive person
   assert.equal(authorized.response.status, 200, JSON.stringify(authorized.body));
   assert.equal((await request(ctx.env, ctx.actor, `/overview?scopeId=${scopeBss}`)).response.status, 403);
   assert.equal((await request(ctx.env, ctx.actor, `/overview?scopeId=${scopePersonal}`)).response.status, 403);
+  await grant(ctx.DB, 'pilot', scopePersonal);
+  assert.equal((await request(ctx.env, ctx.actor, `/overview?scopeId=${scopePersonal}`)).response.status, 403);
   assert.equal((await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeBss}&accountId=forged`)).response.status, 403);
 });
 
@@ -83,6 +85,19 @@ test('D1 local: idempotency replays only the identical actor/route payload and r
   const conflict = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`, { method: 'POST', key: 'account-key', body: { name: 'Outro banco', type: 'bank', currency: 'BRL' } });
   assert.equal(first.response.status, 201); assert.equal(second.response.status, 201); assert.equal(second.body.replayed, true);
   assert.equal(first.body.account.id, second.body.account.id); assert.equal(conflict.response.status, 409);
+});
+
+test('D1 local: concurrent identical idempotency keys converge on one persisted operation', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const payload = { name: 'Conta concorrente', type: 'bank', currency: 'BRL' };
+  const [left, right] = await Promise.all([
+    request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`, { method: 'POST', key: 'concurrent-account', body: payload }),
+    request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`, { method: 'POST', key: 'concurrent-account', body: payload }),
+  ]);
+  assert.equal(left.response.status, 201, JSON.stringify(left.body)); assert.equal(right.response.status, 201, JSON.stringify(right.body));
+  assert.equal(left.body.account.id, right.body.account.id);
+  const persisted = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_accounts WHERE scope_id=? AND name=?`).bind(scopeNh, 'Conta concorrente').first();
+  assert.equal(Number(persisted.count), 1);
 });
 
 test('D1 local: transfer posts a balanced journal and an invalid income cannot be unbalanced', async (t) => {
@@ -118,7 +133,7 @@ test('D1 local: CSV workflow retains source, maps Brazilian rows, records decisi
   const csv = 'Data;Descrição;Valor;Conta;Categoria;Moeda;Observação;Identificador Externo\n01/07/2026;Consulta estética;1.250,50;Banco NH;Receitas;BRL;Pagamento cartão;ef-1001\n02/07/2026;Transferência;-200,00;Cartão;Despesas;BRL;Mover saldo;ef-1002\n02/07/2026;Transferência;-200,00;Cartão;Despesas;BRL;Mover saldo;ef-1002\n';
   const staged = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'csv-stage', body: { filename: 'extrato-br.csv', csv, encoding: 'utf-8' } });
   assert.equal(staged.response.status, 201, JSON.stringify(staged.body)); assert.equal(staged.body.analysis.delimiter, ';'); assert.equal(staged.body.analysis.dateFormat, 'DD/MM/YYYY');
-  let loaded = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}?scopeId=${scopeNh}`); assert.equal(loaded.body.batch.source_csv, csv); assert.equal(loaded.body.rows.filter((row) => row.status === 'exact_duplicate').length, 1);
+  let loaded = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}?scopeId=${scopeNh}`); assert.equal(loaded.body.batch.source_csv, undefined); assert.equal(loaded.body.batch.sourceRetained, true); assert.equal(loaded.body.rows.filter((row) => row.status === 'exact_duplicate').length, 1);
   const transferRow = loaded.body.rows.find((row) => JSON.parse(row.normalized_json || '{}').description === 'Transferência' && row.status === 'valid');
   const decision = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/decisions?scopeId=${scopeNh}`, { method: 'POST', key: 'csv-decision', body: { rowId: transferRow.id, decision: 'import', transferAccountId: clearing.id } });
   assert.equal(decision.response.status, 201, JSON.stringify(decision.body));
@@ -195,11 +210,39 @@ test('D1 local: scope and monetary safeguards reject cross-scope, unbalanced and
   assert.equal(fractional.response.status, 400);
   const badSplit = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'bad-split', body: { type: 'income', accountId: nhAccount.id, description: 'Split inválido', amountMinor: 100, currency: 'BRL', competenceDate: '2026-07-21', splits: [{ categoryId: nhCategory.id, amountMinor: 99 }] } });
   assert.equal(badSplit.response.status, 400);
+  const nhMovement = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'nh-direct-url', body: { type: 'income', accountId: nhAccount.id, categoryId: nhCategory.id, description: 'Somente NH', amountMinor: 100, currency: 'BRL', competenceDate: '2026-07-21' } });
+  assert.equal(nhMovement.response.status, 201, JSON.stringify(nhMovement.body));
+  const enumerated = await request(ctx.env, ctx.actor, `/movements/${nhMovement.body.movement.id}?scopeId=${scopeBss}`);
+  assert.equal(enumerated.response.status, 404);
   const first = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`, { method: 'POST', key: 'cross-scope-key', body: { name: 'Chave NH', type: 'cash', currency: 'BRL' } });
   const reused = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeBss}`, { method: 'POST', key: 'cross-scope-key', body: { name: 'Chave NH', type: 'cash', currency: 'BRL' } });
   assert.equal(first.response.status, 201); assert.equal(reused.response.status, 409);
   const filtered = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&accountId=${bssAccount.id}`);
   assert.equal(filtered.response.status, 200); assert.equal(filtered.body.movements.length, 0);
+});
+
+test('D1 local: unsafe metadata, oversized payloads and internal D1 failures do not leak or cross boundaries', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const invalidAttachment = await request(ctx.env, ctx.actor, `/attachments?scopeId=${scopeNh}`, { method: 'POST', key: 'unsafe-attachment', body: { objectKey: '../other-scope/secret.pdf', filename: 'secret.pdf', contentType: 'application/pdf', sizeBytes: 1 } });
+  assert.equal(invalidAttachment.response.status, 400);
+  const tooLarge = await handler(new Request(`https://api.skincos.com.br/finance/accounts?scopeId=${scopeNh}`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'too-large', 'content-length': String(9 * 1024 * 1024) }, body: '{}' }), ctx.env, {}, { actor: ctx.actor });
+  assert.equal(tooLarge.status, 413);
+  await ctx.DB.exec(`DROP TABLE finance_accounts`);
+  const failed = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`);
+  assert.equal(failed.response.status, 500); assert.equal(failed.body.error, 'FINANCE_INTERNAL_ERROR'); assert.equal(failed.body.message, 'Não foi possível concluir a operação financeira.');
+});
+
+test('D1 local: failed import commit is atomic and leaves no partial ledger state', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco atômico', 'atomic-bank'); const income = await category(ctx.env, ctx.actor, scopeNh, 'Receita atômica', 'income', 'atomic-income'); const expense = await category(ctx.env, ctx.actor, scopeNh, 'Despesa atômica', 'expense', 'atomic-expense');
+  const csv = 'Data,Descrição,Valor,Tipo,External_ID\n2026-07-21,Primeiro,10.00,receita,external-collision\n2026-07-22,Segundo,20.00,receita,external-collision\n';
+  const staged = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'atomic-stage', body: { filename: 'atomic.csv', csv } });
+  assert.equal(staged.response.status, 201, JSON.stringify(staged.body));
+  const committed = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/commit?scopeId=${scopeNh}`, { method: 'POST', key: 'atomic-commit', body: { defaultAccountId: bank.id, incomeCategoryId: income.id, expenseCategoryId: expense.id } });
+  assert.equal(committed.response.status, 500); assert.equal(committed.body.message, 'Não foi possível concluir a operação financeira.');
+  const movements = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_movements WHERE scope_id=?`).bind(scopeNh).first();
+  const batch = await ctx.DB.prepare(`SELECT status FROM finance_import_batches WHERE id=?`).bind(staged.body.batchId).first();
+  assert.equal(Number(movements.count), 0); assert.equal(batch.status, 'staged');
 });
 
 test('D1 local: movement search and audit details remain scoped and paginated', async (t) => {
@@ -217,4 +260,22 @@ test('D1 local: movement search and audit details remain scoped and paginated', 
   assert.equal(audit.response.status, 200); assert.equal(audit.body.total, 1); assert.equal(audit.body.events[0].action, 'MOVEMENT_CREATED');
   const denied = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeBss}&entityId=${created.body.movement.id}`);
   assert.equal(denied.response.status, 403);
+});
+
+test('D1 local: posted journal evidence is balanced and immutable at the database boundary', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const source = await account(ctx.env, ctx.actor, scopeNh, 'Caixa protegido', 'protected-source'); const destination = await account(ctx.env, ctx.actor, scopeNh, 'Banco protegido', 'protected-destination');
+  const posted = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'protected-transfer', body: { type: 'transfer', accountId: source.id, destinationAccountId: destination.id, description: 'Transferência protegida', amountMinor: 100, currency: 'BRL', competenceDate: '2026-07-21' } });
+  assert.equal(posted.response.status, 201, JSON.stringify(posted.body));
+  const entry = await ctx.DB.prepare(`SELECT id FROM finance_journal_entries`).first();
+  await assert.rejects(ctx.DB.exec(`UPDATE finance_journal_lines SET amount_minor=999`), /append-only/);
+  await assert.rejects(ctx.DB.exec(`UPDATE finance_movements SET amount_minor=999`), /immutable/);
+  await assert.rejects(ctx.DB.prepare(`INSERT INTO finance_journal_entries(id,scope_id,movement_id,status,created_at) VALUES(?,?,?,?,?)`).bind('unbalanced-entry', scopeNh, posted.body.movement.id, 'posted', new Date().toISOString()).run(), /start draft/);
+  const income = await category(ctx.env, ctx.actor, scopeNh, 'Receita pendente', 'income', 'protected-income');
+  const pending = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'protected-pending', body: { type: 'income', accountId: source.id, categoryId: income.id, description: 'Pendente para teste', amountMinor: 100, currency: 'BRL', competenceDate: '2026-07-21', operationalStatus: 'pending' } });
+  const ledger = await ctx.DB.prepare(`SELECT ledger_account_id FROM finance_accounts WHERE id=?`).bind(source.id).first();
+  await ctx.DB.prepare(`INSERT INTO finance_journal_entries(id,scope_id,movement_id,status,created_at) VALUES(?,?,?,?,?)`).bind('unbalanced-entry', scopeNh, pending.body.movement.id, 'draft', new Date().toISOString()).run();
+  await ctx.DB.prepare(`INSERT INTO finance_journal_lines(id,entry_id,ledger_account_id,direction,amount_minor,currency,created_at) VALUES(?,?,?,?,?,?,?)`).bind('unbalanced-line', 'unbalanced-entry', ledger.ledger_account_id, 'debit', 100, 'BRL', new Date().toISOString()).run();
+  await assert.rejects(ctx.DB.prepare(`UPDATE finance_journal_entries SET status='posted' WHERE id=?`).bind('unbalanced-entry').run(), /balanced/);
+  assert.ok(entry.id);
 });
