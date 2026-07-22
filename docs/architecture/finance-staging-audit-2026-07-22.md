@@ -27,6 +27,13 @@ para ser lido estruturalmente com Node; a aplicação repetida foi validada em D
 local e remoto, sem reaplicar migrations. O Worker ainda precisa ser publicado
 por um workflow verde antes dos smokes autenticados.
 
+O workflow também continha uma etapa opcional de recuperação de senha que,
+quando acionada por `staging`, escrevia os segredos genéricos de CI no Worker
+sem `--env`. Ela foi limitada a `main`: staging mantém somente os seus próprios
+segredos preprovisionados e não exerce entrega de e-mail neste ciclo. A execução
+anterior confirmou o risco pelo nome-base exibido pelo Wrangler; valores nunca
+foram lidos ou registrados e a correção evita qualquer nova escrita cruzada.
+
 ## Condição para smokes autenticados da versão atual
 
 1. Integrar a branch Financeiro revisada no branch `staging`.

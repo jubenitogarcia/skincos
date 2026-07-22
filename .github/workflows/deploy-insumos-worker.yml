@@ -85,8 +85,12 @@ jobs:
           npm --prefix api ci
           pnpm -C inventory install --frozen-lockfile
 
-      - name: Sync password-recovery secrets (optional)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
+      # Staging owns its session secret and must never receive or overwrite
+      # production recovery credentials through this workflow.  Staging does
+      # not exercise password delivery; controlled test identities use the
+      # normal auth lifecycle with the pre-provisioned staging SESSION_SECRET.
+      - name: Sync password-recovery secrets (production only)
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && github.ref_name == 'main' }}
         working-directory: inventory
         env:
           AUTH_RESET_SMTP_HOST: ${{ secrets.AUTH_RESET_SMTP_HOST }}
