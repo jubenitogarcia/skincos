@@ -15,6 +15,8 @@ export function hasCrmModuleAccess(role: unknown, allowedModules: unknown, modul
   // Data and administrative operations remain authorized by the Ponto proxy and
   // Workforce service; this function only governs sidebar navigation.
   if (key === 'ponto') return true
+  // Customer intelligence includes detailed commercial and clinical history.
+  if (key === 'clientes') return roleKey === 'GESTOR' || roleKey === 'ADMIN'
   if (roleKey === 'GESTOR' || roleKey === 'ADMIN') return true
   if (roleKey === 'CONSULTOR' || roleKey === 'EMPLOYEE') return CONSULTOR_MODULE_KEYS.has(key)
   if (key === 'escala-profissionais') return roleKey === 'GERENTE'
