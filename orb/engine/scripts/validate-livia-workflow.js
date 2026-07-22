@@ -390,6 +390,9 @@ function validateContracts() {
   assert(processHttp.includes('facebook_static_photo_already_posted_recovery'), 'Process HTTP Publish Result must recover an already-published Facebook static photo without duplicating it');
   assert(processHttp.includes('fb_reels_published'), 'Process HTTP Publish Result must distinguish Facebook Reel publication confirmation from upload readiness');
   assert(processHttp.includes('scheduleFacebookReelsFinishRetry'), 'Process HTTP Publish Result must perform one bounded idempotent Facebook Reel finish retry after a terminal provider status');
+  assert(processHttp.includes('scheduleFacebookReelsUploadRecovery'), 'Process HTTP Publish Result must rebuild one fresh Facebook Reel upload chain when Meta discards a completed video upload');
+  assert(processHttp.includes('facebook_reels_upload_missing_reupload'), 'Facebook Reel upload-missing recovery must have a durable, explicit reason');
+  assert(getNode('Process HTTP Publish Result')?.retryOnFail !== true, 'Process HTTP Publish Result must not hide provider errors behind implicit node retries');
   assert(bqValidateJobGraph.includes('postPublishFromRunIndex'), 'BQ - Validate Job Graph must require the Facebook Reel post-publication status dependency');
   for (const required of ['fb_reels_upload_ready', 'fb_reels_published', 'postPublishFromRunIndex', 'recoveryAttempt']) {
     assert(compose2Source.includes(required), `Compose (2) must require Facebook Reel post-publication confirmation (${required})`);
