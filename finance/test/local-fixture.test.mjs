@@ -8,12 +8,14 @@ import test from 'node:test';
 
 const script = fileURLToPath(new URL('../scripts/write-local-fixture.mjs', import.meta.url));
 
-async function fixture(scenario) {
+async function fixture(scenario, actor = undefined) {
   const directory = await mkdtemp(join(tmpdir(), 'skincos-finance-fixture-'));
   const output = join(directory, `${scenario}.sql`);
   try {
     return await new Promise((resolve, reject) => {
-      execFile(process.execPath, [script, '--scenario', scenario, '--output', output], (error, stdout, stderr) => {
+      const args = [script, '--scenario', scenario, '--output', output]
+      if (actor) args.push('--actor', actor)
+      execFile(process.execPath, args, (error, stdout, stderr) => {
         if (error) reject(new Error(stderr || error.message));
         else resolve(JSON.parse(stdout));
       });
@@ -47,4 +49,11 @@ test('local Finance fixture exposes only the intended module and business scopes
   assert.deepEqual(both.allowedUnits, ['novo-hamburgo', 'barra-shopping-sul']);
   assert.equal(both.personalScopeGranted, false);
   assert.equal(both.grantedScopes.includes('finance-scope-personal'), false);
+});
+
+test('local Finance fixture supports an isolated, bounded smoke actor', async () => {
+  const actor = 'finance-local-1721650000-12345';
+  const both = await fixture('both', actor);
+  assert.equal(both.username, actor);
+  assert.equal(both.personalScopeGranted, false);
 });

@@ -99,6 +99,8 @@ try {
   await page.waitForTimeout(250)
   await page.getByRole('tab', { name: 'Movimentações' }).click()
   await page.getByText(/Movimentações|Nenhuma movimentação/).first().waitFor({ state: 'visible', timeout: 30_000 })
+  await page.getByRole('tab', { name: 'Títulos' }).click()
+  await page.getByText('Títulos a pagar e receber').waitFor({ state: 'visible', timeout: 30_000 })
   await page.getByRole('tab', { name: 'Cadastros' }).click()
   await page.getByText('Contas financeiras').first().waitFor({ state: 'visible', timeout: 30_000 })
   await page.screenshot({ path: screenshot, fullPage: false })

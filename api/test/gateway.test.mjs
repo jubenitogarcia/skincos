@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createGatewayHandler } from '../src/router.js';
-import { createApiGateway } from '../src/gateway.js';
+import { createApiGateway, enforceFinanceRateLimit } from '../src/gateway.js';
 
 const calls = [];
 const gateway = createGatewayHandler({
@@ -84,3 +84,18 @@ test('finance gateway passes only an authenticated, CSRF-valid request after the
   const allowed = await gateway(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), { RATE_LIMITER: limiter }, {});
   assert.equal(allowed.status, 200); assert.equal(seenPath, '/imports');
 });
+
+test('finance rate limits reads, writes and imports in independent buckets', async () => {
+  const limiterRequests = [];
+  const limiter = { idFromName: () => 'finance-limiter', get: () => ({ fetch: async (input) => { limiterRequests.push(String(input)); return new Response(JSON.stringify({ allowed: true }), { headers: { 'content-type': 'application/json' } }); } }) };
+  const env = { RATE_LIMITER: limiter };
+  const actor = { username: 'pilot' };
+  await enforceFinanceRateLimit(new Request('https://api.skincos.com.br/overview'), env, actor);
+  await enforceFinanceRateLimit(new Request('https://api.skincos.com.br/accounts', { method: 'POST' }), env, actor);
+  await enforceFinanceRateLimit(new Request('https://api.skincos.com.br/imports', { method: 'POST' }), env, actor);
+  expectQuery(limiterRequests[0], 'key=finance:read&limit=240');
+  expectQuery(limiterRequests[1], 'key=finance:write&limit=60');
+  expectQuery(limiterRequests[2], 'key=finance:import&limit=12');
+});
+
+function expectQuery(url, expected) { assert.ok(url.includes(expected), `${url} should include ${expected}`); }

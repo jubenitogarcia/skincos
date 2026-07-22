@@ -209,7 +209,11 @@ echo '[finance-local] Aplicando migrations CRM mínimas no D1 local...'
 apply_finance_migrations
 
 fixture_sql="$RUNTIME_ROOT/fixture.sql"
-fixture="$(node "$ROOT_DIR/finance/scripts/write-local-fixture.mjs" --scenario "$SCENARIO" --output "$fixture_sql")"
+# Each launch gets a bounded local actor identifier. This prevents the
+# persistent local Durable Object rate-limit window from leaking into the next
+# controlled fixture, without weakening or bypassing the limiter itself.
+LOCAL_FINANCE_ACTOR="finance-local-$(date +%s)-$RANDOM"
+fixture="$(node "$ROOT_DIR/finance/scripts/write-local-fixture.mjs" --scenario "$SCENARIO" --actor "$LOCAL_FINANCE_ACTOR" --output "$fixture_sql")"
 d1 execute skincos-db --config "$ROOT_DIR/api/wrangler.toml" --file "$fixture_sql" >/dev/null
 
 case "$SCENARIO" in
@@ -226,7 +230,7 @@ fi
 umask 077
 {
   printf 'LOCAL_FINANCE_AUTH_BYPASS=true\n'
-  printf 'LOCAL_FINANCE_ACTOR=finance-local\n'
+  printf 'LOCAL_FINANCE_ACTOR=%s\n' "$LOCAL_FINANCE_ACTOR"
   printf 'LOCAL_FINANCE_ALLOWED_MODULES=%s\n' "$LOCAL_MODULES"
   printf 'LOCAL_FINANCE_CSRF_TOKEN=finance-local-csrf\n'
 } > "$GATEWAY_ENV_FILE"
@@ -268,13 +272,17 @@ if ! wait_for_http "http://127.0.0.1:${GATEWAY_PORT}/health"; then echo "Gateway
 case "$SCENARIO" in nh) LOCAL_UNITS='novo-hamburgo';; bss) LOCAL_UNITS='barra-shopping-sul';; both) LOCAL_UNITS='novo-hamburgo,barra-shopping-sul';; *) LOCAL_UNITS='';; esac
 
 echo "[finance-local] Iniciando CRM Pages local para cenário $SCENARIO"
+# Finance local must exercise the same explicit-module gate as production.
+# The generic CRM launcher defaults this switch to an all-modules test admin,
+# which would hide the difference between the shell authorization and the
+# Finance gateway grants.
 (
   cd "$ROOT_DIR"
   CRM_VITE_PORT="$CRM_VITE_PORT" CRM_PAGES_PORT="$CRM_PAGES_PORT" CRM_PID_FILE="$CRM_PID_FILE" CRM_LOG_FILE="$CRM_LOG_FILE" \
   CRM_WITH_WHATSAPP=0 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_GATE_STRICT=0 CRM_BUILD_BEFORE_START="${FINANCE_CRM_BUILD_BEFORE_START:-1}" \
-  LOCAL_AUTH_USERNAME=finance-local LOCAL_AUTH_EMAIL=finance-local@localhost LOCAL_AUTH_NAME='Finance Local' \
+  LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_USERNAME="$LOCAL_FINANCE_ACTOR" LOCAL_AUTH_EMAIL="${LOCAL_FINANCE_ACTOR}@localhost" LOCAL_AUTH_NAME='Finance Local' \
   LOCAL_AUTH_ALLOWED_MODULES="$LOCAL_MODULES" LOCAL_AUTH_ALLOWED_UNITS="$LOCAL_UNITS" \
-  LOCAL_FINANCE_API_TARGET="http://127.0.0.1:${GATEWAY_PORT}" LOCAL_FINANCE_ACTOR=finance-local LOCAL_FINANCE_CSRF_TOKEN=finance-local-csrf \
+  LOCAL_FINANCE_API_TARGET="http://127.0.0.1:${GATEWAY_PORT}" LOCAL_FINANCE_ACTOR="$LOCAL_FINANCE_ACTOR" LOCAL_FINANCE_CSRF_TOKEN=finance-local-csrf \
   setsid "$ROOT_DIR/scripts/run-local-crm.sh" --module finance --without-whatsapp --no-browser
 ) >>"$CRM_LOG_FILE" 2>&1 &
 CRM_PID=$!

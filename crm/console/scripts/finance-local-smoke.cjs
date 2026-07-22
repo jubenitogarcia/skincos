@@ -19,6 +19,7 @@ async function main() {
   const consoleErrors = []
   const apiErrors = []
   const financeResponses = []
+  let recoveredFinanceRateLimits = 0
   page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })
   page.on('response', async (response) => {
     if (response.url().includes('/api/finance')) {
@@ -56,6 +57,8 @@ async function main() {
       await page.getByRole('tab', { name: 'Visão geral' }).waitFor({ state: 'visible', timeout: 30_000 })
       await page.getByRole('tab', { name: 'Movimentações' }).click()
       await page.getByText(/Movimentações|Nenhuma movimentação/).first().waitFor({ state: 'visible', timeout: 30_000 })
+      await page.getByRole('tab', { name: 'Títulos' }).click()
+      await page.getByText('Títulos a pagar e receber').waitFor({ state: 'visible', timeout: 30_000 })
       await page.getByRole('tab', { name: 'Cadastros' }).click()
       await page.getByText('Contas financeiras').first().waitFor({ state: 'visible', timeout: 30_000 })
       const grants = bootstrap.body.grants || []
@@ -84,8 +87,22 @@ async function main() {
       const csv = `Date,Description,Amount,Account,Category,Payee,Tags,Memo,Status,Currency,Transfers,Transaction ID\n2026-07-01,Consulta São José,1250.50,Banco,Receitas,Paciente Smoke,clínica,UTF-8,cleared,BRL,,smoke-${csvSuffix}\n2026-07-01,Consulta São José,1250.50,Banco,Receitas,Paciente Smoke,clínica,UTF-8,cleared,BRL,,smoke-${csvSuffix}\n`
       await page.getByLabel('Arquivo CSV').setInputFiles({ name: 'extrato-br.csv', mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8') })
       await page.getByRole('button', { name: 'Criar lote' }).click()
-      await page.getByRole('button', { name: 'Analisar e pré-visualizar' }).waitFor({ state: 'visible', timeout: 30_000 })
-      await page.getByRole('button', { name: 'Analisar e pré-visualizar' }).click()
+      const analysisButton = page.getByRole('button', { name: 'Analisar e pré-visualizar' })
+      const rateLimited = page.getByText('FINANCE_RATE_LIMITED')
+      const firstStep = await Promise.race([
+        analysisButton.waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'ready'),
+        rateLimited.waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'rate-limited'),
+      ])
+      if (firstStep === 'rate-limited') {
+        // The local D1/DO state is intentionally persisted between launcher
+        // runs. Respect its real 60-second import window once, then retry the
+        // idempotent staging action instead of disabling the production guard.
+        await page.waitForTimeout(60_000)
+        await page.getByRole('button', { name: 'Criar lote' }).click()
+        recoveredFinanceRateLimits += 1
+      }
+      await analysisButton.waitFor({ state: 'visible', timeout: 30_000 })
+      await analysisButton.click()
       await page.locator('label').filter({ hasText: 'Conta de destino' }).getByRole('combobox').click()
       await page.getByRole('option', { name: seed.account }).click()
       await page.locator('label').filter({ hasText: 'Categoria padrão de receita' }).getByRole('combobox').click()
@@ -98,9 +115,24 @@ async function main() {
       await page.getByRole('button', { name: 'Confirmar importação' }).click()
       await page.getByText('Resultado auditável').waitFor({ state: 'visible', timeout: 30_000 })
       await page.getByRole('button', { name: 'Desfazer por estorno auditável' }).click()
-      await page.getByText(/foram estornados por operação compensatória/).waitFor({ state: 'visible', timeout: 30_000 })
+      const undoResult = page.getByText(/foram estornados por operação compensatória/)
+      const undoStep = await Promise.race([
+        undoResult.waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'ready'),
+        rateLimited.waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'rate-limited'),
+      ])
+      if (undoStep === 'rate-limited') {
+        await page.waitForTimeout(60_000)
+        await page.getByRole('button', { name: 'Desfazer por estorno auditável' }).click()
+        recoveredFinanceRateLimits += 1
+      }
+      await undoResult.waitFor({ state: 'visible', timeout: 30_000 })
     }
-    if (consoleErrors.length || apiErrors.length) throw new Error(`Erros de runtime: ${JSON.stringify({ consoleErrors, apiErrors })}`)
+    let toleratedRateLimitWarnings = recoveredFinanceRateLimits
+    const relevantConsoleErrors = consoleErrors.filter((message) => {
+      if (toleratedRateLimitWarnings > 0 && /server responded with a status of 429/i.test(message)) { toleratedRateLimitWarnings -= 1; return false }
+      return true
+    })
+    if (relevantConsoleErrors.length || apiErrors.length) throw new Error(`Erros de runtime: ${JSON.stringify({ consoleErrors: relevantConsoleErrors, apiErrors })}`)
     await page.screenshot({ path: shotFile, fullPage: false })
     fs.writeFileSync(reportFile, `${JSON.stringify({ ok: true, url, scenario, bootstrap, financeResponses, screenshot: shotFile }, null, 2)}\n`)
     console.log(`[finance-local-smoke] OK (${scenario}): ${url}`)
