@@ -625,11 +625,18 @@ const normalizeRole = (value) => {
     return ROLE_ALIASES.get(raw) || raw
 }
 
+const effectiveAllowedModules = (role, allowedModules) => {
+    if (normalizeRole(role) === 'CONSULTOR') return ['atendimento']
+    return Array.isArray(allowedModules) ? allowedModules.map((x) => String(x)).filter(Boolean) : []
+}
+
 const normalizeCrmUser = (user) => {
     if (!user || typeof user !== 'object') return user
     const role = normalizeRole(user.role)
-    if (!role || role === user.role) return user
-    return { ...user, role }
+    const normalizedRole = role || user.role
+    const allowedModules = effectiveAllowedModules(normalizedRole, user.allowedModules)
+    if (normalizedRole === user.role && JSON.stringify(allowedModules) === JSON.stringify(user.allowedModules || [])) return user
+    return { ...user, role: normalizedRole, allowedModules }
 }
 
 const ADMIN_ROLES = new Set(['GESTOR', 'GERENTE'])
@@ -1121,14 +1128,16 @@ if (DEV_AUTH_ENABLED) {
         const users = usersIn.map((user) => {
             if (!user || typeof user !== 'object') return user
             const role = normalizeRole(user.role)
-            if (role && role !== user.role) changed = true
-            return { ...user, role: role || user.role }
+            const allowedModules = effectiveAllowedModules(role || user.role, user.allowedModules)
+            if ((role && role !== user.role) || JSON.stringify(allowedModules) !== JSON.stringify(user.allowedModules || [])) changed = true
+            return { ...user, role: role || user.role, allowedModules }
         })
         const invites = invitesIn.map((invite) => {
             if (!invite || typeof invite !== 'object') return invite
             const role = normalizeRole(invite.role)
-            if (role && role !== invite.role) changed = true
-            return { ...invite, role: role || invite.role }
+            const allowedModules = effectiveAllowedModules(role || invite.role, invite.allowedModules)
+            if ((role && role !== invite.role) || JSON.stringify(allowedModules) !== JSON.stringify(invite.allowedModules || [])) changed = true
+            return { ...invite, role: role || invite.role, allowedModules }
         })
         return { store: { users, invites }, changed }
     }
@@ -1176,7 +1185,7 @@ if (DEV_AUTH_ENABLED) {
             displayName: String(body.displayName || body.name || username).trim(),
             role: normalizeRole(body.role || 'INJETOR'),
             allowedUnits: Array.isArray(body.allowedUnits) ? body.allowedUnits.map((x) => String(x)).filter(Boolean) : [],
-            allowedModules: Array.isArray(body.allowedModules) ? body.allowedModules.map((x) => String(x)).filter(Boolean) : [],
+            allowedModules: effectiveAllowedModules(body.role || 'INJETOR', body.allowedModules),
             ativo: body.ativo !== false,
             password: typeof body.password === 'string' ? body.password : null,
             note: typeof body.note === 'string' ? body.note : null,
@@ -1202,7 +1211,7 @@ if (DEV_AUTH_ENABLED) {
             displayName: body.displayName !== undefined ? String(body.displayName || '').trim() : cur.displayName,
             role: body.role !== undefined ? normalizeRole(body.role) : cur.role,
             allowedUnits: body.allowedUnits !== undefined ? (Array.isArray(body.allowedUnits) ? body.allowedUnits.map((x) => String(x)).filter(Boolean) : []) : cur.allowedUnits,
-            allowedModules: body.allowedModules !== undefined ? (Array.isArray(body.allowedModules) ? body.allowedModules.map((x) => String(x)).filter(Boolean) : []) : cur.allowedModules,
+            allowedModules: effectiveAllowedModules(body.role !== undefined ? body.role : cur.role, body.allowedModules !== undefined ? body.allowedModules : cur.allowedModules),
             ativo: body.ativo !== undefined ? Boolean(body.ativo) : cur.ativo,
             note: body.note !== undefined ? (typeof body.note === 'string' ? body.note : null) : cur.note,
             updatedBy: session?.user?.username || session?.user?.email || 'dev',
@@ -1246,7 +1255,7 @@ if (DEV_AUTH_ENABLED) {
             tokenHint,
             role: normalizeRole(body.role || 'INJETOR'),
             allowedUnits: Array.isArray(body.allowedUnits) ? body.allowedUnits.map((x) => String(x)).filter(Boolean) : [],
-            allowedModules: Array.isArray(body.allowedModules) ? body.allowedModules.map((x) => String(x)).filter(Boolean) : [],
+            allowedModules: effectiveAllowedModules(body.role || 'INJETOR', body.allowedModules),
             maxUses,
             usesCount: 0,
             expiresAt,

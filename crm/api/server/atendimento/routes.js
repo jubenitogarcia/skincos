@@ -61,7 +61,13 @@ function parseActorHeader(req) {
 async function verifySignedActor(req, actorKey) {
     const actor = parseActorHeader(req)
     if (!actor) return null
-    if (!actorKey) return actor
+    // An unsigned actor is only valid for the explicit, loopback-only local
+    // development runtime.  Accepting this header elsewhere would let any
+    // caller choose their own role, module and allowed-unit scope.
+    if (!actorKey) {
+        const localBypass = String(process.env.CRM_LOCAL_NO_AUTH || process.env.NO_AUTH || '').trim().toLowerCase() === 'true'
+        return localBypass && isLocalRequest(req) ? actor : null
+    }
     const ts = String(req.headers['x-crm-ts'] || '').trim()
     const sig = String(req.headers['x-crm-signature'] || '').trim()
     const encoded = String(req.headers['x-crm-user'] || '').trim()
@@ -99,20 +105,31 @@ function isCommercialManager(actor) {
 }
 
 function isLocalRequest(req) {
-    const host = String(req.hostname || req.headers?.host || '').trim().toLowerCase().replace(/^\[|\]$/g, '')
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+    // Host is caller-controlled. Only the peer address may authorize the
+    // unsigned local-development actor or the local mirror diagnostics.
+    const remote = String(req.socket?.remoteAddress || req.connection?.remoteAddress || '').trim().toLowerCase()
+    return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+}
+
+function errorPayload(error) {
+    const message = String(error?.message || error || 'ERROR')
+    const status = Number(error?.statusCode || error?.status || 500)
+    const clientError = Number.isInteger(status) && status >= 400 && status < 500
+    return {
+        status,
+        body: {
+        ok: false,
+        error: clientError ? message : 'INTERNAL_ERROR',
+        hint: clientError && message === 'DATABASE_URL_not_configured'
+            ? 'Configure DATABASE_URL no crm-api antes de usar o módulo de Acompanhamento de Atendimento.'
+            : undefined,
+        },
+    }
 }
 
 function errorResponse(res, error) {
-    const message = String(error?.message || error || 'ERROR')
-    const status = Number(error?.statusCode || error?.status || 500)
-    return json(res, status, {
-        ok: false,
-        error: message,
-        hint: message === 'DATABASE_URL_not_configured'
-            ? 'Configure DATABASE_URL no crm-api antes de usar o módulo de Acompanhamento de Atendimento.'
-            : undefined,
-    })
+    const response = errorPayload(error)
+    return json(res, response.status, response.body)
 }
 
 export function createAtendimentoRouter(options = {}) {
@@ -300,6 +317,14 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    expressRouter.get('/clients', async (req, res) => {
+        try {
+            return json(res, 200, { ok: true, ...(await store.clients(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.get('/overview', async (req, res) => {
         try {
             return json(res, 200, { ok: true, ...(await store.overview(req.query || {}, req.atendimentoActor)) })
@@ -452,7 +477,10 @@ export function createAtendimentoRouter(options = {}) {
 
     expressRouter.post('/attendances', async (req, res) => {
         try {
-            const data = await store.createAttendance(req.body || {}, req.atendimentoActor)
+            const data = await store.createAttendance({
+                ...(req.body || {}),
+                idempotencyKey: String(req.headers['idempotency-key'] || '').trim() || undefined,
+            }, req.atendimentoActor)
             return json(res, 200, { ok: true, data })
         } catch (error) {
             return errorResponse(res, error)
@@ -470,7 +498,7 @@ export function createAtendimentoRouter(options = {}) {
 
     expressRouter.delete('/attendances/:id', async (req, res) => {
         try {
-            const data = await store.deleteAttendance(String(req.params.id || ''), req.atendimentoActor)
+            const data = await store.deleteAttendance(String(req.params.id || ''), req.body || {}, req.atendimentoActor)
             return json(res, 200, { ok: true, ...data })
         } catch (error) {
             return errorResponse(res, error)
@@ -512,4 +540,10 @@ export function createAtendimentoRouter(options = {}) {
     })
 
     return expressRouter
+}
+
+export const __testables = {
+    errorPayload,
+    isLocalRequest,
+    verifySignedActor,
 }
