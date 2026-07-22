@@ -107,6 +107,12 @@ try {
   await page.getByText('Títulos a pagar e receber').waitFor({ state: 'visible', timeout: 30_000 })
   const obligations = await obligationsResponse
   if (obligations.status() !== 200) fail(`Consulta de títulos falhou: ${obligations.status()}`)
+  await page.getByText('Posição e previsão de 30 dias').waitFor({ state: 'visible', timeout: 30_000 })
+  const obligationSummary = await page.evaluate(async (scopeId) => {
+    const response = await fetch(`/api/finance/obligations/summary?scopeId=${encodeURIComponent(scopeId)}`, { credentials: 'include' })
+    return { status: response.status, body: await response.json() }
+  }, bootstrap.body.grants[0].scope_id)
+  if (obligationSummary.status !== 200 || obligationSummary.body?.ok !== true) fail(`Resumo de títulos falhou: ${obligationSummary.status}`)
   await page.getByText(/Nenhum título corresponde aos filtros|Página \d+ de \d+/).first().waitFor({ state: 'visible', timeout: 30_000 })
   await page.getByRole('tab', { name: 'Cadastros' }).click()
   await page.getByText('Contas financeiras').first().waitFor({ state: 'visible', timeout: 30_000 })
