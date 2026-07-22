@@ -18,7 +18,7 @@ controlados e o contexto pessoal continua inativo.
 | Filtros, paginação, busca e auditoria | Implementado para movimentações | filtros enviados à API, paginação, detalhes/auditoria no CRM | persistência de filtros e ações em lote |
 | Contas a pagar/receber e liquidação | Núcleo e UI operacional implementados localmente | migration `0011`, aba **Títulos** com criação, filtros, detalhe/auditoria, baixa parcial e cancelamento; liquidação continua ligada a lançamento confirmado, com idempotência e auditoria | recorrências, calendário detalhado e teste autenticado em staging da posição |
 | Posição vencida, aging e fluxo projetado de títulos | Implementado por escopo, em servidor | `GET /obligations/summary` agrega somente títulos abertos/parcialmente baixados, separa moedas, vencido, janela de 30 dias, aging e agenda prevista; o CRM mostra posição e previsão sem criar caixa | consolidado autorizado, calendário navegável e comparação realizado versus previsto |
-| Regras de cartão e recorrência | Recorrência mensal no domínio; cartão parcial | migration `0012`, `POST /recurrences` e materialização manual/idempotente em títulos AP/AR, sem caixa/razão; teste D1 de escopo e replay | interface CRM de recorrências, pausa/arquivo auditado, fechamento/fatura de cartão |
+| Regras de cartão e recorrência | Recorrência mensal operacional; cartão parcial | migration `0012`, contrato `finance/v1`, `GET/POST /recurrences` e materialização manual/idempotente em títulos AP/AR, sem caixa/razão; o CRM permite criar regra e gerar títulos até uma data; testes D1 cobrem escopo, replay, competência e meses curtos | pausa/arquivo auditado, fechamento/fatura de cartão |
 | Relatórios gerenciais | Visão geral inicial | `/overview`, saldos, entradas, saídas e período anterior | DRE, fluxo de caixa, competência/caixa e exportações seguras |
 | Backup, recuperação e observabilidade de produção | Não concluído | docs de segurança registram a dependência | exercício de backup/restauração D1, alertas e runbook |
 
@@ -31,6 +31,17 @@ referencia um único lançamento confirmado ou conciliado, do mesmo escopo,
 moeda e sentido financeiro. O principal reduz o saldo do título; desconto,
 abatimento, juros e multa explicam a diferença para o valor efetivamente pago.
 Não há exclusão nem cancelamento de título parcialmente liquidado.
+
+## Decisão do ciclo de recorrências
+
+Uma recorrência é um template mensal imutável de planejamento. O primeiro
+vencimento é alinhado pelo servidor ao dia configurado e os meses curtos usam
+o último dia válido; competência e vencimento são calculados separadamente.
+Materializar até uma data cria somente títulos ainda inexistentes, vinculados
+por identificador externo à regra e ocorrência. Repetir a mesma chamada é
+idempotente, não duplica títulos, nem movimenta caixa ou razão. A UI apenas
+coleta a intenção e exibe a operação; não calcula valores financeiros nem
+persiste estado local como fonte de verdade.
 
 ## Decisão anterior do ciclo
 

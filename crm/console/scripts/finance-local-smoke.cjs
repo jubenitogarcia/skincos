@@ -37,14 +37,17 @@ async function main() {
       return { status: response.status, body: await response.json(), authStatus: auth.status, authBody: await auth.json().catch(() => null) }
     })
     if (scenario === 'disabled') {
-      const visible = await financeNav.isVisible().catch(() => false)
-      if (bootstrap.status !== 200 || bootstrap.body.moduleEnabled !== false || visible) throw new Error('Flag desligada não bloqueou a navegação Financeiro.')
+      // App asks the same bootstrap endpoint asynchronously before it removes
+      // the entry.  Wait for the state transition instead of observing the
+      // first paint, which can still contain the pre-bootstrap navigation.
+      await financeNav.waitFor({ state: 'hidden', timeout: 30_000 })
+      if (bootstrap.status !== 200 || bootstrap.body.moduleEnabled !== false || bootstrap.body.canAccess !== false) throw new Error(`Flag desligada não bloqueou a navegação Financeiro: ${JSON.stringify({ status: bootstrap.status, body: bootstrap.body })}`)
     } else if (scenario === 'no-module') {
-      const visible = await financeNav.isVisible().catch(() => false)
-      if (bootstrap.status !== 403 || visible) throw new Error('Usuário sem módulo finance não foi bloqueado.')
+      await financeNav.waitFor({ state: 'hidden', timeout: 30_000 })
+      if (bootstrap.status !== 403) throw new Error('Usuário sem módulo finance não foi bloqueado.')
     } else if (scenario === 'no-grant') {
-      const visible = await financeNav.isVisible().catch(() => false)
-      if (bootstrap.status !== 200 || bootstrap.body.canAccess !== false || visible) throw new Error('Usuário sem grant não foi bloqueado.')
+      await financeNav.waitFor({ state: 'hidden', timeout: 30_000 })
+      if (bootstrap.status !== 200 || bootstrap.body.canAccess !== false) throw new Error('Usuário sem grant não foi bloqueado.')
     } else {
       if (bootstrap.status !== 200 || bootstrap.body.canAccess !== true || bootstrap.body.moduleEnabled !== true) {
         throw new Error(`Bootstrap Financeiro autorizado falhou: ${bootstrap.status}`)
@@ -130,6 +133,10 @@ async function main() {
     let toleratedRateLimitWarnings = recoveredFinanceRateLimits
     const relevantConsoleErrors = consoleErrors.filter((message) => {
       if (toleratedRateLimitWarnings > 0 && /server responded with a status of 429/i.test(message)) { toleratedRateLimitWarnings -= 1; return false }
+      // A user without the explicit module grant receives a deliberately
+      // fail-closed bootstrap response. Browsers log that expected 403 as a
+      // resource error even though the shell correctly hides the module.
+      if (scenario === 'no-module' && /server responded with a status of 403/i.test(message)) return false
       return true
     })
     if (relevantConsoleErrors.length || apiErrors.length) throw new Error(`Erros de runtime: ${JSON.stringify({ consoleErrors: relevantConsoleErrors, apiErrors })}`)

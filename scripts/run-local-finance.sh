@@ -217,7 +217,10 @@ fixture="$(node "$ROOT_DIR/finance/scripts/write-local-fixture.mjs" --scenario "
 d1 execute skincos-db --config "$ROOT_DIR/api/wrangler.toml" --file "$fixture_sql" >/dev/null
 
 case "$SCENARIO" in
-  disabled|no-module) LOCAL_MODULES='' ;;
+  # A disabled module must still reach Finance with its explicit module grant;
+  # otherwise the local scenario only tests NO_MODULE and never exercises the
+  # global feature flag gate.
+  no-module) LOCAL_MODULES='' ;;
   *) LOCAL_MODULES='finance' ;;
 esac
 
