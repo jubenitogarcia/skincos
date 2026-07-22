@@ -114,6 +114,13 @@ jobs:
         run: |
           set -euo pipefail
           PROJECT="${PAGES_PROJECT:-skincos}"
+          if [[ "$BRANCH_NAME" == "staging" ]]; then
+            # Pages reads only wrangler.toml from its working directory. This
+            # checkout is ephemeral, so stage the isolated config in place
+            # rather than letting the staging project inherit production
+            # proxy targets from the repository default.
+            cp .wrangler-staging/wrangler.toml wrangler.toml
+          fi
           echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
           npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
         working-directory: crm/console

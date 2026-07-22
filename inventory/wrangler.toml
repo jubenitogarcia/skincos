@@ -49,7 +49,7 @@ class_name = "JobQueue"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "skincos-db-staging"
-database_id = "REPLACE_ME"
+database_id = "4bdd7995-ad69-465a-917c-0aab22db5c4e"
 
 [[env.staging.r2_buckets]]
 binding = "BACKUP_BUCKET"

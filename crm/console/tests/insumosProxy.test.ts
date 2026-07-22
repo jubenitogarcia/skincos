@@ -86,4 +86,27 @@ describe('Insumos proxy cookie contract', () => {
     expect(response.status).toBe(404)
     await expect(response.json()).resolves.toEqual({ success: false, error: 'NOT_FOUND' })
   })
+
+  it('fails closed when a staging deployment is missing its isolated API target', async () => {
+    const response = await onRequest(
+      createContext('https://skincos-staging.pages.dev/api/insumos/_proxy-status', {
+        SKINCOS_DEPLOYMENT_ENV: 'staging',
+      }),
+    )
+
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toEqual({ ok: false, error: 'STAGING_INSUMOS_TARGET_INVALID' })
+  })
+
+  it('recognizes the staging target as non-production', async () => {
+    const response = await onRequest(
+      createContext('https://skincos-staging.pages.dev/api/insumos/_proxy-status', {
+        SKINCOS_DEPLOYMENT_ENV: 'staging',
+        INSUMOS_API_TARGET: 'https://api-staging.skincos.com.br',
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ target: 'https://api-staging.skincos.com.br', isProductionTarget: false })
+  })
 })

@@ -9,7 +9,15 @@ export async function onRequest(context: any): Promise<Response> {
   const incoming = new URL(request.url)
   const prefix = '/api/finance'
   const rest = incoming.pathname.startsWith(prefix) ? incoming.pathname.slice(prefix.length) || '/' : incoming.pathname
-  const target = new URL((context.env?.FINANCE_API_TARGET as string | undefined) || 'https://api.skincos.com.br')
+  const configuredTarget = String((context.env?.FINANCE_API_TARGET as string | undefined) || '').trim()
+  const isStaging = String(context.env?.SKINCOS_DEPLOYMENT_ENV || '').trim().toLowerCase() === 'staging'
+  if (isStaging && configuredTarget !== 'https://api-staging.skincos.com.br') {
+    return new Response(JSON.stringify({ ok: false, error: 'STAGING_FINANCE_TARGET_INVALID' }), {
+      status: 503,
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    })
+  }
+  const target = new URL(configuredTarget || 'https://api.skincos.com.br')
   target.pathname = `/finance${rest.startsWith('/') ? '' : '/'}${rest}`
   target.search = incoming.search
   const headers = sanitizeProxyRequestHeaders(request.headers)
