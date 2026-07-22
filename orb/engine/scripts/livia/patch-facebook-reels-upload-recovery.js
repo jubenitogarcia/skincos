@@ -57,14 +57,17 @@ function scheduleFacebookReelsUploadRecovery(failedJob, apiErr) {
   if (!Number.isFinite(attempted) || attempted >= maximum) return null;
 
   const originalFinishRun = Number(failedJob.recoveryOfPublishRunIndex || failedJob.publishRunIndex);
-  const allKnown = [...state.completed, ...state.pending, ...state.allJobs].map(asObject);
-  const originalFinish = state.completed.map(asObject).find((entry) => Number(entry.publishRunIndex) === originalFinishRun);
+  // Durable resume records are deliberately compact and omit dependency edges.
+  // The complete immutable job graph is retained in allJobs, so it must win
+  // over compact completed entries when rebuilding a provider-only recovery.
+  const allKnown = [...state.allJobs, ...state.pending, ...state.completed].map(asObject);
+  const originalFinish = allKnown.find((entry) => Number(entry.publishRunIndex) === originalFinishRun);
   const originalStartRun = Number(asObject(originalFinish).reelsStartFromPublishRunIndex);
-  const originalStart = state.completed.map(asObject).find((entry) => Number(entry.publishRunIndex) === originalStartRun && str(entry.step, "").toLowerCase() === "reels_start");
-  const originalUpload = state.completed.map(asObject).find((entry) =>
+  const originalStart = allKnown.find((entry) => Number(entry.publishRunIndex) === originalStartRun && str(entry.step, "").toLowerCase() === "reels_start");
+  const originalUpload = allKnown.find((entry) =>
     str(entry.step, "").toLowerCase() === "reels_upload_hosted" && Number(entry.reelsStartFromPublishRunIndex) === originalStartRun,
   );
-  const originalReady = state.completed.map(asObject).find((entry) =>
+  const originalReady = allKnown.find((entry) =>
     str(entry.checkKind, "").toLowerCase() === "fb_reels_upload_ready" && Number(entry.statusFromPublishRunIndex) === originalStartRun,
   );
   const originalPost = allKnown.find((entry) =>
@@ -112,9 +115,14 @@ function scheduleFacebookReelsUploadRecovery(failedJob, apiErr) {
 
 function scheduleFacebookReelsFinishRetry(checkJob, fatalStatus) {`, 'Process HTTP Publish Result upload-missing recovery insertion');
 
-  code = replaceOnce(code, `  state.pending.unshift(retryStatus);
-  state.pending.unshift(retry);`, `  // The retry job is returned directly below; queue only its successor status check.
+  const duplicateFinishRetryQueue = `  state.pending.unshift(retryStatus);
+  state.pending.unshift(retry);`;
+  if (code.includes(duplicateFinishRetryQueue)) {
+    code = replaceOnce(code, duplicateFinishRetryQueue, `  // The retry job is returned directly below; queue only its successor status check.
   state.pending.unshift(retryStatus);`, 'Process HTTP Publish Result finish-retry queue ownership');
+  } else if (!code.includes('state.pending.unshift(retryStatus);')) {
+    throw new Error('Process HTTP Publish Result: finish-retry queue marker is missing.');
+  }
 
   for (const required of ['scheduleFacebookReelsUploadRecovery', 'isFacebookReelsUploadMissing', 'facebook_reels_upload_missing_reupload', 'reels_finish_retry']) {
     if (!code.includes(required)) throw new Error(`Process HTTP Publish Result: missing postcondition ${required}.`);
