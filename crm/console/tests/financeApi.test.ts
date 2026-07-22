@@ -72,13 +72,15 @@ describe('Finance transport helpers', () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 201, headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
     await financeApi.obligations('scope-nh', { kind: 'payable', status: 'open', from: '2026-08-01', to: '2026-08-31' })
+    await financeApi.obligationSummary('scope-nh', { asOf: '2026-08-10', horizonDays: 30 })
     await financeApi.createObligation('scope-nh', { kind: 'payable', description: 'Fornecedor', amountMinor: 10000, currency: 'BRL', competenceDate: '2026-08-01', dueDate: '2026-08-10' }, 'obligation-create')
     await financeApi.settleObligation('scope-nh', 'obligation-1', { movementId: 'movement-1', principalAmountMinor: 10000, discountMinor: 500 }, 'obligation-settle')
     await financeApi.cancelObligation('scope-nh', 'obligation-2', 'Contrato cancelado', 'obligation-cancel')
     const calls = fetchMock.mock.calls.map(([input, init]) => ({ url: String(input), init: init as RequestInit }))
-    expect(calls.map((call) => call.url)).toEqual(expect.arrayContaining(['/api/finance/obligations?scopeId=scope-nh&kind=payable&status=open&from=2026-08-01&to=2026-08-31', '/api/finance/obligations?scopeId=scope-nh', '/api/finance/obligations/obligation-1/settlements?scopeId=scope-nh', '/api/finance/obligations/obligation-2/cancel?scopeId=scope-nh']))
-    expect(new Headers(calls[2].init.headers).get('idempotency-key')).toBe('obligation-settle')
-    expect(JSON.parse(String(calls[2].init.body))).toMatchObject({ movementId: 'movement-1', principalAmountMinor: 10000 })
+    expect(calls.map((call) => call.url)).toEqual(expect.arrayContaining(['/api/finance/obligations?scopeId=scope-nh&kind=payable&status=open&from=2026-08-01&to=2026-08-31', '/api/finance/obligations/summary?scopeId=scope-nh&asOf=2026-08-10&horizonDays=30', '/api/finance/obligations?scopeId=scope-nh', '/api/finance/obligations/obligation-1/settlements?scopeId=scope-nh', '/api/finance/obligations/obligation-2/cancel?scopeId=scope-nh']))
+    const settlementCall = calls.find((call) => call.url.includes('/obligations/obligation-1/settlements?'))
+    expect(new Headers(settlementCall?.init.headers).get('idempotency-key')).toBe('obligation-settle')
+    expect(JSON.parse(String(settlementCall?.init.body))).toMatchObject({ movementId: 'movement-1', principalAmountMinor: 10000 })
   })
 
   it('sends staged CSV decisions, idempotent commit and audited undo to server routes', async () => {
