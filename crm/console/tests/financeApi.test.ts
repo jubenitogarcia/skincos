@@ -55,6 +55,16 @@ describe('Finance transport helpers', () => {
     expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toMatchObject({ sourceType: 'moneywiz' })
   })
 
+  it('sends the controlled Caixa EF delivery as an import source, not a client-side ledger mutation', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const efCaixa = { contractVersion: 'ef-caixa/v1', source: { executionId: 'run-1' }, unit: { slug: 'novo-hamburgo' }, period: { from: '2026-07-01', to: '2026-07-01' }, records: [] }
+    await financeApi.stageCsv('scope-nh', 'caixa-ef.json', JSON.stringify(efCaixa), { sourceType: 'ef-caixa', efCaixa, idempotencyKey: 'ef-caixa-stage' })
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(body).toMatchObject({ sourceType: 'ef-caixa', efCaixa })
+    expect(body.csv).toBeUndefined()
+  })
+
   it('routes Finance browser requests through the Pages proxy instead of the static shell', () => {
     const routes = JSON.parse(readFileSync(new URL('../public/_routes.json', import.meta.url), 'utf8'))
     expect(routes.include).toContain('/api/finance/*')

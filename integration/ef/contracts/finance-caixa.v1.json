@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skincos.com.br/contracts/ef-caixa/v1",
+  "title": "Entrega Caixa EF para Financeiro",
+  "type": "object",
+  "required": ["contractVersion", "source", "unit", "period", "records"],
+  "properties": {
+    "contractVersion": { "const": "ef-caixa/v1" },
+    "source": { "type": "object", "required": ["executionId"], "properties": { "executionId": { "type": "string" }, "artifactId": { "type": "string" }, "artifactSha256": { "type": "string" } } },
+    "unit": { "type": "object", "required": ["slug"], "properties": { "slug": { "type": "string" }, "name": { "type": "string" } } },
+    "period": { "type": "object", "required": ["from", "to"], "properties": { "from": { "type": "string", "format": "date" }, "to": { "type": "string", "format": "date" } } },
+    "records": { "type": "array", "items": { "type": "object", "required": ["occurredOn", "paidAmountMinor", "paymentMethod", "status", "currency"], "properties": { "occurredOn": { "type": "string", "format": "date" }, "paidAmountMinor": { "type": "integer", "minimum": 0 }, "grossAmountMinor": { "type": "integer", "minimum": 1 }, "clientCreditMinor": { "type": "integer", "minimum": 0 }, "feeAmountMinor": { "type": "integer", "minimum": 0 }, "installmentCount": { "type": "integer", "minimum": 1 }, "paymentMethod": { "type": "string" }, "status": { "type": "string" }, "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }, "externalId": { "type": "string" }, "refundOfExternalId": { "type": "string" } } } }
+  }
+}

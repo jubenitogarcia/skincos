@@ -4,7 +4,7 @@ import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
+const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';
@@ -140,6 +140,22 @@ test('D1 local: MoneyWiz adapter stages source metadata and transfer candidates 
   const loaded = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}?scopeId=${scopeNh}`); assert.equal(loaded.body.batch.source_type, 'moneywiz'); assert.equal(loaded.body.batch.source_metadata_json.includes('transfers'), true);
   assert.equal(loaded.body.transferCandidates.length, 2); assert.equal(loaded.body.rows.filter((row) => row.status === 'exact_duplicate').length, 1); assert.equal(loaded.body.rows.filter((row) => JSON.parse(row.normalized_json || '{}').transferAccountName).every((row) => row.decision === 'review'), true);
   const ledger = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_movements`).first(); assert.equal(Number(ledger.count), 0);
+});
+
+test('D1 local: Caixa EF delivery stays scoped, auditable, idempotent and sends cancellations to human review', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco NH Caixa EF', 'ef-caixa-bank'); const income = await category(ctx.env, ctx.actor, scopeNh, 'Receitas Caixa EF', 'income', 'ef-caixa-income'); const expense = await category(ctx.env, ctx.actor, scopeNh, 'Despesas Caixa EF', 'expense', 'ef-caixa-expense');
+  const delivery = JSON.parse(await readFile(new URL('./fixtures/ef-caixa-delivery-nh.json', import.meta.url), 'utf8'));
+  const staged = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'ef-caixa-stage', body: { filename: 'caixa-ef.json', sourceType: 'ef-caixa', efCaixa: delivery } });
+  assert.equal(staged.response.status, 201, JSON.stringify(staged.body)); assert.equal(staged.body.analysis.sourceType, 'ef-caixa');
+  const loaded = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}?scopeId=${scopeNh}`); assert.equal(loaded.body.batch.source_adapter, 'ef-caixa/v1'); assert.equal(loaded.body.batch.sourceMetadata.executionId, 'ef-run-20260731-nh'); assert.equal(loaded.body.rows.filter((row) => row.decision === 'review').length, 2);
+  const cancelled = loaded.body.rows.find((row) => JSON.parse(row.normalized_json || '{}').externalId === 'ef-sale-cancelled');
+  const unsafe = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/decisions?scopeId=${scopeNh}`, { method: 'POST', key: 'ef-caixa-cancelled', body: { rowId: cancelled.id, decision: 'import' } }); assert.equal(unsafe.response.status, 400);
+  const reprocessed = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'ef-caixa-repeat', body: { filename: 'caixa-ef-repeat.json', sourceType: 'ef-caixa', efCaixa: { ...delivery, source: { ...delivery.source, executionId: 'ef-run-reprocessed' } } } }); assert.equal(reprocessed.body.alreadyStaged, true);
+  const wrongUnit = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeBss}`, { method: 'POST', key: 'ef-caixa-wrong-unit', body: { filename: 'caixa-ef.json', sourceType: 'ef-caixa', efCaixa: delivery } }); assert.equal(wrongUnit.response.status, 403);
+  const ledger = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_movements WHERE source='ef-caixa'`).first(); assert.equal(Number(ledger.count), 0);
+  const committed = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/commit?scopeId=${scopeNh}`, { method: 'POST', key: 'ef-caixa-commit', body: { defaultAccountId: bank.id, incomeCategoryId: income.id, expenseCategoryId: expense.id } }); assert.equal(committed.response.status, 201, JSON.stringify(committed.body)); assert.equal(committed.body.committed, 1);
+  const movement = await ctx.DB.prepare(`SELECT source,external_id FROM finance_movements WHERE source='ef-caixa'`).first(); assert.deepEqual(movement, { source: 'ef-caixa', external_id: 'ef-sale-1001' });
 });
 
 test('D1 local: splits, base currency, installments and operational lifecycle remain traceable', async (t) => {

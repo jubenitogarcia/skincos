@@ -1190,6 +1190,8 @@ def _run_cash_combined(headless: bool, output_dir: Path, unit_name: str, persist
         end_name = datetime.strptime(end_str, "%d/%m/%Y").strftime("%Y%m%d")
         xlsx_output_dir = _unit_output_dir(output_dir, unit_name)
         xlsx_path = xlsx_output_dir / f"caixa_recebimentos_completo_{start_name}_a_{end_name}.xlsx"
+        finance_delivery_path = xlsx_output_dir / f"caixa_finance_delivery_{start_name}_a_{end_name}.json"
+        finance_outputs: list[str] = []
 
         if not dry_run:
             with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
@@ -1201,6 +1203,30 @@ def _run_cash_combined(headless: bool, output_dir: Path, unit_name: str, persist
                 if not df_total.empty:
                     df_total.to_excel(writer, index=False, sheet_name="Total")
             format_workbook(xlsx_path)
+
+            # The JSON delivery is a neutral, versioned hand-off. Finance will
+            # stage it later through its authenticated import pipeline; this
+            # collector never connects to D1 or posts financial movements.
+            from hashlib import sha256
+            from uuid import uuid4
+            from espacofacial.finance_caixa import write_finance_caixa_delivery
+
+            finance_outputs = [str(xlsx_path)]
+            if client_rows:
+                write_finance_caixa_delivery(
+                    client_rows,
+                    output_path=finance_delivery_path,
+                    unit_name=unit_name,
+                    period_from=start_dt,
+                    period_to=end_dt,
+                    execution_id=f"ef-caixa-{uuid4()}",
+                    artifact_id=xlsx_path.name,
+                    artifact_sha256=sha256(xlsx_path.read_bytes()).hexdigest(),
+                )
+                finance_outputs.append(str(finance_delivery_path))
+                log(f"✓ Saved Finance delivery: {finance_delivery_path}")
+            else:
+                log("⚠ Caixa EF sem linhas detalhadas; resumo por pagamento não gera entrega Financeiro.")
 
             log(f"✓ Saved XLSX: {xlsx_path}")
             print("\nCaixa exportado (clientes + pagamentos):")
@@ -1225,7 +1251,7 @@ def _run_cash_combined(headless: bool, output_dir: Path, unit_name: str, persist
             started_at=started_at,
             ended_at=datetime.now(),
             details=details,
-            outputs=[str(xlsx_path)] if not dry_run else [],
+            outputs=finance_outputs,
         )
         return 0
     except Exception as e:
