@@ -33,6 +33,7 @@
     "crm:local:finance:stop": "bash ./scripts/run-local-finance.sh --stop",
     "crm:local:finance:status": "bash ./scripts/run-local-finance.sh --status",
     "crm:local:finance:ports": "bash ./scripts/run-local-finance.sh --ports",
+    "finance:migrate:staging": "bash ./finance/scripts/apply-d1-migrations.sh --remote --env staging --adopt-existing-schema",
     "codex:shared:setup": "powershell -ExecutionPolicy Bypass -File .\\scripts\\setup-shared-codex-workspace.ps1",
     "codex:shared:validate": "powershell -ExecutionPolicy Bypass -File .\\scripts\\validate-shared-codex-workspace.ps1",
     "codex:runtime:setup": "powershell -ExecutionPolicy Bypass -File .\\scripts\\setup-shared-runtime.ps1",

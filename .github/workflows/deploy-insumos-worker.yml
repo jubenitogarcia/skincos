@@ -113,6 +113,18 @@ jobs:
           put_secret AUTH_RESET_EMAIL_FROM "$AUTH_RESET_EMAIL_FROM"
           put_secret AUTH_RESET_CODE_PEPPER "$AUTH_RESET_CODE_PEPPER"
 
+      - name: Apply audited Finance migrations (staging only)
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && github.ref_name == 'staging' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          # The command fails on an unknown historical baseline or checksum
+          # drift. It writes only the isolated staging D1 and runs before the
+          # gateway can serve a schema-dependent Finance route.
+          bash finance/scripts/apply-d1-migrations.sh --remote --env staging --adopt-existing-schema
+
       - name: Deploy changed Workers
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         env:
