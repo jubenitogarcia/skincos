@@ -7,7 +7,7 @@ controlados e o contexto pessoal continua inativo.
 | Requisito | Estado | Evidência atual | Próxima pendência |
 | --- | --- | --- | --- |
 | Isolamento NH/BSS e pessoal bloqueado | Implementado e testado | grants explícitos, `finance_scopes.active`, handler e testes D1 | smoke de navegador local ainda precisa completar sem interrupção do runner |
-| Contas, categorias, favorecidos, tags e centros de custo | Criação e leitura implementadas | `/accounts`, `/categories`, `/payees`, `/tags`, `/cost-centers`; CRM Cadastros | edição/arquivamento auditado de cadastros |
+| Contas, categorias, favorecidos, tags e centros de custo | Criação, leitura e arquivamento implementados | rotas de cadastros, `POST /:collection/:id/archive`, auditoria e CRM Cadastros | renomear com política de referência e lista de arquivados para restauração na UI |
 | Receita, despesa e transferência | Implementado e testado | `finance_movements`, `buildPostedJournal`, D1 para balanceamento | regras específicas de fechamento/fatura de cartão |
 | Splits, parcelas, competência e moedas | Implementado e testado | `finance_movement_splits`, `finance_installments`, minor units, ppm | calendário operacional e fluxo completo de contas a pagar/receber |
 | Rascunho editável sem alterar evidência | Implementado neste ciclo | migration `0008`, `PUT /movements/:id`, revisão otimista, auditoria e testes D1/CRM | teste visual headless do diálogo de revisão |

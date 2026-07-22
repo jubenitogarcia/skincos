@@ -4,7 +4,7 @@ import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql', '0008_finance_draft_revision.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
+const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql', '0008_finance_draft_revision.sql', '0009_finance_registration_lifecycle.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';
@@ -85,6 +85,19 @@ test('D1 local: idempotency replays only the identical actor/route payload and r
   const conflict = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`, { method: 'POST', key: 'account-key', body: { name: 'Outro banco', type: 'bank', currency: 'BRL' } });
   assert.equal(first.response.status, 201); assert.equal(second.response.status, 201); assert.equal(second.body.replayed, true);
   assert.equal(first.body.account.id, second.body.account.id); assert.equal(conflict.response.status, 409);
+});
+
+test('D1 local: registrations are archived instead of deleted and stay isolated by scope', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
+  const archived = await account(ctx.env, ctx.actor, scopeNh, 'Conta encerrada', 'archive-account');
+  const result = await request(ctx.env, ctx.actor, `/accounts/${archived.id}/archive?scopeId=${scopeNh}`, { method: 'POST', key: 'archive-account', body: {} });
+  assert.equal(result.response.status, 201, JSON.stringify(result.body)); assert.equal(result.body.active, false);
+  const list = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`); assert.equal(list.body.accounts.some((row) => row.id === archived.id), false);
+  const ledger = await ctx.DB.prepare(`SELECT active FROM finance_ledger_accounts WHERE id=?`).bind(archived.ledgerAccountId).first(); assert.equal(Number(ledger.active), 0);
+  assert.equal((await request(ctx.env, ctx.actor, `/accounts/${archived.id}/restore?scopeId=${scopeBss}`, { method: 'POST', key: 'cross-archive', body: {} })).response.status, 404);
+  await assert.rejects(ctx.DB.prepare(`DELETE FROM finance_accounts WHERE id=?`).bind(archived.id).run(), /archived, not deleted/);
+  const restored = await request(ctx.env, ctx.actor, `/accounts/${archived.id}/restore?scopeId=${scopeNh}`, { method: 'POST', key: 'restore-account', body: {} }); assert.equal(restored.response.status, 201); assert.equal(restored.body.active, true);
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${archived.id}&entityType=account`); assert.equal(audit.body.events.some((event) => event.action === 'ACCOUNT_ARCHIVED'), true); assert.equal(audit.body.events.some((event) => event.action === 'ACCOUNT_RESTORED'), true);
 });
 
 test('D1 local: concurrent identical idempotency keys converge on one persisted operation', async (t) => {

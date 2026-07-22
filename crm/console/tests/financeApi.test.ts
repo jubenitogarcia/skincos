@@ -46,6 +46,16 @@ describe('Finance transport helpers', () => {
     expect(JSON.parse(String(init.body))).toMatchObject({ expectedRevision: 1, description: 'Rascunho revisado' })
   })
 
+  it('archives registrations through the API without a client-side delete', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true, active: false }), { status: 201, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await financeApi.registrationLifecycle('scope-nh', 'accounts', 'account-1', 'archive', 'archive-key')
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(String(url)).toBe('/api/finance/accounts/account-1/archive?scopeId=scope-nh')
+    expect(init.method).toBe('POST')
+    expect(new Headers(init.headers).get('idempotency-key')).toBe('archive-key')
+  })
+
   it('sends staged CSV decisions, idempotent commit and audited undo to server routes', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
