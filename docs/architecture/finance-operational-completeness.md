@@ -1,36 +1,47 @@
 # Matriz de completude operacional — Financeiro
 
-_Atualizada em 2026-07-22. Esta matriz descreve código e testes existentes;
-não é autorização para ativar o módulo em produção._
+Atualizada em 2026-07-22. Esta matriz descreve código e testes presentes nesta
+branch; não é evidência de produção. A flag continua desligada fora dos testes
+controlados e o contexto pessoal continua inativo.
 
-| Capacidade | Estado | Evidência atual | Lacuna antes da operação diária |
+| Requisito | Estado | Evidência atual | Próxima pendência |
 | --- | --- | --- | --- |
-| Escopos, grants e pessoal inativo | Completa | `finance_scopes`, `finance_access_grants`, guardas no Worker e D1 tests | Consolidado empresarial ainda não tem contrato/relatório próprio. |
-| Contas, categorias, favorecidos, tags e centros | Parcial | CRUD de criação/listagem/arquivamento; `FinanceModule` tem cadastros | Sem edição explícita, busca/paginação visual e gestão de conta de cartão. |
-| Receita, despesa e transferência | Completa no núcleo | Worker, razão balanceada, estorno, idempotência e testes D1 | Ações em lote e filtros persistidos ainda não existem. |
-| Rascunhos, splits e parcelas | Completa no núcleo / parcial na UI | revisão otimista, parcela individual e detalhe no CRM | Falta visão agrupada de parcelas e vencidas. |
-| Auditoria e anexos | Parcial | auditoria append-only e metadados de anexo no domínio | UI não mostra anexo; não há upload privado nesta fase. |
-| Importação CSV, MoneyWiz e Caixa EF | Completa para staging controlado | pipeline normalizado, deduplicação, decisão, commit/undo e smokes | histórico operacional e painel de saúde de integração ainda ausentes. |
-| Conciliação | Parcial | linhas, sugestões, confirmação e testes D1; diálogo por lançamento | sem fila de divergências, ações em lote ou conector bancário. |
-| Contas a pagar e receber | Backend apenas | `finance_obligations`, baixas parciais e cancelamento auditados; migration `0011` e D1 tests | Sem tela, calendário, aging, recorrência, previsão e drill-down. |
-| Cartões | Schema apenas | tipo `card` como passivo no razão | sem fatura, fechamento, vencimento e liquidação. |
-| Recorrências e planejamento | Ausente | nenhum contrato/migration/serviço | requer modelo aditivo de regra, ocorrências e realização sem duplicar razão. |
-| Relatórios e DRE | Ausente | overview por escopo é apenas operacional | requer classificação gerencial versionada, agregações autorizadas e reconciliação com razão. |
-| Backup, recuperação e observabilidade | Parcial | runbook D1 e `request_id`; staging isolado | falta export automatizado, restore drill e alertas Financeiro. |
+| Isolamento NH/BSS e pessoal bloqueado | Implementado e testado | grants explícitos, `finance_scopes.active`, handler e testes D1 | manter smoke autenticado em cada publicação de staging |
+| Contas, categorias, favorecidos, tags e centros de custo | Criação, leitura e arquivamento implementados | rotas de cadastros, `POST /:collection/:id/archive`, auditoria e CRM Cadastros | renomear com política de referência e lista de arquivados para restauração na UI |
+| Receita, despesa e transferência | Implementado e testado | `finance_movements`, `buildPostedJournal`, D1 para balanceamento | regras específicas de fechamento/fatura de cartão |
+| Splits, parcelas, competência e moedas | Implementado e testado | `finance_movement_splits`, `finance_installments`, minor units, ppm | calendário operacional e fluxo completo de contas a pagar/receber |
+| Rascunho editável sem alterar evidência | Implementado neste ciclo | migration `0008`, `PUT /movements/:id`, revisão otimista, auditoria e testes D1/CRM | teste visual headless do diálogo de revisão |
+| Confirmar, conciliar, estornar e auditar | Implementado e testado | transições auditadas, razão/estorno append-only, linha de extrato e match 1:1 | conciliação parcial, lote de extrato e regras de divergência/AP-AR |
+| Anexos | Apenas metadados | `finance_attachments`, validação de chave/tipo/tamanho | upload privado R2, antivírus, leitura assinada e UI |
+| CSV, MoneyWiz e Caixa EF | Pipeline de staging implementado | adapters normalizam para staging, decisão, commit, undo e D1 tests | histórico de lotes na UI e revisão operacional ampliada |
+| Conciliação manual | Implementada para vínculo 1:1 | `/reconciliation/lines`, sugestões exatas, confirmação auditada e diálogo no detalhe | importação de extrato, divergência parcial e ações em lote |
+| Filtros, paginação, busca e auditoria | Implementado para movimentações | filtros enviados à API, paginação, detalhes/auditoria no CRM | persistência de filtros e ações em lote |
+| Contas a pagar/receber e liquidação | Núcleo implementado e testado localmente | migration `0011`, títulos sem segundo ledger, baixa append-only ligada a lançamento confirmado, desconto/juros/multa em minor units, idempotência e auditoria | expor criação, baixa parcial, cancelamento, calendário, aging e fluxo projetado na UI |
+| Regras de cartão e recorrência | Estruturado parcialmente | tipo `card`, parcelas, vencimento, pagamento | fechamento/fatura, regra de recorrência versionada e geração controlada de títulos |
+| Relatórios gerenciais | Visão geral inicial | `/overview`, saldos, entradas, saídas e período anterior | DRE, fluxo de caixa, competência/caixa e exportações seguras |
+| Backup, recuperação e observabilidade de produção | Não concluído | docs de segurança registram a dependência | exercício de backup/restauração D1, alertas e runbook |
 
-## Ordem de implementação
+## Decisão do ciclo AP/AR
 
-1. Expor títulos (pagar/receber) no CRM sobre os endpoints existentes, com
-   filtros, criação, baixa parcial, cancelamento e auditoria; não criar uma
-   segunda persistência.
-2. Criar previsões e recorrências como documentos não-postados, vinculando a
-   realização ao lançamento confirmado existente.
-3. Implementar fatura de cartão e conta de liquidação sobre o mesmo ledger.
-4. Construir calendário, aging e fluxo realizado/projetado a partir de títulos
-   e lançamentos oficiais.
-5. Adicionar classificação DRE versionada e relatórios consolidados somente de
-   escopos empresariais explicitamente concedidos.
+Um título de conta a pagar ou receber é uma obrigação gerencial, não um novo
+lançamento de caixa. `finance_obligations` portanto não escreve no razão. A
+liquidação é uma evidência append-only (`finance_obligation_settlements`) que
+referencia um único lançamento confirmado ou conciliado, do mesmo escopo,
+moeda e sentido financeiro. O principal reduz o saldo do título; desconto,
+abatimento, juros e multa explicam a diferença para o valor efetivamente pago.
+Não há exclusão nem cancelamento de título parcialmente liquidado.
 
-Cada item precisa de migration aditiva quando houver dados novos, contrato
-versionado, autorização por escopo, idempotência, auditoria, D1 tests, UI e
-smoke antes de ser considerado concluído.
+## Decisão anterior do ciclo
+
+O rascunho pendente é dado operacional transitório; por isso pode ser
+substituído somente como uma revisão integral, versionada e idempotente. Depois
+da confirmação, o lançamento é evidência: qualquer correção continua sendo
+estorno auditável, não edição. A migration é aditiva e não altera linhas ou
+auditoria já existentes.
+
+## Critério de ativação
+
+Este trabalho não muda o critério: produção permanece não ativável até
+backup/restauração exercitados, observabilidade verificada, smoke autenticado
+estável e novo ciclo de staging com migrations aditivas aplicadas. Não há
+concessão automática por papel e o contexto pessoal segue bloqueado.
