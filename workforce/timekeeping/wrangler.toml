@@ -12,6 +12,10 @@ migrations_dir = "migrations"
 binding = "SCHEDULE"
 service = "skincos-escala-api"
 
+[[kv_namespaces]]
+binding = "MODULE_CONTROL"
+id = "__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__"
+
 [vars]
 APP_VERSION = "1.0.0"
 APP_ORIGIN = "https://crm.skincos.com.br"
@@ -28,6 +32,10 @@ migrations_dir = "migrations"
 [[env.staging.services]]
 binding = "SCHEDULE"
 service = "skincos-escala-api-staging"
+
+[[env.staging.kv_namespaces]]
+binding = "MODULE_CONTROL"
+id = "__CONFIGURE_MODULE_CONTROL_STAGING_KV_ID__"
 
 [env.staging.vars]
 APP_VERSION = "1.0.0"

@@ -1,5 +1,7 @@
 import { canonicalEventType, calculateDay, calculatePeriod, isoDateInZone } from './domain.js'
 import { biometricDistance, constantTimeEqual, decryptSensitiveText, decryptTemplate, encryptSensitiveText, encryptTemplate, hashPin, isValidBiometricTemplate, sha256, signHmac, verifyPin } from './security.js'
+import { readModuleAvailability, moduleUnavailableResponse } from '../../shared/module-availability/worker.js'
+import { dependencyState, operationalStatus } from '../../shared/observability/contract.js'
 
 const encoder = new TextEncoder()
 const json = (status, payload, requestId) => new Response(JSON.stringify({ ...payload, requestId }), {
@@ -582,7 +584,8 @@ export async function handleTimekeeping(request, env) {
   const requestId = requestIdFor(request)
   const url = new URL(request.url)
   let path = canonicalPath(url.pathname.replace(/^\/workforce/, ''))
-  if (path === '/health' || path === '/api/ponto/health') return json(200, { ok: true, service: 'workforce-timekeeping', version: env.APP_VERSION || '1.0.0', database: !!env.DB }, requestId)
+  const availability = await readModuleAvailability(env, 'timekeeping')
+  if (path === '/health' || path === '/api/ponto/health') return json(200, { service: 'workforce-timekeeping', database: Boolean(env.DB), ...operationalStatus({ unit: 'timekeeping', version: env.APP_VERSION || '1.0.0', environment: env.ENVIRONMENT, ready: Boolean(env.DB) && availability.state === 'active', requestId, dependencies: { d1: dependencyState(Boolean(env.DB)), schedule: dependencyState(Boolean(env.SCHEDULE), { required: false }), module_control: dependencyState(Boolean(env.MODULE_CONTROL), { required: false }) } }), availability }, requestId)
   if (path === '/readiness' || path === '/api/ponto/readiness') {
     try {
       if (!env.DB) throw new Error('DB_NOT_CONFIGURED')
@@ -591,6 +594,7 @@ export async function handleTimekeeping(request, env) {
     } catch { return json(503, { ok: false, error: 'NOT_READY', code: 'DATABASE_UNAVAILABLE' }, requestId) }
   }
   if (!path.startsWith('/api/ponto')) return json(404, { ok: false, error: 'NOT_FOUND' }, requestId)
+  if (availability.state !== 'active') return moduleUnavailableResponse('timekeeping', availability, requestId)
   if (!env.DB) return json(503, { ok: false, error: 'NOT_READY', code: 'DATABASE_UNAVAILABLE' }, requestId)
   let bodyHash = await sha256('')
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
