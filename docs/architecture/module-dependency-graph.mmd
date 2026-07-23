@@ -1,0 +1,65 @@
+%% Generated from docs/architecture/module-catalog.json; do not edit by hand.
+flowchart LR
+  module_ads["ads\nexperimental"]
+  module_api["api\nexperimental"]
+  module_booking["booking\nexperimental"]
+  module_crm["crm\nexperimental"]
+  module_finance["finance\nexperimental"]
+  module_identity["identity\nexperimental"]
+  module_integration["integration\nexperimental"]
+  module_inventory["inventory\nexperimental"]
+  module_messaging["messaging\nexperimental"]
+  module_ops["ops\nexperimental"]
+  module_orb["orb\nexperimental"]
+  module_platform["platform\nexperimental"]
+  module_service["service\nexperimental"]
+  module_shared["shared\nexperimental"]
+  module_social["social\nexperimental"]
+  module_website["website\nexperimental"]
+  module_workforce["workforce\nexperimental"]
+  module_ads -->|hard| module_shared
+  module_ads -. optional .-> module_orb
+  module_api -->|hard| module_shared
+  module_api -. optional .-> module_finance
+  module_api -. optional .-> module_identity
+  module_api -. optional .-> module_inventory
+  module_api -. optional .-> module_workforce
+  module_booking -->|hard| module_shared
+  module_booking -. optional .-> module_integration
+  module_booking -. optional .-> module_workforce
+  module_crm -->|hard| module_shared
+  module_crm -. optional .-> module_ads
+  module_crm -. optional .-> module_api
+  module_crm -. optional .-> module_booking
+  module_crm -. optional .-> module_finance
+  module_crm -. optional .-> module_inventory
+  module_crm -. optional .-> module_messaging
+  module_crm -. optional .-> module_service
+  module_crm -. optional .-> module_social
+  module_crm -. optional .-> module_workforce
+  module_finance -->|hard| module_shared
+  module_finance -. optional .-> module_integration
+  module_identity -->|hard| module_shared
+  module_integration -->|hard| module_shared
+  module_inventory -->|hard| module_shared
+  module_messaging -->|hard| module_shared
+  module_ops -->|hard| module_shared
+  module_ops -. optional .-> module_booking
+  module_ops -. optional .-> module_crm
+  module_ops -. optional .-> module_messaging
+  module_ops -. optional .-> module_orb
+  module_ops -. optional .-> module_platform
+  module_orb -->|hard| module_shared
+  module_orb -. optional .-> module_integration
+  module_platform -->|hard| module_shared
+  module_service -->|hard| module_shared
+  module_service -. optional .-> module_booking
+  module_service -. optional .-> module_integration
+  module_social -->|hard| module_shared
+  module_social -. optional .-> module_orb
+  module_website -->|hard| module_shared
+  module_website -. optional .-> module_ads
+  module_website -. optional .-> module_api
+  module_website -. optional .-> module_booking
+  module_website -. optional .-> module_workforce
+  module_workforce -->|hard| module_shared

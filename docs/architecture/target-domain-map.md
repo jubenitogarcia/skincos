@@ -14,6 +14,7 @@ the former source path and public route must be removed rather than aliased.
 | `crm` | console shell, customers, leads and permissions | extracted product internals |
 | `finance` | cash, billing and financial imports | browser collection mechanics |
 | `integration` | external connectors, browser sessions and technical jobs | business data ownership |
+| `identity` | users, authentication, sessions, roles, scopes, invitations and credential recovery | inventory, clinical or financial business data |
 | `inventory` | supplies and stock | the gateway implementation |
 | `messaging` | inbox and channel adapters | social publishing |
 | `orb` | workflows, scheduling, retries and operator automation | public API ownership |
