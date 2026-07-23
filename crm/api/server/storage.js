@@ -1,5 +1,5 @@
 // Replit Auth Integration: Storage operations for user management (JavaScript)
-import { Client } from "pg";
+import { createPgPool } from './postgres/pool.js';
 
 // Database client setup
 let dbClient = null;
@@ -9,12 +9,7 @@ async function getDbClient() {
       throw new Error("DATABASE_URL environment variable is required");
     }
     
-    dbClient = new Client({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
-    });
-    
-    await dbClient.connect();
+    dbClient = createPgPool(process.env.DATABASE_URL, { domain: 'crm' });
   }
   return dbClient;
 }

@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto'
-import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
+import { createPgPool, getPgPoolMetrics, withPgTransaction } from '../harmonia/store/pg.js'
 import {
     buildConversionReportFromRawRows,
     buildScheduleDropdowns,
@@ -58,14 +58,12 @@ import {
 let pool = null
 
 export function createAtendimentoPool(databaseUrl = process.env.DATABASE_URL) {
-    if (!pool) pool = createPgPool(databaseUrl)
+    if (!pool) pool = createPgPool(databaseUrl, { domain: 'atendimento' })
     return pool
 }
 
 export function atendimentoMigrationStatements() {
     return [
-        `create extension if not exists pgcrypto;`,
-        `create schema if not exists crm_atendimento;`,
         `create table if not exists crm_atendimento.units (
             id uuid primary key default gen_random_uuid(),
             slug text unique not null,
@@ -2658,19 +2656,22 @@ export function createAtendimentoStore(options = {}) {
 
     async function ensureReady() {
         requirePool(pgPool)
-        await withPgTransaction(pgPool, migrateAtendimento)
+        await pgPool.query('select 1 from crm_atendimento.units limit 1')
     }
 
     return {
         async health() {
+            await ensureReady()
             return {
                 ok: !!pgPool,
                 databaseConfigured: !!pgPool,
+                pool: getPgPoolMetrics(pgPool),
             }
         },
 
         async migrate() {
-            await ensureReady()
+            requirePool(pgPool)
+            await withPgTransaction(pgPool, migrateAtendimento)
             return { ok: true }
         },
 

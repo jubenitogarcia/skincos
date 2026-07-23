@@ -2,8 +2,6 @@ import { defaultWorkingHoursForUnitSlug } from '../util/workingHours.js'
 
 export function harmoniaMigrationStatements() {
     return [
-        `create extension if not exists pgcrypto;`,
-        `create schema if not exists harmonia;`,
 
         `create table if not exists harmonia.units (
             id uuid primary key default gen_random_uuid(),

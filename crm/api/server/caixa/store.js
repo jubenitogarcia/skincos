@@ -1,4 +1,4 @@
-import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
+import { createPgPool, getPgPoolMetrics, withPgTransaction } from '../harmonia/store/pg.js'
 import { inferProcedureName, normalizeText } from './domain.js'
 
 let pool = null
@@ -6,23 +6,11 @@ const actorLabel = (actor) => String(actor?.id || actor?.username || actor?.emai
 const money = (value) => Math.round(Number(value) * 100) / 100
 
 export function createCaixaStore({ databaseUrl = process.env.DATABASE_URL } = {}) {
-    if (!pool) pool = createPgPool(databaseUrl)
+    if (!pool) pool = createPgPool(databaseUrl, { domain: 'caixa' })
     let ready = null
     async function ensureReady() {
         if (!pool) { const error = new Error('DATABASE_URL_not_configured'); error.statusCode = 503; throw error }
-        if (!ready) ready = withPgTransaction(pool, async (client) => {
-            for (const sql of [
-                'create extension if not exists pgcrypto',
-                'create schema if not exists crm_caixa',
-                `create table if not exists crm_caixa.customers (id uuid primary key default gen_random_uuid(), name text not null, name_key text not null, phone_key text not null, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique(name_key, phone_key))`,
-                `create table if not exists crm_caixa.import_batches (id uuid primary key default gen_random_uuid(), source_sheet_id text not null, dry_run boolean not null, actor text, summary jsonb not null default '{}'::jsonb, created_at timestamptz not null default now())`,
-                `create table if not exists crm_caixa.service_mappings (service_key text primary key, raw_name text not null, procedure_id uuid references crm_atendimento.procedures(id), status text not null check(status in ('mapped','pending')), updated_at timestamptz not null default now())`,
-                `create table if not exists crm_caixa.sales (id uuid primary key default gen_random_uuid(), unit_id uuid not null references crm_atendimento.units(id), customer_id uuid references crm_caixa.customers(id), occurred_on date not null, occurred_at time, client_name text not null, phone_raw text, phone_key text, total numeric(12,2) not null, raw_service text not null default '', source_sheet_id text not null, source_tab text not null, source_row int not null, created_by text, updated_by text, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique(source_sheet_id, source_tab, source_row))`,
-                `create table if not exists crm_caixa.sale_items (id uuid primary key default gen_random_uuid(), sale_id uuid not null references crm_caixa.sales(id) on delete cascade, line_position int not null, raw_name text not null, service_key text not null, procedure_id uuid references crm_atendimento.procedures(id), mapping_status text not null check(mapping_status in ('mapped','pending')), quantity int not null default 1, unique(sale_id, line_position))`,
-                'create index if not exists crm_caixa_sales_period_idx on crm_caixa.sales(unit_id, occurred_on desc)',
-                'create index if not exists crm_caixa_sale_items_status_idx on crm_caixa.sale_items(mapping_status, procedure_id)',
-            ]) await client.query(sql)
-        })
+        if (!ready) ready = pool.query('select 1 from crm_caixa.customers limit 1')
         return ready
     }
     async function procedureIndex(client) {
@@ -45,7 +33,7 @@ export function createCaixaStore({ databaseUrl = process.env.DATABASE_URL } = {}
         return { sales: records.length, total: money(total), byUnit, items: mappedItems + pendingItems, mappedItems, pendingItems, phoneMissing, canonicalCustomersInSource: identities.size }
     }
     return {
-        async health() { await ensureReady(); return { database: 'ok' } },
+        async health() { await ensureReady(); return { database: 'ok', pool: getPgPoolMetrics(pool) } },
         async importRecords({ records, actor, dryRun = true, sourceSheetId }) {
             await ensureReady()
             const procedures = await procedureIndex(pool)

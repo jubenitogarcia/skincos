@@ -6,6 +6,7 @@ import session from "express-session";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage.js";
+import { createPgPool } from './postgres/pool.js';
 
 // Environment variables validation will be done in setupAuth() to prevent server crashes
 const isTruthyEnv = (value) => {
@@ -35,10 +36,11 @@ export function getSession(useMemoryStore = false) {
     // PRODUCTION MODE: Use PostgreSQL session store
     const pgStore = connectPg(session);
     sessionStore = new pgStore({
-      conString: process.env.DATABASE_URL,
-      createTableIfMissing: true, // Allow table creation if missing
+      pool: createPgPool(process.env.DATABASE_URL, { domain: 'crm' }),
+      createTableIfMissing: false,
       ttl: sessionTtl,
       tableName: "sessions",
+      schemaName: "crm_sessions",
     });
   }
   

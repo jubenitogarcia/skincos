@@ -8,7 +8,7 @@ let cache = null
 
 function getPool() {
     if (pool) return pool
-    pool = createPgPool(process.env.DATABASE_URL)
+    pool = createPgPool(process.env.DATABASE_URL, { domain: 'tracking' })
     return pool
 }
 

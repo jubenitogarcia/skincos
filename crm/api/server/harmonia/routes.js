@@ -437,12 +437,6 @@ export function createHarmoniaRouter({ varDir }) {
     const store = createHarmoniaStore({ databaseUrl: config.databaseUrl })
     const providers = createProviders(config)
 
-    if (config.autoMigrate && config.databaseUrl) {
-        store.migrate()
-            .then(() => console.log('✅ Harmonia DB migrated/seeded'))
-            .catch((e) => console.warn('⚠️  Harmonia DB migrate failed:', e?.message || String(e)))
-    }
-
     const router = express.Router()
 
     function requireDebugToken(req, res, next) {

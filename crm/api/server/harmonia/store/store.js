@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { createPgPool, withPgTransaction } from './pg.js'
+import { createPgPool, getPgPoolMetrics, withPgTransaction } from './pg.js'
 import { harmoniaMigrationStatements, defaultUnitsSeedRows } from './migrate.js'
 import { defaultWorkingHoursForUnitSlug } from '../util/workingHours.js'
 
@@ -8,7 +8,7 @@ function onlyDigits(s) {
 }
 
 export function createHarmoniaStore({ databaseUrl }) {
-    const pool = createPgPool(databaseUrl)
+    const pool = createPgPool(databaseUrl, { domain: 'harmonia' })
 
     async function migrate() {
         if (!pool) throw new Error('DATABASE_URL not configured')
@@ -508,6 +508,11 @@ export function createHarmoniaStore({ databaseUrl }) {
 
     return {
         pool,
+        health: async () => {
+            if (!pool) return { ok: false, databaseConfigured: false, pool: getPgPoolMetrics(pool) }
+            await pool.query('select 1 from harmonia.units limit 1')
+            return { ok: true, databaseConfigured: true, pool: getPgPoolMetrics(pool) }
+        },
         migrate,
         withTransaction: (fn) => {
             if (!pool) throw new Error('DATABASE_URL not configured')

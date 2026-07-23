@@ -1,18 +1,13 @@
 // Replit Auth Integration: Database connection configuration
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Client } from "pg";
 import * as schema from "../shared/schema";
+import { createPgPool } from "./postgres/pool.js";
 
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is required");
 }
 
-const client = new Client({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
-});
+const pool = createPgPool(process.env.DATABASE_URL, { domain: 'crm' });
+if (!pool) throw new Error("DATABASE_URL environment variable is required");
 
-// Initialize connection
-client.connect().catch(console.error);
-
-export const db = drizzle(client, { schema });
+export const db = drizzle(pool, { schema });
