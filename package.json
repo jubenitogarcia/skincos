@@ -1,6 +1,9 @@
 {
   "scripts": {
-    "architecture:validate": "node ./.github/scripts/validate-architecture.mjs",
+    "architecture:validate": "node ./.github/scripts/validate-architecture.mjs && node ./.github/scripts/validate-module-catalog.mjs && node ./.github/scripts/validate-domain-boundaries.mjs",
+    "module-catalog:validate": "node ./.github/scripts/validate-module-catalog.mjs",
+    "module-maturity:validate": "node ./.github/scripts/validate-module-maturity.mjs",
+    "domain-boundaries:validate": "node ./.github/scripts/validate-domain-boundaries.mjs",
     "api:test": "npm --prefix api test",
     "booking:test": "npm --prefix booking test",
     "runtime:lifecycle:prepare": "bash ./scripts/runtime/prepare-lifecycle-layout.sh",

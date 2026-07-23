@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "description": "Only registered contracts, SDKs and adapters under shared/ may cross a module boundary. Direct implementation imports are rejected unless listed as time-boxed migration debt.",
+  "contracts": [
+    {
+      "id": "finance-contracts-v1",
+      "kind": "contract",
+      "paths": ["shared/finance-contracts/**"],
+      "consumers": ["finance", "integration"],
+      "owner": "finance"
+    },
+    {
+      "id": "crm-auth-adapter-v1",
+      "kind": "adapter",
+      "paths": ["shared/crm-auth/**"],
+      "consumers": ["api"],
+      "owner": "crm"
+    },
+    {
+      "id": "module-sdk-v1",
+      "kind": "sdk",
+      "paths": ["shared/module-sdk/**"],
+      "consumers": ["*"],
+      "owner": "shared"
+    }
+  ],
+  "recommendedContracts": [
+    {
+      "from": "crm",
+      "to": "inventory",
+      "contractId": "module-sdk-v1",
+      "path": "shared/module-sdk/README.md",
+      "usage": "publish an Inventory HTTP contract or SDK before consuming Inventory from CRM"
+    },
+    {
+      "from": "api",
+      "to": "inventory",
+      "contractId": "module-sdk-v1",
+      "path": "shared/module-sdk/README.md",
+      "usage": "publish a gateway-to-Inventory adapter before importing Inventory implementation"
+    },
+    {
+      "from": "api",
+      "to": "finance",
+      "contractId": "module-sdk-v1",
+      "path": "shared/module-sdk/README.md",
+      "usage": "publish a gateway-to-Finance adapter before importing Finance implementation"
+    },
+    {
+      "from": "finance",
+      "to": "crm",
+      "contractId": "module-sdk-v1",
+      "path": "shared/module-sdk/README.md",
+      "usage": "provide a Finance-owned test-runtime adapter instead of borrowing CRM dependencies"
+    },
+    {
+      "from": "inventory",
+      "to": "identity",
+      "contractId": "module-sdk-v1",
+      "path": "shared/module-sdk/README.md",
+      "usage": "use a stable actor contract or service adapter, never an Identity implementation import"
+    }
+  ],
+  "legacyDirectImports": [
+    {
+      "from": "api/src/gateway.js",
+      "specifier": "../../inventory/src/worker.js",
+      "replacementContractId": "module-sdk-v1",
+      "deadline": "2026-09-30",
+      "reason": "The gateway currently mounts the Inventory Worker implementation while the service-binding adapter is introduced."
+    },
+    {
+      "from": "api/workers/index.js",
+      "specifier": "../../inventory/src/worker.js",
+      "replacementContractId": "module-sdk-v1",
+      "deadline": "2026-09-30",
+      "reason": "The gateway entrypoint re-exports Inventory runtime classes and must move to a stable service boundary."
+    },
+    {
+      "from": "api/src/gateway.js",
+      "specifier": "../../finance/api/worker.js",
+      "replacementContractId": "module-sdk-v1",
+      "deadline": "2026-09-30",
+      "reason": "Finance remains mounted by the gateway until its independently deployed service adapter is available."
+    },
+    {
+      "from": "crm/console/tests/insumosShareRoutes.test.ts",
+      "specifier": "../../../inventory/src/routes/share.js",
+      "replacementContractId": "module-sdk-v1",
+      "deadline": "2026-08-31",
+      "reason": "The CRM test reaches an Inventory implementation instead of asserting its public contract."
+    },
+    {
+      "from": "finance/scripts/staging-ui-smoke.mjs",
+      "specifier": "../../crm/console/node_modules/playwright",
+      "replacementContractId": "module-sdk-v1",
+      "deadline": "2026-08-31",
+      "reason": "The Finance smoke borrows CRM's dependency tree and needs a Finance-owned test-runtime adapter."
+    },
+    {
+      "from": "shared/crm-auth/worker.js",
+      "specifier": "../../inventory/src/d1Store.js",
+      "replacementContractId": "crm-auth-adapter-v1",
+      "deadline": "2026-09-30",
+      "reason": "The shared CRM auth helper still reaches the Inventory store and must be inverted behind an injected repository adapter."
+    }
+  ]
+}

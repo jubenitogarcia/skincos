@@ -13,6 +13,7 @@ the former source path and public route must be removed rather than aliased.
 | `booking` | availability, request lifecycle and reservation contracts | Selenium/browser execution |
 | `crm` | console shell, customers, leads and permissions | extracted product internals |
 | `finance` | cash, billing and financial imports | browser collection mechanics |
+| `identity` | users, sessions, invitations, roles and permissions | inventory implementation or inventory data ownership |
 | `integration` | external connectors, browser sessions and technical jobs | business data ownership |
 | `inventory` | supplies and stock | the gateway implementation |
 | `messaging` | inbox and channel adapters | social publishing |

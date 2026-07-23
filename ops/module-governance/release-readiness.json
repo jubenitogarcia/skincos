@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "assessedAt": "2026-07-23",
+  "assessmentRule": "A live endpoint, historical deployment, or local test alone does not make a module releasable. A module is released only when its catalog maturity and reviewed promotion evidence satisfy the target gate.",
+  "enterpriseGate": ["explicit feature flag defaulting to off", "least-privilege pilot group", "non-production or approved seed data", "operator training and named support channel", "safe manual fallback", "measurable success criteria", "tested rapid rollback", "backup, restore and independent monitoring evidence"],
+  "classification": [
+    { "id": "ads", "currentUse": "Reporting integration exists", "decision": "hold", "reason": "No module-wide flag, independent monitoring or restore evidence." },
+    { "id": "api", "currentUse": "Production gateway health returned 200 on 2026-07-23", "decision": "hold", "reason": "Core transport, not a separately releasable product capability; deployed health contract is legacy." },
+    { "id": "booking", "currentUse": "Public booking paths are registered", "decision": "hold", "reason": "No approved pilot flag or restore evidence." },
+    { "id": "crm", "currentUse": "CRM console returned 200 on 2026-07-23", "decision": "hold", "reason": "Console health returned HTML, so API readiness and independent monitoring are not evidenced." },
+    { "id": "finance", "currentUse": "New Finance Worker is prepared locally; production gateway health returned 401", "decision": "next-candidate", "reason": "Disabled-by-default flag and access grants exist, but target deployment, isolated restore drill and external monitoring are not evidenced." },
+    { "id": "identity", "currentUse": "Compatibility authentication path remains in use", "decision": "hold", "reason": "Identity is not independently deployed and must not be released as a new service until its cutover gate is complete." },
+    { "id": "integration", "currentUse": "Operator-managed connector executors", "decision": "hold", "reason": "Provider-specific release controls and recovery evidence are incomplete." },
+    { "id": "inventory", "currentUse": "Production health returned 200 on 2026-07-23", "decision": "candidate-after-finance", "reason": "No disabled-by-default Inventory module flag, independent restore drill or external monitor evidence." },
+    { "id": "messaging", "currentUse": "WhatsApp runtime is service-managed", "decision": "hold", "reason": "Channel recovery and provider delivery reconciliation need evidence before a user-facing release." },
+    { "id": "ops", "currentUse": "Operational definitions and workflows", "decision": "not-a-product-release", "reason": "Cross-cutting capability; promote only through change-management evidence." },
+    { "id": "orb", "currentUse": "Production health returned 200 on 2026-07-23", "decision": "hold", "reason": "Health alone does not evidence workflow backup, isolated restore or controlled activation." },
+    { "id": "platform", "currentUse": "Security and observability Workers", "decision": "not-a-product-release", "reason": "Fail-closed platform functions require their own change controls." },
+    { "id": "service", "currentUse": "No independently deployed public service", "decision": "hold", "reason": "No service contract, data store or pilot exists." },
+    { "id": "shared", "currentUse": "Build-time contracts", "decision": "not-a-product-release", "reason": "No independent runtime or user cohort." },
+    { "id": "social", "currentUse": "Publication Worker with disabled default", "decision": "hold", "reason": "Provider reconciliation and external monitoring evidence are incomplete." },
+    { "id": "website", "currentUse": "Public site deployment surface", "decision": "hold", "reason": "New public flows need explicit feature flags and restore/monitor evidence." },
+    { "id": "workforce", "currentUse": "Production Ponto health returned 200 on 2026-07-23", "decision": "candidate-after-finance", "reason": "Facial subfeature is disabled, but pilot controls, restore drill and external monitoring are not evidenced." }
+  ],
+  "releaseCandidates": [
+    {
+      "id": "finance", "order": 1, "targetState": "pilot", "status": "blocked-pending-evidence",
+      "featureFlag": "finance_settings.module_enabled=false; enable only with an explicit finance_access_grant and CRM allowedModules=finance",
+      "pilotGroup": "One named internal finance operator, one backup reviewer and one non-personal test unit; identities and unit are recorded only in the private approval ticket.",
+      "initialData": "Create a pilot-only chart of accounts, one test supplier, one test customer and balanced opening entries in isolated Finance D1. Do not import historical or personal-finance data.",
+      "training": "30-minute walkthrough: permitted unit/scope, creating and approving one movement, export/reconciliation, disabled-state behavior and escalation.",
+      "fallback": "Use the approved controlled spreadsheet/manual ledger; queue the reference only once and reconcile after Finance is restored. Do not dual-write automatically.",
+      "support": "Primary: designated private Skincos operations channel; escalation: finance owner @jubenitogarcia; incident record in the private operator runtime.",
+      "successCriteria": "Five business days with 100% pilot reconciliation, no unauthorized access, no duplicate movement, p95 bootstrap/read within 1 s, and a successful staged rollback exercise.",
+      "rollback": "Set module_enabled=false, remove pilot grants, stop imports, notify pilot users, reconcile pending references manually, and retain additive schema. Restore only via the Finance D1 runbook.",
+      "requiredEvidence": ["Finance Worker deployed first to staging and its gateway binding verified", "independent external health/readiness monitor and alert route", "encrypted offsite Finance D1 backup", "isolated Finance restore drill with retained evidence", "authenticated staging import and UI smoke", "named pilot approval"]
+    },
+    {
+      "id": "workforce", "order": 2, "targetState": "pilot", "status": "blocked-pending-evidence",
+      "featureFlag": "Keep PONTO_FACE_PUNCH_ENABLED=false; use MODULE_CONTROL only for a documented maintenance/kill-switch transition after its production state is verified.",
+      "pilotGroup": "One approved clinic unit, two trained staff members and one supervisor; identifiers and approved network context remain in the private approval ticket.",
+      "initialData": "Register only the pilot unit, approved terminal/PIN assignments and network CIDRs. Do not bulk-import historical punches.",
+      "training": "20-minute terminal/PIN flow, denied-network behavior, manual correction, daily closing and support escalation.",
+      "fallback": "PIN/terminal plus the approved signed manual time sheet; supervisor reconciles before payroll processing.",
+      "support": "Primary: clinic operations channel; escalation: workforce owner @jubenitogarcia; record incidents in the private operator runtime.",
+      "successCriteria": "Ten business days with authorized punches only, no duplicate punch after retries, daily close reconciliation, and tested module maintenance switch.",
+      "rollback": "Disable the pilot capability, set the verified availability control to maintenance if required, preserve audit records, return to PIN/manual flow, and reconcile the affected day.",
+      "requiredEvidence": ["PONTO_NETWORK_CONTEXT_KEY configured in both Workers", "real clinic CIDRs and terminal/PIN authorization validated in staging", "isolated D1 restore drill", "external monitor and alert route", "pilot supervisor approval", "rollback rehearsal"]
+    },
+    {
+      "id": "inventory", "order": 3, "targetState": "pilot", "status": "blocked-pending-implementation-and-evidence",
+      "featureFlag": "Introduce a disabled-by-default Inventory module availability flag before selecting a pilot; PONTO_INSUMOS_ENABLED is not an Inventory release flag.",
+      "pilotGroup": "One stock operator and one manager in a non-critical pilot unit, recorded in the private approval ticket.",
+      "initialData": "Load a small verified subset of SKUs and opening counts; retain the signed source count and do not bulk-migrate until reconciliation succeeds.",
+      "training": "30-minute receiving, adjustment approval, count reconciliation, outage procedure and support escalation.",
+      "fallback": "Use the approved paper/spreadsheet count sheet; suspend online mutations and reconcile signed adjustments once the module recovers.",
+      "support": "Primary: stock-operations channel; escalation: inventory owner @jubenitogarcia; private incident record.",
+      "successCriteria": "Two complete count cycles with zero unexplained variance, authorization checks passing, no lost mutation on retry and staged rollback proven.",
+      "rollback": "Disable the new module flag, suspend writes, retain additive migrations, restore only through the Inventory runbook, and reconcile the delta from signed count sheets.",
+      "requiredEvidence": ["implemented and tested disabled-by-default module flag", "staging count/reconciliation smoke", "isolated D1 restore drill", "external monitor and alert route", "pilot approval", "rollback rehearsal"]
+    }
+  ],
+  "releasedModules": []
+}
