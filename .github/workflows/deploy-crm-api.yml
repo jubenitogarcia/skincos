@@ -48,7 +48,7 @@ jobs:
 
       - name: Deploy via SSH
         if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.mode == 'ssh' }}
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         with:
           host: ${{ secrets.CRM_API_SSH_HOST }}
           username: ${{ secrets.CRM_API_SSH_USER }}
