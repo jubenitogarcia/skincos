@@ -1,0 +1,82 @@
+name: Immutable promotion gate
+
+on:
+  workflow_call:
+    inputs:
+      unit: { required: true, type: string }
+      target: { required: true, type: string }
+      release_sha: { required: false, type: string, default: "" }
+      preview_run_id: { required: false, type: string, default: "" }
+      staging_run_id: { required: false, type: string, default: "" }
+      staging_supported: { required: false, type: boolean, default: true }
+    outputs:
+      source_sha:
+        value: ${{ jobs.gate.outputs.source_sha }}
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 1
+      - name: Resolve immutable source identity
+        id: identity
+        env:
+          REQUESTED_SHA: ${{ inputs.release_sha }}
+          PROMOTION_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$PROMOTION_TARGET" != "preview" && -z "${REQUESTED_SHA:-}" ]]; then
+            echo "::error::staging and production require the exact release_sha from predecessor evidence."
+            exit 1
+          fi
+          source_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
+          git fetch --no-tags --depth=1 origin "$source_sha"
+          git cat-file -e "$source_sha^{commit}"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Block unsupported staging target
+        if: ${{ inputs.target == 'staging' && !inputs.staging_supported }}
+        run: |
+          echo "::error::This unit has no isolated staging binding. Provision it before any promotion."
+          exit 1
+      - name: Verify predecessor evidence
+        if: ${{ inputs.target != 'preview' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREDECESSOR_RUN_ID: ${{ inputs.target == 'staging' && inputs.preview_run_id || inputs.staging_run_id }}
+          EXPECTED_TARGET: ${{ inputs.target == 'staging' && 'preview' || 'staging' }}
+          PROMOTION_UNIT: ${{ inputs.unit }}
+          PROMOTION_EXPECTED_TARGET: ${{ inputs.target == 'staging' && 'preview' || 'staging' }}
+          PROMOTION_EXPECTED_SHA: ${{ steps.identity.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::A numeric predecessor run id is required."; exit 1; }
+          mkdir -p "$RUNNER_TEMP/promotion-evidence"
+          gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "promotion-evidence-${PROMOTION_UNIT}" --dir "$RUNNER_TEMP/promotion-evidence"
+          node .github/scripts/promotion-evidence.mjs verify "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+      - name: Write preview evidence
+        if: ${{ inputs.target == 'preview' }}
+        env:
+          PROMOTION_UNIT: ${{ inputs.unit }}
+          PROMOTION_TARGET: preview
+          PROMOTION_SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+          PROMOTION_SOURCE_TREE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tree="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")"
+          PROMOTION_SOURCE_TREE="$tree" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+      - name: Upload preview evidence
+        if: ${{ inputs.target == 'preview' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-${{ inputs.unit }}
+          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error
