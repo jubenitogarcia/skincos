@@ -97,10 +97,18 @@ async function processTask({ task, store, provider, config }) {
 
 export function startHarmoniaWorker({ varDir }) {
     const config = loadHarmoniaConfig({ varDir })
-    if (!config.workerEnabled) return { stop: () => {} }
+    if (!config.workerEnabled) {
+        return {
+            stop: () => {},
+            status: () => ({ enabled: false, ready: false, dependencies: { database: 'not_configured' } }),
+        }
+    }
     if (!config.databaseUrl) {
         console.warn('⚠️  Harmonia worker disabled: DATABASE_URL not configured')
-        return { stop: () => {} }
+        return {
+            stop: () => {},
+            status: () => ({ enabled: true, ready: false, dependencies: { database: 'not_configured' } }),
+        }
     }
 
     const store = createHarmoniaStore({ databaseUrl: config.databaseUrl })
@@ -108,14 +116,25 @@ export function startHarmoniaWorker({ varDir }) {
 
     let running = true
     let loopActive = false
+    const state = {
+        ready: false,
+        lastLoopAt: null,
+        lastSuccessAt: null,
+        lastErrorAt: null,
+        dependencies: { database: 'unknown', messaging: config.wa?.baseUrl ? 'configured' : 'not_configured' },
+    }
 
     async function loop() {
         if (!running || loopActive) return
         loopActive = true
+        state.lastLoopAt = new Date().toISOString()
         try {
             const tasks = await store.withTransaction(async (tx) => {
                 return store.claimTasks(tx, { limit: config.tasksClaimLimit, staleMinutes: config.tasksStaleMinutes })
             })
+            state.ready = true
+            state.lastSuccessAt = new Date().toISOString()
+            state.dependencies.database = 'ok'
 
             for (const task of tasks) {
                 try {
@@ -185,6 +204,9 @@ export function startHarmoniaWorker({ varDir }) {
                 }
             }
         } catch (e) {
+            state.ready = false
+            state.lastErrorAt = new Date().toISOString()
+            state.dependencies.database = 'unavailable'
             console.warn('⚠️  Harmonia worker loop error:', e?.message || String(e))
         } finally {
             loopActive = false
@@ -199,5 +221,14 @@ export function startHarmoniaWorker({ varDir }) {
             running = false
             clearInterval(interval)
         },
+        status: () => ({
+            enabled: true,
+            running,
+            ready: state.ready,
+            lastLoopAt: state.lastLoopAt,
+            lastSuccessAt: state.lastSuccessAt,
+            lastErrorAt: state.lastErrorAt,
+            dependencies: { ...state.dependencies },
+        }),
     }
 }
