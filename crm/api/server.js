@@ -30,6 +30,7 @@ import { registerPontoRoutes } from './server/pontoRoutes.js'
 // Harmonia (atendimento de leads via WhatsApp - Decision API)
 import { createHarmoniaRouter } from './server/harmonia/routes.js'
 import { startHarmoniaWorker } from './server/harmonia/worker.js'
+import { createJobsRouter } from './server/jobs/router.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
 import { createCaixaRouter } from './server/caixa/routes.js'
@@ -130,12 +131,14 @@ app.use((req, res, next) => {
         const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info'
         const payload = {
             level,
+            domain: 'crm-api',
+            version: String(process.env.APP_VERSION || process.env.GITHUB_SHA || 'unknown'),
+            environment: String(process.env.NODE_ENV || 'unknown'),
             request_id: req.requestId || 'unknown',
             method: req.method,
-            path: req.originalUrl || req.path || '/',
+            path: String(req.path || '/').split('?')[0],
             status,
             duration_ms: Date.now() - startedAt,
-            ip: req.ip,
         }
         if (shouldLog(level)) {
             console.log(JSON.stringify(payload))
@@ -777,11 +780,8 @@ try {
     console.warn('⚠️  Caixa routes failed to register:', e?.message || String(e))
 }
 
-try {
-    startHarmoniaWorker({ varDir: VAR_DIR })
-    console.log('✅ Harmonia worker initialized')
-} catch (e) {
-    console.warn('⚠️  Harmonia worker failed to start:', e?.message || String(e))
+if (String(process.env.CRM_HARMONIA_WORKER_MODE || 'embedded').toLowerCase() === 'embedded') {
+    try { startHarmoniaWorker({ varDir: VAR_DIR }); console.log('✅ Harmonia worker initialized (compatibility mode)') } catch (e) { console.warn('⚠️  Harmonia worker failed to start:', e?.message || String(e)) }
 }
 
 // -------------------------------------------------------------
@@ -1464,6 +1464,16 @@ app.use((req, res, next) => {
 // =================================================================
 const JOBS_DIR = path.join(VAR_DIR, 'jobs')
 try { await fs.mkdir(JOBS_DIR, { recursive: true }) } catch { /* ignore */ }
+
+const jobsMode = String(process.env.CRM_JOBS_MODE || 'embedded').trim().toLowerCase()
+const jobsWorkerUrl = String(process.env.CRM_JOBS_WORKER_URL || '').trim()
+if (jobsMode === 'external' && jobsWorkerUrl) {
+    app.use('/api/jobs', createProxyMiddleware({ target: jobsWorkerUrl, changeOrigin: false, pathRewrite: { '^/api/jobs': '' } }))
+    console.log('✅ Jobs routes delegated to external worker')
+} else {
+    app.use('/api/jobs', createJobsRouter({ jobsDir: JOBS_DIR, backendRoot: BACKEND_ROOT }))
+    console.log('✅ Jobs runner mounted through compatibility process')
+}
 
 const jobs = new Map()
 
@@ -6913,8 +6923,24 @@ app.get('/health', (req, res) => {
         ok: true,
         status: 'healthy',
         service: 'CRM Microservice',
+        version: String(process.env.APP_VERSION || process.env.GITHUB_SHA || 'unknown'),
+        environment: String(process.env.NODE_ENV || 'unknown'),
+        dependencies: { postgres: { state: process.env.DATABASE_URL ? 'configured' : 'not-configured', required: true } },
         port: process.env.CRM_API_PORT || process.env.PORT || 8099,
         timestamp: new Date().toISOString()
+    })
+})
+
+app.get('/readiness', (req, res) => {
+    const postgresConfigured = Boolean(process.env.DATABASE_URL)
+    res.status(postgresConfigured ? 200 : 503).json({
+        ok: postgresConfigured,
+        ready: postgresConfigured,
+        service: 'CRM Microservice',
+        version: String(process.env.APP_VERSION || process.env.GITHUB_SHA || 'unknown'),
+        environment: String(process.env.NODE_ENV || 'unknown'),
+        dependencies: { postgres: { state: postgresConfigured ? 'configured' : 'not-configured', required: true } },
+        request_id: req.requestId,
     })
 })
 
@@ -6923,6 +6949,9 @@ app.get('/api/health', (req, res) => {
         ok: true,
         status: 'healthy',
         service: 'CRM API',
+        version: String(process.env.APP_VERSION || process.env.GITHUB_SHA || 'unknown'),
+        environment: String(process.env.NODE_ENV || 'unknown'),
+        dependencies: { postgres: { state: process.env.DATABASE_URL ? 'configured' : 'not-configured', required: true } },
         conversations: conversations.length,
         timestamp: new Date().toISOString()
     })

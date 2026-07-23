@@ -6,6 +6,7 @@ import session from "express-session";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage.js";
+import { createPgPool } from "./harmonia/store/pg.js";
 
 // Environment variables validation will be done in setupAuth() to prevent server crashes
 const isTruthyEnv = (value) => {
@@ -34,9 +35,11 @@ export function getSession(useMemoryStore = false) {
   } else {
     // PRODUCTION MODE: Use PostgreSQL session store
     const pgStore = connectPg(session);
+    const pool = createPgPool(process.env.DATABASE_URL, { domain: 'replit-auth' });
+    if (!pool) throw new Error('DATABASE_URL is required when NO_AUTH is disabled');
     sessionStore = new pgStore({
-      conString: process.env.DATABASE_URL,
-      createTableIfMissing: true, // Allow table creation if missing
+      pool,
+      createTableIfMissing: false,
       ttl: sessionTtl,
       tableName: "sessions",
     });

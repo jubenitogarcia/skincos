@@ -7,6 +7,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:harmonia-worker": "node entrypoints/harmonia-worker.js",
+    "start:domain": "node entrypoints/domain-server.js",
+    "start:jobs-worker": "node entrypoints/jobs-server.js",
     "test": "node --test server/__tests__/*.test.js server/harmonia/__tests__/*.test.js server/atendimento/__tests__/*.test.js server/caixa/__tests__/*.test.js services/__tests__/*.test.js",
     "import-atendimento-sheet": "node scripts/import-atendimento-sheet.mjs",
     "import-gerencia-sheet": "node scripts/import-gerencia-sheet.mjs",

@@ -16,7 +16,6 @@ export function loadHarmoniaConfig({ varDir }) {
     const openAiApiKey = String(process.env.OPENAI_API_KEY || '').trim() || null
     const openAiModel = String(process.env.HARMONIA_OPENAI_MODEL || '').trim() || 'gpt-5-nano'
 
-    const autoMigrate = ['1', 'true', 'yes'].includes(String(process.env.HARMONIA_AUTO_MIGRATE || '').toLowerCase())
     const storeRaw = ['1', 'true', 'yes'].includes(String(process.env.HARMONIA_STORE_RAW || '').toLowerCase())
     const rateLimitSecondsRaw = String(process.env.HARMONIA_RATE_LIMIT_SECONDS || '').trim()
     const rateLimitSeconds = rateLimitSecondsRaw ? Number.parseInt(rateLimitSecondsRaw, 10) : 20
@@ -72,7 +71,7 @@ export function loadHarmoniaConfig({ varDir }) {
         debugToken,
         execToken,
         ingestToken,
-        autoMigrate,
+        autoMigrate: false,
         storeRaw,
         rateLimitSeconds: Number.isFinite(rateLimitSeconds) ? Math.max(0, rateLimitSeconds) : 0,
         tasksClaimLimit: Number.isFinite(tasksClaimLimit) ? Math.max(1, tasksClaimLimit) : 20,

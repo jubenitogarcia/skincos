@@ -8,7 +8,7 @@ function onlyDigits(s) {
 }
 
 export function createHarmoniaStore({ databaseUrl }) {
-    const pool = createPgPool(databaseUrl)
+    const pool = createPgPool(databaseUrl, { domain: 'harmonia' })
 
     async function migrate() {
         if (!pool) throw new Error('DATABASE_URL not configured')

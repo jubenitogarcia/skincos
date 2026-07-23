@@ -58,7 +58,7 @@ import {
 let pool = null
 
 export function createAtendimentoPool(databaseUrl = process.env.DATABASE_URL) {
-    if (!pool) pool = createPgPool(databaseUrl)
+    if (!pool) pool = createPgPool(databaseUrl, { domain: 'atendimento' })
     return pool
 }
 
@@ -2658,7 +2658,6 @@ export function createAtendimentoStore(options = {}) {
 
     async function ensureReady() {
         requirePool(pgPool)
-        await withPgTransaction(pgPool, migrateAtendimento)
     }
 
     return {
@@ -2670,8 +2669,9 @@ export function createAtendimentoStore(options = {}) {
         },
 
         async migrate() {
-            await ensureReady()
-            return { ok: true }
+            const error = new Error('ATENDIMENTO_MIGRATION_PIPELINE_REQUIRED')
+            error.statusCode = 503
+            throw error
         },
 
         async localMirrorStatus() {

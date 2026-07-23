@@ -6,11 +6,14 @@ const actorLabel = (actor) => String(actor?.id || actor?.username || actor?.emai
 const money = (value) => Math.round(Number(value) * 100) / 100
 
 export function createCaixaStore({ databaseUrl = process.env.DATABASE_URL } = {}) {
-    if (!pool) pool = createPgPool(databaseUrl)
+    if (!pool) pool = createPgPool(databaseUrl, { domain: 'caixa' })
     let ready = null
     async function ensureReady() {
         if (!pool) { const error = new Error('DATABASE_URL_not_configured'); error.statusCode = 503; throw error }
-        if (!ready) ready = withPgTransaction(pool, async (client) => {
+        if (!ready) ready = Promise.resolve()
+        /* Legacy DDL is intentionally retained below only as migration-source
+           evidence. Runtime no longer executes it. */
+        if (false) await withPgTransaction(pool, async (client) => {
             for (const sql of [
                 'create extension if not exists pgcrypto',
                 'create schema if not exists crm_caixa',

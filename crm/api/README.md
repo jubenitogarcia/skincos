@@ -41,8 +41,9 @@ Rotas: `/api/harmonia/*`
   - Messages: `GET /api/harmonia/conversations/:id/messages?limit=50`
 
 ### Env vars (Harmonia)
-- `DATABASE_URL` (obrigatório para persistência)
-- `HARMONIA_AUTO_MIGRATE=1` (opcional, cria schema/tabelas e seed de unidades)
+- `DATABASE_URL` (fallback transitório de compatibilidade)
+- `POSTGRES_HARMONIA_DATABASE_URL`, `POSTGRES_ATENDIMENTO_DATABASE_URL`, `POSTGRES_CAIXA_DATABASE_URL` e `POSTGRES_TRACKING_DATABASE_URL` (roles e pools segregados)
+- migrations são executadas somente pelo pipeline PostgreSQL com a credencial de migrator; `HARMONIA_AUTO_MIGRATE` não é mais suportada.
 - `HARMONIA_STORE_RAW=1` (opcional, persiste payload completo no `messages.raw` com redaction)
 - `HARMONIA_DEBUG_TOKEN` (opcional, protege rotas de leitura/debug)
 - `HARMONIA_EXEC_TOKEN` (opcional, protege rotas de execucao: tasks/delivery)
