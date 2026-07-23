@@ -1,17 +1,23 @@
 name: Deploy Core Workers (api + insumos)
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "api/**"
-      - "inventory/**"
-      - ".github/workflows/deploy-core-workers.yml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target environment"
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+
+concurrency:
+  group: deploy-core-workers-${{ inputs.target }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
     permissions:
       contents: read
 
@@ -61,11 +67,16 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars
-          npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars
+          if [[ "${{ inputs.target }}" == "staging" ]]; then
+            env_args=(--env staging)
+          else
+            env_args=()
+          fi
+          npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars "${env_args[@]}"
+          npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars "${env_args[@]}"
 
       - name: Smoke check API + Inventory Workers (production)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
         run: |
           set -euo pipefail
           python3 .github/scripts/workers_smoke.py \

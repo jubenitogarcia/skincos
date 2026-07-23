@@ -1,16 +1,16 @@
 name: Deploy Meta Ads Report Worker
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "ads/meta/apps/report-ingest-worker/**"
-      - ".github/workflows/deploy-meta-ads-report-worker.yml"
   workflow_dispatch: {}
+
+concurrency:
+  group: deploy-meta-ads-report-production
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
 

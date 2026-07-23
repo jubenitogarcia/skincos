@@ -1,16 +1,23 @@
 name: Deploy Escala API Worker
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "workforce/schedule/**"
-      - ".github/workflows/deploy-escala-api.yml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target environment"
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+
+concurrency:
+  group: deploy-escala-api-${{ inputs.target }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
     permissions:
       contents: read
 
@@ -18,8 +25,7 @@ jobs:
       - name: Guard Escala deploy settings
         id: guard
         env:
-          ENABLE: ${{ vars.ENABLE_ESCALA_API_DEPLOY }}
-          ENABLE_STAGING: ${{ vars.ENABLE_ESCALA_API_DEPLOY_STAGING }}
+          ENABLE: ${{ inputs.target == 'staging' && vars.ENABLE_ESCALA_API_DEPLOY_STAGING || vars.ENABLE_ESCALA_API_DEPLOY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
@@ -38,11 +44,6 @@ jobs:
             echo "::error::Missing GitHub secret ESCALA_ACTOR_HMAC_KEY."
             exit 1
           fi
-          if [[ "${ENABLE_STAGING:-false}" == "true" ]]; then
-            echo "deploy_staging=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "deploy_staging=false" >> "$GITHUB_OUTPUT"
-          fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
@@ -56,7 +57,7 @@ jobs:
           node-version: "22.12.0"
 
       - name: Sync Escala worker secret (production)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -67,7 +68,7 @@ jobs:
           echo "Synced ESCALA_ACTOR_HMAC_KEY for production."
 
       - name: Apply Escala D1 migrations (production)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -76,7 +77,7 @@ jobs:
           npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config workforce/schedule/wrangler.toml
 
       - name: Deploy Escala worker (production)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -85,7 +86,7 @@ jobs:
           npx --yes wrangler@4 deploy --config workforce/schedule/wrangler.toml --keep-vars
 
       - name: Sync Escala worker secret (staging)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.deploy_staging == 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -96,7 +97,7 @@ jobs:
           echo "Synced ESCALA_ACTOR_HMAC_KEY for staging."
 
       - name: Apply Escala D1 migrations (staging)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.deploy_staging == 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -105,7 +106,7 @@ jobs:
           npx --yes wrangler@4 d1 migrations apply skincos-escala --remote --config workforce/schedule/wrangler.toml --env staging
 
       - name: Deploy Escala worker (staging)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.deploy_staging == 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -114,7 +115,7 @@ jobs:
           npx --yes wrangler@4 deploy --config workforce/schedule/wrangler.toml --env staging --keep-vars
 
       - name: Smoke check Escala API (production)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
         env:
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
           ESCALA_SMOKE_BASE_URL: https://escala-api.skincos.com.br
@@ -123,7 +124,7 @@ jobs:
           node workforce/schedule/scripts/smoke.mjs
 
       - name: Smoke check Escala API (staging)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.guard.outputs.deploy_staging == 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
         env:
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
           ESCALA_SMOKE_BASE_URL: https://escala-api-staging.skincos.com.br

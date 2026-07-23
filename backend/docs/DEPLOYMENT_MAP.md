@@ -23,16 +23,16 @@ Este documento é um “mapa operacional” do que está rodando em produção h
 - Route: `api.skincos.com.br/insumos/*` (mais específico, ganha precedência)
 - Código: `inventory`
 
-## Auto-deploy (GitHub → Cloudflare)
+## Publicação canônica (GitHub → Cloudflare)
 
 ### Workers
-- Workflow: `.github/workflows/deploy-insumos-worker.yml`
-- Dispara em `push` na `main` para mudanças em `api/**`, `inventory/**` e lockfiles do backend.
-- Deploy “inteligente”: `backend/scripts/cloudflare-workers.sh` (deploy só do que mudou, considerando dependências).
+- Workflow: `.github/workflows/deploy-core-workers.yml`
+- É manual e seleciona `staging` ou `production`; não há publicação por `push`, reconciliação ou automerge.
+- A unidade é deliberadamente conjunta: publica `skincos-api` e `skincos-insumos` para preservar o contrato compartilhado atual. Consultar `platform/deploy/operational-units.json` antes de criar outra via.
 
 ### Pages
-- Caminho recomendado: integração GitHub↔Pages (Cloudflare). O Pages já está conectado ao repo.
-- Fallback opcional: `.github/workflows/deploy-crm-pages.yml` (wrangler), gated por `vars.ENABLE_CRM_PAGES_DEPLOY=true`.
+- Único publisher: `.github/workflows/deploy-crm-pages.yml` (manual, com `staging` e `production` separados).
+- A integração GitHub↔Pages não deve ser habilitada para este projeto, pois criaria um segundo publisher.
 
 ## Onde normalmente você “deixa passar” (checklist rápido)
 
@@ -49,4 +49,3 @@ Este documento é um “mapa operacional” do que está rodando em produção h
 - Migrar rate limiting de GET/read para **Cloudflare WAF Rate Limiting Rules** (elimina `rows_written` do DO para esse caso).
 - Centralizar “source of truth” de configuração (schema de env + auditoria em CI).
 - Observabilidade: Logpush / alertas (erros 5xx, rate-limited, D1 latency) e dashboards.
-
