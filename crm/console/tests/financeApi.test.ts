@@ -130,6 +130,12 @@ describe('Finance transport helpers', () => {
     expect(routes.include).toContain('/api/finance/*')
   })
 
+  it('unlocks Finance navigation only after the server bootstrap authorizes it', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    expect(app).toContain("unlockedModuleKeys(financeEnabled ? 'finance' : DEFAULT_MODULE_KEY")
+    expect(app).toContain('}, [financeEnabled, initializing])')
+  })
+
   it('keeps the local authorization smoke synchronized with the asynchronous Finance bootstrap gate', () => {
     const smoke = readFileSync(new URL('../scripts/finance-local-smoke.cjs', import.meta.url), 'utf8')
     expect(smoke).toContain("financeNav.waitFor({ state: 'hidden', timeout: 30_000 })")

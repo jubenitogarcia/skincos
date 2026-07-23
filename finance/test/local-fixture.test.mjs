@@ -63,4 +63,5 @@ test('local Finance launcher preserves the module grant when exercising only the
   const source = await readFile(launcher, 'utf8');
   assert.match(source, /no-module\) LOCAL_MODULES='' ;;/);
   assert.doesNotMatch(source, /disabled\|no-module\) LOCAL_MODULES='' ;;/);
+  assert.match(source, /curl -sS --connect-timeout 1 --max-time 1/);
 });

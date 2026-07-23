@@ -18,7 +18,9 @@ API_DEV_VARS_LINK="$ROOT_DIR/api/.dev.vars"
 CRM_PID_FILE="$RUNTIME_ROOT/crm-launcher.pid"
 CRM_LOG_FILE="$RUNTIME_ROOT/crm-local.log"
 GATEWAY_PORT="${FINANCE_GATEWAY_PORT:-8792}"
-CRM_VITE_PORT="${FINANCE_CRM_VITE_PORT:-5182}"
+# Keep the Finance runtime out of the generic CRM Vite range.  It avoids the
+# Windows relay that commonly owns :5182 while other local CRM workflows run.
+CRM_VITE_PORT="${FINANCE_CRM_VITE_PORT:-5192}"
 CRM_PAGES_PORT="${FINANCE_CRM_PAGES_PORT:-8793}"
 SCENARIO="${FINANCE_LOCAL_SCENARIO:-both}"
 OPEN_BROWSER="${FINANCE_OPEN_BROWSER:-1}"
@@ -101,7 +103,13 @@ terminate_tree() { local root="$1" children; kill -0 "$root" >/dev/null 2>&1 || 
 belongs_to_finance_runtime() { local pid="$1" candidate="$1" args cwd; while [[ "$candidate" =~ ^[0-9]+$ && "$candidate" != 1 ]]; do args="$(ps -p "$candidate" -o args= 2>/dev/null || true)"; cwd="$(readlink "/proc/$candidate/cwd" 2>/dev/null || true)"; if [[ "$args" == *'run-local-finance.sh'* && ( "$args" == *"$ROOT_DIR"* || "$cwd" == "$ROOT_DIR" ) ]]; then return 0; fi; candidate="$(ps -p "$candidate" -o ppid= 2>/dev/null | tr -d ' ' || true)"; done; return 1; }
 belongs_to_finance_gateway() { local pid="$1" args; args="$(ps -p "$pid" -o args= 2>/dev/null || true)"; [[ "$args" == *'wrangler dev'* && "$args" == *'api/wrangler.toml'* && "$args" == *"$D1_STATE_DIR"* ]]; }
 state_value() { [[ -f "$STATE_FILE" ]] && sed -n "s/^$1=//p" "$STATE_FILE" | head -n 1 || true; }
-port_is_free() { ! lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+# A Windows-side relay can answer on localhost without appearing in WSL's
+# lsof output. Probe HTTP as well so the Finance launcher selects another
+# port before the CRM launcher rejects an external listener.
+port_is_free() {
+  ! lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1 \
+    && ! curl -sS --connect-timeout 1 --max-time 1 -o /dev/null "http://127.0.0.1:$1" 2>/dev/null
+}
 select_port() { local preferred="$1" candidate; for ((candidate=preferred; candidate<=preferred+30; candidate++)); do port_is_free "$candidate" && { printf '%s' "$candidate"; return; }; done; echo "Não há porta livre para gateway Financeiro perto de $preferred." >&2; exit 1; }
 wait_for_http() { local url="$1" retries="${2:-90}"; while (( retries > 0 )); do curl -fsS --max-time 3 "$url" >/dev/null 2>&1 && return 0; sleep 1; retries=$((retries - 1)); done; return 1; }
 wrangler_bin() { printf '%s' "$FRONTEND_RUNTIME_DIR/node_modules/.bin/wrangler"; }
