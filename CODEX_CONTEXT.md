@@ -13,6 +13,9 @@
 - WhatsApp release: `/opt/skincos/current/messaging-whatsapp`; the only supported implementation is `messaging/channels/whatsapp/engine`.
 - Mutable state: `/var/lib/skincos-runtime`; private config/secrets: `/etc/skincos`; logs: `/var/log/skincos`; temporary runtime: `/var/tmp/skincos`.
 - Active units: `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`, `cloudflare-orb` and `cloudflare-runtime`.
+- Versioned but not yet activated: `crm-jobs`. It is the isolated
+  continuous-worker process and requires the staging gate in
+  `docs/runbooks/crm-continuous-workers.md` before it joins the active set.
 - Windows keepalive: scheduled task `SkincosWslRuntimeKeepalive`; its single
   anchor uses native cwd `/`, while Linux service supervision remains under
   `systemd`.

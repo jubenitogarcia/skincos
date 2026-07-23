@@ -45,6 +45,7 @@ const lifecycleUnits = [
   "orb-proxy.service",
   "messaging-whatsapp.service",
   "crm.service",
+  "crm-jobs.service",
   "booking.service",
   "cloudflare-orb.service",
   "cloudflare-runtime.service",
@@ -88,6 +89,17 @@ if (!/dirname "\$\{BASH_SOURCE\[0\]\}"\)\/\.\.\/\.\.\/\.\./.test(crmRunner)) {
 }
 if (crmRunner.includes("/../../../..")) {
   fail("CRM runner escapes the native source release by resolving four parent directories");
+}
+
+const crmApi = fs.readFileSync(path.join(root, "crm/api/server.js"), "utf8");
+if (crmApi.includes("startHarmoniaWorker")) {
+  fail("CRM HTTP process must not start a continuous Harmonia worker");
+}
+
+const crmJobsUnit = fs.readFileSync(path.join(root, "ops/runtime/units/crm-jobs.service"), "utf8");
+if (!/^Environment=CRM_CONTINUOUS_WORKER_PORT=8102$/m.test(crmJobsUnit) ||
+    !/^ExecStart=__REPO_ROOT__\/scripts\/crm\/run-continuous-workers-linux\.sh$/m.test(crmJobsUnit)) {
+  fail("crm-jobs.service must run the versioned loopback continuous-worker entrypoint");
 }
 
 const crmPagesWorkflow = fs.readFileSync(path.join(root, ".github/workflows", "deploy-crm-pages.yml"), "utf8");

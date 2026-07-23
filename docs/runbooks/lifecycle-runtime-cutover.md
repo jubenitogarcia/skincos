@@ -8,7 +8,7 @@
   atomic link `/opt/skincos/current/messaging-whatsapp`.
 - State: `/var/lib/skincos-runtime`; secrets/config: `/etc/skincos`; logs:
   `/var/log/skincos`; cache/tmp: native Linux filesystems only.
-- Units: `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`,
+- Units: `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`, `crm-jobs`, `booking`,
   `cloudflare-orb` and `cloudflare-runtime`.
 - Native backup staging: `/var/backups/skincos/orb/daily`.
 - Durable published backup and operator evidence: `C:\CodexRuntime`.
@@ -80,13 +80,14 @@ Do not install a WSL timer or launch Windows executables from a systemd unit.
 scripts/runtime/manage-native-runtime.sh status
 scripts/runtime/manage-native-runtime.sh validate
 systemctl show -p NRestarts,ActiveState,SubState \
-  orb orb-proxy messaging-whatsapp crm booking cloudflare-orb cloudflare-runtime
+  orb orb-proxy messaging-whatsapp crm crm-jobs booking cloudflare-orb cloudflare-runtime
 ```
 
 Validate at minimum:
 
 - Orb `http://127.0.0.1:5678/healthz` and `https://orb.skincos.com.br/healthz`;
 - CRM `http://127.0.0.1:8099/health` and `https://crm.skincos.com.br`;
+- CRM continuous workers `http://127.0.0.1:8102/health` and `/readiness`;
 - Booking `http://127.0.0.1:8765/healthz`;
 - API and website public endpoints;
 - WhatsApp `https://wa.skincos.com.br/health` plus authenticated credential and

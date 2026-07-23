@@ -29,7 +29,6 @@ import { registerPontoRoutes } from './server/pontoRoutes.js'
 
 // Harmonia (atendimento de leads via WhatsApp - Decision API)
 import { createHarmoniaRouter } from './server/harmonia/routes.js'
-import { startHarmoniaWorker } from './server/harmonia/worker.js'
 import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.js'
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
 import { createCaixaRouter } from './server/caixa/routes.js'
@@ -775,13 +774,6 @@ try {
     console.log('✅ Caixa routes registered')
 } catch (e) {
     console.warn('⚠️  Caixa routes failed to register:', e?.message || String(e))
-}
-
-try {
-    startHarmoniaWorker({ varDir: VAR_DIR })
-    console.log('✅ Harmonia worker initialized')
-} catch (e) {
-    console.warn('⚠️  Harmonia worker failed to start:', e?.message || String(e))
 }
 
 // -------------------------------------------------------------
