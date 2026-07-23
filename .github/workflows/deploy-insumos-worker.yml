@@ -1,157 +1,157 @@
-name: Deploy Cloudflare Workers (API + Insumos)
+name: Promote Cloudflare Workers (API + Insumos)
 
 on:
-  push:
-    branches: [ main, staging ]
-    paths:
-      - "api/**"
-      - "inventory/**"
-      - "finance/**"
-      - "shared/finance-contracts/**"
-      - "shared/crm-auth/**"
-      - "backend/pnpm-lock.yaml"
-      - "backend/pnpm-workspace.yaml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Promotion target"
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      release_sha:
+        description: "Full SHA already reachable from main"
+        required: true
+        type: string
+      staging_run_id:
+        description: "Required for production: successful staging run for this exact SHA"
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: promote-core-workers-${{ inputs.target }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
+    environment: ${{ inputs.target }}
     steps:
-      - name: Guard Cloudflare deploy secrets
-        id: guard
+      - name: Verify production staging attestation
+        if: inputs.target == 'production'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ENABLE_STAGING: ${{ vars.ENABLE_INSUMOS_DEPLOY_STAGING }}
-          BRANCH_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+          EXPECTED_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
-          if [[ "$BRANCH_NAME" == "staging" && "${ENABLE_STAGING:-}" != "true" ]]; then
-            echo "ENABLE_INSUMOS_DEPLOY_STAGING!=true; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare deploy secrets not configured; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+          [[ "$STAGING_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::Production requires a numeric staging_run_id"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/core-workers-staging-attestation"
+          gh run download "$STAGING_RUN_ID" --repo "$GITHUB_REPOSITORY" --name core-workers-staging-attestation --dir "$RUNNER_TEMP/core-workers-staging-attestation"
+          node - "$RUNNER_TEMP/core-workers-staging-attestation/attestation.json" "$EXPECTED_SHA" <<'NODE'
+          const fs = require('fs')
+          const [file, expectedSha] = process.argv.slice(2)
+          const value = JSON.parse(fs.readFileSync(file, 'utf8'))
+          if (value.target !== 'staging' || value.sha !== expectedSha || value.deployed !== true) process.exit(1)
+          NODE
 
-      - name: Checkout
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@v6
+      - name: Guard target and credentials
+        env:
+          TARGET: ${{ inputs.target }}
+          ENABLE_STAGING: ${{ vars.ENABLE_INSUMOS_DEPLOY_STAGING }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == "staging" && "${ENABLE_STAGING:-}" != "true" ]]; then
+            echo "::error::ENABLE_INSUMOS_DEPLOY_STAGING must be true for a staging promotion"
+            exit 1
+          fi
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            [[ -n "${!name:-}" ]] || { echo "::error::Missing required value: $name"; exit 1; }
+          done
 
-      - name: Setup Node
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: "22.12.0"
 
-      - name: Setup pnpm (corepack)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-
-      - name: Hold Finance changes from production until an explicit release
-        id: finance_production_gate
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+      - name: Verify immutable release source
+        id: release
         env:
-          ALLOW_FINANCE_PRODUCTION: ${{ vars.ENABLE_FINANCE_PRODUCTION_DEPLOY }}
-          BRANCH_NAME: ${{ github.ref_name }}
-          GITHUB_BEFORE_SHA: ${{ github.event.before }}
-          GITHUB_SHA: ${{ github.sha }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
-          if [[ "$BRANCH_NAME" != "main" || "${ALLOW_FINANCE_PRODUCTION:-}" == "true" ]]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          changed="$(git diff --name-only "$GITHUB_BEFORE_SHA" "$GITHUB_SHA" 2>/dev/null || true)"
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::release_sha must be a full SHA"; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo "::error::Checkout SHA mismatch"; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo "::error::release_sha is not reachable from main"; exit 1; }
+          echo "before_sha=$(git rev-parse "$RELEASE_SHA^")" >> "$GITHUB_OUTPUT"
+
+      - name: Hold Finance changes from production until an explicit release
+        if: inputs.target == 'production'
+        env:
+          ALLOW_FINANCE_PRODUCTION: ${{ vars.ENABLE_FINANCE_PRODUCTION_DEPLOY }}
+          BEFORE_SHA: ${{ steps.release.outputs.before_sha }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${ALLOW_FINANCE_PRODUCTION:-}" == "true" ]]; then exit 0; fi
+          changed="$(git diff --name-only "$BEFORE_SHA" "$RELEASE_SHA")"
           if grep -Eq '^(finance/|shared/finance-contracts/|shared/crm-auth/|api/src/(gateway|router)\.js$)' <<< "$changed"; then
-            echo "Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true; Worker deploy held."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true"
+            exit 1
           fi
 
       - name: Install Worker dependencies
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         run: |
+          set -euo pipefail
           npm --prefix api ci
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
           pnpm -C inventory install --frozen-lockfile
 
-      # Staging owns its session secret and must never receive or overwrite
-      # production recovery credentials through this workflow.  Staging does
-      # not exercise password delivery; controlled test identities use the
-      # normal auth lifecycle with the pre-provisioned staging SESSION_SECRET.
-      - name: Sync password-recovery secrets (production only)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && github.ref_name == 'main' }}
-        working-directory: inventory
-        env:
-          AUTH_RESET_SMTP_HOST: ${{ secrets.AUTH_RESET_SMTP_HOST }}
-          AUTH_RESET_SMTP_PORT: ${{ secrets.AUTH_RESET_SMTP_PORT }}
-          AUTH_RESET_SMTP_USERNAME: ${{ secrets.AUTH_RESET_SMTP_USERNAME }}
-          AUTH_RESET_SMTP_PASSWORD: ${{ secrets.AUTH_RESET_SMTP_PASSWORD }}
-          AUTH_RESET_EMAIL_FROM: ${{ secrets.AUTH_RESET_EMAIL_FROM }}
-          AUTH_RESET_CODE_PEPPER: ${{ secrets.AUTH_RESET_CODE_PEPPER }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          put_secret() {
-            local name="$1"
-            local value="$2"
-            if [[ -n "$value" && "$value" != "__KEEP_EXISTING__" ]]; then
-              printf '%s' "$value" | ./node_modules/.bin/wrangler secret put "$name" --config wrangler.toml
-            fi
-          }
-          put_secret AUTH_RESET_SMTP_HOST "$AUTH_RESET_SMTP_HOST"
-          put_secret AUTH_RESET_SMTP_PORT "$AUTH_RESET_SMTP_PORT"
-          put_secret AUTH_RESET_SMTP_USERNAME "$AUTH_RESET_SMTP_USERNAME"
-          put_secret AUTH_RESET_SMTP_PASSWORD "$AUTH_RESET_SMTP_PASSWORD"
-          put_secret AUTH_RESET_EMAIL_FROM "$AUTH_RESET_EMAIL_FROM"
-          put_secret AUTH_RESET_CODE_PEPPER "$AUTH_RESET_CODE_PEPPER"
-
       - name: Apply audited Finance migrations (staging only)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && github.ref_name == 'staging' }}
+        if: inputs.target == 'staging'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          # The command fails on an unknown historical baseline or checksum
-          # drift. It writes only the isolated staging D1 and runs before the
-          # gateway can serve a schema-dependent Finance route.
-          bash finance/scripts/apply-d1-migrations.sh --remote --env staging --adopt-existing-schema
+        run: bash finance/scripts/apply-d1-migrations.sh --remote --env staging --adopt-existing-schema
 
-      - name: Deploy changed Workers
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
+      - name: Deploy the immutable release source
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           INSUMOS_D1_DB_NAME: ${{ vars.INSUMOS_D1_DB_NAME }}
           INSUMOS_D1_DB_NAME_STAGING: ${{ vars.INSUMOS_D1_DB_NAME_STAGING }}
-          GITHUB_BEFORE_SHA: ${{ github.event.before }}
-          GITHUB_SHA: ${{ github.sha }}
-          DEPLOY_ENV: ${{ github.ref_name == 'staging' && 'staging' || '' }}
+          BEFORE_SHA: ${{ steps.release.outputs.before_sha }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
-          if [[ "${DEPLOY_ENV:-}" == "staging" ]]; then
-            bash backend/scripts/cloudflare-workers.sh deploy --before "$GITHUB_BEFORE_SHA" --after "$GITHUB_SHA" --env staging
+          if [[ "$TARGET" == "staging" ]]; then
+            bash backend/scripts/cloudflare-workers.sh deploy --before "$BEFORE_SHA" --after "$RELEASE_SHA" --env staging
           else
-            bash backend/scripts/cloudflare-workers.sh deploy --before "$GITHUB_BEFORE_SHA" --after "$GITHUB_SHA"
+            bash backend/scripts/cloudflare-workers.sh deploy --before "$BEFORE_SHA" --after "$RELEASE_SHA"
           fi
 
-      - name: Smoke check API + Inventory Workers (production)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && github.ref_name == 'main' }}
+      - name: Smoke check production API + Inventory Workers
+        if: inputs.target == 'production'
         run: |
           set -euo pipefail
-          python3 .github/scripts/workers_smoke.py \
-            --attempts 5 \
-            --sleep-seconds 6 \
-            --user-agent "Mozilla/5.0 (compatible; WorkersDeploySmoke/1.0)"
+          python3 .github/scripts/workers_smoke.py --attempts 5 --sleep-seconds 6 --user-agent "Mozilla/5.0 (compatible; WorkersDeploySmoke/1.0)"
+
+      - name: Write staging attestation
+        if: inputs.target == 'staging'
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/core-workers-staging-attestation"
+          node -e "require('fs').writeFileSync(process.argv[1], JSON.stringify({target:'staging',sha:process.env.RELEASE_SHA,deployed:true,runId:process.env.GITHUB_RUN_ID,createdAt:new Date().toISOString()},null,2)+'\\n')" "$RUNNER_TEMP/core-workers-staging-attestation/attestation.json"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.target == 'staging'
+        with:
+          name: core-workers-staging-attestation
+          path: ${{ runner.temp }}/core-workers-staging-attestation/attestation.json
+          retention-days: 14
+          if-no-files-found: error

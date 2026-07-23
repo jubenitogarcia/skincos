@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "sourceBranch": "main",
+  "releaseArtifact": "release-source-<full-sha>",
+  "phases": ["preview", "staging", "smoke", "canary", "production"],
+  "units": {
+    "core-workers": { "workflow": "deploy-insumos-worker.yml", "status": "sha-promotion-enabled" },
+    "crm-pages": { "workflow": "deploy-crm-pages.yml", "status": "migration-required" },
+    "timekeeping": { "workflow": "deploy-timekeeping.yml", "status": "sha-promotion-enabled" },
+    "escala-api": { "workflow": "deploy-escala-api.yml", "status": "migration-required" },
+    "social-publisher": { "workflow": "deploy-social-publisher-worker.yml", "status": "migration-required" },
+    "meta-ads-report": { "workflow": "deploy-meta-ads-report-worker.yml", "status": "unreleased" },
+    "website": { "workflow": "deploy-website-cloudflare.yml", "status": "migration-required" }
+  }
+}

@@ -14,3 +14,4 @@ jobs:
         with:
           node-version: 22
       - run: node .github/scripts/validate-architecture.mjs
+      - run: node .github/scripts/validate-artifact-promotion.mjs

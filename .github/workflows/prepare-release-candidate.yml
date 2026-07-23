@@ -1,0 +1,61 @@
+name: Prepare immutable release candidate
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: "Full commit SHA already reachable from main (defaults to the dispatch SHA)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release-candidate-${{ github.event.inputs.release_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    name: Archive immutable source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve a commit already promoted to main
+        id: release
+        env:
+          INPUT_SHA: ${{ inputs.release_sha }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          candidate="${INPUT_SHA:-$EVENT_SHA}"
+          [[ "$candidate" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::release_sha must be a full SHA"; exit 1; }
+          git fetch --no-tags origin main
+          git cat-file -e "$candidate^{commit}"
+          git merge-base --is-ancestor "$candidate" origin/main || {
+            echo "::error::$candidate is not reachable from origin/main"
+            exit 1
+          }
+          echo "sha=$candidate" >> "$GITHUB_OUTPUT"
+
+      - name: Archive and attest source
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-candidate
+          git archive --format=tar.gz --prefix="skincos-${RELEASE_SHA}/" "$RELEASE_SHA" > "release-candidate/source.tar.gz"
+          sha256sum release-candidate/source.tar.gz | awk '{print $1}' > release-candidate/source.sha256
+          node -e "const fs=require('fs'); const sha=process.env.RELEASE_SHA; const digest=fs.readFileSync('release-candidate/source.sha256','utf8').trim(); fs.writeFileSync('release-candidate/release.json', JSON.stringify({schemaVersion:1,sourceSha:sha,sourceArchiveSha256:digest,createdAt:new Date().toISOString()},null,2)+'\\n')"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-source-${{ steps.release.outputs.sha }}
+          path: release-candidate/
+          retention-days: 30
+          if-no-files-found: error

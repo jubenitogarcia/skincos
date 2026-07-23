@@ -9,6 +9,10 @@ on:
         default: staging
         type: choice
         options: [staging, production]
+      release_sha:
+        description: Full SHA already reachable from main; this exact source is promoted
+        required: true
+        type: string
       staging_run_id:
         description: Required for production - successful staging run id for this exact commit
         required: false
@@ -33,7 +37,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           STAGING_RUN_ID: ${{ inputs.staging_run_id }}
-          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
           [[ "$STAGING_RUN_ID" =~ ^[0-9]+$ ]] || { echo "Production requires a numeric staging_run_id"; exit 1; }
@@ -69,8 +73,8 @@ jobs:
 
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
-          ref: main
-          fetch-depth: 1
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: 22.12.0
@@ -86,9 +90,14 @@ jobs:
           (cd inventory && npx --yes pnpm@9.15.4 install --frozen-lockfile --ignore-scripts)
 
       - name: Verify checked-out source identity
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo "Checkout SHA mismatch"; exit 1; }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full SHA"; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo "Checkout SHA mismatch"; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo "release_sha is not reachable from main"; exit 1; }
 
       - name: Test release source
         run: |
@@ -99,6 +108,7 @@ jobs:
       - name: Configure target D1 id in ephemeral checkout
         env:
           TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
           D1_ID: ${{ inputs.target == 'production' && vars.TIMEKEEPING_D1_PRODUCTION_ID || vars.TIMEKEEPING_D1_STAGING_ID }}
         run: |
           set -euo pipefail
@@ -119,7 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); DB_NAME=skincos-timekeeping; else ENV_ARGS=(--env staging); DB_NAME=skincos-timekeeping-staging; fi
-          plain="$RUNNER_TEMP/timekeeping-${TARGET}-pre-migration-${GITHUB_SHA}.sql"
+          plain="$RUNNER_TEMP/timekeeping-${TARGET}-pre-migration-${RELEASE_SHA}.sql"
           encrypted="${plain}.gpg"
           ./node_modules/.bin/wrangler d1 export "$DB_NAME" --remote --output "$plain" --config wrangler.toml "${ENV_ARGS[@]}"
           printf '%s' "$TIMEKEEPING_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
@@ -129,7 +139,7 @@ jobs:
       - name: Upload encrypted migration checkpoint
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: timekeeping-${{ inputs.target }}-pre-migration-${{ github.sha }}
+          name: timekeeping-${{ inputs.target }}-pre-migration-${{ inputs.release_sha }}
           path: ${{ steps.checkpoint.outputs.artifact }}
           retention-days: 7
           if-no-files-found: error
@@ -205,9 +215,11 @@ jobs:
 
       - name: Write staging attestation
         if: inputs.target == 'staging'
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           mkdir -p "$RUNNER_TEMP/timekeeping-staging-attestation"
-          node -e "require('fs').writeFileSync(process.argv[1], JSON.stringify({target:'staging',sha:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,health:200,readiness:200,createdAt:new Date().toISOString()},null,2))" "$RUNNER_TEMP/timekeeping-staging-attestation/attestation.json"
+          node -e "require('fs').writeFileSync(process.argv[1], JSON.stringify({target:'staging',sha:process.env.RELEASE_SHA,runId:process.env.GITHUB_RUN_ID,health:200,readiness:200,createdAt:new Date().toISOString()},null,2)+'\\n')" "$RUNNER_TEMP/timekeeping-staging-attestation/attestation.json"
 
       - name: Upload staging attestation
         if: inputs.target == 'staging'
