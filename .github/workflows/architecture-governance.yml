@@ -9,8 +9,37 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: 22
-      - run: node .github/scripts/validate-architecture.mjs
+      - name: Validate architecture contracts
+        run: node .github/scripts/validate-architecture.mjs
+      - name: Validate canonical deployment pipelines
+        run: node .github/scripts/validate-canonical-deploy-pipelines.mjs
+      - name: Validate domain isolation boundaries
+        run: node .github/scripts/validate-domain-boundaries.mjs
+      - name: Validate D1 critical-domain separation contract
+        run: node .github/scripts/validate-d1-domain-separation.mjs
+      - name: Validate PostgreSQL security and migration governance
+        run: node .github/scripts/validate-postgres-governance.mjs
+      - name: Validate CRM API extraction boundaries
+        run: node .github/scripts/validate-crm-api-extraction.mjs
+      - name: Validate module catalog and dependency graph
+        run: node .github/scripts/validate-module-catalog.mjs
+      - name: Validate official module-stage promotion evidence
+        run: npm run module-maturity:validate
+      - name: Validate progressive release readiness
+        run: npm run release-readiness:validate
+      - name: Validate domain event contracts and disabled release gate
+        run: npm run events:validate
+      - name: Validate dependency classification and resilience fallbacks
+        run: npm run resilience:validate
+      - name: Validate controlled chaos policy and containment suite
+        run: npm run chaos:validate && npm run chaos:controlled
+      - name: Validate CRM shell module registry boundary
+        run: npm run crm-module-registry:validate
+      - name: Validate observability catalog and external-monitoring policy
+        run: npm run observability:validate
+      - name: Validate backup, offsite replication and restore-drill policy
+        run: npm run backup-policy:validate && npm run backup-policy:test
