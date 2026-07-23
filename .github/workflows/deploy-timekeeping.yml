@@ -33,7 +33,12 @@ permissions:
 jobs:
   promotion:
     uses: ./.github/workflows/promotion-gate.yml
-    with: { unit: timekeeping, target: ${{ inputs.target }}, release_sha: ${{ inputs.release_sha }}, preview_run_id: ${{ inputs.preview_run_id }}, staging_run_id: ${{ inputs.staging_run_id }} }
+    with:
+      unit: timekeeping
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
     secrets: inherit
   deploy:
     needs: promotion
