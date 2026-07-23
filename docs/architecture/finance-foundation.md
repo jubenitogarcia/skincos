@@ -8,7 +8,7 @@ O antigo `backend/apps/actual-server` não é serviço, banco, autenticação ou
 
 ## Acesso e ativação
 
-O acesso exige sessão CRM válida, `allowedModules` contendo literalmente `finance`, feature flag `finance_settings.module_enabled=true` e um grant em `finance_access_grants`. Não existe herança por papel, lista vazia ou administrador. A tela só aparece após o bootstrap confirmar esses três gates.
+O acesso exige sessão CRM válida, `allowedModules` contendo literalmente `finance`, a feature flag `finance_settings` com `key='module_enabled'` e `value='true'`, e um grant em `finance_access_grants`. Não existe herança por papel, lista vazia ou administrador. A tela só aparece após o bootstrap confirmar esses três gates.
 
 Os escopos empresariais são Novo Hamburgo e BarraShoppingSul. O escopo pessoal é criado inativo e não recebe grant. Consolidado é somente uma consulta futura sobre escopos empresariais explicitamente autorizados.
 
