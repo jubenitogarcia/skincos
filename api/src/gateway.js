@@ -1,13 +1,13 @@
-import inventoryWorker from '../../inventory/src/worker.js';
 import { createGatewayHandler } from './router.js';
-import { createFinanceHandler } from '../../finance/api/worker.js';
-import { csrfErrorFor, resolveCrmActor } from '../../shared/crm-auth/worker.js';
+import { csrfErrorFor, resolveIdentityActor } from '../../identity/session/actor.js';
+import { fetchBoundService } from '../../shared/service-adapters/cloudflare-service-binding.js';
+import { createSignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
 
 const financeRateLimitResponse = (status, error) => new Response(JSON.stringify({ ok: false, error }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const digest = async (value) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))).map((item) => item.toString(16).padStart(2, '0')).join('');
 
 async function resolveFinanceActor(request, env) {
-    const auth = await resolveCrmActor(request, env);
+    const auth = await resolveIdentityActor(request, env);
     // This bypass exists only when the private runner injects its local-only
     // Worker binding. Production configuration never defines that binding.
     if (auth.actor || String(env?.LOCAL_FINANCE_AUTH_BYPASS || '') !== 'true') return auth;
@@ -45,13 +45,37 @@ export async function enforceFinanceRateLimit(request, env, actor) {
     }
 }
 
-export function createApiGateway({ inventoryHandler, timekeepingHandler, financeDomainHandler = createFinanceHandler(), resolveActor = resolveFinanceActor, rateLimit = enforceFinanceRateLimit } = {}) {
+export async function forwardFinanceToService(request, env, ctx, auth) {
+    const secret = String(env?.FINANCE_SERVICE_AUTH_SECRET || '').trim();
+    if (!secret) return financeRateLimitResponse(503, 'FINANCE_SERVICE_IDENTITY_UNAVAILABLE');
+    const headers = new Headers(request.headers);
+    headers.delete('cookie');
+    headers.delete('x-csrf-token');
+    try {
+        const signed = await createSignedDomainContext({ actor: auth.actor, csrf: auth.csrf, requestId: request.headers.get('x-request-id') }, secret, 'finance');
+        for (const [name, value] of Object.entries(signed)) headers.set(name, value);
+        return fetchBoundService(new Request(request, { headers }), env, 'FINANCE', { timeoutMs: 800 });
+    } catch {
+        return financeRateLimitResponse(503, 'FINANCE_SERVICE_UNAVAILABLE');
+    }
+}
+
+export function createApiGateway({ inventoryHandler, timekeepingHandler, financeDomainHandler = forwardFinanceToService, resolveActor = resolveFinanceActor, rateLimit = enforceFinanceRateLimit } = {}) {
     if (typeof inventoryHandler !== 'function') throw new TypeError('inventoryHandler is required');
     return createGatewayHandler({
         inventoryHandler,
         timekeepingHandler,
         financeHandler: async (request, env, ctx) => {
-            const auth = await resolveActor(request, env);
+            let auth;
+            try {
+                auth = await resolveActor(request, env);
+            } catch {
+                // Identity is required only for the authenticated Finance
+                // capability. Contain an unexpected resolver failure here so
+                // the gateway, Inventory and Workforce mounts remain usable.
+                return financeRateLimitResponse(503, 'IDENTITY_UNAVAILABLE');
+            }
+            if (auth?.unavailable) return financeRateLimitResponse(503, 'IDENTITY_UNAVAILABLE');
             const csrfError = csrfErrorFor(request, auth.csrf);
             if (csrfError) return csrfError;
             const rateLimitError = await rateLimit(request, env, auth.actor);
@@ -64,14 +88,7 @@ export function createApiGateway({ inventoryHandler, timekeepingHandler, finance
 export { createGatewayHandler } from './router.js';
 
 export const handleGatewayRequest = createApiGateway({
-    inventoryHandler: inventoryWorker.fetch.bind(inventoryWorker),
-    timekeepingHandler: async (request, env) => {
-        if (!env.TIMEKEEPING?.fetch) {
-            return new Response(JSON.stringify({ ok: false, error: 'workforce_unavailable' }), {
-                status: 503,
-                headers: { 'content-type': 'application/json; charset=utf-8' },
-            });
-        }
-        return env.TIMEKEEPING.fetch(request);
-    },
+    inventoryHandler: (request, env) => fetchBoundService(request, env, 'INVENTORY', { timeoutMs: 800 }),
+    timekeepingHandler: (request, env) => fetchBoundService(request, env, 'TIMEKEEPING', { timeoutMs: 800 }),
+    financeDomainHandler: forwardFinanceToService,
 });

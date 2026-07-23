@@ -40,8 +40,14 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
         const url = new URL(request.url);
 
         if (url.pathname === '/health') {
-            return json(200, { ok: true, service: 'api', requestId }, requestId);
+            return json(200, operationalStatus({ unit: 'api-gateway', version: env?.APP_VERSION, environment: env?.ENVIRONMENT, ready: true, requestId, dependencies: {
+                inventory: dependencyState(Boolean(env?.INVENTORY), { required: false }),
+                finance: dependencyState(Boolean(env?.FINANCE), { required: false }),
+                timekeeping: dependencyState(Boolean(env?.TIMEKEEPING), { required: false }),
+            } }), requestId);
         }
+
+        if (url.pathname === '/readiness') return json(200, operationalStatus({ unit: 'api-gateway', version: env?.APP_VERSION, environment: env?.ENVIRONMENT, ready: true, requestId, dependencies: {} }), requestId);
 
         if (url.pathname === '/api/ponto' || url.pathname.startsWith('/api/ponto/')) {
             if (typeof timekeepingHandler !== 'function') {
@@ -78,3 +84,4 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
         return json(404, { ok: false, error: 'route_not_found', requestId }, requestId);
     };
 }
+import { dependencyState, operationalStatus } from '../../shared/observability/contract.js';

@@ -3,7 +3,7 @@
 ## Correções desta revisão
 
 - O mount `/finance` deixou de entrar no Worker de Inventário, que aplicava uma unidade padrão antes de o Financeiro validar o próprio escopo.
-- A sessão e CSRF continuam sendo CRM, através de `shared/crm-auth`; não há segundo login ou cookie.
+- A sessão e CSRF são responsabilidade de `identity/`, pelo contrato `shared/identity-contract`; não há segundo login ou cookie.
 - Contas operacionais agora têm contas de razão; receitas, despesas e transferências criam débito/crédito em contas distintas e balanceadas.
 - A migration inclui parcelas, relação movimento-tag, candidatos de duplicidade e idempotência vinculada a ator, rota e escopo.
 - O deploy deixou de executar migration Financeiro como efeito colateral de qualquer alteração em Inventário.

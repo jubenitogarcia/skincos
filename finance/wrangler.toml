@@ -1,0 +1,28 @@
+name = "skincos-finance"
+main = "worker.js"
+compatibility_date = "2026-07-23"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "skincos-finance"
+database_id = "__CONFIGURE_FINANCE_D1_ID__"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "MODULE_CONTROL"
+id = "__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__"
+
+[env.staging]
+name = "skincos-finance-staging"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "skincos-finance-staging"
+database_id = "__CONFIGURE_FINANCE_STAGING_D1_ID__"
+migrations_dir = "migrations"
+
+[[env.staging.kv_namespaces]]
+binding = "MODULE_CONTROL"
+id = "__CONFIGURE_MODULE_CONTROL_STAGING_KV_ID__"
+
+# FINANCE_SERVICE_AUTH_SECRET is a secret set separately in production and staging.

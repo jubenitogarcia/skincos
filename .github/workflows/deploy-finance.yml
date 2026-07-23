@@ -1,0 +1,129 @@
+name: Deploy Finance Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Isolated environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      release_sha:
+        description: Immutable main commit to promote or restore
+        required: true
+        type: string
+      operation:
+        description: Deploy a release or restore a previous release SHA
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback]
+      staging_run_id:
+        description: Required for production; successful Finance staging run for this exact SHA
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-finance-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify immutable release
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
+          git cat-file -e "$RELEASE_SHA^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
+          git checkout --detach "$RELEASE_SHA"
+      - name: Verify production staging attestation
+        if: inputs.target == 'production'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.staging_run_id }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo 'production requires staging_run_id'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/finance-attestation"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name finance-staging-attestation --dir "$RUNNER_TEMP/finance-attestation"
+          node -e "const x=require(process.argv[1]);if(x.target!=='staging'||x.sha!==process.argv[2]||x.health!==200)process.exit(1)" "$RUNNER_TEMP/finance-attestation/attestation.json" "$RELEASE_SHA"
+      - name: Guard isolated bindings and secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_ID: ${{ inputs.target == 'production' && vars.FINANCE_D1_PRODUCTION_ID || vars.FINANCE_D1_STAGING_ID }}
+          CONTROL_KV_ID: ${{ inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID }}
+          SERVICE_SECRET: ${{ secrets.FINANCE_SERVICE_AUTH_SECRET }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID CONTROL_KV_ID SERVICE_SECRET; do [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }; done
+          [[ "$D1_ID" =~ ^[0-9a-fA-F-]{36}$ && "$CONTROL_KV_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid Finance D1 or control KV id'; exit 1; }
+      - name: Validate Finance release source
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          npm --prefix finance ci --ignore-scripts
+          npm --prefix finance run check
+          npm --prefix finance test
+      - name: Render only target bindings in ephemeral checkout
+        env:
+          TARGET: ${{ inputs.target }}
+          D1_ID: ${{ inputs.target == 'production' && vars.FINANCE_D1_PRODUCTION_ID || vars.FINANCE_D1_STAGING_ID }}
+          CONTROL_KV_ID: ${{ inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then
+            sed -i "s/__CONFIGURE_FINANCE_D1_ID__/$D1_ID/;s/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/$CONTROL_KV_ID/" finance/wrangler.toml
+          else
+            sed -i "s/__CONFIGURE_FINANCE_STAGING_D1_ID__/$D1_ID/;s/__CONFIGURE_MODULE_CONTROL_STAGING_KV_ID__/$CONTROL_KV_ID/" finance/wrangler.toml
+          fi
+      - name: Apply Finance migrations then publish only Finance
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SERVICE_SECRET: ${{ secrets.FINANCE_SERVICE_AUTH_SECRET }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-finance; else ENV_ARGS=(--env staging); DB=skincos-finance-staging; fi
+          npx --yes wrangler@4.112.0 d1 migrations apply "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}"
+          printf '%s' "$SERVICE_SECRET" | npx --yes wrangler@4.112.0 secret put FINANCE_SERVICE_AUTH_SECRET --config finance/wrangler.toml "${ENV_ARGS[@]}"
+          npx --yes wrangler@4.112.0 deploy --config finance/wrangler.toml --keep-vars --message "finance:${{ inputs.operation }}:${{ inputs.release_sha }}" "${ENV_ARGS[@]}"
+      - name: Smoke private Finance Worker through the gateway
+        id: smoke
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then BASE=https://api.skincos.com.br; else BASE=https://api-staging.skincos.com.br; fi
+          code="$(curl --silent --show-error --output "$RUNNER_TEMP/finance-health.json" --write-out '%{http_code}' "$BASE/finance/health")"
+          [[ "$code" == 200 ]] || { cat "$RUNNER_TEMP/finance-health.json"; exit 1; }
+          node -e "const x=require(process.argv[1]);if(!x.ok||x.module!=='finance')process.exit(1)" "$RUNNER_TEMP/finance-health.json"
+      - name: Write staging attestation
+        if: inputs.target == 'staging'
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/finance-attestation"
+          node -e "require('fs').writeFileSync(process.argv[1],JSON.stringify({target:'staging',sha:process.env.RELEASE_SHA,health:200,createdAt:new Date().toISOString()},null,2))" "$RUNNER_TEMP/finance-attestation/attestation.json"
+      - if: inputs.target == 'staging'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: finance-staging-attestation
+          path: ${{ runner.temp }}/finance-attestation/attestation.json
+          retention-days: 14

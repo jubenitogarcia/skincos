@@ -2,7 +2,7 @@
 
 ## Fonte de verdade e propriedade
 
-`finance/` é o único dono de movimentos, partidas, importações, conciliação, auditoria e relatórios. O D1 `skincos-db` é acessado pelo gateway em `api.skincos.com.br/finance/*`. `integration/` apenas coleta e normaliza entradas externas; `crm/console` não calcula nem persiste regras financeiras. O gateway chama o handler Financeiro diretamente; ele não encaminha mais `/finance` pelo Worker de Inventário. `shared/crm-auth` é somente o adaptador da sessão CRM existente e usa o repositório atual de usuários até que a identidade CRM seja extraída do domínio Inventário.
+`finance/` é o único dono de movimentos, partidas, importações, conciliação, auditoria e relatórios. O D1 `skincos-db` é acessado pelo gateway em `api.skincos.com.br/finance/*`. `integration/` apenas coleta e normaliza entradas externas; `crm/console` não calcula nem persiste regras financeiras. O gateway chama o handler Financeiro diretamente; ele não encaminha mais `/finance` pelo Worker de Inventário. `identity/` valida a sessão existente e entrega o ator pelo contrato `shared/identity-contract`; Finance não lê usuários, hashes ou tabelas de sessão.
 
 O antigo `backend/apps/actual-server` não é serviço, banco, autenticação ou dependência do Financeiro. Sua licença MIT permite referência seletiva, mas não há código nem estado importado dele.
 
