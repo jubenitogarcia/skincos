@@ -18,11 +18,16 @@ export async function onRequest(context: any): Promise<Response> {
         )
     }
 
-    const targetOrigin = (context.env?.INSUMOS_API_TARGET as string | undefined) || 'https://api.skincos.com.br'
-    const isProductionTarget = (() => {
-        const raw = String(targetOrigin || '').trim().toLowerCase()
-        return raw === 'https://api.skincos.com.br' || raw.endsWith('.skincos.com.br')
-    })()
+    const configuredTarget = String((context.env?.INSUMOS_API_TARGET as string | undefined) || '').trim()
+    const isStaging = String(context.env?.SKINCOS_DEPLOYMENT_ENV || '').trim().toLowerCase() === 'staging'
+    if (isStaging && configuredTarget !== 'https://api-staging.skincos.com.br') {
+        return new Response(JSON.stringify({ ok: false, error: 'STAGING_INSUMOS_TARGET_INVALID' }), {
+            status: 503,
+            headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+        })
+    }
+    const targetOrigin = configuredTarget || 'https://api.skincos.com.br'
+    const isProductionTarget = targetOrigin.toLowerCase() === 'https://api.skincos.com.br'
 
     if (rest === '/_proxy-status' || rest === '/_proxy-status/') {
         return new Response(

@@ -448,9 +448,12 @@ export default function AppFunctionalNeatlab() {
 	        }
 	    }, [loadProfile, profileCurrentPassword, profileDisplayName, profileEmail, profileNewPassword])
 
+	    // Finance becomes operational only after its server-side bootstrap has
+	    // confirmed flag, explicit module grant and scope grant. Keep the
+	    // generic unlocked-module policy intact for every other module.
 	    const UNLOCKED_MODULE_KEYS = useMemo(
-	        () => unlockedModuleKeys(DEFAULT_MODULE_KEY, isOnlineCrmRuntime(window.location.hostname)),
-	        [DEFAULT_MODULE_KEY]
+	        () => unlockedModuleKeys(financeEnabled ? 'finance' : DEFAULT_MODULE_KEY, isOnlineCrmRuntime(window.location.hostname)),
+	        [DEFAULT_MODULE_KEY, financeEnabled]
 	    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    React.useEffect(() => {
@@ -784,7 +787,7 @@ export default function AppFunctionalNeatlab() {
             }
         } catch { /* ignore */ }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [initializing])
+	    }, [financeEnabled, initializing])
 
 	    // Save active module selection
 	    React.useEffect(() => {

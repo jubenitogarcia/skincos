@@ -19,8 +19,13 @@ async function main() {
   const consoleErrors = []
   const apiErrors = []
   const financeResponses = []
+  const clientErrorResponses = []
+  let recoveredFinanceRateLimits = 0
   page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })
   page.on('response', async (response) => {
+    if (response.status() >= 400 && response.url().startsWith('http://localhost:')) {
+      clientErrorResponses.push(`${response.status()} ${response.url()}`)
+    }
     if (response.url().includes('/api/finance')) {
       financeResponses.push(`${response.status()} ${response.url()}`)
       if (response.status() >= 500) apiErrors.push(`${response.status()} ${response.url()}`)
@@ -36,14 +41,17 @@ async function main() {
       return { status: response.status, body: await response.json(), authStatus: auth.status, authBody: await auth.json().catch(() => null) }
     })
     if (scenario === 'disabled') {
-      const visible = await financeNav.isVisible().catch(() => false)
-      if (bootstrap.status !== 200 || bootstrap.body.moduleEnabled !== false || visible) throw new Error('Flag desligada não bloqueou a navegação Financeiro.')
+      // App asks the same bootstrap endpoint asynchronously before it removes
+      // the entry.  Wait for the state transition instead of observing the
+      // first paint, which can still contain the pre-bootstrap navigation.
+      await financeNav.waitFor({ state: 'hidden', timeout: 30_000 })
+      if (bootstrap.status !== 200 || bootstrap.body.moduleEnabled !== false || bootstrap.body.canAccess !== false) throw new Error(`Flag desligada não bloqueou a navegação Financeiro: ${JSON.stringify({ status: bootstrap.status, body: bootstrap.body })}`)
     } else if (scenario === 'no-module') {
-      const visible = await financeNav.isVisible().catch(() => false)
-      if (bootstrap.status !== 403 || visible) throw new Error('Usuário sem módulo finance não foi bloqueado.')
+      await financeNav.waitFor({ state: 'hidden', timeout: 30_000 })
+      if (bootstrap.status !== 403) throw new Error('Usuário sem módulo finance não foi bloqueado.')
     } else if (scenario === 'no-grant') {
-      const visible = await financeNav.isVisible().catch(() => false)
-      if (bootstrap.status !== 200 || bootstrap.body.canAccess !== false || visible) throw new Error('Usuário sem grant não foi bloqueado.')
+      await financeNav.waitFor({ state: 'hidden', timeout: 30_000 })
+      if (bootstrap.status !== 200 || bootstrap.body.canAccess !== false) throw new Error('Usuário sem grant não foi bloqueado.')
     } else {
       if (bootstrap.status !== 200 || bootstrap.body.canAccess !== true || bootstrap.body.moduleEnabled !== true) {
         throw new Error(`Bootstrap Financeiro autorizado falhou: ${bootstrap.status}`)
@@ -56,6 +64,8 @@ async function main() {
       await page.getByRole('tab', { name: 'Visão geral' }).waitFor({ state: 'visible', timeout: 30_000 })
       await page.getByRole('tab', { name: 'Movimentações' }).click()
       await page.getByText(/Movimentações|Nenhuma movimentação/).first().waitFor({ state: 'visible', timeout: 30_000 })
+      await page.getByRole('tab', { name: 'Títulos' }).click()
+      await page.getByText('Títulos a pagar e receber').waitFor({ state: 'visible', timeout: 30_000 })
       await page.getByRole('tab', { name: 'Cadastros' }).click()
       await page.getByText('Contas financeiras').first().waitFor({ state: 'visible', timeout: 30_000 })
       const grants = bootstrap.body.grants || []
@@ -84,8 +94,22 @@ async function main() {
       const csv = `Date,Description,Amount,Account,Category,Payee,Tags,Memo,Status,Currency,Transfers,Transaction ID\n2026-07-01,Consulta São José,1250.50,Banco,Receitas,Paciente Smoke,clínica,UTF-8,cleared,BRL,,smoke-${csvSuffix}\n2026-07-01,Consulta São José,1250.50,Banco,Receitas,Paciente Smoke,clínica,UTF-8,cleared,BRL,,smoke-${csvSuffix}\n`
       await page.getByLabel('Arquivo CSV').setInputFiles({ name: 'extrato-br.csv', mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8') })
       await page.getByRole('button', { name: 'Criar lote' }).click()
-      await page.getByRole('button', { name: 'Analisar e pré-visualizar' }).waitFor({ state: 'visible', timeout: 30_000 })
-      await page.getByRole('button', { name: 'Analisar e pré-visualizar' }).click()
+      const analysisButton = page.getByRole('button', { name: 'Analisar e pré-visualizar' })
+      const rateLimited = page.getByText('FINANCE_RATE_LIMITED')
+      const firstStep = await Promise.race([
+        analysisButton.waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'ready'),
+        rateLimited.waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'rate-limited'),
+      ])
+      if (firstStep === 'rate-limited') {
+        // The local D1/DO state is intentionally persisted between launcher
+        // runs. Respect its real 60-second import window once, then retry the
+        // idempotent staging action instead of disabling the production guard.
+        await page.waitForTimeout(60_000)
+        await page.getByRole('button', { name: 'Criar lote' }).click()
+        recoveredFinanceRateLimits += 1
+      }
+      await analysisButton.waitFor({ state: 'visible', timeout: 30_000 })
+      await analysisButton.click()
       await page.locator('label').filter({ hasText: 'Conta de destino' }).getByRole('combobox').click()
       await page.getByRole('option', { name: seed.account }).click()
       await page.locator('label').filter({ hasText: 'Categoria padrão de receita' }).getByRole('combobox').click()
@@ -98,15 +122,49 @@ async function main() {
       await page.getByRole('button', { name: 'Confirmar importação' }).click()
       await page.getByText('Resultado auditável').waitFor({ state: 'visible', timeout: 30_000 })
       await page.getByRole('button', { name: 'Desfazer por estorno auditável' }).click()
-      await page.getByText(/foram estornados por operação compensatória/).waitFor({ state: 'visible', timeout: 30_000 })
+      const undoResult = page.getByText(/foram estornados por operação compensatória/)
+      const undoStep = await Promise.race([
+        undoResult.waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'ready'),
+        rateLimited.waitFor({ state: 'visible', timeout: 30_000 }).then(() => 'rate-limited'),
+      ])
+      if (undoStep === 'rate-limited') {
+        await page.waitForTimeout(60_000)
+        await page.getByRole('button', { name: 'Desfazer por estorno auditável' }).click()
+        recoveredFinanceRateLimits += 1
+      }
+      await undoResult.waitFor({ state: 'visible', timeout: 30_000 })
     }
-    if (consoleErrors.length || apiErrors.length) throw new Error(`Erros de runtime: ${JSON.stringify({ consoleErrors, apiErrors })}`)
+    // The Finance-focused local launcher deliberately does not start the
+    // Atendimento service. The CRM shell still prefetches its dashboard
+    // resources, so these six authenticated requests correctly receive 401.
+    // Keep them in the artifact, but make unexpected client errors (including
+    // any Finance 4xx) fail this smoke.
+    const expectedOfflineClientErrors = clientErrorResponses.filter((entry) => /^401 http:\/\/localhost:\d+\/api\/atendimento\//.test(entry))
+    // A no-module actor must receive an explicit fail-closed bootstrap 403.
+    // It is the sole Finance client error accepted by this negative scenario.
+    const expectedNoModuleClientErrors = scenario === 'no-module'
+      ? clientErrorResponses.filter((entry) => /^403 http:\/\/localhost:\d+\/api\/finance\/bootstrap$/.test(entry))
+      : []
+    const expectedClientErrors = [...expectedOfflineClientErrors, ...expectedNoModuleClientErrors]
+    const unexpectedClientErrors = clientErrorResponses.filter((entry) => !expectedClientErrors.includes(entry))
+    let toleratedRateLimitWarnings = recoveredFinanceRateLimits
+    let toleratedOfflineUnauthorizedWarnings = expectedOfflineClientErrors.length
+    const relevantConsoleErrors = consoleErrors.filter((message) => {
+      if (toleratedRateLimitWarnings > 0 && /server responded with a status of 429/i.test(message)) { toleratedRateLimitWarnings -= 1; return false }
+      if (toleratedOfflineUnauthorizedWarnings > 0 && /server responded with a status of 401/i.test(message)) { toleratedOfflineUnauthorizedWarnings -= 1; return false }
+      // A user without the explicit module grant receives a deliberately
+      // fail-closed bootstrap response. Browsers log that expected 403 as a
+      // resource error even though the shell correctly hides the module.
+      if (scenario === 'no-module' && /server responded with a status of 403/i.test(message)) return false
+      return true
+    })
+    if (relevantConsoleErrors.length || apiErrors.length || unexpectedClientErrors.length) throw new Error(`Erros de runtime: ${JSON.stringify({ consoleErrors: relevantConsoleErrors, apiErrors, unexpectedClientErrors })}`)
     await page.screenshot({ path: shotFile, fullPage: false })
-    fs.writeFileSync(reportFile, `${JSON.stringify({ ok: true, url, scenario, bootstrap, financeResponses, screenshot: shotFile }, null, 2)}\n`)
+    fs.writeFileSync(reportFile, `${JSON.stringify({ ok: true, url, scenario, bootstrap, financeResponses, clientErrorResponses, screenshot: shotFile }, null, 2)}\n`)
     console.log(`[finance-local-smoke] OK (${scenario}): ${url}`)
   } catch (error) {
     await page.screenshot({ path: shotFile, fullPage: false }).catch(() => {})
-    fs.writeFileSync(reportFile, `${JSON.stringify({ ok: false, url, scenario, error: String(error?.message || error), consoleErrors, apiErrors, financeResponses, screenshot: shotFile }, null, 2)}\n`)
+    fs.writeFileSync(reportFile, `${JSON.stringify({ ok: false, url, scenario, error: String(error?.message || error), consoleErrors, apiErrors, financeResponses, clientErrorResponses, screenshot: shotFile }, null, 2)}\n`)
     throw error
   } finally {
     await context.close().catch(() => {})

@@ -27,12 +27,13 @@ export async function enforceFinanceRateLimit(request, env, actor) {
     const write = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method.toUpperCase());
     const importWrite = write && path.startsWith('/imports');
     const limit = importWrite ? 12 : write ? 60 : 240;
+    const bucket = importWrite ? 'import' : write ? 'write' : 'read';
     const remote = String(request.headers.get('cf-connecting-ip') || '').trim();
     const actorKey = String(actor?.username || 'anonymous').trim();
     const identity = await digest(`finance:${actorKey}:${remote || 'no-ip'}`);
     try {
         const id = env.RATE_LIMITER.idFromName(`finance:${identity}`);
-        const response = await env.RATE_LIMITER.get(id).fetch(`https://rate-limiter/?key=finance&limit=${limit}&window=60`);
+        const response = await env.RATE_LIMITER.get(id).fetch(`https://rate-limiter/?key=finance:${bucket}&limit=${limit}&window=60`);
         const result = await response.json().catch(() => null);
         if (!response.ok || !result || typeof result.allowed !== 'boolean') return financeRateLimitResponse(503, 'FINANCE_RATE_LIMIT_UNAVAILABLE');
         if (!result.allowed) return financeRateLimitResponse(429, 'FINANCE_RATE_LIMITED');

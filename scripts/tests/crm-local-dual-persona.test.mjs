@@ -61,6 +61,13 @@ test('persona runtime records isolated manifest, lock and build state', () => {
   assert.match(runtime, /timekeeping: enabled\(process\.env\.CRM_WITH_TIMEKEEPING\)/)
 })
 
+test('persona runtime exposes the loopback-aware port preflight used by the CRM launcher', () => {
+  assert.match(runtime, /crm_runtime_port_is_free\(\)/)
+  assert.match(runtime, /lsof -nP -iTCP:"\$port" -sTCP:LISTEN/)
+  assert.match(runtime, /curl -sS --connect-timeout 1 --max-time 1/)
+  assert.match(crmRunner, /if crm_runtime_port_is_free "\$port"; then/)
+})
+
 test('opening the browser never blocks the runtime manifest transition', () => {
   assert.match(crmRunner, /open \"\$DEFAULT_URL\" >\/dev\/null 2>&1 &/)
   assert.match(crmRunner, /xdg-open \"\$DEFAULT_URL\" >\/dev\/null 2>&1 &/)

@@ -26,10 +26,10 @@ npm run crm:local:finance:stop
 
 O launcher informa a URL confirmada, normalmente
 `http://localhost:<porta>/?module=finance`. Ele seleciona uma porta livre perto
-de `8792` para o gateway e delega Vite/Pages ao launcher CRM existente, que
-também seleciona portas, mantém manifesto privado e encerra árvores de
-processos próprias. `--stop` só encerra processos cuja linha de comando prova
-pertencer a este worktree.
+de `8792` para o gateway e usa a faixa própria `5192+` para Vite, separada do
+launcher CRM genérico. Antes de escolher, verifica processos WSL e respostas
+HTTP de relays Windows; Pages continua perto de `8793`. `--stop` só encerra
+processos cuja linha de comando prova pertencer a este worktree.
 
 ## Cenários
 

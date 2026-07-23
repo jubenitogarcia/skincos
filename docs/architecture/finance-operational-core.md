@@ -38,8 +38,12 @@ pessoais com unidades empresariais.
 O estado de razão permanece `draft`/`posted`; a UI usa
 `pending`/`confirmed`/`reconciled`/`cancelled`. Criar pendente não gera razão;
 confirmar cria a partida. Conciliar não muda o valor. Cancelar lançamento já
-postado só é possível pelo endpoint de estorno e produz linhas inversas.
-Não há `PUT`, `PATCH` ou `DELETE` de lançamentos submetidos.
+postado só é possível pelo endpoint de estorno e produz linhas inversas. O
+único `PUT` permitido é `/movements/:id` para um rascunho `draft`/`pending`.
+Ele exige `expectedRevision`, substitui documento, splits, parcelas e tags na
+mesma operação D1, e grava uma solicitação de revisão e evento append-only.
+Uma versão desatualizada retorna conflito; lançamentos submetidos não têm
+`PUT`, `PATCH` ou `DELETE`.
 
 ## Rotas atuais
 
@@ -48,6 +52,7 @@ Não há `PUT`, `PATCH` ou `DELETE` de lançamentos submetidos.
   `/attachments`.
 - Criação: `/accounts`, `/categories`, `/payees`, `/tags`, `/cost-centers`,
   `/movements`, `/attachments`.
+- Revisão controlada: `PUT /movements/:id` somente para rascunhos pendentes.
 - Transições auditadas: `/movements/:id/confirm`, `/reconcile`, `/reverse` e
   `/installments/:id/pay`.
 - Importação preserva o pipeline de staging: `/imports`, `/:id`, `/:id/preview`
@@ -63,8 +68,10 @@ do documento, splits, razão, revisão, auditoria e chave de idempotência em um
 
 `0001` é a fundação original. `0002` adiciona estado operacional, moeda-base,
 splits, revisões e estornos. `0003` adiciona guards D1 para impedir referências
-entre escopos e torna revisões/estornos imutáveis. Nenhuma migration anterior é
-reescrita para ativar esta evolução.
+entre escopos e torna revisões/estornos imutáveis. `0004`–`0007` acrescentam
+staging de importação, adaptadores e guards do ledger. `0008` limita a revisão
+atômica ao rascunho pendente e registra a versão esperada no banco. Nenhuma
+migration anterior é reescrita para ativar esta evolução.
 
 ## Limites deliberados desta fase
 

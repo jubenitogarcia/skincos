@@ -13,6 +13,18 @@ crm_persona_runtime_init() {
   mkdir -p "$CRM_RUNTIME_ROOT"
 }
 
+# A Windows-side relay can own a localhost port without appearing in WSL's
+# process table.  Both the generic CRM launcher and focused module launchers
+# must reject it before starting Vite or Pages on the same port.
+crm_runtime_port_is_free() {
+  local port="$1"
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    return 1
+  fi
+  ! curl -sS --connect-timeout 1 --max-time 1 -o /dev/null "http://127.0.0.1:$port" 2>/dev/null
+}
+
 crm_persona_runtime_acquire_lock() {
   if mkdir "$CRM_RUNTIME_LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "$CRM_RUNTIME_LOCK_DIR/pid"
