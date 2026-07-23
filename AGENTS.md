@@ -46,6 +46,12 @@
 
 ## Production and Deploys
 
+- **Operational change contract:** before planning or applying any change,
+  read and follow
+  [docs/decisions/operational-change-policy.md](docs/decisions/operational-change-policy.md).
+  It is mandatory for branches/PRs, flags, migrations, rollback, validation,
+  and every staging or production action. A missing explicit pre-production
+  validation record means production changes are not authorized.
 - When the user asks for a live fix, prioritize fix, deploy, and online
   verification.
 - Before deploys, inspect the intended target, current git state, and relevant
