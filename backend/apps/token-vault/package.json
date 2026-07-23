@@ -6,7 +6,8 @@
   "description": "Internal Cloudflare Worker for n8n credential token storage.",
   "scripts": {
     "dev": "wrangler dev --config wrangler.toml",
-    "deploy": "wrangler deploy --config wrangler.toml --keep-vars",
+    "deploy": "npx --yes wrangler versions upload --config wrangler.toml --env='' --keep-vars",
+    "deploy:promote": "npx --yes wrangler versions deploy",
     "deploy:staging": "wrangler deploy --config wrangler.toml --env staging --keep-vars",
     "d1:migrate": "wrangler d1 migrations apply skincos-token-vault --config wrangler.toml --remote",
     "d1:migrate:staging": "wrangler d1 migrations apply skincos-token-vault-staging --config wrangler.toml --env staging --remote",

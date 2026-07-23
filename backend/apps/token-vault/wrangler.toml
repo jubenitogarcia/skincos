@@ -4,6 +4,9 @@ compatibility_date = "2026-06-18"
 workers_dev = true
 routes = ["api.skincos.com.br/internal/token-vault/*"]
 
+[secrets]
+required = ["TOKEN_VAULT_API_TOKEN", "TOKEN_VAULT_ENCRYPTION_KEY", "TOKEN_VAULT_N8N_API_TOKEN"]
+
 [vars]
 ENVIRONMENT = "production"
 REQUIRE_AUTH = "true"

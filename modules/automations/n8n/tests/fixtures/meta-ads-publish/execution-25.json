@@ -1,0 +1,163 @@
+{
+  "execution": {
+    "id": 25,
+    "status": "error",
+    "startedAt": "2026-07-09T12:07:25.554-03:00",
+    "stoppedAt": "2026-07-09T12:10:18.625-03:00"
+  },
+  "last_node_executed": "Prepare Meta Creative Fallback",
+  "terminal_error": {
+    "node": "Prepare Meta Creative Fallback",
+    "message": "false} [line 84]"
+  },
+  "build_payload": [
+    {
+      "job_key": "id_d092aa9b33",
+      "creative_group_key": "BOTOX__PRICE__35UI__AVISTA__ANIVERSARIO_7_ANOS__V3",
+      "action": "replace_existing",
+      "image_ratios": [
+        "2x1",
+        "4x5",
+        "9x16"
+      ],
+      "destination_groups": [
+        "BarraShoppingSul",
+        "Novo Hamburgo"
+      ],
+      "matched_count": 80,
+      "selected_count": 2
+    },
+    {
+      "job_key": "id_84e40e74c0",
+      "creative_group_key": "BOTOX__PRICE__35UI__AVISTA__ANIVERSARIO_7_ANOS__V2",
+      "action": "replace_existing",
+      "image_ratios": [
+        "2x1",
+        "4x5",
+        "9x16"
+      ],
+      "destination_groups": [
+        "BarraShoppingSul",
+        "Novo Hamburgo"
+      ],
+      "matched_count": 80,
+      "selected_count": 2
+    },
+    {
+      "job_key": "id_78e18e767e",
+      "creative_group_key": "BOTOX__PRICE__35UI__AVISTA__ANIVERSARIO_7_ANOS__V4",
+      "action": "replace_existing",
+      "image_ratios": [
+        "2x1",
+        "4x5",
+        "9x16"
+      ],
+      "destination_groups": [
+        "BarraShoppingSul",
+        "Novo Hamburgo"
+      ],
+      "matched_count": 80,
+      "selected_count": 2
+    }
+  ],
+  "build_jobs": [
+    {
+      "job_key": "id_adc7cf6386",
+      "creative_group_key": "BOTOX__PRICE__35UI__AVISTA__ANIVERSARIO_7_ANOS__V3",
+      "destination_group": "BarraShoppingSul",
+      "action": "replace_existing",
+      "selected_ad_id": "id_ad67090a47",
+      "creative_counts": {
+        "images": 3,
+        "bodies": 5,
+        "titles": 5,
+        "descriptions": 1
+      },
+      "temporal_reason": "past_candidate_selected"
+    },
+    {
+      "job_key": "id_f8c3381a97",
+      "creative_group_key": "BOTOX__PRICE__35UI__AVISTA__ANIVERSARIO_7_ANOS__V3",
+      "destination_group": "Novo Hamburgo",
+      "action": "replace_existing",
+      "selected_ad_id": "id_3c238bd438",
+      "creative_counts": {
+        "images": 3,
+        "bodies": 5,
+        "titles": 5,
+        "descriptions": 1
+      },
+      "temporal_reason": "past_candidate_selected"
+    },
+    {
+      "job_key": "id_2943978328",
+      "creative_group_key": "BOTOX__PRICE__35UI__AVISTA__ANIVERSARIO_7_ANOS__V2",
+      "destination_group": "BarraShoppingSul",
+      "action": "replace_existing",
+      "selected_ad_id": "id_45b293ae5e",
+      "creative_counts": {
+        "images": 3,
+        "bodies": 5,
+        "titles": 5,
+        "descriptions": 1
+      },
+      "temporal_reason": "past_candidate_selected"
+    },
+    {
+      "job_key": "id_9f2243be77",
+      "creative_group_key": "BOTOX__PRICE__35UI__AVISTA__ANIVERSARIO_7_ANOS__V2",
+      "destination_group": "Novo Hamburgo",
+      "action": "replace_existing",
+      "selected_ad_id": "id_2874955bfd",
+      "creative_counts": {
+        "images": 3,
+        "bodies": 5,
+        "titles": 5,
+        "descriptions": 1
+      },
+      "temporal_reason": "past_candidate_selected"
+    },
+    {
+      "job_key": "id_3f0ce71a10",
+      "creative_group_key": "BOTOX__PRICE__35UI__AVISTA__ANIVERSARIO_7_ANOS__V4",
+      "destination_group": "BarraShoppingSul",
+      "action": "replace_existing",
+      "selected_ad_id": "id_0922db5ff0",
+      "creative_counts": {
+        "images": 3,
+        "bodies": 5,
+        "titles": 5,
+        "descriptions": 1
+      },
+      "temporal_reason": "past_candidate_selected"
+    },
+    {
+      "job_key": "id_c216958313",
+      "creative_group_key": "BOTOX__PRICE__35UI__AVISTA__ANIVERSARIO_7_ANOS__V4",
+      "destination_group": "Novo Hamburgo",
+      "action": "replace_existing",
+      "selected_ad_id": "id_e157469ebf",
+      "creative_counts": {
+        "images": 3,
+        "bodies": 5,
+        "titles": 5,
+        "descriptions": 1
+      },
+      "temporal_reason": "past_candidate_selected"
+    }
+  ],
+  "create_creative": {
+    "total": 6,
+    "success": 5,
+    "errors": [
+      {
+        "message": "400 - \"{\\\"error\\\":{\\\"message\\\":\\\"Invalid parameter\\\",\\\"type\\\":\\\"OAuthException\\\",\\\"code\\\":100,\\\"error_subcode\\\":1487390,\\\"is_transient\\\":false,\\\"error_user_title\\\":\\\"Falha na gera\\\\u00e7\\\\u00e3o do criativo do an\\\\u00fancio\\\",\\\"error_user_msg\\\":\\\"Falha na cria\\\\u00e7\\\\u00e3o do criativo do an\\\\u00fa",
+        "code": null,
+        "error_subcode": 0,
+        "fbtrace_id_present": false
+      }
+    ]
+  },
+  "create_ad_count": 0,
+  "update_ad_count": 5
+}

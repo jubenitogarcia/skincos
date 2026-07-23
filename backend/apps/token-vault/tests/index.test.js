@@ -4,6 +4,7 @@ import { handleRequest } from '../src/index.js';
 
 const encoder = new TextEncoder();
 const TEST_API_TOKEN = ['unit', 'auth', 'token'].join('-');
+const TEST_N8N_TOKEN = ['unit', 'n8n', 'token'].join('-');
 const TEST_ENCRYPTION_KEY = ['unit', 'encryption', 'key', 'with', 'enough', 'length'].join('-');
 const THREADS_TOKEN = ['threads', 'fixture', 'token'].join('-');
 const FACEBOOK_TOKEN = ['facebook', 'fixture', 'token'].join('-');
@@ -73,6 +74,7 @@ function env(db) {
   return {
     TOKEN_VAULT_DB: db,
     TOKEN_VAULT_API_TOKEN: TEST_API_TOKEN,
+    TOKEN_VAULT_N8N_API_TOKEN: TEST_N8N_TOKEN,
     TOKEN_VAULT_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
     REQUIRE_AUTH: 'true',
     WORKER_AUTH_HEADER_NAME: 'Authorization',
@@ -82,6 +84,10 @@ function env(db) {
 
 function authHeaders() {
   return { Authorization: `Bearer ${TEST_API_TOKEN}` };
+}
+
+function operationalAuthHeaders() {
+  return { Authorization: `Bearer ${TEST_N8N_TOKEN}` };
 }
 
 async function encryptForSeed(token, secret) {
@@ -171,6 +177,44 @@ test('lists facebook tokens with compatibility fields', async () => {
   assert.equal(body.items[0].fbId, '789');
   assert.equal(body.items[0].fbToken, FACEBOOK_TOKEN);
   assert.equal(body.items[0].token, FACEBOOK_TOKEN);
+});
+
+test('operational credential can list metadata but cannot read decrypted tokens', async () => {
+  const db = new FakeDb();
+  db.tokens.push({
+    id: 'tok_facebook_metadata',
+    provider: 'facebook',
+    unit: 'novo_hamburgo',
+    external_account_id: '789',
+    token_type: 'long_lived_access_token',
+    token_ciphertext: await encryptForSeed(FACEBOOK_TOKEN, env(db).TOKEN_VAULT_ENCRYPTION_KEY),
+    expires_at: null,
+    last_refreshed_at: null,
+    active: 1,
+    metadata_json: '{}',
+    created_at: '2026-06-18T00:00:00.000Z',
+    updated_at: '2026-06-18T00:00:00.000Z',
+  });
+
+  const rawResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/tokens?provider=facebook', {
+      headers: operationalAuthHeaders(),
+    }),
+    env(db),
+  );
+  assert.equal(rawResponse.status, 403);
+
+  const metadataResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/token-metadata?provider=facebook', {
+      headers: operationalAuthHeaders(),
+    }),
+    env(db),
+  );
+  const metadata = await metadataResponse.json();
+  assert.equal(metadataResponse.status, 200);
+  assert.equal(metadata.items[0].token_id, 'tok_facebook_metadata');
+  assert.equal(JSON.stringify(metadata).includes(FACEBOOK_TOKEN), false);
+  assert.equal(Object.hasOwn(metadata.items[0], 'token'), false);
 });
 
 test('patch updates encrypted token and writes audit without token payload', async () => {

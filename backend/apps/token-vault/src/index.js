@@ -1,3 +1,9 @@
+import {
+  handleMetaAdsPublishRequest,
+  isMetaAdsPublishPath,
+} from './meta-ads-publish.js';
+import { handleSocialPublishOperation } from './social-publish.js';
+
 const TOKEN_PREFIX = '/internal/token-vault';
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -27,16 +33,42 @@ export async function handleRequest(request, env) {
       return health(env, requestId);
     }
 
+    if (isMetaAdsPublishPath(pathname)) {
+      return await handleMetaAdsPublishRequest({
+        request,
+        env,
+        requestId,
+        pathname,
+        decryptToken,
+        writeAudit,
+      });
+    }
+
+    if (request.method === 'GET' && pathname === '/v1/token-metadata') {
+      return listTokenMetadata(url, env, requestId);
+    }
+
+    if (request.method === 'POST' && pathname === '/v1/token-maintenance/refresh') {
+      return refreshToken(request, env, requestId);
+    }
+
+    if (request.method === 'POST' && pathname === '/v1/social-publish/operations') {
+      return handleSocialPublishOperation({ request, env, requestId, decryptToken, writeAudit });
+    }
+
     if (request.method === 'GET' && pathname === '/v1/tokens') {
+      if (auth.role !== 'admin') return adminOnly(requestId);
       return listTokens(url, env, requestId);
     }
 
     if (request.method === 'POST' && pathname === '/v1/tokens') {
+      if (auth.role !== 'admin') return adminOnly(requestId);
       return createToken(request, env, requestId);
     }
 
     const patchMatch = pathname.match(/^\/v1\/tokens\/([^/]+)$/);
     if (request.method === 'PATCH' && patchMatch) {
+      if (auth.role !== 'admin') return adminOnly(requestId);
       return patchToken(decodeURIComponent(patchMatch[1]), request, env, requestId);
     }
 
@@ -51,6 +83,10 @@ export async function handleRequest(request, env) {
       { status: 500 },
     );
   }
+}
+
+function adminOnly(requestId) {
+  return json({ ok: false, error: 'admin_credential_required', requestId }, { status: 403 });
 }
 
 function normalizePath(pathname) {
@@ -123,6 +159,133 @@ async function listTokens(url, env, requestId) {
   });
 
   return json({ ok: true, count: items.length, items, requestId });
+}
+
+async function listTokenMetadata(url, env, requestId) {
+  const provider = safeString(url.searchParams.get('provider')).toLowerCase();
+  if (provider && !PROVIDERS.has(provider)) {
+    return json({ ok: false, error: 'invalid_provider', requestId }, { status: 400 });
+  }
+
+  const activeParam = safeString(url.searchParams.get('active')).toLowerCase();
+  const activeOnly = activeParam === '' ? true : !['false', '0', 'no'].includes(activeParam);
+  const limit = clampInteger(url.searchParams.get('limit'), 200, 1, 1000);
+  const clauses = [];
+  const binds = [];
+  if (provider) {
+    clauses.push('provider = ?');
+    binds.push(provider);
+  }
+  if (activeOnly) clauses.push('active = 1');
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const rows = (await env.TOKEN_VAULT_DB.prepare(
+    `SELECT id, provider, unit, external_account_id, token_type,
+            expires_at, last_refreshed_at, active, metadata_json, created_at, updated_at
+       FROM credential_tokens
+       ${where}
+       ORDER BY provider, unit, external_account_id
+       LIMIT ?`,
+  ).bind(...binds, limit).all()).results || [];
+
+  const items = rows.map((row) => ({
+    id: row.id,
+    token_id: row.id,
+    provider: row.provider,
+    unit: row.unit,
+    external_account_id: row.external_account_id,
+    token_type: row.token_type,
+    expires_at: row.expires_at,
+    last_refreshed_at: row.last_refreshed_at,
+    active: Boolean(row.active),
+    metadata: parseJsonObject(row.metadata_json),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+
+  await writeAudit(env, {
+    event: 'tokens.metadata.list',
+    status: 'ok',
+    requestId,
+    metadata: { provider: provider || null, activeOnly, count: items.length },
+  });
+  return json({ ok: true, count: items.length, items, requestId });
+}
+
+async function refreshToken(request, env, requestId) {
+  const body = await readJson(request);
+  const tokenId = safeString(body?.token_id || body?.id);
+  if (!tokenId) return json({ ok: false, error: 'token_id_required', requestId }, { status: 400 });
+
+  const existing = await env.TOKEN_VAULT_DB.prepare(
+    `SELECT id, provider, unit, external_account_id, token_type, token_ciphertext,
+            expires_at, metadata_json
+       FROM credential_tokens
+      WHERE id = ? AND active = 1`,
+  ).bind(tokenId).first();
+  if (!existing) return json({ ok: false, error: 'token_not_found', requestId }, { status: 404 });
+  if (!['threads', 'instagram'].includes(existing.provider)) {
+    return json({ ok: false, error: 'provider_refresh_not_supported', provider: existing.provider, requestId }, { status: 409 });
+  }
+
+  const currentToken = await decryptToken(existing.token_ciphertext, env);
+  const refreshUrl = new URL(existing.provider === 'threads'
+    ? 'https://graph.threads.net/refresh_access_token'
+    : 'https://graph.instagram.com/refresh_access_token');
+  refreshUrl.searchParams.set('grant_type', existing.provider === 'threads' ? 'th_refresh_token' : 'ig_refresh_token');
+  refreshUrl.searchParams.set('access_token', currentToken);
+
+  const upstream = await fetch(refreshUrl.toString(), { method: 'GET' });
+  const upstreamBody = await upstream.json().catch(() => ({}));
+  const nextToken = safeString(upstreamBody.access_token);
+  if (!upstream.ok || !nextToken) {
+    await writeAudit(env, {
+      tokenId,
+      event: 'tokens.refresh',
+      provider: existing.provider,
+      unit: existing.unit,
+      tokenType: existing.token_type,
+      status: 'error',
+      requestId,
+      metadata: { upstream_status: upstream.status },
+    });
+    return json({ ok: false, error: 'provider_refresh_failed', provider: existing.provider, upstream_status: upstream.status, requestId }, { status: 502 });
+  }
+
+  const now = new Date().toISOString();
+  const expiresIn = Number(upstreamBody.expires_in);
+  const expiresAt = Number.isFinite(expiresIn)
+    ? new Date(Date.now() + expiresIn * 1000).toISOString()
+    : existing.expires_at;
+  const metadata = { ...parseJsonObject(existing.metadata_json), last_refresh_source: 'token-vault-worker' };
+  await env.TOKEN_VAULT_DB.prepare(
+    `UPDATE credential_tokens
+        SET token_ciphertext = ?, expires_at = ?, last_refreshed_at = ?,
+            metadata_json = ?, updated_at = ?
+      WHERE id = ?`,
+  ).bind(await encryptToken(nextToken, env), expiresAt, now, JSON.stringify(metadata), now, tokenId).run();
+
+  await writeAudit(env, {
+    tokenId,
+    event: 'tokens.refresh',
+    provider: existing.provider,
+    unit: existing.unit,
+    tokenType: existing.token_type,
+    status: 'ok',
+    requestId,
+    metadata: { expires_at: expiresAt },
+  });
+  return json({
+    ok: true,
+    item: {
+      token_id: tokenId,
+      provider: existing.provider,
+      unit: existing.unit,
+      external_account_id: existing.external_account_id,
+      expires_at: expiresAt,
+      last_refreshed_at: now,
+    },
+    requestId,
+  });
 }
 
 async function patchToken(id, request, env, requestId) {
@@ -321,20 +484,22 @@ async function serializeToken(row, env) {
 function authorizeRequest(request, env) {
   if (safeString(env.REQUIRE_AUTH || 'true') !== 'true') return { ok: true };
 
-  const configuredToken = safeString(env.TOKEN_VAULT_API_TOKEN);
-  if (!configuredToken) return { ok: false, status: 500, reason: 'missing_worker_secret' };
+  const adminToken = safeString(env.TOKEN_VAULT_API_TOKEN);
+  const operationalToken = safeString(env.TOKEN_VAULT_N8N_API_TOKEN);
+  if (!adminToken && !operationalToken) return { ok: false, status: 500, reason: 'missing_worker_secret' };
 
   const headerName = safeString(env.WORKER_AUTH_HEADER_NAME || 'Authorization') || 'Authorization';
   const scheme = safeString(env.WORKER_AUTH_SCHEME || 'Bearer') || 'Bearer';
   const authHeader = safeString(request.headers.get(headerName));
   if (!authHeader) return { ok: false, status: 401, reason: 'missing_auth_header' };
 
-  const expected = `${scheme} ${configuredToken}`.trim();
-  if (!constantTimeEqual(authHeader, expected)) {
-    return { ok: false, status: 401, reason: 'invalid_auth_header' };
+  if (adminToken && constantTimeEqual(authHeader, `${scheme} ${adminToken}`.trim())) {
+    return { ok: true, role: 'admin' };
   }
-
-  return { ok: true };
+  if (operationalToken && constantTimeEqual(authHeader, `${scheme} ${operationalToken}`.trim())) {
+    return { ok: true, role: 'operational' };
+  }
+  return { ok: false, status: 401, reason: 'invalid_auth_header' };
 }
 
 async function encryptToken(token, env) {
@@ -389,14 +554,25 @@ function contract(requestId) {
     service: 'skincos-token-vault',
     endpoints: {
       health: 'GET /internal/token-vault/health',
+      tokenMetadata: 'GET /internal/token-vault/v1/token-metadata?provider=threads|instagram|facebook&active=true',
+      tokenRefresh: 'POST /internal/token-vault/v1/token-maintenance/refresh',
+      socialPublish: 'POST /internal/token-vault/v1/social-publish/operations',
       listTokens: 'GET /internal/token-vault/v1/tokens?provider=threads|instagram|facebook&active=true',
       createToken: 'POST /internal/token-vault/v1/tokens',
       updateToken: 'PATCH /internal/token-vault/v1/tokens/:id',
+      metaAdsPublishConfig: 'GET /internal/token-vault/v1/meta-ads-publish/config',
+      metaAdsPublishInventory: 'POST /internal/token-vault/v1/meta-ads-publish/inventory',
+      metaAdsPublishRuns: 'POST /internal/token-vault/v1/meta-ads-publish/runs',
+      metaAdsPublishRun: 'GET|PATCH /internal/token-vault/v1/meta-ads-publish/runs/:id',
+      metaAdsPublishHeartbeat: 'POST /internal/token-vault/v1/meta-ads-publish/runs/:id/heartbeat',
+      metaAdsPublishOperations: 'POST /internal/token-vault/v1/meta-ads-publish/runs/:id/operations',
+      metaAdsPublishEvents: 'POST /internal/token-vault/v1/meta-ads-publish/runs/:id/events',
     },
     auth: {
       header: 'Authorization',
       scheme: 'Bearer',
-      secret: 'TOKEN_VAULT_API_TOKEN',
+      admin_secret: 'TOKEN_VAULT_API_TOKEN',
+      operational_secret: 'TOKEN_VAULT_N8N_API_TOKEN',
     },
     storage: {
       d1_binding: 'TOKEN_VAULT_DB',

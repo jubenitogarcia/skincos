@@ -1,0 +1,65 @@
+{
+  "execution": {
+    "id": 24,
+    "status": "success",
+    "startedAt": "2026-07-09T11:29:50.408-03:00",
+    "stoppedAt": "2026-07-09T11:31:21.998-03:00"
+  },
+  "last_node_executed": "Update Ad",
+  "terminal_error": null,
+  "build_payload": [
+    {
+      "job_key": "id_e364e4638d",
+      "creative_group_key": "BOTOX__35UI__PRICE__DOSE__AVISTA",
+      "action": "replace_existing",
+      "image_ratios": [
+        "2x1",
+        "4x5",
+        "9x16"
+      ],
+      "destination_groups": [
+        "BarraShoppingSul",
+        "Novo Hamburgo"
+      ],
+      "matched_count": 80,
+      "selected_count": 1
+    }
+  ],
+  "build_jobs": [
+    {
+      "job_key": "id_9c278ba394",
+      "creative_group_key": "BOTOX__35UI__PRICE__DOSE__AVISTA",
+      "destination_group": "BarraShoppingSul",
+      "action": "replace_existing",
+      "selected_ad_id": "id_af34ea68b6",
+      "creative_counts": {
+        "images": 3,
+        "bodies": 5,
+        "titles": 5,
+        "descriptions": 1
+      },
+      "temporal_reason": "past_candidate_selected"
+    },
+    {
+      "job_key": "id_5af536a5be",
+      "creative_group_key": "BOTOX__35UI__PRICE__DOSE__AVISTA",
+      "destination_group": "Novo Hamburgo",
+      "action": "replace_existing",
+      "selected_ad_id": "id_365589bfd0",
+      "creative_counts": {
+        "images": 3,
+        "bodies": 5,
+        "titles": 5,
+        "descriptions": 1
+      },
+      "temporal_reason": "past_candidate_selected"
+    }
+  ],
+  "create_creative": {
+    "total": 2,
+    "success": 2,
+    "errors": []
+  },
+  "create_ad_count": 0,
+  "update_ad_count": 2
+}

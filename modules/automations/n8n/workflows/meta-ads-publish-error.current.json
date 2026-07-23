@@ -1,0 +1,124 @@
+{
+  "id": "metaAdsPublishErrorV1",
+  "name": "Meta Ads Publish - Error Handler",
+  "active": false,
+  "settings": {
+    "timezone": "America/Sao_Paulo",
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "nodes": [
+    {
+      "id": "meta-publish-error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "meta-publish-error-build",
+      "name": "Build Sanitized Error Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function text(value) { return String(value ?? '').trim(); }\nconst root = $input.first()?.json || {};\nconst execution = root.execution || {};\nconst workflow = root.workflow || {};\nconst raw = text(execution.error?.message || root.error?.message || 'Falha nao classificada');\nconst safe = raw.replace(/Bearer\\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]').replace(/[A-Za-z0-9_-]{80,}/g, '[REDACTED]').slice(0, 800);\nconst message = ['Meta Ads Publish falhou', 'Workflow: ' + text(workflow.name || 'eFJhFg79lyaycjlm'), 'Execucao: ' + text(execution.id), 'Ultimo no: ' + text(execution.lastNodeExecuted), 'Erro: ' + safe].join('\\n');\nreturn [{ json: { message } }];"
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "operation": "send-text",
+        "instanceName": "crm-channel-1",
+        "remoteJid": "5551995103563",
+        "messageText": "={{ $json.message }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api-en.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        128,
+        -80
+      ],
+      "id": "meta-publish-error-whatsapp",
+      "name": "Alert Meta Publish Error (WhatsApp)",
+      "executeOnce": true,
+      "retryOnFail": false,
+      "credentials": {
+        "evolutionApi": {
+          "id": "bfuWTzZoi8VCYCzE",
+          "name": "Evolution Token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "7893126619",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        128,
+        80
+      ],
+      "id": "meta-publish-error-telegram",
+      "name": "Alert Meta Publish Error (Telegram)",
+      "webhookId": "837f6d8f-f5bb-41e6-9323-fb074a1d43c1",
+      "retryOnFail": false,
+      "credentials": {
+        "telegramApi": {
+          "id": "9NlSo0dcxNrKtlWW",
+          "name": "Telegram – @espacofacial_bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Sanitized Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sanitized Error Alert": {
+      "main": [
+        [
+          {
+            "node": "Alert Meta Publish Error (WhatsApp)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Alert Meta Publish Error (Telegram)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
