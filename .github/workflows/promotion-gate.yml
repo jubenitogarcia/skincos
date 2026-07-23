@@ -30,9 +30,10 @@ jobs:
         id: identity
         env:
           REQUESTED_SHA: ${{ inputs.release_sha }}
+          PROMOTION_TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
-          if [[ "${{ inputs.target }}" != "preview" && -z "${REQUESTED_SHA:-}" ]]; then
+          if [[ "$PROMOTION_TARGET" != "preview" && -z "${REQUESTED_SHA:-}" ]]; then
             echo "::error::staging and production require the exact release_sha from predecessor evidence."
             exit 1
           fi
