@@ -20,8 +20,8 @@ for (const control of catalog.externalPublisherControls ?? []) {
   }
 }
 for (const unit of catalog.units ?? []) {
-  if (!unit.id || !Array.isArray(unit.resources) || !Array.isArray(unit.publishes) || !Array.isArray(unit.secrets) || !Array.isArray(unit.migrationPaths) || !Array.isArray(unit.environments)) {
-    fail("every operational unit needs id, publishes, resources, secrets, migrationPaths and environments");
+  if (!unit.id || !unit.promotion || typeof unit.promotion.stagingSupported !== "boolean" || !Array.isArray(unit.resources) || !Array.isArray(unit.publishes) || !Array.isArray(unit.secrets) || !Array.isArray(unit.migrationPaths) || !Array.isArray(unit.environments)) {
+    fail("every operational unit needs promotion, publishes, resources, secrets, migrationPaths and environments");
     continue;
   }
   for (const resource of unit.publishes) {
@@ -43,6 +43,7 @@ for (const unit of catalog.units ?? []) {
   if (/^\s{2}(push|schedule|pull_request_target|workflow_run|repository_dispatch):/m.test(source)) fail(`${unit.id} has an automatic publish trigger`);
   if (!/^concurrency:/m.test(source) || !source.includes(unit.concurrencyPrefix)) fail(`${unit.id} must serialize by unit and environment`);
   if (!/^\s+environment:/m.test(source)) fail(`${unit.id} must select a GitHub environment`);
+  if (!source.includes("promotion-gate.yml") || !source.includes("release_sha") || !source.includes("staging_run_id")) fail(`${unit.id} must use the immutable promotion gate`);
 }
 
 for (const retiredPath of catalog.retiredWorkflowPaths ?? []) {

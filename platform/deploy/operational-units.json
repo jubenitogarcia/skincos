@@ -9,7 +9,8 @@
       "resources": ["api gateway Worker", "inventory Worker", "skincos-db", "skincos-db-staging"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
       "migrationPaths": ["inventory/migrations"],
-      "environments": ["staging", "production"]
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": true, "financeIncluded": true}
     },
     {
       "id": "crm-pages",
@@ -19,7 +20,8 @@
       "resources": ["Cloudflare Pages skincos", "Cloudflare Pages skincos-staging", "crm console"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
       "migrationPaths": [],
-      "environments": ["staging", "production"]
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": true, "financeIncluded": true}
     },
     {
       "id": "escala-api",
@@ -29,7 +31,8 @@
       "resources": ["Escala Worker", "skincos-escala", "skincos-escala-staging"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "ESCALA_ACTOR_HMAC_KEY"],
       "migrationPaths": ["workforce/schedule/migrations-d1"],
-      "environments": ["staging", "production"]
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": true}
     },
     {
       "id": "timekeeping",
@@ -39,37 +42,41 @@
       "resources": ["Timekeeping Worker", "skincos-timekeeping", "skincos-timekeeping-staging"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "PONTO_ACTOR_HMAC_KEY", "PONTO_IDEMPOTENCY_KEY", "PONTO_TEMPLATES_KEY", "PONTO_NETWORK_CONTEXT_KEY"],
       "migrationPaths": ["workforce/timekeeping/migrations"],
-      "environments": ["staging", "production"]
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": true}
     },
     {
       "id": "social-publisher",
       "workflow": ".github/workflows/deploy-social-publisher-worker.yml",
-      "concurrencyPrefix": "deploy-social-publisher-production",
+      "concurrencyPrefix": "deploy-social-publisher-",
       "publishes": ["Worker:skincos-social-publisher"],
       "resources": ["Social Publisher Worker"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
       "migrationPaths": [],
-      "environments": ["production"]
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": false, "blocker": "Dedicated Social Publisher bindings, R2 and Durable Object namespace are not provisioned for staging."}
     },
     {
       "id": "meta-ads-report",
       "workflow": ".github/workflows/deploy-meta-ads-report-worker.yml",
-      "concurrencyPrefix": "deploy-meta-ads-report-production",
+      "concurrencyPrefix": "deploy-meta-ads-report-",
       "publishes": ["Worker:skincos-meta-ads-performance-report"],
       "resources": ["Meta Ads Report Worker", "skincos-meta-ads-performance-report", "skincos-meta-ads-performance-report-staging"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
       "migrationPaths": ["ads/meta/apps/report-ingest-worker/migrations"],
-      "environments": ["production"]
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": true}
     },
     {
       "id": "public-website-release",
       "workflow": ".github/workflows/deploy-website-cloudflare.yml",
-      "concurrencyPrefix": "deploy-website-production",
+      "concurrencyPrefix": "deploy-website-",
       "publishes": ["Worker:espacofacial", "Worker:skincos-legal-hub", "Worker:esfa-redirector"],
       "resources": ["Espaco Facial Worker", "SKINCOS legal hub Worker", "esfa redirect Worker", "espacofacial-booking D1"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_SECURITY_API_TOKEN"],
       "migrationPaths": ["website/migrations"],
-      "environments": ["production"]
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": false, "blocker": "Dedicated Website, booking D1, legal hub and redirect routes are not provisioned for staging."}
     },
     {
       "id": "native-runtime",
@@ -79,7 +86,8 @@
       "resources": ["orb", "orb-proxy", "messaging-whatsapp", "crm", "booking", "cloudflare-orb", "cloudflare-runtime", "PostgreSQL n8n_runtime"],
       "secrets": ["/etc/skincos"],
       "migrationPaths": ["orb/engine/db/migrations", "crm/api/server/atendimento/migrations", "booking/migrations"],
-      "environments": ["production"]
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": false, "blocker": "Native runtime has immutable releases but no isolated native staging host; production remains operator-gated."}
     }
   ],
   "nonPublishingSurfaces": [

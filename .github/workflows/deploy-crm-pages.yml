@@ -8,14 +8,23 @@ on:
         required: true
         default: staging
         type: choice
-        options: [staging, production]
+        options: [preview, staging, production]
+      release_sha: { description: "Immutable commit SHA", required: false, type: string }
+      preview_run_id: { description: "Required for staging", required: false, type: string }
+      staging_run_id: { description: "Required for production", required: false, type: string }
 
 concurrency:
   group: deploy-crm-pages-${{ inputs.target }}
   cancel-in-progress: false
 
 jobs:
+  promotion:
+    uses: ./.github/workflows/promotion-gate.yml
+    with: { unit: crm-pages, target: ${{ inputs.target }}, release_sha: ${{ inputs.release_sha }}, preview_run_id: ${{ inputs.preview_run_id }}, staging_run_id: ${{ inputs.staging_run_id }} }
+    secrets: inherit
   deploy:
+    needs: promotion
+    if: ${{ inputs.target != 'preview' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
     permissions:
@@ -59,6 +68,7 @@ jobs:
         if: ${{ steps.guard.outputs.skip != 'true' }}
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
           fetch-depth: 2
 
       - name: Setup Node
@@ -103,7 +113,7 @@ jobs:
       - name: Build frontend
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         env:
-          VITE_BUILD_SHA: ${{ github.sha }}
+          VITE_BUILD_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: npm run build
         working-directory: crm/console
 
@@ -143,3 +153,11 @@ jobs:
             --sleep-seconds 10 \
             --allow-ponto-disabled \
             --user-agent "Mozilla/5.0 (compatible; PontoSmoke/1.0)"
+      - name: Write staging promotion evidence
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && inputs.target == 'staging' }}
+        env: { PROMOTION_UNIT: crm-pages, PROMOTION_TARGET: staging, PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }} }
+        run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+      - name: Upload staging promotion evidence
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && inputs.target == 'staging' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: { name: promotion-evidence-crm-pages, path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json, retention-days: 14, if-no-files-found: error }
