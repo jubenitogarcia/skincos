@@ -53,6 +53,9 @@ for (const retiredPath of catalog.retiredWorkflowPaths ?? []) {
 for (const filename of workflowFiles) {
   const relativePath = path.posix.join(".github/workflows", filename);
   const source = read(relativePath);
+  if (/:\s*\{[^\r\n}]*\$\{\{/.test(source)) {
+    fail(`${relativePath} uses a GitHub expression inside a compact YAML map; use a block mapping so GitHub can parse the workflow.`);
+  }
   const publishingLines = source.split(/\r?\n/).filter((line) => publishPattern.test(line) && !/(--local|--dry-run)/i.test(line));
   if (publishingLines.length && !canonicalPaths.has(relativePath)) fail(`non-canonical publisher found: ${relativePath}`);
 }

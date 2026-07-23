@@ -160,7 +160,10 @@ jobs:
             --user-agent "Mozilla/5.0 (compatible; PontoSmoke/1.0)"
       - name: Write staging promotion evidence
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && inputs.target == 'staging' }}
-        env: { PROMOTION_UNIT: crm-pages, PROMOTION_TARGET: staging, PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }} }
+        env:
+          PROMOTION_UNIT: crm-pages
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
       - name: Upload staging promotion evidence
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && inputs.target == 'staging' }}
