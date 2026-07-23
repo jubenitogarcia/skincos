@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Keep codex PRs up-to-date (update-branch) + label conflicts
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           github-token: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || github.token }}
           script: |

@@ -33,7 +33,7 @@ jobs:
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: main
           fetch-depth: 1
@@ -48,7 +48,7 @@ jobs:
       - name: Restore deploy cache (skip if already deployed)
         if: ${{ steps.guard.outputs.skip != 'true' }}
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           key: workers-deploy-${{ steps.sha.outputs.sha }}
           path: deploy-state/deployed_sha.txt
@@ -61,7 +61,7 @@ jobs:
 
       - name: Setup Node
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.12.0"
 
@@ -93,7 +93,7 @@ jobs:
 
       - name: Save deploy cache
         if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           key: workers-deploy-${{ steps.sha.outputs.sha }}
           path: deploy-state/deployed_sha.txt
