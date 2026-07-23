@@ -26,6 +26,7 @@ return $input.all().map((item, index) => {
         start_offset: Number(state.start_offset),
         file_name: `video-${state.start_offset}.part`,
         file_checksum: state.checksum_sha256,
+        semantic_replay_video_id: state.semantic_replay_video_id || undefined,
       },
     },
     binary: { data: item.binary.data },

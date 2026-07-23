@@ -8,6 +8,156 @@ function pairedIndex(item, fallback) {
   return Number(fallback);
 }
 function unique(values) { return [...new Set(list(values).map(text).filter(Boolean))]; }
+function labels(assets) {
+  return new Set(list(assets).flatMap((asset) => list(asset && asset.adlabels).map((label) => text(label && label.name))).filter(Boolean));
+}
+function contains(actual, expected) {
+  const values = new Set(list(actual).map(text).filter(Boolean));
+  return expected.every((value) => values.has(value));
+}
+function allCarryLabel(assets, label) {
+  return list(assets).length === 5 && list(assets).every((asset) => labels([asset]).has(label));
+}
+function isNineBySixteen(widthValue, heightValue) {
+  const width = Number(widthValue);
+  const height = Number(heightValue);
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+    && Math.abs((width / height) - (9 / 16)) <= 0.002;
+}
+function effectiveWhatsAppStatus(placementItems, source) {
+  const destinationGroup = text(source.destination_group);
+  const adsetId = text(source.destination_adset_id || source.adset_id);
+  const checks = list(placementItems).flatMap((item) => list(object(item && item.json).placement_checks));
+  return checks.some((check) => {
+    const sameDestination = destinationGroup && text(check.destination_group) === destinationGroup;
+    const sameAdset = adsetId && text(check.adset_id) === adsetId;
+    return (sameDestination || sameAdset) && contains(object(check.targeting).effective_whatsapp_positions, ['status']);
+  });
+}
+function effectiveVideoOnlyPlacementScope(placementItems, source) {
+  const destinationGroup = text(source.destination_group);
+  const adsetId = text(source.destination_adset_id || source.adset_id);
+  const checks = list(placementItems).flatMap((item) => list(object(item && item.json).placement_checks));
+  return checks.some((check) => {
+    const sameDestination = destinationGroup && text(check.destination_group) === destinationGroup;
+    const sameAdset = adsetId && text(check.adset_id) === adsetId;
+    if (!sameDestination && !sameAdset) return false;
+    const targeting = object(check.targeting);
+    return contains(targeting.effective_publisher_platforms, ['facebook', 'instagram', 'audience_network', 'whatsapp']) &&
+      contains(targeting.effective_facebook_positions, ['feed', 'instream_video', 'story', 'search', 'facebook_reels', 'facebook_reels_overlay', 'notification']) &&
+      contains(targeting.effective_instagram_positions, ['stream', 'story', 'reels']) &&
+      contains(targeting.effective_audience_network_positions, ['classic', 'rewarded_video']) &&
+      contains(targeting.effective_whatsapp_positions, ['status']);
+  });
+}
+function verifyMixedCreativeReadback(source, creative, placementItems) {
+  if (text(source.media_variant) !== 'mixed_flexible') return { status: 'not_applicable' };
+  const feed = object(creative.asset_feed_spec);
+  const images = list(feed.images);
+  const videos = list(feed.videos);
+  const imageLabels = labels(images);
+  const videoLabels = labels(videos);
+  const descriptions = list(feed.descriptions);
+  const descriptionLabels = labels(descriptions);
+  const formats = list(feed.ad_formats).map((value) => text(value).toUpperCase()).filter(Boolean);
+  const rules = list(feed.asset_customization_rules);
+  const staticVertical = rules.filter((rule) => text(rule && rule.image_label && rule.image_label.name) === 'vertical_image' && !text(rule && rule.video_label && rule.video_label.name));
+  const videoRewarded = rules.filter((rule) => text(rule && rule.video_label && rule.video_label.name) === 'vertical_video' && !text(rule && rule.image_label && rule.image_label.name));
+  const staticSpec = object(staticVertical[0] && staticVertical[0].customization_spec);
+  const videoSpec = object(videoRewarded[0] && videoRewarded[0].customization_spec);
+  const ruleDescriptionLabels = rules.map((rule) => text(rule && rule.description_label && rule.description_label.name));
+  const videoWidth = Number(source.video_width || 0);
+  const videoHeight = Number(source.video_height || 0);
+  const thumbnailWidth = Number(source.video_thumbnail_width || 0);
+  const thumbnailHeight = Number(source.video_thumbnail_height || 0);
+  // Graph keeps the WhatsApp publisher platform but canonicalizes the sole
+  // supported subposition (Status) by omitting whatsapp_positions. This is
+  // equivalent only when the effective ad-set targeting independently proves
+  // that Status is the available WhatsApp position; otherwise it remains a
+  // fail-closed placement loss.
+  const whatsappScopeNormalized = contains(staticSpec.publisher_platforms, ['whatsapp'])
+    && list(staticSpec.whatsapp_positions).length === 0
+    && effectiveWhatsAppStatus(placementItems, source);
+  const failures = [];
+  if (images.length !== 3 || !contains([...imageLabels], ['feed_image', 'banner_image', 'vertical_image'])) failures.push('mixed_readback_images_invalid');
+  if (videos.length !== 1 || !videoLabels.has('vertical_video')) failures.push('mixed_readback_video_invalid');
+  if (descriptions.length !== 5 || ruleDescriptionLabels.some((label) => !label || !descriptionLabels.has(label)) || new Set(ruleDescriptionLabels).size !== rules.length) failures.push('mixed_readback_description_rules_invalid');
+  if (formats.length !== 1 || formats[0] !== 'AUTOMATIC_FORMAT') failures.push('mixed_readback_ad_format_invalid');
+  if (staticVertical.length !== 1 || !contains(staticSpec.publisher_platforms, ['facebook', 'instagram', 'audience_network', 'whatsapp']) || !contains(staticSpec.facebook_positions, ['instream_video', 'story', 'facebook_reels']) || !contains(staticSpec.instagram_positions, ['story', 'reels']) || !contains(staticSpec.audience_network_positions, ['classic']) || !(contains(staticSpec.whatsapp_positions, ['status']) || whatsappScopeNormalized)) failures.push('mixed_readback_static_vertical_rule_invalid');
+  if (videoRewarded.length !== 1 || !contains(videoSpec.publisher_platforms, ['audience_network']) || !contains(videoSpec.audience_network_positions, ['rewarded_video']) || list(videoSpec.facebook_positions).length || list(videoSpec.instagram_positions).length || list(videoSpec.whatsapp_positions).length) failures.push('mixed_readback_rewarded_video_rule_invalid');
+  if (!isNineBySixteen(videoWidth, videoHeight) || !isNineBySixteen(thumbnailWidth, thumbnailHeight)) failures.push('mixed_rewarded_video_source_not_verified_9x16');
+  if (failures.length) throw new Error(`Mixed creative readback divergiu do contrato de midia: ${JSON.stringify({ creative_id: text(creative.id || source.creative_id), failures })}`);
+  return {
+    status: 'verified',
+    image_count: images.length,
+    video_count: videos.length,
+    static_vertical_rule_count: staticVertical.length,
+    rewarded_video_rule_count: videoRewarded.length,
+    rewarded_video_source_dimensions: `${videoWidth}x${videoHeight}`,
+    rewarded_video_thumbnail_dimensions: `${thumbnailWidth}x${thumbnailHeight}`,
+    rewarded_video_delivery_aspect_ratio: '9x16',
+    rewarded_video_format_status: 'recommended_9x16_satisfied_by_exact_original_source',
+    ads_manager_format_label: 'original',
+    ads_manager_format_label_status: 'exact_9x16_semantic_equivalent_to_recommended',
+    ads_manager_crop_control_semantics: 'original_is_exact_9x16_and_recommended_crop_is_a_no_op',
+    video_auto_crop_calibration: 'graph_acknowledged_opt_in_but_ads_manager_remained_original',
+    graph_video_crop_field_available: false,
+    whatsapp_status_scope: whatsappScopeNormalized ? 'graph_normalized_to_effective_adset_status' : 'explicit',
+  };
+}
+function verifyVideoOnlyCreativeReadback(source, creative, placementItems) {
+  if (text(source.media_variant) !== 'video_single') return { status: 'not_applicable' };
+  const feed = object(creative.asset_feed_spec);
+  const images = list(feed.images);
+  const videos = list(feed.videos);
+  const videoLabels = labels(videos);
+  const bodyLabels = labels(feed.bodies);
+  const titleLabels = labels(feed.titles);
+  const descriptionLabels = labels(feed.descriptions);
+  const formats = list(feed.ad_formats).map((value) => text(value).toUpperCase()).filter(Boolean);
+  const rules = list(feed.asset_customization_rules);
+  const placementScopeVerified = effectiveVideoOnlyPlacementScope(placementItems, source);
+  const mainRule = object(rules[0]);
+  const rewardedRule = object(rules[1]);
+  const mainSpec = object(mainRule.customization_spec);
+  const rewardedSpec = object(rewardedRule.customization_spec);
+  const whatsappScopeNormalized = contains(mainSpec.publisher_platforms, ['whatsapp'])
+    && list(mainSpec.whatsapp_positions).length === 0
+    && effectiveWhatsAppStatus(placementItems, source);
+  const failures = [];
+  if (images.length !== 0) failures.push('video_only_readback_images_present');
+  if (videos.length !== 1 || videoLabels.size !== 1 || !videoLabels.has('vertical_video')) failures.push('video_only_readback_video_invalid');
+  if (formats.length !== 1 || formats[0] !== 'SINGLE_VIDEO') failures.push('video_only_readback_ad_format_invalid');
+  const exactlyFiveUnique = (assets, labels) => list(assets).length === 5 && labels.size === 5 && list(assets).every((asset) => list(asset && asset.adlabels).length === 1);
+  if (!exactlyFiveUnique(feed.bodies, bodyLabels)) failures.push('video_only_readback_body_labels_invalid');
+  if (!exactlyFiveUnique(feed.titles, titleLabels)) failures.push('video_only_readback_title_labels_invalid');
+  if (!exactlyFiveUnique(feed.descriptions, descriptionLabels)) failures.push('video_only_readback_description_labels_invalid');
+  const labelsValid = rules.length === 2 && rules.every((rule) => text(rule.video_label && rule.video_label.name) === 'vertical_video' && bodyLabels.has(text(rule.body_label && rule.body_label.name)) && titleLabels.has(text(rule.title_label && rule.title_label.name)) && descriptionLabels.has(text(rule.description_label && rule.description_label.name)) && !text(rule.image_label && rule.image_label.name)) &&
+    text(mainRule.body_label && mainRule.body_label.name) !== text(rewardedRule.body_label && rewardedRule.body_label.name) &&
+    text(mainRule.title_label && mainRule.title_label.name) !== text(rewardedRule.title_label && rewardedRule.title_label.name) &&
+    text(mainRule.description_label && mainRule.description_label.name) !== text(rewardedRule.description_label && rewardedRule.description_label.name);
+  if (!labelsValid) failures.push('video_only_readback_rule_labels_invalid');
+  if (!contains(mainSpec.publisher_platforms, ['facebook', 'instagram', 'audience_network', 'whatsapp']) || list(mainSpec.publisher_platforms).length !== 4) failures.push('video_only_readback_publishers_invalid');
+  if (!contains(mainSpec.facebook_positions, ['feed', 'instream_video', 'story', 'search', 'facebook_reels', 'facebook_reels_overlay', 'notification']) || list(mainSpec.facebook_positions).length !== 7) failures.push('video_only_readback_facebook_positions_invalid');
+  if (!contains(mainSpec.instagram_positions, ['stream', 'story', 'reels']) || list(mainSpec.instagram_positions).length !== 3) failures.push('video_only_readback_instagram_positions_invalid');
+  if (!contains(mainSpec.audience_network_positions, ['classic']) || list(mainSpec.audience_network_positions).length !== 1) failures.push('video_only_readback_audience_network_positions_invalid');
+  if (!(contains(mainSpec.whatsapp_positions, ['status']) || whatsappScopeNormalized)) failures.push('video_only_readback_whatsapp_status_invalid');
+  if (!contains(rewardedSpec.publisher_platforms, ['audience_network']) || list(rewardedSpec.publisher_platforms).length !== 1 || !contains(rewardedSpec.audience_network_positions, ['rewarded_video']) || list(rewardedSpec.audience_network_positions).length !== 1 || list(rewardedSpec.facebook_positions).length || list(rewardedSpec.instagram_positions).length || list(rewardedSpec.whatsapp_positions).length) failures.push('video_only_readback_rewarded_rule_invalid');
+  if (!placementScopeVerified) failures.push('video_only_readback_placement_scope_invalid');
+  if (failures.length) throw new Error(`Video-only creative readback divergiu do contrato: ${JSON.stringify({ creative_id: text(creative.id || source.creative_id), failures })}`);
+  return {
+    status: 'verified',
+    image_count: 0,
+    video_count: 1,
+    body_count: 5,
+    title_count: 5,
+    description_count: 5,
+    placement_rule_count: 2,
+    placement_scope: 'two_explicit_video_rules_match_effective_adset_targeting',
+    whatsapp_status_scope: whatsappScopeNormalized ? 'graph_normalized_to_effective_adset_status' : 'explicit',
+    aspect_ratio_semantics: 'single_uploaded_source_verified_9x16_no_video_crop_field_in_graph_schema',
+  };
+}
 function updateFeatureGroup(groups, reportedOptIn, removedOrIneligible, notReported) {
   return list(groups).map((entry) => {
     const feature = text(entry && entry.api_key);
@@ -40,6 +190,7 @@ function buildEffectiveReport(source, reportedOptIn, removedOrIneligible, notRep
 }
 
 const sources = $items('Attach Creative Result') || [];
+const placementItems = $items('Validate Meta Placement Eligibility') || [];
 return $input.all().map((item, index) => {
   const sourceIndex = pairedIndex(item, index);
   const sourceItem = sources[sourceIndex] || {};
@@ -79,6 +230,8 @@ return $input.all().map((item, index) => {
     };
   }
   const creative = object(response.operation.result);
+  const mixedMediaReadback = verifyMixedCreativeReadback(source, creative, placementItems);
+  const videoOnlyMediaReadback = verifyVideoOnlyCreativeReadback(source, creative, placementItems);
   const features = object(object(creative.degrees_of_freedom_spec).creative_features_spec);
   const reported = Object.keys(features);
   const reportedOptIn = Object.entries(features)
@@ -95,6 +248,8 @@ return $input.all().map((item, index) => {
     json: {
       ...source,
       creative_id: text(source.creative_id || creative.id),
+      mixed_media_readback: mixedMediaReadback,
+      video_only_media_readback: videoOnlyMediaReadback,
       advantage_plus_effective_report: buildEffectiveReport(
         source,
         reportedOptIn,

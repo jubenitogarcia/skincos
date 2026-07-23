@@ -6,6 +6,7 @@ const path = require('path');
 const CODE_SOURCES = require('./meta-ads-publish-code-sources');
 const { applyGraphContract } = require('./meta-ads-publish-graph-contract');
 const { applyOfferFingerprintContract } = require('./meta-ads-publish-offer-fingerprint-contract');
+const { applyAgentContract } = require('./meta-ads-publish-agent-contract');
 
 const moduleRoot = path.resolve(__dirname, '..');
 const workflowPath = path.join(moduleRoot, 'workflows', 'meta-ads-publish.current.json');
@@ -40,6 +41,7 @@ function inject({ write = true } = {}) {
   const workflow = readWorkflow();
   const drift = applyGraphContract(workflow);
   drift.push(...applyOfferFingerprintContract(workflow));
+  drift.push(...applyAgentContract(workflow));
   for (const [nodeName, fileName] of Object.entries(CODE_SOURCES)) {
     const filePath = path.join(sourceRoot, fileName);
     const code = fs.readFileSync(filePath, 'utf8').replace(/\s+$/, '');

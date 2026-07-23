@@ -11,5 +11,6 @@ return $input.all().map((item) => {
     source_file_id: state.source_file_id,
     upload_session_id: state.upload_session_id,
     title: state.source_file_name,
+    semantic_replay_video_id: state.semantic_replay_video_id || undefined,
   } } };
 });

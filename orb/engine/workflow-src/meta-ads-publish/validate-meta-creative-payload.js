@@ -4,19 +4,29 @@ const MAX_DESCRIPTION_LENGTH = 60;
 const MIN_IMAGES = 3;
 const BODY_COUNT = 5;
 const TITLE_COUNT = 5;
-const DESCRIPTION_COUNT = 1;
+const DESCRIPTION_COUNT = 5;
 const VERTICAL_CROP_KEY = '90x160';
 const HORIZONTAL_CROP_KEY = '191x100';
 const FEED_FOUR_BY_FIVE_CROP_KEY = '400x500';
-const REQUIRED_VERTICAL_PLATFORMS = ['facebook', 'instagram'];
-const REQUIRED_VERTICAL_FACEBOOK_POSITIONS = ['story', 'facebook_reels'];
+const REQUIRED_MIXED_STATIC_VERTICAL_PLATFORMS = ['facebook', 'instagram', 'audience_network', 'whatsapp'];
+const REQUIRED_MIXED_STATIC_VERTICAL_FACEBOOK_POSITIONS = ['instream_video', 'story', 'facebook_reels'];
 const REQUIRED_VERTICAL_INSTAGRAM_POSITIONS = ['story', 'reels'];
-const REQUIRED_VERTICAL_AUX_PLATFORMS = ['audience_network', 'whatsapp'];
+const REQUIRED_MIXED_STATIC_VERTICAL_AUDIENCE_NETWORK_POSITIONS = ['classic'];
+const REQUIRED_MIXED_STATIC_VERTICAL_WHATSAPP_POSITIONS = ['status'];
+const REQUIRED_MIXED_VIDEO_PLATFORMS = ['audience_network'];
+const REQUIRED_MIXED_VIDEO_AUDIENCE_NETWORK_POSITIONS = ['rewarded_video'];
+const REQUIRED_VIDEO_ONLY_SOCIAL_PLATFORMS = ['facebook', 'instagram'];
+const REQUIRED_VIDEO_ONLY_NETWORK_PLATFORMS = ['audience_network', 'whatsapp'];
+const REQUIRED_VIDEO_ONLY_FACEBOOK_POSITIONS = ['feed', 'instream_video', 'story', 'search', 'facebook_reels', 'facebook_reels_overlay', 'notification'];
+const REQUIRED_VIDEO_ONLY_INSTAGRAM_POSITIONS = ['stream', 'story', 'reels'];
+const REQUIRED_VIDEO_ONLY_AUDIENCE_NETWORK_POSITIONS = ['classic'];
+const REQUIRED_VIDEO_ONLY_REWARDED_AUDIENCE_NETWORK_POSITIONS = ['rewarded_video'];
+const REQUIRED_VIDEO_ONLY_WHATSAPP_POSITIONS = ['status'];
 const REQUIRED_HORIZONTAL_PLATFORMS = ['facebook'];
 const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
 const REQUIRED_CTA = 'LEARN_MORE';
 const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v2';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v9';
 const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'add_text_overlay',
   'image_touchups',
@@ -30,6 +40,11 @@ const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'show_destination_blurbs',
   'image_animation',
   'site_extensions',
+  'adapt_to_placement',
+  'video_filtering',
+  'video_highlights',
+  'video_auto_crop',
+  'video_uncrop',
 ]);
 const FORBIDDEN_ADVANTAGE_PLUS_FEATURES = new Set([
   'image_template',
@@ -127,6 +142,12 @@ function containsAll(actual, expected) {
   return expected.every((value) => values.has(value));
 }
 
+function isNineBySixteen(widthValue, heightValue) {
+  const width = Number(widthValue);
+  const height = Number(heightValue);
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 && Math.abs((width / height) - (9 / 16)) <= 0.002;
+}
+
 function validateCrop(image, index, cropKey, targetWidth, targetHeight, label) {
   const crops = asObject(image && image.image_crops);
   if (!Object.prototype.hasOwnProperty.call(crops, cropKey)) return false;
@@ -169,14 +190,67 @@ function validateFeedFourByFiveCrop(image, index) {
   return validateCrop(image, index, FEED_FOUR_BY_FIVE_CROP_KEY, 4, 5, 'feed_four_by_five');
 }
 
-function validatePlacementRules(feed) {
+function validateVideoOnlyPlacementRules(feed) {
   const imageLabels = labelNames(feed.images);
   const videoLabels = labelNames(feed.videos);
   const bodyLabels = labelNames(feed.bodies);
   const titleLabels = labelNames(feed.titles);
+  const descriptionLabels = labelNames(feed.descriptions);
+  const rules = safeArray(feed.asset_customization_rules);
+  assert(imageLabels.size === 0, 'video_only_images_forbidden', { actual: imageLabels.size });
+  assert(videoLabels.size === 1 && videoLabels.has('vertical_video'), 'video_only_video_label_invalid', { labels: [...videoLabels] });
+  const exactUniqueLabels = (assets, labels) => safeArray(assets).length === 5 && labels.size === 5 && safeArray(assets).every((asset) => safeArray(asset && asset.adlabels).length === 1);
+  assert(exactUniqueLabels(feed.bodies, bodyLabels), 'video_only_body_labels_invalid', { labels: [...bodyLabels] });
+  assert(exactUniqueLabels(feed.titles, titleLabels), 'video_only_title_labels_invalid', { labels: [...titleLabels] });
+  assert(exactUniqueLabels(feed.descriptions, descriptionLabels), 'video_only_description_labels_invalid', { labels: [...descriptionLabels] });
+  assert(rules.length === 2, 'video_only_placement_rule_count_invalid', { actual: rules.length });
+  const mainRule = asObject(rules[0]);
+  const rewardedRule = asObject(rules[1]);
+  const mainSpec = asObject(mainRule.customization_spec);
+  const rewardedSpec = asObject(rewardedRule.customization_spec);
+  for (const rule of [mainRule, rewardedRule]) {
+    assert(!safeString(rule.image_label && rule.image_label.name), 'video_only_image_label_forbidden', {});
+    assert(safeString(rule.video_label && rule.video_label.name) === 'vertical_video', 'video_only_rule_video_label_invalid', {});
+    assert(bodyLabels.has(safeString(rule.body_label && rule.body_label.name)), 'video_only_rule_body_label_invalid', {});
+    assert(titleLabels.has(safeString(rule.title_label && rule.title_label.name)), 'video_only_rule_title_label_invalid', {});
+    assert(descriptionLabels.has(safeString(rule.description_label && rule.description_label.name)), 'video_only_rule_description_label_invalid', {});
+  }
+  assert(safeString(mainRule.body_label && mainRule.body_label.name) !== safeString(rewardedRule.body_label && rewardedRule.body_label.name), 'video_only_rule_body_label_reused', {});
+  assert(safeString(mainRule.title_label && mainRule.title_label.name) !== safeString(rewardedRule.title_label && rewardedRule.title_label.name), 'video_only_rule_title_label_reused', {});
+  assert(safeString(mainRule.description_label && mainRule.description_label.name) !== safeString(rewardedRule.description_label && rewardedRule.description_label.name), 'video_only_rule_description_label_reused', {});
+  assert(containsAll(mainSpec.publisher_platforms, [...REQUIRED_VIDEO_ONLY_SOCIAL_PLATFORMS, ...REQUIRED_VIDEO_ONLY_NETWORK_PLATFORMS]), 'video_only_publishers_incomplete', {});
+  assert(safeArray(mainSpec.publisher_platforms).length === 4, 'video_only_publishers_not_exclusive', {});
+  assert(containsAll(mainSpec.facebook_positions, REQUIRED_VIDEO_ONLY_FACEBOOK_POSITIONS), 'video_only_facebook_positions_incomplete', {});
+  assert(safeArray(mainSpec.facebook_positions).length === REQUIRED_VIDEO_ONLY_FACEBOOK_POSITIONS.length, 'video_only_facebook_positions_not_exclusive', {});
+  assert(containsAll(mainSpec.instagram_positions, REQUIRED_VIDEO_ONLY_INSTAGRAM_POSITIONS), 'video_only_instagram_positions_incomplete', {});
+  assert(safeArray(mainSpec.instagram_positions).length === REQUIRED_VIDEO_ONLY_INSTAGRAM_POSITIONS.length, 'video_only_instagram_positions_not_exclusive', {});
+  assert(containsAll(mainSpec.audience_network_positions, REQUIRED_VIDEO_ONLY_AUDIENCE_NETWORK_POSITIONS), 'video_only_audience_network_positions_incomplete', {});
+  assert(safeArray(mainSpec.audience_network_positions).length === REQUIRED_VIDEO_ONLY_AUDIENCE_NETWORK_POSITIONS.length, 'video_only_audience_network_positions_not_exclusive', {});
+  assert(containsAll(mainSpec.whatsapp_positions, REQUIRED_VIDEO_ONLY_WHATSAPP_POSITIONS), 'video_only_whatsapp_positions_incomplete', {});
+  assert(safeArray(mainSpec.whatsapp_positions).length === REQUIRED_VIDEO_ONLY_WHATSAPP_POSITIONS.length, 'video_only_whatsapp_positions_not_exclusive', {});
+  assert(containsAll(rewardedSpec.publisher_platforms, ['audience_network']) && safeArray(rewardedSpec.publisher_platforms).length === 1, 'video_only_rewarded_publishers_invalid', {});
+  assert(containsAll(rewardedSpec.audience_network_positions, REQUIRED_VIDEO_ONLY_REWARDED_AUDIENCE_NETWORK_POSITIONS) && safeArray(rewardedSpec.audience_network_positions).length === 1, 'video_only_rewarded_positions_invalid', {});
+  assert(!safeArray(rewardedSpec.facebook_positions).length && !safeArray(rewardedSpec.instagram_positions).length && !safeArray(rewardedSpec.whatsapp_positions).length, 'video_only_rewarded_scope_invalid', {});
+  return {
+    feed_four_by_five_rule_count: 0,
+    mixed_static_vertical_rule_count: 0,
+    mixed_video_rewarded_rule_count: 0,
+    video_only_placement_rule_count: 2,
+  };
+}
+
+function validatePlacementRules(feed, isVideoOnly = false) {
+  if (isVideoOnly) return validateVideoOnlyPlacementRules(feed);
+  const imageLabels = labelNames(feed.images);
+  const videoLabels = labelNames(feed.videos);
+  const bodyLabels = labelNames(feed.bodies);
+  const titleLabels = labelNames(feed.titles);
+  const descriptionLabels = labelNames(feed.descriptions);
   const images = safeArray(feed.images);
-  let verticalMixedRuleCount = 0;
-  let verticalAuxRuleCount = 0;
+  const hasMixedVideo = safeArray(feed.videos).length > 0;
+  const usedDescriptionLabels = new Set();
+  let mixedStaticVerticalRuleCount = 0;
+  let mixedVideoVerticalRuleCount = 0;
   let verticalLegacyRuleCount = 0;
   let horizontalRuleCount = 0;
   let feedFourByFiveRuleCount = 0;
@@ -185,26 +259,45 @@ function validatePlacementRules(feed) {
     const video = safeString(rule && rule.video_label && rule.video_label.name);
     const body = safeString(rule && rule.body_label && rule.body_label.name);
     const title = safeString(rule && rule.title_label && rule.title_label.name);
-    assert(imageLabels.has(image), 'placement_image_label_missing', { index, image });
+    const description = safeString(rule && rule.description_label && rule.description_label.name);
+    assert(Boolean(image || video), 'placement_media_label_missing', { index });
+    if (image) assert(imageLabels.has(image), 'placement_image_label_missing', { index, image });
     if (video) assert(videoLabels.has(video), 'placement_video_label_missing', { index, video });
     assert(bodyLabels.has(body), 'placement_body_label_missing', { index, body });
     assert(titleLabels.has(title), 'placement_title_label_missing', { index, title });
+    assert(descriptionLabels.has(description), 'placement_description_label_missing', { index, description });
+    assert(!usedDescriptionLabels.has(description), 'placement_description_label_reused', { index, description });
+    usedDescriptionLabels.add(description);
     const creativeImage = images.find((entry) => safeArray(entry && entry.adlabels)
       .some((label) => safeString(label && label.name) === image));
     const spec = asObject(rule && rule.customization_spec);
+    if (video) {
+      // The vertical video is not a companion for Stories/Reels. It is the
+      // explicit replacement only for Audience Network rewarded video.
+      assert(!image, 'mixed_video_rule_must_not_include_image_label', { index, image });
+      mixedVideoVerticalRuleCount += 1;
+      assert(containsAll(spec.publisher_platforms, REQUIRED_MIXED_VIDEO_PLATFORMS), 'mixed_video_publishers_incomplete', { index });
+      assert(containsAll(spec.audience_network_positions, REQUIRED_MIXED_VIDEO_AUDIENCE_NETWORK_POSITIONS), 'mixed_video_rewarded_position_missing', { index });
+      assert(safeArray(spec.publisher_platforms).length === REQUIRED_MIXED_VIDEO_PLATFORMS.length, 'mixed_video_publishers_not_exclusive', { index });
+      assert(safeArray(spec.audience_network_positions).length === REQUIRED_MIXED_VIDEO_AUDIENCE_NETWORK_POSITIONS.length, 'mixed_video_positions_not_exclusive', { index });
+      assert(safeArray(spec.facebook_positions).length === 0, 'mixed_video_facebook_position_forbidden', { index });
+      assert(safeArray(spec.instagram_positions).length === 0, 'mixed_video_instagram_position_forbidden', { index });
+      assert(safeArray(spec.whatsapp_positions).length === 0, 'mixed_video_whatsapp_position_forbidden', { index });
+      continue;
+    }
     const isFeedPlacement = containsAll(spec.publisher_platforms, ['facebook', 'instagram']) &&
       (containsAll(spec.facebook_positions, ['feed']) || containsAll(spec.instagram_positions, ['stream']));
     if (creativeImage && isFeedPlacement && validateFeedFourByFiveCrop(creativeImage, index)) {
       feedFourByFiveRuleCount += 1;
     }
     if (creativeImage && validateVerticalCrop(creativeImage, index)) {
-      if (video) {
-        verticalMixedRuleCount += 1;
-        assert(containsAll(spec.publisher_platforms, REQUIRED_VERTICAL_PLATFORMS), 'vertical_publishers_incomplete', { index });
-        assert(containsAll(spec.facebook_positions, REQUIRED_VERTICAL_FACEBOOK_POSITIONS), 'vertical_facebook_positions_incomplete', { index });
+      if (hasMixedVideo) {
+        mixedStaticVerticalRuleCount += 1;
+        assert(containsAll(spec.publisher_platforms, REQUIRED_MIXED_STATIC_VERTICAL_PLATFORMS), 'mixed_static_vertical_publishers_incomplete', { index });
+        assert(containsAll(spec.facebook_positions, REQUIRED_MIXED_STATIC_VERTICAL_FACEBOOK_POSITIONS), 'mixed_static_vertical_facebook_positions_incomplete', { index });
         assert(containsAll(spec.instagram_positions, REQUIRED_VERTICAL_INSTAGRAM_POSITIONS), 'vertical_instagram_positions_incomplete', { index });
-      } else if (containsAll(spec.publisher_platforms, REQUIRED_VERTICAL_AUX_PLATFORMS)) {
-        verticalAuxRuleCount += 1;
+        assert(containsAll(spec.audience_network_positions, REQUIRED_MIXED_STATIC_VERTICAL_AUDIENCE_NETWORK_POSITIONS), 'mixed_static_vertical_audience_network_positions_incomplete', { index });
+        assert(containsAll(spec.whatsapp_positions, REQUIRED_MIXED_STATIC_VERTICAL_WHATSAPP_POSITIONS), 'mixed_static_vertical_whatsapp_positions_incomplete', { index });
       } else {
         verticalLegacyRuleCount += 1;
       }
@@ -215,17 +308,25 @@ function validatePlacementRules(feed) {
       assert(containsAll(spec.facebook_positions, REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS), 'horizontal_facebook_positions_incomplete', { index });
     }
   }
-  if (safeArray(feed.videos).length) {
-    assert(verticalMixedRuleCount === 1, 'vertical_mixed_placement_rule_count_invalid', { actual: verticalMixedRuleCount });
-    assert(verticalAuxRuleCount === 1, 'vertical_aux_placement_rule_count_invalid', { actual: verticalAuxRuleCount });
+  if (hasMixedVideo) {
+    assert(mixedStaticVerticalRuleCount === 1, 'mixed_static_vertical_placement_rule_count_invalid', { actual: mixedStaticVerticalRuleCount });
+    assert(mixedVideoVerticalRuleCount === 1, 'mixed_video_rewarded_placement_rule_count_invalid', { actual: mixedVideoVerticalRuleCount });
   } else {
     assert(verticalLegacyRuleCount === 1, 'vertical_placement_rule_count_invalid', { actual: verticalLegacyRuleCount });
   }
   assert(horizontalRuleCount === 1, 'horizontal_placement_rule_count_invalid', { actual: horizontalRuleCount });
+  assert(usedDescriptionLabels.size === safeArray(feed.asset_customization_rules).length, 'placement_description_rule_count_invalid', {
+    expected: safeArray(feed.asset_customization_rules).length,
+    actual: usedDescriptionLabels.size,
+  });
   // A 4:5 source carries Meta's explicit 400x500 crop. A 3:4 or 1:1 fallback
   // deliberately keeps its native aspect, so it has no artificial 4:5 crop.
   assert(feedFourByFiveRuleCount <= 1, 'feed_four_by_five_placement_rule_count_invalid', { actual: feedFourByFiveRuleCount });
-  return { feed_four_by_five_rule_count: feedFourByFiveRuleCount };
+  return {
+    feed_four_by_five_rule_count: feedFourByFiveRuleCount,
+    mixed_static_vertical_rule_count: mixedStaticVerticalRuleCount,
+    mixed_video_rewarded_rule_count: mixedVideoVerticalRuleCount,
+  };
 }
 
 function validateAdvantagePlus(payload, source, hosts) {
@@ -288,74 +389,83 @@ return $input.all().map((item) => {
   const story = asObject(payload.object_story_spec);
   const feed = asObject(payload.asset_feed_spec);
   const isVideoOnly = safeString(source.media_variant) === 'video_single';
+  const isMixedFlexible = safeString(source.media_variant) === 'mixed_flexible';
   const hosts = allowedHosts(source);
   const destinationKind = destinationContractKind(source);
   assert(safeString(payload.name), 'creative_name_missing', {});
   assert(safeString(story.page_id) === safeString(source.page_id), 'creative_page_id_mismatch', {});
-  assert(isVideoOnly ? Object.keys(feed).length === 0 : Object.keys(feed).length > 0, isVideoOnly ? 'video_single_asset_feed_forbidden' : 'asset_feed_spec_required', {});
-
-  if (isVideoOnly) {
-    const videoData = asObject(story.video_data);
-    assert(/^\d+$/.test(safeString(videoData.video_id)), 'video_id_invalid', {});
-    assert(Boolean(safeString(videoData.image_hash)), 'video_thumbnail_hash_missing', {});
-    assert(safeString(source.video_status).toLowerCase() === 'ready', 'video_not_ready', { video_status: source.video_status });
-    const cta = asObject(videoData.call_to_action);
-    const primaryLink = validateUrl(asObject(cta.value).link, hosts, 'video_primary_link');
-    const whatsappDestination = destinationKind === 'whatsapp';
-    if (whatsappDestination) {
-      assert(safeString(cta.type).toUpperCase() === WHATSAPP_CTA, 'cta_must_be_whatsapp_message', { value: cta.type });
-      assert(isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_required', {});
-    } else {
-      assert(safeString(cta.type).toUpperCase() === REQUIRED_CTA, 'cta_must_be_learn_more', { value: cta.type });
-      assert(!isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_forbidden', {});
-      assert(primaryLink === safeString(source.landing_page_url), 'primary_link_landing_page_mismatch', {});
-    }
+  assert(Object.keys(feed).length > 0, 'asset_feed_spec_required', {});
+  if (isMixedFlexible || isVideoOnly) {
+    assert(Object.keys(asObject(story.video_data)).length === 0, 'asset_feed_video_object_story_spec_forbidden', {});
   }
 
   const images = safeArray(feed.images);
-  if (!isVideoOnly) assert(images.length >= MIN_IMAGES, 'image_count_invalid', { minimum: MIN_IMAGES, actual: images.length });
+  if (isVideoOnly) assert(images.length === 0, 'video_only_images_forbidden', { actual: images.length });
+  else assert(images.length >= MIN_IMAGES, 'image_count_invalid', { minimum: MIN_IMAGES, actual: images.length });
   for (const [index, image] of images.entries()) {
     assert(Boolean(safeString(image && image.hash) || safeString(image && image.url)), 'image_reference_missing', { index });
     if (safeString(image && image.url)) validateUrl(image.url, hosts, `image_${index}`);
   }
   const videos = safeArray(feed.videos);
-  const requiresVideo = isVideoOnly;
-  assert(videos.length === 0, 'mixed_video_asset_feed_forbidden', { actual: videos.length });
+  const expectsAssetFeedVideo = isMixedFlexible || isVideoOnly;
+  assert(expectsAssetFeedVideo ? videos.length === 1 : videos.length === 0, expectsAssetFeedVideo ? 'asset_feed_video_count_invalid' : 'unexpected_asset_feed_video', { actual: videos.length });
   for (const [index, video] of videos.entries()) {
     assert(/^\d+$/.test(safeString(video && video.video_id)), 'video_id_invalid', { index });
     assert(Boolean(safeString(video && video.thumbnail_hash)), 'video_thumbnail_hash_missing', { index });
   }
-  if (!isVideoOnly) {
-    textAssets(feed.bodies, BODY_COUNT, MAX_BODY_LENGTH, 'bodies');
-    textAssets(feed.titles, TITLE_COUNT, MAX_TITLE_LENGTH, 'titles');
-    textAssets(feed.descriptions, DESCRIPTION_COUNT, MAX_DESCRIPTION_LENGTH, 'descriptions');
+  if (expectsAssetFeedVideo) {
+    assert(safeString(source.video_status).toLowerCase() === 'ready', 'video_not_ready', { video_status: source.video_status });
+    assert(isNineBySixteen(source.video_width, source.video_height), 'video_source_aspect_ratio_invalid', { width: source.video_width, height: source.video_height, required: '9x16' });
+    assert(safeString(source.video_aspect_ratio) === '9x16' && safeString(source.video_recommended_aspect_ratio) === '9x16', 'video_source_aspect_ratio_metadata_invalid', {});
+    assert(isNineBySixteen(source.video_thumbnail_width, source.video_thumbnail_height), 'video_thumbnail_aspect_ratio_invalid', { width: source.video_thumbnail_width, height: source.video_thumbnail_height, required: '9x16' });
+    assert(safeString(source.video_thumbnail_aspect_ratio) === '9x16', 'video_thumbnail_aspect_ratio_metadata_invalid', {});
+    const adFormats = safeArray(feed.ad_formats).map((format) => safeString(format).toUpperCase()).filter(Boolean);
+    if (isMixedFlexible) {
+      // The Graph endpoint rejects a multi-format feed (1885374), and
+      // SINGLE_VIDEO rejects images (1885718). AUTOMATIC_FORMAT is the
+      // supported flexible envelope for mixed labelled inventory.
+      assert(adFormats.length === 1 && adFormats[0] === 'AUTOMATIC_FORMAT', 'mixed_ad_format_must_be_automatic', { formats: safeArray(feed.ad_formats) });
+    } else {
+      assert(adFormats.length === 1 && adFormats[0] === 'SINGLE_VIDEO', 'video_only_ad_format_must_be_single_video', { formats: safeArray(feed.ad_formats) });
+    }
   }
+  textAssets(feed.bodies, BODY_COUNT, MAX_BODY_LENGTH, 'bodies');
+  textAssets(feed.titles, TITLE_COUNT, MAX_TITLE_LENGTH, 'titles');
+  textAssets(feed.descriptions, DESCRIPTION_COUNT, MAX_DESCRIPTION_LENGTH, 'descriptions');
 
   const ctas = safeArray(feed.call_to_action_types);
   const linkUrls = safeArray(feed.link_urls);
-  if (!isVideoOnly) assert(linkUrls.length === 1, 'link_url_count_invalid', { actual: linkUrls.length });
-  const primaryLink = isVideoOnly ? '' : validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
+  assert(linkUrls.length === 1, 'link_url_count_invalid', { actual: linkUrls.length });
+  const primaryLink = validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
   const whatsappDestination = destinationKind === 'whatsapp';
-  if (!isVideoOnly && whatsappDestination) {
+  if (whatsappDestination) {
     assert(ctas.length === 1 && safeString(ctas[0]).toUpperCase() === WHATSAPP_CTA, 'cta_must_be_whatsapp_message', { value: ctas });
     assert(isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_required', {});
     const schedulingUrl = validateUrl(source.scheduling_landing_page_url, hosts, 'scheduling_landing_page');
     assert(!isWhatsAppUrl(schedulingUrl), 'scheduling_landing_page_whatsapp_forbidden', {});
-  } else if (!isVideoOnly) {
+  } else {
     assert(ctas.length === 1 && safeString(ctas[0]).toUpperCase() === REQUIRED_CTA, 'cta_must_be_learn_more', { value: ctas });
     assert(!isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_forbidden', {});
     assert(primaryLink === safeString(source.landing_page_url), 'primary_link_landing_page_mismatch', {});
   }
-  const placementValidation = !isVideoOnly
-    ? validatePlacementRules(feed)
-    : { feed_four_by_five_rule_count: 0 };
-  if (!isVideoOnly) {
-    validateAdvantagePlus(payload, source, hosts);
-  }
+  const placementValidation = validatePlacementRules(feed, isVideoOnly);
+  validateAdvantagePlus(payload, source, hosts);
 
   const adPayload = asObject(source.adPayload);
   assert(safeString(adPayload.name), 'ad_name_missing', {});
-  assert(safeString(adPayload.status) === 'ACTIVE', 'ad_publish_status_must_be_active', { value: adPayload.status });
+  const adStatus = safeString(adPayload.status).toUpperCase();
+  const isPausedCalibration =
+    source.calibration_mode === true &&
+    isVideoOnly &&
+    safeString(source.action) === 'create_new' &&
+    safeString(adPayload.name).toUpperCase().startsWith('[TEST-VIDEO-ONLY]') &&
+    safeString(source.desired_final_status).toUpperCase() === 'PAUSED' &&
+    adStatus === 'PAUSED';
+  assert(
+    adStatus === 'ACTIVE' || isPausedCalibration,
+    'ad_publish_status_invalid',
+    { value: adPayload.status, calibration_mode: source.calibration_mode === true },
+  );
   const offerFingerprint = asObject(source.offer_fingerprint);
   const offerReplacementGuard = asObject(source.offer_replacement_guard);
   const offerTag = safeString(offerFingerprint.tag).toUpperCase();
@@ -396,17 +506,26 @@ return $input.all().map((item) => {
         image_count: images.length,
         video_count: videos.length,
         video_status: safeString(source.video_status),
+        video_delivery_aspect_ratio: expectsAssetFeedVideo ? '9x16' : '',
+        video_delivery_format_semantics: safeString(source.media_variant) === 'mixed_flexible'
+          ? 'rewarded_video_recommended_9x16_satisfied_by_exact_original_source'
+          : (expectsAssetFeedVideo ? 'recommended_9x16_satisfied_by_exact_original_source' : ''),
         vertical_crop_key: VERTICAL_CROP_KEY,
         media_variant: safeString(source.media_variant || 'static_flexible'),
         destination_contract_kind: destinationKind,
         workflow_contract_revision: WORKFLOW_CONTRACT_REVISION,
-        vertical_placement_rule_count: isVideoOnly ? 0 : 1,
+        vertical_placement_rule_count: isVideoOnly ? Number(placementValidation.video_only_placement_rule_count || 0) : 1,
+        video_only_placement_rule_count: Number(placementValidation.video_only_placement_rule_count || 0),
+        mixed_static_vertical_rule_count: Number(placementValidation.mixed_static_vertical_rule_count || 0),
+        mixed_video_rewarded_rule_count: Number(placementValidation.mixed_video_rewarded_rule_count || 0),
         horizontal_crop_key: HORIZONTAL_CROP_KEY,
-        horizontal_placement_rule_count: 1,
+        horizontal_placement_rule_count: isVideoOnly ? 0 : 1,
         feed_four_by_five_placement_rule_count: Number(placementValidation.feed_four_by_five_rule_count || 0),
-        body_count: isVideoOnly ? 0 : BODY_COUNT,
-        title_count: isVideoOnly ? 0 : TITLE_COUNT,
-        description_count: isVideoOnly ? 0 : DESCRIPTION_COUNT,
+        body_count: BODY_COUNT,
+        title_count: TITLE_COUNT,
+        description_count: DESCRIPTION_COUNT,
+        ad_status: adStatus,
+        calibration_mode: isPausedCalibration,
         site_links_count: safeArray(asObject(payload.creative_sourcing_spec).site_links_spec).length,
         advantage_plus_requested_features: safeArray(source.advantage_plus_requested_features),
         offer_fingerprint: {

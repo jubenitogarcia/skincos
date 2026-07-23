@@ -24,12 +24,15 @@ const jobs = inputs.map((item, index) => {
     : `adset:${text(job.destination_adset_id)}:name:${targetNameKey(object(job.adPayload).name)}`;
   if (targets.has(target)) throw new Error(`Target Meta duplicado no mesmo lote: ${target}`);
   targets.add(target);
+  const desiredStatus = text(job.desired_final_status || object(job.adPayload).status || 'ACTIVE').toUpperCase();
+  if (!['ACTIVE', 'PAUSED'].includes(desiredStatus)) {
+    throw new Error(`Status final invalido no job ${job.job_key || index}: ${desiredStatus}`);
+  }
   const adPayload = {
     ...object(job.adPayload),
-    // The commercial workflow publishes only approved creatives.  New and
-    // replacement ads therefore enter Meta already active; the later activate
-    // operation remains idempotent and is retained for journal reconciliation.
-    status: 'ACTIVE',
+    // Commercial jobs stay ACTIVE. Explicit calibration jobs carry PAUSED
+    // through staging and final reconciliation without changing that default.
+    status: desiredStatus,
     creative: { creative_id: creativeId },
   };
   // Updating an existing ad must not resend adset_id.  Meta treats it as an
@@ -47,6 +50,7 @@ const jobs = inputs.map((item, index) => {
     creative_group_key: text(job.creative_group_key || job.group_key),
     media_variant: text(job.media_variant || 'static_flexible'),
     creative_id: creativeId,
+    desired_status: desiredStatus,
     ad_payload: adPayload,
     files: Object.entries(object(job.asset_ids)).map(([ratio, id]) => ({
       id: text(id),

@@ -102,6 +102,15 @@ const MANAGED_NODES = Object.freeze([
     position: [8656, 496],
     parameters: { jsCode: '' },
   },
+  {
+    id: 'meta-publish-advantage-stabilization-wait',
+    name: 'Wait Advantage+ Stabilization',
+    type: 'n8n-nodes-base.wait',
+    typeVersion: 1.1,
+    position: [13360, 1120],
+    webhookId: 'meta-publish-advantage-stabilization-wait',
+    parameters: { amount: 30, unit: 'seconds' },
+  },
 ]);
 
 const REQUIRED_EDGES = Object.freeze([
@@ -122,6 +131,7 @@ const REQUIRED_EDGES = Object.freeze([
   ['Emit No Image Upload', 0, 'Merge Media Upload Results', 0],
   ['Has Videos?', 0, 'Prepare Video Upload Starts', 0],
   ['Has Videos?', 1, 'Emit No Video Upload', 0],
+  ['Normalize Video Upload Start', 0, 'Video Bytes Complete?', 0],
   ['Video Ready?', 0, 'Merge Media Upload Results', 1],
   ['Emit No Video Upload', 0, 'Merge Media Upload Results', 1],
   ['Merge Media Upload Results', 0, 'Aggregate Media Upload Results', 0],
@@ -130,6 +140,8 @@ const REQUIRED_EDGES = Object.freeze([
   ['Merge (2)', 0, 'Assemble Job Inputs', 0],
   ['Assemble Job Inputs', 0, 'Build Jobs', 0],
   ['Build Jobs', 0, 'Validate Meta Creative Payload', 0],
+  ['Attach Creative Result', 0, 'Wait Advantage+ Stabilization', 0],
+  ['Wait Advantage+ Stabilization', 0, 'Verify Advantage+ Creative', 0],
 ]);
 
 function nodeByName(workflow, name) {
@@ -249,6 +261,7 @@ function applyGraphContract(workflow) {
     [['Prepare Video Upload Starts', 0]],
     [['Emit No Video Upload', 0]],
   ], changes);
+  setMainConnections(workflow, 'Normalize Video Upload Start', [[['Video Bytes Complete?', 0]]], changes);
   setMainConnections(workflow, 'Emit No Video Upload', [[['Merge Media Upload Results', 1]]], changes);
   setMainConnections(workflow, 'Normalize Gateway Upload', [[['Merge Media Upload Results', 0]]], changes);
   setMainConnections(workflow, 'Video Ready?', [
@@ -260,6 +273,8 @@ function applyGraphContract(workflow) {
   setMainConnections(workflow, 'Livia', [[['Merge (2)', 0]]], changes);
   setMainConnections(workflow, 'Merge (2)', [[['Assemble Job Inputs', 0]]], changes);
   setMainConnections(workflow, 'Assemble Job Inputs', [[['Build Jobs', 0]]], changes);
+  setMainConnections(workflow, 'Attach Creative Result', [[['Wait Advantage+ Stabilization', 0]]], changes);
+  setMainConnections(workflow, 'Wait Advantage+ Stabilization', [[['Verify Advantage+ Creative', 0]]], changes);
 
   return changes;
 }
@@ -290,6 +305,10 @@ function validateGraphContract(workflow) {
   if (visualGroupingAgent?.retryOnFail !== true || Number(visualGroupingAgent?.maxTries) !== 3) failures.push('visual_grouping_retry_missing');
   const runnerHealth = nodeByName(workflow, 'Check Task Runner Health');
   if (runnerHealth?.parameters?.url !== 'http://127.0.0.1:5681/health') failures.push('runner_health_endpoint_invalid');
+  const advantageWait = nodeByName(workflow, 'Wait Advantage+ Stabilization');
+  if (Number(advantageWait?.parameters?.amount) !== 30 || advantageWait?.parameters?.unit !== 'seconds') {
+    failures.push('advantage_stabilization_wait_invalid');
+  }
   const classifier = nodeByName(workflow, 'Classify Media');
   const classifierCode = String(classifier?.parameters?.jsCode || '');
   if (!classifierCode.includes(VIDEO_STAGING_ROOT + '/${executionId}/${sourceId}')) {

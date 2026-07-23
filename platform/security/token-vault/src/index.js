@@ -49,7 +49,12 @@ var ALLOWED_CREATIVE_FEATURES = /* @__PURE__ */ new Set([
   "reveal_details_over_time",
   "show_destination_blurbs",
   "image_animation",
-  "site_extensions"
+  "site_extensions",
+  "adapt_to_placement",
+  "video_filtering",
+  "video_highlights",
+  "video_auto_crop",
+  "video_uncrop"
 ]);
 var FORBIDDEN_CREATIVE_FEATURES = /* @__PURE__ */ new Set([
   "image_template",
@@ -59,17 +64,11 @@ var FORBIDDEN_CREATIVE_FEATURES = /* @__PURE__ */ new Set([
   "standard_enhancements"
 ]);
 var REQUIRED_CREATIVE_FEATURES = Object.freeze([
-  "add_text_overlay",
-  "image_touchups",
   "text_optimizations",
   "inline_comment",
-  "enhance_cta",
-  "image_brightness_and_contrast",
-  "reveal_details_over_time",
-  "show_destination_blurbs",
-  "image_animation"
+  "enhance_cta"
 ]);
-var TERMINAL_RUN_STATES = /* @__PURE__ */ new Set(["completed", "rolled_back"]);
+var TERMINAL_RUN_STATES = /* @__PURE__ */ new Set(["completed", "failed", "rolled_back"]);
 var ALLOWED_ACTIONS = /* @__PURE__ */ new Set([
   "list_ads",
   "upload_image",
@@ -322,6 +321,20 @@ async function createOrResumeRun(request, env, requestId) {
     if (clean(existing.request_hash) !== requestHash) {
       return response({ ok: false, error: "batch_fingerprint_conflict", requestId }, 409);
     }
+    // Replays must refresh their run-level locks.  A failed browser/manual
+    // execution can stop before it reaches the terminal PATCH, and returning
+    // the journal row without reacquiring its locks leaves a false success
+    // path for a later retry.
+    if (!TERMINAL_RUN_STATES.has(clean(existing.status))) {
+      const runId2 = clean(existing.id);
+      const resourceKeys = [`batch:${batchFingerprint}`, ...files.map((file) => `drive:${file.id}`)];
+      try {
+        await reclaimRecoverableRunLocks(env, runId2, resourceKeys);
+        await acquireLocks(env, runId2, `run:${runId2}`, resourceKeys);
+      } catch (error) {
+        return response({ ok: false, error: clean(error.message) || "resource_locked", requestId }, 409);
+      }
+    }
     return response({ ok: true, replayed: true, run: serializeRun(existing), requestId });
   }
   const now = nowIso();
@@ -344,7 +357,17 @@ async function createOrResumeRun(request, env, requestId) {
     now,
     now
   );
-  await acquireLocks(env, runId, `run:${runId}`, [`batch:${batchFingerprint}`, ...files.map((file) => `drive:${file.id}`)]);
+  const resourceKeys = [`batch:${batchFingerprint}`, ...files.map((file) => `drive:${file.id}`)];
+  try {
+    await reclaimRecoverableRunLocks(env, runId, resourceKeys);
+    await acquireLocks(env, runId, `run:${runId}`, resourceKeys);
+  } catch (error) {
+    // Do not leave a run row or a partially-acquired batch lock behind when a
+    // different run legitimately owns one of the files.
+    await releaseRunLocks(env, runId);
+    await dbRun(env, `DELETE FROM meta_ads_publish_runs WHERE id = ?`, runId);
+    return response({ ok: false, error: clean(error.message) || "resource_locked", requestId }, 409);
+  }
   const created = await loadRun(env, runId);
   return response({ ok: true, replayed: false, run: serializeRun(created), requestId }, 201);
 }
@@ -486,9 +509,6 @@ async function executeOperation(context) {
   const { runId, request, env, requestId, decryptToken: decryptToken2, writeAudit: writeAudit2 } = context;
   const run = await loadRun(env, runId);
   if (!run) return response({ ok: false, error: "run_not_found", requestId }, 404);
-  if (TERMINAL_RUN_STATES.has(clean(run.status))) {
-    return response({ ok: false, error: "run_already_terminal", status: run.status, requestId }, 409);
-  }
   const parsed = await readOperationRequest(request);
   if (parsed.error) return response({ ok: false, error: parsed.error, requestId }, parsed.status || 400);
   const body = parsed.body;
@@ -504,15 +524,80 @@ async function executeOperation(context) {
     `SELECT * FROM meta_ads_publish_operations WHERE operation_key = ?`,
     operationKey
   );
+  // A terminal run must never accept a new mutation, but an exact replay of a
+  // completed operation is safe and is required for n8n recovery after the
+  // finalization response was persisted before the workflow itself stopped.
+  // Check the stored operation before the terminal guard so this remains a
+  // read-only idempotent response, never a reopening of the run.
+  if (TERMINAL_RUN_STATES.has(clean(run.status))) {
+    if (existing && clean(existing.request_hash) === requestHash && clean(existing.status) === "completed") {
+      return response({
+        ok: true,
+        replayed: true,
+        semantic_replay: false,
+        terminal_run_replay: true,
+        operation: serializeOperation(existing),
+        requestId
+      });
+    }
+    return response({ ok: false, error: "run_already_terminal", status: run.status, requestId }, 409);
+  }
   if (existing) {
     if (clean(existing.request_hash) !== requestHash) {
+      if (
+        clean(existing.status) === "completed" &&
+        ["transfer_video_chunk", "finish_video_upload"].includes(action) &&
+        clean(body.semantic_replay_video_id)
+      ) {
+        const startCandidates = await dbAll(
+          env,
+          `SELECT * FROM meta_ads_publish_operations
+            WHERE run_id = ? AND action = 'start_video_upload' AND status = 'completed'
+            ORDER BY created_at, id`,
+          runId
+        );
+        const reusableStart = selectReusableVideoStartOperation(
+          run,
+          {
+            source_file_id: body.source_file_id,
+            resume_video_id: body.semantic_replay_video_id,
+            upload_session_id: body.upload_session_id
+          },
+          startCandidates
+        );
+        if (reusableStart) {
+          return response({ ok: true, replayed: true, semantic_replay: true, operation: serializeOperation(existing), requestId });
+        }
+      }
       return response({ ok: false, error: "operation_key_conflict", requestId }, 409);
     }
     if (clean(existing.status) === "completed") {
-      return response({ ok: true, replayed: true, operation: serializeOperation(existing), requestId });
+      const semanticStartReplay = action === "start_video_upload" && Boolean(
+        selectReusableVideoStartOperation(run, body, [existing])
+      );
+      return response({
+        ok: true,
+        replayed: true,
+        semantic_replay: semanticStartReplay,
+        operation: serializeOperation(existing),
+        requestId
+      });
     }
     if (clean(existing.status) === "in_progress") {
       return response({ ok: false, error: "operation_in_progress", operation: serializeOperation(existing), requestId }, 409);
+    }
+  }
+  if (!existing && action === "start_video_upload" && clean(body.resume_video_id)) {
+    const candidates = await dbAll(
+      env,
+      `SELECT * FROM meta_ads_publish_operations
+        WHERE run_id = ? AND action = 'start_video_upload' AND status = 'completed'
+        ORDER BY created_at, id`,
+      runId
+    );
+    const reusable = selectReusableVideoStartOperation(run, body, candidates);
+    if (reusable) {
+      return response({ ok: true, replayed: true, semantic_replay: true, operation: serializeOperation(reusable), requestId });
     }
   }
   const resources = deriveResourceKeys(action, body);
@@ -856,7 +941,11 @@ async function stageBatch(body, context) {
     for (const job of jobs) {
       const auth = await resolveGraphAuth(job, context);
       const payload = validateAdPayload(job.ad_payload, job.action);
-      payload.status = "ACTIVE";
+      const desiredStatus = clean(job.desired_status || payload.status || "ACTIVE").toUpperCase();
+      if (!["ACTIVE", "PAUSED"].includes(desiredStatus)) {
+        throw failure("ad_desired_status_invalid", { classification: "permanent", http_status: 400 });
+      }
+      payload.status = desiredStatus;
       if (job.action === "replace_existing") {
         const adId = normalizeNumericId(job.target_ad_id, "target_ad_id");
         const previous = await readAd(auth, adId, context);
@@ -890,9 +979,13 @@ async function activateBatch(body, context) {
   try {
     for (const record of staged.jobs) {
       const auth = await resolveGraphAuth(record, context);
-      const result = await updateAdWithReconciliation(auth, record.ad_id, { status: "ACTIVE" }, context);
+      const desiredStatus = clean(record.desired_status || "ACTIVE").toUpperCase();
+      if (!["ACTIVE", "PAUSED"].includes(desiredStatus)) {
+        throw failure("ad_desired_status_invalid", { classification: "permanent", http_status: 400 });
+      }
+      const result = await updateAdWithReconciliation(auth, record.ad_id, { status: desiredStatus }, context);
       activated.push({ ...record, activation_result: sanitizeGraphValue(result) });
-      await updateJobStatus(context.env, record.operation_key, "active", { ad_id: record.ad_id });
+      await updateJobStatus(context.env, record.operation_key, desiredStatus === "ACTIVE" ? "active" : "paused", { ad_id: record.ad_id });
     }
   } catch (error) {
     const rollback = await compensateStaged(staged.jobs, context);
@@ -1186,40 +1279,69 @@ function validateCreativePayload(value, operationKey) {
     throw failure("flexible_creative_required", { classification: "permanent", http_status: 400 });
   }
   const feed = asObject(payload.asset_feed_spec);
-  if (safeArray(feed.images).length < 3 || safeArray(feed.bodies).length !== 5 || safeArray(feed.titles).length !== 5) {
+  const images = safeArray(feed.images);
+  const videos = safeArray(feed.videos);
+  const isAssetFeedVideoOnly = images.length === 0 && videos.length === 1;
+  if ((!isAssetFeedVideoOnly && images.length < 3) || safeArray(feed.bodies).length !== 5 || safeArray(feed.titles).length !== 5) {
     throw failure("creative_quality_gate_failed", { classification: "permanent", http_status: 400 });
   }
-  if (safeArray(feed.descriptions).length !== 1) {
+  if (safeArray(feed.descriptions).length !== 5) {
     throw failure("creative_description_count_invalid", { classification: "permanent", http_status: 400 });
   }
-  const videos = safeArray(feed.videos);
   if (videos.length > 1) throw failure("creative_video_count_invalid", { classification: "permanent", http_status: 400 });
-  if (videos.length) throw failure("mixed_image_video_single_creative_unsupported_by_meta", { classification: "permanent", http_status: 409 });
   if (videos.length === 1) {
     const video = asObject(videos[0]);
     normalizeNumericId(video.video_id, "video_id");
     if (!/^[A-Za-z0-9_-]{16,200}$/.test(clean(video.thumbnail_hash))) throw failure("video_thumbnail_hash_invalid");
     const formats = safeArray(feed.ad_formats).map(clean).filter(Boolean);
-    if (formats.length !== 1 || formats[0] !== "SINGLE_IMAGE") {
-      throw failure("mixed_video_feed_requires_single_image_format");
+    const requiredFormat = isAssetFeedVideoOnly ? "SINGLE_VIDEO" : "AUTOMATIC_FORMAT";
+    if (formats.length !== 1 || formats[0] !== requiredFormat) {
+      throw failure(isAssetFeedVideoOnly ? "video_only_feed_requires_single_video_format" : "mixed_video_feed_requires_automatic_format");
     }
   }
   if (payload.video_id || asObject(payload.object_story_spec).video_id) throw failure("root_video_id_forbidden");
   const imageLabels = new Set(safeArray(feed.images).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
   const videoLabels = new Set(videos.flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
-  const videoRuleLabels = [];
+  const bodyLabels = new Set(safeArray(feed.bodies).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
+  const titleLabels = new Set(safeArray(feed.titles).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
+  const descriptionLabels = new Set(safeArray(feed.descriptions).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
+  const customizationRules = safeArray(feed.asset_customization_rules);
+  const videoRules = [];
+  const ruleMetadata = [];
   const placementClaims = /* @__PURE__ */ new Set();
-  for (const [index, rule] of safeArray(feed.asset_customization_rules).entries()) {
+  const usedDescriptionLabels = /* @__PURE__ */ new Set();
+  for (const [index, rule] of customizationRules.entries()) {
     const imageLabel = clean(rule?.image_label?.name);
     const videoLabel = clean(rule?.video_label?.name);
-    if (!imageLabel || !imageLabels.has(imageLabel)) throw failure(`creative_rule_image_label_invalid:${index}`);
+    const bodyLabel = clean(rule?.body_label?.name);
+    const titleLabel = clean(rule?.title_label?.name);
+    const descriptionLabel = clean(rule?.description_label?.name);
+    if (!imageLabel && !videoLabel) throw failure(`creative_rule_media_label_missing:${index}`);
+    if (imageLabel && !imageLabels.has(imageLabel)) throw failure(`creative_rule_image_label_invalid:${index}`);
     if (videoLabel) {
+      if (imageLabel) throw failure(`creative_mixed_video_rule_image_label_forbidden:${index}`);
       if (!videoLabels.has(videoLabel)) throw failure(`creative_rule_video_label_invalid:${index}`);
-      videoRuleLabels.push(videoLabel);
+      videoRules.push({ index, videoLabel });
     }
+    if (!descriptionLabel && !isAssetFeedVideoOnly) throw failure(`creative_rule_description_label_invalid:${index}`);
+    if (descriptionLabel && !descriptionLabels.has(descriptionLabel)) throw failure(`creative_rule_description_label_invalid:${index}`);
+    // Video-only placement customization uses two non-overlapping rules with
+    // a distinct text label per scope. Unlabelled copy would apply all five
+    // variants to one rule, which Graph rejects (subcode 1885878).
+    if (descriptionLabel && usedDescriptionLabels.has(descriptionLabel) && !isAssetFeedVideoOnly) throw failure(`creative_rule_description_label_reused:${index}`);
+    if (descriptionLabel) usedDescriptionLabels.add(descriptionLabel);
     const spec = asObject(rule?.customization_spec);
+    ruleMetadata.push({ index, imageLabel, videoLabel, bodyLabel, titleLabel, descriptionLabel, spec });
     for (const publisher of safeArray(spec.publisher_platforms).map(clean).filter(Boolean)) {
-      const positions = publisher === "facebook" ? safeArray(spec.facebook_positions) : publisher === "instagram" ? safeArray(spec.instagram_positions) : ["*"];
+      const positions = publisher === "facebook"
+        ? safeArray(spec.facebook_positions)
+        : publisher === "instagram"
+          ? safeArray(spec.instagram_positions)
+          : publisher === "audience_network"
+            ? safeArray(spec.audience_network_positions)
+            : publisher === "whatsapp"
+              ? safeArray(spec.whatsapp_positions)
+              : ["*"];
       for (const position of positions.length ? positions : ["*"]) {
         const claim = `${publisher}:${clean(position)}:${imageLabel}:${videoLabel}`;
         if (placementClaims.has(claim)) throw failure(`creative_rule_overlap:${index}`);
@@ -1227,8 +1349,61 @@ function validateCreativePayload(value, operationKey) {
       }
     }
   }
-  if (videos.length === 1 && (videoRuleLabels.length !== 1 || videoRuleLabels[0] !== [...videoLabels][0])) {
-    throw failure("creative_video_rule_invalid");
+  if (videos.length === 1) {
+    const equal = (actual, expected) => {
+      const values = safeArray(actual).map(clean).filter(Boolean);
+      return values.length === expected.length && expected.every((value) => values.includes(value));
+    };
+    const contains = (actual, expected) => expected.every((value) => safeArray(actual).map(clean).includes(value));
+    if (isAssetFeedVideoOnly) {
+      const hasOneUniqueLabel = (assets, labels) => safeArray(assets).length === 5 && labels.size === 5 && safeArray(assets).every((asset) => {
+        const labels = safeArray(asset?.adlabels).map((label) => clean(label?.name)).filter(Boolean);
+        return labels.length === 1;
+      });
+      if (videoLabels.size !== 1 || !videoLabels.has("vertical_video") || videoRules.length !== 2 || ruleMetadata.length !== 2) {
+        throw failure("creative_video_only_rule_invalid");
+      }
+      if (!hasOneUniqueLabel(feed.bodies, bodyLabels)) {
+        throw failure("creative_video_only_body_labels_invalid");
+      }
+      if (!hasOneUniqueLabel(feed.titles, titleLabels)) {
+        throw failure("creative_video_only_title_labels_invalid");
+      }
+      if (!hasOneUniqueLabel(feed.descriptions, descriptionLabels)) {
+        throw failure("creative_video_only_description_labels_invalid");
+      }
+      const labelsValid = ruleMetadata.every((videoRule) => videoRule.videoLabel === "vertical_video" && !videoRule.imageLabel && bodyLabels.has(videoRule.bodyLabel) && titleLabels.has(videoRule.titleLabel) && descriptionLabels.has(videoRule.descriptionLabel));
+      if (!labelsValid) {
+        throw failure("creative_video_only_rule_labels_invalid");
+      }
+      const mainRule = ruleMetadata.find((entry) => equal(asObject(entry.spec).publisher_platforms, ["facebook", "instagram", "audience_network", "whatsapp"]));
+      const rewardedRule = ruleMetadata.find((entry) => equal(asObject(entry.spec).publisher_platforms, ["audience_network"]) && equal(asObject(entry.spec).audience_network_positions, ["rewarded_video"]));
+      const mainSpec = asObject(mainRule?.spec);
+      const rewardedSpec = asObject(rewardedRule?.spec);
+      if (clean(mainRule?.bodyLabel) === clean(rewardedRule?.bodyLabel) || clean(mainRule?.titleLabel) === clean(rewardedRule?.titleLabel) || clean(mainRule?.descriptionLabel) === clean(rewardedRule?.descriptionLabel)) {
+        throw failure("creative_video_only_rule_text_label_reused");
+      }
+      if (!mainRule || !rewardedRule || !equal(mainSpec.facebook_positions, ["feed", "instream_video", "story", "search", "facebook_reels", "facebook_reels_overlay", "notification"]) || !equal(mainSpec.instagram_positions, ["stream", "story", "reels"]) || !equal(mainSpec.audience_network_positions, ["classic"]) || !equal(mainSpec.whatsapp_positions, ["status"]) || safeArray(rewardedSpec.facebook_positions).length || safeArray(rewardedSpec.instagram_positions).length || safeArray(rewardedSpec.whatsapp_positions).length) {
+        throw failure("creative_video_only_placement_scope_invalid");
+      }
+    } else {
+      if (videoRules.length !== 1 || videoRules[0].videoLabel !== [...videoLabels][0]) {
+        throw failure("creative_video_rule_invalid");
+      }
+      const videoRule = ruleMetadata.find((entry) => entry.videoLabel === videoRules[0].videoLabel);
+      const videoSpec = asObject(videoRule?.spec);
+      if (!equal(videoSpec.publisher_platforms, ["audience_network"]) || !equal(videoSpec.audience_network_positions, ["rewarded_video"]) || safeArray(videoSpec.facebook_positions).length || safeArray(videoSpec.instagram_positions).length || safeArray(videoSpec.whatsapp_positions).length) {
+        throw failure("creative_mixed_video_rule_must_be_rewarded_video_only");
+      }
+      const staticVertical = ruleMetadata.find((entry) => entry.imageLabel === "vertical_image" && !entry.videoLabel);
+      const staticSpec = asObject(staticVertical?.spec);
+      if (!staticVertical || !contains(staticSpec.publisher_platforms, ["facebook", "instagram", "audience_network", "whatsapp"]) || !contains(staticSpec.facebook_positions, ["instream_video", "story", "facebook_reels"]) || !contains(staticSpec.instagram_positions, ["story", "reels"]) || !contains(staticSpec.audience_network_positions, ["classic"]) || !contains(staticSpec.whatsapp_positions, ["status"])) {
+        throw failure("creative_mixed_static_vertical_rule_invalid");
+      }
+    }
+  }
+  if (!isAssetFeedVideoOnly && usedDescriptionLabels.size !== safeArray(feed.asset_customization_rules).length) {
+    throw failure("creative_description_rule_count_invalid");
   }
   const ctas = safeArray(feed.call_to_action_types).map((entry) => clean(entry).toUpperCase());
   if (ctas.length !== 1 || !["LEARN_MORE", "WHATSAPP_MESSAGE", "BOOK_NOW"].includes(ctas[0])) {
@@ -1286,6 +1461,11 @@ function validateAdPayload(value, action) {
   if (action === "create_new" && !clean(payload.adset_id)) {
     throw failure("adset_id_required_for_create", { classification: "permanent", http_status: 400 });
   }
+  const status = clean(payload.status || "ACTIVE").toUpperCase();
+  if (!["ACTIVE", "PAUSED"].includes(status)) {
+    throw failure("ad_status_invalid", { classification: "permanent", http_status: 400 });
+  }
+  payload.status = status;
   delete payload.access_token;
   return payload;
 }
@@ -1330,6 +1510,7 @@ function buildStagedRecord(job, adId, previousState, result, createdNew) {
     destination_group: job.destination_group,
     creative_group_key: job.creative_group_key,
     creative_id: clean(job.creative_id || job.ad_payload?.creative?.creative_id),
+    desired_status: clean(job.desired_status || job.ad_payload?.status || "ACTIVE").toUpperCase(),
     action: job.action,
     resource_key: job.resource_key,
     ad_id: adId,
@@ -1484,6 +1665,47 @@ async function releaseRunLocks(env, runId) {
 }
 __name(releaseRunLocks, "releaseRunLocks");
 __name2(releaseRunLocks, "releaseRunLocks");
+async function reclaimRecoverableRunLocks(env, requestedRunId, resourceKeys) {
+  const owners = /* @__PURE__ */ new Set();
+  for (const resourceKey of [...new Set(safeArray(resourceKeys).map(clean).filter(Boolean))]) {
+    const current = await dbFirst(
+      env,
+      `SELECT resource_key, run_id, expires_at FROM meta_ads_publish_locks WHERE resource_key = ?`,
+      resourceKey
+    );
+    if (current && clean(current.run_id) !== requestedRunId && Date.parse(current.expires_at) > Date.now()) owners.add(clean(current.run_id));
+  }
+  for (const ownerRunId of owners) {
+    const owner = await loadRun(env, ownerRunId);
+    if (!owner) continue;
+    if (TERMINAL_RUN_STATES.has(clean(owner.status))) {
+      await releaseRunLocks(env, ownerRunId);
+      continue;
+    }
+    const operations = await dbAll(
+      env,
+      `SELECT action, status FROM meta_ads_publish_operations WHERE run_id = ?`,
+      ownerRunId
+    );
+    const hasFailedOperation = operations.some((operation) => clean(operation.status) === "failed");
+    const hasInFlightOperation = operations.some((operation) => clean(operation.status) === "in_progress");
+    const hasCompletedMutation = operations.some((operation) => clean(operation.status) === "completed" && ["create_creative", "stage_batch", "activate_batch"].includes(clean(operation.action)));
+    // Only reclaim a stale run when its Graph operation failed conclusively and
+    // it did not create/stage/activate anything.  This preserves idempotency
+    // and never steals an active or reconciliation-required publication.
+    if (!hasFailedOperation || hasInFlightOperation || hasCompletedMutation) continue;
+    await dbRun(
+      env,
+      `UPDATE meta_ads_publish_runs SET status = 'failed', error_json = ?, updated_at = ? WHERE id = ?`,
+      limitedJson({ reason: "superseded_after_failed_operation", superseded_by: requestedRunId }),
+      nowIso(),
+      ownerRunId
+    );
+    await releaseRunLocks(env, ownerRunId);
+  }
+}
+__name(reclaimRecoverableRunLocks, "reclaimRecoverableRunLocks");
+__name2(reclaimRecoverableRunLocks, "reclaimRecoverableRunLocks");
 function deriveResourceKeys(action, body) {
   if (action === "stage_batch") {
     return validateBatchJobs(body.jobs).map((job) => job.resource_key);
@@ -1503,9 +1725,13 @@ function normalizeMetaError(body, status, headers) {
   const error = asObject(body?.error);
   const code = Number(error.code || 0);
   const subcode = Number(error.error_subcode || 0);
-  const transient = error.is_transient === true || status === 408 || status === 429 || status >= 500;
+  // Meta can return code 100 for both invalid payloads and temporary
+  // infrastructure failures.  Subcode 1487390 is explicitly the latter
+  // ("try again later"), so it must retain the normal bounded retry path.
+  const knownTransientSubcode = subcode === 1487390;
+  const transient = knownTransientSubcode || error.is_transient === true || status === 408 || status === 429 || status >= 500;
   const auth = [190, 102, 10, 200].includes(code) || status === 401 || status === 403;
-  const permanent = auth || code === 100 || !transient && status >= 400 && status < 500;
+  const permanent = auth || code === 100 && !transient || !transient && status >= 400 && status < 500;
   return {
     message: redactText(error.error_user_msg || error.message || `Meta Graph HTTP ${status}`),
     classification: auth ? "auth" : permanent ? "permanent" : transient ? "transient" : "unknown",
@@ -1868,6 +2094,17 @@ __name2(readOperationRequest, "readOperationRequest");
 function operationHashInput(body, file) {
   const copy = sanitizeGraphValue({ ...body });
   delete copy.request_hash;
+  if (clean(copy.action) === "start_video_upload") {
+    // The normalized MP4 can contain encoder metadata that changes its byte
+    // checksum or size without changing the source creative. Idempotency is
+    // anchored to the Drive source fingerprint and normalization contract.
+    delete copy.file_size;
+    delete copy.file_checksum;
+    delete copy.resume_video_id;
+  }
+  if (["transfer_video_chunk", "finish_video_upload"].includes(clean(copy.action))) {
+    delete copy.semantic_replay_video_id;
+  }
   return {
     ...copy,
     file: file instanceof Blob ? { size: file.size, type: file.type, name: file.name || "" } : null
@@ -1875,6 +2112,24 @@ function operationHashInput(body, file) {
 }
 __name(operationHashInput, "operationHashInput");
 __name2(operationHashInput, "operationHashInput");
+function selectReusableVideoStartOperation(run, body, operations) {
+  const requestedVideoId = clean(body.resume_video_id);
+  const sourceFileId = clean(body.source_file_id);
+  if (!/^\d{5,30}$/.test(requestedVideoId) || !sourceFileId) return null;
+  if (!deriveRunFiles(run).some((file) => clean(file.id) === sourceFileId)) return null;
+  const matches = safeArray(operations).filter((operation) => {
+    if (clean(operation.run_id) && clean(operation.run_id) !== clean(run.id)) return false;
+    if (clean(operation.action) !== "start_video_upload" || clean(operation.status) !== "completed") return false;
+    const result = parseObject(operation.result_json);
+    const sessionId = clean(result.upload_session_id);
+    const requestedSessionId = clean(body.upload_session_id);
+    return clean(result.video_id) === requestedVideoId && /^\d{5,100}$/.test(sessionId) &&
+      (!requestedSessionId || sessionId === requestedSessionId);
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+__name(selectReusableVideoStartOperation, "selectReusableVideoStartOperation");
+__name2(selectReusableVideoStartOperation, "selectReusableVideoStartOperation");
 function deriveRunFiles(row) {
   return parseArray(row.files_json);
 }
@@ -1952,6 +2207,7 @@ function stripJobForSummary(record) {
     ad_id: record.ad_id,
     creative_id: record.creative_id,
     created_new: record.created_new,
+    desired_status: record.desired_status,
     files: safeArray(record.files)
   };
 }
@@ -2162,6 +2418,7 @@ var __test = Object.freeze({
   normalizeVideoOffset,
   normalizeVideoUploadResponse,
   operationHashInput,
+  selectReusableVideoStartOperation,
   parseLandingUrl,
   previousStatePayload,
   sanitizeGraphValue,
@@ -3002,6 +3259,7 @@ __name(safeErrorMessage, "safeErrorMessage");
 __name4(safeErrorMessage, "safeErrorMessage");
 export {
   index_default as default,
-  handleRequest
+  handleRequest,
+  __test
 };
 //# sourceMappingURL=index.js.map

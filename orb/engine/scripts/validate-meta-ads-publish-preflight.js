@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const crypto = require('crypto');
 const http = require('http');
 const path = require('path');
 const {
@@ -10,6 +11,7 @@ const {
 const CODE_SOURCES = require('./meta-ads-publish-code-sources');
 const { validateGraphContract } = require('./meta-ads-publish-graph-contract');
 const { validateOfferFingerprintContract } = require('./meta-ads-publish-offer-fingerprint-contract');
+const { validateAgentContract } = require('./meta-ads-publish-agent-contract');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 function loadPgClient() {
@@ -24,6 +26,38 @@ function parseJson(value, fallback) {
 
 function normalizedCode(value) {
   return String(value || '').replace(/\s+$/, '');
+}
+
+function sha256File(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function checkVideoProcessorRuntime(moduleRoot) {
+  const sourcePath = path.join(moduleRoot, 'scripts', 'meta-ads', 'process-video-asset.js');
+  const runtimePath = process.env.META_ADS_VIDEO_PROCESSOR_PATH
+    || '/var/lib/skincos-runtime/orb/scripts/meta-ads/process-video-asset.js';
+  const runtimeHash = String(process.env.META_ADS_VIDEO_PROCESSOR_RUNTIME_SHA256 || '').trim();
+  if (!fs.existsSync(sourcePath)) {
+    return { ok: false, reason: 'canonical_source_missing', source_path: sourcePath, runtime_path: runtimePath };
+  }
+  const sourceHash = sha256File(sourcePath);
+  if (!runtimeHash) {
+    return {
+      ok: false,
+      reason: 'runtime_hash_not_provided',
+      source_path: sourcePath,
+      runtime_path: runtimePath,
+      source_sha256: sourceHash,
+    };
+  }
+  return {
+    ok: sourceHash === runtimeHash,
+    reason: sourceHash === runtimeHash ? null : 'source_runtime_drift',
+    source_path: sourcePath,
+    runtime_path: runtimePath,
+    source_sha256: sourceHash,
+    runtime_sha256: runtimeHash,
+  };
 }
 
 function checkTaskRunnerHealth() {
@@ -72,7 +106,9 @@ async function main() {
     const settings = parseJson(workflow.settings, {});
     const graphFailures = validateGraphContract({ nodes, connections });
     const offerFingerprintFailures = validateOfferFingerprintContract({ nodes, connections });
+    const agentContractFailures = validateAgentContract({ nodes, connections });
     const taskRunnerHealth = await checkTaskRunnerHealth();
+    const videoProcessorRuntime = checkVideoProcessorRuntime(moduleRoot);
     const report = {
       workflow_id: WORKFLOW_ID,
       mode: 'read_only',
@@ -84,7 +120,9 @@ async function main() {
       code_source_drift: drift,
       graph_contract: { ok: graphFailures.length === 0, failures: graphFailures },
       offer_fingerprint_contract: { ok: offerFingerprintFailures.length === 0, failures: offerFingerprintFailures },
+      agent_contract: { ok: agentContractFailures.length === 0, failures: agentContractFailures },
       task_runner_health: taskRunnerHealth,
+      video_processor_runtime: videoProcessorRuntime,
       manual_execution_audit: manualExecutionAuditState(settings),
       manual_execution_note: settings.saveManualExecutions === true
         ? 'Manual executions are retained for later inspection.'
@@ -93,7 +131,7 @@ async function main() {
       service_restarts_performed: false,
     };
     console.log(JSON.stringify(report, null, 2));
-    if (drift.length || graphFailures.length || offerFingerprintFailures.length || !taskRunnerHealth.ok) process.exitCode = 1;
+    if (drift.length || graphFailures.length || offerFingerprintFailures.length || agentContractFailures.length || !taskRunnerHealth.ok || !videoProcessorRuntime.ok) process.exitCode = 1;
   } finally {
     await client.end();
   }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { handleRequest } from '../src/index.js';
+import { __test, handleRequest } from '../src/index.js';
 
 const encoder = new TextEncoder();
 const TEST_API_TOKEN = ['unit', 'auth', 'token'].join('-');
@@ -84,6 +84,168 @@ function env(db) {
 function authHeaders() {
   return { Authorization: `Bearer ${TEST_API_TOKEN}` };
 }
+
+function mixedCreativePayload() {
+  const image = (name, hash) => ({ hash, adlabels: [{ name }] });
+  const labels = (prefix) => [{ name: `${prefix}_feed` }, { name: `${prefix}_banner` }, { name: `${prefix}_vertical` }];
+  const bodyLabels = labels('body');
+  const titleLabels = labels('title');
+  const descriptionLabels = Array.from({ length: 5 }, (_, index) => ({ name: `description_${index}` }));
+  return {
+    name: 'TEST VIDEO MIX',
+    object_story_spec: { page_id: '123456789' },
+    asset_feed_spec: {
+      ad_formats: ['AUTOMATIC_FORMAT'],
+      images: [image('feed_image', 'feed_hash'), image('banner_image', 'banner_hash'), image('vertical_image', 'vertical_hash')],
+      videos: [{ video_id: '123456789', thumbnail_hash: 'thumbnail_hash_123456', adlabels: [{ name: 'vertical_video' }] }],
+      bodies: Array.from({ length: 5 }, (_, index) => ({ text: `body ${index}`, adlabels: bodyLabels })),
+      titles: Array.from({ length: 5 }, (_, index) => ({ text: `title ${index}`, adlabels: titleLabels })),
+      descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `description ${index}`, adlabels: [descriptionLabels[index]] })),
+      link_urls: [{ website_url: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' }],
+      call_to_action_types: ['LEARN_MORE'],
+      asset_customization_rules: [
+        { image_label: { name: 'feed_image' }, body_label: bodyLabels[0], title_label: titleLabels[0], description_label: descriptionLabels[0], customization_spec: { publisher_platforms: ['facebook'], facebook_positions: ['feed'] } },
+        { image_label: { name: 'banner_image' }, body_label: bodyLabels[1], title_label: titleLabels[1], description_label: descriptionLabels[1], customization_spec: { publisher_platforms: ['facebook'], facebook_positions: ['search'] } },
+        { image_label: { name: 'vertical_image' }, body_label: bodyLabels[2], title_label: titleLabels[2], description_label: descriptionLabels[2], customization_spec: { publisher_platforms: ['facebook', 'instagram', 'audience_network', 'whatsapp'], facebook_positions: ['instream_video', 'story', 'facebook_reels'], instagram_positions: ['story', 'reels'], audience_network_positions: ['classic'], whatsapp_positions: ['status'] } },
+        { video_label: { name: 'vertical_video' }, body_label: bodyLabels[2], title_label: titleLabels[2], description_label: descriptionLabels[3], customization_spec: { publisher_platforms: ['audience_network'], audience_network_positions: ['rewarded_video'] } },
+      ],
+    },
+    degrees_of_freedom_spec: {
+      creative_features_spec: Object.fromEntries([
+        'add_text_overlay', 'image_touchups', 'text_optimizations', 'inline_comment',
+        'enhance_cta', 'image_brightness_and_contrast', 'reveal_details_over_time',
+        'show_destination_blurbs', 'image_animation',
+      ].map((key) => [key, { enroll_status: 'OPT_IN' }])),
+    },
+    creative_sourcing_spec: {},
+  };
+}
+
+test('mixed creative accepts one rewarded-video rule and rejects any other video placement', () => {
+  const payload = mixedCreativePayload();
+  const validated = __test.validateCreativePayload(payload, 'creative:test:mixed');
+  assert.deepEqual(validated.asset_feed_spec.ad_formats, ['AUTOMATIC_FORMAT']);
+  assert.equal(validated.asset_feed_spec.videos.length, 1);
+
+  const rejected = mixedCreativePayload();
+  rejected.asset_feed_spec.asset_customization_rules[3].customization_spec.audience_network_positions = ['classic'];
+  assert.throws(
+    () => __test.validateCreativePayload(rejected, 'creative:test:mixed'),
+    /creative_mixed_video_rule_must_be_rewarded_video_only/,
+  );
+});
+
+test('video-only asset feed accepts two non-overlapping vertical-video rules with five text variants', () => {
+  const videoLabel = { name: 'vertical_video' };
+  const bodyLabels = Array.from({ length: 5 }, (_, index) => ({ name: `video_body_${index}` }));
+  const titleLabels = Array.from({ length: 5 }, (_, index) => ({ name: `video_title_${index}` }));
+  const descriptionLabels = Array.from({ length: 5 }, (_, index) => ({ name: `video_description_${index}` }));
+  const payload = {
+    name: 'TEST VIDEO ONLY',
+    object_story_spec: { page_id: '123456789' },
+    asset_feed_spec: {
+      ad_formats: ['SINGLE_VIDEO'],
+      videos: [{ video_id: '123456789', thumbnail_hash: 'thumbnail_hash_123456', adlabels: [videoLabel] }],
+      bodies: Array.from({ length: 5 }, (_, index) => ({ text: `body ${index}`, adlabels: [bodyLabels[index]] })),
+      titles: Array.from({ length: 5 }, (_, index) => ({ text: `title ${index}`, adlabels: [titleLabels[index]] })),
+      descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `description ${index}`, adlabels: [descriptionLabels[index]] })),
+      link_urls: [{ website_url: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' }],
+      call_to_action_types: ['LEARN_MORE'],
+      asset_customization_rules: [
+        {
+          video_label: videoLabel,
+          body_label: bodyLabels[0], title_label: titleLabels[0], description_label: descriptionLabels[0],
+          customization_spec: {
+            publisher_platforms: ['facebook', 'instagram', 'audience_network', 'whatsapp'],
+            facebook_positions: ['feed', 'instream_video', 'story', 'search', 'facebook_reels', 'facebook_reels_overlay', 'notification'],
+            instagram_positions: ['stream', 'story', 'reels'],
+            audience_network_positions: ['classic'],
+            whatsapp_positions: ['status'],
+          },
+        },
+        {
+          video_label: videoLabel,
+          body_label: bodyLabels[1], title_label: titleLabels[1], description_label: descriptionLabels[1],
+          customization_spec: {
+            publisher_platforms: ['audience_network'],
+            audience_network_positions: ['rewarded_video'],
+          },
+        },
+      ],
+    },
+    degrees_of_freedom_spec: {
+      creative_features_spec: Object.fromEntries([
+        'add_text_overlay', 'music_generation', 'adapt_to_placement', 'video_filtering',
+        'text_optimizations', 'inline_comment', 'enhance_cta', 'reveal_details_over_time',
+        'show_destination_blurbs', 'video_highlights',
+      ].map((key) => [key, { enroll_status: 'OPT_IN' }])),
+    },
+  };
+  const validated = __test.validateCreativePayload(payload, 'creative:test:video-only');
+  assert.equal(validated.asset_feed_spec.videos.length, 1);
+  assert.equal(validated.asset_feed_spec.descriptions.length, 5);
+
+  const rejected = structuredClone(payload);
+  rejected.asset_feed_spec.asset_customization_rules[0].customization_spec.facebook_positions = ['feed'];
+  assert.throws(
+    () => __test.validateCreativePayload(rejected, 'creative:test:video-only'),
+    /creative_video_only_placement_scope_invalid/,
+  );
+});
+
+test('Meta temporary creative subcode remains retryable even when returned as code 100', () => {
+  const normalized = __test.normalizeMetaError({
+    error: {
+      code: 100,
+      error_subcode: 1487390,
+      message: 'An error occurred. Please try again later',
+    },
+  }, 400, new Headers());
+  assert.equal(normalized.classification, 'transient');
+  assert.equal(normalized.retryable, true);
+});
+
+test('video start replay is anchored to the source and can reuse a persisted ready video', () => {
+  const base = {
+    action: 'start_video_upload', operation_key: 'video-start:v4:test', source_file_id: 'drive-video',
+    source_fingerprint: 'source-md5', normalization_contract_revision: 'video9x16_h264_aac_v1',
+    file_size: 1000, file_checksum: 'a'.repeat(64), resume_video_id: '123456789',
+  };
+  const changedBytes = { ...base, file_size: 1001, file_checksum: 'b'.repeat(64) };
+  assert.deepEqual(__test.operationHashInput(base, null), __test.operationHashInput(changedBytes, null));
+  const operation = {
+    id: 'op', run_id: 'run', action: 'start_video_upload', status: 'completed',
+    result_json: JSON.stringify({ video_id: '123456789', upload_session_id: '987654321', start_offset: '0', end_offset: '1000' }),
+  };
+  const selected = __test.selectReusableVideoStartOperation(
+    { id: 'run', files_json: JSON.stringify([{ id: 'drive-video' }]) },
+    base,
+    [operation],
+  );
+  assert.equal(selected, operation);
+  assert.equal(__test.selectReusableVideoStartOperation(
+    { id: 'run', files_json: JSON.stringify([{ id: 'drive-video' }]) },
+    { ...base, upload_session_id: 'different-session' },
+    [operation],
+  ), null);
+  assert.equal(__test.selectReusableVideoStartOperation(
+    { id: 'run', files_json: JSON.stringify([{ id: 'other-file' }]) }, base, [operation],
+  ), null);
+});
+
+test('ad payload keeps an explicit paused calibration status and rejects unknown states', () => {
+  const payload = __test.validateAdPayload({
+    name: '[TEST-VIDEO-ONLY] BSS',
+    status: 'PAUSED',
+    adset_id: '123456789',
+    creative: { creative_id: '987654321' },
+  }, 'create_new');
+  assert.equal(payload.status, 'PAUSED');
+  assert.throws(
+    () => __test.validateAdPayload({ ...payload, status: 'DRAFT' }, 'create_new'),
+    /ad_status_invalid/,
+  );
+});
 
 async function encryptForSeed(token, secret) {
   const iv = crypto.getRandomValues(new Uint8Array(12));

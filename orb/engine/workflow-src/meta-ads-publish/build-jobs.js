@@ -1,8 +1,10 @@
 const DEFAULT_AD_STATUS = 'ACTIVE';
+const CALIBRATION_AD_STATUS = 'PAUSED';
+const CALIBRATION_FILE_PREFIX = '[TEST-VIDEO-ONLY]';
 // Build Jobs and the downstream quality gate must advance together. This
 // prevents a stale n8n node definition from quietly accepting a payload whose
 // destination contract was added by a newer workflow revision.
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v2';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v9';
 // Website Lead ad sets with dynamic creative reject BOOK_NOW. A replacement
 // must, however, preserve the destination contract of its source ad: message
 // campaigns require WHATSAPP_MESSAGE and the WhatsApp URL.
@@ -17,9 +19,37 @@ const VERTICAL_PUBLISHER_PLATFORMS = ['facebook', 'instagram', 'audience_network
 const VERTICAL_FACEBOOK_POSITIONS = ['instream_video', 'story', 'facebook_reels'];
 const VERTICAL_INSTAGRAM_POSITIONS = ['story', 'reels'];
 const VERTICAL_AUDIENCE_NETWORK_POSITIONS = ['classic'];
+const VERTICAL_WHATSAPP_POSITIONS = ['status'];
+const VERTICAL_REWARDED_VIDEO_PLATFORMS = ['audience_network'];
+const VERTICAL_REWARDED_VIDEO_POSITIONS = ['rewarded_video'];
+const VIDEO_ONLY_SOCIAL_PLATFORMS = ['facebook', 'instagram'];
+const VIDEO_ONLY_NETWORK_PLATFORMS = ['audience_network', 'whatsapp'];
+const VIDEO_ONLY_FACEBOOK_POSITIONS = ['feed', 'instream_video', 'story', 'search', 'facebook_reels', 'facebook_reels_overlay', 'notification'];
+const VIDEO_ONLY_INSTAGRAM_POSITIONS = ['stream', 'story', 'reels'];
+const VIDEO_ONLY_AUDIENCE_NETWORK_POSITIONS = ['classic', 'rewarded_video'];
+const VIDEO_ONLY_WHATSAPP_POSITIONS = ['status'];
 
 function safeString(value) {
   return String(value ?? '').trim();
+}
+
+function isVideoOnlyCalibrationJob(job) {
+  const assets = [
+    ...safeArray(job && job.media_inventory),
+    ...safeArray(job && job.videos),
+    ...safeArray(job && job.imagens),
+    ...safeArray(job && job.arquivos),
+  ];
+  return assets.some((asset) => {
+    const name = safeString(asset && (asset.original_name || asset.name || asset.file_name));
+    return name.toUpperCase().startsWith(CALIBRATION_FILE_PREFIX);
+  });
+}
+
+function calibrationAdName(value) {
+  const name = safeString(value);
+  if (name.toUpperCase().startsWith(CALIBRATION_FILE_PREFIX)) return name.slice(0, 255);
+  return `${CALIBRATION_FILE_PREFIX} ${name || 'Video calibration'}`.slice(0, 255);
 }
 
 function toHttps(url) {
@@ -553,6 +583,26 @@ const ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES = Object.freeze({
   image_animation: 'Animacao de imagem',
   site_extensions: 'Extensoes do site',
 });
+const VIDEO_ADVANTAGE_PLUS_MAIN_FEATURES = Object.freeze({
+  add_text_overlay: 'Adicionar sobreposicoes',
+  music_generation: 'Adicionar musica',
+  pac_relaxation: 'Midia flexivel',
+  adapt_to_placement: 'Adaptar layout ao posicionamento',
+  video_filtering: 'Retoques e efeitos de video',
+  text_optimizations: 'Melhorias no texto',
+});
+const VIDEO_ADVANTAGE_PLUS_ESSENTIAL_FEATURES = Object.freeze({
+  inline_comment: 'Comentarios relevantes',
+  enhance_cta: 'Aprimorar CTA',
+});
+const VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES = Object.freeze({
+  reveal_details_over_time: 'Revelar detalhes ao longo do tempo',
+  show_destination_blurbs: 'Mostrar detalhes do destino',
+  video_highlights: 'Destaques automaticos de video',
+  site_extensions: 'Extensoes do site',
+  video_auto_crop: 'Recorte automatico de video',
+  video_uncrop: 'Expansao automatica de video',
+});
 const ADVANTAGE_PLUS_BASELINE_FEATURES = [
   'add_text_overlay',
   'image_touchups',
@@ -565,6 +615,18 @@ const ADVANTAGE_PLUS_BASELINE_FEATURES = [
   'image_animation',
 ];
 const ADVANTAGE_PLUS_CONDITIONAL_FEATURES = ['music_generation', 'pac_relaxation', 'site_extensions'];
+const VIDEO_ADVANTAGE_PLUS_BASELINE_FEATURES = [
+  'add_text_overlay',
+  'adapt_to_placement',
+  'video_filtering',
+  'text_optimizations',
+  'inline_comment',
+  'enhance_cta',
+  'reveal_details_over_time',
+  'show_destination_blurbs',
+  'video_highlights',
+];
+const VIDEO_ADVANTAGE_PLUS_CONDITIONAL_FEATURES = ['music_generation', 'pac_relaxation', 'site_extensions', 'video_auto_crop', 'video_uncrop'];
 
 function parseApiVersionMajor(version) {
   const match = safeString(version).match(/^v?(\d+)/i);
@@ -596,15 +658,32 @@ function normalizeSiteLinks(list) {
   return out;
 }
 
-function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEligible }) {
+function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEligible, mediaMode }) {
   if (parseApiVersionMajor(apiVersion) < 25) {
     throw new Error(`Advantage+ Creative completo exige Marketing API v25.0; recebido ${safeString(apiVersion) || 'vazio'}.`);
   }
+  const videoOnly = mediaMode === 'video_only';
+  const hasVideo = videoOnly || mediaMode === 'mixed';
+  const baselineFeatures = videoOnly ? VIDEO_ADVANTAGE_PLUS_BASELINE_FEATURES : ADVANTAGE_PLUS_BASELINE_FEATURES;
+  const mainFeatures = videoOnly ? VIDEO_ADVANTAGE_PLUS_MAIN_FEATURES : ADVANTAGE_PLUS_MAIN_FEATURES;
+  const essentialFeatures = videoOnly ? VIDEO_ADVANTAGE_PLUS_ESSENTIAL_FEATURES : ADVANTAGE_PLUS_ESSENTIAL_FEATURES;
+  const supplementalFeatures = videoOnly
+    ? VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES
+    : (hasVideo
+        ? { ...ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES, video_auto_crop: VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES.video_auto_crop, video_uncrop: VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES.video_uncrop }
+        : ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES);
+  const desiredFeatures = videoOnly
+    ? [...VIDEO_ADVANTAGE_PLUS_BASELINE_FEATURES, ...VIDEO_ADVANTAGE_PLUS_CONDITIONAL_FEATURES]
+    : [
+        ...ADVANTAGE_PLUS_BASELINE_FEATURES,
+        ...ADVANTAGE_PLUS_CONDITIONAL_FEATURES,
+        ...(hasVideo ? ['video_auto_crop', 'video_uncrop'] : []),
+      ];
   const creativeFeaturesSpec = {};
-  const eligibleFeatures = [...ADVANTAGE_PLUS_BASELINE_FEATURES];
+  const eligibleFeatures = [...baselineFeatures];
   const skippedFeatures = [];
   const skipReasons = {};
-  for (const feature of ADVANTAGE_PLUS_BASELINE_FEATURES) {
+  for (const feature of baselineFeatures) {
     creativeFeaturesSpec[feature] = { enroll_status: 'OPT_IN' };
   }
 
@@ -616,12 +695,25 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
     skipReasons.music_generation = 'adset_without_eligible_instagram_static_image_placement';
   }
 
-  if (pacEligible) {
+  if (!videoOnly && pacEligible) {
     creativeFeaturesSpec.pac_relaxation = { enroll_status: 'OPT_IN' };
     eligibleFeatures.push('pac_relaxation');
   } else {
     skippedFeatures.push('pac_relaxation');
-    skipReasons.pac_relaxation = 'multiple_ratios_or_explicit_placement_rules_missing';
+    skipReasons.pac_relaxation = videoOnly
+      ? 'video_only_pac_relaxation_requires_separate_calibration'
+      : 'multiple_ratios_or_explicit_placement_rules_missing';
+  }
+
+  if (hasVideo) {
+    // Asset-feed video has no supported per-placement crop field. Live paused
+    // calibration with video_auto_crop=OPT_IN was acknowledged by Graph, but
+    // Ads Manager still rendered the exact 1080x1920 source as "Original".
+    // Keep those verified 9:16 pixels authoritative instead of allowing Meta
+    // to silently crop or generatively expand the source.
+    skippedFeatures.push('video_auto_crop', 'video_uncrop');
+    skipReasons.video_auto_crop = 'exact_9x16_source_already_satisfies_recommended_format_and_live_opt_in_calibration_kept_ads_manager_label_original';
+    skipReasons.video_uncrop = 'disabled_to_preserve_verified_9x16_source_without_silent_expansion';
   }
 
   const siteLinksEligible = siteLinks.length >= ADVANTAGE_PLUS_SITE_LINKS_MIN;
@@ -635,7 +727,7 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
 
   return {
     featureKeyMode: 'add_text_overlay',
-    desiredFeatures: [...ADVANTAGE_PLUS_BASELINE_FEATURES, ...ADVANTAGE_PLUS_CONDITIONAL_FEATURES],
+    desiredFeatures,
     requestedFeatures: Object.keys(creativeFeaturesSpec),
     eligibleFeatures,
     skippedFeatures,
@@ -643,7 +735,7 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
     siteLinksEligible,
     siteLinks: deepClone(siteLinks),
     featureGroups: {
-      main: Object.entries(ADVANTAGE_PLUS_MAIN_FEATURES).map(([apiKey, label]) => ({
+      main: Object.entries(mainFeatures).map(([apiKey, label]) => ({
         api_key: apiKey,
         label,
         requested: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey),
@@ -651,7 +743,7 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
         status: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey) ? 'requested' : 'ineligible',
         reason: skipReasons[apiKey] || '',
       })),
-      essential: Object.entries(ADVANTAGE_PLUS_ESSENTIAL_FEATURES).map(([apiKey, label]) => ({
+      essential: Object.entries(essentialFeatures).map(([apiKey, label]) => ({
         api_key: apiKey,
         label,
         requested: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey),
@@ -659,7 +751,7 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
         status: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey) ? 'requested' : 'ineligible',
         reason: skipReasons[apiKey] || '',
       })),
-      supplemental: Object.entries(ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES).map(([apiKey, label]) => ({
+      supplemental: Object.entries(supplementalFeatures).map(([apiKey, label]) => ({
         api_key: apiKey,
         label,
         requested: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey),
@@ -721,6 +813,50 @@ function isMusicEligible(placementEligibility) {
   const publishers = safeArray(targeting.effective_publisher_platforms || targeting.publisher_platforms).map((value) => safeString(value).toLowerCase());
   const instagram = safeArray(targeting.effective_instagram_positions || targeting.instagram_positions).map((value) => safeString(value).toLowerCase());
   return publishers.includes('instagram') && instagram.some((value) => ['story', 'reels', 'stream'].includes(value));
+}
+
+function placementValues(placementEligibility, key) {
+  const targeting = asObject(placementEligibility && placementEligibility.targeting);
+  const effectiveKey = `effective_${key}`;
+  const values = safeArray(targeting[effectiveKey]).length ? targeting[effectiveKey] : targeting[key];
+  return safeArray(values).map((value) => safeString(value).toLowerCase()).filter(Boolean);
+}
+
+function videoOnlyPlacementContract(placementEligibility) {
+  const publishers = placementValues(placementEligibility, 'publisher_platforms');
+  const facebook = placementValues(placementEligibility, 'facebook_positions');
+  const instagram = placementValues(placementEligibility, 'instagram_positions');
+  const audienceNetwork = placementValues(placementEligibility, 'audience_network_positions');
+  const whatsapp = placementValues(placementEligibility, 'whatsapp_positions');
+  const required = {
+    publisher_platforms: VERTICAL_PUBLISHER_PLATFORMS,
+    facebook_positions: VIDEO_ONLY_FACEBOOK_POSITIONS,
+    instagram_positions: VIDEO_ONLY_INSTAGRAM_POSITIONS,
+    audience_network_positions: VIDEO_ONLY_AUDIENCE_NETWORK_POSITIONS,
+    whatsapp_positions: VIDEO_ONLY_WHATSAPP_POSITIONS,
+  };
+  const actual = { publisher_platforms: publishers, facebook_positions: facebook, instagram_positions: instagram, audience_network_positions: audienceNetwork, whatsapp_positions: whatsapp };
+  const missing = Object.fromEntries(Object.entries(required)
+    .map(([key, expected]) => [key, expected.filter((value) => !actual[key].includes(value))])
+    .filter(([, values]) => values.length));
+  const unsupported = {
+    facebook_positions: facebook.filter((value) => !VIDEO_ONLY_FACEBOOK_POSITIONS.includes(value)),
+    instagram_positions: instagram.filter((value) => !VIDEO_ONLY_INSTAGRAM_POSITIONS.includes(value)),
+    audience_network_positions: audienceNetwork.filter((value) => !VIDEO_ONLY_AUDIENCE_NETWORK_POSITIONS.includes(value)),
+    whatsapp_positions: whatsapp.filter((value) => !VIDEO_ONLY_WHATSAPP_POSITIONS.includes(value)),
+  };
+  const hasUnsupported = Object.values(unsupported).some((values) => values.length);
+  return {
+    ok: !Object.keys(missing).length && !hasUnsupported,
+    required,
+    actual,
+    missing,
+    unsupported,
+    // Messenger remains permitted on the ad set, but it is deliberately not
+    // represented here because the effective targeting exposes no Messenger
+    // sub-position that can be bound by an asset customization rule.
+    ignored_publishers: publishers.filter((value) => !VERTICAL_PUBLISHER_PLATFORMS.includes(value)),
+  };
 }
 
 
@@ -805,6 +941,12 @@ function buildUploadedByJob(inputItems, fileToJob) {
       if (target) target.vertical_video = {
         media_type: 'video', role: 'vertical_video', ratio: '9x16', video_id: safeString(item.video_id),
         video_status: safeString(item.video_status), ready: item.ready === true,
+        width: Number(item.video_width || 0), height: Number(item.video_height || 0),
+        aspect_ratio: safeString(item.video_aspect_ratio),
+        recommended_aspect_ratio: safeString(item.video_recommended_aspect_ratio),
+        preferred_thumbnail_width: Number(item.preferred_thumbnail_width || 0),
+        preferred_thumbnail_height: Number(item.preferred_thumbnail_height || 0),
+        preferred_thumbnail_aspect_ratio: safeString(item.preferred_thumbnail_aspect_ratio),
         source_file_id: safeString(item.source_file_id), source_file_name: safeString(item.source_file_name),
         checksum_sha256: safeString(item.checksum_sha256), operation_key: safeString(item.status_operation_key),
       };
@@ -936,6 +1078,12 @@ function buildOrderedAssets(job, uploaded) {
   const ordered = requiredRatios.map((ratio) => uploaded[ratio]).filter(Boolean);
   if (ordered.length) return ordered;
   return RATIO_PRIORITY.map((ratio) => uploaded[ratio]).filter(Boolean);
+}
+
+function isNineBySixteen(widthValue, heightValue) {
+  const width = Number(widthValue);
+  const height = Number(heightValue);
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 && Math.abs((width / height) - (9 / 16)) <= 0.002;
 }
 
 function buildCenteredCrop(widthValue, heightValue, targetWidth, targetHeight) {
@@ -1316,6 +1464,38 @@ const assembledInputItems = $input.all();
 const jobEntries = getBuildPayloadEntries();
 const buildPayloadErrors = getBuildPayloadErrorEntries();
 
+function isCurrentVideoOnlyResumeContract(row) {
+  const mediaMode = normalizeMediaMode(row && row.media_mode, row || {});
+  if (mediaMode !== 'video_only') return true;
+  const feed = asObject(asObject(row && row.creativePayload).asset_feed_spec);
+  const rules = safeArray(feed.asset_customization_rules);
+  if (safeArray(feed.images).length || safeArray(feed.videos).length !== 1 || rules.length !== 2) return false;
+  const labelsFrom = (assets) => safeArray(assets).map((asset) => safeString(asset && asset.adlabels && asset.adlabels[0] && asset.adlabels[0].name)).filter(Boolean);
+  const bodyLabels = labelsFrom(feed.bodies);
+  const titleLabels = labelsFrom(feed.titles);
+  const descriptionLabels = labelsFrom(feed.descriptions);
+  if ([bodyLabels, titleLabels, descriptionLabels].some((labels) => labels.length !== 5 || new Set(labels).size !== 5)) return false;
+  const hasExpectedLabels = (rule) => safeString(rule && rule.video_label && rule.video_label.name) === 'vertical_video' &&
+    bodyLabels.includes(safeString(rule && rule.body_label && rule.body_label.name)) &&
+    titleLabels.includes(safeString(rule && rule.title_label && rule.title_label.name)) &&
+    descriptionLabels.includes(safeString(rule && rule.description_label && rule.description_label.name)) &&
+    !safeString(rule && rule.image_label && rule.image_label.name);
+  const mainRule = rules.find((rule) => {
+    const spec = asObject(rule && rule.customization_spec);
+    return safeArray(spec.publisher_platforms).map(safeString).sort().join(',') === 'audience_network,facebook,instagram,whatsapp' &&
+      safeArray(spec.audience_network_positions).map(safeString).join(',') === 'classic';
+  });
+  const rewardedRule = rules.find((rule) => {
+    const spec = asObject(rule && rule.customization_spec);
+    return safeArray(spec.publisher_platforms).map(safeString).join(',') === 'audience_network' &&
+      safeArray(spec.audience_network_positions).map(safeString).join(',') === 'rewarded_video';
+  });
+  return Boolean(mainRule && rewardedRule && hasExpectedLabels(mainRule) && hasExpectedLabels(rewardedRule) &&
+    safeString(mainRule.body_label && mainRule.body_label.name) !== safeString(rewardedRule.body_label && rewardedRule.body_label.name) &&
+    safeString(mainRule.title_label && mainRule.title_label.name) !== safeString(rewardedRule.title_label && rewardedRule.title_label.name) &&
+    safeString(mainRule.description_label && mainRule.description_label.name) !== safeString(rewardedRule.description_label && rewardedRule.description_label.name));
+}
+
 function persistedResumeJobs() {
   let restored = [];
   try { restored = $items('Restore Publish Groups') || []; } catch (error) { restored = []; }
@@ -1337,10 +1517,11 @@ const resumeJobs = persistedJobs.filter((job) => {
   return safeString(row.workflow_contract_revision) === WORKFLOW_CONTRACT_REVISION &&
     (kind === 'website' || kind === 'whatsapp') &&
     Boolean(linkUrl) &&
-    (kind !== 'whatsapp' || isWhatsAppHostname(linkUrl));
+    (kind !== 'whatsapp' || isWhatsAppHostname(linkUrl)) &&
+    isCurrentVideoOnlyResumeContract(row);
 });
 if (persistedJobs.length && !resumeJobs.length && !assembledInputItems.length) {
-  throw new Error('Build Jobs recusou resume_jobs de revisao de contrato anterior sem entradas suficientes para reconstruir com seguranca.');
+  throw new Error('Build Jobs recusou resume_jobs incompativeis com o contrato de midia atual sem entradas suficientes para reconstruir com seguranca.');
 }
 if (resumeJobs.length === persistedJobs.length && resumeJobs.length) {
   return resumeJobs.map((job) => ({ json: job }));
@@ -1439,26 +1620,46 @@ for (const entry of jobEntries) {
       claimedReplacementAdIdsByDestination.set(destinationClaimKey, new Set());
     }
     const claimedReplacementAdIds = claimedReplacementAdIdsByDestination.get(destinationClaimKey);
-    const requestedReplaceExisting =
-      safeString(job.action) === 'replace_existing' || Boolean(job.should_replace_existing);
     const mediaMode = normalizeMediaMode(job.media_mode, job);
+    const calibrationMode = isVideoOnlyCalibrationJob(job) && mediaMode === 'video_only';
+    const requestedReplaceExistingRaw =
+      safeString(job.action) === 'replace_existing' || Boolean(job.should_replace_existing);
+    const requestedReplaceExisting = requestedReplaceExistingRaw && !calibrationMode;
+    const desiredAdStatus = calibrationMode ? CALIBRATION_AD_STATUS : DEFAULT_AD_STATUS;
     if (!['static_only', 'mixed', 'video_only'].includes(mediaMode)) {
       outputs.push({ json: { error: 'Modo de midia invalido.', upstream_node: 'Build Jobs', upstream_error: 'media_mode_invalid', debug: { job_key: safeString(job.job_key), media_mode: mediaMode } } });
       continue;
     }
-    // A mixed logical group is materialized as two physical ads. Replacing one
-    // old ad with both would be non-idempotent and can silently discard a media
-    // variant, so this migration always creates separate ACTIVE ads. Static
-    // replacement also needs a complete, deterministic commercial-offer
-    // fingerprint. Missing evidence must create a new ad, never broaden the
-    // candidate search back to campaign/product-only matches.
+    const videoOnlyPlacement = mediaMode === 'video_only'
+      ? videoOnlyPlacementContract(destinationMeta.placement_eligibility)
+      : null;
+    if (videoOnlyPlacement && !videoOnlyPlacement.ok) {
+      outputs.push({
+        json: {
+          error: 'O ad set possui posicionamento de video unico sem regra de personalizacao mapeada.',
+          upstream_node: 'Build Jobs',
+          upstream_error: 'video_only_placement_contract_invalid',
+          debug: {
+            job_key: safeString(job.job_key),
+            destination_group: safeString(destinationMeta.destination_group),
+            missing: videoOnlyPlacement.missing,
+            unsupported: videoOnlyPlacement.unsupported,
+          },
+        },
+      });
+      continue;
+    }
+    // A complete mixed group is one physical creative and one physical ad. Its
+    // image and video variants are selected by placement rules inside the
+    // asset feed, so replacement remains the same one-ad idempotent operation
+    // used for a static-only group. Missing offer evidence still creates a new
+    // ad; it never broadens the candidate search.
     const expectedOfferFingerprint = asObject(job.offer_fingerprint);
     const offerFingerprintTag = safeString(expectedOfferFingerprint.tag).toUpperCase();
     const offerFingerprintReplacementEligible =
       expectedOfferFingerprint.replacement_eligible === true &&
       /^OFV1:[A-Z0-9]+$/.test(offerFingerprintTag);
-    const shouldReplaceExisting =
-      requestedReplaceExisting && mediaMode === 'static_only' && offerFingerprintReplacementEligible;
+    const shouldReplaceExisting = requestedReplaceExisting && offerFingerprintReplacementEligible;
 
     const preferredIds = new Set(
       shouldReplaceExisting
@@ -1569,7 +1770,7 @@ for (const entry of jobEntries) {
 
     const offerReplacementGuard = {
       required: true,
-      requested_replace_existing: requestedReplaceExisting,
+      requested_replace_existing: requestedReplaceExistingRaw,
       expected_status: safeString(expectedOfferFingerprint.status || (offerFingerprintReplacementEligible ? 'verified' : 'unverified')),
       expected_tag: offerFingerprintTag,
       replacement_eligible: offerFingerprintReplacementEligible,
@@ -1578,11 +1779,13 @@ for (const entry of jobEntries) {
       selected_candidate_offer_match_status: chosenAd
         ? safeString(offerMatchStatusByAdId.get(safeString(chosenAd.id)))
         : '',
-      reason: action === 'replace_existing'
+      reason: calibrationMode
+        ? 'calibration_forces_create_new_paused'
+        : (action === 'replace_existing'
         ? 'exact_eligible_candidate_selected'
         : (!offerFingerprintReplacementEligible
           ? 'offer_fingerprint_unverified'
-          : (freshCandidates.length ? 'all_exact_candidates_are_fresh' : 'offer_fingerprint_mismatch')),
+          : (freshCandidates.length ? 'all_exact_candidates_are_fresh' : 'offer_fingerprint_mismatch'))),
     };
 
     let scopedReplacementPlan = action === 'replace_existing'
@@ -1632,6 +1835,11 @@ for (const entry of jobEntries) {
     const requiresStaticImages = mediaMode === 'mixed' || mediaMode === 'static_only';
     const uploadedVideo = asObject(uploaded.vertical_video);
     const uploadedVideoThumbnail = asObject(uploaded.vertical_video_thumbnail);
+    const videoGeometryValid = isNineBySixteen(uploadedVideo.width, uploadedVideo.height)
+      && safeString(uploadedVideo.aspect_ratio) === '9x16'
+      && safeString(uploadedVideo.recommended_aspect_ratio) === '9x16'
+      && isNineBySixteen(uploadedVideo.preferred_thumbnail_width, uploadedVideo.preferred_thumbnail_height)
+      && safeString(uploadedVideo.preferred_thumbnail_aspect_ratio) === '9x16';
     if (requiresStaticImages && (orderedAssets.length !== safeArray(job.required_ratios).length || orderedAssets.length < 3)) {
       outputs.push({
         json: {
@@ -1648,7 +1856,7 @@ for (const entry of jobEntries) {
       });
       continue;
     }
-    if (requiresVideo && (!safeString(uploadedVideo.video_id) || uploadedVideo.ready !== true || safeString(uploadedVideo.video_status) !== 'ready' || !safeString(uploadedVideoThumbnail.hash))) {
+    if (requiresVideo && (!safeString(uploadedVideo.video_id) || uploadedVideo.ready !== true || safeString(uploadedVideo.video_status) !== 'ready' || !safeString(uploadedVideoThumbnail.hash) || !videoGeometryValid)) {
       outputs.push({
         json: {
           error: 'Upload de video ou miniatura incompleto antes da criacao do creative.',
@@ -1658,6 +1866,9 @@ for (const entry of jobEntries) {
             job_key: safeString(job.job_key), account_id: resolvedAccountId,
             video_id: safeString(uploadedVideo.video_id), video_status: safeString(uploadedVideo.video_status),
             video_ready: uploadedVideo.ready === true, thumbnail_hash_present: Boolean(safeString(uploadedVideoThumbnail.hash)),
+            video_dimensions: `${Number(uploadedVideo.width || 0)}x${Number(uploadedVideo.height || 0)}`,
+            thumbnail_dimensions: `${Number(uploadedVideo.preferred_thumbnail_width || 0)}x${Number(uploadedVideo.preferred_thumbnail_height || 0)}`,
+            required_aspect_ratio: '9x16',
           },
         },
       });
@@ -1676,10 +1887,10 @@ for (const entry of jobEntries) {
     if (!resolvedTokenId) warnings.push('token_id opaco do gateway ausente para o destino.');
     if (action === 'create_new' && !resolvedAdsetId) warnings.push(`Job ${job.job_key} sem destination_adset_id para create_new.`);
     if (action === 'replace_existing' && !resolvedSourceAdId) warnings.push('source_ad_id ausente para replace_existing.');
-    if (temporalGuardRequiresNewAd) warnings.push(`Janela de ${freshnessWindowDays} dias protegeu ${freshCandidates.length} anuncio(s) recente(s); sera criado um novo anuncio ACTIVE sem substituir os existentes.`);
-    if (replacementFallsBackToNewAd && !temporalGuardRequiresNewAd) warnings.push(`Nenhum candidato com oferta comercial comprovadamente identica foi localizado para substituicao; sera criado um novo anuncio ACTIVE sem substituir anuncios existentes.`);
-    if (requestedReplaceExisting && !offerFingerprintReplacementEligible) warnings.push('replace_existing foi convertido para create_new ACTIVE porque a oferta comercial nao possui fingerprint comprovado.');
-    else if (requestedReplaceExisting && !shouldReplaceExisting) warnings.push('replace_existing foi convertido para create_new ACTIVE porque o grupo possui video; os anuncios fisicos precisam permanecer distintos.');
+    if (calibrationMode) warnings.push('Marcador de calibracao detectado: sera criado um anuncio novo PAUSED e nenhuma substituicao sera permitida.');
+    if (temporalGuardRequiresNewAd) warnings.push(`Janela de ${freshnessWindowDays} dias protegeu ${freshCandidates.length} anuncio(s) recente(s); sera criado um novo anuncio ${desiredAdStatus} sem substituir os existentes.`);
+    if (replacementFallsBackToNewAd && !temporalGuardRequiresNewAd) warnings.push(`Nenhum candidato com oferta comercial comprovadamente identica foi localizado para substituicao; sera criado um novo anuncio ${desiredAdStatus} sem substituir anuncios existentes.`);
+    if (requestedReplaceExisting && !offerFingerprintReplacementEligible) warnings.push(`replace_existing foi convertido para create_new ${desiredAdStatus} porque a oferta comercial nao possui fingerprint comprovado.`);
 
     const overrides = deepClone(ai.creative_override || {});
     const analysis = deepClone(ai.analysis || {});
@@ -1695,11 +1906,11 @@ for (const entry of jobEntries) {
 
     const aiBodies = normalizeTextAssets(overrides.bodies, 5);
     const aiTitles = normalizeTextAssets(overrides.titles, 5);
-    const aiDescriptions = normalizeTextAssets(overrides.descriptions, 1);
+    const aiDescriptions = normalizeTextAssets(overrides.descriptions, 5);
 
     const aiCorrelationConflict = aiCorrelation.diagnostics.conflicting_job_keys.includes(safeString(job.job_key));
     const aiOutputUnmapped = !aiByJob.has(job.job_key) && aiCorrelation.diagnostics.unmapped_candidate_count > 0;
-    if (aiCorrelationConflict || aiOutputUnmapped || !aiByJob.has(job.job_key) || aiBodies.length !== 5 || aiTitles.length !== 5 || aiDescriptions.length !== 1) {
+    if (aiCorrelationConflict || aiOutputUnmapped || !aiByJob.has(job.job_key) || aiBodies.length !== 5 || aiTitles.length !== 5 || aiDescriptions.length !== 5) {
       const upstreamError = aiCorrelationConflict
         ? 'ai_output_conflict'
         : aiOutputUnmapped
@@ -1711,7 +1922,7 @@ for (const entry of jobEntries) {
             ? 'A resposta estruturada da IA nao pode ser correlacionada com seguranca ao job.'
             : upstreamError === 'ai_output_conflict'
               ? 'Mais de uma resposta estruturada da IA foi correlacionada ao mesmo job.'
-              : 'A saida estruturada da IA nao atende ao contrato exato de 5 bodies, 5 titles e 1 description.',
+              : 'A saida estruturada da IA nao atende ao contrato exato de 5 bodies, 5 titles e 5 descriptions.',
           upstream_node: 'Build Jobs',
           upstream_error: upstreamError,
           debug: {
@@ -1779,7 +1990,8 @@ for (const entry of jobEntries) {
       (action === 'replace_existing' && chosenAd && chosenAd.name) ||
       'Duplicated Ad'
     );
-    const finalAdName = buildCanonicalAdName(sourceAdName, destinationMeta.destination_group, offerFingerprintTag);
+    const canonicalAdName = buildCanonicalAdName(sourceAdName, destinationMeta.destination_group, offerFingerprintTag);
+    const finalAdName = calibrationMode ? calibrationAdName(canonicalAdName) : canonicalAdName;
 
     const normalizedBodies = aiBodies;
     const normalizedTitles = aiTitles;
@@ -1810,7 +2022,7 @@ for (const entry of jobEntries) {
     const safeLinkUrls = [{ website_url: primaryLinkUrl }];
     const adMutationPayload = {
       name: finalAdName || sourceAdName,
-      status: DEFAULT_AD_STATUS,
+      status: desiredAdStatus,
       creative: {
         creative_id: '',
       },
@@ -1820,8 +2032,16 @@ for (const entry of jobEntries) {
 
     const imageLabels = orderedAssets.map((asset) => ({ name: asset.ratio === '2x1' ? 'banner_image' : asset.ratio === '9x16' ? 'vertical_image' : 'feed_image' }));
     const videoLabel = { name: 'vertical_video' };
-    const bodyRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'body_rule', index + 1));
-    const titleRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'title_rule', index + 1));
+  const bodyRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'body_rule', index + 1));
+  const titleRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'title_rule', index + 1));
+  const descriptionRuleLabels = normalizedDescriptions.map((asset, index) => createLabel(sourceAdName, 'description_rule', index + 1));
+  // In a placement-customized video feed Meta applies every unlabelled text
+  // asset to every rule. Give every variant its own label and bind one exact
+  // variant to each of the two video scopes. The remaining variants stay
+  // preserved in the feed but never form a multi-asset rule.
+  const videoOnlyBodyLabels = normalizedBodies.map((asset, index) => createLabel(sourceAdName, 'video_body_rule', index + 1));
+  const videoOnlyTitleLabels = normalizedTitles.map((asset, index) => createLabel(sourceAdName, 'video_title_rule', index + 1));
+  const videoOnlyDescriptionLabels = normalizedDescriptions.map((asset, index) => createLabel(sourceAdName, 'video_description_rule', index + 1));
 
     const imageAssets = orderedAssets.map((asset, index) => ({
       hash: safeString(asset.hash) || undefined,
@@ -1867,44 +2087,109 @@ for (const entry of jobEntries) {
       continue;
     }
 
-    const bodyAssets = normalizedBodies.map((asset) => ({
-      text: safeString(asset.text),
-      adlabels: bodyRuleLabels,
-    }));
+  const bodyAssets = normalizedBodies.map((asset, index) => ({
+    text: safeString(asset.text),
+    adlabels: mediaMode === 'video_only' ? [videoOnlyBodyLabels[index]] : bodyRuleLabels,
+  }));
 
-    const titleAssets = normalizedTitles.map((asset) => ({
-      text: safeString(asset.text).slice(0, 80),
-      adlabels: titleRuleLabels,
-    }));
+  const titleAssets = normalizedTitles.map((asset, index) => ({
+    text: safeString(asset.text).slice(0, 80),
+    adlabels: mediaMode === 'video_only' ? [videoOnlyTitleLabels[index]] : titleRuleLabels,
+  }));
 
-    const descriptionAssets = normalizedDescriptions.map((asset) => ({
-      text: safeString(asset.text),
+  const descriptionAssets = normalizedDescriptions.map((asset, index) => ({
+    text: safeString(asset.text),
+    adlabels: mediaMode === 'video_only' ? [videoOnlyDescriptionLabels[index]] : [descriptionRuleLabels[index]],
     }));
 
     const feedIndex = orderedAssets.findIndex((asset) => !['2x1', '9x16'].includes(asset.ratio));
     const bannerIndex = orderedAssets.findIndex((asset) => asset.ratio === '2x1');
     const verticalIndex = orderedAssets.findIndex((asset) => asset.ratio === '9x16');
-    const placementRules = [
+    const staticPlacementRules = [
       {
         customization_spec: { publisher_platforms: ['facebook', 'instagram'], facebook_positions: ['feed', 'marketplace'], instagram_positions: ['stream', 'explore'] },
-        image_label: imageLabels[feedIndex], body_label: bodyRuleLabels[feedIndex], title_label: titleRuleLabels[feedIndex], priority: 1,
+        image_label: imageLabels[feedIndex], body_label: bodyRuleLabels[feedIndex], title_label: titleRuleLabels[feedIndex], description_label: descriptionRuleLabels[0], priority: 1,
       },
       {
         customization_spec: { publisher_platforms: ['facebook'], facebook_positions: ['search'] },
-        image_label: imageLabels[bannerIndex], body_label: bodyRuleLabels[bannerIndex], title_label: titleRuleLabels[bannerIndex], priority: 2,
+        image_label: imageLabels[bannerIndex], body_label: bodyRuleLabels[bannerIndex], title_label: titleRuleLabels[bannerIndex], description_label: descriptionRuleLabels[1], priority: 2,
       },
       {
         customization_spec: { publisher_platforms: ['facebook', 'instagram'], facebook_positions: ['story', 'facebook_reels'], instagram_positions: ['story', 'reels'] },
         image_label: imageLabels[verticalIndex],
-        body_label: bodyRuleLabels[verticalIndex], title_label: titleRuleLabels[verticalIndex], priority: 3,
+        body_label: bodyRuleLabels[verticalIndex], title_label: titleRuleLabels[verticalIndex], description_label: descriptionRuleLabels[2], priority: 3,
       },
     ];
+
+    // A mixed group is a placement-customized vertical variation, never a
+    // second standalone video ad. The image is deliberately assigned to every
+    // requested vertical surface except rewarded video; the uploaded video is
+    // constrained to Audience Network rewarded video only.
+    const mixedPlacementRules = mediaMode === 'mixed' ? [
+      staticPlacementRules[0],
+      staticPlacementRules[1],
+      {
+        customization_spec: {
+          publisher_platforms: VERTICAL_PUBLISHER_PLATFORMS,
+          facebook_positions: VERTICAL_FACEBOOK_POSITIONS,
+          instagram_positions: VERTICAL_INSTAGRAM_POSITIONS,
+          audience_network_positions: VERTICAL_AUDIENCE_NETWORK_POSITIONS,
+          whatsapp_positions: VERTICAL_WHATSAPP_POSITIONS,
+        },
+        image_label: imageLabels[verticalIndex],
+        body_label: bodyRuleLabels[verticalIndex], title_label: titleRuleLabels[verticalIndex], description_label: descriptionRuleLabels[2], priority: 3,
+      },
+      {
+        customization_spec: {
+          publisher_platforms: VERTICAL_REWARDED_VIDEO_PLATFORMS,
+          audience_network_positions: VERTICAL_REWARDED_VIDEO_POSITIONS,
+        },
+        video_label: videoLabel,
+        body_label: bodyRuleLabels[verticalIndex], title_label: titleRuleLabels[verticalIndex], description_label: descriptionRuleLabels[3], priority: 4,
+      },
+    ] : staticPlacementRules;
+
+    // Meta requires at least two customization rules when placement
+    // personalization is enabled, and each rule may receive only one text
+    // asset of each type. The labels select one of the five preserved variants
+    // for each scope instead of letting every global variant match both rules.
+    const videoOnlyPlacementRules = mediaMode === 'video_only' ? [
+      {
+        customization_spec: {
+          publisher_platforms: VERTICAL_PUBLISHER_PLATFORMS,
+          facebook_positions: VIDEO_ONLY_FACEBOOK_POSITIONS,
+          instagram_positions: VIDEO_ONLY_INSTAGRAM_POSITIONS,
+          audience_network_positions: VERTICAL_AUDIENCE_NETWORK_POSITIONS,
+          whatsapp_positions: VIDEO_ONLY_WHATSAPP_POSITIONS,
+        },
+        video_label: videoLabel,
+        body_label: videoOnlyBodyLabels[0],
+        title_label: videoOnlyTitleLabels[0],
+        description_label: videoOnlyDescriptionLabels[0],
+        priority: 1,
+      },
+      {
+        customization_spec: {
+          publisher_platforms: VERTICAL_REWARDED_VIDEO_PLATFORMS,
+          audience_network_positions: VERTICAL_REWARDED_VIDEO_POSITIONS,
+        },
+        video_label: videoLabel,
+        body_label: videoOnlyBodyLabels[1],
+        title_label: videoOnlyTitleLabels[1],
+        description_label: videoOnlyDescriptionLabels[1],
+        priority: 2,
+      },
+    ] : [];
 
     const advantagePlusRequest = buildAdvantagePlusRequest({
       apiVersion: resolvedApiVersion,
       siteLinks,
       musicEligible: isMusicEligible(destinationMeta.placement_eligibility),
-      pacEligible: orderedAssets.length > 1 && placementRules.length > 1,
+      // pac_relaxation is represented by Ads Manager as "Mídia flexível".
+      // It remains disabled for video_only until a dedicated calibration proves
+      // that Meta preserves the full labelled placement contract.
+      pacEligible: orderedAssets.length > 1 && mixedPlacementRules.length > 1,
+      mediaMode,
     });
 
     const creativeRootExtras = removeEmptyFields({
@@ -1930,7 +2215,7 @@ for (const entry of jobEntries) {
             descriptions: descriptionAssets,
             link_urls: safeLinkUrls,
             call_to_action_types: ctaTypes,
-            asset_customization_rules: placementRules,
+            asset_customization_rules: staticPlacementRules,
           },
           ...creativeRootExtras,
         })
@@ -1957,28 +2242,62 @@ for (const entry of jobEntries) {
           ...creativeRootExtras,
         });
 
-    const videoCreativePayload = requiresVideo ? removeEmptyFields({
+    const mixedCreativePayload = mediaMode === 'mixed' ? removeEmptyFields({
+      name: finalAdName || sourceAdName,
+      object_story_spec: {
+        page_id: String(resolvedPageId),
+        instagram_user_id: resolvedInstagramUserId ? String(resolvedInstagramUserId) : undefined,
+      },
+      asset_feed_spec: {
+        // Meta accepts exactly one ad format per asset_feed_spec (1885374),
+        // while SINGLE_VIDEO rejects labelled image assets (1885718).
+        // AUTOMATIC_FORMAT is the single flexible envelope that can carry the
+        // image and video inventory together; placement rules still make the
+        // vertical video exclusive to rewarded video.
+        ad_formats: ['AUTOMATIC_FORMAT'],
+        optimization_type: 'PLACEMENT',
+        images: imageAssets,
+        videos: [{
+          video_id: safeString(uploadedVideo.video_id),
+          thumbnail_hash: safeString(uploadedVideoThumbnail.hash),
+          adlabels: [videoLabel],
+        }],
+        bodies: bodyAssets,
+        titles: titleAssets,
+        descriptions: descriptionAssets,
+        link_urls: safeLinkUrls,
+        call_to_action_types: ctaTypes,
+        asset_customization_rules: mixedPlacementRules,
+      },
+      ...creativeRootExtras,
+    }) : null;
+
+    const videoCreativePayload = mediaMode === 'video_only' ? removeEmptyFields({
       name: `${finalAdName || sourceAdName} [VIDEO]`,
       object_story_spec: {
         page_id: String(resolvedPageId),
         instagram_user_id: resolvedInstagramUserId ? String(resolvedInstagramUserId) : undefined,
-        video_data: {
-          video_id: safeString(uploadedVideo.video_id),
-          image_hash: safeString(uploadedVideoThumbnail.hash),
-          message: safeString(bodyAssets[0] && bodyAssets[0].text),
-          title: safeString(titleAssets[0] && titleAssets[0].text).slice(0, 80),
-          call_to_action: {
-            type: ctaTypes[0] || DEFAULT_CTA_TYPE,
-            value: { link: primaryLinkUrl },
-          },
-        },
       },
-      // Meta accepts a video creative through object_story_spec.video_data.
-      // Do not attach the image-only Advantage+ asset-feed configuration here.
+      asset_feed_spec: {
+        ad_formats: ['SINGLE_VIDEO'],
+        optimization_type: 'PLACEMENT',
+        videos: [{
+          video_id: safeString(uploadedVideo.video_id),
+          thumbnail_hash: safeString(uploadedVideoThumbnail.hash),
+          adlabels: [videoLabel],
+        }],
+        bodies: bodyAssets,
+        titles: titleAssets,
+        descriptions: descriptionAssets,
+        link_urls: safeLinkUrls,
+        call_to_action_types: ctaTypes,
+        asset_customization_rules: videoOnlyPlacementRules,
+      },
+      ...creativeRootExtras,
     }) : null;
 
     const creativeVariants = [
-      ...(requiresStaticImages ? [{
+      ...(mediaMode === 'static_only' ? [{
         media_variant: 'static_flexible',
         name_suffix: '[STATIC]',
         creativePayload: staticCreativePayload,
@@ -1990,7 +2309,29 @@ for (const entry of jobEntries) {
         requiredMediaRoles: ['feed_image', 'banner_image', 'vertical_image'],
         advantagePlusEnabled: true,
       }] : []),
-      ...(requiresVideo ? [{
+      ...(mediaMode === 'mixed' ? [{
+        media_variant: 'mixed_flexible',
+        name_suffix: '',
+        creativePayload: mixedCreativePayload,
+        assetIds: {
+          ...Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, safeString(asset.source_file_id)])),
+          vertical_video: safeString(safeArray(job.videos)[0] && safeArray(job.videos)[0].id),
+        },
+        assetNames: {
+          ...Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, safeString(asset.source_file_name || asset.original_filename)])),
+          vertical_video: safeString(safeArray(job.videos)[0] && (safeArray(job.videos)[0].original_name || safeArray(job.videos)[0].name)),
+        },
+        assetHashes: {
+          ...Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, safeString(asset.hash)])),
+          vertical_video: safeString(uploadedVideo.video_id),
+          vertical_video_thumbnail: safeString(uploadedVideoThumbnail.hash),
+        },
+        assetUrls: Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, toHttps(asset.url)])),
+        orderedRatios: [...orderedAssets.map((asset) => safeString(asset.ratio)), '9x16_video'],
+        requiredMediaRoles: ['feed_image', 'banner_image', 'vertical_image', 'vertical_video'],
+        advantagePlusEnabled: true,
+      }] : []),
+      ...(mediaMode === 'video_only' ? [{
         media_variant: 'video_single',
         name_suffix: '[VIDEO]',
         creativePayload: videoCreativePayload,
@@ -2000,7 +2341,7 @@ for (const entry of jobEntries) {
         assetUrls: {},
         orderedRatios: ['9x16_video'],
         requiredMediaRoles: ['vertical_video'],
-        advantagePlusEnabled: false,
+        advantagePlusEnabled: true,
       }] : []),
     ];
 
@@ -2016,26 +2357,24 @@ for (const entry of jobEntries) {
       ? Boolean(resolvedTokenId && resolvedAccountId && resolvedAdsetId && resolvedApiVersion && (requiresStaticImages ? orderedAssets.length : safeString(uploadedVideo.video_id)))
       : false;
 
-    const readyToReplaceAd = Boolean(resolvedTokenId && action === 'replace_existing' && resolvedSourceAdId && resolvedApiVersion && orderedAssets.length);
+    const readyToReplaceAd = Boolean(
+      resolvedTokenId && action === 'replace_existing' && resolvedSourceAdId && resolvedApiVersion &&
+      (requiresStaticImages ? orderedAssets.length : safeString(uploadedVideo.video_id))
+    );
 
     if (readyToReplaceAd) {
       claimedReplacementAdIds.add(resolvedSourceAdId);
     }
 
     for (const variant of creativeVariants) {
-      // Static and video variants must never collapse to the same name when a
-      // long source name reaches Meta's 255-character cap. Keep the variant
-      // discriminator and the commercial offer tag as the non-truncatable tail.
-      const variantAdName = buildVariantAdName(finalAdName || sourceAdName, variant.name_suffix, offerFingerprintTag);
+      // Only distinct physical variants receive a suffix. A mixed creative is
+      // intentionally the one canonical ad for its group and destination.
+      const variantAdName = variant.name_suffix
+        ? buildVariantAdName(finalAdName || sourceAdName, variant.name_suffix, offerFingerprintTag)
+        : (finalAdName || sourceAdName);
       const variantAdPayload = { ...adMutationPayload, name: variantAdName };
-      const reportedAdvantage = variant.advantagePlusEnabled ? advantagePlusRequest : {
-        desiredFeatures: [], requestedFeatures: [], eligibleFeatures: [],
-        skippedFeatures: ['video_single_creative_no_asset_feed_advantage_plus'],
-        skipReasons: { video_single_creative_no_asset_feed_advantage_plus: 'O creative de video usa object_story_spec.video_data, sem asset_feed_spec.' },
-        featureKeyMode: 'not_applicable_video_single', siteLinks: [], siteLinksEligible: false,
-        featureGroups: { main: [], essential: [], supplemental: [] },
-      };
-      if (variant.media_variant === 'static_flexible') variant.creativePayload.name = variantAdName;
+      const reportedAdvantage = advantagePlusRequest;
+      variant.creativePayload.name = variantAdName;
       outputs.push({
       json: {
         parent_job_key: safeString(job.job_key),
@@ -2106,7 +2445,9 @@ for (const entry of jobEntries) {
         destination_contract: publicDestinationContract(destinationContract),
         landing_page_source: landingPage.source,
         landing_page_configured_key: landingPage.configured_key,
-        desired_final_status: DEFAULT_AD_STATUS,
+        desired_final_status: desiredAdStatus,
+        calibration_mode: calibrationMode,
+        calibration_marker: calibrationMode ? CALIBRATION_FILE_PREFIX : '',
 
         creativePayload: variant.creativePayload,
         advantage_plus_request: {
@@ -2172,18 +2513,35 @@ for (const entry of jobEntries) {
         video_id: safeString(uploadedVideo.video_id),
         video_status: safeString(uploadedVideo.video_status),
         video_thumbnail_hash: safeString(uploadedVideoThumbnail.hash),
+        video_width: Number(uploadedVideo.width || 0),
+        video_height: Number(uploadedVideo.height || 0),
+        video_aspect_ratio: safeString(uploadedVideo.aspect_ratio),
+        video_recommended_aspect_ratio: safeString(uploadedVideo.recommended_aspect_ratio),
+        video_thumbnail_width: Number(uploadedVideo.preferred_thumbnail_width || 0),
+        video_thumbnail_height: Number(uploadedVideo.preferred_thumbnail_height || 0),
+        video_thumbnail_aspect_ratio: safeString(uploadedVideo.preferred_thumbnail_aspect_ratio),
 
         readyToCreateCreative,
         readyToCreateAd,
         readyToReplaceAd,
 
-        creative_mode: variant.media_variant === 'video_single' ? 'video_single' : (action === 'replace_existing' || useFlexibleCreative ? 'flexible_required' : 'single_image'),
-        creative_quality_status: variant.media_variant === 'video_single' ? 'video_single_payload_prepared' : (useFlexibleCreative ? 'flexible_payload_prepared' : 'single_image_payload_prepared'),
+        creative_mode: variant.media_variant === 'video_single'
+          ? 'video_single_asset_feed'
+          : (variant.media_variant === 'mixed_flexible'
+            ? 'mixed_flexible'
+            : (action === 'replace_existing' || useFlexibleCreative ? 'flexible_required' : 'single_image')),
+        creative_quality_status: variant.media_variant === 'video_single'
+          ? 'video_single_asset_feed_payload_prepared'
+          : (variant.media_variant === 'mixed_flexible'
+            ? 'mixed_flexible_payload_prepared'
+            : (useFlexibleCreative ? 'flexible_payload_prepared' : 'single_image_payload_prepared')),
         creative_quality_requirements: {
-          require_asset_feed_spec: variant.media_variant !== 'video_single' && (action === 'replace_existing' || useFlexibleCreative),
+          require_asset_feed_spec: variant.media_variant === 'video_single' || action === 'replace_existing' || useFlexibleCreative,
           min_images: variant.media_variant === 'video_single' ? 0 : (action === 'replace_existing' || useFlexibleCreative ? 3 : 1),
-          min_bodies: variant.media_variant === 'video_single' ? 0 : (action === 'replace_existing' || useFlexibleCreative ? 5 : 1),
-          min_titles: variant.media_variant === 'video_single' ? 0 : (action === 'replace_existing' || useFlexibleCreative ? 5 : 1),
+          min_videos: variant.media_variant === 'mixed_flexible' ? 1 : (variant.media_variant === 'video_single' ? 1 : 0),
+          min_bodies: variant.media_variant === 'video_single' ? 5 : (action === 'replace_existing' || useFlexibleCreative ? 5 : 1),
+          min_titles: variant.media_variant === 'video_single' ? 5 : (action === 'replace_existing' || useFlexibleCreative ? 5 : 1),
+          min_descriptions: 5,
         },
         allow_fallback_creative: false,
         blocked_before_update: false,
