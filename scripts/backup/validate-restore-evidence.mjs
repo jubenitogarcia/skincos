@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+const file = process.argv[2];
+if (!file) throw new Error('Usage: node scripts/backup/validate-restore-evidence.mjs <evidence.json>');
+const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+const required = ['asset', 'sourceSnapshot', 'target', 'startedAt', 'completedAt', 'checksum', 'restoreVerified', 'validation', 'operator'];
+for (const field of required) if (!value[field]) throw new Error(`Restore evidence missing ${field}`);
+if (value.restoreVerified !== true) throw new Error('Restore evidence is not verified');
+if (!['scratch', 'isolated'].includes(String(value.target.kind || '').toLowerCase())) throw new Error('Restore target must be scratch or isolated');
+if (String(value.target.environment || '').toLowerCase() === 'production') throw new Error('Production is never a restore-drill target');
+if (!/^[a-f0-9]{64}$/i.test(String(value.checksum))) throw new Error('Restore evidence checksum must be SHA-256');
+console.log(JSON.stringify({ ok: true, asset: value.asset, target: value.target, completedAt: value.completedAt }));

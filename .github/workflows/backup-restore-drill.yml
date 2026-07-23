@@ -1,0 +1,55 @@
+name: Backup restore drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset:
+        description: Asset class to restore into an isolated target
+        required: true
+        type: choice
+        options: [d1-critical, postgres, r2, configuration, operational-state]
+      confirm:
+        description: Type RESTORE_DRILL_ISOLATED
+        required: true
+        type: string
+  schedule:
+    - cron: '17 4 1 * *'
+
+concurrency:
+  group: backup-restore-drill-${{ inputs.asset || 'scheduled' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.confirm == 'RESTORE_DRILL_ISOLATED') || (github.event_name == 'schedule' && vars.ENABLE_BACKUP_RESTORE_DRILL == 'true') }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - name: Guard isolated restore operator
+        env:
+          COMMAND: ${{ vars.BACKUP_RESTORE_DRILL_COMMAND }}
+          OFFSITE_TARGET: ${{ vars.OFFSITE_BACKUP_TARGET }}
+          AGE_RECIPIENT: ${{ vars.OFFSITE_BACKUP_AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          for name in COMMAND OFFSITE_TARGET AGE_RECIPIENT; do [[ -n "${!name:-}" ]] || { echo "Missing required recovery configuration: $name"; exit 1; }; done
+      - name: Execute restore only in a scratch target
+        env:
+          ASSET: ${{ inputs.asset || 'operational-state' }}
+          EVIDENCE_FILE: ${{ runner.temp }}/restore-evidence.json
+          BACKUP_RESTORE_DRILL_COMMAND: ${{ vars.BACKUP_RESTORE_DRILL_COMMAND }}
+        run: |
+          set -euo pipefail
+          eval "$BACKUP_RESTORE_DRILL_COMMAND"
+          test -s "$EVIDENCE_FILE"
+          node scripts/backup/validate-restore-evidence.mjs "$EVIDENCE_FILE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: restore-drill-${{ inputs.asset || 'scheduled' }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/restore-evidence.json
+          retention-days: 730
+          if-no-files-found: error

@@ -33,6 +33,12 @@ Este documento define os SLOs mínimos, a rota de alerta e a disciplina operacio
 
 Até existirem times GitHub por domínio, o owner humano único deve manter a matriz acima atualizada em `docs/service-catalog.md`.
 
+## Monitoramento externo primário
+
+O primário é **Uptime Kuma + Prometheus/Grafana auto-hospedados** no runtime do operador, fora do GitHub e da Cloudflare. Importe [ops/observability/catalog.json](../ops/observability/catalog.json) como a lista autoritativa de probes e [o dashboard versionado](../ops/observability/grafana/skincos-critical-services.json). Cada alerta deve conter `unit`, ambiente, versão, impacto, causa provável e os módulos saudáveis; não incluir URL com query, IP, ator, payload ou segredo.
+
+O GitHub workflow abaixo é somente uma segunda opinião, nunca o monitor primário.
+
 ## Alertas automáticos (GitHub Actions)
 
 Workflow: `.github/workflows/uptime-slo.yml`

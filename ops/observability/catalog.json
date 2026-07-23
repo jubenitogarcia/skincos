@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "externalMonitoring": { "preferred": "self-hosted Uptime Kuma plus Grafana/Prometheus on the operator runtime", "forbiddenAsPrimary": ["GitHub Actions", "Cloudflare"], "reason": "A Cloudflare or GitHub incident must not suppress the only alert." },
+  "contract": { "health": "liveness without writes", "readiness": "required dependencies available", "fields": ["unit", "version", "environment", "request_id", "dependencies"] },
+  "units": [
+    { "id": "api", "endpoint": "https://api.skincos.com.br/health", "readiness": "https://api.skincos.com.br/readiness", "dashboard": "skincos-critical-services", "alert": { "availability": "2 failed probes/2m", "latency": "p95 > 800ms/5m", "impact": "Gateway routes may degrade; direct module Workers remain isolated." } },
+    { "id": "inventory", "endpoint": "https://api.skincos.com.br/insumos/health", "readiness": "https://api.skincos.com.br/insumos/readiness", "dashboard": "skincos-d1-and-workers", "alert": { "availability": "2 failed probes/2m", "latency": "p95 > 800ms/5m", "impact": "Inventory only; CRM shell and other modules remain healthy." } },
+    { "id": "finance", "endpoint": "https://api.skincos.com.br/finance/health", "readiness": "https://api.skincos.com.br/finance/readiness", "dashboard": "skincos-d1-and-workers", "alert": { "availability": "2 failed probes/2m", "latency": "p95 > 1000ms/5m", "impact": "Finance pilot only; gateway and Inventory remain healthy." } },
+    { "id": "timekeeping", "endpoint": "https://api.skincos.com.br/api/ponto/health", "readiness": "https://api.skincos.com.br/api/ponto/readiness", "dashboard": "skincos-d1-and-workers", "alert": { "availability": "2 failed probes/2m", "latency": "p95 > 800ms/5m", "impact": "Ponto only; CRM core remains healthy." } },
+    { "id": "crm", "endpoint": "https://crm.skincos.com.br/health", "readiness": "https://crm.skincos.com.br/readiness", "dashboard": "skincos-crm-postgres", "alert": { "availability": "2 failed probes/2m", "latency": "p95 > 1000ms/5m", "impact": "CRM transport may be unavailable; Workers remain independently healthy." } },
+    { "id": "atendimento", "endpoint": "${CRM_ATENDIMENTO_HEALTH_URL}", "readiness": "${CRM_ATENDIMENTO_READINESS_URL}", "dashboard": "skincos-crm-postgres", "alert": { "availability": "2 failed probes/2m", "latency": "p95 > 1000ms/5m", "impact": "Atendimento only; CRM shell shows module maintenance/degraded state." } }
+  ]
+}

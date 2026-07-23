@@ -1,0 +1,11 @@
+{
+  "title": "SKINCOS Critical Services",
+  "tags": ["skincos", "operations"],
+  "templating": { "list": [{ "name": "environment", "type": "custom", "query": "staging,production" }, { "name": "unit", "type": "custom", "query": "api,inventory,finance,timekeeping,crm,atendimento" }] },
+  "panels": [
+    { "title": "Availability by unit", "type": "stat", "query": "probe_success{job=~\"skincos-.*\",environment=\"$environment\"}" },
+    { "title": "p95 probe latency", "type": "timeseries", "query": "histogram_quantile(0.95,sum(rate(probe_duration_seconds_bucket{environment=\"$environment\"}[5m])) by (le,unit))" },
+    { "title": "Dependencies unavailable", "type": "table", "query": "skincos_dependency_state{state=~\"unavailable|degraded\"}" }
+  ],
+  "alertRuleContract": { "requiredLabels": ["unit", "environment", "version", "impact", "probable_cause", "healthy_modules"], "runbook": "docs/observability.md" }
+}
