@@ -10,7 +10,7 @@ cp ../../config/templates/modules/meta-ads/.env.example ./apps/api/.env
 cp ../../config/templates/modules/meta-ads/.env.example ./apps/worker/.env
 ```
 
-2. Ajuste `DATABASE_URL`, `REDIS_URL` e `ENCRYPTION_MASTER_KEY`.
+2. Ajuste `META_APP_DATABASE_URL`, `META_MIGRATIONS_DATABASE_URL`, `REDIS_URL` e `ENCRYPTION_MASTER_KEY`. As duas URLs usam roles distintos; ambas exigem TLS verificado fora do ambiente local.
 
 3. Suba o banco/redis (separado do CRM):
 
@@ -21,7 +21,7 @@ docker compose up -d
 4. Migre e rode:
 
 ```
-pnpm prisma migrate dev
+pnpm --filter @meta/db migrate:deploy
 pnpm --filter @meta/db seed
 ./../../scripts/meta-ads.sh start
 ```

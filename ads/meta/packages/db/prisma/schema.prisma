@@ -4,7 +4,8 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("META_APP_DATABASE_URL")
+  directUrl = env("META_MIGRATIONS_DATABASE_URL")
 }
 
 enum Role {
