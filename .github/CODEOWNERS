@@ -1,22 +1,36 @@
-# Default owner
+# Transitional ownership: the repository has one human owner until the
+# Organization teams in docs/runbooks/github-enterprise-governance.md exist.
 * @jubenitogarcia
 
-# CI / workflows
+# Delivery control plane and repository-wide governance
 /.github/ @jubenitogarcia
-
-# Public website
-/website/ @jubenitogarcia
-
-# CRM / Pages frontend
-/frontend/ @jubenitogarcia
-
-# Backend services
-/backend/ @jubenitogarcia
-
-# Repo hygiene
-/.pre-commit-config.yaml @jubenitogarcia
-/.flake8 @jubenitogarcia
-/.editorconfig @jubenitogarcia
-/Makefile @jubenitogarcia
-/README.md @jubenitogarcia
+/.githooks/ @jubenitogarcia
+/.codex/ @jubenitogarcia
 /docs/ @jubenitogarcia
+/ops/ @jubenitogarcia
+/platform/ @jubenitogarcia
+/scripts/ @jubenitogarcia
+
+# Product and operational domains
+/website/ @jubenitogarcia
+/crm/console/ @jubenitogarcia
+/crm/api/ @jubenitogarcia
+/api/ @jubenitogarcia
+/booking/ @jubenitogarcia
+/inventory/ @jubenitogarcia
+/finance/ @jubenitogarcia
+/workforce/timekeeping/ @jubenitogarcia
+/workforce/schedule/ @jubenitogarcia
+/ads/ @jubenitogarcia
+/social/ @jubenitogarcia
+/messaging/ @jubenitogarcia
+/orb/ @jubenitogarcia
+/integration/ @jubenitogarcia
+
+# Shared data, compatibility roots and build contracts
+/shared/ @jubenitogarcia
+/db/ @jubenitogarcia
+/backend/ @jubenitogarcia
+/Makefile @jubenitogarcia
+/package.json @jubenitogarcia
+/README.md @jubenitogarcia

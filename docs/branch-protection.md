@@ -2,7 +2,11 @@
 
 Objetivo: bloquear push direto em `main` e exigir PR com checks verdes.
 
-## Checklist (Settings → Branches → Add rule)
+## Estado canônico
+
+O contrato versionado está em `.github/governance/main-ruleset.json`. O ruleset ativo `main-enterprise-baseline` deve coexistir temporariamente com a proteção legada até a migração para Organization; ambos mantêm os mesmos checks e bloqueiam force push e exclusão.
+
+## Checklist (Settings → Rules → Rulesets)
 
 - Branch name pattern: `main`
 - Require a pull request before merging
@@ -19,9 +23,10 @@ Objetivo: bloquear push direto em `main` e exigir PR com checks verdes.
 - Do not allow bypassing the above settings: `true` (enforce_admins)
 - Allow force pushes: `false`
 - Allow deletions: `false`
+- Require conversation resolution: `true`
 
 ## Observações
 
-- Se precisar de aprovações no futuro: usar `CODEOWNERS` + “Require review from Code Owners” e um usuário humano/bot dedicado para reviews.
+- Depois de criar os times da Organization: usar `CODEOWNERS` + “Require review from Code Owners”, uma aprovação e `require_last_push_approval=true`. Não ativar isso antes: o repositório ainda tem somente um operador elegível.
 - Para deploy automático: manter os workflows de deploy disparando apenas após merge em `main` (nunca em PR).
 - Auto-merge fica desabilitado. O merge é uma ação controlada após confirmar checks obrigatórios, ausência de vulnerabilidade crítica/alta alcançável, rollback e superfícies afetadas.

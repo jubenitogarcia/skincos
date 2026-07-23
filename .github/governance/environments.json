@@ -1,0 +1,17 @@
+{
+  "staging": {
+    "deployment_branch_policy": {
+      "protected_branches": true,
+      "custom_branch_policies": false
+    },
+    "required_reviewers": "none while the repository has one operator"
+  },
+  "production": {
+    "deployment_branch_policy": {
+      "protected_branches": true,
+      "custom_branch_policies": false
+    },
+    "required_reviewers": "add the platform-release team after Organization migration",
+    "prevent_self_review": true
+  }
+}
