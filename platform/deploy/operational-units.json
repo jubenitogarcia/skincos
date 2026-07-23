@@ -110,6 +110,17 @@
       "scope": "Configuration surface only; publishing remains exclusively in deploy-meta-ads-report-worker.yml."
     }
   ],
+  "externalPublisherControls": [
+    {
+      "id": "cloudflare-pages-skincos-git-source",
+      "provider": "Cloudflare Pages",
+      "project": "skincos",
+      "sourceRepository": "jubenitogarcia/skincos",
+      "productionDeploymentsEnabled": false,
+      "previewDeploymentSetting": "none",
+      "verification": "Read the Pages project source config before every release-governance change; the Git source remains connected only for repository metadata, never for publication."
+    }
+  ],
   "retiredWorkflowPaths": [
     ".github/workflows/deploy-core-workers-reconcile.yml",
     ".github/workflows/deploy-insumos-worker.yml",
