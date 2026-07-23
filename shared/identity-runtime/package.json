@@ -1,0 +1,5 @@
+{
+  "name": "@skincos/identity-runtime-adapter",
+  "private": true,
+  "type": "module"
+}

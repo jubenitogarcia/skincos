@@ -17,6 +17,21 @@
       "owner": "crm"
     },
     {
+      "id": "identity-actor-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/identity-contract/**"],
+      "consumers": ["api", "crm", "finance", "identity", "inventory", "workforce"],
+      "owner": "identity"
+    },
+    {
+      "id": "identity-runtime-adapter-v1",
+      "kind": "adapter",
+      "paths": ["shared/identity-runtime/**"],
+      "consumers": ["api", "inventory"],
+      "owner": "identity",
+      "providesFor": "identity"
+    },
+    {
       "id": "module-sdk-v1",
       "kind": "sdk",
       "paths": ["shared/module-sdk/**"],
@@ -56,9 +71,9 @@
     {
       "from": "inventory",
       "to": "identity",
-      "contractId": "module-sdk-v1",
-      "path": "shared/module-sdk/README.md",
-      "usage": "use a stable actor contract or service adapter, never an Identity implementation import"
+      "contractId": "identity-runtime-adapter-v1",
+      "path": "shared/identity-runtime/README.md",
+      "usage": "use the registered Identity runtime adapter; do not import Identity implementation directly"
     }
   ],
   "legacyDirectImports": [
@@ -96,13 +111,6 @@
       "replacementContractId": "module-sdk-v1",
       "deadline": "2026-08-31",
       "reason": "The Finance smoke borrows CRM's dependency tree and needs a Finance-owned test-runtime adapter."
-    },
-    {
-      "from": "shared/crm-auth/worker.js",
-      "specifier": "../../inventory/src/d1Store.js",
-      "replacementContractId": "crm-auth-adapter-v1",
-      "deadline": "2026-09-30",
-      "reason": "The shared CRM auth helper still reaches the Inventory store and must be inverted behind an injected repository adapter."
     }
   ]
 }

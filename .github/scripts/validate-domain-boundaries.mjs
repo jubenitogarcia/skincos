@@ -94,6 +94,11 @@ for (const contract of policy.contracts ?? []) {
     continue;
   }
   if (contractsById.has(contract.id)) fail(`duplicate shared contract id ${contract.id}`);
+  if (contract.providesFor !== undefined && (
+    contract.kind !== "adapter" || !nonEmptyString(contract.providesFor) || !governedRoots.has(contract.providesFor)
+  )) {
+    fail(`contract ${contract.id} providesFor must name a governed domain and is only valid for an adapter`);
+  }
   contractsById.set(contract.id, contract);
   for (const contractPath of contract.paths) {
     if (!nonEmptyString(contractPath) || !contractPath.startsWith("shared/")) {
@@ -159,12 +164,19 @@ for (const domain of governedRoots) {
 
       const legacyKey = `${relativeSource}:${imported.specifier}`;
       const legacy = legacyImports.get(legacyKey);
+      const authorizedAdapter = sourceRoot === "shared" && [...contractsById.values()].find((contract) =>
+        contract.kind === "adapter" &&
+        contract.providesFor === target.targetRoot &&
+        contract.paths.some((contractPath) => pathMatches(relativeSource, contractPath)),
+      );
       const recommendation = recommendations.get(`${sourceRoot}:${target.targetRoot}`);
       const recommendationText = recommendation
         ? `Use ${recommendation.contractId} (${recommendation.path}): ${recommendation.usage}.`
         : "Define the required contract, SDK or adapter under shared/ before crossing this boundary.";
 
-      if (sourceRoot === "shared" && !legacy) {
+      if (authorizedAdapter) {
+        continue;
+      } else if (sourceRoot === "shared" && !legacy) {
         fail(`${relativeSource}:${imported.line}: shared must not import ${target.targetRoot} implementation ${target.relativeTarget}. Move the neutral projection/adapter into shared. ${recommendationText}`);
       } else if (!legacy) {
         fail(`${relativeSource}:${imported.line}: forbidden direct implementation import ${sourceRoot} -> ${target.targetRoot} (${imported.specifier}). ${recommendationText}`);
