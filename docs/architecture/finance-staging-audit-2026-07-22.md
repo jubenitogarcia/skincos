@@ -19,8 +19,9 @@ controladas de validação no staging. Ele não autoriza produção.
 O D1 de staging já continha uma baseline Financeiro compatível até a versão 6,
 mas sem um diário que o domínio pudesse consumir com segurança. A reconciliação
 explícita registrou `0001` a `0006` como `adopted`, depois aplicou `0007` a
-`0011` como `applied`. A consulta remota de 2026-07-22 confirmou as onze linhas
-e respectivos checksums em `finance_release_migrations`.
+`0011` como `applied`. O journal usa a coluna `id` (não `version`); a consulta
+remota de 2026-07-22 confirmou as onze linhas e respectivos checksums em
+`finance_release_migrations`.
 
 Uma primeira execução do workflow falhou após a escrita porque o script
 identificava entries do JSON por formatação textual. O journal foi corrigido
