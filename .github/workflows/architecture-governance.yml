@@ -16,3 +16,4 @@ jobs:
       - run: node .github/scripts/validate-architecture.mjs
       - run: node .github/scripts/validate-github-governance.mjs
       - run: node .github/scripts/validate-deploy-topology.mjs
+      - run: node .github/scripts/validate-progressive-release.mjs

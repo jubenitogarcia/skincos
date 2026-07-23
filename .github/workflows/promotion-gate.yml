@@ -38,8 +38,13 @@ jobs:
             exit 1
           fi
           source_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
+          git fetch --no-tags origin main
           git fetch --no-tags --depth=1 origin "$source_sha"
           git cat-file -e "$source_sha^{commit}"
+          git merge-base --is-ancestor "$source_sha" origin/main || {
+            echo "::error::$source_sha is not reachable from origin/main."
+            exit 1
+          }
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
       - name: Block unsupported staging target
         if: ${{ inputs.target == 'staging' && !inputs.staging_supported }}
