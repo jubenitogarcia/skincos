@@ -464,9 +464,16 @@ start_insumos_local() {
   ensure_insumos_seed_config
   ensure_insumos_local_schema
   echo "[crm-local] Iniciando Worker local do Insumos em :$CRM_INSUMOS_PORT"
+  # The local Worker reads this flag at process start. Export it before
+  # spawning Wrangler so the Pages local-auth proxy and Insumos agree on the
+  # scoped Gestor test identity.
+  local auth_bypass="${ALLOW_DEV_AUTH_BYPASS:-}"
+  if [[ "$CRM_PROFILE" == "realistic" ]]; then
+    auth_bypass=true
+  fi
   (
     cd "$ROOT_DIR"
-    PORT="$CRM_INSUMOS_PORT" ./backend/scripts/insumos.sh dev \
+    ALLOW_DEV_AUTH_BYPASS="$auth_bypass" PORT="$CRM_INSUMOS_PORT" ./backend/scripts/insumos.sh dev \
       --log-level "$CRM_LOCAL_LOG_LEVEL" \
       --show-interactive-dev-session false \
       --test-scheduled
