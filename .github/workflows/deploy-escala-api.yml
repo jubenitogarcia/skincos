@@ -17,6 +17,10 @@ concurrency:
   group: deploy-escala-api-${{ inputs.target }}
   cancel-in-progress: false
 
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   promotion:
     uses: ./.github/workflows/promotion-gate.yml
