@@ -163,3 +163,34 @@ ela verifica os objetos das versões históricas antes de registrar `0001` a
 aplica todas em sequência. O script falha se detectar checksum diferente.
 
 Nenhum recurso de produção foi consultado ou alterado nesta auditoria.
+
+## Janela controlada da versão atual — 2026-07-23
+
+Antes da janela foi exportado o D1 de staging para o armazenamento privado do
+operador e o artefato recebeu checksum SHA-256 verificável. O export não foi
+adicionado ao repositório. A janela usou três identidades efêmeras e explícitas:
+sem módulo, com módulo sem grant e operador Financeiro; todas foram desativadas
+ao término com incremento de `session_version`.
+
+Com a flag desligada, a identidade sem `finance` recebeu
+`403 FINANCE_MODULE_DENIED`; as identidades com módulo, mas sem grant, receberam
+bootstrap `200` com `moduleEnabled=false` e `canAccess=false`. Durante a janela
+com a flag temporariamente ligada, o grant isolado de Novo Hamburgo bloqueou
+BarraShoppingSul e pessoal com `403 SCOPE_DENIED`; o grant isolado de
+BarraShoppingSul bloqueou Novo Hamburgo e pessoal da mesma forma. O caso com
+ambos os grants foi validado pelo Pages real e exibiu somente as duas unidades
+empresariais.
+
+Foram criadas por API uma conta, receita, despesa e transferência controladas.
+A repetição idempotente retornou a operação original e a mesma chave com payload
+distinto retornou `409`. A consulta de razão não encontrou partidas
+desbalanceadas; uma tentativa direta de alterar `finance_audit_events` foi
+rejeitada pelo trigger append-only. O CSV brasileiro foi importado, confirmado
+e desfeito por estorno auditável; sua reimportação retornou o lote existente.
+MoneyWiz foi normalizado em staging e Caixa EF reconheceu reprocessamento sem
+regravar movimentos.
+
+Ao encerrar: `module_enabled=false`, zero linhas em
+`finance_access_grants`, zero grants pessoais e zero identidades de controle
+ativas. Lotes, movimentos, estornos e auditoria permanecem como evidência de
+staging. Produção não foi consultada ou alterada.
