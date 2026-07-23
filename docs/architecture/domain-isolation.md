@@ -8,8 +8,9 @@ nos domínios catalogados e aplica estas regras:
 2. um consumidor só pode importar `shared/**` quando o caminho for um contrato,
    SDK ou adapter registrado em `shared/domain-boundaries.json` e autorizar
    aquele consumidor;
-3. `shared` não pode importar código de produto: uma projeção neutra deve ser
-   movida para o próprio adapter compartilhado;
+3. `shared` não pode importar código de produto, exceto em um adapter registrado
+   com `providesFor`: esse adapter é a única fachada autorizada para a
+   implementação do domínio dono;
 4. toda violação nova falha indicando `arquivo:linha`, fronteira, contrato
    recomendado e forma de uso.
 
@@ -25,8 +26,8 @@ dívidas com arquivo, specifier, motivo, contrato de substituição e prazo. O C
 emite uma anotação para cada uma e passa a falhar após o prazo; quando a
 migração termina, a entrada precisa ser removida no mesmo PR.
 
-Baseline atual: seis dívidas estão registradas no manifesto, cada uma com
-arquivo, specifier, contrato alvo e prazo verificável pelo CI. Elas cobrem os
-mounts transitórios API → Inventory/Finance, o helper compartilhado → Inventory,
-um teste CRM → Inventory e o smoke Finance → dependência local do CRM. Nenhuma
-nova importação direta recebe exceção automática.
+Baseline atual: cinco dívidas históricas estão registradas no manifesto, cada
+uma com arquivo, specifier, contrato alvo e prazo verificável pelo CI. Elas
+cobrem os mounts transitórios API → Inventory/Finance, um teste CRM → Inventory
+e o smoke Finance → dependência local do CRM. A sessão Identity usa o adapter
+registrado `identity-runtime-adapter-v1`, sem exceção permanente para Inventory.
