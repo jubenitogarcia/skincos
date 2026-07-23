@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "defaults": {
+    "optionalTimeoutMs": 800,
+    "failureThreshold": 2,
+    "cooldownMs": 15000,
+    "delivery": "Optional dependencies return a degraded response with pendingSynchronization=true; they never block module health or an already-committed origin transaction."
+  },
+  "modules": {
+    "ads": { "hard": ["shared"], "optional": { "orb": { "cache": "safe-read-only", "degraded": "retain last report snapshot", "pendingSynchronization": "report refresh pending" } } },
+    "api": { "hard": ["shared"], "optional": { "identity": { "cache": "none", "degraded": "deny only the affected authenticated request", "pendingSynchronization": "identity verification pending" }, "finance": { "cache": "none", "degraded": "return finance domain unavailable", "pendingSynchronization": "finance request not accepted" }, "inventory": { "cache": "none", "degraded": "return inventory domain unavailable", "pendingSynchronization": "inventory projection pending" }, "workforce": { "cache": "none", "degraded": "return workforce domain unavailable", "pendingSynchronization": "workforce projection pending" } } },
+    "booking": { "hard": ["shared"], "optional": { "integration": { "cache": "none", "degraded": "retain booking request for operator recovery", "pendingSynchronization": "provider confirmation pending" }, "workforce": { "cache": "safe-read-only", "degraded": "show last approved availability", "pendingSynchronization": "availability refresh pending" } } },
+    "crm": { "hard": ["shared"], "optional": { "ads": { "cache": "safe-read-only", "degraded": "show stale reporting", "pendingSynchronization": "ads projection pending" }, "api": { "cache": "none", "degraded": "isolate unavailable gateway capability", "pendingSynchronization": "gateway request pending" }, "booking": { "cache": "safe-read-only", "degraded": "show controlled contact path", "pendingSynchronization": "booking confirmation pending" }, "finance": { "cache": "none", "degraded": "keep finance module unavailable", "pendingSynchronization": "finance projection pending" }, "inventory": { "cache": "safe-read-only", "degraded": "mark stock availability stale", "pendingSynchronization": "inventory projection pending" }, "messaging": { "cache": "none", "degraded": "queue no message from UI", "pendingSynchronization": "message delivery pending" }, "service": { "cache": "none", "degraded": "isolate service capability", "pendingSynchronization": "service sync pending" }, "social": { "cache": "safe-read-only", "degraded": "show last publication status", "pendingSynchronization": "social status refresh pending" }, "workforce": { "cache": "safe-read-only", "degraded": "show last schedule snapshot", "pendingSynchronization": "workforce refresh pending" } } },
+    "finance": { "hard": ["shared"], "optional": { "integration": { "cache": "none", "degraded": "retain import staging without posting", "pendingSynchronization": "import reconciliation pending" } } },
+    "identity": { "hard": ["shared"], "optional": {} },
+    "integration": { "hard": ["shared"], "optional": {} },
+    "inventory": { "hard": ["shared"], "optional": {} },
+    "messaging": { "hard": ["shared"], "optional": {} },
+    "ops": { "hard": ["shared"], "optional": { "booking": { "cache": "none", "degraded": "skip booking probe", "pendingSynchronization": "booking check pending" }, "crm": { "cache": "none", "degraded": "skip CRM probe", "pendingSynchronization": "CRM check pending" }, "messaging": { "cache": "none", "degraded": "skip messaging probe", "pendingSynchronization": "messaging check pending" }, "orb": { "cache": "none", "degraded": "skip workflow probe", "pendingSynchronization": "Orb check pending" }, "platform": { "cache": "none", "degraded": "skip platform probe", "pendingSynchronization": "platform check pending" } } },
+    "orb": { "hard": ["shared"], "optional": { "integration": { "cache": "none", "degraded": "fail only the workflow task", "pendingSynchronization": "connector task pending" } } },
+    "platform": { "hard": ["shared"], "optional": {} },
+    "service": { "hard": ["shared"], "optional": { "booking": { "cache": "safe-read-only", "degraded": "use controlled contact path", "pendingSynchronization": "booking sync pending" }, "integration": { "cache": "none", "degraded": "isolate connector action", "pendingSynchronization": "connector sync pending" } } },
+    "shared": { "hard": [], "optional": {} },
+    "social": { "hard": ["shared"], "optional": { "orb": { "cache": "safe-read-only", "degraded": "retain last publication state", "pendingSynchronization": "publication sync pending" } } },
+    "website": { "hard": ["shared"], "optional": { "ads": { "cache": "safe-read-only", "degraded": "render without reporting", "pendingSynchronization": "ads sync pending" }, "api": { "cache": "none", "degraded": "keep public page usable", "pendingSynchronization": "API request pending" }, "booking": { "cache": "none", "degraded": "show manual contact path", "pendingSynchronization": "booking confirmation pending" }, "workforce": { "cache": "safe-read-only", "degraded": "show last approved availability", "pendingSynchronization": "availability sync pending" } } },
+    "workforce": { "hard": ["shared"], "optional": {} }
+  }
+}

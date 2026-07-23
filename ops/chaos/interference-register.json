@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-23",
+  "items": [
+    {
+      "id": "CHAOS-001",
+      "priority": "P1",
+      "status": "fixed",
+      "interference": "Finance returned HTTP 200 from /readiness when its D1 binding was absent, allowing an unavailable Finance data path to look ready.",
+      "correction": "Finance /readiness now returns 503 whenever D1 is absent or the module is not active; /health remains a liveness endpoint.",
+      "evidence": "finance/test/edge-worker.test.mjs"
+    },
+    {
+      "id": "CHAOS-002",
+      "priority": "P1",
+      "status": "fixed",
+      "interference": "An unexpected exception from the Identity resolver could escape the Finance gateway path instead of producing a controlled dependency failure.",
+      "correction": "The Finance mount now returns 503 IDENTITY_UNAVAILABLE and does not invoke Finance; unrelated gateway mounts continue normally.",
+      "evidence": "api/test/gateway.test.mjs"
+    },
+    {
+      "id": "CHAOS-003",
+      "priority": "P1",
+      "status": "fixed",
+      "interference": "The Finance D1 integration test imported miniflare without declaring it in the module, and the release workflow ran Finance tests before installing module dependencies.",
+      "correction": "Finance now pins miniflare in devDependencies with a committed lockfile, the Finance deployment workflow installs the locked dependencies before source validation, and the Finance test command has a bounded per-test timeout.",
+      "evidence": "finance/package.json, finance/package-lock.json and .github/workflows/deploy-finance.yml"
+    }
+  ],
+  "coverageGaps": [
+    {
+      "priority": "P2",
+      "status": "open",
+      "gap": "After its dependency was installed, the full Finance Miniflare D1 integration suite did not complete within the 120-second local execution limit. The focused Finance edge tests and the local chaos D1 readiness scenario pass.",
+      "nextStep": "Diagnose Miniflare/workerd startup in an isolated Linux CI job with bounded per-test timeouts; retain the suite as a required Finance gate only after it has a reproducible completion signal."
+    },
+    {
+      "priority": "P2",
+      "status": "open",
+      "gap": "CRM aggregate /readiness currently confirms PostgreSQL configuration rather than a live bounded SELECT 1. The suite validates transaction rollback with a failing pool but does not inject a production CRM process fault.",
+      "nextStep": "Add a separately pooled, bounded PostgreSQL readiness probe and execute it first in isolated staging; do not make the production health path depend on an unbounded connection attempt."
+    },
+    {
+      "priority": "P2",
+      "status": "open",
+      "gap": "No deployed queue consumer is registered for the transactional outbox yet; the suite verifies that a queue outage cannot block the producer, not end-to-end retry/DLQ delivery.",
+      "nextStep": "When the first consumer is deployed, add staging-only retry, dead-letter and reconciliation evidence before enabling its flag."
+    }
+  ]
+}

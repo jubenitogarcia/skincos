@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "mode": "local-in-memory-only",
+  "safety": ["No production URL, credential, queue, database or Cloudflare API is contacted.", "Faults are injected through local mocks, absent bindings or failing functions.", "A scenario must assert both the affected capability and an unrelated control flow."],
+  "scenarios": [
+    { "id": "identity-unavailable", "dependency": "Identity", "affectedFlow": "authenticated Finance request fails closed", "controlFlow": "Inventory mount remains available", "expected": "503 IDENTITY_UNAVAILABLE; no Finance domain call" },
+    { "id": "inventory-binding-unavailable", "dependency": "Inventory", "affectedFlow": "Inventory route degrades", "controlFlow": "gateway health remains available", "expected": "503 with pending synchronization; health 200" },
+    { "id": "finance-binding-unavailable", "dependency": "Finance", "affectedFlow": "Finance route degrades", "controlFlow": "Inventory mount remains available", "expected": "503 domain_service_degraded; Inventory 200" },
+    { "id": "postgres-transaction-failure", "dependency": "PostgreSQL", "affectedFlow": "database transaction rolls back", "controlFlow": "gateway health remains available", "expected": "rollback and release; health 200" },
+    { "id": "d1-unavailable", "dependency": "D1", "affectedFlow": "Finance and Ponto readiness fail closed", "controlFlow": "gateway health remains available", "expected": "readiness 503; health 200" },
+    { "id": "queue-unavailable", "dependency": "Queues", "affectedFlow": "consumer dispatch is unavailable", "controlFlow": "origin event remains in transactional outbox", "expected": "outbox insert prepared without queue send" },
+    { "id": "whatsapp-unavailable", "dependency": "WhatsApp", "affectedFlow": "provider status is degraded", "controlFlow": "channel compatibility API remains available", "expected": "providerOnline=false; nine channels remain addressable" },
+    { "id": "external-integration-timeout", "dependency": "External integrations", "affectedFlow": "optional call degrades", "controlFlow": "caller receives explicit pending synchronization", "expected": "short timeout/fallback; pendingSynchronization=true" },
+    { "id": "cloudflare-binding-unavailable", "dependency": "Cloudflare bindings", "affectedFlow": "Finance enters maintenance when module-control KV fails", "controlFlow": "gateway health remains available", "expected": "Finance 503 MODULE_MAINTENANCE; health 200" }
+  ]
+}
