@@ -38,6 +38,7 @@ function tryHardReloadOnce() {
 interface Props {
   children: ReactNode
   fallback?: ReactNode
+  reloadOnChunkFailure?: boolean
 }
 
 interface State {
@@ -59,7 +60,7 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo)
 
-    if (isDynamicImportFailure(error)) {
+    if (this.props.reloadOnChunkFailure !== false && isDynamicImportFailure(error)) {
       const reloaded = tryHardReloadOnce()
       if (reloaded) return
     }

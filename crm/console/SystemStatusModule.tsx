@@ -9,6 +9,7 @@ import { Switch } from '@/switch'
 import { DEFAULT_UNIT_OPTIONS, useGlobalUnitSelection } from '@/unitSelection'
 import { LoadingPercentButton, LoadingPercentText } from '@/LoadingPattern'
 import { getCsrfToken } from '@/csrf'
+import { officialStateLabel, technicalModuleMaturity } from '@/moduleMaturity'
 
 type StatusKind = 'ok' | 'warn' | 'error' | 'unknown'
 
@@ -447,6 +448,20 @@ export function SystemStatusModule() {
           </div>
           <div className="text-xs text-blue-200/60">
             Este módulo centraliza status para não poluir o cabeçalho dos módulos operacionais.
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="glass-morphism border border-white/10">
+        <CardHeader>
+          <CardTitle className="text-white text-base">Maturidade dos módulos</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-blue-100/70">Estado técnico informativo. Não concede acesso, não ativa feature flag e não substitui o gate operacional.</p>
+          <div className="flex flex-wrap gap-2">
+            {technicalModuleMaturity.map((module) => (
+              <Badge key={module.id} variant="secondary">{module.id}: {officialStateLabel[module.state]}</Badge>
+            ))}
           </div>
         </CardContent>
       </Card>
