@@ -1,0 +1,75 @@
+name: Deploy CRM Atendimento
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Isolated environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      release_sha:
+        description: Immutable main commit to deploy or restore
+        required: true
+        type: string
+      operation:
+        description: Deploy a release or restore a previous release
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback]
+
+concurrency:
+  group: deploy-atendimento-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify immutable release is promotable
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
+          git cat-file -e "$RELEASE_SHA^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
+      - name: Guard dedicated domain runtime
+        env:
+          ENABLE: ${{ vars.ENABLE_ATENDIMENTO_DEPLOY }}
+          HOST: ${{ secrets.CRM_API_SSH_HOST }}
+          USER: ${{ secrets.CRM_API_SSH_USER }}
+          KEY: ${{ secrets.CRM_API_SSH_KEY }}
+          COMMAND: ${{ inputs.operation == 'deploy' && vars.CRM_ATENDIMENTO_DEPLOY_COMMAND || vars.CRM_ATENDIMENTO_ROLLBACK_COMMAND }}
+          HEALTH_URL: ${{ vars.CRM_ATENDIMENTO_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLE" == true ]] || { echo 'ENABLE_ATENDIMENTO_DEPLOY=true is required'; exit 1; }
+          for name in HOST USER KEY COMMAND HEALTH_URL; do [[ -n "${!name:-}" ]] || { echo "Missing dedicated Atendimento setting: $name"; exit 1; }; done
+      - name: Promote only the Atendimento runtime
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.CRM_API_SSH_HOST }}
+          username: ${{ secrets.CRM_API_SSH_USER }}
+          key: ${{ secrets.CRM_API_SSH_KEY }}
+          port: ${{ secrets.CRM_API_SSH_PORT != '' && secrets.CRM_API_SSH_PORT || '22' }}
+          script: |
+            set -euo pipefail
+            export RELEASE_SHA='${{ inputs.release_sha }}' CRM_DOMAIN=atendimento RELEASE_OPERATION='${{ inputs.operation }}'
+            ${{ inputs.operation == 'deploy' && vars.CRM_ATENDIMENTO_DEPLOY_COMMAND || vars.CRM_ATENDIMENTO_ROLLBACK_COMMAND }}
+      - name: Smoke isolated domain
+        env:
+          HEALTH_URL: ${{ vars.CRM_ATENDIMENTO_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$HEALTH_URL" | node -e "let b='';process.stdin.on('data',d=>b+=d).on('end',()=>{const x=JSON.parse(b);if(!x.ok||x.domain!=='atendimento')process.exit(1)})"

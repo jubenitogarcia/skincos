@@ -1,0 +1,52 @@
+name: Set Atendimento availability
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Isolated environment
+        required: true
+        type: choice
+        options: [staging, production]
+      state:
+        description: Runtime state; no artifact is published
+        required: true
+        type: choice
+        options: [active, maintenance, disabled]
+      message:
+        description: User-visible maintenance reason (optional)
+        required: false
+        type: string
+
+concurrency:
+  group: module-availability-atendimento-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  set-state:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - name: Guard dedicated domain control command
+        env:
+          HOST: ${{ secrets.CRM_API_SSH_HOST }}
+          USER: ${{ secrets.CRM_API_SSH_USER }}
+          KEY: ${{ secrets.CRM_API_SSH_KEY }}
+          COMMAND: ${{ vars.CRM_ATENDIMENTO_CONTROL_COMMAND }}
+        run: |
+          set -euo pipefail
+          for name in HOST USER KEY COMMAND; do [[ -n "${!name:-}" ]] || { echo "Missing dedicated Atendimento setting: $name"; exit 1; }; done
+      - name: Set Atendimento state without release
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.CRM_API_SSH_HOST }}
+          username: ${{ secrets.CRM_API_SSH_USER }}
+          key: ${{ secrets.CRM_API_SSH_KEY }}
+          port: ${{ secrets.CRM_API_SSH_PORT != '' && secrets.CRM_API_SSH_PORT || '22' }}
+          script: |
+            set -euo pipefail
+            export MODULE_ID=atendimento MODULE_STATE='${{ inputs.state }}' MODULE_MESSAGE='${{ inputs.message }}'
+            ${{ vars.CRM_ATENDIMENTO_CONTROL_COMMAND }}
