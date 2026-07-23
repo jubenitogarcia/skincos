@@ -4,7 +4,7 @@ import { safeJson, safeJsonNoTruncate } from './lib/json.js';
 import { qrSvg } from './lib/qr.js';
 import { getClientIp, getUserAgent } from './lib/request.js';
 import { handleBackupRoutes } from './routes/backup.js';
-import { handleAuthRoutes } from './routes/auth.js';
+import { createIdentityD1Store, handleAuthRoutes } from './routes/auth.js';
 import { handleAdminRoutes } from './routes/admin.js';
 import { handleExportsRoutes } from './routes/exports.js';
 import { handleAuditRoutes } from './routes/audit.js';
@@ -30,10 +30,6 @@ import {
     d1DeleteMovimentacao,
     d1ListInsumosPaged,
     d1ListInsumosOptions,
-    d1GetUserByUsername,
-    d1GetUserByIdentifier,
-    d1UpdateUserProfile,
-    resolveCrmTables,
 } from './d1Store.js';
 
 const MAX_PROFILE_PHOTO_URL_CHARS = 45000;
@@ -1169,13 +1165,16 @@ export default {
         const storageOk = storageMode === 'd1';
 
         // Public endpoints
-        if (url.pathname === "/health") {
+        if (url.pathname === "/health" || url.pathname === "/readiness") {
             const ready = d1Enabled && storageOk;
             return withCORS(
                 JSON.stringify({
                     ok: ready,
                     ready,
                     service: "insumos",
+                    version: String(env?.APP_VERSION || 'unknown'),
+                    environment: String(env?.ENVIRONMENT || 'unknown'),
+                    dependencies: { d1: { state: d1Enabled ? 'healthy' : 'unavailable', required: true } },
                     runtime: "cloudflare-workers",
                     storage: storageMode,
                     dbConfigured: d1Enabled,
@@ -1258,6 +1257,7 @@ export default {
 
         // D1-only: legacy Sheets credentials/ranges are intentionally not loaded.
 
+        const identityD1 = createIdentityD1Store(env);
         const sessionSecret = String(env.SESSION_SECRET || '').trim();
         if (!sessionSecret) {
             return withCORS(JSON.stringify({ error: "SESSION_SECRET not configured" }), { status: 500 }, appOrigin);
@@ -1309,7 +1309,7 @@ export default {
                 return sessionUser;
             }
             if (!sessionUsername) return null;
-            const userDb = await d1GetUserByUsername(env, sessionUsername);
+            const userDb = await identityD1.getUserByUsername(sessionUsername);
             if (!userDb || !userDb.ativo) return null;
             if (Number(userDb.sessionVersion || 0) !== sessionVersion) return null;
             sessionUser = { ...userDb, role: normalizeRole(userDb.role || 'CONSULTOR') };
@@ -1442,12 +1442,7 @@ export default {
             MAX_PROFILE_PHOTO_URL_CHARS,
             devBypass: devBypassActive,
             devBypassUser,
-            d1: {
-                enabled: true,
-                getUserByUsername: (u) => d1GetUserByUsername(env, u),
-                getUserByIdentifier: (id) => d1GetUserByIdentifier(env, id),
-                updateUserProfile: d1UpdateUserProfile,
-            },
+            d1: identityD1,
             appendAuditLog,
             ip,
             userAgent,
