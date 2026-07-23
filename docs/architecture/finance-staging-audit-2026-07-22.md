@@ -194,3 +194,8 @@ Ao encerrar: `module_enabled=false`, zero linhas em
 `finance_access_grants`, zero grants pessoais e zero identidades de controle
 ativas. Lotes, movimentos, estornos e auditoria permanecem como evidência de
 staging. Produção não foi consultada ou alterada.
+
+O export privado criado antes dessa janela foi restaurado em um D1 local
+isolado. A restauração recuperou 12 migrations, 32 eventos de auditoria e 10
+movimentos, com `module_enabled=false`. A evidência de backup e restauração
+permanece fora do repositório no runtime privado do operador.
