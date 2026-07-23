@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Contract for the staged removal of the shared skincos-db D1 database from critical domains. Entries describe target resources only; no target is provisioned or bound until its staging gate is approved.",
+  "sharedSource": {
+    "production": "skincos-db",
+    "staging": "skincos-db-staging",
+    "status": "read-compatible source during coexistence only"
+  },
+  "domains": [
+    {
+      "id": "identity",
+      "state": "planned",
+      "currentSourceTables": ["crm_users", "crm_invites", "crm_password_resets", "crm_user_prefs", "auth_attempts"],
+      "target": {
+        "productionDatabase": "skincos-identity",
+        "stagingDatabase": "skincos-identity-staging",
+        "productionIdVariable": "IDENTITY_D1_PRODUCTION_ID",
+        "stagingIdVariable": "IDENTITY_D1_STAGING_ID",
+        "migrationDirectory": "identity/d1/migrations",
+        "journalTable": "identity_release_migrations"
+      },
+      "backup": {
+        "productionBucket": "skincos-identity-backups",
+        "stagingBucket": "skincos-identity-backups-staging",
+        "privateEvidenceRoot": "C:/CodexRuntime/operator/admin/skincos/d1/identity",
+        "restoreTarget": "fresh local scratch D1 only before an approved remote recovery"
+      },
+      "access": {
+        "githubEnvironments": ["staging", "production"],
+        "writers": ["Identity Worker", "approved identity migration workflow"],
+        "readers": ["Identity Worker"],
+        "forbidden": ["Inventory Worker", "Finance Worker", "shared backup restore"]
+      }
+    },
+    {
+      "id": "inventory",
+      "state": "planned",
+      "currentSourceTables": ["insumos_items", "insumos_stocks", "insumos_movements", "insumos_categories", "insumos_barcodes", "audit_log", "notification_snapshot", "jobs", "backup_snapshots", "share_history"],
+      "target": {
+        "productionDatabase": "skincos-inventory",
+        "stagingDatabase": "skincos-inventory-staging",
+        "productionIdVariable": "INVENTORY_D1_PRODUCTION_ID",
+        "stagingIdVariable": "INVENTORY_D1_STAGING_ID",
+        "migrationDirectory": "inventory/d1/migrations",
+        "journalTable": "inventory_release_migrations"
+      },
+      "backup": {
+        "productionBucket": "skincos-inventory-backups",
+        "stagingBucket": "skincos-inventory-backups-staging",
+        "privateEvidenceRoot": "C:/CodexRuntime/operator/admin/skincos/d1/inventory",
+        "restoreTarget": "fresh local scratch D1 only before an approved remote recovery"
+      },
+      "access": {
+        "githubEnvironments": ["staging", "production"],
+        "writers": ["Inventory Worker", "approved inventory migration workflow"],
+        "readers": ["Inventory Worker"],
+        "forbidden": ["Identity Worker", "Finance Worker", "shared backup restore"]
+      }
+    },
+    {
+      "id": "finance",
+      "state": "planned",
+      "currentSourceTables": ["finance_settings", "finance_scopes", "finance_access_grants", "finance_movements", "finance_journal_entries", "finance_journal_lines", "finance_import_batches", "finance_audit_events"],
+      "target": {
+        "productionDatabase": "skincos-finance",
+        "stagingDatabase": "skincos-finance-staging",
+        "productionIdVariable": "FINANCE_D1_PRODUCTION_ID",
+        "stagingIdVariable": "FINANCE_D1_STAGING_ID",
+        "migrationDirectory": "finance/migrations",
+        "journalTable": "finance_release_migrations"
+      },
+      "backup": {
+        "productionBucket": "skincos-finance-backups",
+        "stagingBucket": "skincos-finance-backups-staging",
+        "privateEvidenceRoot": "C:/CodexRuntime/operator/admin/skincos/d1/finance",
+        "restoreTarget": "fresh local scratch D1 only before an approved remote recovery"
+      },
+      "access": {
+        "githubEnvironments": ["staging", "production"],
+        "writers": ["Finance Worker", "approved finance migration workflow"],
+        "readers": ["Finance Worker"],
+        "forbidden": ["Identity Worker", "Inventory Worker", "shared backup restore"]
+      }
+    }
+  ]
+}

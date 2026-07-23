@@ -1,0 +1,52 @@
+name: PostgreSQL migrations
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: Domain migration to apply
+        required: true
+        type: choice
+        options: [harmonia, atendimento, caixa]
+      target:
+        description: Isolated environment
+        required: true
+        type: choice
+        options: [staging, production]
+      confirm:
+        description: Type APPLY_POSTGRES_MIGRATION
+        required: true
+        type: string
+
+concurrency:
+  group: postgres-migrations-${{ inputs.domain }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    if: inputs.confirm == 'APPLY_POSTGRES_MIGRATION'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply versioned migration with the migrator role
+        env:
+          POSTGRES_MIGRATIONS_DATABASE_URL: ${{ secrets.POSTGRES_MIGRATIONS_DATABASE_URL }}
+          TARGET: ${{ inputs.target }}
+          DOMAIN: ${{ inputs.domain }}
+          PRODUCTION_APPROVED: ${{ vars.POSTGRES_PRODUCTION_CHANGE_APPROVED }}
+        run: |
+          set -euo pipefail
+          [[ -n "$POSTGRES_MIGRATIONS_DATABASE_URL" ]] || { echo 'Missing migrator URL.' >&2; exit 1; }
+          [[ "$TARGET" != production || "$PRODUCTION_APPROVED" == 1 ]] || { echo 'Production approval variable is required.' >&2; exit 1; }
+          shopt -s nullglob
+          files=("crm/api/migrations/$DOMAIN"/*.sql)
+          ((${#files[@]})) || { echo "No migrations for $DOMAIN." >&2; exit 1; }
+          for file in "${files[@]}"; do
+            echo "Applying audited migration: $file"
+            psql "$POSTGRES_MIGRATIONS_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
+          done
