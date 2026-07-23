@@ -1,0 +1,38 @@
+name = "skincos-identity-staging"
+main = "worker.js"
+compatibility_date = "2026-07-23"
+workers_dev = true
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+DOMAIN = "identity"
+ENVIRONMENT = "staging"
+APP_VERSION = "staging-foundation-v1"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "skincos-identity-staging"
+database_id = "31df4107-63fc-42d3-943f-801d0454b6d5"
+
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "skincos-identity-staging-data"
+
+[[kv_namespaces]]
+binding = "FLAGS"
+id = "2206b31da6f24b79a117af038cf84fab"
+
+[[queues.producers]]
+binding = "EVENT_QUEUE"
+queue = "skincos-identity-events-staging"
+
+[[queues.consumers]]
+queue = "skincos-identity-events-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+retry_delay = 30
+dead_letter_queue = "skincos-identity-events-dlq-staging"

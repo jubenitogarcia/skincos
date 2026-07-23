@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SKINCOS isolated staging resource inventory",
+  "type": "object",
+  "required": ["schemaVersion", "environment", "recordedAt", "owners", "cloudflare", "postgresql", "revalidation"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "environment": { "const": "staging" },
+    "recordedAt": { "type": "string", "format": "date" },
+    "owners": { "type": "object", "minProperties": 1 },
+    "cloudflare": {
+      "type": "object",
+      "required": ["domains"],
+      "properties": {
+        "domains": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["id", "owner", "worker", "d1", "r2", "kv", "queue", "secrets"],
+            "properties": {
+              "id": { "enum": ["identity", "inventory", "finance"] },
+              "owner": { "type": "string", "minLength": 1 },
+              "secrets": { "type": "array", "items": { "const": "STAGING_CONTROL_TOKEN" } }
+            }
+          }
+        }
+      }
+    },
+    "postgresql": { "type": "object", "required": ["database", "owners", "runtimeRoles", "migrator"] },
+    "revalidation": { "type": "object", "minProperties": 3 }
+  }
+}

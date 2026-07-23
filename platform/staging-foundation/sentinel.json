@@ -1,0 +1,5 @@
+{
+  "purpose": "isolated-staging-readiness",
+  "contains_personal_data": false,
+  "feature_flags_default": false
+}

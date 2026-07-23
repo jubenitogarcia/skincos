@@ -1,0 +1,38 @@
+name = "skincos-finance-staging-foundation"
+main = "worker.js"
+compatibility_date = "2026-07-23"
+workers_dev = true
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+DOMAIN = "finance"
+ENVIRONMENT = "staging"
+APP_VERSION = "staging-foundation-v1"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "skincos-finance-staging"
+database_id = "347aced6-fdb0-4e0c-932c-15aa879281de"
+
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "skincos-finance-staging-data"
+
+[[kv_namespaces]]
+binding = "FLAGS"
+id = "3013d6873d084abcb452440e9c1e700c"
+
+[[queues.producers]]
+binding = "EVENT_QUEUE"
+queue = "skincos-finance-events-staging"
+
+[[queues.consumers]]
+queue = "skincos-finance-events-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+retry_delay = 30
+dead_letter_queue = "skincos-finance-events-dlq-staging"

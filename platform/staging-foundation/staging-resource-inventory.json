@@ -1,0 +1,108 @@
+{
+  "$schema": "./staging-resource-inventory.schema.json",
+  "schemaVersion": 1,
+  "environment": "staging",
+  "recordedAt": "2026-07-23",
+  "scope": "non-production foundation for the Identity, Inventory and Finance separation phase",
+  "defaultFeatureFlags": {
+    "module_enabled": false,
+    "storage": "domain-specific Cloudflare KV namespace"
+  },
+  "privacy": {
+    "productionDataImport": "prohibited without an approved sanitisation run",
+    "seed": "synthetic-control-fixture only",
+    "personalDataPresent": false
+  },
+  "owners": {
+    "operational": "@jubenitogarcia",
+    "identity": "@jubenitogarcia",
+    "inventory": "@jubenitogarcia",
+    "finance": "@jubenitogarcia"
+  },
+  "cloudflare": {
+    "accountScope": "current authenticated SKINCOS account",
+    "pagesProjects": [
+      {
+        "name": "skincos-staging",
+        "status": "pre-existing isolated CRM Pages project",
+        "owner": "@jubenitogarcia"
+      }
+    ],
+    "domains": [
+      {
+        "id": "identity",
+        "owner": "@jubenitogarcia",
+        "worker": {
+          "name": "skincos-identity-staging",
+          "url": "https://skincos-identity-staging.skincos.workers.dev",
+          "config": "wrangler.identity.toml",
+          "lastValidatedVersion": "5c3c2f63-3816-4775-8c50-7c296d2c0371",
+          "routes": [],
+          "bindings": ["DB", "DATA_BUCKET", "FLAGS", "EVENT_QUEUE"]
+        },
+        "d1": { "name": "skincos-identity-staging", "id": "31df4107-63fc-42d3-943f-801d0454b6d5" },
+        "r2": { "name": "skincos-identity-staging-data" },
+        "kv": { "title": "SKINCOS_IDENTITY_STAGING_FLAGS", "id": "2206b31da6f24b79a117af038cf84fab" },
+        "queue": { "name": "skincos-identity-events-staging", "deadLetterQueue": "skincos-identity-events-dlq-staging", "maxRetries": 3, "retentionSeconds": 1209600 },
+        "secrets": ["STAGING_CONTROL_TOKEN"]
+      },
+      {
+        "id": "inventory",
+        "owner": "@jubenitogarcia",
+        "worker": {
+          "name": "skincos-inventory-staging-foundation",
+          "url": "https://skincos-inventory-staging-foundation.skincos.workers.dev",
+          "config": "wrangler.inventory.toml",
+          "lastValidatedVersion": "ba1f2ccb-1056-4e1d-a18b-e1612f26d589",
+          "routes": [],
+          "bindings": ["DB", "DATA_BUCKET", "FLAGS", "EVENT_QUEUE"]
+        },
+        "d1": { "name": "skincos-inventory-staging", "id": "a73ea686-a61a-4e73-9628-bfcd91848dc4" },
+        "r2": { "name": "skincos-inventory-staging-data" },
+        "kv": { "title": "SKINCOS_INVENTORY_STAGING_FLAGS", "id": "b775ee195eae4219ac0be6508b3ff434" },
+        "queue": { "name": "skincos-inventory-events-staging", "deadLetterQueue": "skincos-inventory-events-dlq-staging", "maxRetries": 3, "retentionSeconds": 1209600 },
+        "secrets": ["STAGING_CONTROL_TOKEN"]
+      },
+      {
+        "id": "finance",
+        "owner": "@jubenitogarcia",
+        "worker": {
+          "name": "skincos-finance-staging-foundation",
+          "url": "https://skincos-finance-staging-foundation.skincos.workers.dev",
+          "config": "wrangler.finance.toml",
+          "lastValidatedVersion": "2374860a-3cb8-450b-ad84-95e40092c6e1",
+          "routes": [],
+          "bindings": ["DB", "DATA_BUCKET", "FLAGS", "EVENT_QUEUE"]
+        },
+        "d1": { "name": "skincos-finance-staging", "id": "347aced6-fdb0-4e0c-932c-15aa879281de" },
+        "r2": { "name": "skincos-finance-staging-data" },
+        "kv": { "title": "SKINCOS_FINANCE_STAGING_FLAGS", "id": "3013d6873d084abcb452440e9c1e700c" },
+        "queue": { "name": "skincos-finance-events-staging", "deadLetterQueue": "skincos-finance-events-dlq-staging", "maxRetries": 3, "retentionSeconds": 1209600 },
+        "secrets": ["STAGING_CONTROL_TOKEN"]
+      }
+    ]
+  },
+  "postgresql": {
+    "database": "skincos_staging",
+    "isolation": "separate database, schemas and NOLOGIN owner/runtime roles on the local PostgreSQL instance",
+    "notYetIsolated": "physical PostgreSQL host and network boundary; provision a separate managed instance before production-class staging workloads",
+    "owners": [
+      "skincos_staging_identity_owner",
+      "skincos_staging_inventory_owner",
+      "skincos_staging_finance_owner"
+    ],
+    "runtimeRoles": [
+      "skincos_staging_identity_runtime",
+      "skincos_staging_inventory_runtime",
+      "skincos_staging_finance_runtime"
+    ],
+    "migrator": "skincos_staging_migrator",
+    "credentials": "not issued; create only at runtime cutover in the approved secret manager",
+    "bootstrap": "postgres-bootstrap.sql"
+  },
+  "revalidation": {
+    "bindingDryRun": "npx wrangler deploy --dry-run --config platform/staging-foundation/wrangler.<domain>.toml",
+    "runtimeAndQueue": "ALLOW_STAGING_SECRET_ROTATION=1 bash platform/staging-foundation/validate.sh",
+    "postgresql": "sudo -n -u postgres psql -d postgres -f platform/staging-foundation/postgres-bootstrap.sql"
+  }
+}
