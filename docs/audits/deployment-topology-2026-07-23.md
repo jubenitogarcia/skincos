@@ -10,7 +10,8 @@ O catálogo executável é `platform/deploy/operational-units.json`; o CI o vali
 Uma unidade operacional tem exatamente um publisher de código. Todos os
 publishers GitHub são manuais, usam `environment` explícito e serializam por
 unidade/ambiente com `cancel-in-progress: false`. Um commit ou merge não publica
-Workers, Pages, serviço nativo ou migration.
+Workers, serviço nativo ou migration. O Pages também exige o controle externo
+registrado abaixo, pois uma integração Git do fornecedor é outro publisher.
 
 ## Publishers de código e dados associados
 
@@ -52,6 +53,25 @@ Não há leitura de valores de secrets nesta auditoria. A separação efetiva de
 valores entre os environments precisa continuar sendo confirmada no GitHub e
 Cloudflare antes de cada promoção.
 
+## Reconciliação externa de Pages
+
+Após o merge da PR inicial, a leitura de `Cloudflare Pages` identificou que o
+projeto `skincos` ainda estava ligado ao repositório `jubenitogarcia/skincos`
+com deploys automáticos de produção e preview ativos. Isso publicou o preview
+do commit `85f1ea5` e a produção do merge `a5e1c65`, fora de GitHub Actions.
+
+O controle foi corrigido diretamente no projeto, sem criar deployment:
+
+- `production_deployments_enabled=false`;
+- `preview_deployment_setting=none`;
+- `deployments_enabled=false`.
+
+O catálogo exige esses valores esperados e a reconciliação operacional deve
+consultar a configuração remota antes de qualquer promoção. O projeto
+`skincos-app` também tem Git Provider, mas aponta para
+`jubenitogarcia/insumos`; é uma superfície externa, fora desta `main`, e não
+foi alterado.
+
 ## Caminhos removidos nesta mudança
 
 Foram removidos apenas publishers redundantes quando a unidade já possui o
@@ -67,8 +87,9 @@ um voltar ao repositório.
    dois publishers declarados.
 2. A alteração é verificada por CI sem `workflow_dispatch`, sem `wrangler deploy`
    local e sem migration remota.
-3. Após o merge, os workflows do commit de merge não incluem publisher de deploy;
-   só uma execução manual aprovada pode iniciar promoção.
+3. Após o merge, os workflows do commit de merge não incluem publisher de deploy
+   e o Pages `skincos` está com seus deploys Git automáticos desabilitados; só
+   uma execução manual aprovada pode iniciar promoção.
 
 ## Riscos conhecidos e próximos passos
 
@@ -79,5 +100,6 @@ um voltar ao repositório.
   única promoção e testá-la em staging.
 - P2: os sincronizadores de secrets/configuração não publicam código, mas ainda
   são mutações operacionais; mantê-los manuais, com environment e revisão.
-- P2: a auditoria é estática e versionada. Mudanças diretas no dashboard ou no
-  servidor nativo continuam exigindo reconciliação operacional separada.
+- P2: a auditoria de workflow é estática e versionada. Mudanças diretas no
+  dashboard ou no servidor nativo continuam exigindo reconciliação operacional
+  separada; o controle de Pages acima é uma primeira verificação remota.

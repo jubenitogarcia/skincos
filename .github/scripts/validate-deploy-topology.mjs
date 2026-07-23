@@ -13,6 +13,12 @@ const publishers = new Map();
 const publishPattern = /(wrangler(?:@[^\s]+)?\s+(?:pages\s+)?deploy|wrangler[^\n]*\sd1 migrations apply|cloudflare-workers\.sh\s+deploy|appleboy\/ssh-action|npm run deploy(?::[^\s]+)?)/i;
 
 if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.units)) fail("deployment catalog must declare schemaVersion 1 and units");
+if (!Array.isArray(catalog.externalPublisherControls)) fail("deployment catalog must declare externalPublisherControls");
+for (const control of catalog.externalPublisherControls ?? []) {
+  if (!control.id || !control.provider || !control.project || !control.sourceRepository || control.productionDeploymentsEnabled !== false || control.previewDeploymentSetting !== "none") {
+    fail("every external publisher control must identify the source and disable automatic production and preview deployment");
+  }
+}
 for (const unit of catalog.units ?? []) {
   if (!unit.id || !Array.isArray(unit.resources) || !Array.isArray(unit.publishes) || !Array.isArray(unit.secrets) || !Array.isArray(unit.migrationPaths) || !Array.isArray(unit.environments)) {
     fail("every operational unit needs id, publishes, resources, secrets, migrationPaths and environments");
