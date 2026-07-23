@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "description": "Only these versioned contracts, SDKs and adapters under shared/ may cross a module boundary. Direct implementation imports are rejected unless listed as time-boxed migration debt.",
+  "contracts": [
+    {
+      "id": "finance-contracts-v1",
+      "kind": "contract",
+      "paths": ["shared/finance-contracts/**"],
+      "consumers": ["finance"],
+      "owner": "finance"
+    },
+    {
+      "id": "crm-auth-adapter-v1",
+      "kind": "adapter",
+      "paths": ["shared/crm-auth/**"],
+      "consumers": ["api"],
+      "owner": "crm"
+    },
+    {
+      "id": "identity-actor-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/identity-contract/**"],
+      "consumers": ["api", "identity"],
+      "owner": "identity"
+    },
+    {
+      "id": "identity-service-binding-adapter-v1",
+      "kind": "adapter",
+      "paths": ["shared/identity-runtime/**"],
+      "consumers": ["api", "inventory"],
+      "owner": "identity"
+    },
+    {
+      "id": "module-sdk-v1",
+      "kind": "sdk",
+      "paths": ["shared/module-sdk/**"],
+      "consumers": ["*"],
+      "owner": "shared"
+    },
+    {
+      "id": "cloudflare-service-binding-adapter-v1",
+      "kind": "adapter",
+      "paths": ["shared/service-adapters/**"],
+      "consumers": ["api", "finance"],
+      "owner": "platform"
+    },
+    {
+      "id": "module-availability-v1",
+      "kind": "contract",
+      "paths": ["shared/module-availability/**"],
+      "consumers": ["finance", "workforce", "crm"],
+      "owner": "platform"
+    },
+    {
+      "id": "observability-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/observability/**"],
+      "consumers": ["api", "finance", "workforce", "crm", "inventory"],
+      "owner": "platform"
+    },
+    {
+      "id": "inventory-http-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/http-contracts/inventory-v1.md"],
+      "consumers": ["crm"],
+      "owner": "inventory"
+    },
+    {
+      "id": "test-runtime-sdk-v1",
+      "kind": "sdk",
+      "paths": ["shared/test-runtime/**"],
+      "consumers": ["finance"],
+      "owner": "ops"
+    },
+    {
+      "id": "domain-events-v1",
+      "kind": "contract",
+      "paths": ["shared/events/**"],
+      "consumers": ["crm", "finance", "inventory", "ads"],
+      "owner": "platform"
+    }
+  ],
+  "recommendedContracts": [
+    {
+      "from": "api",
+      "to": "inventory",
+      "contractId": "cloudflare-service-binding-adapter-v1",
+      "path": "shared/service-adapters/cloudflare-service-binding.js",
+      "usage": "bind INVENTORY to the Inventory Worker and proxy through the adapter"
+    },
+    {
+      "from": "api",
+      "to": "finance",
+      "contractId": "cloudflare-service-binding-adapter-v1",
+      "path": "shared/service-adapters/cloudflare-service-binding.js",
+      "usage": "bind FINANCE to an independently deployed Finance Worker and proxy through the adapter"
+    },
+    {
+      "from": "crm",
+      "to": "inventory",
+      "contractId": "inventory-http-contract-v1",
+      "path": "shared/http-contracts/inventory-v1.md",
+      "usage": "exercise the Inventory HTTP contract through the gateway or a contract test double"
+    },
+    {
+      "from": "finance",
+      "to": "crm",
+      "contractId": "test-runtime-sdk-v1",
+      "path": "shared/test-runtime/README.md",
+      "usage": "supply Playwright through the Finance test runtime instead of resolving CRM node_modules"
+    },
+    {
+      "from": "api",
+      "to": "identity",
+      "contractId": "identity-service-binding-adapter-v1",
+      "path": "shared/identity-runtime/README.md",
+      "usage": "resolve the actor through the future Identity service binding; the stable actor payload is identity-actor-contract-v1"
+    },
+    {
+      "from": "inventory",
+      "to": "identity",
+      "contractId": "identity-service-binding-adapter-v1",
+      "path": "shared/identity-runtime/README.md",
+      "usage": "replace the compatibility /auth mount with the independently promoted Identity service binding"
+    }
+  ],
+  "legacyDirectImports": [
+    {
+      "from": "api/src/gateway.js",
+      "specifier": "../../identity/session/actor.js",
+      "replacementContractId": "identity-service-binding-adapter-v1",
+      "deadline": "2026-09-30",
+      "reason": "The gateway resolves existing signed sessions in-process until the Identity Worker service can be promoted without changing cookie format."
+    },
+    {
+      "from": "inventory/src/routes/auth.js",
+      "specifier": "../../../identity/routes/auth.js",
+      "replacementContractId": "identity-service-binding-adapter-v1",
+      "deadline": "2026-09-30",
+      "reason": "Inventory retains the existing /auth mount while Identity is extracted behind a compatibility adapter."
+    },
+    {
+      "from": "inventory/src/routes/auth.js",
+      "specifier": "../../../identity/store/d1.js",
+      "replacementContractId": "identity-service-binding-adapter-v1",
+      "deadline": "2026-09-30",
+      "reason": "Inventory injects the Identity repository during the compatibility mount so session validation preserves existing users and session versions."
+    },
+    {
+      "from": "inventory/src/smtpMailer.js",
+      "specifier": "../../identity/notifications/smtpMailer.js",
+      "replacementContractId": "identity-service-binding-adapter-v1",
+      "deadline": "2026-09-30",
+      "reason": "Inventory admin routes still consume the compatibility mail export while invitation ownership moves to Identity."
+    },
+    {
+      "from": "inventory/src/invitePolicy.js",
+      "specifier": "../../identity/policy/invitePolicy.js",
+      "replacementContractId": "identity-service-binding-adapter-v1",
+      "deadline": "2026-09-30",
+      "reason": "Inventory admin routes still consume the compatibility invitation-policy export while invitation ownership moves to Identity."
+    },
+    {
+      "from": "api/workers/index.js",
+      "specifier": "../../inventory/src/worker.js",
+      "replacementContractId": "cloudflare-service-binding-adapter-v1",
+      "deadline": "2026-09-30",
+      "reason": "The gateway currently re-exports Inventory Durable Objects; migrate the gateway to its own runtime classes while introducing the Inventory service binding."
+    },
+    {
+      "from": "crm/console/tests/insumosShareRoutes.test.ts",
+      "specifier": "../../../inventory/src/routes/share.js",
+      "replacementContractId": "inventory-http-contract-v1",
+      "deadline": "2026-08-31",
+      "reason": "This legacy test reaches an Inventory implementation instead of asserting the Inventory HTTP contract."
+    },
+    {
+      "from": "finance/scripts/staging-ui-smoke.mjs",
+      "specifier": "../../crm/console/node_modules/playwright",
+      "replacementContractId": "test-runtime-sdk-v1",
+      "deadline": "2026-08-31",
+      "reason": "The staging-only smoke currently borrows CRM's local dependency tree and must receive its test runtime explicitly."
+    }
+  ]
+}
