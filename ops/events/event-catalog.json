@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "skincos-event/v1",
+  "status": "foundation-disabled",
+  "releaseGate": {
+    "flag": "EVENTS_OUTBOX_ENABLED",
+    "default": "false",
+    "rule": "No producer or dispatcher may be enabled until its additive migration, staging smoke, consumer idempotency test, DLQ alert and reconciliation run are approved."
+  },
+  "delivery": {
+    "guarantee": "at-least-once",
+    "maxAttempts": 8,
+    "retrySeconds": [30, 60, 120, 240, 480, 960, 1920, 3600],
+    "consumerRule": "Each consumer inserts its inbox claim in the same transaction as its local projection before acknowledging delivery.",
+    "producerRule": "The origin transaction writes its outbox row atomically with the domain change; dispatch happens after commit and never in the request path."
+  },
+  "events": [
+    {
+      "type": "attendance.completed.v1",
+      "producer": { "module": "crm", "component": "atendimento", "storage": "crm_atendimento.event_outbox" },
+      "consumers": [{ "module": "crm", "component": "clientes" }, { "module": "finance", "component": "attendance-reference-projector" }, { "module": "ads", "component": "conversion-projector" }],
+      "subject": "attendance",
+      "data": ["attendanceId", "clientId", "unitId", "outcome", "completedAt"],
+      "fallback": "Keep attendance complete; consumers reconcile by completedAt range."
+    },
+    {
+      "type": "client.identity-reconciled.v1",
+      "producer": { "module": "crm", "component": "clientes", "storage": "crm_atendimento.event_outbox" },
+      "consumers": [{ "module": "crm", "component": "atendimento-client-projector" }, { "module": "ads", "component": "audience-reference-projector" }],
+      "subject": "client",
+      "data": ["clientId", "canonicalClientId", "resolution", "resolvedAt"],
+      "fallback": "Keep the prior client projection and place only the consumer projection in retry/DLQ."
+    },
+    {
+      "type": "finance.movement-posted.v1",
+      "producer": { "module": "finance", "component": "ledger", "storage": "finance_event_outbox" },
+      "consumers": [{ "module": "crm", "component": "clientes-finance-reference-projector" }, { "module": "ads", "component": "conversion-value-projector" }],
+      "subject": "finance-movement",
+      "data": ["movementId", "scopeId", "unitId", "amountMinor", "currency", "postedAt"],
+      "fallback": "The posted movement remains authoritative; consumer projections reconcile from the finance watermark."
+    },
+    {
+      "type": "inventory.stock-changed.v1",
+      "producer": { "module": "inventory", "component": "stock-ledger", "storage": "inventory_event_outbox" },
+      "consumers": [{ "module": "crm", "component": "atendimento-availability-projector" }, { "module": "ads", "component": "campaign-availability-projector" }],
+      "subject": "inventory-item",
+      "data": ["itemId", "unitId", "movementId", "quantityDelta", "stockAfter", "occurredAt"],
+      "fallback": "Inventory ledger remains authoritative; availability projections are marked stale until reconciled."
+    },
+    {
+      "type": "marketing.conversion-requested.v1",
+      "producer": { "module": "crm", "component": "atendimento", "storage": "crm_atendimento.event_outbox" },
+      "consumers": [{ "module": "ads", "component": "conversion-dispatcher" }],
+      "subject": "conversion",
+      "data": ["conversionId", "attendanceId", "clientId", "unitId", "occurredAt"],
+      "fallback": "Keep CRM outcome complete and queue the conversion request for retry; never retry the attendance mutation."
+    }
+  ],
+  "storage": [
+    { "module": "finance", "migration": "finance/migrations/0013_event_outbox.sql", "outbox": "finance_event_outbox", "inbox": "finance_event_inbox", "deadLetter": "finance_event_dead_letters", "reconciliation": "finance_event_reconciliation" },
+    { "module": "inventory", "migration": "inventory/migrations/0017_event_outbox.sql", "outbox": "inventory_event_outbox", "inbox": "inventory_event_inbox", "deadLetter": "inventory_event_dead_letters", "reconciliation": "inventory_event_reconciliation" },
+    { "module": "crm", "migration": "crm/api/migrations/atendimento/20260723_event_outbox.sql", "outbox": "crm_atendimento.event_outbox", "inbox": "crm_atendimento.event_inbox", "deadLetter": "crm_atendimento.event_dead_letters", "reconciliation": "crm_atendimento.event_reconciliation" },
+    { "module": "ads", "migration": "ads/meta/apps/report-ingest-worker/migrations/0002_event_inbox.sql", "outbox": null, "inbox": "marketing_event_inbox", "deadLetter": "marketing_event_dead_letters", "reconciliation": "marketing_event_reconciliation" }
+  ]
+}

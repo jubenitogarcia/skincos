@@ -1,0 +1,6 @@
+{
+  "name": "@skincos/domain-events",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0"
+}
