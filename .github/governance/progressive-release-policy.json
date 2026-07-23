@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "sourceBranch": "main",
+  "stages": ["preview", "staging", "pilot", "canary", "production"],
+  "stagePredecessor": {"staging": "preview", "pilot": "staging", "canary": "pilot", "production": "canary"},
+  "controls": {
+    "immutableSource": "release-source-<sha> artifact and source SHA reachable from main",
+    "featureFlag": "module-specific flag remains disabled until the approved stage",
+    "killSwitch": "a documented per-unit switch must stop new promotion and the module fallback must remain available",
+    "rollback": "redeploy the previous attested SHA through the canonical publisher; migrations remain additive",
+    "automaticInterruption": "a stage may not advance when error, latency, or journey evidence exceeds policy"
+  },
+  "criticalUnits": {
+    "core-workers": {"featureFlag": "deployment gate ENABLE_CORE_WORKERS_DEPLOY", "killSwitch": "RELEASE_KILL_SWITCH_CORE_WORKERS", "rollback": "previous staging-attested SHA", "pilotCanary": "blocked: dual Worker version affinity and external SLO evidence are not configured"},
+    "crm-pages": {"featureFlag": "Finance module_enabled plus ENABLE_FINANCE_PRODUCTION_DEPLOY", "killSwitch": "finance_settings.module_enabled=false", "rollback": "previous Pages deployment or previous staging-attested SHA", "pilotCanary": "blocked: Pages traffic steering and pilot cohort configuration are not configured"},
+    "escala-api": {"featureFlag": "deployment gate ENABLE_ESCALA_API_DEPLOY", "killSwitch": "RELEASE_KILL_SWITCH_ESCALA_API", "rollback": "previous staging-attested SHA", "pilotCanary": "blocked: Worker gradual routing and external SLO evidence are not configured"},
+    "timekeeping": {"featureFlag": "environment deploy gate and Ponto operational flag", "killSwitch": "RELEASE_KILL_SWITCH_TIMEKEEPING", "rollback": "previous staging-attested SHA with additive-migration compatibility", "pilotCanary": "blocked: Worker gradual routing, network-context pilot cohort and external SLO evidence are not configured"},
+    "meta-ads-report": {"featureFlag": "META_ADS_REPORT_MODE", "killSwitch": "RELEASE_KILL_SWITCH_META_ADS_REPORT", "rollback": "previous staging-attested SHA", "pilotCanary": "blocked: job-level canary and external ingestion journey evidence are not configured"}
+  }
+}
