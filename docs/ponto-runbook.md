@@ -64,11 +64,11 @@ A trava `timekeeping_period_guards` é adquirida por data antes do cálculo e im
 
 ## Deploy e rollback
 
-Executar `.github/workflows/deploy-timekeeping.yml` primeiro em `staging`. O workflow exporta e cifra um checkpoint D1, aplica migrations, configura secrets, publica Worker e gateway e faz smoke read-only. Produção exige o `staging_run_id` numérico de uma execução verde para o mesmo SHA e o environment protegido `production`.
+Executar `.github/workflows/deploy-timekeeping.yml` primeiro em `staging`. O workflow exporta e cifra um checkpoint D1, aplica migrations, configura secrets, publica somente o Worker de Ponto e faz smoke read-only. O gateway/API é publicado exclusivamente pelo publisher canônico `.github/workflows/deploy-core-workers.yml`. Produção exige o `staging_run_id` numérico de uma execução verde para o mesmo SHA e o environment protegido `production`.
 
 Configure secrets e variables separadamente nos environments GitHub `staging` e `production`. O Pages environment `preview` usa `https://api-staging.skincos.com.br`; nunca compartilhe o upstream ou a chave HMAC de produção com preview. O smoke produtivo permanece somente leitura e não aceita opção para criar marcações.
 
-Rollback de aplicação: publicar a versão anterior do Worker/gateway. Migrations são expansivas; não remover colunas/tabelas em incidente. Rollback de importação segue `docs/ponto-migration.md`. Backups e evidências ficam em `C:\CodexRuntime\operator\admin\skincos\timekeeping`, nunca no repositório.
+Rollback de aplicação: publicar a versão anterior do Worker de Ponto; se o gateway/API também exigir rollback, usar seu publisher canônico em execução separada. Migrations são expansivas; não remover colunas/tabelas em incidente. Rollback de importação segue `docs/ponto-migration.md`. Backups e evidências ficam em `C:\CodexRuntime\operator\admin\skincos\timekeeping`, nunca no repositório.
 
 ## Incidentes
 

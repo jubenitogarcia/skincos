@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "units": [
+    {
+      "id": "core-workers",
+      "workflow": ".github/workflows/deploy-core-workers.yml",
+      "concurrencyPrefix": "deploy-core-workers-",
+      "publishes": ["Worker:skincos-api", "Worker:skincos-insumos"],
+      "resources": ["api gateway Worker", "inventory Worker", "skincos-db", "skincos-db-staging"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
+      "migrationPaths": ["inventory/migrations"],
+      "environments": ["staging", "production"]
+    },
+    {
+      "id": "crm-pages",
+      "workflow": ".github/workflows/deploy-crm-pages.yml",
+      "concurrencyPrefix": "deploy-crm-pages-",
+      "publishes": ["Pages:skincos", "Pages:skincos-staging"],
+      "resources": ["Cloudflare Pages skincos", "Cloudflare Pages skincos-staging", "crm console"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
+      "migrationPaths": [],
+      "environments": ["staging", "production"]
+    },
+    {
+      "id": "escala-api",
+      "workflow": ".github/workflows/deploy-escala-api.yml",
+      "concurrencyPrefix": "deploy-escala-api-",
+      "publishes": ["Worker:skincos-escala", "Worker:skincos-escala-staging"],
+      "resources": ["Escala Worker", "skincos-escala", "skincos-escala-staging"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "ESCALA_ACTOR_HMAC_KEY"],
+      "migrationPaths": ["workforce/schedule/migrations-d1"],
+      "environments": ["staging", "production"]
+    },
+    {
+      "id": "timekeeping",
+      "workflow": ".github/workflows/deploy-timekeeping.yml",
+      "concurrencyPrefix": "deploy-timekeeping-",
+      "publishes": ["Worker:skincos-timekeeping", "Worker:skincos-timekeeping-staging"],
+      "resources": ["Timekeeping Worker", "skincos-timekeeping", "skincos-timekeeping-staging"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "PONTO_ACTOR_HMAC_KEY", "PONTO_IDEMPOTENCY_KEY", "PONTO_TEMPLATES_KEY", "PONTO_NETWORK_CONTEXT_KEY"],
+      "migrationPaths": ["workforce/timekeeping/migrations"],
+      "environments": ["staging", "production"]
+    },
+    {
+      "id": "social-publisher",
+      "workflow": ".github/workflows/deploy-social-publisher-worker.yml",
+      "concurrencyPrefix": "deploy-social-publisher-production",
+      "publishes": ["Worker:skincos-social-publisher"],
+      "resources": ["Social Publisher Worker"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
+      "migrationPaths": [],
+      "environments": ["production"]
+    },
+    {
+      "id": "meta-ads-report",
+      "workflow": ".github/workflows/deploy-meta-ads-report-worker.yml",
+      "concurrencyPrefix": "deploy-meta-ads-report-production",
+      "publishes": ["Worker:skincos-meta-ads-performance-report"],
+      "resources": ["Meta Ads Report Worker", "skincos-meta-ads-performance-report", "skincos-meta-ads-performance-report-staging"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
+      "migrationPaths": ["ads/meta/apps/report-ingest-worker/migrations"],
+      "environments": ["production"]
+    },
+    {
+      "id": "public-website-release",
+      "workflow": ".github/workflows/deploy-website-cloudflare.yml",
+      "concurrencyPrefix": "deploy-website-production",
+      "publishes": ["Worker:espacofacial", "Worker:skincos-legal-hub", "Worker:esfa-redirector"],
+      "resources": ["Espaco Facial Worker", "SKINCOS legal hub Worker", "esfa redirect Worker", "espacofacial-booking D1"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_SECURITY_API_TOKEN"],
+      "migrationPaths": ["website/migrations"],
+      "environments": ["production"]
+    },
+    {
+      "id": "native-runtime",
+      "workflow": null,
+      "canonicalRunbook": "docs/runbooks/lifecycle-runtime-cutover.md",
+      "publishes": ["Native:orb", "Native:orb-proxy", "Native:messaging-whatsapp", "Native:crm", "Native:booking", "Native:cloudflare-orb", "Native:cloudflare-runtime"],
+      "resources": ["orb", "orb-proxy", "messaging-whatsapp", "crm", "booking", "cloudflare-orb", "cloudflare-runtime", "PostgreSQL n8n_runtime"],
+      "secrets": ["/etc/skincos"],
+      "migrationPaths": ["orb/engine/db/migrations", "crm/api/server/atendimento/migrations", "booking/migrations"],
+      "environments": ["production"]
+    }
+  ],
+  "nonPublishingSurfaces": [
+    {
+      "id": "cloudflare-configuration-synchronizers",
+      "workflows": ["cloudflare-pages-sync-escala.yml", "cloudflare-pages-sync-meta-ads-report-secret.yml", "cloudflare-pages-sync-ponto.yml", "cloudflare-sync-integrations-encryption-secret.yml", "cloudflare-workers-sync-ponto-secrets.yml", "sync-website-cloudflare-security.yml", "website-instagram-sync.yml"],
+      "scope": "Secrets, bindings or configuration only; a source deploy command is prohibited by CI topology validation."
+    },
+    {
+      "id": "token-vault",
+      "canonicalRunbook": "platform/security/token-vault/README.md",
+      "resources": ["Worker:skincos-token-vault", "Worker:skincos-token-vault-staging", "D1:skincos-token-vault", "D1:skincos-token-vault-staging"],
+      "migrationPaths": ["platform/security/token-vault/migrations"],
+      "scope": "No GitHub publisher exists; controlled operator promotion remains the sole known path and must be cataloged before automation is added."
+    },
+    {
+      "id": "observability-alert-webhook",
+      "canonicalRunbook": "platform/observability/alert-webhook/README.md",
+      "resources": ["Worker:skincos-obs-alert-webhook"],
+      "migrationPaths": [],
+      "scope": "No GitHub publisher exists; this Worker remains held outside the release catalog until its promotion runbook is made explicit."
+    },
+    {
+      "id": "orb-meta-ads-performance-report-config",
+      "canonicalRunbook": "orb/engine/cloudflare/meta-ads-performance-report/wrangler.jsonc",
+      "resources": ["Worker:skincos-meta-ads-performance-report", "D1:skincos-meta-ads-performance-report", "R2:skincos-meta-ads-performance-report-raw"],
+      "migrationPaths": [],
+      "scope": "Configuration surface only; publishing remains exclusively in deploy-meta-ads-report-worker.yml."
+    }
+  ],
+  "retiredWorkflowPaths": [
+    ".github/workflows/deploy-core-workers-reconcile.yml",
+    ".github/workflows/deploy-insumos-worker.yml",
+    ".github/workflows/deploy-workers-reconcile.yml",
+    ".github/workflows/deploy-workers-after-automerge.yml",
+    ".github/workflows/dispatch-after-automerge-fallback.yml",
+    ".github/workflows/deploy-crm-pages-after-automerge.yml",
+    ".github/workflows/deploy-crm-pages-reconcile.yml",
+    ".github/workflows/deploy-escala-api-reconcile.yml",
+    ".github/workflows/deploy-social-publisher-worker-reconcile.yml",
+    ".github/workflows/deploy-crm-api.yml"
+  ]
+}

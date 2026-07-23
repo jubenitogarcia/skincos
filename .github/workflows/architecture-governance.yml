@@ -15,3 +15,4 @@ jobs:
           node-version: 22
       - run: node .github/scripts/validate-architecture.mjs
       - run: node .github/scripts/validate-github-governance.mjs
+      - run: node .github/scripts/validate-deploy-topology.mjs

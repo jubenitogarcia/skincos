@@ -1,16 +1,16 @@
 name: Deploy Social Publisher Worker
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "social/publisher/**"
-      - ".github/workflows/deploy-social-publisher-worker.yml"
   workflow_dispatch: {}
+
+concurrency:
+  group: deploy-social-publisher-production
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
 
@@ -47,4 +47,3 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@3 deploy --config social/publisher/wrangler.toml --keep-vars
-

@@ -1,20 +1,16 @@
 name: Deploy Website to Cloudflare
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "website/**"
-      - ".github/workflows/deploy-website-cloudflare.yml"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 concurrency:
   group: deploy-website-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
     env:
