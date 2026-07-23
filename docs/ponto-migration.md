@@ -7,6 +7,7 @@ O arquivo legado `ponto_store.v2.json` é aceito apenas pelo importador em `work
 As migrations reproduzíveis ficam em `workforce/timekeeping/migrations`:
 
 - `0001_timekeeping.sql`: identidade, vínculos temporais, regras, dispositivos, credenciais, biometria, eventos append-only, correções, fechamentos, auditoria e nonces;
+- `0005_employee_profiles.sql`: extensão 1:1 do funcionário canônico, perfil de RH, dados privados cifrados e identificação legal de unidade;
 - `0002_operations.sql`: unidades, Escala, feriados, ausências, bloqueio de PIN, snapshots, controle de importação e conflitos de identidade;
 - `0003_audit_chain.sql`: cabeça e triggers da cadeia imutável de auditoria.
 - `0004_period_guards.sql`: data de trabalho indexada e trava transacional de dias em fechamento/fechados.

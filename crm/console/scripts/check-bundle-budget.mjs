@@ -8,6 +8,7 @@ const manifestPath = path.join(distDir, '.vite', 'bundle-manifest.json')
 const initialBudgetBytes = 800 * 1024
 const specializedBudgetBytes = 1400 * 1024
 const writeReport = process.argv.includes('--report')
+const pontoModulePath = path.join(rootDir, 'PontoModule.tsx')
 
 function toKiB(bytes) {
   return Math.round((bytes / 1024) * 10) / 10
@@ -58,13 +59,16 @@ const specializedFiles = Object.values(manifest)
   .map((item) => item.file)
   .filter((file) => typeof file === 'string' && /^assets\/ponto-(tensorflow|face-api)-.+\.js$/.test(file))
 const specializedAssets = await describeFiles([...new Set(specializedFiles)])
+const pontoSource = await fs.readFile(pontoModulePath, 'utf8')
+const faceIdentificationDisabled = /const FACE_IDENTIFICATION_ENABLED\s*=\s*false\b/.test(pontoSource)
+const expectedSpecializedChunks = faceIdentificationDisabled ? 0 : 2
 const pontoKeys = Object.keys(manifest).filter((key) => key === 'PontoModule.tsx' || key.endsWith('/PontoModule.tsx'))
 if (pontoKeys.length !== 1) throw new Error('BUNDLE_PONTO_ENTRY_NOT_FOUND')
 const pontoReachableFiles = new Set(filesFor(manifest, collect(manifest, pontoKeys, true)))
 
 const failures = []
 if (initialBytes > initialBudgetBytes) failures.push(`BUNDLE_INITIAL_BUDGET_EXCEEDED_${initialBytes}`)
-if (specializedAssets.length !== 2) failures.push('BUNDLE_SPECIALIZED_CHUNKS_MISSING')
+if (specializedAssets.length !== expectedSpecializedChunks) failures.push('BUNDLE_SPECIALIZED_CHUNKS_MISMATCH')
 for (const asset of specializedAssets) {
   if (initialFiles.includes(asset.file)) failures.push(`BUNDLE_SPECIALIZED_EAGER_${asset.file}`)
   if (!pontoReachableFiles.has(asset.file)) failures.push(`BUNDLE_SPECIALIZED_NOT_PONTO_${asset.file}`)
@@ -78,6 +82,7 @@ const report = {
     initialKiB: toKiB(initialBudgetBytes),
     specializedDeferredKiB: toKiB(specializedBudgetBytes),
   },
+  faceIdentification: faceIdentificationDisabled ? 'disabled' : 'enabled',
   initial: { bytes: initialBytes, kib: toKiB(initialBytes), assets: initialAssets },
   specializedDeferred: specializedAssets,
   failures,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { biometricDistance, decryptTemplate, encryptTemplate, hashPin, verifyPin } from './security.js'
+import { biometricDistance, decryptSensitiveText, decryptTemplate, encryptSensitiveText, encryptTemplate, hashPin, verifyPin } from './security.js'
 
 test('PIN is salted, hashed and verified without plaintext persistence', async () => {
   const first = await hashPin('123456')
@@ -23,4 +23,12 @@ test('biometric templates require encryption and round-trip without raw payload'
   assert.equal(encrypted.includes(String(template[4])), false)
   assert.deepEqual(await decryptTemplate(encrypted, 'unit-test-secret'), template)
   await assert.rejects(() => encryptTemplate(template, ''), /BIOMETRIC_KEY_MISSING/)
+})
+
+test('profile text is encrypted with an authenticated envelope', async () => {
+  const plaintext = JSON.stringify({ cpf: '12345678900', street: 'Rua Teste' })
+  const encrypted = await encryptSensitiveText(plaintext, 'profile-test-key')
+  assert.equal(encrypted.includes('12345678900'), false)
+  assert.equal(await decryptSensitiveText(encrypted, 'profile-test-key'), plaintext)
+  await assert.rejects(() => decryptSensitiveText(encrypted, 'wrong-key'))
 })

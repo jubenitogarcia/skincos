@@ -6,6 +6,8 @@ O navegador usa `https://crm.skincos.com.br/api/ponto/*`. A Pages Function auten
 
 O backend legado `crm/api/server/pontoRoutes.js` não participa desse caminho. `ponto_store.v2.json` é somente entrada de migração/rollback controlado.
 
+O terminal físico usa `https://crm.skincos.com.br/ponto-terminal.html`, autentica somente com um token de dispositivo revogável e registra por matrícula + PIN. A unidade, o dispositivo e o instante são definidos pelo servidor; não há seleção de unidade, reconhecimento facial ou horário do navegador. O procedimento de ativação e as políticas de rede/trabalho externo ficam em [ponto-terminal-presenca.md](ponto-terminal-presenca.md).
+
 ## Saúde e 404
 
 ```bash
@@ -38,8 +40,11 @@ Mutações same-origin exigem o token CSRF da sessão. A Pages Function envia um
 - `PONTO_ACTOR_HMAC_KEY`: assinatura CRM → Timekeeping;
 - `PONTO_IDEMPOTENCY_KEY`: fingerprint de retries;
 - `PONTO_TEMPLATES_KEY`: A256GCM dos templates biométricos;
+- `PONTO_PROFILE_DATA_KEY`: A256GCM de documentos, filiação, telefone e endereço do perfil canônico;
 - `ESCALA_ACTOR_HMAC_KEY`: autenticação Timekeeping → Escala;
 - `TIMEKEEPING_BACKUP_PASSPHRASE`: cifra o checkpoint D1 criado pelo workflow antes de migrations remotas;
+- `PONTO_FACE_PUNCH_ENABLED`: mantém identificação facial desabilitada por padrão; só use `true` após aprovação operacional explícita. A interface também bloqueia temporariamente novas capturas faciais; as marcações usam PIN;
+- `PONTO_NETWORK_CONTEXT_KEY`: assinatura do IP público observado pela Pages Function para o Worker. Configure o mesmo secret nos dois serviços somente quando for usar política de rede `OBSERVE` ou `REQUIRE`;
 - `PONTO_FACE_THRESHOLD`, `PONTO_PIN_ITERATIONS`, `PONTO_COOLDOWN_SECONDS`: ajustes operacionais no servidor;
 - `TIMEKEEPING_D1_STAGING_ID` e `TIMEKEEPING_D1_PRODUCTION_ID`: variables do GitHub, não secrets.
 

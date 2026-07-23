@@ -13,6 +13,8 @@ required=(
   'actual_archive_sha256="$(sha256sum "$RELEASE_ARCHIVE"'
   'sudo -n tar -xf "$RELEASE_ARCHIVE" -C "$STAGING"'
   'find "$STAGING" -type f'
+  'LIVIA_BUILD_JOB_GRAPH_SOURCE="$STAGING/orb/engine/compose2-current.js"'
+  '--assert-runtime-compatibility'
 )
 
 for pattern in "${required[@]}"; do
@@ -26,5 +28,8 @@ if grep -F -- 'git -C "$CANONICAL_REPO_ROOT" archive' "$SCRIPT" >/dev/null; then
   echo 'Source release must not archive through the Windows checkout from WSL.' >&2
   exit 1
 fi
+
+LIVIA_BUILD_JOB_GRAPH_SOURCE="$ROOT_DIR/orb/engine/compose2-current.js" \
+  node "$ROOT_DIR/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-runtime-compatibility >/dev/null
 
 echo 'PASS: native source release accepts only a checksum-verified Linux archive.'

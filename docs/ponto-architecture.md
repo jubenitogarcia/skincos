@@ -4,7 +4,7 @@
 
 - `workforce/timekeeping/worker.js`: rotas, orquestração, autenticação/autorização e observabilidade;
 - `workforce/timekeeping/domain.js`: cálculo diário e consolidado puro/determinístico;
-- `workforce/timekeeping/security.js`: PIN, HMAC e criptografia biométrica;
+- `workforce/timekeeping/security.js`: PIN, HMAC, criptografia biométrica e envelope A256GCM do perfil;
 - `workforce/timekeeping/migrations`: persistência D1 e integridade;
 - `crm/console/pontoApi.ts` e `pontoTypes.ts`: contrato do cliente;
 - `crm/console/functions/api/ponto/[[path]].ts`: adaptador same-origin seguro;
@@ -20,11 +20,13 @@ Sucesso JSON: `{ "ok": true, "data": ..., "requestId": "..." }`. Erro JSON: `{ "
 
 O proxy CRM aplica CSRF às mutações e assina um envelope HMAC v2 ligado ao método, caminho/query, nonce e hash do corpo. O gateway não replica cookies: propaga apenas o contrato assinado para o Service Binding. Corpos acima de 1 MiB são rejeitados antes do parsing tanto no proxy quanto no Worker.
 
-Principais recursos: `health`, `readiness`, `context`, `employees`, `punches`, `daily`, `mirror`, `monthly`, `inconsistencies`, `bank`, `corrections`, `devices`, `biometrics`, `pin`, `periods`, `audit`, `export` e `schedule/sync`.
+Principais recursos: `health`, `readiness`, `context`, `me/profile`, `employees/:id/profile`, `employees`, `punches`, `daily`, `mirror`, `monthly`, `inconsistencies`, `bank`, `corrections`, `devices`, `biometrics`, `pin`, `periods`, `audit`, `export` e `schedule/sync`.
 
 ## Identidade
 
 `workforce_employees.canonical_employee_id` é o identificador estável compartilhado. `workforce_employee_aliases` relaciona `PONTO_V2`, `ESCALA_PROFESSIONAL_ID` e `ESCALA_NAME`. Vínculos de unidade, jornada e escala têm vigência temporal. Desligamento altera status; não apaga evento, snapshot ou relatório histórico.
+
+`workforce_employee_profiles` é uma extensão 1:1 do funcionário canônico, não um novo cadastro. CPF, PIS, RG, filiação, telefone e endereço são envelope cifrado e nunca entram em logs/auditoria/listagens; o CRM mostra apenas status de preenchimento. CNPJ pertence a `workforce_unit_legal_profiles`, pois um funcionário pode atuar em mais de uma unidade.
 
 ## Cálculo
 

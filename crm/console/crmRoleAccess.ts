@@ -1,4 +1,4 @@
-export const CONSULTOR_MODULE_KEYS = new Set(['atendimento', 'ponto'])
+export const CONSULTOR_MODULE_KEYS = new Set(['atendimento'])
 
 function normalizedModules(value: unknown): string[] {
   return Array.isArray(value)
@@ -11,12 +11,16 @@ export function hasCrmModuleAccess(role: unknown, allowedModules: unknown, modul
   const key = String(moduleKey || '').trim()
   const roleKey = String(role || '').trim().toUpperCase()
   if (!key) return false
+  // Consultants only operate Atendimento. This must be evaluated before the
+  // generic self-service Ponto allowance below.
+  if (roleKey === 'CONSULTOR' || roleKey === 'EMPLOYEE') return CONSULTOR_MODULE_KEYS.has(key)
   // Every authenticated CRM user can access the self-service timekeeping area.
   // Data and administrative operations remain authorized by the Ponto proxy and
   // Workforce service; this function only governs sidebar navigation.
   if (key === 'ponto') return true
+  // Customer intelligence includes detailed commercial and clinical history.
+  if (key === 'clientes') return roleKey === 'GESTOR' || roleKey === 'ADMIN'
   if (roleKey === 'GESTOR' || roleKey === 'ADMIN') return true
-  if (roleKey === 'CONSULTOR' || roleKey === 'EMPLOYEE') return CONSULTOR_MODULE_KEYS.has(key)
   if (key === 'escala-profissionais') return roleKey === 'GERENTE'
 
   const allowed = normalizedModules(allowedModules)

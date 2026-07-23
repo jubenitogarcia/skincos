@@ -60,6 +60,31 @@ async function templateKey(secret) {
   return crypto.subtle.importKey('raw', material, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
 }
 
+async function sensitiveDataKey(secret) {
+  if (!secret) throw new Error('PROFILE_DATA_KEY_MISSING')
+  const material = await crypto.subtle.digest('SHA-256', encoder.encode(String(secret)))
+  return crypto.subtle.importKey('raw', material, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
+/**
+ * Encrypt bounded, structured employee profile data. The caller owns field
+ * allow-listing; this helper deliberately does not log or retain plaintext.
+ */
+export async function encryptSensitiveText(value, secret) {
+  const text = String(value ?? '')
+  if (text.length > 16 * 1024) throw new Error('PROFILE_DATA_TOO_LARGE')
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await sensitiveDataKey(secret), encoder.encode(text))
+  return JSON.stringify({ v: 1, alg: 'A256GCM', iv: bytesToBase64Url(iv), ciphertext: bytesToBase64Url(encrypted) })
+}
+
+export async function decryptSensitiveText(payload, secret) {
+  const parsed = JSON.parse(String(payload || ''))
+  if (parsed?.alg !== 'A256GCM' || parsed?.v !== 1 || !parsed?.iv || !parsed?.ciphertext) throw new Error('PROFILE_DATA_INVALID')
+  const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64UrlToBytes(parsed.iv) }, await sensitiveDataKey(secret), base64UrlToBytes(parsed.ciphertext))
+  return decoder.decode(plaintext)
+}
+
 export async function encryptTemplate(template, secret) {
   if (!isValidBiometricTemplate(template)) throw new Error('BIOMETRIC_TEMPLATE_INVALID')
   const iv = crypto.getRandomValues(new Uint8Array(12))
