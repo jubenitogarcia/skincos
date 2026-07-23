@@ -36,6 +36,7 @@ lerna-debug.log*
 !/instances/.gitkeep
 /test/*
 !/test/lid-jid.test.ts
+!/test/media-scheduler-compatibility.test.ts
 !/test/security-regression.test.ts
 /src/env.yml
 /store
