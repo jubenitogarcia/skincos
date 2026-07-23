@@ -12,6 +12,10 @@ concurrency:
   group: deploy-meta-ads-report-${{ inputs.target }}
   cancel-in-progress: false
 
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   promotion:
     uses: ./.github/workflows/promotion-gate.yml

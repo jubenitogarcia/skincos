@@ -43,6 +43,7 @@ for (const unit of catalog.units ?? []) {
   if (/^\s{2}(push|schedule|pull_request_target|workflow_run|repository_dispatch):/m.test(source)) fail(`${unit.id} has an automatic publish trigger`);
   if (!/^concurrency:/m.test(source) || !source.includes(unit.concurrencyPrefix)) fail(`${unit.id} must serialize by unit and environment`);
   if (!/^\s+environment:/m.test(source)) fail(`${unit.id} must select a GitHub environment`);
+  if (!/^permissions:\r?\n\s+actions:\s+read\r?\n\s+contents:\s+read/m.test(source)) fail(`${unit.id} must grant the promotion gate actions: read and contents: read`);
   if (!source.includes("promotion-gate.yml") || !source.includes("release_sha") || !source.includes("staging_run_id")) fail(`${unit.id} must use the immutable promotion gate`);
 }
 
