@@ -1,5 +1,17 @@
 function safeString(value) { return String(value ?? '').trim(); }
 function asObject(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+function normalizeCompact(value) {
+  return safeString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '')
+    .toLowerCase();
+}
+
+const SAFE_LANDING_PAGE_BY_DESTINATION = Object.freeze({
+  barrashoppingsul: 'https://espacofacial.com/agendamento?unit=barrashoppingsul',
+  novohamburgo: 'https://espacofacial.com/agendamento?unit=novo-hamburgo',
+});
 
 const root = $input.first()?.json || {};
 if (root.ok !== true || root.ready !== true) {
@@ -24,6 +36,15 @@ const rows = destinations.map((entry) => {
   if (missing.length) {
     throw new Error(`Meta Publish config incompleta em ${item.token_id || item.destination_group || 'destino'}: ${missing.join(', ')}`);
   }
+  const configuredLandingPages = asObject(item.landing_pages_by_creative_group);
+  const destinationKey = normalizeCompact(item.destination_group);
+  const safeFallbackLandingPage = SAFE_LANDING_PAGE_BY_DESTINATION[destinationKey] || '';
+  if (!Object.keys(configuredLandingPages).length && !safeFallbackLandingPage) {
+    throw new Error(`Meta Publish sem landing page segura para o destino ${safeString(item.destination_group)}.`);
+  }
+  const landingPages = Object.keys(configuredLandingPages).length
+    ? configuredLandingPages
+    : { DEFAULT: safeFallbackLandingPage };
   return {
     json: {
       row_number: item.row_number ?? '',
@@ -36,6 +57,8 @@ const rows = destinations.map((entry) => {
       instagram_user_id: safeString(item.instagram_user_id),
       token_id: safeString(item.token_id),
       allowed_link_hosts: Array.isArray(item.allowed_link_hosts) ? item.allowed_link_hosts : [],
+      landing_pages_by_creative_group: landingPages,
+      landing_page_validation: asObject(item.landing_page_validation),
       freshness_window_days: Number(item.freshness_window_days || 7),
       config_revision: safeString(root.config_revision),
       destination_id_source: 'meta_publish_gateway',

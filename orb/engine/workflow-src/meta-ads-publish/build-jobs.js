@@ -1,8 +1,17 @@
 const DEFAULT_AD_STATUS = 'ACTIVE';
-const DEFAULT_CTA_TYPE = 'WHATSAPP_MESSAGE';
-const DEFAULT_LINK_URL = 'https://api.whatsapp.com/send';
+// Website Lead ad sets with dynamic creative reject BOOK_NOW. A replacement
+// must, however, preserve the destination contract of its source ad: message
+// campaigns require WHATSAPP_MESSAGE and the WhatsApp URL.
+const DEFAULT_CTA_TYPE = 'LEARN_MORE';
+const WHATSAPP_CTA_TYPE = 'WHATSAPP_MESSAGE';
 const RATIO_PRIORITY = ['3x4', '2x1', '9x16'];
 const TEMPORAL_GUARD_FRESH_DAYS = 7;
+const VERTICAL_CROP_KEY = '90x160';
+const HORIZONTAL_CROP_KEY = '191x100';
+const VERTICAL_PUBLISHER_PLATFORMS = ['facebook', 'instagram', 'audience_network', 'whatsapp'];
+const VERTICAL_FACEBOOK_POSITIONS = ['instream_video', 'story', 'facebook_reels'];
+const VERTICAL_INSTAGRAM_POSITIONS = ['story', 'reels'];
+const VERTICAL_AUDIENCE_NETWORK_POSITIONS = ['classic'];
 
 function safeString(value) {
   return String(value ?? '').trim();
@@ -19,6 +28,10 @@ function deepClone(value) {
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function asObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
 function normalizeLookupKey(value) {
@@ -71,6 +84,11 @@ function isAllowedLinkUrl(value, configuredHosts) {
 
 function safeHostname(value) {
   return parseHttpsHostname(value);
+}
+
+function isWhatsAppHostname(value) {
+  const hostname = parseHttpsHostname(value);
+  return hostname === 'wa.me' || hostname === 'api.whatsapp.com' || hostname.endsWith('.whatsapp.com');
 }
 
 function uniqueStrings(values) {
@@ -331,53 +349,6 @@ function isValidWebsiteUrl(url) {
   return Boolean(parseHttpsHostname(url));
 }
 
-function normalizeLinkUrls(list) {
-  for (const entry of safeArray(list)) {
-    const candidate = toHttps(extractUrlCandidate(entry));
-    if (isValidWebsiteUrl(candidate)) return [{ website_url: candidate }];
-  }
-
-  return [{ website_url: DEFAULT_LINK_URL }];
-}
-
-function normalizeCtaTypes(list) {
-  const raw = safeString((Array.isArray(list) ? list[0] : '')).toUpperCase();
-
-  const aliasMap = {
-    WHATSAPP: 'WHATSAPP_MESSAGE',
-    WHATSAPP_MESSAGE: 'WHATSAPP_MESSAGE',
-  };
-
-  const allowed = new Set([
-    'OPEN_LINK', 'LIKE_PAGE', 'SHOP_NOW', 'PLAY_GAME', 'INSTALL_APP', 'USE_APP',
-    'CALL', 'CALL_ME', 'VIDEO_CALL', 'INSTALL_MOBILE_APP', 'USE_MOBILE_APP',
-    'MOBILE_DOWNLOAD', 'BOOK_TRAVEL', 'LISTEN_MUSIC', 'WATCH_VIDEO', 'LEARN_MORE',
-    'SIGN_UP', 'DOWNLOAD', 'WATCH_MORE', 'NO_BUTTON', 'VISIT_PAGES_FEED',
-    'CALL_NOW', 'APPLY_NOW', 'CONTACT', 'BUY_NOW', 'GET_OFFER', 'GET_OFFER_VIEW',
-    'BUY_TICKETS', 'UPDATE_APP', 'GET_DIRECTIONS', 'BUY', 'SEND_UPDATES',
-    'MESSAGE_PAGE', 'DONATE', 'SUBSCRIBE', 'SAY_THANKS', 'SELL_NOW', 'SHARE',
-    'DONATE_NOW', 'GET_QUOTE', 'CONTACT_US', 'ORDER_NOW', 'START_ORDER',
-    'ADD_TO_CART', 'VIEW_CART', 'VIEW_IN_CART', 'VIDEO_ANNOTATION', 'RECORD_NOW',
-    'INQUIRE_NOW', 'CONFIRM', 'REFER_FRIENDS', 'REQUEST_TIME', 'GET_SHOWTIMES',
-    'LISTEN_NOW', 'TRY_DEMO', 'WOODHENGE_SUPPORT', 'SOTTO_SUBSCRIBE',
-    'FOLLOW_USER', 'RAISE_MONEY', 'SEE_SHOP', 'GET_DETAILS', 'FIND_OUT_MORE',
-    'VISIT_WEBSITE', 'BROWSE_SHOP', 'EVENT_RSVP', 'WHATSAPP_MESSAGE',
-    'FOLLOW_NEWS_STORYLINE', 'SEE_MORE', 'BOOK_NOW', 'FIND_A_GROUP',
-    'FIND_YOUR_GROUPS', 'PAY_TO_ACCESS', 'PURCHASE_GIFT_CARDS', 'FOLLOW_PAGE',
-    'SEND_A_GIFT', 'SWIPE_UP_SHOP', 'SWIPE_UP_PRODUCT', 'SEND_GIFT_MONEY',
-    'PLAY_GAME_ON_FACEBOOK', 'GET_STARTED', 'OPEN_INSTANT_APP', 'AUDIO_CALL',
-    'GET_PROMOTIONS', 'JOIN_CHANNEL', 'MAKE_AN_APPOINTMENT',
-    'ASK_ABOUT_SERVICES', 'BOOK_A_CONSULTATION', 'GET_A_QUOTE',
-    'BUY_VIA_MESSAGE', 'ASK_FOR_MORE_INFO', 'CHAT_WITH_US', 'VIEW_PRODUCT',
-    'VIEW_CHANNEL', 'GET_IN_TOUCH', 'ASK_A_QUESTION', 'START_A_CHAT',
-    'CHAT_NOW', 'ASK_US', 'WATCH_LIVE_VIDEO', 'SHOP_WITH_AI', 'TRY_ON_WITH_AI'
-  ]);
-
-  const normalized = aliasMap[raw] || raw;
-  return [allowed.has(normalized) ? normalized : DEFAULT_CTA_TYPE];
-}
-
-
 function removeEmptyFields(value) {
   if (Array.isArray(value)) {
     return value.map(removeEmptyFields).filter((item) => item !== undefined && item !== null && item !== '');
@@ -399,22 +370,40 @@ function removeEmptyFields(value) {
 
 const ADVANTAGE_PLUS_SITE_LINKS_MIN = 2;
 const ADVANTAGE_PLUS_SITE_LINKS_MAX = 4;
-const ADVANTAGE_PLUS_BASE_FEATURES = [
+const ADVANTAGE_PLUS_MAIN_FEATURES = Object.freeze({
+  add_text_overlay: 'Adicionar sobreposicoes',
+  music_generation: 'Adicionar musica',
+  pac_relaxation: 'Midia flexivel',
+  image_touchups: 'Retoques visuais',
+  text_optimizations: 'Melhorias no texto',
+});
+const ADVANTAGE_PLUS_ESSENTIAL_FEATURES = Object.freeze({
+  inline_comment: 'Comentarios relevantes',
+  enhance_cta: 'Aprimorar CTA',
+  image_brightness_and_contrast: 'Ajustar brilho e contraste',
+});
+const ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES = Object.freeze({
+  reveal_details_over_time: 'Revelar detalhes ao longo do tempo',
+  show_destination_blurbs: 'Mostrar detalhes do destino',
+  image_animation: 'Animacao de imagem',
+  site_extensions: 'Extensoes do site',
+});
+const ADVANTAGE_PLUS_BASELINE_FEATURES = [
+  'add_text_overlay',
   'image_touchups',
-  'inline_comment',
   'text_optimizations',
+  'inline_comment',
   'enhance_cta',
   'image_brightness_and_contrast',
+  'reveal_details_over_time',
+  'show_destination_blurbs',
   'image_animation',
 ];
+const ADVANTAGE_PLUS_CONDITIONAL_FEATURES = ['music_generation', 'pac_relaxation', 'site_extensions'];
 
 function parseApiVersionMajor(version) {
   const match = safeString(version).match(/^v?(\d+)/i);
   return match ? Number(match[1]) : 0;
-}
-
-function advantagePlusFeatureKeyMode(apiVersion) {
-  return parseApiVersionMajor(apiVersion) >= 25 ? 'add_text_overlay' : 'image_template';
 }
 
 function normalizeSiteLinks(list) {
@@ -426,8 +415,8 @@ function normalizeSiteLinks(list) {
         ? ''
         : entry && (entry.title || entry.site_link_title || entry.name || entry.label)
     );
-    const url = toHttps(extractUrlCandidate(entry));
-    if (!title || !isValidWebsiteUrl(url)) continue;
+    const url = safeString(extractUrlCandidate(entry));
+    if (!title || !/^https:\/\//i.test(url) || !isValidWebsiteUrl(url)) continue;
     const key = title.toLowerCase() + '::' + url.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -442,34 +431,131 @@ function normalizeSiteLinks(list) {
   return out;
 }
 
-function buildAdvantagePlusRequest(apiVersion, siteLinks) {
+function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEligible }) {
+  if (parseApiVersionMajor(apiVersion) < 25) {
+    throw new Error(`Advantage+ Creative completo exige Marketing API v25.0; recebido ${safeString(apiVersion) || 'vazio'}.`);
+  }
   const creativeFeaturesSpec = {};
-  for (const feature of ADVANTAGE_PLUS_BASE_FEATURES) {
+  const eligibleFeatures = [...ADVANTAGE_PLUS_BASELINE_FEATURES];
+  const skippedFeatures = [];
+  const skipReasons = {};
+  for (const feature of ADVANTAGE_PLUS_BASELINE_FEATURES) {
     creativeFeaturesSpec[feature] = { enroll_status: 'OPT_IN' };
   }
-  const featureKeyMode = advantagePlusFeatureKeyMode(apiVersion);
-  creativeFeaturesSpec[featureKeyMode] = { enroll_status: 'OPT_IN' };
+
+  if (musicEligible) {
+    creativeFeaturesSpec.music_generation = { enroll_status: 'OPT_IN' };
+    eligibleFeatures.push('music_generation');
+  } else {
+    skippedFeatures.push('music_generation');
+    skipReasons.music_generation = 'adset_without_eligible_instagram_static_image_placement';
+  }
+
+  if (pacEligible) {
+    creativeFeaturesSpec.pac_relaxation = { enroll_status: 'OPT_IN' };
+    eligibleFeatures.push('pac_relaxation');
+  } else {
+    skippedFeatures.push('pac_relaxation');
+    skipReasons.pac_relaxation = 'multiple_ratios_or_explicit_placement_rules_missing';
+  }
 
   const siteLinksEligible = siteLinks.length >= ADVANTAGE_PLUS_SITE_LINKS_MIN;
   if (siteLinksEligible) {
     creativeFeaturesSpec.site_extensions = { enroll_status: 'OPT_IN' };
+    eligibleFeatures.push('site_extensions');
+  } else {
+    skippedFeatures.push('site_extensions');
+    skipReasons.site_extensions = 'fewer_than_two_valid_site_links';
   }
 
   return {
-    featureKeyMode,
+    featureKeyMode: 'add_text_overlay',
+    desiredFeatures: [...ADVANTAGE_PLUS_BASELINE_FEATURES, ...ADVANTAGE_PLUS_CONDITIONAL_FEATURES],
     requestedFeatures: Object.keys(creativeFeaturesSpec),
+    eligibleFeatures,
+    skippedFeatures,
+    skipReasons,
     siteLinksEligible,
     siteLinks: deepClone(siteLinks),
+    featureGroups: {
+      main: Object.entries(ADVANTAGE_PLUS_MAIN_FEATURES).map(([apiKey, label]) => ({
+        api_key: apiKey,
+        label,
+        requested: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey),
+        eligible: eligibleFeatures.includes(apiKey),
+        status: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey) ? 'requested' : 'ineligible',
+        reason: skipReasons[apiKey] || '',
+      })),
+      essential: Object.entries(ADVANTAGE_PLUS_ESSENTIAL_FEATURES).map(([apiKey, label]) => ({
+        api_key: apiKey,
+        label,
+        requested: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey),
+        eligible: eligibleFeatures.includes(apiKey),
+        status: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey) ? 'requested' : 'ineligible',
+        reason: skipReasons[apiKey] || '',
+      })),
+      supplemental: Object.entries(ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES).map(([apiKey, label]) => ({
+        api_key: apiKey,
+        label,
+        requested: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey),
+        eligible: eligibleFeatures.includes(apiKey),
+        status: Object.prototype.hasOwnProperty.call(creativeFeaturesSpec, apiKey) ? 'requested' : 'ineligible',
+        reason: skipReasons[apiKey] || '',
+      })),
+    },
     creativeFeaturesSpec,
     creativeSourcingSpec: siteLinksEligible
-      ? {
-          site_links_spec: siteLinks.map((link) => ({
+      ? { site_links_spec: siteLinks.map((link) => ({
             site_link_title: safeString(link.site_link_title || link.title),
             site_link_url: toHttps(link.site_link_url || link.url),
-          })),
-        }
-      : undefined,
+          })) }
+      : {},
   };
+}
+
+function resolveLandingPage(destinationMeta, gatewayConfig, creativeGroupKey, allowedHosts) {
+  const map = asObject(destinationMeta.landing_pages_by_creative_group || gatewayConfig && gatewayConfig.landing_pages_by_creative_group);
+  const normalizedGroup = normalizeKey(creativeGroupKey);
+  const exactMatches = Object.entries(map).filter(([key]) => normalizeKey(key) === normalizedGroup);
+  const defaultMatches = Object.entries(map).filter(([key]) => ['DEFAULT', 'ALL'].includes(normalizeKey(key)) || safeString(key) === '*');
+  const uniqueUrls = uniqueStrings(Object.values(map));
+  const matches = exactMatches.length
+    ? exactMatches
+    : defaultMatches.length
+      ? defaultMatches
+      : uniqueUrls.length === 1
+        ? [Object.entries(map).find(([, value]) => safeString(value) === uniqueUrls[0])]
+        : [];
+  if (matches.length !== 1) {
+    return {
+      ok: false,
+      error: matches.length ? 'landing_page_mapping_ambiguous' : 'landing_page_mapping_missing',
+      configured_keys: Object.keys(map).map(normalizeKey).filter(Boolean),
+    };
+  }
+  const url = safeString(matches[0][1]);
+  if (!/^https:\/\//i.test(url) || !isAllowedLinkUrl(url, allowedHosts) || isWhatsAppHostname(url)) {
+    return {
+      ok: false,
+      error: isWhatsAppHostname(url) ? 'landing_page_redirects_to_whatsapp' : 'landing_page_invalid_or_not_allowed',
+      rejected_hostname: safeHostname(url) || 'invalid',
+    };
+  }
+  return {
+    ok: true,
+    url,
+    source: 'token_vault.landing_pages_by_creative_group',
+    configured_key: matches[0][0],
+  };
+}
+
+function isMusicEligible(placementEligibility) {
+  const eligibility = asObject(placementEligibility && placementEligibility.advantage_plus_eligibility);
+  if (eligibility.instagram_static_image_music === true) return true;
+  const targeting = asObject(placementEligibility && placementEligibility.targeting);
+  const publishers = safeArray(targeting.effective_publisher_platforms || targeting.publisher_platforms).map((value) => safeString(value).toLowerCase());
+  const instagram = safeArray(targeting.effective_instagram_positions || targeting.instagram_positions).map((value) => safeString(value).toLowerCase());
+  return publishers.includes('instagram') && instagram.some((value) => ['story', 'reels', 'stream'].includes(value));
 }
 
 
@@ -486,8 +572,12 @@ function safeWarnings(jobWarnings, extraWarnings) {
 }
 
 function getBuildPayloadEntries() {
-  return $('Build Payload')
-    .all()
+  let items = [];
+  try { items = $items('Restore Publish Groups') || []; } catch (error) { items = []; }
+  if (!items.some((item) => safeString(item && item.json && item.json.job_key))) {
+    items = $('Build Payload').all();
+  }
+  return items
     .map((item) => ({
       json: item.json || {},
       binary: item.binary || {},
@@ -510,15 +600,17 @@ function buildFileToJob(jobEntries) {
 
   for (const entry of jobEntries) {
     const job = entry.json || {};
-    for (const image of safeArray(job.imagens)) {
-      const imageName = safeString(image.name);
-      const originalName = safeString(image.original_name);
-      const ratio = safeString(image.proporcao || detectRatio(imageName || originalName));
+    for (const media of [...safeArray(job.imagens), ...safeArray(job.videos)]) {
+      const imageName = safeString(media.name);
+      const originalName = safeString(media.original_name);
+      const ratio = safeString(media.proporcao || detectRatio(imageName || originalName));
 
       const payload = {
         job_key: safeString(job.job_key),
         ratio,
-        source_file_id: safeString(image.id),
+        role: safeString(media.role),
+        media_type: safeString(media.media_type || 'image'),
+        source_file_id: safeString(media.id),
         source_file_name: imageName || originalName,
       };
 
@@ -531,31 +623,50 @@ function buildFileToJob(jobEntries) {
 }
 
 function buildUploadedByJob(inputItems, fileToJob) {
-  const uploadItems = inputItems
-    .map((item) => item.json || {})
-    .filter((json) => json.images && typeof json.images === 'object');
+  const uploadItems = inputItems.map((item) => item.json || {});
 
   const uploadedByJob = new Map();
+  const targetFor = (jobKey, accountId) => {
+    if (!jobKey || !accountId) return null;
+    if (!uploadedByJob.has(jobKey)) uploadedByJob.set(jobKey, new Map());
+    const byAccount = uploadedByJob.get(jobKey);
+    if (!byAccount.has(accountId)) byAccount.set(accountId, {});
+    return byAccount.get(accountId);
+  };
 
   for (const item of uploadItems) {
+    if (item.video_id && item.upload_kind === 'video') {
+      const target = targetFor(safeString(item.job_key), safeString(item._gateway_account_id || item.account_id));
+      if (target) target.vertical_video = {
+        media_type: 'video', role: 'vertical_video', ratio: '9x16', video_id: safeString(item.video_id),
+        video_status: safeString(item.video_status), ready: item.ready === true,
+        source_file_id: safeString(item.source_file_id), source_file_name: safeString(item.source_file_name),
+        checksum_sha256: safeString(item.checksum_sha256), operation_key: safeString(item.status_operation_key),
+      };
+      continue;
+    }
     for (const [filename, meta] of Object.entries(item.images || {})) {
       const normalizedFilename = normalizeKey(filename);
-      const fileRef = fileToJob.get(normalizedFilename);
+      const fileRef = safeString(item.job_key)
+        ? { job_key: safeString(item.job_key), ratio: safeString(item.ratio), role: safeString(item.role), media_type: item.upload_kind === 'video_thumbnail' ? 'video_thumbnail' : 'image', source_file_id: safeString(item.source_file_id), source_file_name: safeString(item.source_file_name) }
+        : fileToJob.get(normalizedFilename);
       if (!fileRef || !fileRef.job_key) continue;
 
       const accountId = safeString(item._gateway_account_id || item.account_id);
       if (!accountId) continue;
-      if (!uploadedByJob.has(fileRef.job_key)) uploadedByJob.set(fileRef.job_key, new Map());
-      const byAccount = uploadedByJob.get(fileRef.job_key);
-      if (!byAccount.has(accountId)) byAccount.set(accountId, {});
-
-      byAccount.get(accountId)[fileRef.ratio || detectRatio(filename)] = {
+      const target = targetFor(fileRef.job_key, accountId);
+      const targetKey = item.upload_kind === 'video_thumbnail' ? 'vertical_video_thumbnail' : (fileRef.ratio || detectRatio(filename));
+      target[targetKey] = {
         ratio: fileRef.ratio || detectRatio(filename),
+        role: fileRef.role,
+        media_type: fileRef.media_type,
         original_filename: safeString(filename),
         source_file_id: fileRef.source_file_id,
         source_file_name: fileRef.source_file_name,
         hash: safeString(meta && meta.hash),
         url: toHttps(meta && meta.url),
+        width: Number(meta && meta.width),
+        height: Number(meta && meta.height),
       };
     }
   }
@@ -589,6 +700,8 @@ function buildFallbackUploadPool(inputItems) {
         source_file_name: safeString(filename),
         hash,
         url,
+        width: Number(meta && meta.width),
+        height: Number(meta && meta.height),
       });
     }
   }
@@ -597,68 +710,30 @@ function buildFallbackUploadPool(inputItems) {
 }
 
 function buildAiByJob(inputItems, jobEntries) {
+  // This node receives a Merge containing Livia output plus image/video upload
+  // receipts.  Upload receipts also carry job_key, so job_key alone is never
+  // evidence of an AI response.  Treat only a parsed creative_override as copy.
   const aiItems = inputItems
-    .map((item) => item.json || {})
-    .filter((json) =>
-      json.output ||
-      json.analysis ||
-      json.creative_override ||
-      json.source_ad_name ||
-      json.group_key ||
-      json.job_key
-    );
-
-  const jobRefs = jobEntries.map((entry) => {
-    const job = entry.json || {};
-    const key = safeString(job.job_key);
-    const aliases = uniqueStrings([
-      job.job_key,
-      job.source_ad_name,
-      job.source_ad_name_base,
-      job.group_key,
-      job.nome_base,
-    ]).map((value) => normalizeKey(value)).filter(Boolean);
-
-    return { key, aliases };
-  });
+    .map((item, input_index) => ({ item: item.json || {}, input_index }))
+    .map(({ item, input_index }) => ({ item, ai: unwrapAi(item), input_index }))
+    .filter(({ ai }) => Object.keys(asObject(ai.creative_override)).length > 0);
 
   const jobsByKey = new Map();
   const jobsBySourceName = new Map(jobEntries.map((entry) => [normalizeKey(entry.json.source_ad_name), safeString(entry.json.job_key)]));
   const jobsByGroupKey = new Map(jobEntries.map((entry) => [normalizeKey(entry.json.group_key), safeString(entry.json.job_key)]));
 
-  for (const ref of jobRefs) {
-    if (!ref.key) continue;
-    jobsByKey.set(ref.key, ref.key);
-    jobsByKey.set(normalizeKey(ref.key), ref.key);
-  }
-
-  function resolveJobKeyByAlias(value) {
-    const normalized = normalizeKey(value);
-    if (!normalized) return '';
-
-    let best = null;
-
-    for (const ref of jobRefs) {
-      for (const alias of ref.aliases) {
-        if (!alias) continue;
-        const exact = normalized === alias;
-        const aiExtendsJob = normalized.startsWith(alias + '_');
-        const jobExtendsAi = alias.startsWith(normalized + '_');
-        if (!exact && !aiExtendsJob && !jobExtendsAi) continue;
-
-        if (!best || alias.length > best.alias.length) {
-          best = { key: ref.key, alias };
-        }
-      }
-    }
-
-    return best ? best.key : '';
+  for (const entry of jobEntries) {
+    const key = safeString(entry.json && entry.json.job_key);
+    if (!key) continue;
+    jobsByKey.set(key, key);
+    jobsByKey.set(normalizeKey(key), key);
   }
 
   const aiByJob = new Map();
+  const unmappedInputIndexes = [];
+  const conflictingJobKeys = new Set();
 
-  for (const item of aiItems) {
-    const ai = unwrapAi(item);
+  for (const { item, ai, input_index } of aiItems) {
     const directKey = safeString(ai.job_key || item.job_key);
     const aiSourceName = safeString(ai.source_ad_name || item.source_ad_name);
     const aiGroupKey = safeString(ai.group_key || ai.nome_base || item.group_key);
@@ -667,15 +742,28 @@ function buildAiByJob(inputItems, jobEntries) {
       jobsByKey.get(normalizeKey(directKey)) ||
       jobsBySourceName.get(normalizeKey(aiSourceName)) ||
       jobsByGroupKey.get(normalizeKey(aiGroupKey)) ||
-      resolveJobKeyByAlias(aiSourceName) ||
-      resolveJobKeyByAlias(aiGroupKey) ||
       (jobEntries.length === 1 && aiItems.length === 1 ? safeString(jobEntries[0].json.job_key) : '');
 
-    if (!resolvedJobKey) continue;
+    if (!resolvedJobKey) {
+      unmappedInputIndexes.push(input_index);
+      continue;
+    }
+    if (aiByJob.has(resolvedJobKey)) {
+      conflictingJobKeys.add(resolvedJobKey);
+      continue;
+    }
     aiByJob.set(resolvedJobKey, ai);
   }
 
-  return aiByJob;
+  return {
+    aiByJob,
+    diagnostics: {
+      candidate_count: aiItems.length,
+      mapped_job_keys: [...aiByJob.keys()],
+      unmapped_candidate_count: unmappedInputIndexes.length,
+      conflicting_job_keys: [...conflictingJobKeys],
+    },
+  };
 }
 
 function buildOrderedAssets(job, uploaded) {
@@ -683,6 +771,55 @@ function buildOrderedAssets(job, uploaded) {
   const ordered = requiredRatios.map((ratio) => uploaded[ratio]).filter(Boolean);
   if (ordered.length) return ordered;
   return RATIO_PRIORITY.map((ratio) => uploaded[ratio]).filter(Boolean);
+}
+
+function buildCenteredCrop(widthValue, heightValue, targetWidth, targetHeight) {
+  const width = Math.trunc(Number(widthValue));
+  const height = Math.trunc(Number(heightValue));
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+
+  const targetRatio = targetWidth / targetHeight;
+  const sourceRatio = width / height;
+  if (Math.abs(sourceRatio - targetRatio) < 0.000001) {
+    return [[0, 0], [width, height]];
+  }
+
+  // Meta evaluates image_crops against the exact integer ratio encoded in the
+  // crop key.  Rounding only one edge can produce a crop such as 1731x906 for
+  // 191x100, which looks correct locally but is rejected by the creative API.
+  // When the source is large enough, retain the largest centred crop whose
+  // dimensions are an exact integer multiple of the requested ratio.
+  const exactScale = Math.floor(Math.min(width / targetWidth, height / targetHeight));
+  if (exactScale >= 1) {
+    const cropWidth = targetWidth * exactScale;
+    const cropHeight = targetHeight * exactScale;
+    const left = Math.max(0, Math.floor((width - cropWidth) / 2));
+    const top = Math.max(0, Math.floor((height - cropHeight) / 2));
+    return [[left, top], [left + cropWidth, top + cropHeight]];
+  }
+
+  if (sourceRatio > targetRatio) {
+    const cropWidth = Math.max(1, Math.round(height * targetRatio));
+    const left = Math.max(0, Math.floor((width - cropWidth) / 2));
+    return [[left, 0], [Math.min(width, left + cropWidth), height]];
+  }
+
+  const cropHeight = Math.max(1, Math.round(width / targetRatio));
+  const top = Math.max(0, Math.floor((height - cropHeight) / 2));
+  return [[0, top], [width, Math.min(height, top + cropHeight)]];
+}
+
+function buildImageCrops(asset) {
+  const ratio = safeString(asset && asset.ratio);
+  if (ratio === '9x16') {
+    const crop = buildCenteredCrop(asset && asset.width, asset && asset.height, 9, 16);
+    return crop ? { [VERTICAL_CROP_KEY]: crop } : undefined;
+  }
+  if (ratio === '2x1') {
+    const crop = buildCenteredCrop(asset && asset.width, asset && asset.height, 191, 100);
+    return crop ? { [HORIZONTAL_CROP_KEY]: crop } : undefined;
+  }
+  return undefined;
 }
 
 function buildSourceAssetFallback(job, preferredAd) {
@@ -950,6 +1087,23 @@ const inputItems = $input.all();
 const jobEntries = getBuildPayloadEntries();
 const buildPayloadErrors = getBuildPayloadErrorEntries();
 
+function persistedResumeJobs() {
+  let restored = [];
+  try { restored = $items('Restore Publish Groups') || []; } catch (error) { restored = []; }
+  const jobs = restored.flatMap((item) => safeArray(item && item.json && item.json.resume_jobs));
+  const unique = new Map();
+  for (const job of jobs) {
+    const key = safeString(job && job.job_key);
+    if (key && !unique.has(key)) unique.set(key, deepClone(job));
+  }
+  return [...unique.values()];
+}
+
+const resumeJobs = persistedResumeJobs();
+if (resumeJobs.length) {
+  return resumeJobs.map((job) => ({ json: job }));
+}
+
 if (!jobEntries.length) {
   const rootError = buildPayloadErrors[0] && buildPayloadErrors[0].json ? buildPayloadErrors[0].json : null;
   return [{
@@ -976,7 +1130,8 @@ if (!jobEntries.length) {
 
 const fileToJob = buildFileToJob(jobEntries);
 const uploadedByJob = buildUploadedByJob(inputItems, fileToJob);
-const aiByJob = buildAiByJob(inputItems, jobEntries);
+const aiCorrelation = buildAiByJob(inputItems, jobEntries);
+const aiByJob = aiCorrelation.aiByJob;
 function buildDestinationClaimKey(destinationMeta) {
   return safeString(destinationMeta && destinationMeta.destination_adset_id) ||
     safeString(destinationMeta && destinationMeta.destination_campaign_id) ||
@@ -1021,6 +1176,9 @@ for (const entry of jobEntries) {
     destination_api_version: safeString(destination.destination_api_version || destination.api_version || 'v25.0'),
     token_id: safeString(destination.token_id),
     allowed_link_hosts: safeArray(destination.allowed_link_hosts),
+    landing_pages_by_creative_group: deepClone(destination.landing_pages_by_creative_group || {}),
+    landing_page_validation: deepClone(destination.landing_page_validation || {}),
+    placement_eligibility: deepClone(destination.placement_eligibility || {}),
     freshness_window_days: Number(destination.freshness_window_days || TEMPORAL_GUARD_FRESH_DAYS),
     config_revision: safeString(destination.config_revision || job.config_revision),
     destination_id_source: safeString(destination.destination_id_source || 'build_payload'),
@@ -1034,8 +1192,17 @@ for (const entry of jobEntries) {
       claimedReplacementAdIdsByDestination.set(destinationClaimKey, new Set());
     }
     const claimedReplacementAdIds = claimedReplacementAdIdsByDestination.get(destinationClaimKey);
-    const shouldReplaceExisting =
+    const requestedReplaceExisting =
       safeString(job.action) === 'replace_existing' || Boolean(job.should_replace_existing);
+    const mediaMode = safeString(job.media_mode) || (safeArray(job.videos).length ? 'mixed_group' : 'static_group');
+    if (!['static_group', 'mixed_group', 'video_only'].includes(mediaMode)) {
+      outputs.push({ json: { error: 'Modo de midia invalido.', upstream_node: 'Build Jobs', upstream_error: 'media_mode_invalid', debug: { job_key: safeString(job.job_key), media_mode: mediaMode } } });
+      continue;
+    }
+    // A mixed logical group is materialized as two physical ads.  Replacing one
+    // old ad with both would be non-idempotent and can silently discard a media
+    // variant, so this migration always creates separate ACTIVE ads.
+    const shouldReplaceExisting = requestedReplaceExisting && mediaMode === 'static_group';
 
     const preferredIds = new Set(
       shouldReplaceExisting
@@ -1117,37 +1284,28 @@ for (const entry of jobEntries) {
         : (freshCandidates.length ? 'all_matching_candidates_are_fresh' : 'no_matching_candidate'),
     };
 
-    if (shouldReplaceExisting && !chosenAd) {
-      outputs.push({
-        json: {
-          error: freshCandidates.length
-            ? 'Temporal replacement guard bloqueou replace_existing: todos os candidatos correspondentes estao dentro da janela protegida.'
-            : 'replace_existing foi solicitado, mas nenhum candidato antigo e inequivoco foi encontrado.',
-          upstream_node: 'Build Jobs',
-          upstream_error: freshCandidates.length ? 'temporal_guard_all_candidates_fresh' : 'replacement_candidate_not_found',
-          debug: {
-            job_key: safeString(job.job_key),
-            destination_group: safeString(destinationMeta.destination_group),
-            temporal_guard: temporalGuard,
-            ranked_candidates: rankedCandidates.slice(0, 10).map((entry) => summarizeAd(entry.ad, entry.score, entry.reasons, entry.temporal)),
-          },
-        },
-        binary: deepClone(entry.binary || {}),
-      });
-      continue;
-    }
+    // A requested replacement only proceeds when an unambiguous, old target
+    // exists. Recent candidates and an empty match set are both normal reasons
+    // to create a separate ad in the configured ad set, never to block a valid
+    // publication batch or overwrite a protected ad.
+    const replacementFallsBackToNewAd = shouldReplaceExisting && !chosenAd;
+    const temporalGuardRequiresNewAd = replacementFallsBackToNewAd && freshCandidates.length > 0;
 
-    let scopedReplacementPlan = shouldReplaceExisting
+    const action = shouldReplaceExisting && !replacementFallsBackToNewAd
+      ? 'replace_existing'
+      : 'create_new';
+
+    let scopedReplacementPlan = action === 'replace_existing'
       ? safeArray(job.replacement_plan).filter((item) =>
           safeString(item.ad_id) === safeString(chosenAd && chosenAd.id)
         )
       : [];
 
-    if (shouldReplaceExisting && !scopedReplacementPlan.length && chosenAd) {
+    if (action === 'replace_existing' && !scopedReplacementPlan.length && chosenAd) {
       scopedReplacementPlan = buildReplacementPlanForAd(chosenAd, mediaInventoryByRatio);
     }
 
-    if (shouldReplaceExisting && !scopedReplacementPlan.length) {
+    if (action === 'replace_existing' && !scopedReplacementPlan.length) {
       outputs.push({
         json: {
           error: 'replace_existing foi bloqueado porque o plano de substituicao nao pode ser construido com seguranca.',
@@ -1162,8 +1320,6 @@ for (const entry of jobEntries) {
       });
       continue;
     }
-
-    const action = shouldReplaceExisting ? 'replace_existing' : 'create_new';
 
     const chosenScore = chosenEntry ? chosenEntry.score : 0;
     const chosenReasons = chosenEntry ? chosenEntry.reasons : [];
@@ -1182,7 +1338,11 @@ for (const entry of jobEntries) {
     const resolvedTokenId = safeString(destinationMeta.token_id || gatewayConfig && gatewayConfig.token_id);
     const uploaded = uploadedByAccount.get(resolvedAccountId) || {};
     const orderedAssets = buildOrderedAssets(job, uploaded).filter(hasCreativeAsset);
-    if (orderedAssets.length !== safeArray(job.required_ratios).length || orderedAssets.length < 3) {
+    const requiresVideo = mediaMode === 'mixed_group' || mediaMode === 'video_only';
+    const requiresStaticImages = mediaMode === 'mixed_group' || mediaMode === 'static_group';
+    const uploadedVideo = asObject(uploaded.vertical_video);
+    const uploadedVideoThumbnail = asObject(uploaded.vertical_video_thumbnail);
+    if (requiresStaticImages && (orderedAssets.length !== safeArray(job.required_ratios).length || orderedAssets.length < 3)) {
       outputs.push({
         json: {
           error: 'Upload gateway incompleto ou sem correlacao estrita por nome, ratio e conta.',
@@ -1198,6 +1358,25 @@ for (const entry of jobEntries) {
       });
       continue;
     }
+    if (requiresVideo && (!safeString(uploadedVideo.video_id) || uploadedVideo.ready !== true || safeString(uploadedVideo.video_status) !== 'ready' || !safeString(uploadedVideoThumbnail.hash))) {
+      outputs.push({
+        json: {
+          error: 'Upload de video ou miniatura incompleto antes da criacao do creative.',
+          upstream_node: 'Build Jobs',
+          upstream_error: 'strict_video_upload_mapping_failed',
+          debug: {
+            job_key: safeString(job.job_key), account_id: resolvedAccountId,
+            video_id: safeString(uploadedVideo.video_id), video_status: safeString(uploadedVideo.video_status),
+            video_ready: uploadedVideo.ready === true, thumbnail_hash_present: Boolean(safeString(uploadedVideoThumbnail.hash)),
+          },
+        },
+      });
+      continue;
+    }
+    if (!requiresStaticImages && orderedAssets.length) {
+      outputs.push({ json: { error: 'Video unico nao pode carregar imagens estaticas no mesmo job.', upstream_node: 'Build Jobs', upstream_error: 'video_only_contains_images', debug: { job_key: safeString(job.job_key), image_count: orderedAssets.length } } });
+      continue;
+    }
 
     if (!orderedAssets.length) warnings.push('Nenhum asset enviado foi associado a este job.');
     if (!resolvedAccountId) warnings.push('destination_ad_account_id ausente.');
@@ -1207,7 +1386,9 @@ for (const entry of jobEntries) {
     if (!resolvedTokenId) warnings.push('token_id opaco do gateway ausente para o destino.');
     if (action === 'create_new' && !resolvedAdsetId) warnings.push(`Job ${job.job_key} sem destination_adset_id para create_new.`);
     if (action === 'replace_existing' && !resolvedSourceAdId) warnings.push('source_ad_id ausente para replace_existing.');
-    if (shouldReplaceExisting && !chosenAd) warnings.push(`Nenhum anuncio antigo da unidade ${destinationMeta.destination_group} foi localizado para match preciso.`);
+    if (temporalGuardRequiresNewAd) warnings.push(`Janela de ${freshnessWindowDays} dias protegeu ${freshCandidates.length} anuncio(s) recente(s); sera criado um novo anuncio ACTIVE sem substituir os existentes.`);
+    if (replacementFallsBackToNewAd && !temporalGuardRequiresNewAd) warnings.push(`Nenhum candidato inequivoco foi localizado para substituicao; sera criado um novo anuncio ACTIVE sem substituir anuncios existentes.`);
+    if (requestedReplaceExisting && !shouldReplaceExisting) warnings.push('replace_existing foi convertido para create_new ACTIVE porque o grupo possui video; os anuncios fisicos precisam permanecer distintos.');
 
     const overrides = deepClone(ai.creative_override || {});
     const analysis = deepClone(ai.analysis || {});
@@ -1225,26 +1406,44 @@ for (const entry of jobEntries) {
     const aiTitles = normalizeTextAssets(overrides.titles, 5);
     const aiDescriptions = normalizeTextAssets(overrides.descriptions, 1);
 
-    if (!aiByJob.has(job.job_key) || aiBodies.length !== 5 || aiTitles.length !== 5 || aiDescriptions.length !== 1) {
+    const aiCorrelationConflict = aiCorrelation.diagnostics.conflicting_job_keys.includes(safeString(job.job_key));
+    const aiOutputUnmapped = !aiByJob.has(job.job_key) && aiCorrelation.diagnostics.unmapped_candidate_count > 0;
+    if (aiCorrelationConflict || aiOutputUnmapped || !aiByJob.has(job.job_key) || aiBodies.length !== 5 || aiTitles.length !== 5 || aiDescriptions.length !== 1) {
+      const upstreamError = aiCorrelationConflict
+        ? 'ai_output_conflict'
+        : aiOutputUnmapped
+          ? 'ai_output_unmapped'
+          : 'ai_copy_contract_failed';
       outputs.push({
         json: {
-          error: 'A saida estruturada da IA nao atende ao contrato exato de 5 bodies, 5 titles e 1 description.',
+          error: upstreamError === 'ai_output_unmapped'
+            ? 'A resposta estruturada da IA nao pode ser correlacionada com seguranca ao job.'
+            : upstreamError === 'ai_output_conflict'
+              ? 'Mais de uma resposta estruturada da IA foi correlacionada ao mesmo job.'
+              : 'A saida estruturada da IA nao atende ao contrato exato de 5 bodies, 5 titles e 1 description.',
           upstream_node: 'Build Jobs',
-          upstream_error: 'ai_copy_contract_failed',
+          upstream_error: upstreamError,
           debug: {
             job_key: safeString(job.job_key),
             ai_output_found: aiByJob.has(job.job_key),
             body_count: aiBodies.length,
             title_count: aiTitles.length,
             description_count: aiDescriptions.length,
+            ai_candidate_count: aiCorrelation.diagnostics.candidate_count,
+            ai_unmapped_candidate_count: aiCorrelation.diagnostics.unmapped_candidate_count,
+            ai_conflicting_job_keys: deepClone(aiCorrelation.diagnostics.conflicting_job_keys),
           },
         },
       });
       continue;
     }
 
-    const linkUrls = normalizeLinkUrls(overrides.link_urls);
-    const ctaTypes = normalizeCtaTypes(overrides.call_to_action_types);
+    const sourceFeed = deepClone(asObject(chosenAd && chosenAd.creative && chosenAd.creative.asset_feed_spec));
+    const sourceCta = safeString(safeArray(sourceFeed.call_to_action_types)[0]).toUpperCase();
+    const sourceLinkUrl = safeString(safeArray(sourceFeed.link_urls)[0]?.website_url);
+    const preservesWhatsAppDestination = action === 'replace_existing' &&
+      sourceCta === WHATSAPP_CTA_TYPE && /^https:\/\/(?:api\.whatsapp\.com|wa\.me)(?:[/?#]|$)/i.test(sourceLinkUrl);
+    const ctaTypes = [preservesWhatsAppDestination ? WHATSAPP_CTA_TYPE : DEFAULT_CTA_TYPE];
     const requestedRawSiteLinks = safeArray(overrides.site_links || overrides.siteLinks || ai.site_links || ai.siteLinks);
     const allowedLinkHosts = safeArray(destinationMeta.allowed_link_hosts || gatewayConfig && gatewayConfig.allowed_link_hosts);
     const siteLinks = normalizeSiteLinks(requestedRawSiteLinks);
@@ -1281,35 +1480,32 @@ for (const entry of jobEntries) {
     const normalizedTitles = aiTitles;
     const normalizedDescriptions = aiDescriptions;
 
-    const primaryLinkCandidate = toHttps(extractUrlCandidate(linkUrls[0]));
-    const isWhatsAppCta = ctaTypes[0] === DEFAULT_CTA_TYPE;
-    const primaryLinkUrl = isWhatsAppCta
-      ? DEFAULT_LINK_URL
-      : primaryLinkCandidate;
-    if (isWhatsAppCta && primaryLinkCandidate && primaryLinkCandidate !== DEFAULT_LINK_URL) {
-      warnings.push(`A URL sugerida pela IA foi ignorada porque o CTA e WhatsApp; hostname=${safeHostname(primaryLinkCandidate) || 'invalid'}.`);
-    }
-    if (!isAllowedLinkUrl(primaryLinkUrl, allowedLinkHosts)) {
+    const creativeGroupKey = safeString(job.creative_group_key || job.group_key);
+    const landingPage = resolveLandingPage(destinationMeta, gatewayConfig, creativeGroupKey, allowedLinkHosts);
+    if (!landingPage.ok) {
       outputs.push({
         json: {
-          error: 'A URL principal retornada pela IA esta fora da allowlist de hosts.',
+          error: 'A landing page especifica da campanha nao esta pronta no Token Vault.',
           upstream_node: 'Build Jobs',
-          upstream_error: 'primary_link_host_not_allowed',
+          upstream_error: landingPage.error,
           debug: {
             job_key: safeString(job.job_key),
-            rejected_hostname: safeHostname(primaryLinkUrl) || 'invalid',
-            cta_type: ctaTypes[0] || '',
+            creative_group_key: creativeGroupKey,
+            destination_group: safeString(destinationMeta.destination_group),
+            configured_keys: landingPage.configured_keys || [],
+            rejected_hostname: landingPage.rejected_hostname || '',
           },
         },
       });
       continue;
     }
 
+    const schedulingLandingPageUrl = landingPage.url;
+    const primaryLinkUrl = preservesWhatsAppDestination ? sourceLinkUrl : schedulingLandingPageUrl;
     const safeLinkUrls = [{ website_url: primaryLinkUrl }];
-    const advantagePlusRequest = buildAdvantagePlusRequest(resolvedApiVersion, siteLinks);
     const adMutationPayload = {
       name: finalAdName || sourceAdName,
-      status: 'PAUSED',
+      status: DEFAULT_AD_STATUS,
       creative: {
         creative_id: '',
       },
@@ -1317,15 +1513,54 @@ for (const entry of jobEntries) {
     };
     const useFlexibleCreative = orderedAssets.length >= 3;
 
-    const imageLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'image', index + 1));
+    const imageLabels = orderedAssets.map((asset) => ({ name: asset.ratio === '2x1' ? 'banner_image' : asset.ratio === '9x16' ? 'vertical_image' : 'feed_image' }));
+    const videoLabel = { name: 'vertical_video' };
     const bodyRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'body_rule', index + 1));
     const titleRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'title_rule', index + 1));
 
     const imageAssets = orderedAssets.map((asset, index) => ({
       hash: safeString(asset.hash) || undefined,
       url: safeString(asset.hash) ? undefined : toHttps(asset.url),
+      image_crops: buildImageCrops(asset),
       adlabels: [imageLabels[index]],
     }));
+
+    const verticalAsset = orderedAssets.find((asset) => safeString(asset && asset.ratio) === '9x16');
+    if (verticalAsset && !buildImageCrops(verticalAsset)) {
+      outputs.push({
+        json: {
+          error: 'A arte vertical nao possui dimensoes validas para calcular o corte recomendado 9:16.',
+          upstream_node: 'Build Jobs',
+          upstream_error: 'vertical_crop_dimensions_missing',
+          debug: {
+            job_key: safeString(job.job_key),
+            ratio: '9x16',
+            width_present: Number(verticalAsset.width) > 0,
+            height_present: Number(verticalAsset.height) > 0,
+          },
+        },
+      });
+      continue;
+    }
+
+    const horizontalAsset = orderedAssets.find((asset) => safeString(asset && asset.ratio) === '2x1');
+    if (horizontalAsset && !buildImageCrops(horizontalAsset)) {
+      outputs.push({
+        json: {
+          error: 'A arte horizontal nao possui dimensoes validas para calcular o corte recomendado 1,91:1.',
+          upstream_node: 'Build Jobs',
+          upstream_error: 'horizontal_crop_dimensions_missing',
+          debug: {
+            job_key: safeString(job.job_key),
+            ratio: '2x1',
+            meta_crop_key: HORIZONTAL_CROP_KEY,
+            width_present: Number(horizontalAsset.width) > 0,
+            height_present: Number(horizontalAsset.height) > 0,
+          },
+        },
+      });
+      continue;
+    }
 
     const bodyAssets = normalizedBodies.map((asset) => ({
       text: safeString(asset.text),
@@ -1341,40 +1576,40 @@ for (const entry of jobEntries) {
       text: safeString(asset.text),
     }));
 
-    const placementRules = orderedAssets.map((asset, index) => ({
-      customization_spec:
-        asset.ratio === '9x16'
-          ? {
-              publisher_platforms: ['facebook', 'instagram'],
-              facebook_positions: ['story', 'facebook_reels'],
-              instagram_positions: ['story', 'reels'],
-            }
-          : asset.ratio === '2x1'
-            ? {
-                publisher_platforms: ['facebook'],
-                facebook_positions: ['search'],
-              }
-            : {
-                publisher_platforms: ['facebook', 'instagram'],
-                facebook_positions: ['feed', 'marketplace'],
-                instagram_positions: ['stream', 'explore'],
-              },
-      image_label: imageLabels[index],
-      body_label: bodyRuleLabels[index],
-      title_label: titleRuleLabels[index],
-      priority: index + 1,
-    }));
+    const feedIndex = orderedAssets.findIndex((asset) => !['2x1', '9x16'].includes(asset.ratio));
+    const bannerIndex = orderedAssets.findIndex((asset) => asset.ratio === '2x1');
+    const verticalIndex = orderedAssets.findIndex((asset) => asset.ratio === '9x16');
+    const placementRules = [
+      {
+        customization_spec: { publisher_platforms: ['facebook', 'instagram'], facebook_positions: ['feed', 'marketplace'], instagram_positions: ['stream', 'explore'] },
+        image_label: imageLabels[feedIndex], body_label: bodyRuleLabels[feedIndex], title_label: titleRuleLabels[feedIndex], priority: 1,
+      },
+      {
+        customization_spec: { publisher_platforms: ['facebook'], facebook_positions: ['search'] },
+        image_label: imageLabels[bannerIndex], body_label: bodyRuleLabels[bannerIndex], title_label: titleRuleLabels[bannerIndex], priority: 2,
+      },
+      {
+        customization_spec: { publisher_platforms: ['facebook', 'instagram'], facebook_positions: ['story', 'facebook_reels'], instagram_positions: ['story', 'reels'] },
+        image_label: imageLabels[verticalIndex],
+        body_label: bodyRuleLabels[verticalIndex], title_label: titleRuleLabels[verticalIndex], priority: 3,
+      },
+    ];
+
+    const advantagePlusRequest = buildAdvantagePlusRequest({
+      apiVersion: resolvedApiVersion,
+      siteLinks,
+      musicEligible: isMusicEligible(destinationMeta.placement_eligibility),
+      pacEligible: orderedAssets.length > 1 && placementRules.length > 1,
+    });
 
     const creativeRootExtras = removeEmptyFields({
       degrees_of_freedom_spec: {
         creative_features_spec: deepClone(advantagePlusRequest.creativeFeaturesSpec),
       },
-      creative_sourcing_spec: advantagePlusRequest.siteLinksEligible
-        ? deepClone(advantagePlusRequest.creativeSourcingSpec)
-        : undefined,
+      creative_sourcing_spec: deepClone(advantagePlusRequest.creativeSourcingSpec),
     });
 
-    const creativePayload = useFlexibleCreative
+    const staticCreativePayload = useFlexibleCreative
       ? removeEmptyFields({
           name: finalAdName || sourceAdName,
           object_story_spec: {
@@ -1417,16 +1652,63 @@ for (const entry of jobEntries) {
           ...creativeRootExtras,
         });
 
+    const videoCreativePayload = requiresVideo ? removeEmptyFields({
+      name: `${finalAdName || sourceAdName} [VIDEO]`,
+      object_story_spec: {
+        page_id: String(resolvedPageId),
+        instagram_user_id: resolvedInstagramUserId ? String(resolvedInstagramUserId) : undefined,
+        video_data: {
+          video_id: safeString(uploadedVideo.video_id),
+          image_hash: safeString(uploadedVideoThumbnail.hash),
+          message: safeString(bodyAssets[0] && bodyAssets[0].text),
+          title: safeString(titleAssets[0] && titleAssets[0].text).slice(0, 80),
+          call_to_action: {
+            type: ctaTypes[0] || DEFAULT_CTA_TYPE,
+            value: { link: primaryLinkUrl },
+          },
+        },
+      },
+      // Meta accepts a video creative through object_story_spec.video_data.
+      // Do not attach the image-only Advantage+ asset-feed configuration here.
+    }) : null;
+
+    const creativeVariants = [
+      ...(requiresStaticImages ? [{
+        media_variant: 'static_flexible',
+        name_suffix: '[STATIC]',
+        creativePayload: staticCreativePayload,
+        assetIds: Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, safeString(asset.source_file_id)])),
+        assetNames: Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, safeString(asset.source_file_name || asset.original_filename)])),
+        assetHashes: Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, safeString(asset.hash)])),
+        assetUrls: Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, toHttps(asset.url)])),
+        orderedRatios: orderedAssets.map((asset) => safeString(asset.ratio)),
+        requiredMediaRoles: ['feed_image', 'banner_image', 'vertical_image'],
+        advantagePlusEnabled: true,
+      }] : []),
+      ...(requiresVideo ? [{
+        media_variant: 'video_single',
+        name_suffix: '[VIDEO]',
+        creativePayload: videoCreativePayload,
+        assetIds: Object.fromEntries(safeArray(job.videos).map((video) => ['vertical_video', safeString(video.id)])),
+        assetNames: Object.fromEntries(safeArray(job.videos).map((video) => ['vertical_video', safeString(video.original_name || video.name)])),
+        assetHashes: { vertical_video: safeString(uploadedVideo.video_id), vertical_video_thumbnail: safeString(uploadedVideoThumbnail.hash) },
+        assetUrls: {},
+        orderedRatios: ['9x16_video'],
+        requiredMediaRoles: ['vertical_video'],
+        advantagePlusEnabled: false,
+      }] : []),
+    ];
+
     const readyToCreateCreative = Boolean(
       resolvedTokenId &&
       resolvedAccountId &&
       resolvedPageId &&
       resolvedApiVersion &&
-      orderedAssets.length
+      (requiresStaticImages ? orderedAssets.length : safeString(uploadedVideo.video_id))
     );
 
     const readyToCreateAd = action === 'create_new'
-      ? Boolean(resolvedTokenId && resolvedAccountId && resolvedAdsetId && resolvedApiVersion && orderedAssets.length)
+      ? Boolean(resolvedTokenId && resolvedAccountId && resolvedAdsetId && resolvedApiVersion && (requiresStaticImages ? orderedAssets.length : safeString(uploadedVideo.video_id)))
       : false;
 
     const readyToReplaceAd = Boolean(resolvedTokenId && action === 'replace_existing' && resolvedSourceAdId && resolvedApiVersion && orderedAssets.length);
@@ -1435,13 +1717,28 @@ for (const entry of jobEntries) {
       claimedReplacementAdIds.add(resolvedSourceAdId);
     }
 
-    outputs.push({
+    for (const variant of creativeVariants) {
+      const variantAdName = `${finalAdName || sourceAdName} ${variant.name_suffix}`.slice(0, 255);
+      const variantAdPayload = { ...adMutationPayload, name: variantAdName };
+      const reportedAdvantage = variant.advantagePlusEnabled ? advantagePlusRequest : {
+        desiredFeatures: [], requestedFeatures: [], eligibleFeatures: [],
+        skippedFeatures: ['video_single_creative_no_asset_feed_advantage_plus'],
+        skipReasons: { video_single_creative_no_asset_feed_advantage_plus: 'O creative de video usa object_story_spec.video_data, sem asset_feed_spec.' },
+        featureKeyMode: 'not_applicable_video_single', siteLinks: [], siteLinksEligible: false,
+        featureGroups: { main: [], essential: [], supplemental: [] },
+      };
+      if (variant.media_variant === 'static_flexible') variant.creativePayload.name = variantAdName;
+      outputs.push({
       json: {
         parent_job_key: safeString(job.job_key),
-        job_key: createExpandedJobKey(job.job_key, destinationMeta),
+        job_key: `${createExpandedJobKey(job.job_key, destinationMeta)}:${variant.media_variant}`,
 
         action,
-        match_status: action === 'replace_existing' ? 'destination_replace' : safeString(job.match_status || 'no_match'),
+        match_status: action === 'replace_existing'
+          ? 'destination_replace'
+          : (temporalGuardRequiresNewAd
+            ? 'temporal_guard_create_new'
+            : (replacementFallsBackToNewAd ? 'replacement_candidate_create_new' : safeString(job.match_status || 'no_match'))),
         should_create_new_ad: action === 'create_new',
         should_replace_existing: action === 'replace_existing',
 
@@ -1452,6 +1749,9 @@ for (const entry of jobEntries) {
         group_key: safeString(job.group_key),
         offer_group_key: safeString(job.offer_group_key || job.offer_key || job.group_key),
         creative_group_key: safeString(job.creative_group_key || job.group_key),
+        logical_creative_group_key: safeString(job.creative_group_key || job.group_key),
+        media_mode: mediaMode,
+        media_variant: variant.media_variant,
         grouping_discriminator: safeString(job.grouping_discriminator),
         grouping_strategy: safeString(job.grouping_strategy),
         nome_base: safeString(job.nome_base),
@@ -1485,51 +1785,89 @@ for (const entry of jobEntries) {
         batch_fingerprint: safeString(job.batch_fingerprint),
         config_revision: safeString(destinationMeta.config_revision || job.config_revision),
         allowed_link_hosts: deepClone(allowedLinkHosts),
+        landing_page_url: primaryLinkUrl,
+        scheduling_landing_page_url: schedulingLandingPageUrl,
+        destination_mode: preservesWhatsAppDestination ? 'whatsapp_message_preserved_from_source_ad' : 'website_leads',
+        landing_page_source: landingPage.source,
+        landing_page_configured_key: landingPage.configured_key,
         desired_final_status: DEFAULT_AD_STATUS,
 
-        creativePayload,
+        creativePayload: variant.creativePayload,
         advantage_plus_request: {
-          requested_features: deepClone(advantagePlusRequest.requestedFeatures),
-          feature_key_mode: safeString(advantagePlusRequest.featureKeyMode),
-          site_links: deepClone(advantagePlusRequest.siteLinks),
-          site_extensions_enabled: Boolean(advantagePlusRequest.siteLinksEligible),
+          desired_features: deepClone(reportedAdvantage.desiredFeatures),
+          requested_features: deepClone(reportedAdvantage.requestedFeatures),
+          eligible_features: deepClone(reportedAdvantage.eligibleFeatures),
+          skipped_features: deepClone(reportedAdvantage.skippedFeatures),
+          skip_reasons: deepClone(reportedAdvantage.skipReasons),
+          feature_key_mode: safeString(reportedAdvantage.featureKeyMode),
+          site_links: deepClone(reportedAdvantage.siteLinks),
+          site_extensions_enabled: Boolean(reportedAdvantage.siteLinksEligible),
+          landing_page_source: landingPage.source,
+          requested_at_api_version: resolvedApiVersion,
+          feature_groups: deepClone(reportedAdvantage.featureGroups),
         },
-        advantage_plus_requested_features: deepClone(advantagePlusRequest.requestedFeatures),
-        advantage_plus_final_features: deepClone(advantagePlusRequest.requestedFeatures),
+        advantage_plus_feature_groups: deepClone(reportedAdvantage.featureGroups),
+        advantage_plus_effective_report: {
+          status: 'pending_graph_readback',
+          evidence_source: 'request_only',
+          main: deepClone(reportedAdvantage.featureGroups.main),
+          essential: deepClone(reportedAdvantage.featureGroups.essential),
+          supplemental: deepClone(reportedAdvantage.featureGroups.supplemental),
+          graph_acknowledged_features: [],
+          ui_confirmed_features: [],
+          rejected_features: [],
+          ineligible_features: deepClone(reportedAdvantage.skippedFeatures),
+          ui_confirmation_required: true,
+        },
+        advantage_plus_requested_features: deepClone(reportedAdvantage.requestedFeatures),
+        advantage_plus_eligible_features: deepClone(reportedAdvantage.eligibleFeatures),
+        advantage_plus_skipped_features: deepClone(reportedAdvantage.skippedFeatures),
+        advantage_plus_skip_reasons: deepClone(reportedAdvantage.skipReasons),
+        advantage_plus_final_features: deepClone(reportedAdvantage.requestedFeatures),
         advantage_plus_applied_features: [],
         advantage_plus_removed_features: [],
-        advantage_plus_feature_key_mode: safeString(advantagePlusRequest.featureKeyMode),
-        advantage_plus_site_links: deepClone(advantagePlusRequest.siteLinks),
-        site_links_requested_count: safeArray(advantagePlusRequest.siteLinks).length,
+        advantage_plus_feature_key_mode: safeString(reportedAdvantage.featureKeyMode),
+        advantage_plus_site_links: deepClone(reportedAdvantage.siteLinks),
+        site_links_requested_count: safeArray(reportedAdvantage.siteLinks).length,
         site_links_applied: [],
         advantage_plus_verification: {
           status: 'pending',
-          requested_features: deepClone(advantagePlusRequest.requestedFeatures),
-          site_links_requested_count: safeArray(advantagePlusRequest.siteLinks).length,
-          site_extensions_requested: Boolean(advantagePlusRequest.siteLinksEligible),
+          requested_features: deepClone(reportedAdvantage.requestedFeatures),
+          eligible_features: deepClone(reportedAdvantage.eligibleFeatures),
+          skipped_features: deepClone(reportedAdvantage.skippedFeatures),
+          skip_reasons: deepClone(reportedAdvantage.skipReasons),
+          site_links_requested_count: safeArray(reportedAdvantage.siteLinks).length,
+          site_extensions_requested: Boolean(reportedAdvantage.siteLinksEligible),
+          landing_page_source: landingPage.source,
+          requested_at_api_version: resolvedApiVersion,
+          graph_acknowledgement_is_not_ui_confirmation: true,
         },
 
-        adPayload: deepClone(adMutationPayload),
+        adPayload: deepClone(variantAdPayload),
 
-        updateAdPayload: deepClone(adMutationPayload),
+        updateAdPayload: deepClone(variantAdPayload),
 
-        asset_ids: Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, safeString(asset.source_file_id)])),
-        asset_names: Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, safeString(asset.source_file_name || asset.original_filename)])),
-        asset_hashes: Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, safeString(asset.hash)])),
-        asset_urls: Object.fromEntries(orderedAssets.map((asset) => [asset.ratio, toHttps(asset.url)])),
-        ordered_asset_ratios: orderedAssets.map((asset) => safeString(asset.ratio)),
+        asset_ids: variant.assetIds,
+        asset_names: variant.assetNames,
+        asset_hashes: variant.assetHashes,
+        asset_urls: variant.assetUrls,
+        ordered_asset_ratios: variant.orderedRatios,
+        required_media_roles: variant.requiredMediaRoles,
+        video_id: safeString(uploadedVideo.video_id),
+        video_status: safeString(uploadedVideo.video_status),
+        video_thumbnail_hash: safeString(uploadedVideoThumbnail.hash),
 
         readyToCreateCreative,
         readyToCreateAd,
         readyToReplaceAd,
 
-        creative_mode: action === 'replace_existing' || useFlexibleCreative ? 'flexible_required' : 'single_image',
-        creative_quality_status: useFlexibleCreative ? 'flexible_payload_prepared' : 'single_image_payload_prepared',
+        creative_mode: variant.media_variant === 'video_single' ? 'video_single' : (action === 'replace_existing' || useFlexibleCreative ? 'flexible_required' : 'single_image'),
+        creative_quality_status: variant.media_variant === 'video_single' ? 'video_single_payload_prepared' : (useFlexibleCreative ? 'flexible_payload_prepared' : 'single_image_payload_prepared'),
         creative_quality_requirements: {
-          require_asset_feed_spec: action === 'replace_existing' || useFlexibleCreative,
-          min_images: action === 'replace_existing' || useFlexibleCreative ? 3 : 1,
-          min_bodies: action === 'replace_existing' || useFlexibleCreative ? 5 : 1,
-          min_titles: action === 'replace_existing' || useFlexibleCreative ? 5 : 1,
+          require_asset_feed_spec: variant.media_variant !== 'video_single' && (action === 'replace_existing' || useFlexibleCreative),
+          min_images: variant.media_variant === 'video_single' ? 0 : (action === 'replace_existing' || useFlexibleCreative ? 3 : 1),
+          min_bodies: variant.media_variant === 'video_single' ? 0 : (action === 'replace_existing' || useFlexibleCreative ? 5 : 1),
+          min_titles: variant.media_variant === 'video_single' ? 0 : (action === 'replace_existing' || useFlexibleCreative ? 5 : 1),
         },
         allow_fallback_creative: false,
         blocked_before_update: false,
@@ -1570,6 +1908,7 @@ for (const entry of jobEntries) {
       },
       binary: deepClone(entry.binary || {}),
     });
+    }
   }
 }
 

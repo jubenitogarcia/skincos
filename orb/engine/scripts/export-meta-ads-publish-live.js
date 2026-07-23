@@ -51,10 +51,13 @@ async function main() {
     const buildPayload = workflow.nodes.find((node) => node.name === 'Build Payload');
     if (!buildPayload?.parameters?.jsCode) throw new Error('Build Payload Code node not found.');
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const target = path.join(
+    const checkpointRoot = process.env.META_ADS_PUBLISH_CHECKPOINT_ROOT || path.join(
       runtimePaths.runtimeHome,
       'exports',
       'workflow-patches',
+    );
+    const target = path.join(
+      checkpointRoot,
       `meta-ads-build-payload-${stamp}`,
     );
     fs.mkdirSync(target, { recursive: true });
