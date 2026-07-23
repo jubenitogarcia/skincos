@@ -54,6 +54,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           D1_ID: ${{ inputs.target == 'production' && vars.TIMEKEEPING_D1_PRODUCTION_ID || vars.TIMEKEEPING_D1_STAGING_ID }}
+          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID }}
           PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
           PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
           PONTO_TEMPLATES_KEY: ${{ secrets.PONTO_TEMPLATES_KEY }}
@@ -62,10 +63,11 @@ jobs:
           TIMEKEEPING_BACKUP_PASSPHRASE: ${{ secrets.TIMEKEEPING_BACKUP_PASSPHRASE }}
         run: |
           set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY PONTO_NETWORK_CONTEXT_KEY ESCALA_ACTOR_HMAC_KEY TIMEKEEPING_BACKUP_PASSPHRASE; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID MODULE_CONTROL_KV_ID PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY PONTO_NETWORK_CONTEXT_KEY ESCALA_ACTOR_HMAC_KEY TIMEKEEPING_BACKUP_PASSPHRASE; do
             [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }
           done
           [[ "$D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "Invalid Timekeeping D1 id"; exit 1; }
+          [[ "$MODULE_CONTROL_KV_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "Invalid module-control KV id"; exit 1; }
 
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
@@ -100,12 +102,15 @@ jobs:
         env:
           TARGET: ${{ inputs.target }}
           D1_ID: ${{ inputs.target == 'production' && vars.TIMEKEEPING_D1_PRODUCTION_ID || vars.TIMEKEEPING_D1_STAGING_ID }}
+          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID }}
         run: |
           set -euo pipefail
           if [[ "$TARGET" == "production" ]]; then
             sed -i "s/__CONFIGURE_TIMEKEEPING_D1_ID__/$D1_ID/" workforce/timekeeping/wrangler.toml
+            sed -i "s/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/$MODULE_CONTROL_KV_ID/" workforce/timekeeping/wrangler.toml
           else
             sed -i "s/__CONFIGURE_TIMEKEEPING_STAGING_D1_ID__/$D1_ID/" workforce/timekeeping/wrangler.toml
+            sed -i "s/__CONFIGURE_MODULE_CONTROL_STAGING_KV_ID__/$MODULE_CONTROL_KV_ID/" workforce/timekeeping/wrangler.toml
           fi
 
       - name: Capture encrypted D1 checkpoint
@@ -177,7 +182,7 @@ jobs:
             curl --fail --silent --show-error --request PATCH "${auth[@]}" --data '{"proxied":true,"ttl":1}' "https://api.cloudflare.com/client/v4/zones/$zone/dns_records/$record" >/dev/null
           fi
 
-      - name: Deploy Timekeeping then gateway
+      - name: Deploy Timekeeping only
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -186,7 +191,6 @@ jobs:
           set -euo pipefail
           if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); else ENV_ARGS=(--env staging); fi
           workforce/timekeeping/node_modules/.bin/wrangler deploy --config workforce/timekeeping/wrangler.toml --keep-vars "${ENV_ARGS[@]}"
-          workforce/timekeeping/node_modules/.bin/wrangler deploy --config api/wrangler.toml --keep-vars "${ENV_ARGS[@]}"
 
       - name: Read-only endpoint smoke
         id: smoke

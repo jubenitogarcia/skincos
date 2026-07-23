@@ -4,7 +4,11 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "crm/api/**"
+      - "crm/api/server.js"
+      - "crm/api/services/**"
+      - "crm/api/entrypoints/jobs-server.js"
+      - "crm/api/entrypoints/harmonia-worker.js"
+      - "crm/api/package*.json"
       - "backend/pnpm-lock.yaml"
       - "backend/pnpm-workspace.yaml"
       - ".github/workflows/deploy-crm-api.yml"
@@ -12,6 +16,9 @@ on:
 
 jobs:
   deploy:
+    concurrency:
+      group: deploy-crm-api-production
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: read

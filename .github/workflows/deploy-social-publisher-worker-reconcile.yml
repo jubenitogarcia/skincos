@@ -1,94 +1,13 @@
-name: Deploy Social Publisher Worker reconcile
+name: Retired duplicate deploy path - Social Publisher reconcile
 
 on:
-  schedule:
-    # Workaround: merges performed via GitHub Actions can skip `on: push` deploy triggers.
-    # This job reconciles production to the latest `main` SHA.
-    - cron: "*/10 * * * *"
   workflow_dispatch: {}
 
-concurrency:
-  group: deploy-social-publisher-reconcile-main
-  cancel-in-progress: true
-
 jobs:
-  deploy:
+  retired:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Guard Cloudflare deploy secrets
-        id: guard
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Reject retired deployment path
         run: |
-          set -euo pipefail
-          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare deploy secrets not configured; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@v6
-        with:
-          ref: main
-          fetch-depth: 1
-
-      - name: Resolve target SHA
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        id: sha
-        run: |
-          set -euo pipefail
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          msg=$(git log -1 --pretty=%s | tr '\n' ' ')
-          echo "message=$msg" >> "$GITHUB_OUTPUT"
-
-      - name: Restore deploy cache (skip if already deployed)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          key: social-publisher-deploy-${{ steps.sha.outputs.sha }}
-          path: deploy-state/social_publisher_deployed_sha.txt
-
-      - name: Skip (already deployed)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit == 'true' }}
-        run: |
-          set -euo pipefail
-          echo "Already deployed sha=${{ steps.sha.outputs.sha }}; skipping."
-
-      - name: Setup Node
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22.12.0"
-
-      - name: Deploy Worker (wrangler)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          echo "Reconciling social-publisher worker sha=${{ steps.sha.outputs.sha }}"
-          npx --yes wrangler@3 deploy --config social/publisher/wrangler.toml --keep-vars
-
-      - name: Mark deployed SHA
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
-        run: |
-          set -euo pipefail
-          mkdir -p deploy-state
-          echo "${{ steps.sha.outputs.sha }}" > deploy-state/social_publisher_deployed_sha.txt
-
-      - name: Save deploy cache
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
-        uses: actions/cache/save@v4
-        with:
-          key: social-publisher-deploy-${{ steps.sha.outputs.sha }}
-          path: deploy-state/social_publisher_deployed_sha.txt
-
+          echo "::error::RETIRED_DUPLICATE_DEPLOY_PIPELINE: use deploy-social-publisher-worker.yml for Social Publisher."
+          exit 1

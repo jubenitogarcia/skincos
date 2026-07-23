@@ -1,109 +1,13 @@
-name: Deploy Cloudflare Workers (API + Insumos) reconcile
+name: Retired duplicate deploy path - Workers reconcile
 
 on:
-  schedule:
-    # Workaround: merges performed via GitHub Actions can skip `on: push` deploy triggers.
-    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
-concurrency:
-  group: deploy-workers-reconcile-main
-  cancel-in-progress: true
-
 jobs:
-  deploy:
+  retired:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Guard Cloudflare deploy secrets
-        id: guard
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Reject retired deployment path
         run: |
-          set -euo pipefail
-          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare deploy secrets not configured; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@v6
-        with:
-          ref: main
-          fetch-depth: 1
-
-      - name: Resolve target SHA
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        id: sha
-        run: |
-          set -euo pipefail
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore deploy cache (skip if already deployed)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          key: workers-deploy-${{ steps.sha.outputs.sha }}
-          path: deploy-state/deployed_sha.txt
-
-      - name: Skip (already deployed)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit == 'true' }}
-        run: |
-          set -euo pipefail
-          echo "Already deployed sha=${{ steps.sha.outputs.sha }}; skipping."
-
-      - name: Setup Node
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22.12.0"
-
-      - name: Setup pnpm (corepack)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-
-      - name: Install backend workspace deps
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
-        run: pnpm -C backend install --frozen-lockfile
-
-      - name: Deploy Workers (deploy-all)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          bash backend/scripts/cloudflare-workers.sh deploy-all
-
-      - name: Mark deployed SHA
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
-        run: |
-          set -euo pipefail
-          mkdir -p deploy-state
-          echo "${{ steps.sha.outputs.sha }}" > deploy-state/deployed_sha.txt
-
-      - name: Save deploy cache
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true' && success() }}
-        uses: actions/cache/save@v4
-        with:
-          key: workers-deploy-${{ steps.sha.outputs.sha }}
-          path: deploy-state/deployed_sha.txt
-
-      - name: Smoke check API + Inventory Workers (production)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/workers_smoke.py \
-            --attempts 5 \
-            --sleep-seconds 6 \
-            --user-agent "Mozilla/5.0 (compatible; WorkersReconcileSmoke/1.0)"
+          echo "::error::RETIRED_DUPLICATE_DEPLOY_PIPELINE: use deploy-insumos-worker.yml for API and Inventory Workers."
+          exit 1

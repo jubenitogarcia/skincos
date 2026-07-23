@@ -1,74 +1,13 @@
-name: Deploy Core Workers (api + insumos)
+name: Retired duplicate deploy path - Core Workers
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "api/**"
-      - "inventory/**"
-      - ".github/workflows/deploy-core-workers.yml"
   workflow_dispatch: {}
 
 jobs:
-  deploy:
+  retired:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Guard Cloudflare deploy secrets
-        id: guard
-        env:
-          ENABLE: ${{ vars.ENABLE_CORE_WORKERS_DEPLOY }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Reject retired deployment path
         run: |
-          set -euo pipefail
-          if [[ "${ENABLE:-true}" != "true" ]]; then
-            echo "Deploy flag not enabled; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare deploy secrets not configured; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@v6
-
-      - name: Setup Node
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22.12.0"
-
-      - name: Install worker deps (insumos + api)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        run: |
-          set -euo pipefail
-          npm install --no-package-lock --no-audit --no-fund
-          (cd ../api && npm install --no-package-lock --no-audit --no-fund)
-        working-directory: inventory
-
-      - name: Deploy Workers (wrangler)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars
-          npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars
-
-      - name: Smoke check API + Inventory Workers (production)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/workers_smoke.py \
-            --attempts 5 \
-            --sleep-seconds 6 \
-            --user-agent "Mozilla/5.0 (compatible; CoreWorkerSmoke/1.0)"
+          echo "::error::RETIRED_DUPLICATE_DEPLOY_PIPELINE: use deploy-insumos-worker.yml for API and Inventory Workers."
+          exit 1

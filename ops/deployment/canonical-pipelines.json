@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "purpose": "One publishing workflow per operational unit. Retired workflows remain dispatchable only to fail explicitly and point operators to the canonical path.",
+  "units": [
+    { "id": "core-workers", "service": "API and Inventory Workers", "canonicalWorkflow": ".github/workflows/deploy-insumos-worker.yml", "retiredDuplicateWorkflows": [".github/workflows/deploy-core-workers.yml", ".github/workflows/deploy-core-workers-reconcile.yml", ".github/workflows/deploy-workers-reconcile.yml", ".github/workflows/deploy-workers-after-automerge.yml"] },
+    { "id": "crm-pages", "service": "CRM Cloudflare Pages", "canonicalWorkflow": ".github/workflows/deploy-crm-pages.yml", "retiredDuplicateWorkflows": [".github/workflows/deploy-crm-pages-reconcile.yml", ".github/workflows/deploy-crm-pages-after-automerge.yml"] },
+    { "id": "escala-api", "service": "Escala API Worker", "canonicalWorkflow": ".github/workflows/deploy-escala-api.yml", "retiredDuplicateWorkflows": [".github/workflows/deploy-escala-api-reconcile.yml"] },
+    { "id": "social-publisher", "service": "Social Publisher Worker", "canonicalWorkflow": ".github/workflows/deploy-social-publisher-worker.yml", "retiredDuplicateWorkflows": [".github/workflows/deploy-social-publisher-worker-reconcile.yml"] }
+  ]
+}
