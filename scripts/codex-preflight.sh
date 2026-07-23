@@ -91,7 +91,6 @@ check_github() {
   local required_vars=(
     CLOUDFLARE_PAGES_PROJECT
     ENABLE_CRM_PAGES_DEPLOY
-    ENABLE_CRM_API_DEPLOY
     META_ADS_REPORT_WORKER_BASE_URL
   )
 
@@ -215,10 +214,11 @@ PY
 
 check_workflows() {
   local workflows=(
-    .github/workflows/codex-automerge.yml
-    .github/workflows/dispatch-after-automerge-fallback.yml
-    .github/workflows/deploy-crm-pages-after-automerge.yml
-    .github/workflows/deploy-workers-after-automerge.yml
+    .github/workflows/codex-autonomy-preflight.yml
+    .github/workflows/deploy-insumos-worker.yml
+    .github/workflows/deploy-crm-pages.yml
+    .github/workflows/deploy-timekeeping.yml
+    .github/workflows/deploy-escala-api.yml
     .github/workflows/cloudflare-audit.yml
     .github/workflows/security-secrets-audit.yml
   )

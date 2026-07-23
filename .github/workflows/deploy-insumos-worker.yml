@@ -13,9 +13,14 @@ on:
       - "backend/pnpm-workspace.yaml"
   workflow_dispatch: {}
 
+concurrency:
+  group: deploy-core-workers-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'staging' && 'staging' || 'production' }}
     permissions:
       contents: read
 
@@ -30,16 +35,14 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$BRANCH_NAME" == "staging" && "${ENABLE_STAGING:-}" != "true" ]]; then
-            echo "ENABLE_INSUMOS_DEPLOY_STAGING!=true; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::ENABLE_INSUMOS_DEPLOY_STAGING must be true for a staging deploy."
+            exit 1
           fi
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare deploy secrets not configured; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Cloudflare deploy credentials are missing."
+            exit 1
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -73,11 +76,10 @@ jobs:
           fi
           changed="$(git diff --name-only "$GITHUB_BEFORE_SHA" "$GITHUB_SHA" 2>/dev/null || true)"
           if grep -Eq '^(finance/|shared/finance-contracts/|shared/crm-auth/|api/src/(gateway|router)\.js$)' <<< "$changed"; then
-            echo "Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true; Worker deploy held."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true."
+            exit 1
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Install Worker dependencies
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}

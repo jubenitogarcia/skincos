@@ -8,43 +8,46 @@ on:
       - ".github/workflows/deploy-social-publisher-worker.yml"
   workflow_dispatch: {}
 
+concurrency:
+  group: deploy-social-publisher-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
 
     steps:
       - name: Guard Cloudflare deploy secrets
-        id: guard
         env:
+          ENABLE_DEPLOY: ${{ vars.ENABLE_SOCIAL_PUBLISHER_DEPLOY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
+          if [[ "${ENABLE_DEPLOY:-}" != "true" ]]; then
+            echo "::error::ENABLE_SOCIAL_PUBLISHER_DEPLOY must be true before publication."
+            exit 1
+          fi
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare deploy secrets not configured; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Cloudflare deploy credentials are missing."
+            exit 1
           fi
 
       - name: Checkout
-        if: ${{ steps.guard.outputs.skip != 'true' }}
         uses: actions/checkout@v6
 
       - name: Setup Node
-        if: ${{ steps.guard.outputs.skip != 'true' }}
         uses: actions/setup-node@v6
         with:
           node-version: "22.12.0"
 
       - name: Deploy Worker (wrangler)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           npx --yes wrangler@3 deploy --config social/publisher/wrangler.toml --keep-vars
-

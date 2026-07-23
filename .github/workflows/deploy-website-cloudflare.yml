@@ -10,11 +10,12 @@ on:
 
 concurrency:
   group: deploy-website-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
     env:
@@ -49,11 +50,10 @@ jobs:
         id: guard
         run: |
           if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ] || [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Cloudflare deploy secrets not configured; skipping website deploy."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Cloudflare deploy credentials are missing."
+            exit 1
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -91,7 +91,6 @@ jobs:
 
       - name: Sync worker secrets (optional)
         if: ${{ steps.guard.outputs.skip != 'true' && (env.NEXT_PUBLIC_META_PIXEL_ID != '' || env.META_PIXEL_ID != '' || env.META_ACCESS_TOKEN != '' || env.AGENDA_SYNC_TOKEN != '' || env.TURNSTILE_SECRET_KEY != '' || env.CADASTRO_WHEEL_SECRET != '' || env.TITAN_SMTP_HOST != '' || env.TITAN_SMTP_PORT != '' || env.TITAN_SMTP_USER_BARRA != '' || env.TITAN_SMTP_PASS_BARRA != '' || env.TITAN_SMTP_USER_NH != '' || env.TITAN_SMTP_PASS_NH != '' || env.BOOKING_EMAIL_FROM != '' || env.RESEND_API_KEY != '' || env.BOOKING_EMAIL_WEBHOOK_URL != '' || env.BOOKING_EMAIL_WEBHOOK_SECRET != '' || env.BOOKING_WHATSAPP_WEBHOOK_URL != '' || env.BOOKING_WHATSAPP_WEBHOOK_SECRET != '' || env.BOOKING_WEBHOOK_URL != '' || env.BOOKING_WEBHOOK_SECRET != '' || env.TRACKING_DASHBOARD_TOKEN != '' || env.BOOKING_EMAIL_LOGO_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_MALE_IMAGE_URL != '' || env.BOOKING_EMAIL_AMBASSADOR_FEMALE_IMAGE_URL != '' || env.INSTAGRAM_SYNC_TOKEN != '') }}
-        continue-on-error: true
         working-directory: website
         run: |
           is_placeholder() {

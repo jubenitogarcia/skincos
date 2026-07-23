@@ -8,12 +8,13 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: deploy-crm-pages
+  group: deploy-crm-pages-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'staging' && 'staging' || 'production' }}
     permissions:
       contents: read
 
@@ -38,14 +39,12 @@ jobs:
             PROJECT="${PROJECT_PROD:-skincos}"
           fi
           if [[ "${ENABLE:-}" != "true" ]]; then
-            echo "Deploy flag not enabled; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::The explicit deployment flag is not enabled for $BRANCH_NAME."
+            exit 1
           fi
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare deploy secrets not configured; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Cloudflare deploy credentials are missing."
+            exit 1
           fi
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
@@ -63,6 +62,43 @@ jobs:
           cache: "npm"
           cache-dependency-path: crm/console/package-lock.json
 
+      - name: Sync required CRM Pages proxy secrets
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.guard.outputs.project }}
+          BRANCH_NAME: ${{ steps.guard.outputs.branch }}
+          PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
+          PONTO_NETWORK_CONTEXT_KEY: ${{ secrets.PONTO_NETWORK_CONTEXT_KEY }}
+          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
+          INTEGRATIONS_ENCRYPTION_SECRET: ${{ secrets.INTEGRATIONS_ENCRYPTION_SECRET }}
+        run: |
+          set -euo pipefail
+          for name in PONTO_ACTOR_HMAC_KEY PONTO_NETWORK_CONTEXT_KEY ESCALA_ACTOR_HMAC_KEY INTEGRATIONS_ENCRYPTION_SECRET; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required GitHub secret $name for the CRM Pages proxy."
+              exit 1
+            fi
+          done
+          if [[ "$BRANCH_NAME" == "staging" ]]; then
+            pages_env=preview
+            ponto_target=https://api-staging.skincos.com.br
+          else
+            pages_env=production
+            ponto_target=https://api.skincos.com.br
+          fi
+          put_secret() {
+            local name="$1"
+            local value="$2"
+            printf '%s' "$value" | npx --yes wrangler@4 pages secret put "$name" --project-name "$PROJECT" --env "$pages_env" >/dev/null
+          }
+          put_secret PONTO_API_TARGET "$ponto_target"
+          put_secret PONTO_ACTOR_HMAC_KEY "$PONTO_ACTOR_HMAC_KEY"
+          put_secret PONTO_NETWORK_CONTEXT_KEY "$PONTO_NETWORK_CONTEXT_KEY"
+          put_secret ESCALA_ACTOR_HMAC_KEY "$ESCALA_ACTOR_HMAC_KEY"
+          put_secret INTEGRATIONS_ENCRYPTION_SECRET "$INTEGRATIONS_ENCRYPTION_SECRET"
+
       - name: Hold Finance UI from production until an explicit release
         id: finance_production_gate
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -79,11 +115,10 @@ jobs:
           fi
           changed="$(git diff --name-only "$GITHUB_BEFORE_SHA" "$GITHUB_SHA" 2>/dev/null || true)"
           if grep -Eq '^crm/console/(App\.tsx|Finance|financeApi|functions/api/finance/|public/_routes\.json|scripts/finance-)' <<< "$changed"; then
-            echo "Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true; Pages deploy held."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true."
+            exit 1
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Install frontend deps
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}

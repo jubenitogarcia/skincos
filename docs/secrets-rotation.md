@@ -52,11 +52,11 @@ NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
 3. Atualizar secrets/vars no Cloudflare (Workers/Pages).
 4. Fazer deploy de teste e validar `/health`.
 
-### Backend / CRM API (SSH)
+### Backend / CRM API nativo
 1. Gerar nova chave SSH.
 2. Atualizar `authorized_keys` no servidor.
-3. Atualizar `CRM_API_SSH_KEY` (GitHub).
-4. Executar workflow `deploy-crm-api`.
+3. Atualizar o cofre/overlay operacional do runtime, sem gravar segredo no repositório.
+4. Executar o procedimento controlado de promoção nativa e validar `crm.service`.
 
 ## Medidas de segurança recomendadas
 - Escopo mínimo em tokens (Cloudflare/GitHub).
