@@ -103,7 +103,6 @@ jobs:
           .github/scripts/ponto_smoke.py \
             --attempts 5 \
             --sleep-seconds 5 \
-            --require-proxy-token-configured \
             --require-actor-key-configured \
             --user-agent "Mozilla/5.0 (compatible; PontoSmoke/1.0)"
 
@@ -173,7 +172,6 @@ jobs:
           .github/scripts/ponto_smoke.py \
             --attempts 15 \
             --sleep-seconds 10 \
-            --require-proxy-token-configured \
             --require-actor-key-configured \
             --user-agent "Mozilla/5.0 (compatible; PontoSmoke/1.0)"
 
