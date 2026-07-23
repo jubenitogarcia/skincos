@@ -36,6 +36,28 @@ async function readiness(env) {
   };
 }
 
+const migrationProbe = {
+  identity: { table: 'identity_users', compatibility: 'legacy-shared-read-primary' },
+  inventory: { table: 'insumos_categories', compatibility: 'legacy-shared-read-primary' },
+  finance: { table: 'finance_settings', compatibility: 'legacy-shared-read-primary' },
+};
+
+async function migrationStatus(env) {
+  const probe = migrationProbe[env.DOMAIN];
+  if (!probe) throw new Error('UNKNOWN_DOMAIN');
+  const [latest, target] = await Promise.all([
+    env.DB.prepare("SELECT id,status,finished_at FROM domain_migration_runs WHERE domain=? ORDER BY started_at DESC LIMIT 1").bind(env.DOMAIN).first(),
+    env.DB.prepare(`SELECT COUNT(*) AS count FROM ${probe.table}`).first(),
+  ]);
+  return {
+    ok: latest?.status === 'verified',
+    domain: env.DOMAIN,
+    legacyCompatibility: probe.compatibility,
+    latestRun: latest ? { id: latest.id, status: latest.status, finishedAt: latest.finished_at } : null,
+    targetCount: Number(target?.count || 0),
+  };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -47,6 +69,14 @@ export default {
         return json(await readiness(env));
       } catch {
         return json({ ok: false, domain: env.DOMAIN, environment: env.ENVIRONMENT, error: 'DEPENDENCY_UNAVAILABLE' }, 503);
+      }
+    }
+    if (request.method === 'GET' && url.pathname === '/migration-status') {
+      try {
+        const status = await migrationStatus(env);
+        return json(status, status.ok ? 200 : 503);
+      } catch {
+        return json({ ok: false, domain: env.DOMAIN, error: 'MIGRATION_STATUS_UNAVAILABLE' }, 503);
       }
     }
     if (request.method === 'GET' && url.pathname === '/fixtures') {

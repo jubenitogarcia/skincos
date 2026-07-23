@@ -36,7 +36,7 @@
           "name": "skincos-identity-staging",
           "url": "https://skincos-identity-staging.skincos.workers.dev",
           "config": "wrangler.identity.toml",
-          "lastValidatedVersion": "5c3c2f63-3816-4775-8c50-7c296d2c0371",
+          "lastValidatedVersion": "1b9cb4bb-0513-40cf-99d6-800bcb3beb1f",
           "routes": [],
           "bindings": ["DB", "DATA_BUCKET", "FLAGS", "EVENT_QUEUE"]
         },
@@ -53,7 +53,7 @@
           "name": "skincos-inventory-staging-foundation",
           "url": "https://skincos-inventory-staging-foundation.skincos.workers.dev",
           "config": "wrangler.inventory.toml",
-          "lastValidatedVersion": "ba1f2ccb-1056-4e1d-a18b-e1612f26d589",
+          "lastValidatedVersion": "f5bbacf5-9c46-4674-9374-6c0c2a025ae0",
           "routes": [],
           "bindings": ["DB", "DATA_BUCKET", "FLAGS", "EVENT_QUEUE"]
         },
@@ -70,7 +70,7 @@
           "name": "skincos-finance-staging-foundation",
           "url": "https://skincos-finance-staging-foundation.skincos.workers.dev",
           "config": "wrangler.finance.toml",
-          "lastValidatedVersion": "2374860a-3cb8-450b-ad84-95e40092c6e1",
+          "lastValidatedVersion": "e3173abd-68e7-428c-b628-82b78f516ff3",
           "routes": [],
           "bindings": ["DB", "DATA_BUCKET", "FLAGS", "EVENT_QUEUE"]
         },
@@ -103,6 +103,8 @@
   "revalidation": {
     "bindingDryRun": "npx wrangler deploy --dry-run --config platform/staging-foundation/wrangler.<domain>.toml",
     "runtimeAndQueue": "ALLOW_STAGING_SECRET_ROTATION=1 bash platform/staging-foundation/validate.sh",
-    "postgresql": "sudo -n -u postgres psql -d postgres -f platform/staging-foundation/postgres-bootstrap.sql"
+    "postgresql": "sudo -n -u postgres psql -d postgres -f platform/staging-foundation/postgres-bootstrap.sql",
+    "domainMigrations": "SKINCOS_STAGING_DATA_MIGRATION_ACK=1 node platform/staging-foundation/scripts/apply-staging-domain-migrations.mjs --execute",
+    "shadowReconciliation": "SKINCOS_STAGING_DATA_MIGRATION_ACK=1 node platform/staging-foundation/scripts/run-staging-domain-shadow-migration.mjs --execute --domain <identity|inventory|finance>"
   }
 }
