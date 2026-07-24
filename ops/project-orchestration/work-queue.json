@@ -5,18 +5,19 @@
       "id": "p0-insumos-unit-access",
       "objective": "P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos",
       "priority": 1000,
-      "state": "actor-correlated",
+      "state": "production-gated",
       "dependencies": [],
       "blockers": [
-        "production release remains separately gated and is not authorized by staging evidence",
-        "record current production versions and preserve a known rollback artifact before any production deploy"
+        "production promotion run 30133378752 stopped before publish because production IDENTITY_PII_KEY is missing",
+        "provision the segregated production secret through the authorized operator, then rerun preflight",
+        "CRM Pages production was intentionally not started after the Inventory gate failed"
       ],
       "environment": "staging",
       "permitted_actions": [
         "read-only runtime verification and actor correlation",
         "record production versions and rollback metadata without publishing",
         "preserve rollback artifacts",
-        "no production deploy, grants, flags, users or data mutation"
+        "no production deploy, grants, flags, users or data mutation until the missing secret is provisioned and a fresh gate passes"
       ],
       "required_evidence": [
         "PR #763 and functional PR #776 integrated on current main",
@@ -29,7 +30,7 @@
       ],
       "done_definition": "The unit-access regression is corrected, CI remains green, and current-main controlled staging proves authorized access and denied cross-unit/no-unit access without production data mutation; production gates remain separate.",
       "next_item": null,
-      "last_verified": "2026-07-24T22:54:39Z",
+      "last_verified": "2026-07-24T23:18:01Z",
       "sha": "cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb",
       "pr": 763,
       "evidence": {

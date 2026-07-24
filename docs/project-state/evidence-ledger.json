@@ -2,6 +2,24 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-24T23:18:01Z",
+      "surface": "github-and-production-gate",
+      "scope": "P0 Insumos explicit production promotion attempt",
+      "state": "blocked-before-publish",
+      "method": "canonical Deploy Core Worker workflow 30133378752 with release_sha cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb, staging_run_id 30131598506, target production, unit inventory; read-only post-failure health and Cloudflare version/deployment checks",
+      "result": "Immutable gate passed ancestry and staging predecessor evidence. Remote D1 migration reported no migrations to apply. Deployment stopped before Worker upload because production secret IDENTITY_PII_KEY is absent. Inventory health remained HTTP 200; current Worker deployment/version stayed unchanged.",
+      "limitation": "CRM Pages production was not started after the Inventory gate failed. Secret provisioning requires an authorized production operator; no secret value is stored here. Finance, Ponto, Atendimento and other units remain untouched.",
+      "rollback_checkpoint": {
+        "inventory_worker_deployment": "f0037d0a-bc21-4a26-8a8b-59a010c85ba6",
+        "inventory_worker_version": "6104273d-a14c-4a84-8bb1-889a681969dc",
+        "crm_pages_deployment": "0b8657b8-d162-4c0e-8a4a-e542255ec1a4",
+        "crm_pages_commit": "fdf8cda8ab1df4e41a06897231fad3e9d41042a0"
+      },
+      "sha": "4339df47f2797be78928d1da0a5124635c3ef976",
+      "run": 30133378752,
+      "pr": null
+    },
+    {
       "observed_at": "2026-07-24T22:54:39Z",
       "surface": "crm-auth-and-production-d1",
       "scope": "P0 Insumos current actor correlation",
