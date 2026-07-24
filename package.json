@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "observability:validate": "node scripts/observability/validate-catalog.mjs",
     "architecture:validate": "node ./.github/scripts/validate-architecture.mjs && node ./.github/scripts/validate-module-catalog.mjs && node ./.github/scripts/validate-domain-boundaries.mjs",
     "module-catalog:validate": "node ./.github/scripts/validate-module-catalog.mjs",
     "module-maturity:validate": "node ./.github/scripts/validate-module-maturity.mjs",
