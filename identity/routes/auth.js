@@ -4,6 +4,7 @@
 import { resolveIdentityTables } from '../store/d1.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notifications/smtpMailer.js';
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
+import { normalizeAllowedUnits } from '../../shared/identity-contract/index.js';
 
 export async function handleAuthRoutes({
     request,
@@ -225,21 +226,6 @@ export async function handleAuthRoutes({
     };
 	    if (d1?.enabled) {
 	        const normalizeRole = (role) => String(role || 'CONSULTOR').trim().toUpperCase();
-	        const normalizeAllowedUnits = (value) => {
-	            if (!value) return [];
-	            if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
-	            if (typeof value === 'string') {
-	                const s = value.trim();
-	                if (!s) return [];
-	                try {
-	                    const parsed = JSON.parse(s);
-	                    if (Array.isArray(parsed)) return parsed.map(String).map((x) => x.trim()).filter(Boolean);
-	                } catch {}
-	                return s.split(/[,;|]/g).map((x) => String(x || '').trim()).filter(Boolean);
-	            }
-	            return [];
-	        };
-
 	        const normalizeAllowedModules = (value) => {
 	            if (!value) return [];
 	            if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
@@ -605,7 +591,7 @@ export async function handleAuthRoutes({
                 const registration = env.DB.prepare(
                     `INSERT INTO ${usersTable}
                      (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
-                     SELECT ?, invitee_email, ?, ?, role, '', allowed_units_json, allowed_modules_json, 1, ?, ?
+                     SELECT ?, invitee_email, ?, ?, role, '', ?, ?, 1, ?, ?
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                        AND invitee_email = ?
@@ -613,7 +599,7 @@ export async function handleAuthRoutes({
                        AND max_uses = 1
                        AND uses_count = 0
                        AND expires_at > ?`
-                ).bind(candidate, name, hash, now, now, inviteHash, email, currentTime);
+                ).bind(candidate, name, hash, JSON.stringify(allowedUnits), JSON.stringify(allowedModules), now, now, inviteHash, email, currentTime);
                 const consume = env.DB.prepare(
                     `UPDATE ${invitesTable}
                      SET uses_count = 1

@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits } from '../../shared/identity-contract/index.js';
 
 function toInt(v, fallback = 0) {
   const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
@@ -1866,17 +1867,7 @@ function safeJsonParse(raw, fallback) {
 }
 
 function normalizeAllowedUnits(value) {
-  if (!value) return [];
-  if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
-  if (typeof value === 'string') {
-    const parsed = safeJsonParse(value, null);
-    if (Array.isArray(parsed)) return parsed.map(String).map((s) => s.trim()).filter(Boolean);
-    return value
-      .split(/[,;|]/g)
-      .map((s) => String(s || '').trim())
-      .filter(Boolean);
-  }
-  return [];
+  return normalizeCanonicalAllowedUnits(value);
 }
 
 function normalizeAllowedModules(value) {
