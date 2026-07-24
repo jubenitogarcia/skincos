@@ -52,8 +52,12 @@ async function runScenario(browser, config) {
   const requests = { authMe: 0, insumosMe: 0, health: 0, data: 0 }
   const context = await browser.newContext({ viewport: { width: 1365, height: 860 } })
   await context.addInitScript((staleUnit) => {
-    localStorage.setItem('skincos.insumos.unidade.v1', staleUnit)
-    localStorage.setItem('app.activeModule', 'insumos')
+    // addInitScript runs for every document, including reloads used to verify a
+    // deliberate unit change. Seed the stale state only once per scenario.
+    if (!localStorage.getItem('skincos.insumos.unidade.v1')) {
+      localStorage.setItem('skincos.insumos.unidade.v1', staleUnit)
+    }
+    if (!localStorage.getItem('app.activeModule')) localStorage.setItem('app.activeModule', 'insumos')
   }, config.staleUnit)
   const page = await context.newPage()
   page.on('request', (request) => {
