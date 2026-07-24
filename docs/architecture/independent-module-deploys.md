@@ -23,7 +23,7 @@ O gateway somente transporta `/finance/*` e `/api/ponto/*`. Para Financeiro, ele
 
 ## Configuração externa mínima
 
-- GitHub Environments `staging` e `production`: `FINANCE_D1_STAGING_ID`, `FINANCE_D1_PRODUCTION_ID`, `MODULE_CONTROL_STAGING_KV_ID`, `MODULE_CONTROL_PRODUCTION_KV_ID`, `FINANCE_UI_PAGES_PROJECT_STAGING`, `FINANCE_UI_PAGES_PROJECT_PRODUCTION`, `FINANCE_SERVICE_AUTH_SECRET` e `FINANCE_BACKUP_PASSPHRASE`, todos segregados.
+- GitHub Environments `staging` e `production`: `FINANCE_D1_STAGING_ID`, `FINANCE_D1_PRODUCTION_ID`, `FINANCE_CONTROL_STAGING_KV_ID`, `FINANCE_CONTROL_PRODUCTION_KV_ID`, `FINANCE_UI_PAGES_PROJECT_STAGING`, `FINANCE_UI_PAGES_PROJECT_PRODUCTION`, `FINANCE_SERVICE_AUTH_SECRET` e `FINANCE_BACKUP_PASSPHRASE`, todos segregados.
 - Cloudflare: criar `skincos-finance` e `skincos-finance-staging` antes do bootstrap do `api`; criar D1/KV separados por ambiente; conceder ao token somente Workers/D1/KV necessários.
 - Runtime CRM: criar um unit de Atendimento independente, com porta/health próprios, `CRM_DOMAIN=atendimento`, `CRM_MODULE_CONTROL_FILE` privado e os comandos `CRM_ATENDIMENTO_DEPLOY_COMMAND`, `CRM_ATENDIMENTO_ROLLBACK_COMMAND`, `CRM_ATENDIMENTO_CONTROL_COMMAND`, `CRM_ATENDIMENTO_HEALTH_URL` configurados no Environment GitHub correspondente.
 - Antes de produção: registrar a versão/commit de retorno, confirmar migration somente aditiva, executar smoke de staging do mesmo SHA e aprovar explicitamente o Environment de produção.
