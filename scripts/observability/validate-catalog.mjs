@@ -4,8 +4,10 @@ const catalog = JSON.parse(fs.readFileSync(new URL('../../ops/observability/cata
 const errors = [];
 const required = ['id', 'environment', 'health', 'readiness', 'latencyBudgetMs', 'impact', 'probableCause', 'dashboard'];
 
-if (catalog.schemaVersion !== 2) errors.push('schemaVersion must be 2');
+if (catalog.schemaVersion !== 3) errors.push('schemaVersion must be 3');
 if (catalog.primaryMonitor?.type !== 'windows-scheduled-probe') errors.push('primary monitor must remain independent from GitHub and Cloudflare');
+if (!Number.isInteger(catalog.primaryMonitor?.retentionDays) || catalog.primaryMonitor.retentionDays < 7) errors.push('primary monitor must retain metrics for at least 7 days');
+if (!Number.isInteger(catalog.primaryMonitor?.healthMaxAgeSeconds) || catalog.primaryMonitor.healthMaxAgeSeconds < 120) errors.push('primary monitor must define a safe stale-health threshold');
 if (!Array.isArray(catalog.units) || catalog.units.length === 0) errors.push('units must not be empty');
 for (const unit of catalog.units || []) {
   for (const field of required) if (unit[field] === undefined || unit[field] === '') errors.push(`${unit.id || '<unknown>'}: missing ${field}`);

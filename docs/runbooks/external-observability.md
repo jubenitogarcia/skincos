@@ -6,6 +6,8 @@ O catálogo em `ops/observability/catalog.json` define os probes. O monitor prim
 
 O estado `healthy` mede somente o endpoint de health e o orçamento de latência. `contract_status: incomplete` ou `partial` significa que a unidade ainda não comprovou todos os campos/health-readiness-dependencies-version exigidos: não é gate de promoção.
 
+O instalador registra três tarefas Windows como `SYSTEM`: probe a cada minuto, dashboard local em loopback e watchdog independente a cada dois minutos. O dashboard fica somente em `127.0.0.1`, expõe `/`, `/health` e `/metrics` e não depende de Cloudflare ou GitHub. `history.jsonl`, `metrics-history.jsonl` e `notifications.jsonl` retêm 30 dias; nenhum token, payload de negócio ou dado pessoal é gravado.
+
 ## Instalação e rollback
 
 Executar em PowerShell elevado, após validar a branch/PR:
@@ -13,12 +15,17 @@ Executar em PowerShell elevado, após validar a branch/PR:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\observability\scripts\Install-SkincosObservability.ps1
 Get-ScheduledTaskInfo -TaskName SkincosObservabilityProbe
+Get-ScheduledTaskInfo -TaskName SkincosObservabilityDashboard
+Get-ScheduledTaskInfo -TaskName SkincosObservabilityWatchdog
+Invoke-RestMethod (Get-Content C:\CodexRuntime\operator\admin\skincos\observability\dashboard-url.txt).Trim() + 'health'
 ```
 
 Rollback estrito:
 
 ```powershell
 Unregister-ScheduledTask -TaskName SkincosObservabilityProbe -Confirm:$false
+Unregister-ScheduledTask -TaskName SkincosObservabilityDashboard -Confirm:$false
+Unregister-ScheduledTask -TaskName SkincosObservabilityWatchdog -Confirm:$false
 ```
 
 O rollback remove apenas a tarefa; os arquivos de evidência ficam retidos no runtime privado.
@@ -34,7 +41,7 @@ O drill não acessa nem altera nenhum serviço de produção. Caso o Event Log n
 
 ## Rota de notificação
 
-O destino mínimo é Windows Application Event Log, source `SkincosObservability`, com IDs 1001/1002. A tarefa e a fonte exigem privilégio administrativo neste host. Um webhook HTTPS opcional usa apenas `SKINCOS_OBS_NOTIFICATION_WEBHOOK` e `SKINCOS_OBS_NOTIFICATION_TOKEN` no ambiente privado da tarefa; nunca colocar URL/token no repositório. A configuração do webhook só é considerada pronta depois de um alerta e uma recuperação entregues ao destino humano aprovado.
+O destino humano primário é a mensagem Windows entregue às sessões locais ativas, além do Windows Application Event Log, source `SkincosObservability`, com IDs 1001/1002/1003. O monitor registra `windows-message-delivered` somente quando o sistema aceita a entrega; esse recibo, alerta e resolução permanecem em `notifications.jsonl` privado. Um webhook HTTPS opcional usa apenas `SKINCOS_OBS_NOTIFICATION_WEBHOOK` e `SKINCOS_OBS_NOTIFICATION_TOKEN` no ambiente privado da tarefa; nunca colocar URL/token no repositório.
 
 ## Jornada autenticada
 

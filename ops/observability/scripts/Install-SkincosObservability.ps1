@@ -1,18 +1,16 @@
 [CmdletBinding()]
-param(
-  [string]$RuntimeDirectory = 'C:\CodexRuntime\operator\admin\skincos\observability',
-  [string]$TaskName = 'SkincosObservabilityProbe'
-)
-
-$ErrorActionPreference = 'Stop'
-$sourceRoot = Split-Path -Parent $PSScriptRoot
-New-Item -ItemType Directory -Force -Path (Join-Path $RuntimeDirectory 'bin') | Out-Null
+param([string]$RuntimeDirectory = 'C:\CodexRuntime\operator\admin\skincos\observability', [string]$TaskName = 'SkincosObservabilityProbe', [int]$DashboardPort = 18799)
+$ErrorActionPreference = 'Stop'; $sourceRoot = Split-Path -Parent $PSScriptRoot; $bin = Join-Path $RuntimeDirectory 'bin'; New-Item -ItemType Directory -Force -Path $bin | Out-Null
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'catalog.json') -Destination (Join-Path $RuntimeDirectory 'catalog.json') -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Invoke-SkincosObservability.ps1') -Destination (Join-Path $RuntimeDirectory 'bin\Invoke-SkincosObservability.ps1') -Force
-$scriptPath = Join-Path $RuntimeDirectory 'bin\Invoke-SkincosObservability.ps1'
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -CatalogPath `"$(Join-Path $RuntimeDirectory 'catalog.json')`" -StateDirectory `"$RuntimeDirectory`""
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Description 'SKINCOS external synthetic health/readiness monitor; no production writes.' -Force | Out-Null
-& $scriptPath -CatalogPath (Join-Path $RuntimeDirectory 'catalog.json') -StateDirectory $RuntimeDirectory | Out-Null
-Write-Output "Installed $TaskName. State: $RuntimeDirectory"
+foreach($name in @('Invoke-SkincosObservability.ps1','Serve-SkincosObservabilityDashboard.ps1','Watch-SkincosObservability.ps1')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $bin $name) -Force }
+if (-not [System.Diagnostics.EventLog]::SourceExists('SkincosObservability')) { New-EventLog -LogName Application -Source 'SkincosObservability' }
+& icacls $RuntimeDirectory /grant '*S-1-5-18:(OI)(CI)F' /T /C | Out-Null
+$monitorAction=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $bin 'Invoke-SkincosObservability.ps1')`" -CatalogPath `"$(Join-Path $RuntimeDirectory 'catalog.json')`" -StateDirectory `"$RuntimeDirectory`""
+$dashboardAction=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $bin 'Serve-SkincosObservabilityDashboard.ps1')`" -StateDirectory `"$RuntimeDirectory`" -Port $DashboardPort"
+$watchdogAction=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $bin 'Watch-SkincosObservability.ps1')`" -StateDirectory `"$RuntimeDirectory`" -DashboardTaskName SkincosObservabilityDashboard"
+$principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest; $period=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650); $startup=New-ScheduledTaskTrigger -AtStartup; $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $TaskName -Action $monitorAction -Trigger @($startup,$period) -Principal $principal -Settings $settings -Description 'SKINCOS external synthetic monitor; staging and production reads only.' -Force | Out-Null
+$dashboardSettings=New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew; Register-ScheduledTask -TaskName 'SkincosObservabilityDashboard' -Action $dashboardAction -Trigger $startup -Principal $principal -Settings $dashboardSettings -Description 'Local loopback dashboard and monitor health endpoint.' -Force | Out-Null
+$watchdogTrigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 2) -RepetitionDuration (New-TimeSpan -Days 3650); Register-ScheduledTask -TaskName 'SkincosObservabilityWatchdog' -Action $watchdogAction -Trigger @($startup,$watchdogTrigger) -Principal $principal -Settings $settings -Description 'Independent watchdog for external monitor freshness and dashboard restart.' -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $RuntimeDirectory 'dashboard-url.txt') -Value "http://127.0.0.1:$DashboardPort/" -NoNewline
+Start-ScheduledTask -TaskName $TaskName; Start-ScheduledTask -TaskName 'SkincosObservabilityDashboard'; Start-ScheduledTask -TaskName 'SkincosObservabilityWatchdog'; Write-Output "Installed $TaskName, SkincosObservabilityDashboard and SkincosObservabilityWatchdog. State: $RuntimeDirectory"
