@@ -65,7 +65,7 @@ async function runScenario(browser, config) {
     if (pathname === '/api/auth/me') requests.authMe += 1
     if (pathname === '/api/insumos/auth/me') requests.insumosMe += 1
     if (pathname === '/api/insumos/health') requests.health += 1
-    if (pathname.startsWith('/api/insumos/') && !['/api/insumos/auth/me', '/api/insumos/health', '/api/insumos/_proxy-status'].includes(pathname)) {
+    if (pathname.startsWith('/api/insumos/') && !['/api/insumos/auth/me', '/api/insumos/health', '/api/insumos/_proxy-status', '/api/insumos/prefs'].includes(pathname)) {
       // This is a fixed same-origin route path and query only; it deliberately
       // excludes headers, bodies, credentials and response content.
       requests.data.push(`${pathname}${new URL(request.url()).search}`)
