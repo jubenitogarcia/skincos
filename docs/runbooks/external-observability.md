@@ -6,11 +6,11 @@ O catálogo em `ops/observability/catalog.json` define os probes. O monitor prim
 
 O estado `healthy` mede somente o endpoint de health e o orçamento de latência. `contract_status: incomplete` ou `partial` significa que a unidade ainda não comprovou todos os campos/health-readiness-dependencies-version exigidos: não é gate de promoção.
 
-O instalador registra três tarefas Windows: probe a cada minuto, dashboard local em loopback e watchdog independente a cada dois minutos. Em sessão elevada, elas executam como `SYSTEM` e iniciam no boot; sem elevação, executam como o operador atual, iniciam no logon e continuam automaticamente durante sua sessão. O modo efetivo fica em `installation.json`. O dashboard fica somente em `127.0.0.1`, expõe `/`, `/health` e `/metrics` e não depende de Cloudflare ou GitHub. `history.jsonl`, `metrics-history.jsonl` e `notifications.jsonl` retêm 30 dias; nenhum token, payload de negócio ou dado pessoal é gravado.
+O instalador registra três tarefas Windows: probe a cada minuto, dashboard local em loopback e watchdog independente a cada dois minutos. Em sessão elevada, elas executam como `SYSTEM` e iniciam no boot; sem elevação, executam como o operador atual, iniciam no logon e continuam automaticamente durante sua sessão. Caso uma política local bloqueie até a criação de tarefas do operador, o instalador registra um supervisor em `HKCU\...\Run`: ele inicia no próximo logon, executa probes a cada minuto e reinicia o dashboard se ele encerrar. O modo efetivo fica em `installation.json`. O dashboard fica somente em `127.0.0.1`, expõe `/`, `/health` e `/metrics` e não depende de Cloudflare ou GitHub. `history.jsonl`, `metrics-history.jsonl` e `notifications.jsonl` retêm 30 dias; nenhum token, payload de negócio ou dado pessoal é gravado.
 
 ## Instalação e rollback
 
-Executar em PowerShell elevado, após validar a branch/PR:
+Executar em PowerShell elevado, após validar a branch/PR. Se a política local impedir o Agendador de Tarefas, o instalador usa automaticamente o supervisor do perfil do operador; confirme o modo antes de testar:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\observability\scripts\Install-SkincosObservability.ps1
@@ -18,6 +18,7 @@ Get-ScheduledTaskInfo -TaskName SkincosObservabilityProbe
 Get-ScheduledTaskInfo -TaskName SkincosObservabilityDashboard
 Get-ScheduledTaskInfo -TaskName SkincosObservabilityWatchdog
 Invoke-RestMethod (Get-Content C:\CodexRuntime\operator\admin\skincos\observability\dashboard-url.txt).Trim() + 'health'
+Get-Content C:\CodexRuntime\operator\admin\skincos\observability\installation.json
 ```
 
 Rollback estrito:
@@ -26,9 +27,10 @@ Rollback estrito:
 Unregister-ScheduledTask -TaskName SkincosObservabilityProbe -Confirm:$false
 Unregister-ScheduledTask -TaskName SkincosObservabilityDashboard -Confirm:$false
 Unregister-ScheduledTask -TaskName SkincosObservabilityWatchdog -Confirm:$false
+Remove-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name SkincosObservability -ErrorAction SilentlyContinue
 ```
 
-O rollback remove apenas a tarefa; os arquivos de evidência ficam retidos no runtime privado.
+O rollback remove apenas o agendamento e a inicialização automática; se o modo `operator-run-key` estiver ativo, encerre o processo supervisor na próxima sessão ou reinicie o Windows. Os arquivos de evidência ficam retidos no runtime privado.
 
 ## Alerta e recuperação controlados
 
