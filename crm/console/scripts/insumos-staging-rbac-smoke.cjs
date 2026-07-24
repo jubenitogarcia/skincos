@@ -49,7 +49,7 @@ const api = async (page, pathname, init = {}) => page.evaluate(async ({ pathname
 }, { pathname, init })
 
 async function runScenario(browser, config) {
-  const requests = { authMe: 0, insumosMe: 0, health: 0, data: 0 }
+  const requests = { authMe: 0, insumosMe: 0, health: 0, data: [] }
   const context = await browser.newContext({ viewport: { width: 1365, height: 860 } })
   await context.addInitScript((staleUnit) => {
     // addInitScript runs for every document, including reloads used to verify a
@@ -65,7 +65,11 @@ async function runScenario(browser, config) {
     if (pathname === '/api/auth/me') requests.authMe += 1
     if (pathname === '/api/insumos/auth/me') requests.insumosMe += 1
     if (pathname === '/api/insumos/health') requests.health += 1
-    if (pathname.startsWith('/api/insumos/') && !['/api/insumos/auth/me', '/api/insumos/health', '/api/insumos/_proxy-status'].includes(pathname)) requests.data += 1
+    if (pathname.startsWith('/api/insumos/') && !['/api/insumos/auth/me', '/api/insumos/health', '/api/insumos/_proxy-status'].includes(pathname)) {
+      // This is a fixed same-origin route path and query only; it deliberately
+      // excludes headers, bodies, credentials and response content.
+      requests.data.push(`${pathname}${new URL(request.url()).search}`)
+    }
   })
   try {
     // nosemgrep: playwright-goto-injection -- base is restricted to skincos-staging.pages.dev above
@@ -92,7 +96,7 @@ async function runScenario(browser, config) {
     if (config.noUnit) {
       await page.getByText(/ainda não possui uma unidade autorizada/i).waitFor({ state: 'visible', timeout: 20_000 })
       await sleep(1200)
-      assert(requests.data === 0, 'empty scope issued Insumos data requests')
+      assert(requests.data.length === 0, `empty scope issued Insumos data requests: ${[...new Set(requests.data)].join(', ')}`)
       const stored = await page.evaluate(() => localStorage.getItem('skincos.insumos.unidade.v1'))
       assert(stored === null, 'empty scope retained a unit in localStorage')
       return { id: config.fixture.id, result: 'denied-no-unit', scopes, requests }
