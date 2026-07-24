@@ -9,6 +9,8 @@
     "staging:reconcile": "node ./scripts/staging/reconcile.mjs",
     "staging:teardown": "node ./scripts/staging/teardown.mjs",
     "staging:scripts:validate": "node ./.github/scripts/validate-staging-scripts.mjs",
+    "staging:postgres:roles": "node ./scripts/staging/postgresql-roles.mjs",
+    "staging:postgres:validate": "node ./.github/scripts/validate-staging-postgres.mjs",
     "domain-boundaries:validate": "node ./.github/scripts/validate-domain-boundaries.mjs",
     "api:test": "npm --prefix api test",
     "booking:test": "npm --prefix booking test",
