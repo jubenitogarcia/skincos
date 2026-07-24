@@ -7,12 +7,17 @@ the only executable orchestrator item. Finance pilot/staging progression,
 GitHub Organization transfer, Ponto, Atendimento and every unrelated module
 milestone are frozen until this incident is resolved.
 
-PR #763 (`fix(insumos): corrige RBAC por unidade`) is draft and behind current
-main `3f3e9453`. Its current head is `6fbe4b3`; all listed required checks pass
-except Central E2E Smoke (run `30121896932`). That run has three failing Insumos
-scenarios: circuit-breaker pause, edit-modal policy, and no-unit RBAC request
-suppression. The failure is not an authorization to deploy, change data or
-promote any environment.
+PR #763 (`fix(insumos): corrige RBAC por unidade`) merged into main as
+`4a8b2074`. It was rebased on the P0 freeze, and its Central E2E Smoke (run
+`30124027315`) plus all required checks passed. The repaired scenarios prove
+authorized unit access, no-unit request suppression, circuit-breaker behavior
+and edit policy only in CI.
+
+This is not yet evidence that the incident is operationally resolved: the
+current instruction prohibits deploys, data mutations, flags and grants, so no
+environment has been changed or exercised. The P0 freeze remains in effect
+until an explicitly authorized controlled release and unit-scoped journey can
+be evidenced.
 
 Production, staging mutations, D1/PostgreSQL writes, flags, grants and deploys
 are prohibited for this incident phase. The permitted next work is scoped PR
