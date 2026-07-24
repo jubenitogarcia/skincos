@@ -7,7 +7,7 @@ import type { CrmModuleManifest, ModuleAvailability } from './types'
 type BoundaryProps = { moduleKey: string; children: ReactNode; onReturnToNavigation: () => void; onRetry: () => void }
 type BoundaryState = { error: boolean }
 
-class ModuleErrorBoundary extends Component<BoundaryProps, BoundaryState> {
+export class ModuleErrorBoundary extends Component<BoundaryProps, BoundaryState> {
   state: BoundaryState = { error: false }
   static getDerivedStateFromError() { return { error: true } }
   componentDidCatch(_error: Error, _errorInfo: ErrorInfo) {
@@ -23,7 +23,8 @@ class ModuleErrorBoundary extends Component<BoundaryProps, BoundaryState> {
 }
 
 function ModuleUnavailable({ manifest, availability, onReturnToNavigation }: { manifest: CrmModuleManifest; availability: ModuleAvailability; onReturnToNavigation: () => void }) {
-  return <Card className="border-white/15 bg-slate-950/60 text-white"><CardHeader><CardTitle>{manifest.fallback.unavailableLabel}</CardTitle><CardDescription>{availability.reason || 'O acesso a este módulo não está disponível neste ambiente.'}</CardDescription></CardHeader><CardContent><Button variant="outline" onClick={onReturnToNavigation}>Voltar aos módulos</Button></CardContent></Card>
+  const title = availability.state === 'maintenance' ? `${manifest.label} em manutenção` : manifest.fallback.unavailableLabel
+  return <Card className="border-white/15 bg-slate-950/60 text-white" data-testid="module-unavailable"><CardHeader><CardTitle>{title}</CardTitle><CardDescription>{availability.reason || 'O acesso a este módulo não está disponível neste ambiente.'}</CardDescription></CardHeader><CardContent><Button variant="outline" onClick={onReturnToNavigation}>Voltar aos módulos</Button></CardContent></Card>
 }
 
 export function ModuleHost({ manifest, availability, onReturnToNavigation }: { manifest: CrmModuleManifest; availability: ModuleAvailability; onReturnToNavigation: () => void }) {

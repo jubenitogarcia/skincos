@@ -233,6 +233,15 @@ async function insumosApiJson<T>(
 
 const modules = crmModuleRegistry
 
+function configuredMaintenanceModuleKeys(): Set<string> {
+    return new Set(
+        String(import.meta.env.VITE_CRM_MAINTENANCE_MODULES || '')
+            .split(',')
+            .map((key) => key.trim())
+            .filter((key) => crmModuleByKey.has(key)),
+    )
+}
+
 export default function AppFunctionalNeatlab() {
     const { isAuthenticated, user, signOut, initializing, initProgress } = useAuth()
 
@@ -356,9 +365,9 @@ export default function AppFunctionalNeatlab() {
 	    const [active, setActive] = useState<string>(() => {
 		        try {
 		            const requested = new URLSearchParams(window.location.search).get('module') || new URLSearchParams(window.location.search).get('tab')
-		            if (requested && UNLOCKED_MODULE_KEYS.has(requested) && modules.some((module) => module.key === requested)) {
-		                return requested
-		            }
+            if (requested && crmModuleByKey.has(requested)) {
+                return requested
+            }
 		            const saved = localStorage.getItem('app.activeModule')
 		            const candidate = saved || DEFAULT_MODULE_KEY
 		            return UNLOCKED_MODULE_KEYS.has(candidate) ? candidate : DEFAULT_MODULE_KEY
@@ -376,9 +385,9 @@ export default function AppFunctionalNeatlab() {
 		    const mountedModuleKeys = useMemo(() => [active], [active])
 
 	    React.useEffect(() => {
-	        if (UNLOCKED_MODULE_KEYS.has(active)) return
-	        setActive(DEFAULT_MODULE_KEY)
-	    }, [DEFAULT_MODULE_KEY, UNLOCKED_MODULE_KEYS, active])
+        if (crmModuleByKey.has(active)) return
+        setActive(DEFAULT_MODULE_KEY)
+    }, [DEFAULT_MODULE_KEY, active])
         const [search, setSearch] = useState('')
         const [conversaHeaderState, setConversaHeaderState] = useState<ConversaHeaderState | null>(null)
         const [atendimentoHeaderState, setAtendimentoHeaderState] = useState<AtendimentoHeaderState | null>(null)
@@ -700,16 +709,17 @@ export default function AppFunctionalNeatlab() {
         [UNLOCKED_MODULE_KEYS, permittedModulesSorted]
     )
 
-    const moduleAccessContext = useMemo(() => ({ role: roleKey, allowedModules: user?.allowedModules, enabledModuleKeys: UNLOCKED_MODULE_KEYS, financeEnabled }), [UNLOCKED_MODULE_KEYS, financeEnabled, roleKey, user?.allowedModules])
+    const maintenanceModuleKeys = useMemo(configuredMaintenanceModuleKeys, [])
+    const moduleAccessContext = useMemo(() => ({ role: roleKey, allowedModules: user?.allowedModules, enabledModuleKeys: UNLOCKED_MODULE_KEYS, maintenanceModuleKeys, financeEnabled }), [UNLOCKED_MODULE_KEYS, financeEnabled, maintenanceModuleKeys, roleKey, user?.allowedModules])
     const activeModuleManifest = crmModuleByKey.get(active)
-    const activeModuleAvailability = activeModuleManifest ? moduleAvailability(activeModuleManifest, moduleAccessContext) : { available: false, reason: 'O módulo solicitado não está registrado.' }
-
-    React.useEffect(() => {
-        if (!hasModuleAccess(active)) {
-            const next = permittedUnlockedModules[0]?.key || null
-            if (next && next !== active) setActive(next)
-        }
-    }, [active, hasModuleAccess, permittedUnlockedModules])
+    const activeModuleAvailability = activeModuleManifest ? moduleAvailability(activeModuleManifest, moduleAccessContext) : { available: false, state: 'unreleased' as const, reason: 'O módulo solicitado não está registrado.' }
+    const availableModuleKeys = useMemo(
+        () => crmModuleRegistry
+            .filter((manifest) => permittedUnlockedModules.some((entry) => entry.key === manifest.key))
+            .filter((manifest) => moduleAvailability(manifest, moduleAccessContext).available)
+            .map((manifest) => manifest.key),
+        [moduleAccessContext, permittedUnlockedModules],
+    )
 
     const filteredModules = useMemo(
         () =>
@@ -2245,7 +2255,7 @@ export default function AppFunctionalNeatlab() {
                             <div className={`relative z-10 min-w-0 ${active === 'conversa' ? 'flex h-full min-h-0 flex-col' : active === 'site-tracking' ? 'max-w-full overflow-x-hidden' : ''}`}>
                                 <div className="hidden">{search}</div>
                                 <div className={`animate-fade-in ${active === 'conversa' ? 'flex h-full min-h-0 flex-col' : ''}`}>
-                                    {activeModuleManifest ? <div className={active === 'conversa' ? 'h-full min-h-0' : active === 'site-tracking' ? 'min-w-0 max-w-full overflow-x-hidden' : undefined}><ModuleHost manifest={activeModuleManifest} availability={activeModuleAvailability} onReturnToNavigation={() => selectModule(permittedUnlockedModules[0]?.key || DEFAULT_MODULE_KEY)} /></div> : null}
+                                    {activeModuleManifest ? <div className={active === 'conversa' ? 'h-full min-h-0' : active === 'site-tracking' ? 'min-w-0 max-w-full overflow-x-hidden' : undefined}><ModuleHost manifest={activeModuleManifest} availability={activeModuleAvailability} onReturnToNavigation={() => selectModule(active === DEFAULT_MODULE_KEY ? (availableModuleKeys.find((key) => key !== active) || DEFAULT_MODULE_KEY) : DEFAULT_MODULE_KEY)} /></div> : null}
                                 </div>
                                 <ContextDebugger />
                             </div>

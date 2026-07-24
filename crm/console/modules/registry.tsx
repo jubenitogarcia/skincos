@@ -67,8 +67,9 @@ export const crmModuleRegistry: readonly CrmModuleManifest[] = [
 
 export const crmModuleByKey = new Map(crmModuleRegistry.map((entry) => [entry.key, entry]))
 export function moduleAvailability(manifestEntry: CrmModuleManifest, context: ModuleAccessContext): ModuleAvailability {
-  if (!context.enabledModuleKeys.has(manifestEntry.key)) return { available: false, reason: 'Este módulo ainda não foi liberado neste ambiente.' }
-  if (manifestEntry.key === 'finance' && !context.financeEnabled) return { available: false, reason: 'Financeiro aguarda liberação operacional e escopo explícito.' }
-  if (!hasCrmModuleAccess(context.role, context.allowedModules, manifestEntry.key)) return { available: false, reason: 'Você não possui a permissão necessária para este módulo.' }
-  return { available: true }
+  if (!context.enabledModuleKeys.has(manifestEntry.key)) return { available: false, state: 'unreleased', reason: 'Este módulo ainda não foi liberado neste ambiente.' }
+  if (manifestEntry.key === 'finance' && !context.financeEnabled) return { available: false, state: 'unreleased', reason: 'Financeiro aguarda liberação operacional e escopo explícito.' }
+  if (!hasCrmModuleAccess(context.role, context.allowedModules, manifestEntry.key)) return { available: false, state: 'forbidden', reason: 'Você não possui a permissão necessária para este módulo.' }
+  if (context.maintenanceModuleKeys?.has(manifestEntry.key)) return { available: false, state: 'maintenance', reason: 'Este módulo está em manutenção programada. A navegação e os demais módulos continuam disponíveis.' }
+  return { available: true, state: 'available' }
 }
