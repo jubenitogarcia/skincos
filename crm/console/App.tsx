@@ -1,10 +1,11 @@
 // Combined NEATLAB layout + full functionality exposure
-import React, { useState, Suspense, lazy, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import { ContextDebugger } from './ContextDebugger'
-import { ErrorBoundary } from '@/ErrorBoundary'
+import { ModuleHost } from '@/modules/ModuleHost'
+import { crmModuleByKey, crmModuleRegistry, moduleAvailability } from '@/modules/registry'
 import { NotificationProvider, useAuth, useNotifications } from '@/contexts'
 import { isOnlineCrmRuntime, unlockedModuleKeys } from '@/moduleAvailability'
-import { LoadingPercentText, LoadingScreen } from '@/LoadingPattern'
+import { LoadingScreen } from '@/LoadingPattern'
 import { AuthScreen } from '@/AuthScreen'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Button } from '@/button'
@@ -46,7 +47,7 @@ import { dispatchAtendimentoHeaderAction, subscribeAtendimentoHeaderState } from
 import type { AtendimentoHeaderState } from '@/atendimentoHeaderBridge'
 import { hasCrmModuleAccess } from '@/crmRoleAccess'
 import { canManagePonto } from '@/pontoAccess'
-import { BarChart3, CalendarX2, CheckCircle2, ChevronDown, ClipboardList, Download, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Stethoscope, WalletCards, X } from 'lucide-react'
+import { BarChart3, CalendarX2, CheckCircle2, ChevronDown, Download, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -230,150 +231,7 @@ async function insumosApiJson<T>(
     throw new Error(err.error || err.message || `HTTP ${res.status}`)
 }
 
-// Key functional modules
-const LeadsManager = lazy(() => import('@/LeadsManager').then(m => ({ default: m.LeadsManager })))
-const NotificationCenter = lazy(() => import('@/NotificationCenter').then(m => ({ default: m.NotificationCenter })))
-const ReportsDashboard = lazy(() => import('@/ReportsDashboard').then(m => ({ default: m.ReportsDashboard })))
-const ConversaModule = lazy(() => import('@/ConversaModule').then(m => ({ default: m.ConversaModule })))
-const AtendimentoModule = lazy(() => import('@/AtendimentoModule').then(m => ({ default: m.AtendimentoModule })))
-const CaixaModule = lazy(() => import('@/CaixaModule').then(m => ({ default: m.CaixaModule })))
-const ClientCommercialModule = lazy(() => import('@/ClientCommercialModule').then(m => ({ default: m.ClientCommercialModule })))
-const MetaCampaignControlCenter = lazy(() => import('@/MetaCampaignControlCenter').then(m => ({ default: m.MetaCampaignControlCenter })))
-const MetaCommandCenter = lazy(() => import('@/MetaCommandCenter').then(m => ({ default: m.MetaCommandCenter })))
-const MetaSyncMonitor = lazy(() => import('@/MetaSyncMonitor').then(m => ({ default: m.MetaSyncMonitor })))
-const MetaSentimentMonitor = lazy(() => import('@/MetaSentimentMonitor').then(m => ({ default: m.MetaSentimentMonitor })))
-const InstagramStudioPro = lazy(() => import('@/InstagramStudioPro').then(m => ({ default: m.InstagramStudioPro })))
-const ThreadsStudio = lazy(() => import('@/ThreadsStudio').then(m => ({ default: m.ThreadsStudio })))
-const SocialNetworksStudio = lazy(() => import('@/SocialNetworksStudio').then(m => ({ default: m.SocialNetworksStudio })))
-const MetaPagesReviewStudio = lazy(() => import('@/MetaPagesReviewStudio').then(m => ({ default: m.MetaPagesReviewStudio })))
-const WorkflowEngine = lazy(() => import('@/WorkflowEngine').then(m => ({ default: m.WorkflowEngine })))
-const ProjectManagement = lazy(() => import('@/ProjectManagement').then(m => ({ default: m.ProjectManagement })))
-const KanbanBoard = lazy(() => import('@/KanbanBoard').then(m => ({ default: m.KanbanBoard })))
-const RichTaskManager = lazy(() => import('@/RichTaskManager').then(m => ({ default: m.RichTaskManager })))
-const TerritoriesManager = lazy(() => import('@/TerritoriesManager').then(m => ({ default: m.TerritoriesManager })))
-const QuotesManager = lazy(() => import('@/QuotesManager').then(m => ({ default: m.QuotesManager })))
-const WebFormsManager = lazy(() => import('@/WebFormsManager').then(m => ({ default: m.WebFormsManager })))
-const EmailTemplatesManager = lazy(() => import('@/EmailTemplatesManager').then(m => ({ default: m.EmailTemplatesManager })))
-const FieldsManager = lazy(() => import('@/FieldsManager').then(m => ({ default: m.FieldsManager })))
-const CustomObjectsManager = lazy(() => import('@/CustomObjectsManager').then(m => ({ default: m.CustomObjectsManager })))
-const PermissionsManager = lazy(() => import('@/PermissionsManager').then(m => ({ default: m.PermissionsManager })))
-const ROIDashboard = lazy(() => import('@/ROIDashboard').then(m => ({ default: m.ROIDashboard })))
-const AIAutomationHub = lazy(() => import('@/AIAutomationHub').then(m => ({ default: m.AIAutomationHub })))
-const AgentDashboard = lazy(() => import('@/AgentDashboard').then(m => ({ default: m.AgentDashboard })))
-const PerformanceCoaching = lazy(() => import('@/PerformanceCoaching').then(m => ({ default: m.PerformanceCoaching })))
-const PerformanceAlerts = lazy(() => import('@/PerformanceAlerts').then(m => ({ default: m.PerformanceAlerts })))
-const BackupRecoveryCenter = lazy(() => import('@/BackupRecoveryCenter').then(m => ({ default: m.BackupRecoveryCenter })))
-const SystemMonitoring = lazy(() => import('@/SystemMonitoring').then(m => ({ default: m.SystemMonitoring })))
-const AssetManagement = lazy(() => import('@/AssetManagement').then(m => ({ default: m.AssetManagement })))
-const ManufacturingModule = lazy(() => import('@/ManufacturingModule').then(m => ({ default: m.ManufacturingModule })))
-const HRModule = lazy(() => import('@/HRModule').then(m => ({ default: m.HRModule })))
-const ProcurementModule = lazy(() => import('@/ProcurementModule').then(m => ({ default: m.ProcurementModule })))
-const Financeiro = lazy(() => import('@/FinanceModule').then(m => ({ default: m.FinanceModule })))
-const ProductCatalog = lazy(() => import('@/ProductCatalog').then(m => ({ default: m.ProductCatalog })))
-const PipelineManager = lazy(() => import('@/PipelineManager').then(m => ({ default: m.PipelineManager })))
-const LeadScoringSystem = lazy(() => import('@/LeadScoringSystem').then(m => ({ default: m.LeadScoringSystem })))
-const WebhooksIntegrationsHub = lazy(() => import('@/WebhooksIntegrationsHub').then(m => ({ default: m.WebhooksIntegrationsHub })))
-const MultiCompanyManagement = lazy(() => import('@/MultiCompanyManagement').then(m => ({ default: m.MultiCompanyManagement })))
-const APIExplorer = lazy(() => import('@/APIExplorer').then(m => ({ default: m.APIExplorer })))
-const Relatorios = lazy(() => import('@/ReportsDashboard').then(m => ({ default: m.ReportsDashboard })))
-const NotificationTester = lazy(() => import('@/NotificationTester').then(m => ({ default: m.NotificationTester })))
-const CapabilitiesCenter = lazy(() => import('@/CapabilitiesCenter').then(m => ({ default: m.CapabilitiesCenter })))
-const JobsCenter = lazy(() => import('@/JobsCenter').then(m => ({ default: m.JobsCenter })))
-const UnitMonitor = lazy(() => import('@/UnitMonitor').then(m => ({ default: m.UnitMonitor })))
-const InsumosModule = lazy(() => import('@/InsumosModule').then(m => ({ default: m.InsumosModule })))
-const FaturamentoModule = lazy(() => import('@/FaturamentoModule').then(m => ({ default: m.FaturamentoModule })))
-const ProcedimentosModule = lazy(() => import('@/ProcedimentosModule').then(m => ({ default: m.ProcedimentosModule })))
-const UsersModule = lazy(() => import('@/UsersModule').then(m => ({ default: m.UsersModule })))
-const SystemStatusModule = lazy(() => import('@/SystemStatusModule').then(m => ({ default: m.SystemStatusModule })))
-const PontoModule = lazy(() => import('@/PontoModule').then(m => ({ default: m.PontoModule })))
-const EscalaProfissionaisModule = lazy(() => import('@/EscalaProfissionaisModule').then(m => ({ default: m.EscalaProfissionaisModule })))
-const SiteTrackingModule = lazy(() => import('@/SiteTrackingModule').then(m => ({ default: m.SiteTrackingModule })))
-
-// TODO: Add remaining modules if needed
-
-const modules: { key: string; label: string; icon: React.ReactNode; component: React.ReactNode }[] = [
-    { key: 'capabilities', label: 'Plataforma', icon: '🧭', component: <CapabilitiesCenter /> },
-    { key: 'jobs', label: 'Execuções', icon: '🏃', component: <JobsCenter /> },
-    { key: 'status', label: 'Status', icon: '📡', component: <SystemStatusModule /> },
-    { key: 'unit-monitor', label: 'Unit Monitor', icon: '📹', component: <UnitMonitor /> },
-    {
-        key: 'insumos',
-        label: 'Insumos',
-        icon: <img src="/icons/insumos-icon-192.svg" alt="" aria-hidden className="h-5 w-5" />,
-        component: <InsumosModule />
-    },
-    { key: 'users', label: 'Usuários', icon: '👤', component: <UsersModule /> },
-    { key: 'dashboard', label: 'Analítica', icon: <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />, component: <ReportsDashboard /> },
-    { key: 'leads', label: 'Leads', icon: '💎', component: <LeadsManager /> },
-    { key: 'clientes', label: 'Clientes', icon: '👥', component: <ClientCommercialModule /> },
-    { key: 'notifications', label: 'Notificações', icon: '🔔', component: <NotificationCenter /> },
-    { key: 'conversa', label: 'Conversa', icon: '💬', component: <ConversaModule /> },
-    {
-        key: 'atendimento',
-        label: 'Atendimento',
-        icon: (
-            <span className="relative inline-flex h-5 w-5 items-center justify-center text-sky-100" aria-hidden>
-                <Stethoscope className="absolute h-4 w-4 -translate-x-1 translate-y-0.5" />
-                <ClipboardList className="absolute h-3.5 w-3.5 translate-x-1 -translate-y-0.5 text-emerald-200" />
-            </span>
-        ),
-        component: <AtendimentoModule />
-    },
-    { key: 'caixa', label: 'Caixa', icon: '💰', component: <CaixaModule /> },
-    {
-        key: 'faturamento',
-        label: 'Faturamento',
-        icon: <WalletCards className="h-5 w-5 text-emerald-100" aria-hidden />,
-        component: <FaturamentoModule />
-    },
-    {
-        key: 'procedimentos',
-        label: 'Procedimentos',
-        icon: <ClipboardList className="h-5 w-5 text-sky-100" aria-hidden />,
-        component: <ProcedimentosModule />
-    },
-    { key: 'escala-profissionais', label: 'Escala', icon: '🗓️', component: <EscalaProfissionaisModule /> },
-    { key: 'site-tracking', label: 'Site EF', icon: '📍', component: <SiteTrackingModule /> },
-    { key: 'meta-ads', label: 'Meta Ads', icon: '📢', component: <MetaCampaignControlCenter /> },
-    { key: 'meta-command', label: 'Meta Command', icon: '🧭', component: <MetaCommandCenter /> },
-    { key: 'meta-sync', label: 'Meta Sync', icon: '🔄', component: <MetaSyncMonitor /> },
-    { key: 'meta-sentiment', label: 'Sentimento', icon: '🧠', component: <MetaSentimentMonitor /> },
-    { key: 'meta-pages-review', label: 'Meta Review', icon: '🧪', component: <MetaPagesReviewStudio /> },
-    { key: 'instagram-studio', label: 'Redes Sociais', icon: '🌐', component: <SocialNetworksStudio /> },
-    { key: 'threads-studio', label: 'Threads', icon: '🧵', component: <ThreadsStudio /> },
-    { key: 'workflow', label: 'Workflows', icon: '⚙️', component: <WorkflowEngine /> },
-    { key: 'projects', label: 'Projetos', icon: '📁', component: <ProjectManagement /> },
-    { key: 'kanban', label: 'Kanban', icon: '🗂️', component: <KanbanBoard type="tasks" title="Quadro Kanban" description="Gestão visual de tarefas" /> },
-    { key: 'tasks', label: 'Tarefas', icon: '✅', component: <RichTaskManager /> },
-    { key: 'territories', label: 'Territórios', icon: '🗺️', component: <TerritoriesManager /> },
-    { key: 'quotes', label: 'Cotações', icon: '💬', component: <QuotesManager /> },
-    { key: 'web-forms', label: 'Forms', icon: '📝', component: <WebFormsManager /> },
-    { key: 'email-templates', label: 'Templates', icon: '✉️', component: <EmailTemplatesManager /> },
-    { key: 'fields', label: 'Campos', icon: '🧩', component: <FieldsManager objectType="customer" objectName="Cliente" /> },
-    { key: 'permissions', label: 'Permissões', icon: '🔑', component: <PermissionsManager /> },
-    { key: 'custom-objects', label: 'Objetos', icon: '🛠️', component: <CustomObjectsManager /> },
-    { key: 'roi', label: 'ROI', icon: '📈', component: <ROIDashboard /> },
-    { key: 'ai-automation', label: 'AI Automação', icon: '🤖', component: <AIAutomationHub /> },
-    { key: 'agent-dashboard', label: 'Agentes', icon: '🧑‍💼', component: <AgentDashboard /> },
-    { key: 'coaching', label: 'Coaching', icon: '🎯', component: <PerformanceCoaching /> },
-    { key: 'alerts', label: 'Alertas', icon: <img src="/icons/emergency.png" alt="" aria-hidden className="h-5 w-5" />, component: <PerformanceAlerts /> },
-    { key: 'backup-recovery', label: 'Backup', icon: '💾', component: <BackupRecoveryCenter /> },
-    { key: 'system-monitoring', label: 'Monitoramento', icon: '🖥️', component: <SystemMonitoring /> },
-    { key: 'assets', label: 'Ativos', icon: '📦', component: <AssetManagement /> },
-    { key: 'manufacturing', label: 'Fabricação', icon: '🏭', component: <ManufacturingModule /> },
-    { key: 'hr', label: 'RH', icon: '👥', component: <HRModule /> },
-    { key: 'ponto', label: 'Ponto', icon: '⏱️', component: <PontoModule /> },
-    { key: 'procurement', label: 'Compras', icon: '🛒', component: <ProcurementModule /> },
-    { key: 'finance', label: 'Financeiro', icon: <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />, component: <Financeiro /> },
-    { key: 'products', label: 'Produtos', icon: '📂', component: <ProductCatalog /> },
-    { key: 'pipelines', label: 'Pipelines', icon: '🔀', component: <PipelineManager /> },
-    { key: 'lead-scoring', label: 'Lead Scoring', icon: '⭐', component: <LeadScoringSystem /> },
-    { key: 'webhooks', label: 'Webhooks', icon: '🔌', component: <WebhooksIntegrationsHub /> },
-    { key: 'companies', label: 'Empresas', icon: '🏢', component: <MultiCompanyManagement /> },
-    { key: 'notifications-test', label: 'Notif. Tester', icon: '🔔', component: <NotificationTester /> },
-    { key: 'api', label: 'API', icon: '🧪', component: <APIExplorer /> },
-    { key: 'reports', label: 'Relatórios', icon: <img src="/icons/chart.png" alt="" aria-hidden className="h-5 w-5" />, component: <Relatorios /> },
-]
+const modules = crmModuleRegistry
 
 export default function AppFunctionalNeatlab() {
     const { isAuthenticated, user, signOut, initializing, initProgress } = useAuth()
@@ -841,6 +699,10 @@ export default function AppFunctionalNeatlab() {
         () => permittedModulesSorted.filter((m) => UNLOCKED_MODULE_KEYS.has(m.key)),
         [UNLOCKED_MODULE_KEYS, permittedModulesSorted]
     )
+
+    const moduleAccessContext = useMemo(() => ({ role: roleKey, allowedModules: user?.allowedModules, enabledModuleKeys: UNLOCKED_MODULE_KEYS, financeEnabled }), [UNLOCKED_MODULE_KEYS, financeEnabled, roleKey, user?.allowedModules])
+    const activeModuleManifest = crmModuleByKey.get(active)
+    const activeModuleAvailability = activeModuleManifest ? moduleAvailability(activeModuleManifest, moduleAccessContext) : { available: false, reason: 'O módulo solicitado não está registrado.' }
 
     React.useEffect(() => {
         if (!hasModuleAccess(active)) {
@@ -2382,32 +2244,10 @@ export default function AppFunctionalNeatlab() {
 
                             <div className={`relative z-10 min-w-0 ${active === 'conversa' ? 'flex h-full min-h-0 flex-col' : active === 'site-tracking' ? 'max-w-full overflow-x-hidden' : ''}`}>
                                 <div className="hidden">{search}</div>
-                                <ErrorBoundary>
-                                    <Suspense fallback={
-                                        <div className="glass-morphism rounded-2xl p-8 border border-white/20 animate-pulse">
-                                            <div className="space-y-1">
-                                                <LoadingPercentText label="Carregando módulo" className="text-white/90" showPercent={false} />
-                                                <div className="text-blue-300/60 text-sm">Preparando interface empresarial</div>
-                                            </div>
-                                        </div>
-                                    }>
-                                    <div className={`animate-fade-in ${active === 'conversa' ? 'flex h-full min-h-0 flex-col' : ''}`}>
-                                        {mountedModuleKeys
-                                            .map((key) => permittedModulesSorted.find((m) => m.key === key))
-                                            .filter((m) => Boolean(m) && UNLOCKED_MODULE_KEYS.has((m as any).key))
-                                            .map((m) => {
-                                                const moduleEntry = m as (typeof modules)[number]
-                                                const isActive = moduleEntry.key === active
-                                                return (
-                                                    <div key={moduleEntry.key} hidden={!isActive} className={active === 'conversa' ? 'h-full min-h-0' : active === 'site-tracking' ? 'min-w-0 max-w-full overflow-x-hidden' : undefined}>
-                                                        {moduleEntry.component}
-                                                    </div>
-                                                )
-                                            })}
-                                    </div>
-                                    </Suspense>
-                                    <ContextDebugger />
-                                </ErrorBoundary>
+                                <div className={`animate-fade-in ${active === 'conversa' ? 'flex h-full min-h-0 flex-col' : ''}`}>
+                                    {activeModuleManifest ? <div className={active === 'conversa' ? 'h-full min-h-0' : active === 'site-tracking' ? 'min-w-0 max-w-full overflow-x-hidden' : undefined}><ModuleHost manifest={activeModuleManifest} availability={activeModuleAvailability} onReturnToNavigation={() => selectModule(permittedUnlockedModules[0]?.key || DEFAULT_MODULE_KEY)} /></div> : null}
+                                </div>
+                                <ContextDebugger />
                             </div>
                         </main>
                     </div>
