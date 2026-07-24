@@ -1,5 +1,24 @@
 # Current state
 
+## P0 production gate — blocked by missing segregated secret (2026-07-24)
+
+The explicit production promotion of the validated `cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb`
+candidate was attempted only through the canonical Inventory/Core Worker workflow
+`30133378752`, with staging predecessor `30131598506`. The immutable promotion gate
+passed ancestry and predecessor evidence, and the remote migration step reported
+`No migrations to apply`. The deploy then stopped before publishing because the
+production environment lacks `IDENTITY_PII_KEY`; no Worker version, flag, grant,
+user or production data changed.
+
+The production rollback checkpoint remains intact: Inventory Worker deployment
+`f0037d0a-bc21-4a26-8a8b-59a010c85ba6` / version
+`6104273d-a14c-4a84-8bb1-889a681969dc` (version 5132), and CRM Pages deployment
+`0b8657b8-d162-4c0e-8a4a-e542255ec1a4` / commit `fdf8cda8ab1df4e41a06897231fad3e9d41042a0`.
+Post-failure Insumos health remained HTTP 200. CRM Pages was intentionally not
+started, so there is no partial promotion to reconcile. The only next production
+action is an authorized operator provisioning the segregated production secret,
+followed by a fresh preflight; Finance and unrelated modules remain frozen.
+
 ## P0 incident — current staging evidence validated
 
 `P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos` remains
@@ -70,9 +89,9 @@ there is no repair SQL, grant change or production mutation to roll back.
 ## Lineage reconciliation — 2026-07-24
 
 The pre-candidate `origin/main` was `b8c356baf90b33cef834417cb75ddd172a0b0a9a`.
-After PR #780, current `origin/main` is
-`cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb`. PRs #763 and #771–#780 are
-merged. The historical four preview/staging artifacts and journey all
+The candidate `cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb` is now an ancestor of
+the current `origin/main` `4339df47f2797be78928d1da0a5124635c3ef976`; PRs #763
+and #771–#784 are merged. The historical four preview/staging artifacts and journey all
 reference `f276919ce6a63b337bd02bd0c3799dbf38f13b97` (merge #770). The functional
 change from #776 is the `InsumosModule` fail-closed gate requiring an authenticated
 actor with an authorized unit; that expression is absent from `f276…` and present
