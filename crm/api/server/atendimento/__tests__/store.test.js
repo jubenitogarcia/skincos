@@ -74,6 +74,56 @@ test('scopes atendimento router access by consuming module', () => {
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/catalog', 'GET'), false)
 })
 
+test('initializes Atendimento schema once when concurrent reads arrive', async () => {
+    let transactions = 0
+    const fakePool = createFakePool([
+        (sql) => {
+            if (sql === 'begin') transactions += 1
+            return null
+        },
+        (sql) => sql.includes('select slug, name from crm_atendimento.units order by name') && {
+            rows: [{ slug: 'novo-hamburgo', name: 'Novo Hamburgo' }], rowCount: 1,
+        },
+        (sql) => sql.includes('from crm_atendimento.professionals') && { rows: [], rowCount: 0 },
+        (sql) => sql.includes('from crm_atendimento.procedures') && { rows: [], rowCount: 0 },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+
+    await Promise.all([
+        store.references({ role: 'GESTOR' }),
+        store.references({ role: 'GESTOR' }),
+        store.references({ role: 'GESTOR' }),
+    ])
+
+    assert.equal(transactions, 1)
+})
+
+test('retries Atendimento schema initialization after a transient failure', async () => {
+    let firstMigration = true
+    let transactions = 0
+    const fakePool = createFakePool([
+        (sql) => {
+            if (sql === 'begin') transactions += 1
+            if (sql.includes('create extension if not exists pgcrypto') && firstMigration) {
+                firstMigration = false
+                throw new Error('transient migration failure')
+            }
+            return null
+        },
+        (sql) => sql.includes('select slug, name from crm_atendimento.units order by name') && {
+            rows: [{ slug: 'novo-hamburgo', name: 'Novo Hamburgo' }], rowCount: 1,
+        },
+        (sql) => sql.includes('from crm_atendimento.professionals') && { rows: [], rowCount: 0 },
+        (sql) => sql.includes('from crm_atendimento.procedures') && { rows: [], rowCount: 0 },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+
+    await assert.rejects(() => store.references({ role: 'GESTOR' }), /transient migration failure/)
+    await store.references({ role: 'GESTOR' })
+
+    assert.equal(transactions, 2)
+})
+
 test('rejects a direct non-manager attempt to replace the persisted consultant before any write', async () => {
     const queries = []
     const fakePool = createFakePool([

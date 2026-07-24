@@ -34,6 +34,12 @@
 - Prefer repo evidence and live endpoints over generic assumptions.
 - If the user asks briefly ("proceda", "verifique", "publique", "corrija"),
   infer the standard Skincos flow instead of asking them to restate context.
+- Use `skills/skincos-project-orchestrator` for SKINCOS handoff, audit, status,
+  PR/CI/deploy review, or next-step requests. “retome o SKINCOS”, “continue o
+  projeto”, “prossiga do ponto atual”, “execute o próximo passo” and “use o
+  orquestrador” mean `resume-execute`; only `status`, “somente audite”, or
+  “somente analise” mean read-only. Continue authorized work through PR/CI and
+  staging evidence instead of stopping at a report.
 
 ## Source of Truth
 
