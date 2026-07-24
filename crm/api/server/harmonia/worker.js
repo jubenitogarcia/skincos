@@ -1,6 +1,7 @@
 import { loadHarmoniaConfig } from './config.js'
 import { createHarmoniaStore } from './store/store.js'
 import { createWhatsAppProvider } from './providers/whatsapp.js'
+import { claimAttendanceSignalDelivery, deliverAttendanceSignal } from '../events/attendanceOutbox.js'
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms))
@@ -182,6 +183,14 @@ export function startHarmoniaWorker({ varDir }) {
                             }
                         }
                     }
+                }
+            }
+            if (config.attendanceEventSignalsEnabled) {
+                try {
+                    const deliveries = await claimAttendanceSignalDelivery(store.pool, { limit: 10 })
+                    for (const delivery of deliveries) await deliverAttendanceSignal(store.pool, delivery, { maxAttempts: 3 })
+                } catch {
+                    console.warn(JSON.stringify({ level: 'warn', domain: 'harmonia', event: 'attendance_signal_consumer_unavailable' }))
                 }
             }
         } catch (e) {

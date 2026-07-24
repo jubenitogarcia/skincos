@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
+import { enqueueCommercialActionEvent } from '../events/attendanceOutbox.js'
 import {
     buildConversionReportFromRawRows,
     buildScheduleDropdowns,
@@ -442,6 +443,10 @@ export function atendimentoMigrationStatements() {
         `create index if not exists crm_atendimento_commercial_actions_active_idx
             on crm_atendimento.commercial_actions(status, created_at desc)
             where status in ('open','contacted','responded','scheduled');`,
+        `create table if not exists crm_atendimento.event_outbox (id uuid primary key default gen_random_uuid(), event_key text not null unique, event_type text not null, event_version int not null, aggregate_type text not null, aggregate_id uuid not null, payload jsonb not null, created_at timestamptz not null default now());`,
+        `create table if not exists crm_atendimento.event_deliveries (id uuid primary key default gen_random_uuid(), event_id uuid not null references crm_atendimento.event_outbox(id) on delete cascade, consumer_name text not null, status text not null default 'pending' check(status in ('pending','processing','retrying','delivered','dead_letter')), attempts int not null default 0, available_at timestamptz not null default now(), locked_at timestamptz, lease_until timestamptz, delivered_at timestamptz, dead_lettered_at timestamptz, last_error text, updated_at timestamptz not null default now(), unique(event_id,consumer_name));`,
+        `alter table crm_atendimento.event_deliveries add column if not exists lease_until timestamptz;`,
+        `create index if not exists crm_atendimento_event_deliveries_dispatch_idx on crm_atendimento.event_deliveries(consumer_name,status,available_at);`,
     ]
 }
 
@@ -3066,6 +3071,7 @@ export function createAtendimentoStore(options = {}) {
                     [identityId, unit.rows[0]?.id || null, segmentKey, actionType, owner || null, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor)],
                 )
                 await audit(client, 'commercial.action.created', actor, null, { actionId: created.rows[0]?.id, identityId, segmentKey, actionType, unitSlug })
+                await enqueueCommercialActionEvent(client, { actionId: created.rows[0]?.id, identityId, unitId: unit.rows[0]?.id || null, segmentKey, actionType, dueDate })
                 return { id: created.rows[0]?.id }
             })
         },

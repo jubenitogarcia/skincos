@@ -26,6 +26,7 @@ export function loadHarmoniaConfig({ varDir }) {
     const tasksStaleMinutes = tasksStaleMinutesRaw ? Number.parseInt(tasksStaleMinutesRaw, 10) : 30
     const autoExecute = ['1', 'true', 'yes'].includes(String(process.env.HARMONIA_AUTO_EXECUTE || '').toLowerCase())
     const workerEnabled = ['1', 'true', 'yes'].includes(String(process.env.HARMONIA_WORKER || '').toLowerCase())
+    const attendanceEventSignalsEnabled = ['1', 'true', 'yes'].includes(String(process.env.EVENTS_ATTENDANCE_HARMONIA_SIGNALS_ENABLED || '').toLowerCase())
     const tasksMaxAttemptsRaw = String(process.env.HARMONIA_TASKS_MAX_ATTEMPTS || '').trim()
     const tasksMaxAttempts = tasksMaxAttemptsRaw ? Number.parseInt(tasksMaxAttemptsRaw, 10) : 5
     const tasksBackoffSecondsRaw = String(process.env.HARMONIA_TASKS_BACKOFF_SECONDS || '').trim()
@@ -83,6 +84,7 @@ export function loadHarmoniaConfig({ varDir }) {
         tasksAlertNotify,
         autoExecute,
         workerEnabled,
+        attendanceEventSignalsEnabled,
         webhook: {
             secret: webhookSecret,
         },

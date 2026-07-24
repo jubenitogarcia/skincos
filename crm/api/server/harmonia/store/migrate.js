@@ -82,6 +82,8 @@ export function harmoniaMigrationStatements() {
             unique(conversation_id, provider_message_id)
         );`,
         `create index if not exists harmonia_delivery_events_status_idx on harmonia.delivery_events(status);`,
+        `create table if not exists harmonia.event_inbox (event_id uuid primary key, event_type text not null, event_version int not null, processed_at timestamptz not null default now());`,
+        `create table if not exists harmonia.attendance_signals (id uuid primary key default gen_random_uuid(), source_event_id uuid not null unique, action_id uuid not null, identity_id uuid not null, unit_id uuid, action_type text not null, segment_key text not null, due_date date, created_at timestamptz not null default now());`,
     ]
 }
 

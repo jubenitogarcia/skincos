@@ -13,7 +13,9 @@
     "reconcile-client-identities": "node scripts/reconcile-client-identities.mjs",
     "reconcile-client-registrations": "node scripts/reconcile-client-registrations.mjs",
     "import-supplemental-leads": "node scripts/import-supplemental-leads.mjs",
-    "apply-client-spelling-merges": "node scripts/apply-client-spelling-merges.mjs"
+    "apply-client-spelling-merges": "node scripts/apply-client-spelling-merges.mjs",
+    "reconcile-attendance-event-deliveries": "node scripts/reconcile-attendance-event-deliveries.mjs",
+    "replay-attendance-event-dead-letter": "node scripts/replay-attendance-event-dead-letter.mjs"
   },
   "dependencies": {
     "axios": "1.18.0",
