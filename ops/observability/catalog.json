@@ -1,12 +1,15 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "owner": "platform/observability",
   "primaryMonitor": {
     "type": "windows-scheduled-probe",
     "executionBoundary": "Windows operator runtime; independent of GitHub Actions and Cloudflare Workers",
     "stateDirectory": "C:\\CodexRuntime\\operator\\admin\\skincos\\observability",
     "intervalSeconds": 60,
-    "notification": "Windows Application event log source SkincosObservability; optional HTTPS webhook is a secondary route"
+    "retentionDays": 30,
+    "healthMaxAgeSeconds": 180,
+    "dashboard": "loopback Windows dashboard with /health and /metrics",
+    "notification": "Windows desktop message plus Windows Application event log; optional HTTPS webhook is a secondary route"
   },
   "contract": {
     "health": "liveness only; performs no write",
