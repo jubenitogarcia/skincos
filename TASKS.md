@@ -3,8 +3,9 @@
 ## P0 operacional — incidente de acesso a Insumos
 
 - [ ] **P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos.**
-  PR #763 está atrás da main e falha Central E2E nos cenários de circuit
-  breaker, edição e ausência de unidade. Até a resolução completa, não iniciar
+  A correção de fonte foi integrada pela PR #763, com Central E2E e todos os
+  checks requeridos verdes. A validação de acesso no ambiente continua pendente
+  porque esta fase proíbe deploys. Até a resolução operacional completa, não iniciar
   extrações arquiteturais, piloto Financeiro, transferência para GitHub
   Organization, mudanças de Ponto/Atendimento ou outro módulo. Não fazer deploy
   nem alterar dados, flags, grants ou produção nesta fase.
