@@ -6,6 +6,22 @@ import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notific
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
 import { normalizeAllowedUnits } from '../../shared/identity-contract/index.js';
 
+function b64UrlBytes(value) {
+    const base64 = String(value || '').replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(String(value || '').length / 4) * 4, '=');
+    return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+}
+
+async function decryptOnboardingPersonalEmail(env, value) {
+    const secret = String(env?.IDENTITY_PII_KEY || '').trim();
+    const parts = String(value || '').split('.');
+    if (!secret || parts.length !== 3 || parts[0] !== 'v1') return '';
+    const rawKey = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
+    const key = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64UrlBytes(parts[1]) }, key, b64UrlBytes(parts[2]));
+    const email = new TextDecoder().decode(plain).trim().toLowerCase();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
 export async function handleAuthRoutes({
     request,
     url,
@@ -672,6 +688,19 @@ export async function handleAuthRoutes({
                     return withCORS(JSON.stringify({ success: false, error: 'RESET_COOLDOWN', retryAfterSeconds: cooldownSeconds }), { status: 429 }, appOrigin);
                 }
 
+                // Corporate email remains the login identifier. For employees
+                // created by the hierarchical workflow, recovery is sent only
+                // to the encrypted personal contact; legacy users fall back to
+                // their existing corporate destination until explicitly edited.
+                let recoveryEmail = email;
+                try {
+                    const contact = await env.DB.prepare('SELECT personal_email_encrypted FROM crm_employee_onboarding WHERE LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(email).first();
+                    if (contact?.personal_email_encrypted) recoveryEmail = await decryptOnboardingPersonalEmail(env, contact.personal_email_encrypted) || '';
+                    if (contact?.personal_email_encrypted && !recoveryEmail) return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_RECOVERY_UNAVAILABLE' }), { status: 503 }, appOrigin);
+                } catch {
+                    // The onboarding table is additive; existing deployments
+                    // preserve the prior recovery behavior until migrated.
+                }
                 const code = String(randomInt(100000, 999999));
                 const codeHash = await hashResetSecret(code);
                 const now = new Date();
@@ -683,7 +712,7 @@ export async function handleAuthRoutes({
                 const resetId = pending?.meta?.last_row_id;
                 if (!resetId) throw new Error('PASSWORD_RESET_CREATE_FAILED');
                 try {
-                    await sendPasswordResetEmail({ env, to: email, code, expiresAt });
+                    await sendPasswordResetEmail({ env, to: recoveryEmail, code, expiresAt });
                 } catch (mailError) {
                     await env.DB.prepare(`DELETE FROM ${passwordResetsTable} WHERE id = ? AND sent_at IS NULL`).bind(resetId).run();
                     const reason = String(mailError?.message || mailError || 'SMTP_ERROR_UNKNOWN')

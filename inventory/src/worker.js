@@ -1261,7 +1261,21 @@ export default {
         const issueAuthCookies = async (sessionPayload) => {
             const csrf = crypto.randomUUID();
             const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
-            const payload = { ...sessionPayload, csrf, exp };
+            const sid = crypto.randomUUID();
+            const payload = { ...sessionPayload, sid, csrf, exp };
+            // Best-effort only while the additive migration rolls out. A cookie
+            // remains compatible with existing valid sessions, while all new
+            // sessions gain a durable revocation inventory.
+            try {
+                const digest = async (value) => {
+                    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value || '')));
+                    return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('');
+                };
+                const at = new Date().toISOString();
+                await env.DB.prepare('INSERT INTO crm_identity_sessions (id, username, session_version, device_label, user_agent_hash, ip_hash, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+                    .bind(sid, String(sessionPayload?.username || ''), Number(sessionPayload?.sv || 0), String(request.headers.get('sec-ch-ua-platform') || '').slice(0, 80) || null, await digest(request.headers.get('user-agent')), await digest(request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for')), at, at)
+                    .run();
+            } catch { /* migration may not yet be deployed; signed session remains valid */ }
             const token = await encodeSessionV2(payload, sessionSecret);
 
             // Dev (http) cannot set Secure cookies; SameSite=None also requires Secure.
@@ -1307,6 +1321,17 @@ export default {
             const userDb = await identityD1.getUserByUsername(sessionUsername);
             if (!userDb || !userDb.ativo) return null;
             if (Number(userDb.sessionVersion || 0) !== sessionVersion) return null;
+            if (session?.sid) {
+                try {
+                    const stored = await env.DB.prepare('SELECT id FROM crm_identity_sessions WHERE id=? AND username=? AND session_version=? AND revoked_at IS NULL LIMIT 1')
+                        .bind(String(session.sid), sessionUsername, sessionVersion).first();
+                    if (!stored?.id) return null;
+                    await env.DB.prepare('UPDATE crm_identity_sessions SET last_seen_at=? WHERE id=?').bind(new Date().toISOString(), String(session.sid)).run();
+                } catch {
+                    // Do not invalidate legacy sessions just because the additive
+                    // session migration has not reached this environment.
+                }
+            }
             sessionUser = { ...userDb, role: normalizeRole(userDb.role || 'CONSULTOR') };
             return sessionUser;
         };
