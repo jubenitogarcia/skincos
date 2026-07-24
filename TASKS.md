@@ -1,5 +1,14 @@
 # TASKS
 
+## P0 operacional — incidente de acesso a Insumos
+
+- [ ] **P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos.**
+  PR #763 está atrás da main e falha Central E2E nos cenários de circuit
+  breaker, edição e ausência de unidade. Até a resolução completa, não iniciar
+  extrações arquiteturais, piloto Financeiro, transferência para GitHub
+  Organization, mudanças de Ponto/Atendimento ou outro módulo. Não fazer deploy
+  nem alterar dados, flags, grants ou produção nesta fase.
+
 ## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
 
 - [x] Domínio definitivo criado em `workforce/timekeeping` e montado no gateway.

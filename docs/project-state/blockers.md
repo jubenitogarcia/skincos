@@ -1,3 +1,11 @@
 # Blockers
 
-Finance pilot activation requires current Finance staging evidence and named human approval. The successful deploy, synthetic canary, kill-switch/baseline restoration and health request on 2026-07-24 do not evidence authenticated import/UI smoke, an external monitor with a received human alert, encrypted offsite D1 backup or an isolated restore drill. None of those staging gaps authorizes production, module activation, grants or real-user access.
+## P0 — Insumos unit access
+
+Until PR #763 is rebased, its three Central E2E failures are corrected and the
+required checks are green, the orchestrator must not execute Finance staging or
+pilot work, GitHub Organization transfer, Ponto, Atendimento, or other module
+milestones. Production, data changes and deploys are explicitly out of scope.
+
+Finance pilot activation remains separately blocked by current staging evidence
+and named human approval; it is frozen under the P0 incident.
