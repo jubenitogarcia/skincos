@@ -17,11 +17,18 @@ let report;
 try { report = JSON.parse(await readFile(reportFile, 'utf8')); } catch { report = { ok: false, samples: [], errors: 1, journeyFailures: 1, reason: 'report_missing' }; }
 const limits = policy.limits || {};
 const samples = Array.isArray(report.samples) ? report.samples : [];
-const timings = samples.map((item) => Number(item.durationMs)).filter(Number.isFinite).sort((a, b) => a - b);
+// Authentication is measured and reported separately. Its cold-start/network
+// cost must not be mistaken for Finance Worker latency or cause an unrelated
+// Identity/gateway delay to trigger a Finance artifact rollback.
+const financeSamples = samples.filter((item) => item?.name !== 'login');
+const timings = financeSamples.map((item) => Number(item.durationMs)).filter(Number.isFinite).sort((a, b) => a - b);
+const loginDuration = samples.find((item) => item?.name === 'login')?.durationMs;
 const p95 = timings.length ? timings[Math.min(timings.length - 1, Math.ceil(timings.length * 0.95) - 1)] : Infinity;
 const measured = {
   samples: samples.length,
+  financeSamples: financeSamples.length,
   p95LatencyMs: p95,
+  authenticationLatencyMs: Number.isFinite(Number(loginDuration)) ? Number(loginDuration) : null,
   errors: Number(report.errors || 0) + (report.ok === false ? 1 : 0),
   authenticationFailures: Number(report.authenticationFailures || 0),
   journeyFailures: Number(report.journeyFailures || 0),

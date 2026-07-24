@@ -19,8 +19,11 @@
 ## Canary sintético e limites automáticos
 
 `ops/module-governance/finance-staging-canary-policy.json` é validado pelo CI e
-declara os únicos ator e unidade permitidos, além dos limites para erros, p95,
-autenticação, jornada, divergência de dados, auditoria e dependências. O
+declara os únicos ator e unidade permitidos, além dos limites para erros, p95 do
+Financeiro, falha de autenticação, jornada, divergência de dados, auditoria e
+dependências. A duração de login é registrada separadamente: não é usada no p95
+do Worker Financeiro, mas uma falha de autenticação continua interrompendo a
+promoção. O
 workflow registra relatório sanitizado e decisão como artefato por 90 dias.
 
 Ao exceder qualquer limite, o workflow grava `disabled` no KV, define
