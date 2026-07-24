@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { toAuthenticatedActor } from '../../shared/identity-contract/index.js';
+import { hasUnitScopeAccess, normalizeAllowedUnits, normalizeUnitScope, toAuthenticatedActor } from '../../shared/identity-contract/index.js';
 import { isCurrentSessionVersion, resolveIdentityActor } from '../session/actor.js';
 
 test('Identity publishes a stable actor with scoped permissions and compatibility aliases', () => {
@@ -14,6 +14,22 @@ test('Identity publishes a stable actor with scoped permissions and compatibilit
   assert.deepEqual(actor.allowedModules, ['finance']);
   assert.equal(isCurrentSessionVersion({ sv: 4 }, { sessionVersion: 4 }), true);
   assert.equal(isCurrentSessionVersion({ sv: 3 }, { sessionVersion: 4 }), false);
+});
+
+test('Identity canonicalizes known unit aliases and keeps unknown or empty scopes fail-closed', () => {
+  assert.equal(normalizeUnitScope('NH'), 'novo-hamburgo');
+  assert.equal(normalizeUnitScope('Novo Hamburgo'), 'novo-hamburgo');
+  assert.equal(normalizeUnitScope('novohamburgo'), 'novo-hamburgo');
+  assert.equal(normalizeUnitScope('BSS'), 'barra-shopping-sul');
+  assert.equal(normalizeUnitScope('Barra Shopping Sul'), 'barra-shopping-sul');
+  assert.equal(normalizeUnitScope('BarraShoppingSul'), 'barra-shopping-sul');
+  assert.equal(normalizeUnitScope('unidade-invalida'), '');
+  assert.deepEqual(normalizeAllowedUnits(['NH', 'novo-hamburgo', 'BSS']), ['novo-hamburgo', 'barra-shopping-sul']);
+  assert.equal(hasUnitScopeAccess({ role: 'GESTOR', allowedUnits: ['NH'] }, 'novo-hamburgo'), true);
+  assert.equal(hasUnitScopeAccess({ role: 'GESTOR', allowedUnits: ['BSS'] }, 'novo-hamburgo'), false);
+  assert.equal(hasUnitScopeAccess({ role: 'GESTOR', allowedUnits: [] }, 'novo-hamburgo'), false);
+  assert.equal(hasUnitScopeAccess({ role: 'ADMIN', allowedUnits: [] }, 'barra-shopping-sul'), true);
+  assert.equal(hasUnitScopeAccess({ role: 'ADMIN', allowedUnits: [] }, 'unidade-invalida'), false);
 });
 
 test('Identity accepts the existing signed session payload without changing its cookie format', async () => {
