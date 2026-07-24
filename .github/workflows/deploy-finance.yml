@@ -155,7 +155,7 @@ jobs:
             [[ -n "${SERVICE_SECRET:-}" ]] || { echo 'Missing FINANCE_SERVICE_AUTH_SECRET.'; exit 1; }
             printf '%s' "$SERVICE_SECRET" | npx --yes wrangler@4.112.0 secret put FINANCE_SERVICE_AUTH_SECRET --config finance/wrangler.toml "${ENV_ARGS[@]}"
           fi
-          npx --yes wrangler@4.112.0 secret list --config finance/wrangler.toml "${ENV_ARGS[@]}" --json | node -e "const fs=require('fs');const names=JSON.parse(fs.readFileSync(0,'utf8')).map(x=>x.name);if(!names.includes('FINANCE_SERVICE_AUTH_SECRET')){console.error('FINANCE_SERVICE_AUTH_SECRET must be provisioned before release');process.exit(1)}"
+          npx --yes wrangler@4.114.0 secret list --config finance/wrangler.toml "${ENV_ARGS[@]}" | grep -q 'FINANCE_SERVICE_AUTH_SECRET' || { echo 'FINANCE_SERVICE_AUTH_SECRET must be provisioned before release'; exit 1; }
           WRANGLER_OUTPUT_FILE="$RUNNER_TEMP/finance-upload.jsonl" npx --yes wrangler@4.112.0 versions upload --config finance/wrangler.toml --keep-vars --message "finance:deploy:$RELEASE_SHA" "${ENV_ARGS[@]}"
           VERSION_ID="$(node -e "const fs=require('fs');const items=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).map(JSON.parse);const item=items.reverse().find(x=>x.type==='version-upload');if(!item?.version_id)process.exit(1);process.stdout.write(item.version_id)" "$RUNNER_TEMP/finance-upload.jsonl")"
           echo "FINANCE_VERSION_ID=$VERSION_ID" >> "$GITHUB_ENV"
