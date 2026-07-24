@@ -18,6 +18,53 @@ origem devem ser contas/roles diferentes. A chave precisa de escrow fora do
 fornecedor de armazenamento, com procedimento break-glass auditável. Segredos
 e dados pessoais nunca entram no repositório nem na evidência versionada.
 
+## Implementação do cofre externo
+
+O cofre externo é um diretório privado em Google Drive, fora da conta
+Cloudflare e do host PostgreSQL. Seu ID, o arquivo de configuração do cliente
+e os logs de transferência ficam exclusivamente em
+`C:\CodexRuntime\operator\admin\skincos\offsite-recovery\`, com ACL para
+`SYSTEM` e o operador. O repositório guarda apenas estes contratos:
+
+- a origem usa a credencial de leitura do fornecedor (Cloudflare ou role de
+  backup PostgreSQL), nunca a credencial do Drive;
+- o cliente do Drive deve usar o escopo `drive.file`, para enxergar somente os
+  arquivos que ele próprio criou; uma conta de serviço em Shared Drive é a
+  substituição obrigatória antes de classificar o cofre como corporativo;
+- os objetos são ciphertexts e manifestos sanitizados. O Drive não recebe
+  dumps, configuração, chaves ou tokens em claro;
+- a chave de 32 bytes permanece protegida por DPAPI no runtime privado. Uma
+  cópia do material de recuperação fica como GitHub Actions Environment Secret
+  no environment `recovery`, separado do Drive e da Cloudflare; ela não pode
+  existir como secret genérico do repositório;
+- cada rotação cria um `keyId` novo e um Secret de escrow novo antes do primeiro
+  upload. Chaves anteriores permanecem por `retenção + 30 dias`; revogação,
+  suspeita de exposição ou perda de operador força rotação imediata.
+
+`scripts/recovery/new-offsite-recovery-key.ps1` cria a chave privada;
+`protect-offsite-archive.ps1` cifra arquivos grandes em streaming com
+AES-256-CBC + HMAC-SHA-256 (encrypt-then-MAC); e
+`restore-offsite-archive.ps1` verifica o HMAC antes de decriptar em scratch.
+Os scripts nunca contêm IDs, chaves, contas ou destinos.
+
+## Retenção, acesso e auditoria
+
+- Manter 35 pontos diários e 12 mensais; qualquer exclusão requer a retenção
+  equivalente no cofre e registro de auditoria. Nunca usar `sync --delete`.
+- Antes de promover um arquivo, comparar SHA-256 do ciphertext local com o
+  remoto e registrar `keyId`, hash, tamanho, timestamps e operador em evidência
+  sanitizada. O hash do plaintext fica somente na evidência privada.
+- O acesso normal tem somente upload/listagem no prefixo de backup. Download e
+  decriptação são break-glass: registrar incidente, owner, motivo, escopo,
+  hora, `keyId` e hash; restaurar em scratch sem rotas, bindings ou secrets de
+  produção; e destruir o scratch após validação.
+- O escrow é exercitado a cada trimestre: um administrador autorizado usa o
+  Secret de recuperação em ambiente isolado, valida seu fingerprint e registra
+  a evidência sem revelar a chave. O GitHub Secret não é usado por aplicações.
+- Falha de upload, hash, escrow, retenção ou restore bloqueia promoção e abre
+  alerta P0 para Platform. Acesso de emergência não autoriza sobrescrever a
+  origem nem restaurar sobre produção.
+
 ## Procedimento de restore
 
 1. Suspender somente as escritas do domínio afetado e registrar o bookmark ou
@@ -39,11 +86,21 @@ restauração, testes de dados e funcional, e RTO medido. `critical` exige ainda
 prova de restauração offsite e referência de escrow da chave. Uma referência
 sem esses campos falha o check `module-maturity:validate`.
 
-## Situação transitória em 2026-07-23
+## Situação e gate em 2026-07-24
 
 O exercício `20260723T223442Z` comprovou D1, PostgreSQL e configuração em
-scratch, com ciphertext no R2 de staging. Esse bucket é Cloudflare e a chave
-está apenas em DPAPI do operador; portanto **não é cópia offsite nem escrow**.
-Nenhum módulo pode usar esse exercício para avançar a `operational` ou
-`critical`. A provisão do cofre externo, role de backup segregada e escrow é
-P0 antes de qualquer promoção.
+scratch, com ciphertext no R2 de staging. Ele permanece uma prova útil de
+restore local/same-provider, mas não de offsite.
+
+Em `20260724T0620Z`, um cofre Google Drive privado recebeu ciphertexts novos
+de D1, PostgreSQL e configuração, com AES-256-CBC + HMAC-SHA-256 e escrow de
+chave separado em GitHub Actions. A cópia satisfaz separação de fornecedor e
+de material criptográfico, mas **a restauração a partir do Drive ainda não foi
+aceita como prova**: a autorização OAuth de escopo restrito do cliente de
+recovery está pendente. Não há `recoveryProof` novo, promoção ou alteração de
+produção até que o download do cofre, a restauração scratch, os checksums, a
+jornada funcional e a destruição do scratch sejam registrados.
+
+Também permanece P1 a migração desse cofre privado para Shared Drive com conta
+de serviço e owner corporativo; isso evita dependência de uma conta humana sem
+rebaixar o gate técnico atual.

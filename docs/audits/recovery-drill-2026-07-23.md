@@ -36,3 +36,19 @@ fechado.
    a DPAPI local é apenas camada transitória.
 4. Repetir o exercício recuperando D1, PostgreSQL, R2 e configuração desse
    cofre externo e anexar `recoveryProof` ao módulo candidato.
+
+## Atualização de cofre externo — 2026-07-24
+
+O drill `20260724T0620Z` criou novos exports somente leitura de D1,
+PostgreSQL e configuração nativa, cifrou-os com AES-256-CBC + HMAC-SHA-256 e
+os enviou a um Google Drive privado. A chave foi criada no runtime privado,
+protegida por DPAPI e registrada separadamente como Environment Secret no
+GitHub Actions; hashes
+e metadados sanitizados estão na evidência privada do operador.
+
+O upload externo e a separação de fornecedor estão comprovados. A recuperação
+por download ainda não é evidência válida: a autorização OAuth `drive.file` do
+cliente de restore ficou pendente, portanto não houve import D1, restore
+PostgreSQL, extração de configuração, validação de checksum nem medição nova de
+RPO/RTO a partir do Drive. O gate permanece fechado, e esta atualização não
+promove nenhum módulo.
