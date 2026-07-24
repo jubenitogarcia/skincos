@@ -100,6 +100,17 @@ test('D1 local: registrations are archived instead of deleted and stay isolated 
   const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${archived.id}&entityType=account`); assert.equal(audit.body.events.some((event) => event.action === 'ACCOUNT_ARCHIVED'), true); assert.equal(audit.body.events.some((event) => event.action === 'ACCOUNT_RESTORED'), true);
 });
 
+test('D1 local: a synthetic tag can be archived with an auditable compensation', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const created = await request(ctx.env, ctx.actor, `/tags?scopeId=${scopeNh}`, { method: 'POST', key: 'synthetic-tag-create', body: { name: 'Synthetic canary tag' } });
+  assert.equal(created.response.status, 201, JSON.stringify(created.body));
+  const tagId = created.body.tag.id;
+  const archived = await request(ctx.env, ctx.actor, `/tags/${tagId}/archive?scopeId=${scopeNh}`, { method: 'POST', key: 'synthetic-tag-archive', body: {} });
+  assert.equal(archived.response.status, 201, JSON.stringify(archived.body)); assert.equal(archived.body.active, false);
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${tagId}&entityType=tag`);
+  assert.equal(audit.body.events.some((event) => event.action === 'TAG_CREATED'), true); assert.equal(audit.body.events.some((event) => event.action === 'TAG_ARCHIVED'), true);
+});
+
 test('D1 local: reconciliation lines, exact suggestions and confirmations are scoped, balanced and auditable', async (t) => {
   const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
   const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco conciliado', 'reconciliation-bank'); const income = await category(ctx.env, ctx.actor, scopeNh, 'Receita conciliada', 'income', 'reconciliation-income'); const expense = await category(ctx.env, ctx.actor, scopeNh, 'Despesa conciliada', 'expense', 'reconciliation-expense');
