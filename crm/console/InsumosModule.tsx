@@ -673,7 +673,9 @@ export function InsumosModule() {
     [unidade, user?.allowedUnits, user?.role],
   )
   const allowedUnits = unitAccess.allowedUnits
-  const canUseApi = serviceReady && unitAccessReady && (!isAuthed || unitAccess.hasAuthorizedUnit)
+  // Inventory data is never public: until identity is resolved, and whenever
+  // the actor has no authorized unit, fail closed without issuing data calls.
+  const canUseApi = serviceReady && unitAccessReady && isAuthed && unitAccess.hasAuthorizedUnit
 
   const isManagerRole = ['GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
 
