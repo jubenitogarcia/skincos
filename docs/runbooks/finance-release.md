@@ -5,7 +5,7 @@
 1. No primeiro uso de staging, executar `deploy-finance.yml` com `bootstrap_service_secret=true`; nas execuções posteriores, manter esse campo como `false`. O Worker Financeiro deve existir antes de um gateway poder declarar sua service binding.
 2. Depois, publicar somente o gateway pelo `deploy-core-workers.yml`, com `unit=api` e `bootstrap_finance_context=true`; isso instala a service binding e o segredo de contexto sem publicar Inventory. O smoke inicial do Worker usa `FINANCE_STAGING_WORKER_URL`; a verificação pelo gateway ocorre após este passo.
 3. `deploy-finance.yml` em `preview` para o SHA de `main`.
-4. `deploy-finance.yml` e `deploy-finance-ui.yml` em `staging`, ambos com o mesmo `release_sha` e `preview_run_id`.
+4. `deploy-finance.yml` e `deploy-finance-ui.yml` em `staging`, ambos com o mesmo `release_sha` e `preview_run_id`. Cada migration Financeiro é importada junto ao seu registro em `d1_migrations`, de forma atômica; uma falha não deixa schema sem journal.
 5. Conferir `health`, `readiness`, versão, dependências, logs estruturados, alertas e os artefatos `promotion-evidence-finance` e `promotion-evidence-finance-ui`.
 6. Ativar `canary` pelo `module-availability.yml` apenas para atores-piloto; manter `module_enabled=false` até os grants e dados de teste controlados estarem confirmados.
 7. Para produção, usar o mesmo SHA e os dois `staging_run_id`; a aprovação do Environment é manual.
