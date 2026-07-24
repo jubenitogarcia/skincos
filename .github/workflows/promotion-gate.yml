@@ -25,7 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 1
+          # The gate must verify an older immutable rollback SHA is an
+          # ancestor of main. A shallow clone cannot prove that relation.
+          fetch-depth: 0
       - name: Resolve immutable source identity
         id: identity
         env:
@@ -39,7 +41,7 @@ jobs:
           fi
           source_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
           git fetch --no-tags origin main
-          git fetch --no-tags --depth=1 origin "$source_sha"
+          git fetch --no-tags origin "$source_sha"
           git cat-file -e "$source_sha^{commit}"
           git merge-base --is-ancestor "$source_sha" origin/main || {
             echo "::error::$source_sha is not reachable from origin/main."
