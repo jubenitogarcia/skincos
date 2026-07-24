@@ -45,6 +45,7 @@
     "crm:local:finance:status": "bash ./scripts/run-local-finance.sh --status",
     "crm:local:finance:ports": "bash ./scripts/run-local-finance.sh --ports",
     "finance:migrate:staging": "bash ./finance/scripts/apply-d1-migrations.sh --remote --env staging --adopt-existing-schema",
+    "finance:staging:test-identity:sql": "node ./finance/scripts/staging-test-identity-sql.mjs",
     "finance:staging:import-smoke": "node ./finance/scripts/staging-import-smoke.mjs",
     "finance:staging:ui-smoke": "node ./finance/scripts/staging-ui-smoke.mjs",
     "codex:shared:setup": "powershell -ExecutionPolicy Bypass -File .\\scripts\\setup-shared-codex-workspace.ps1",
