@@ -22,7 +22,10 @@ for (const required of ["branches: [main]", "git merge-base --is-ancestor", "git
   if (!candidate.includes(required)) fail(`release candidate workflow is missing ${required}`);
 }
 const gate = read(".github/workflows/promotion-gate.yml");
+if (!gate.includes("fetch-depth: 0")) fail("promotion gate must fetch complete main history before validating an immutable rollback SHA");
 for (const required of ["release_sha", "Verify predecessor evidence", "promotion-evidence.mjs verify", "source_sha"]) if (!gate.includes(required)) fail(`immutable promotion gate is missing ${required}`);
+const availability = read(".github/workflows/module-availability.yml");
+if (!availability.includes("^[0-9a-fA-F]{32}$")) fail("module availability must validate Cloudflare KV namespace IDs as 32 hexadecimal characters");
 if (failures.length) {
   for (const message of failures) process.stderr.write(`progressive release validation failed: ${message}\n`);
   process.exitCode = 1;
