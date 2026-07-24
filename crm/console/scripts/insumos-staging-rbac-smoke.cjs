@@ -37,6 +37,9 @@ const scenarios = [
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const assert = (condition, message) => { if (!condition) throw new Error(message) }
+// All callers pass only literal relative API paths defined in this file; the
+// browser remains pinned to the validated immutable staging origin above.
+// nosemgrep: playwright-evaluate-arg-injection -- fixed relative route set on validated staging origin
 const api = async (page, pathname, init = {}) => page.evaluate(async ({ pathname, init }) => {
   const response = await fetch(pathname, { credentials: 'include', ...init })
   const text = await response.text()
@@ -61,6 +64,7 @@ async function runScenario(browser, config) {
     if (pathname.startsWith('/api/insumos/') && !['/api/insumos/auth/me', '/api/insumos/health', '/api/insumos/_proxy-status'].includes(pathname)) requests.data += 1
   })
   try {
+    // nosemgrep: playwright-goto-injection -- base is restricted to skincos-staging.pages.dev above
     await page.goto(base.toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
     const login = await api(page, '/api/auth/login', {
       method: 'POST',
@@ -77,6 +81,7 @@ async function runScenario(browser, config) {
     assert(JSON.stringify(scopes) === JSON.stringify(config.fixture.expectedUnits), `${config.fixture.id}: unexpected unit scopes`)
     if (config.alias) assert(JSON.stringify(scopes) === JSON.stringify(['novo-hamburgo']), 'alias did not normalize exclusively to Novo Hamburgo')
 
+    // nosemgrep: playwright-goto-injection -- constant query on validated staging origin
     await page.goto(`${base.toString()}?insumos=1`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
     const insumosButton = page.getByRole('button', { name: 'Insumos', exact: true }).first()
     await insumosButton.click({ timeout: 20_000 })
@@ -108,6 +113,7 @@ async function runScenario(browser, config) {
       assert(denied.status === 403 && denied.json?.code === 'RBAC_UNIT_DENIED', `unauthorized unit must return RBAC_UNIT_DENIED, got ${denied.status}/${denied.json?.code || ''}`)
     }
     if (config.switchTo) {
+      // nosemgrep: playwright-evaluate-arg-injection -- switchTo is a canonical literal from scenarios above
       await page.evaluate((unit) => localStorage.setItem('skincos.insumos.unidade.v1', unit), config.switchTo)
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
       await page.getByRole('button', { name: 'Insumos', exact: true }).first().click({ timeout: 20_000 })
@@ -126,6 +132,7 @@ async function main() {
   try {
     const healthContext = await browser.newContext()
     const healthPage = await healthContext.newPage()
+    // nosemgrep: playwright-goto-injection -- base is restricted to skincos-staging.pages.dev above
     await healthPage.goto(base.toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
     const pagesHealth = await api(healthPage, '/api/health')
     assert(pagesHealth.status === 200 && pagesHealth.json?.service === 'crm-pages', 'CRM Pages health failed')
