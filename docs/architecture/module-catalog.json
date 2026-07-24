@@ -144,15 +144,15 @@
       "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },
       "dataOwnership": ["Ledger, accounts, obligations, movements, imports, access grants and finance audit trail"],
       "dependencies": { "hard": ["shared"], "optional": ["integration"] },
-      "services": ["Finance Worker mounted through the API gateway", "CRM Pages finance proxy"],
-      "datastores": ["D1 finance database with finance_settings and finance_access_grants"],
-      "routes": ["api.skincos.com.br/finance/*", "crm /api/finance/*"],
-      "healthChecks": [{ "name": "finance bootstrap gate", "command": "npm run codex:crm:finance-smoke" }],
+    "services": ["Dedicated Finance Worker reached through the API gateway service binding", "Independently published Finance Pages bundle loaded by the CRM shell"],
+    "datastores": ["Dedicated Finance D1 with finance_settings and finance_access_grants", "Dedicated Finance module-control KV per environment"],
+    "routes": ["api.skincos.com.br/finance/*", "api.skincos.com.br/finance/health", "api.skincos.com.br/finance/readiness"],
+    "healthChecks": [{ "name": "Finance Worker health/readiness", "command": "curl --fail https://api-staging.skincos.com.br/finance/readiness" }, { "name": "finance bootstrap gate", "command": "npm run codex:crm:finance-smoke" }],
       "testCommands": ["npm --prefix finance test", "npm run finance:staging:import-smoke", "npm run finance:staging:ui-smoke"],
-      "featureFlag": { "key": "finance_settings.module_enabled", "defaultState": "false", "enforcement": "The API requires an explicit CRM allowedModules grant, a finance_access_grant and module_enabled=true." },
-      "fallback": "Return FINANCE_DISABLED or FINANCE_MODULE_DENIED without exposing data; retain immutable audit data and use the controlled import/recovery runbook.",
+    "featureFlag": { "key": "finance_settings.module_enabled and module-control:finance", "defaultState": "false", "enforcement": "The Finance Worker requires an explicit CRM allowedModules grant, a finance_access_grant and module_enabled=true; its module-control KV can disable, maintain or limit canary actors without publishing the shell." },
+    "fallback": "Return FINANCE_DISABLED, FINANCE_MODULE_DENIED or isolated module maintenance without exposing data; a failed remote bundle renders only the shell unavailable state, while navigation and other modules continue.",
       "slo": { "availability": "99.5% during approved pilot windows", "latency": "p95 <= 1 s for bootstrap and reads", "measurement": "Authenticated staging smoke with explicit acknowledgement" },
-      "rollback": "Set module_enabled=false, remove pilot grants, stop imports, and restore only through the Finance D1 recovery runbook; migrations remain additive."
+    "rollback": "Set module-control to maintenance or disabled, deploy the previously uploaded Finance Worker version and republish only the previous Finance UI SHA; restore D1 only through the Finance recovery runbook. Migrations remain additive."
     },
     {
       "id": "identity",

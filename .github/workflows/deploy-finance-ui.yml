@@ -30,7 +30,6 @@ jobs:
       release_sha: ${{ inputs.release_sha }}
       preview_run_id: ${{ inputs.preview_run_id }}
       staging_run_id: ${{ inputs.staging_run_id }}
-    secrets: inherit
   deploy:
     needs: promotion
     if: ${{ inputs.target != 'preview' }}
@@ -72,7 +71,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ inputs.target == 'production' && vars.FINANCE_UI_PAGES_PROJECT_PRODUCTION || vars.FINANCE_UI_PAGES_PROJECT_STAGING }}
           BRANCH: ${{ inputs.target == 'production' && 'main' || 'staging' }}
-        run: npx --yes wrangler@4.114.0 pages deploy dist-finance --project-name "$PROJECT" --branch "$BRANCH" --commit-hash "${{ needs.promotion.outputs.source_sha }}"
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: npx --yes wrangler@4.114.0 pages deploy dist-finance --project-name "$PROJECT" --branch "$BRANCH" --commit-hash "$RELEASE_SHA"
         working-directory: crm/console
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'

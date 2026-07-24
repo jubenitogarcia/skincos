@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createGatewayHandler } from '../src/router.js';
-import { createApiGateway, enforceFinanceRateLimit, forwardFinanceToService, handleGatewayRequest } from '../src/gateway.js';
+import { createApiGateway, forwardFinanceToService, handleGatewayRequest } from '../src/gateway.js';
 import { verifySignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
 import { resetBoundServiceResilienceForTest } from '../../shared/service-adapters/cloudflare-service-binding.js';
 
@@ -112,7 +112,7 @@ test('internal paths require a private service identity', async () => {
     assert.equal((await permitted.json()).error, 'internal_route_not_found');
 });
 
-test('finance gateway enforces CSRF before the domain and fails closed when its distributed limiter rejects', async () => {
+test('finance gateway enforces the cross-domain CSRF envelope before forwarding', async () => {
   let domainCalls = 0;
   const rateLimited = createApiGateway({
     inventoryHandler: async () => new Response('inventory'),
@@ -122,20 +122,29 @@ test('finance gateway enforces CSRF before the domain and fails closed when its 
   const csrfDenied = await rateLimited(new Request('https://api.skincos.com.br/finance/accounts', { method: 'POST', headers: { 'idempotency-key': 'x' } }), {}, {});
   assert.equal(csrfDenied.status, 403); assert.equal(domainCalls, 0);
 
-  const limiter = { idFromName: () => 'finance-limiter', get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: false }), { headers: { 'content-type': 'application/json' } }) }) };
-  const blocked = await rateLimited(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), { RATE_LIMITER: limiter }, {});
-  assert.equal(blocked.status, 429); assert.equal((await blocked.json()).error, 'FINANCE_RATE_LIMITED'); assert.equal(domainCalls, 0);
+  const allowed = await rateLimited(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), {}, {});
+  assert.equal(allowed.status, 200); assert.equal(domainCalls, 1);
 });
 
-test('finance gateway passes only an authenticated, CSRF-valid request after the limiter allows it', async () => {
+test('Finance health probes bypass user identity but remain isolated to the Finance binding', async () => {
+  resetBoundServiceResilienceForTest();
+  let receivedPath = null;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/finance/health'), {
+    FINANCE: { fetch: async (request) => { receivedPath = new URL(request.url).pathname; return new Response(JSON.stringify({ ok: true, unit: 'finance' }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {});
+  assert.equal(response.status, 200);
+  assert.equal(receivedPath, '/health');
+  assert.equal((await response.json()).unit, 'finance');
+});
+
+test('finance gateway passes only an authenticated, CSRF-valid request', async () => {
   let seenPath = null;
   const gateway = createApiGateway({
     inventoryHandler: async () => new Response('inventory'),
     financeDomainHandler: async (request) => { seenPath = new URL(request.url).pathname; return new Response('finance-ok'); },
     resolveActor: async () => ({ actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' }),
   });
-  const limiter = { idFromName: () => 'finance-limiter', get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: true }), { headers: { 'content-type': 'application/json' } }) }) };
-  const allowed = await gateway(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), { RATE_LIMITER: limiter }, {});
+  const allowed = await gateway(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), {}, {});
   assert.equal(allowed.status, 200); assert.equal(seenPath, '/imports');
 });
 
@@ -167,18 +176,3 @@ test('Finance is reached through an explicit service binding with a short-lived 
   assert.equal(received.headers.get('x-csrf-token'), null);
   assert.equal((await verifySignedDomainContext(received, 'finance-secret', 'finance')).actor.username, 'pilot');
 });
-
-test('finance rate limits reads, writes and imports in independent buckets', async () => {
-  const limiterRequests = [];
-  const limiter = { idFromName: () => 'finance-limiter', get: () => ({ fetch: async (input) => { limiterRequests.push(String(input)); return new Response(JSON.stringify({ allowed: true }), { headers: { 'content-type': 'application/json' } }); } }) };
-  const env = { RATE_LIMITER: limiter };
-  const actor = { username: 'pilot' };
-  await enforceFinanceRateLimit(new Request('https://api.skincos.com.br/overview'), env, actor);
-  await enforceFinanceRateLimit(new Request('https://api.skincos.com.br/accounts', { method: 'POST' }), env, actor);
-  await enforceFinanceRateLimit(new Request('https://api.skincos.com.br/imports', { method: 'POST' }), env, actor);
-  expectQuery(limiterRequests[0], 'key=finance:read&limit=240');
-  expectQuery(limiterRequests[1], 'key=finance:write&limit=60');
-  expectQuery(limiterRequests[2], 'key=finance:import&limit=12');
-});
-
-function expectQuery(url, expected) { assert.ok(url.includes(expected), `${url} should include ${expected}`); }

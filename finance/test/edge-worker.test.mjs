@@ -5,7 +5,9 @@ import { handleFinance } from '../worker.js';
 test('Finance exposes health without a public domain route and honors runtime maintenance', async () => {
   const health = await handleFinance(new Request('https://finance.internal/health'), {}, {});
   assert.equal(health.status, 200);
-  assert.equal((await health.json()).availability.state, 'active');
+  const body = await health.json();
+  assert.equal(body.availability.state, 'active');
+  assert.equal(body.version, 'unreleased');
 
   const maintenance = await handleFinance(new Request('https://finance.internal/overview'), {
     MODULE_CONTROL: { get: async () => ({ state: 'maintenance', message: 'janela' }) },

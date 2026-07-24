@@ -2,11 +2,13 @@
 
 ## Ordem obrigatória
 
-1. `deploy-finance.yml` em `preview` para o SHA de `main`.
-2. `deploy-finance.yml` e `deploy-finance-ui.yml` em `staging`, ambos com o mesmo `release_sha` e `preview_run_id`.
-3. Conferir `health`, `readiness`, logs estruturados, alertas e o artefato `promotion-evidence-finance`.
-4. Ativar `canary` pelo `module-availability.yml` apenas para atores-piloto; manter `module_enabled=false` até os grants e dados de teste controlados estarem confirmados.
-5. Para produção, usar o mesmo SHA e os dois `staging_run_id`; a aprovação do Environment é manual.
+1. No primeiro uso de cada ambiente, publicar o gateway uma única vez pelo `deploy-core-workers.yml`, com `unit=api` e `bootstrap_finance_context=true`; isso instala a service binding e o segredo de contexto sem publicar Inventory.
+2. No primeiro uso de cada ambiente, executar `deploy-finance.yml` com `bootstrap_service_secret=true`; nas execuções posteriores, manter esse campo como `false`.
+3. `deploy-finance.yml` em `preview` para o SHA de `main`.
+4. `deploy-finance.yml` e `deploy-finance-ui.yml` em `staging`, ambos com o mesmo `release_sha` e `preview_run_id`.
+5. Conferir `health`, `readiness`, versão, dependências, logs estruturados, alertas e os artefatos `promotion-evidence-finance` e `promotion-evidence-finance-ui`.
+6. Ativar `canary` pelo `module-availability.yml` apenas para atores-piloto; manter `module_enabled=false` até os grants e dados de teste controlados estarem confirmados.
+7. Para produção, usar o mesmo SHA e os dois `staging_run_id`; a aprovação do Environment é manual.
 
 ## Kill switch e manutenção
 
@@ -17,10 +19,11 @@
 ## Rollback e restore
 
 1. Colocar Financeiro em `maintenance`.
-2. Publicar pelo pipeline o SHA anterior que possua evidência de staging; não republicar gateway ou CRM Pages.
-3. Se a correção exigir dados, baixar o checkpoint cifrado do workflow, restaurar primeiro em D1 isolado e comparar contagem/checksum lógico de `finance_audit_events`, `finance_movements`, `finance_journal_lines` e `finance_import_batches` por escopo.
-4. Migrations são somente aditivas. Nunca apagar ledger, auditoria ou idempotência para “voltar”.
-5. Reexecutar smoke de health/readiness e o fluxo piloto antes de tirar a manutenção.
+2. Executar `deploy-finance.yml` com `operation=rollback` e o SHA anterior que possua evidência de staging. O pipeline seleciona a versão Worker já enviada para esse SHA; não recompila nem republica gateway, Inventory ou CRM Pages.
+3. Executar `deploy-finance-ui.yml` com o mesmo SHA anterior se o bundle também precisar retornar; ele publica somente o projeto Pages Financeiro.
+4. Se a correção exigir dados, baixar o checkpoint cifrado do workflow, restaurar primeiro em D1 isolado e comparar contagem/checksum lógico de `finance_audit_events`, `finance_movements`, `finance_journal_lines` e `finance_import_batches` por escopo.
+5. Migrations são somente aditivas. Nunca apagar ledger, auditoria ou idempotência para “voltar”.
+6. Reexecutar smoke de health/readiness e o fluxo piloto antes de tirar a manutenção.
 
 ## Replicação após evidência Financeiro
 

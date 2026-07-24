@@ -2,6 +2,10 @@ name = "skincos-finance"
 main = "worker.js"
 compatibility_date = "2026-07-23"
 
+[vars]
+APP_VERSION = "__RELEASE_SHA__"
+ENVIRONMENT = "production"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "skincos-finance"
@@ -14,6 +18,10 @@ id = "__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__"
 
 [env.staging]
 name = "skincos-finance-staging"
+
+[env.staging.vars]
+APP_VERSION = "__RELEASE_SHA__"
+ENVIRONMENT = "staging"
 
 [[env.staging.d1_databases]]
 binding = "DB"
