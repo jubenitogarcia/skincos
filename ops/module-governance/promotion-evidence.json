@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "purpose": "Reviewed evidence required before a module may advance its official maturity state. References identify runbooks, tests or immutable evidence; they never contain secrets or personal data.",
   "criteria": {
     "experimental": ["permissions", "tests", "featureFlag", "fallback", "documentation"],
