@@ -1,0 +1,1 @@
+{"schema":1,"entries":[{"observed_at":"2026-07-24T18:30:00Z","surface":"local","scope":"project-orchestrator update","state":"local-only","method":"behavior test, selector, shell syntax and diff check","result":"passed","limitation":"PR/CI/staging pending"}]}

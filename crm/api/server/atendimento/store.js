@@ -2655,10 +2655,20 @@ async function queryIdentityReviewQueue(pgPool, query = {}) {
 
 export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
+    let readinessPromise = null
 
     async function ensureReady() {
         requirePool(pgPool)
-        await withPgTransaction(pgPool, migrateAtendimento)
+        if (!readinessPromise) {
+            readinessPromise = withPgTransaction(pgPool, migrateAtendimento)
+                .catch((error) => {
+                    // Do not cache a failed initialization: an operator may repair the
+                    // database state and the next request must be allowed to retry.
+                    readinessPromise = null
+                    throw error
+                })
+        }
+        await readinessPromise
     }
 
     return {
