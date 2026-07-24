@@ -61,7 +61,7 @@ jobs:
           npx vite build --config vite.finance.config.ts
           cat > dist-finance/_headers <<'EOF'
           /*
-            Access-Control-Allow-Origin: https://crm.skincos.com.br
+            Access-Control-Allow-Origin: *
             Access-Control-Allow-Methods: GET, HEAD, OPTIONS
             Cache-Control: no-store
           EOF
