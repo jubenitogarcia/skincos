@@ -3,7 +3,8 @@ import { test, expect } from '@playwright/test'
 async function mockInsumos(page: import('@playwright/test').Page, allowedUnits: string[], requests: string[]) {
   await page.route('**/api/insumos/**', async (route) => {
     const path = new URL(route.request().url()).pathname
-    if (!path.endsWith('/health') && !path.endsWith('/auth/me')) requests.push(route.request().url())
+    const isControlRequest = path.endsWith('/health') || path.endsWith('/auth/me') || path.endsWith('/_proxy-status') || path.endsWith('/prefs')
+    if (!isControlRequest) requests.push(route.request().url())
     if (path.endsWith('/health')) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, ready: true, dbConfigured: true, unidades: ['novo-hamburgo', 'barra-shopping-sul'] }) })
     }
