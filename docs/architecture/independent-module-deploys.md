@@ -29,6 +29,14 @@ O gateway somente transporta `/finance/*` e `/api/ponto/*`. Para Financeiro, ele
 - Runtime CRM: criar um unit de Atendimento independente, com porta/health próprios, `CRM_DOMAIN=atendimento`, `CRM_MODULE_CONTROL_FILE` privado e os comandos `CRM_ATENDIMENTO_DEPLOY_COMMAND`, `CRM_ATENDIMENTO_ROLLBACK_COMMAND`, `CRM_ATENDIMENTO_CONTROL_COMMAND`, `CRM_ATENDIMENTO_HEALTH_URL` configurados no Environment GitHub correspondente.
 - Antes de produção: registrar a versão/commit de retorno, confirmar migration somente aditiva, executar smoke de staging do mesmo SHA e aprovar explicitamente o Environment de produção.
 
-Canary é deliberadamente por ator-piloto explícito no KV, não por porcentagem aleatória: o workflow `module-availability.yml` exige `state=canary` e a lista de atores. `maintenance` e `disabled` não publicam artefato. O rollback de código só aceita SHA já promovido; dados não sofrem rollback destrutivo — o checkpoint cifrado é restaurado antes em ambiente isolado e comparado com razão, auditoria, movimentos e lotes.
+Canary do Financeiro é deliberadamente controlado pelo workflow
+`finance-staging-canary.yml`, não pelo controle genérico de disponibilidade. A
+coorte é a interseção de ator em allowlist, unidade permitida, bucket percentual
+determinístico e `releaseSha` igual ao `APP_VERSION` do Worker; qualquer ausência
+falha fechada. Nesta fase é exclusivamente a identidade sintética de staging.
+`maintenance` e `disabled` não publicam artefato. O rollback de código só aceita
+SHA já promovido; dados não sofrem rollback destrutivo — o checkpoint cifrado é
+restaurado antes em ambiente isolado e comparado com razão, auditoria, movimentos
+e lotes.
 
 Nenhum dos workflows novos é acionado por push. Faltas de ID, secret, comando dedicado, checkpoint ou evidência de promoção falham explicitamente e não fazem deploy parcial. O rollback do Worker não recompila nem publica outro módulo: seleciona a versão já associada ao SHA de retorno. O rollback da UI republica somente o bundle construído do SHA previamente promovido, no projeto Pages isolado.

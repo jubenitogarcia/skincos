@@ -1,5 +1,12 @@
 const CONTROL_KEY_PREFIX = 'module-control:';
 const VALID_STATES = new Set(['active', 'canary', 'maintenance', 'disabled']);
+const MAX_CANARY_ACTORS = 100;
+const MAX_CANARY_UNITS = 20;
+
+const list = (value, max) => Array.isArray(value)
+  ? value.map(String).map((item) => item.trim()).filter(Boolean).slice(0, max)
+  : [];
+const percentage = (value) => Number.isFinite(Number(value)) ? Math.max(0, Math.min(100, Math.floor(Number(value)))) : 0;
 
 function normalize(value) {
   const state = String(value?.state || 'active').trim().toLowerCase();
@@ -7,9 +14,13 @@ function normalize(value) {
     state: VALID_STATES.has(state) ? state : 'active',
     message: String(value?.message || '').trim().slice(0, 240),
     changedAt: String(value?.changedAt || '').trim(),
-    // The allow-list is intentionally explicit: Finance launches only for a
-    // named pilot, never by random percentage on financial mutations.
-    pilotActors: Array.isArray(value?.pilotActors) ? value.pilotActors.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 100) : [],
+    // A canary is conjunctive: named actor, named unit, deterministic bucket
+    // and promoted source identity must all agree. Missing fields fail closed.
+    pilotActors: list(value?.pilotActors, MAX_CANARY_ACTORS),
+    pilotUnits: list(value?.pilotUnits, MAX_CANARY_UNITS),
+    percentage: percentage(value?.percentage),
+    releaseSha: String(value?.releaseSha || '').trim().toLowerCase(),
+    syntheticOnly: value?.syntheticOnly === true,
   };
 }
 
@@ -43,8 +54,22 @@ export function moduleUnavailableResponse(moduleId, availability, requestId) {
   });
 }
 
+export function canaryBucket(actorId) {
+  // FNV-1a is stable across Worker isolates. It is a cohort selector, not a
+  // security primitive; authorization remains the explicit allow-list.
+  let hash = 0x811c9dc5;
+  for (const char of String(actorId || '')) { hash ^= char.codePointAt(0); hash = Math.imul(hash, 0x01000193); }
+  return (hash >>> 0) % 10_000;
+}
+
 export function canUseCanary(availability, actor) {
-  return availability.state !== 'canary' || availability.pilotActors.includes(String(actor?.username || '').trim());
+  if (availability.state !== 'canary') return true;
+  const username = String(actor?.username || '').trim();
+  const units = Array.isArray(actor?.allowedUnits) ? actor.allowedUnits.map(String).map((unit) => unit.trim()) : [];
+  if (!username || !availability.pilotActors.includes(username)) return false;
+  if (!availability.pilotUnits.length || !availability.pilotUnits.some((unit) => units.includes(unit))) return false;
+  if (!availability.percentage) return false;
+  return canaryBucket(username) < availability.percentage * 100;
 }
 
 export function moduleHealthResponse(moduleId, availability, requestId) {

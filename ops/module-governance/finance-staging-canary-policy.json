@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "module": "finance",
+  "environment": "staging",
+  "syntheticOnly": true,
+  "cohort": {
+    "pilotActors": ["finance-staging-monitor"],
+    "pilotUnits": ["novo-hamburgo"],
+    "percentage": 100
+  },
+  "limits": {
+    "minimumSamples": 1,
+    "errors": 0,
+    "p95LatencyMs": 1000,
+    "authenticationFailures": 0,
+    "journeyFailures": 0,
+    "dataDivergences": 0,
+    "auditFailures": 0,
+    "dependencyFailures": 0
+  },
+  "abort": {
+    "state": "disabled",
+    "moduleEnabled": false,
+    "rollback": "Keep the current immutable artifact, block Finance at module-control and restore module_enabled=false. Code rollback remains an explicit follow-up only when the diagnosed fault is artifact-specific."
+  }
+}

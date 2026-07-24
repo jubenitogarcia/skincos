@@ -1,0 +1,154 @@
+name: Finance synthetic staging canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Immutable Finance SHA already promoted to staging
+        required: true
+        type: string
+      staging_run_id:
+        description: Successful Deploy Finance Worker staging run for this SHA
+        required: true
+        type: string
+      mode:
+        description: Verify the synthetic cohort or exercise the automatic abort path
+        required: true
+        default: verify
+        type: choice
+        options: [verify, abort-drill]
+
+concurrency:
+  group: finance-synthetic-canary-staging
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 1
+      - name: Verify immutable staging promotion evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checkout does not match release_sha'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_RUN_ID" > "$RUNNER_TEMP/staging-run.json"
+          node - "$RUNNER_TEMP/staging-run.json" <<'NODE'
+          const fs = require('fs'); const run = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (run.conclusion !== 'success' || run.head_sha !== process.env.RELEASE_SHA || run.name !== 'Deploy Finance Worker') process.exit(1);
+          NODE
+      - name: Validate synthetic-only policy and required bindings
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CONTROL_KV_ID: ${{ vars.FINANCE_CONTROL_STAGING_KV_ID }}
+          CANARY_PASSWORD: ${{ secrets.FINANCE_STAGING_CANARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/validate-finance-canary-policy.mjs
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CONTROL_KV_ID CANARY_PASSWORD; do [[ -n "${!name:-}" ]] || { echo "Missing required staging-only value: $name"; exit 1; }; done
+          [[ "$CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid Finance staging control KV id'; exit 1; }
+      - name: Capture reversible synthetic grant baseline
+        id: baseline
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          permission="$(npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "SELECT permission FROM finance_access_grants WHERE username='finance-staging-monitor' AND scope_id='finance-scope-novo-hamburgo' LIMIT 1;" --json | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));const p=x[0]?.results?.[0]?.permission;if(!p)process.exit(1);process.stdout.write(p)")"
+          [[ "$permission" =~ ^(viewer|operator|manager)$ ]] || { echo 'Synthetic grant is invalid'; exit 1; }
+          echo "permission=$permission" >> "$GITHUB_OUTPUT"
+      - name: Open deterministic synthetic canary
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CONTROL_KV_ID: ${{ vars.FINANCE_CONTROL_STAGING_KV_ID }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE' > "$RUNNER_TEMP/canary-control.json"
+          const policy = require('./ops/module-governance/finance-staging-canary-policy.json');
+          process.stdout.write(JSON.stringify({ state: 'canary', message: 'Synthetic staging canary only.', pilotActors: policy.cohort.pilotActors, pilotUnits: policy.cohort.pilotUnits, percentage: policy.cohort.percentage, releaseSha: process.env.RELEASE_SHA, syntheticOnly: true, changedAt: new Date().toISOString(), changedBy: process.env.GITHUB_ACTOR }));
+          NODE
+          npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$(cat "$RUNNER_TEMP/canary-control.json")" --namespace-id "$CONTROL_KV_ID"
+          npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','true',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='true',updated_at=CURRENT_TIMESTAMP; UPDATE finance_access_grants SET permission='operator' WHERE username='finance-staging-monitor' AND scope_id='finance-scope-novo-hamburgo';"
+      - name: Run authenticated synthetic canary journey
+        id: journey
+        continue-on-error: true
+        env:
+          FINANCE_STAGING_CANARY_ACK: "1"
+          FINANCE_CANARY_BASE_URL: https://api-staging.skincos.com.br
+          FINANCE_CANARY_USERNAME: finance-staging-monitor
+          FINANCE_CANARY_PASSWORD: ${{ secrets.FINANCE_STAGING_CANARY_PASSWORD }}
+          FINANCE_CANARY_SCOPE_ID: finance-scope-novo-hamburgo
+          FINANCE_CANARY_RELEASE_SHA: ${{ inputs.release_sha }}
+        run: node finance/scripts/staging-synthetic-canary.mjs --report "$RUNNER_TEMP/canary-report.json"
+      - name: Inject a controlled threshold breach
+        if: always() && inputs.mode == 'abort-drill'
+        run: |
+          node - "$RUNNER_TEMP/canary-report.json" <<'NODE'
+          const fs = require('fs'); const file = process.argv[2]; let report = {};
+          try { report = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { report = { samples: [] }; }
+          report.errors = Number(report.errors || 0) + 1; report.controlledAbortDrill = true;
+          fs.writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
+          NODE
+      - name: Evaluate stop limits
+        id: decision
+        if: always()
+        run: |
+          node finance/scripts/evaluate-canary.mjs --policy ops/module-governance/finance-staging-canary-policy.json --report "$RUNNER_TEMP/canary-report.json" --output "$RUNNER_TEMP/canary-decision.json"
+          node - "$RUNNER_TEMP/canary-decision.json" >> "$GITHUB_OUTPUT" <<'NODE'
+          const fs = require('fs'); const decision = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          console.log(`abort=${decision.ok ? 'false' : 'true'}`);
+          NODE
+      - name: Kill switch on any breached limit
+        if: always() && steps.decision.outputs.abort == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CONTROL_KV_ID: ${{ vars.FINANCE_CONTROL_STAGING_KV_ID }}
+        run: |
+          set -euo pipefail
+          payload="$(node -e "process.stdout.write(JSON.stringify({state:'disabled',message:'Synthetic canary stop limit breached.',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
+          npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$payload" --namespace-id "$CONTROL_KV_ID"
+          npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','false',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='false',updated_at=CURRENT_TIMESTAMP;"
+      - name: Restore non-enabled staging baseline and synthetic grant
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CONTROL_KV_ID: ${{ vars.FINANCE_CONTROL_STAGING_KV_ID }}
+          ORIGINAL_PERMISSION: ${{ steps.baseline.outputs.permission }}
+        run: |
+          set -euo pipefail
+          [[ "$ORIGINAL_PERMISSION" =~ ^(viewer|operator|manager)$ ]] || { echo 'No safe grant baseline available'; exit 1; }
+          payload="$(node -e "process.stdout.write(JSON.stringify({state:'active',message:'',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
+          npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$payload" --namespace-id "$CONTROL_KV_ID"
+          npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','false',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='false',updated_at=CURRENT_TIMESTAMP; UPDATE finance_access_grants SET permission='$ORIGINAL_PERMISSION' WHERE username='finance-staging-monitor' AND scope_id='finance-scope-novo-hamburgo';"
+      - name: Upload sanitized canary evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: finance-staging-synthetic-canary-${{ inputs.release_sha }}-${{ inputs.mode }}
+          path: |
+            ${{ runner.temp }}/canary-report.json
+            ${{ runner.temp }}/canary-decision.json
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Fail promotion when a limit was breached
+        if: always() && steps.decision.outputs.abort == 'true'
+        run: |
+          echo 'Canary stop limit breached; kill switch completed and staging baseline was restored.'
+          exit 1

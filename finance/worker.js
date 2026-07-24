@@ -25,6 +25,9 @@ export async function handleFinance(request, env, ctx) {
     return new Response(JSON.stringify({ ...operationalStatus({ unit: 'finance', version, environment: env?.ENVIRONMENT, ready, requestId, dependencies: { d1: dependencyState(d1), module_control: dependencyState(Boolean(env?.MODULE_CONTROL), { required: false }) } }), availability }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-skincos-module-state': availability.state, 'x-request-id': requestId } });
   }
   if (!['active', 'canary'].includes(availability.state)) return moduleUnavailableResponse('finance', availability, requestId);
+  if (availability.state === 'canary' && availability.releaseSha !== version) {
+    return new Response(JSON.stringify({ ok: false, error: 'FINANCE_CANARY_VERSION_MISMATCH', module: 'finance' }), { status: 503, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-skincos-module-state': 'canary', 'x-request-id': requestId } });
+  }
   const auth = await verifySignedDomainContext(request, String(env?.FINANCE_SERVICE_AUTH_SECRET || ''), 'finance');
   if (!auth) return new Response(JSON.stringify({ ok: false, error: 'SERVICE_IDENTITY_REQUIRED' }), { status: 401, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-request-id': requestId } });
   if (!canUseCanary(availability, auth.actor)) return new Response(JSON.stringify({ ok: false, error: 'FINANCE_CANARY_NOT_GRANTED', module: 'finance' }), { status: 403, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-skincos-module-state': 'canary', 'x-request-id': requestId } });
