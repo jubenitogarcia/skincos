@@ -52,6 +52,9 @@ jobs:
           cache: npm
           cache-dependency-path: website/package-lock.json
 
+      - name: Validate observability catalog
+        run: node scripts/observability/validate-catalog.mjs
+
       - name: Install website dependencies
         working-directory: website
         run: npm ci

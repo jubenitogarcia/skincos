@@ -19,7 +19,20 @@ const gateway = createGatewayHandler({
 test('health is owned by the gateway', async () => {
     const response = await gateway(new Request('https://api.skincos.com.br/health', { headers: { 'x-request-id': 'health-1' } }), {}, {});
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { ok: true, service: 'api', requestId: 'health-1' });
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.unit, 'api');
+    assert.equal(body.request_id, 'health-1');
+    assert.equal(body.dependencies.d1.state, 'unavailable');
+});
+
+test('readiness proves D1 is available and fails closed when it is not', async () => {
+    const ready = await gateway(new Request('https://api.skincos.com.br/readiness'), { DB: { prepare: () => ({ first: async () => ({ ok: 1 }) }) } }, {});
+    assert.equal(ready.status, 200);
+    assert.equal((await ready.json()).dependencies.d1.state, 'healthy');
+    const unavailable = await gateway(new Request('https://api.skincos.com.br/readiness'), {}, {});
+    assert.equal(unavailable.status, 503);
+    assert.equal((await unavailable.json()).ready, false);
 });
 
 test('inventory is mounted without retaining the legacy public prefix', async () => {

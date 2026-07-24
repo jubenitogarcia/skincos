@@ -89,11 +89,14 @@ jobs:
           set -euo pipefail
           if [[ "${{ inputs.target }}" == "staging" ]]; then
             env_args=(--env staging)
+            environment_var=(--var "ENVIRONMENT:staging")
           else
             env_args=()
+            environment_var=(--var "ENVIRONMENT:production")
           fi
           npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars "${env_args[@]}"
-          npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars "${env_args[@]}"
+          npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars "${env_args[@]}" \
+            --var "APP_VERSION:${{ needs.promotion.outputs.source_sha }}" "${environment_var[@]}"
 
       - name: Smoke check API + Inventory Workers (production)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
