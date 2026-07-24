@@ -8,7 +8,7 @@ on:
         required: true
         default: staging
         type: choice
-        options: [staging, production]
+        options: [preview, staging, production]
       release_sha:
         description: Immutable main commit to promote or restore
         required: true
@@ -23,6 +23,10 @@ on:
         description: Required for production; successful Finance staging run for this exact SHA
         required: false
         type: string
+      preview_run_id:
+        description: Required for staging; successful Finance preview for this exact SHA
+        required: false
+        type: string
 
 concurrency:
   group: deploy-finance-${{ inputs.target }}
@@ -33,35 +37,32 @@ permissions:
   contents: read
 
 jobs:
+  promotion:
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: finance
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+    secrets: inherit
   release:
+    needs: promotion
+    if: ${{ inputs.target != 'preview' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
-          ref: main
-          fetch-depth: 0
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
       - name: Verify immutable release
         env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
-          git cat-file -e "$RELEASE_SHA^{commit}"
-          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
-          git checkout --detach "$RELEASE_SHA"
-      - name: Verify production staging attestation
-        if: inputs.target == 'production'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ inputs.staging_run_id }}
-          RELEASE_SHA: ${{ inputs.release_sha }}
-        run: |
-          set -euo pipefail
-          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo 'production requires staging_run_id'; exit 1; }
-          mkdir -p "$RUNNER_TEMP/finance-attestation"
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name finance-staging-attestation --dir "$RUNNER_TEMP/finance-attestation"
-          node -e "const x=require(process.argv[1]);if(x.target!=='staging'||x.sha!==process.argv[2]||x.health!==200)process.exit(1)" "$RUNNER_TEMP/finance-attestation/attestation.json" "$RELEASE_SHA"
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checked-out source does not match promotion evidence'; exit 1; }
       - name: Guard isolated bindings and secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -92,6 +93,29 @@ jobs:
           else
             sed -i "s/__CONFIGURE_FINANCE_STAGING_D1_ID__/$D1_ID/;s/__CONFIGURE_MODULE_CONTROL_STAGING_KV_ID__/$CONTROL_KV_ID/" finance/wrangler.toml
           fi
+      - name: Capture encrypted D1 checkpoint before migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+          FINANCE_BACKUP_PASSPHRASE: ${{ secrets.FINANCE_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          [[ -n "${FINANCE_BACKUP_PASSPHRASE:-}" ]] || { echo 'Missing FINANCE_BACKUP_PASSPHRASE'; exit 1; }
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-finance; else ENV_ARGS=(--env staging); DB=skincos-finance-staging; fi
+          plain="$RUNNER_TEMP/finance-${TARGET}-pre-migration-${GITHUB_SHA}.sql"
+          encrypted="${plain}.gpg"
+          npx --yes wrangler@4.112.0 d1 export "$DB" --remote --output "$plain" --config finance/wrangler.toml "${ENV_ARGS[@]}"
+          printf '%s' "$FINANCE_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
+          rm -f "$plain"
+          echo "CHECKPOINT=$encrypted" >> "$GITHUB_ENV"
+      - name: Upload encrypted D1 checkpoint
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: finance-${{ inputs.target }}-pre-migration-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ env.CHECKPOINT }}
+          retention-days: 30
+          if-no-files-found: error
       - name: Apply Finance migrations then publish only Finance
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -103,7 +127,7 @@ jobs:
           if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-finance; else ENV_ARGS=(--env staging); DB=skincos-finance-staging; fi
           npx --yes wrangler@4.112.0 d1 migrations apply "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}"
           printf '%s' "$SERVICE_SECRET" | npx --yes wrangler@4.112.0 secret put FINANCE_SERVICE_AUTH_SECRET --config finance/wrangler.toml "${ENV_ARGS[@]}"
-          npx --yes wrangler@4.112.0 deploy --config finance/wrangler.toml --keep-vars --message "finance:${{ inputs.operation }}:${{ inputs.release_sha }}" "${ENV_ARGS[@]}"
+          npx --yes wrangler@4.112.0 deploy --config finance/wrangler.toml --keep-vars --message "finance:${{ inputs.operation }}:${{ needs.promotion.outputs.source_sha }}" "${ENV_ARGS[@]}"
       - name: Smoke private Finance Worker through the gateway
         id: smoke
         env:
@@ -114,16 +138,16 @@ jobs:
           code="$(curl --silent --show-error --output "$RUNNER_TEMP/finance-health.json" --write-out '%{http_code}' "$BASE/finance/health")"
           [[ "$code" == 200 ]] || { cat "$RUNNER_TEMP/finance-health.json"; exit 1; }
           node -e "const x=require(process.argv[1]);if(!x.ok||x.module!=='finance')process.exit(1)" "$RUNNER_TEMP/finance-health.json"
-      - name: Write staging attestation
+      - name: Write staging promotion evidence
         if: inputs.target == 'staging'
         env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/finance-attestation"
-          node -e "require('fs').writeFileSync(process.argv[1],JSON.stringify({target:'staging',sha:process.env.RELEASE_SHA,health:200,createdAt:new Date().toISOString()},null,2))" "$RUNNER_TEMP/finance-attestation/attestation.json"
+          PROMOTION_UNIT: finance
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
       - if: inputs.target == 'staging'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: finance-staging-attestation
-          path: ${{ runner.temp }}/finance-attestation/attestation.json
+          name: promotion-evidence-finance
+          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
           retention-days: 14

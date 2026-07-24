@@ -54,7 +54,7 @@ export const crmModuleRegistry: readonly CrmModuleManifest[] = [
   manifest({ key: 'hr', label: 'RH', icon: '👥', loader: () => import('@/HRModule').then((m) => ({ default: m.HRModule })) }),
   manifest({ key: 'ponto', label: 'Ponto', icon: '⏱️', loader: () => import('@/PontoModule').then((m) => ({ default: m.PontoModule })) }),
   manifest({ key: 'procurement', label: 'Compras', icon: '🛒', loader: () => import('@/ProcurementModule').then((m) => ({ default: m.ProcurementModule })) }),
-  manifest({ key: 'finance', label: 'Financeiro', icon: <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />, loader: () => import('@/FinanceModule').then((m) => ({ default: m.FinanceModule })) }),
+  manifest({ key: 'finance', label: 'Financeiro', icon: <img src="/icons/money.png" alt="" aria-hidden className="h-5 w-5" />, loader: () => import('@/modules/RemoteFinanceModule').then((m) => ({ default: m.RemoteFinanceModule })) }),
   manifest({ key: 'products', label: 'Produtos', icon: '📂', loader: () => import('@/ProductCatalog').then((m) => ({ default: m.ProductCatalog })) }),
   manifest({ key: 'pipelines', label: 'Pipelines', icon: '🔀', loader: () => import('@/PipelineManager').then((m) => ({ default: m.PipelineManager })) }),
   manifest({ key: 'lead-scoring', label: 'Lead Scoring', icon: '⭐', loader: () => import('@/LeadScoringSystem').then((m) => ({ default: m.LeadScoringSystem })) }),

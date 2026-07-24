@@ -1,5 +1,5 @@
 import { createGatewayHandler } from './router.js';
-import { csrfErrorFor, resolveIdentityActor } from '../../identity/session/actor.js';
+import { csrfErrorFor, resolveCrmActor } from '../../shared/crm-auth/worker.js';
 import { fetchBoundService } from '../../shared/service-adapters/cloudflare-service-binding.js';
 import { createSignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
 
@@ -7,7 +7,7 @@ const financeRateLimitResponse = (status, error) => new Response(JSON.stringify(
 const digest = async (value) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))).map((item) => item.toString(16).padStart(2, '0')).join('');
 
 async function resolveFinanceActor(request, env) {
-    const auth = await resolveIdentityActor(request, env);
+    const auth = await resolveCrmActor(request, env);
     // This bypass exists only when the private runner injects its local-only
     // Worker binding. Production configuration never defines that binding.
     if (auth.actor || String(env?.LOCAL_FINANCE_AUTH_BYPASS || '') !== 'true') return auth;

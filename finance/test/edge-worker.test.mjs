@@ -21,3 +21,15 @@ test('Finance readiness fails closed when its D1 binding is unavailable', async 
   assert.equal(body.ready, false);
   assert.equal(body.dependencies.d1.state, 'unavailable');
 });
+
+test('Finance canary rejects a non-pilot before domain data is touched', async () => {
+  const encoder = new TextEncoder();
+  const payload = btoa(JSON.stringify({ v: 1, audience: 'finance', issuedAt: Date.now(), actor: { username: 'non-pilot', allowedModules: ['finance'] }, csrf: '' })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  const key = await crypto.subtle.importKey('raw', encoder.encode('test-secret'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(payload))))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  const response = await handleFinance(new Request('https://finance.internal/overview', { headers: { 'x-skincos-domain-context': payload, 'x-skincos-domain-signature': signature } }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'test-secret', MODULE_CONTROL: { get: async () => ({ state: 'canary', pilotActors: ['pilot'] }) },
+  }, {});
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error, 'FINANCE_CANARY_NOT_GRANTED');
+});

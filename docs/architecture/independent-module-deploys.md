@@ -6,7 +6,8 @@ O CRM continua um único Pages/shell visual. As rotas de domínio continuam atr�
 
 | Módulo | Unidade operacional | Pipeline canônico | Controle sem deploy | Rollback |
 | --- | --- | --- | --- | --- |
-| Financeiro | Worker `skincos-finance` / `skincos-finance-staging` | `deploy-finance.yml` | KV `module-control:finance` | mesmo workflow, `operation=rollback` e SHA já promovido |
+| Financeiro API | Worker `skincos-finance` / `skincos-finance-staging` | `deploy-finance.yml` | KV `module-control:finance` | mesmo workflow, `operation=rollback` e SHA já promovido |
+| Financeiro UI | Pages `FINANCE_UI_PAGES_PROJECT_*` | `deploy-finance-ui.yml` | URL estável `VITE_FINANCE_MODULE_URL` no shell | publicar o SHA já promovido pelo mesmo pipeline |
 | Ponto | Worker `skincos-timekeeping` / `skincos-timekeeping-staging` | `deploy-timekeeping.yml` | KV `module-control:timekeeping` | versão Worker anterior + checkpoint D1; nunca republicar `api` |
 | Atendimento | processo `CRM_DOMAIN=atendimento` | `deploy-atendimento.yml` | `atendimento-availability.yml` grava o arquivo indicado por `CRM_MODULE_CONTROL_FILE` | mesmo workflow com SHA anterior e comando de rollback dedicado |
 
@@ -14,17 +15,19 @@ O gateway somente transporta `/finance/*` e `/api/ponto/*`. Para Financeiro, ele
 
 ## Ordem segura de ativação
 
-1. Criar os dois Workers Financeiro, os dois D1s Financeiro e os dois KVs de controle, sem rota pública.
+1. Criar os dois Workers Financeiro, os dois D1s Financeiro, os dois KVs de controle e os dois projetos Pages de UI, sem rota pública.
 2. Configurar `FINANCE_SERVICE_AUTH_SECRET` idêntico apenas entre gateway e Financeiro **no mesmo ambiente**; nunca copiar secret de produção para staging.
-3. Executar Financeiro em staging pelo SHA de `main`, aplicar migrations aditivas, smoke `/finance/health` e guardar a attestation.
-4. Fazer a única publicação de bootstrap do gateway com a nova service binding `FINANCE`, depois promover o mesmo SHA Financeiro. Mudanças seguintes do Financeiro não publicam o gateway.
+3. Executar o preview imutável, depois Financeiro API e UI em staging pelo mesmo SHA de `main`; o pipeline exporta e cifra checkpoint D1, aplica somente migrations aditivas, smoke `/finance/health` e guarda a evidência de promoção.
+4. Fazer a única publicação de bootstrap do gateway com a nova service binding `FINANCE` e do shell com `VITE_FINANCE_MODULE_URL`; mudanças seguintes do Financeiro não publicam gateway nem CRM Pages.
 5. Configurar o unit/service dedicado do Atendimento, remover seu mount do processo CRM compartilhado e validar health por ambiente. Só então habilitar `ENABLE_ATENDIMENTO_DEPLOY=true`.
 
 ## Configuração externa mínima
 
-- GitHub Environments `staging` e `production`: `FINANCE_D1_STAGING_ID`, `FINANCE_D1_PRODUCTION_ID`, `MODULE_CONTROL_STAGING_KV_ID`, `MODULE_CONTROL_PRODUCTION_KV_ID` e `FINANCE_SERVICE_AUTH_SECRET`, todos segregados.
+- GitHub Environments `staging` e `production`: `FINANCE_D1_STAGING_ID`, `FINANCE_D1_PRODUCTION_ID`, `MODULE_CONTROL_STAGING_KV_ID`, `MODULE_CONTROL_PRODUCTION_KV_ID`, `FINANCE_UI_PAGES_PROJECT_STAGING`, `FINANCE_UI_PAGES_PROJECT_PRODUCTION`, `FINANCE_SERVICE_AUTH_SECRET` e `FINANCE_BACKUP_PASSPHRASE`, todos segregados.
 - Cloudflare: criar `skincos-finance` e `skincos-finance-staging` antes do bootstrap do `api`; criar D1/KV separados por ambiente; conceder ao token somente Workers/D1/KV necessários.
 - Runtime CRM: criar um unit de Atendimento independente, com porta/health próprios, `CRM_DOMAIN=atendimento`, `CRM_MODULE_CONTROL_FILE` privado e os comandos `CRM_ATENDIMENTO_DEPLOY_COMMAND`, `CRM_ATENDIMENTO_ROLLBACK_COMMAND`, `CRM_ATENDIMENTO_CONTROL_COMMAND`, `CRM_ATENDIMENTO_HEALTH_URL` configurados no Environment GitHub correspondente.
 - Antes de produção: registrar a versão/commit de retorno, confirmar migration somente aditiva, executar smoke de staging do mesmo SHA e aprovar explicitamente o Environment de produção.
 
-Nenhum dos workflows novos é acionado por push. Faltas de ID, secret, comando dedicado ou attestation falham explicitamente e não fazem deploy parcial.
+Canary é deliberadamente por ator-piloto explícito no KV, não por porcentagem aleatória: o workflow `module-availability.yml` exige `state=canary` e a lista de atores. `maintenance` e `disabled` não publicam artefato. O rollback de código só aceita SHA já promovido; dados não sofrem rollback destrutivo — o checkpoint cifrado é restaurado antes em ambiente isolado e comparado com razão, auditoria, movimentos e lotes.
+
+Nenhum dos workflows novos é acionado por push. Faltas de ID, secret, comando dedicado, checkpoint ou evidência de promoção falham explicitamente e não fazem deploy parcial.

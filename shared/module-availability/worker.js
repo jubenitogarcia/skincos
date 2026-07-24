@@ -1,5 +1,5 @@
 const CONTROL_KEY_PREFIX = 'module-control:';
-const VALID_STATES = new Set(['active', 'maintenance', 'disabled']);
+const VALID_STATES = new Set(['active', 'canary', 'maintenance', 'disabled']);
 
 function normalize(value) {
   const state = String(value?.state || 'active').trim().toLowerCase();
@@ -7,6 +7,9 @@ function normalize(value) {
     state: VALID_STATES.has(state) ? state : 'active',
     message: String(value?.message || '').trim().slice(0, 240),
     changedAt: String(value?.changedAt || '').trim(),
+    // The allow-list is intentionally explicit: Finance launches only for a
+    // named pilot, never by random percentage on financial mutations.
+    pilotActors: Array.isArray(value?.pilotActors) ? value.pilotActors.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 100) : [],
   };
 }
 
@@ -38,6 +41,10 @@ export function moduleUnavailableResponse(moduleId, availability, requestId) {
       'x-request-id': requestId,
     },
   });
+}
+
+export function canUseCanary(availability, actor) {
+  return availability.state !== 'canary' || availability.pilotActors.includes(String(actor?.username || '').trim());
 }
 
 export function moduleHealthResponse(moduleId, availability, requestId) {

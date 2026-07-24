@@ -17,7 +17,11 @@ on:
         description: Runtime state; no artifact is published
         required: true
         type: choice
-        options: [active, maintenance, disabled]
+        options: [active, canary, maintenance, disabled]
+      pilot_actors:
+        description: "CSV of Finance pilot actor IDs; required only for canary"
+        required: false
+        type: string
       message:
         description: User-visible maintenance reason (optional)
         required: false
@@ -53,7 +57,10 @@ jobs:
           MODULE: ${{ inputs.module }}
           STATE: ${{ inputs.state }}
           MESSAGE: ${{ inputs.message }}
+          PILOT_ACTORS: ${{ inputs.pilot_actors }}
         run: |
           set -euo pipefail
-          payload="$(node -e "process.stdout.write(JSON.stringify({state:process.env.STATE,message:process.env.MESSAGE||'',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
+          if [[ "$MODULE" != finance && "$STATE" == canary ]]; then echo 'Canary is implemented only for Finance in this workflow.'; exit 1; fi
+          if [[ "$STATE" == canary && -z "${PILOT_ACTORS//[[:space:],]/}" ]]; then echo 'Canary requires at least one pilot actor.'; exit 1; fi
+          payload="$(node -e "process.stdout.write(JSON.stringify({state:process.env.STATE,message:process.env.MESSAGE||'',pilotActors:(process.env.PILOT_ACTORS||'').split(',').map(x=>x.trim()).filter(Boolean),changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
           npx --yes wrangler@4.112.0 kv key put "module-control:$MODULE" "$payload" --namespace-id "$NAMESPACE_ID"
