@@ -4,6 +4,7 @@ import { restoreBackupPayload } from '../services/backup.js';
 import { resolveCrmTables } from '../d1Store.js';
 import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
+import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE'];
 const ROLE_INVITES = ['GESTOR'];
@@ -31,18 +32,11 @@ function normalizeRole(role) {
 }
 
 function normalizeAllowedUnits(value) {
-  if (!value) return [];
-  if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
-  if (typeof value === 'string') {
-    const s = value.trim();
-    if (!s) return [];
-    try {
-      const parsed = JSON.parse(s);
-      if (Array.isArray(parsed)) return parsed.map(String).map((x) => x.trim()).filter(Boolean);
-    } catch { }
-    return s.split(/[,;|]/g).map((x) => String(x || '').trim()).filter(Boolean);
-  }
-  return [];
+  return normalizeCanonicalAllowedUnits(value);
+}
+
+function invalidUnitScopes(value) {
+  return unknownUnitScopes(value);
 }
 
 function normalizeAllowedModules(value) {
@@ -433,7 +427,9 @@ export async function handleAdminRoutes({
       const body = await request.json().catch(() => ({}));
       const inviteeEmail = normalizeInviteEmail(body.email ?? body.inviteeEmail);
       const role = normalizeRole(body.role || 'CONSULTOR');
-      const allowedUnits = normalizeInviteScope(body.allowedUnits);
+      const invalidUnits = invalidUnitScopes(body.allowedUnits);
+      if (invalidUnits.length) return withCORS(JSON.stringify({ success: false, error: 'Unidade inválida', code: 'UNIT_INVALID' }), { status: 400 }, appOrigin);
+      const allowedUnits = normalizeAllowedUnits(body.allowedUnits);
       const allowedModules = normalizeInviteScope(body.allowedModules ?? body.allowed_modules ?? body.modules ?? body.scopes);
       const requestedMaxUses = body.maxUses === undefined ? 1 : Number.parseInt(String(body.maxUses), 10);
       const maxUses = 1;
@@ -637,6 +633,8 @@ export async function handleAdminRoutes({
       const displayName = String(body.displayName || '').trim();
       const email = String(body.email || '').trim();
       const role = normalizeRole(body.role || 'CONSULTOR');
+      const invalidUnits = invalidUnitScopes(body.allowedUnits);
+      if (invalidUnits.length) return withCORS(JSON.stringify({ success: false, error: 'UNIT_INVALID' }), { status: 400 }, appOrigin);
       const allowedUnits = normalizeAllowedUnits(body.allowedUnits);
       const allowedModules = normalizeAllowedModules(body.allowedModules ?? body.allowed_modules ?? body.modules ?? body.scopes);
       const ativo = body.ativo === false ? 0 : 1;
@@ -737,6 +735,9 @@ export async function handleAdminRoutes({
         return withCORS(JSON.stringify({ success: false, error: 'Somente o provisionamento administrativo pode alterar hierarquia.', code: 'ROLE_MANAGEMENT_DENIED' }), { status: 403 }, appOrigin);
       }
       const photoUrl = body.photoUrl !== undefined ? String(body.photoUrl || '') : null;
+      if (body.allowedUnits !== undefined && invalidUnitScopes(body.allowedUnits).length) {
+        return withCORS(JSON.stringify({ success: false, error: 'UNIT_INVALID' }), { status: 400 }, appOrigin);
+      }
       const allowedUnits = body.allowedUnits !== undefined ? JSON.stringify(normalizeAllowedUnits(body.allowedUnits)) : null;
       const allowedModules = body.allowedModules !== undefined ? JSON.stringify(normalizeAllowedModules(body.allowedModules)) : null;
       const ativo = body.ativo === undefined ? null : (body.ativo ? 1 : 0);
