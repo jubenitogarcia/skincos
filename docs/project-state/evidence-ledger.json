@@ -2,6 +2,18 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-24T22:43:24Z",
+      "surface": "github-and-staging",
+      "scope": "P0 Insumos current-main candidate and staging closure",
+      "state": "staging-validated",
+      "method": "immutable candidate run 30131393262; canonical Inventory/Core preview 30131564731 and staging 30131598506; canonical CRM Pages preview 30131566250 and staging 30131599897; authenticated synthetic journey 30131682451",
+      "result": "All candidate, preview and staging evidence attest sourceSha cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb and sourceTree c9ca5f4826d418b2e3b033107185135831437ffd. The source archive SHA-256 is 5284a1554c24c799453404a66cfdd8194cfce021cecb3e184d8969b40ebf83e9. Pages staging URL af0d1d23.skincos-staging.pages.dev and Inventory health were reachable. Six synthetic unit-scope scenarios passed, including both-unit switching, empty-scope denial, ADMIN override and legacy alias; fixture teardown completed.",
+      "limitation": "This is staging evidence only. The real CRM actor has not been correlated read-only, and no production deploy, user, flag, grant or production data mutation is authorized or evidenced.",
+      "sha": "cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb",
+      "pr": null,
+      "runs": [30131393262, 30131564731, 30131566250, 30131598506, 30131599897, 30131682451]
+    },
+    {
       "observed_at": "2026-07-24T22:20:00Z",
       "surface": "github-and-staging",
       "scope": "P0 Insumos lineage reconciliation",
