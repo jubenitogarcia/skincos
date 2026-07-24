@@ -58,13 +58,14 @@ if (action === 'provision') {
   const fixtures = privateFixtures();
   mkdirSync(dirname(resolve(fixturesPath)), { recursive: true });
   writeFileSync(fixturesPath, JSON.stringify(fixtures), { mode: 0o600 });
-  const statements = ['BEGIN TRANSACTION;'];
+  // Remote D1 rejects SQL BEGIN/COMMIT statements. Wrangler imports this file as
+  // a supported D1 batch; each statement remains idempotent for this run id.
+  const statements = [];
   for (const scenario of fixtures.scenarios) {
     statements.push(`DELETE FROM crm_users WHERE username = ${sql(scenario.username)};`);
     statements.push(`INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at, session_version) VALUES (${sql(scenario.username)}, ${sql(scenario.email)}, ${sql(`Synthetic Insumos RBAC ${scenario.id}`)}, ${sql(passwordHash(scenario.password))}, ${sql(scenario.role)}, '', ${sql(JSON.stringify(scenario.allowedUnits))}, ${sql(JSON.stringify(['inventory']))}, 1, ${sql(now)}, ${sql(now)}, 0);`);
     statements.push(audit('STAGING_SYNTHETIC_IDENTITY_PROVISIONED', scenario.username, { runId, scope: scenario.allowedUnits, role: scenario.role }));
   }
-  statements.push('COMMIT;');
   writeFileSync(sqlPath, `${statements.join('\n')}\n`, { mode: 0o600 });
   console.log(JSON.stringify({ action, environment: 'staging', scenarioCount: fixtures.scenarios.length, credentialsWrittenToPrivateFile: true }));
 } else {
@@ -72,7 +73,7 @@ if (action === 'provision') {
   if (fixtures?.environment !== 'staging' || fixtures?.prefix !== prefix || !Array.isArray(fixtures?.scenarios)) {
     throw new Error('fixture file is not a matching staging fixture');
   }
-  const statements = ['BEGIN TRANSACTION;'];
+  const statements = [];
   for (const scenario of fixtures.scenarios) {
     const username = String(scenario.username || '');
     if (!username.startsWith(`${prefix}-`)) throw new Error('fixture username escaped controlled prefix');
@@ -81,7 +82,6 @@ if (action === 'provision') {
     statements.push(`DELETE FROM crm_user_prefs WHERE username = ${sql(username)};`);
     statements.push(`DELETE FROM crm_users WHERE username = ${sql(username)};`);
   }
-  statements.push('COMMIT;');
   writeFileSync(sqlPath, `${statements.join('\n')}\n`, { mode: 0o600 });
   console.log(JSON.stringify({ action, environment: 'staging', scenarioCount: fixtures.scenarios.length, identitiesRemoved: true }));
 }
