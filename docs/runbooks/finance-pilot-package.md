@@ -2,7 +2,7 @@
 
 **Estado:** rascunho bloqueado; não autoriza ativação.
 **Maturidade atual:** `experimental`.
-**Ambiente:** o pacote só poderá ser usado depois de evidência completa em staging e de uma aprovação nominal independente para produção.
+**Ambiente:** o pacote só poderá ser usado depois de evidência completa em staging e de uma aprovação nominal independente para produção. Os deploys e canários abaixo são parciais: não autorizam produção.
 
 Este documento é deliberadamente um contrato de revisão. Campos marcados como
 `NÃO NOMEADO` impedem a ativação. Não substitua nomes por papéis genéricos,
@@ -23,13 +23,13 @@ listas vazias ou herança administrativa.
 
 | Gate | Evidência exigida | Situação em 2026-07-24 |
 | --- | --- | --- |
-| Artefato imutável em staging | SHA, Worker, UI e migrations atestados | Parcial: SHA `fdf8cda8…` foi re-promovido em staging. |
-| Rollback independente | retorno para SHA anterior, sem usar HEAD, sessão preservada, smoke e RTO medido | **Bloqueado:** o publisher canônico requer a correção da PR #761. |
-| Kill switch sem deploy | `disabled` e retorno ao baseline por `module-availability.yml` | **Bloqueado:** a correção de validação KV da PR #761 ainda não está na `main`. |
-| Jornada autenticada | ator exclusivo, escopo, importação/compensação, auditoria e isolamento | Necessita evidência do SHA candidato após os gates acima. |
-| Observabilidade e alerta humano | monitor contínuo externo, alerta recebido e recuperação registrados | Não há evidência válida anexada a este pacote. |
-| Backup, restore e RTO | cópia offsite, restore isolado e RPO/RTO medidos | Não há evidência válida anexada a este pacote. |
-| Segurança de integração | checks obrigatórios verdes e revisão concluída | **Bloqueado:** `Dependency Audit (JS/TS)` da PR #761 falha por `next` e `postcss` no Website; não mascarar esse gate neste pacote. |
+| Artefato imutável em staging | SHA, Worker, UI e migrations atestados | Parcial: o Worker no SHA `fdf8cda8…` foi publicado no run `30111830881`; a evidência do artefato UI correspondente não está anexada a este pacote. |
+| Rollback independente | retorno para SHA anterior, sem usar HEAD, sessão preservada, smoke e RTO medido | Parcial: PR #761 foi mergeada e o abort drill `30121676670` restaurou o baseline; falta evidência independente de rollback de UI, sessão e RTO. |
+| Kill switch sem deploy | `disabled` e retorno ao baseline por `module-availability.yml` | Evidenciado pelo abort drill `30121676670`, que restaurou o baseline antes de concluir como falha intencional. |
+| Jornada autenticada | ator exclusivo, escopo, importação/compensação, auditoria e isolamento | Parcial: canary autenticado de leitura passou no run `30121622991`; ainda falta smoke autenticado de importação e UI. |
+| Observabilidade e alerta humano | monitor contínuo externo, alerta recebido e recuperação registrados | Não há evidência de monitor externo contínuo, alerta recebido e recuperação anexada a este pacote. |
+| Backup, restore e RTO | cópia offsite, restore isolado e RPO/RTO medidos | Não há evidência de cópia offsite, restore isolado e RPO/RTO anexada a este pacote. |
+| Segurança de integração | checks obrigatórios verdes e revisão concluída | PRs #761 e #762 tiveram seus checks obrigatórios concluídos com sucesso; isso não substitui as evidências operacionais pendentes. |
 
 Enquanto qualquer linha estiver bloqueada, o módulo permanece `experimental` e
 este pacote serve apenas para revisão.
