@@ -22,7 +22,7 @@ function sqlStatements(migration) {
 }
 
 async function fixture({ enabled = true, actor = { username: 'pilot', allowedModules: ['finance'] } } = {}) {
-  const mf = new Miniflare({ modules: true, script: 'export default { fetch() { return new Response("ok") } }', compatibilityDate: '2024-11-20', d1Databases: ['DB'] });
+  const mf = new Miniflare({ modules: true, script: 'export default { fetch() { return new Response("ok") } }', compatibilityDate: '2024-11-20', d1Databases: { DB: '00000000-0000-0000-0000-000000000001' } });
   const DB = await mf.getD1Database('DB');
   for (const migration of migrations) for (const statement of sqlStatements(migration)) { try { await DB.prepare(statement).run(); } catch (error) { throw new Error(`${error.message}\nSQL:\n${statement}`); } }
   await DB.prepare(`UPDATE finance_settings SET value=? WHERE key='module_enabled'`).bind(enabled ? 'true' : 'false').run();
