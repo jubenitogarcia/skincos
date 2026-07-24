@@ -6,7 +6,7 @@ O catálogo em `ops/observability/catalog.json` define os probes. O monitor prim
 
 O estado `healthy` mede somente o endpoint de health e o orçamento de latência. `contract_status: incomplete` ou `partial` significa que a unidade ainda não comprovou todos os campos/health-readiness-dependencies-version exigidos: não é gate de promoção.
 
-O instalador registra três tarefas Windows como `SYSTEM`: probe a cada minuto, dashboard local em loopback e watchdog independente a cada dois minutos. O dashboard fica somente em `127.0.0.1`, expõe `/`, `/health` e `/metrics` e não depende de Cloudflare ou GitHub. `history.jsonl`, `metrics-history.jsonl` e `notifications.jsonl` retêm 30 dias; nenhum token, payload de negócio ou dado pessoal é gravado.
+O instalador registra três tarefas Windows: probe a cada minuto, dashboard local em loopback e watchdog independente a cada dois minutos. Em sessão elevada, elas executam como `SYSTEM` e iniciam no boot; sem elevação, executam como o operador atual, iniciam no logon e continuam automaticamente durante sua sessão. O modo efetivo fica em `installation.json`. O dashboard fica somente em `127.0.0.1`, expõe `/`, `/health` e `/metrics` e não depende de Cloudflare ou GitHub. `history.jsonl`, `metrics-history.jsonl` e `notifications.jsonl` retêm 30 dias; nenhum token, payload de negócio ou dado pessoal é gravado.
 
 ## Instalação e rollback
 
