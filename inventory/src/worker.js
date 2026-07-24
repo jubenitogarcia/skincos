@@ -31,6 +31,7 @@ import {
     d1ListInsumosPaged,
     d1ListInsumosOptions,
 } from './d1Store.js';
+import { hasUnitScopeAccess, normalizeUnitScope } from '../../shared/identity-contract/index.js';
 
 const MAX_PROFILE_PHOTO_URL_CHARS = 45000;
 
@@ -49,20 +50,6 @@ function safeJsonParse(raw) {
     }
 }
 
-function slugifyUnidade(value) {
-    const s0 = String(value || '').trim().toLowerCase();
-    if (!s0) return '';
-    if (s0 === '*' || s0 === 'all' || s0 === 'todas') return '*';
-    if (s0 === 'novo-hamburgo' || s0 === 'novohamburgo' || s0 === 'novo hamburgo' || s0 === 'nh') return 'novo-hamburgo';
-    if (s0 === 'barra-shopping-sul' || s0 === 'barrashoppingsul' || s0 === 'barra shopping sul' || s0 === 'bss') return 'barra-shopping-sul';
-    const s = s0
-        .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-    return s;
-}
-
 function getInsumosConfig(env) {
     const unidadesRaw = String(env?.UNIDADES || '').trim();
     const unidades = unidadesRaw
@@ -70,8 +57,8 @@ function getInsumosConfig(env) {
             new Set(
                 unidadesRaw
                     .split(/[,;|]/g)
-                    .map((u) => slugifyUnidade(u))
-                    .filter((u) => u && u !== '*')
+                    .map((u) => normalizeUnitScope(u))
+                    .filter(Boolean)
             )
         )
         : DEFAULT_UNIDADES;
@@ -81,9 +68,9 @@ function getInsumosConfig(env) {
     const unidadeHeaders = {};
     if (unitHeadersParsed && typeof unitHeadersParsed === 'object') {
         for (const [k, v] of Object.entries(unitHeadersParsed)) {
-            const slug = slugifyUnidade(k);
+            const slug = normalizeUnitScope(k);
             const key = String(v || '').toLowerCase().trim();
-            if (slug && slug !== '*' && key) unidadeHeaders[slug] = key;
+            if (slug && key) unidadeHeaders[slug] = key;
         }
     }
 
@@ -954,7 +941,7 @@ async function enqueueNotificationsRefresh(env, unidade) {
 async function refreshNotificationsSnapshotInD1({ env, unidade }) {
     if (!env?.DB) return;
     const config = getInsumosConfig(env);
-    const unit = unidade ? slugifyUnidade(unidade) : null;
+    const unit = unidade ? normalizeUnitScope(unidade) : null;
     const unidades = unit ? [unit] : config.unidades;
 
     for (const u of unidades) {
@@ -1038,7 +1025,10 @@ export default {
             // ignore
         }
         const defaultUnidade = UNIDADES[0] || 'novo-hamburgo';
-        const unidade = slugifyUnidade(url.searchParams.get('unidade') || '') || defaultUnidade;
+        const unidadeParam = String(url.searchParams.get('unidade') || '').trim();
+        const normalizedRequestedUnit = normalizeUnitScope(unidadeParam);
+        const invalidRequestedUnit = !!unidadeParam && !normalizedRequestedUnit;
+        const unidade = normalizedRequestedUnit || defaultUnidade;
         const cookies = parseCookies(request.headers.get('cookie') || '');
         const ip = getClientIp(request);
         const userAgent = getUserAgent(request);
@@ -1132,6 +1122,14 @@ export default {
             else console.log(serializedPayload);
             return res;
         };
+
+        if (invalidRequestedUnit) {
+            return withCORS(
+                JSON.stringify({ success: false, error: 'Unidade inválida', code: 'UNIT_INVALID' }),
+                { status: 400 },
+                appOrigin
+            );
+        }
 
         const enforceRateLimit = async (kind) => {
             if (!env.RATE_LIMITER) return { allowed: true };
@@ -1313,13 +1311,7 @@ export default {
             return sessionUser;
         };
 
-        const hasUnitAccess = (u, unit) => {
-            if (!u) return false;
-            if (String(u.role || '').toUpperCase() === 'ADMIN') return true;
-            const allowed = Array.isArray(u.allowedUnits) ? u.allowedUnits.filter(Boolean) : [];
-            if (!allowed.length) return false;
-            return allowed.includes(unit);
-        };
+        const hasUnitAccess = (u, unit) => !!u && hasUnitScopeAccess(u, unit);
 
         const getAllowedModules = (u) => {
             const raw = Array.isArray(u?.allowedModules) ? u.allowedModules : [];

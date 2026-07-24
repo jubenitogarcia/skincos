@@ -19,7 +19,7 @@ test('Inventory keeps the existing auth mount through the registered Identity ad
             if (sql.includes('sqlite_master')) return { type: 'table' };
             if (sql.includes('FROM crm_users')) return {
               username: 'existing-user', display_name: 'Existing User', role: 'CONSULTOR', ativo: 1,
-              allowed_units_json: '["novo-hamburgo"]', allowed_modules_json: '["inventory"]', session_version: 0,
+              allowed_units_json: '["NH"]', allowed_modules_json: '["inventory"]', session_version: 0,
             };
             return null;
           },
@@ -31,5 +31,6 @@ test('Inventory keeps the existing auth mount through the registered Identity ad
 
   const user = await store.getUserByUsername('existing-user');
   assert.equal(user.username, 'existing-user');
+  assert.deepEqual(user.allowedUnits, ['novo-hamburgo']);
   assert.deepEqual(user.allowedModules, ['inventory']);
 });

@@ -1,4 +1,4 @@
-import { toAuthenticatedActor } from '../../shared/identity-contract/index.js';
+import { normalizeAllowedUnits, toAuthenticatedActor } from '../../shared/identity-contract/index.js';
 
 const toInt = (value, fallback = 0) => {
   const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
@@ -58,7 +58,7 @@ function toIdentityUser(row) {
     email: row.email || '',
     role: row.role || 'CONSULTOR',
     photoUrl: row.photo_url || '',
-    allowedUnits: parseScopes(row.allowed_units_json),
+    allowedUnits: normalizeAllowedUnits(row.allowed_units_json),
     allowedModules: parseScopes(row.allowed_modules_json),
     ativo: toInt(row.ativo, 1) === 1,
     createdAt: row.created_at || null,
