@@ -4,10 +4,14 @@ Objetivo: validar mudanças em um ambiente isolado antes de produção.
 
 ## Promotion path
 
-1. Desenvolvimento local.
-2. Branch `staging` com deploy automático para ambiente de staging.
-3. Smoke real em staging.
-4. Promoção para `main` somente após smoke e validação de segredos/bindings.
+1. Desenvolvimento local e PR curta.
+2. Integração na `main` estável gera um candidato imutável.
+3. O mesmo SHA/artefato é implantado em staging com bindings, secrets e flags de staging.
+4. Smoke e evidência do artefato em staging são requisitos para uma promoção manual posterior.
+
+A branch `staging` não é linha paralela de desenvolvimento e não autoriza deploy. Workflows legados que ainda a observam devem ser tratados como dívida de migração, não como caminho canônico.
+
+Para reconstruir a fundação isolada de Identity, Inventory e Financeiro sem IDs ou arquivos locais privados, siga o [runbook de bootstrap e teardown](runbooks/staging-bootstrap-and-teardown.md). O estado gerado pelo Wrangler fica fora do repositório.
 
 ## Cloudflare Pages (CRM)
 
@@ -56,3 +60,5 @@ Objetivo: validar mudanças em um ambiente isolado antes de produção.
 - Smoke automatizado passa antes de promoção.
 - Nenhuma flag de bypass local habilitada.
 - Logs e endpoints de health acessíveis.
+- Inventário lógico validado em CI, sem IDs de recursos, URLs de Worker, dados ou valores de segredo no Git.
+- `module_enabled=false` até uma aprovação de release específica do domínio.
