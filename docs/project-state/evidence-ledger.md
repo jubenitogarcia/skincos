@@ -1,0 +1,17 @@
+# Evidence ledger
+
+This append-only index records sanitized observations. It must not contain
+secrets, tokens or personal data, and it must not overstate the proof level.
+
+| Observed at (UTC) | Surface | Scope / identifier | State proved | Method / evidence | Outcome and limitation |
+| --- | --- | --- | --- | --- | --- |
+| 2026-07-24T18:33Z | Git | shared checkout and `origin/main` | local and remote refs | `git status`, `git rev-parse`, `git fetch origin main`, `git worktree list` | Shared checkout `codex/admin/content-studio-v2` is dirty at `598bc3d5`; remote main is `fdf8cda8`; 69 worktrees are registered. Dirty work was not modified. |
+| 2026-07-24T18:33Z | Repository | snapshot collector | source inventory | `rg --files`, `git ls-tree -r origin/main -- docs/project-state` | `scripts/collect-readonly-state.sh` and `docs/project-state/` are absent from main. The collector reference in the orchestrator cannot presently be executed. |
+| 2026-07-24T18:33Z | GitHub | PR #763 | CI failure | `gh pr view 763`; Actions runs `30114230434` and `30114230288` logs | Central E2E Smoke had 32 passing, 21 skipped and 3 failing Insumos scenarios: circuit breaker, edit modal and no-unit RBAC. Dependency Audit also failed for Website `next` and `postcss`. No PR state was changed. |
+| 2026-07-24T18:33Z | GitHub | PR #764 | CI failure scope | `gh pr view 764`; Actions run `30114533267` log | All listed checks except Dependency Audit passed. The same Website `next` and `postcss` findings fail this governance-doc PR, whose diff is unrelated to Website dependencies. |
+| 2026-07-24T18:33Z | HTTPS | public Website and CRM endpoints | endpoint availability | read-only HTTP GET with 15-second timeout | Website, CRM and CRM health returned 200; unauthenticated custom-URL endpoint returned expected 401. This is not a login, data-integrity or user-journey test. |
+| 2026-07-24T18:33Z | Finance | remote main history | code integration | `git log --oneline origin/main -20` | Finance immutable-release, staging probe and synthetic-canary commits are integrated through PR #760. No environment promotion, restore or authenticated Finance journey was performed in this pass. |
+| 2026-07-24T19:04Z | GitHub | PR #766 | integrated main | `gh pr checks 766`, `gh pr view 766`, `git fetch origin main` | The minimal Website PostCSS remediation passed all listed checks and merged as `7b1443e3`. Its Dependency Audit passed. |
+| 2026-07-24T19:12Z | GitHub | PR #761 | PR update in progress | rebase on `53c12672`, local progressive-release and architecture validation, force-with-lease push | Immutable Finance rollback validation was rebased as `69f7b542`. Local validators passed; GitHub replacement CI was in progress when recorded. Pre-rebase archive refs were retained locally. |
+| 2026-07-24T19:08Z | Cloudflare/D1 | Finance staging | deployed staging and D1 setting | Wrangler deployment metadata, read-only D1 `SELECT`, and HTTPS `/finance/health` plus `/finance/readiness` | Staging serves Finance Worker version `fdf8cda8`, reports D1 healthy, and has `module_enabled=false`; there is one grant row. Availability has no actor, unit or percentage canary. This does not prove an authenticated journey, rollback or restore. |
+| 2026-07-24T19:19Z | GitHub | PR #761 / `2bd789ec` | integrated main | `gh pr checks 761`, `gh pr merge 761 --squash --delete-branch`, `git fetch origin main` | All listed checks passed after the final rebase; Finance immutable rollback ancestry and KV namespace validation merged without deployment, data, flag or grant mutation. |

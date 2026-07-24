@@ -1,5 +1,18 @@
 # TASKS
 
+## Current integration gates — 2026-07-24
+
+- [ ] Correct the three focused Insumos E2E regressions blocking draft PR #763
+  (`insumos-circuit-breaker`, `insumos-edit-modal-policy`, and
+  `insumos-unit-rbac`) in the owning worktree; do not mix in dependency updates.
+- [x] Merge the dedicated Website security-maintenance PR #766; the dependency
+  audit is now green for its remediation commit `7b1443e3`.
+- [x] Complete CI and merge Finance rollback gate PR #761 as `2bd789ec`, before
+  any new staging promotion.
+- [ ] Execute the next Finance evidence gate: a staging-only immutable
+  promotion, synthetic canary and rollback rehearsal that restores
+  `module_enabled=false` and does not alter production or human cohorts.
+
 ## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
 
 - [x] Domínio definitivo criado em `workforce/timekeeping` e montado no gateway.
