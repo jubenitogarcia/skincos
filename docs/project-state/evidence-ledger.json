@@ -2,6 +2,18 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-24T22:54:39Z",
+      "surface": "crm-auth-and-production-d1",
+      "scope": "P0 Insumos current actor correlation",
+      "state": "identified-no-write",
+      "method": "authenticated live CRM /api/auth/me via browser network response; read-only production D1 queries for exact username, active non-ADMIN empty scopes, and audit history",
+      "result": "The session returned HTTP 200 and role GESTOR. Production D1 matched exactly one active row with canonical units novo-hamburgo and barra-shopping-sul, five existing modules (ponto, atendimento, conversa, finance, insumos), and session_version 0. The active non-ADMIN empty-scope set contained zero rows. One scope configuration audit record at 2026-07-24T18:02:25Z preserved role and session version while recording the two units and existing modules.",
+      "limitation": "No username, email, IP, credential, grant, flag or personal identifier is stored in the repository. D1 reported zero rows written and zero changes. Production release still requires a separate version/rollback checkpoint and is not performed by this evidence.",
+      "actorFingerprintSha256": "ee037ad8217e029c98ccf9fe87c22d953189994737e8e6d6b1c32c765f7b83d5",
+      "sha": "37879e32dcfa61152bd12d7582b29ebdbf2268f2",
+      "pr": null
+    },
+    {
       "observed_at": "2026-07-24T22:43:24Z",
       "surface": "github-and-staging",
       "scope": "P0 Insumos current-main candidate and staging closure",

@@ -5,15 +5,16 @@
       "id": "p0-insumos-unit-access",
       "objective": "P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos",
       "priority": 1000,
-      "state": "staging-validated",
+      "state": "actor-correlated",
       "dependencies": [],
       "blockers": [
-        "real CRM actor identity must be correlated read-only before any production decision",
-        "production release remains separately gated and is not authorized by staging evidence"
+        "production release remains separately gated and is not authorized by staging evidence",
+        "record current production versions and preserve a known rollback artifact before any production deploy"
       ],
       "environment": "staging",
       "permitted_actions": [
         "read-only runtime verification and actor correlation",
+        "record production versions and rollback metadata without publishing",
         "preserve rollback artifacts",
         "no production deploy, grants, flags, users or data mutation"
       ],
@@ -23,11 +24,12 @@
         "Inventory and CRM Pages preview/staging all attest the same current SHA",
         "positive and negative unit-scope access validation",
         "synthetic environment journey proving access per authorized unit",
-        "read-only identification of the current CRM actor before production consideration"
+        "read-only identification of the current CRM actor before production consideration",
+        "production current-version and rollback checkpoint"
       ],
       "done_definition": "The unit-access regression is corrected, CI remains green, and current-main controlled staging proves authorized access and denied cross-unit/no-unit access without production data mutation; production gates remain separate.",
       "next_item": null,
-      "last_verified": "2026-07-24T22:44:00Z",
+      "last_verified": "2026-07-24T22:54:39Z",
       "sha": "cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb",
       "pr": 763,
       "evidence": {
