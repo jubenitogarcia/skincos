@@ -13,12 +13,17 @@ PR #763 (`fix(insumos): corrige RBAC por unidade`) merged into main as
 authorized unit access, no-unit request suppression, circuit-breaker behavior
 and edit policy only in CI.
 
-This is not yet evidence that the incident is operationally resolved: the
-current instruction prohibits deploys, data mutations, flags and grants, so no
-environment has been changed or exercised. The P0 freeze remains in effect
-until an explicitly authorized controlled release and unit-scoped journey can
-be evidenced.
+The current authorization permits a controlled staging-only release and a
+synthetic, removable identity journey. Canonical preview and staging workflows
+promoted immutable main SHA `f276919ce6a63b337bd02bd0c3799dbf38f13b97` for
+Inventory (runs `30125747962` / `30125805545`) and CRM Pages (runs
+`30125749745` / `30125807334`). The Inventory staging health endpoint and the
+immutable Pages URL are reachable. The Pages custom alias
+`crm-staging.skincos.com.br` is not currently resolvable, so the journey must
+use the attested immutable Pages deployment URL.
 
-Production, staging mutations, D1/PostgreSQL writes, flags, grants and deploys
-are prohibited for this incident phase. The permitted next work is scoped PR
-rebase/fix/test/CI remediation and read-only verification only.
+This is still not evidence that the incident is operationally resolved. The
+remaining P0 gate is the authenticated unit-scope journey: authorized Novo
+Hamburgo, BarraShoppingSul, both units, no-unit denial, ADMIN override,
+recognized legacy alias and explicit cross-unit denial. Production, production
+identities, flags, grants and production data remain prohibited.
