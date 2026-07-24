@@ -55,11 +55,11 @@ test('unit selection remains available after the shell loads a module directly',
 
 test('a Finance chunk failure does not take down the shell or another module', async ({ page }) => {
   await mockAuthenticatedShell(page)
-  await page.route('**/FinanceModule.tsx*', async (route) => route.abort('failed'))
+  await page.route('**/finance-module.js*', async (route) => route.abort('failed'))
   await page.goto('/?module=finance')
 
-  await expect(page.getByText('Este módulo está indisponível')).toBeVisible({ timeout: 30_000 })
-  await expect(page.getByText(/falha foi isolada/i)).toBeVisible()
+  await expect(page.getByTestId('finance-remote-unavailable')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText(/versão independente do Financeiro não pôde ser carregada/i)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Insumos' })).toBeVisible()
 
   // Vite's development error overlay is outside the application shell. Dismiss it

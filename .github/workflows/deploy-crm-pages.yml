@@ -123,6 +123,7 @@ jobs:
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         env:
           VITE_BUILD_SHA: ${{ needs.promotion.outputs.source_sha }}
+          VITE_FINANCE_MODULE_URL: ${{ vars.FINANCE_UI_MODULE_URL }}
         run: npm run build
         working-directory: crm/console
 

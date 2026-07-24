@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createGatewayHandler } from '../src/router.js';
-import { createApiGateway, enforceFinanceRateLimit } from '../src/gateway.js';
+import { createApiGateway, forwardFinanceToService, handleGatewayRequest } from '../src/gateway.js';
+import { verifySignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
+import { resetBoundServiceResilienceForTest } from '../../shared/service-adapters/cloudflare-service-binding.js';
 
 const calls = [];
 const gateway = createGatewayHandler({
@@ -45,6 +47,45 @@ test('inventory is mounted without retaining the legacy public prefix', async ()
     assert.equal(calls.at(-1).search, '?unidade=nh');
 });
 
+test('default gateway reaches Inventory through the explicit service binding', async () => {
+    resetBoundServiceResilienceForTest();
+    let receivedPath = null;
+    const response = await handleGatewayRequest(
+        new Request('https://api.skincos.com.br/inventory/insumos?unidade=nh', { headers: { 'x-request-id': 'inventory-binding-1' } }),
+        { INVENTORY: { fetch: async (request) => { receivedPath = new URL(request.url).pathname; return new Response('inventory-binding-ok'); } } },
+        {},
+    );
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'inventory-binding-ok');
+    assert.equal(receivedPath, '/insumos');
+    assert.equal(response.headers.get('x-request-id'), 'inventory-binding-1');
+});
+
+test('an unavailable optional Inventory binding degrades only its route and leaves gateway health operational', async () => {
+    resetBoundServiceResilienceForTest();
+    const inventory = await handleGatewayRequest(new Request('https://api.skincos.com.br/inventory/insumos'), {}, {});
+    assert.equal(inventory.status, 503);
+    assert.equal((await inventory.json()).pendingSynchronization, true);
+    assert.equal(inventory.headers.get('x-skincos-dependency-status'), 'unavailable');
+    const health = await handleGatewayRequest(new Request('https://api.skincos.com.br/health'), {}, {});
+    assert.equal(health.status, 200);
+});
+
+test('a timing-out optional Workforce binding degrades only workforce and opens a circuit', async () => {
+    resetBoundServiceResilienceForTest();
+    const env = { TIMEKEEPING: { fetch: () => new Promise(() => {}) } };
+    const first = await handleGatewayRequest(new Request('https://api.skincos.com.br/api/ponto/health'), env, {});
+    assert.equal(first.status, 503);
+    assert.equal(first.headers.get('x-skincos-sync-state'), 'pending');
+    const second = await handleGatewayRequest(new Request('https://api.skincos.com.br/api/ponto/health'), env, {});
+    assert.equal(second.status, 503);
+    const open = await handleGatewayRequest(new Request('https://api.skincos.com.br/api/ponto/health'), env, {});
+    assert.equal(open.status, 503);
+    assert.equal(open.headers.get('x-skincos-dependency-status'), 'circuit-open');
+    const health = await handleGatewayRequest(new Request('https://api.skincos.com.br/health'), env, {});
+    assert.equal(health.status, 200);
+});
+
 test('workforce owns the canonical public Ponto mount', async () => {
     const response = await gateway(new Request('https://api.skincos.com.br/api/ponto/health', { headers: { 'x-request-id': 'ponto-1' } }), {}, {});
     assert.equal(response.status, 200);
@@ -71,7 +112,7 @@ test('internal paths require a private service identity', async () => {
     assert.equal((await permitted.json()).error, 'internal_route_not_found');
 });
 
-test('finance gateway enforces CSRF before the domain and fails closed when its distributed limiter rejects', async () => {
+test('finance gateway enforces the cross-domain CSRF envelope before forwarding', async () => {
   let domainCalls = 0;
   const rateLimited = createApiGateway({
     inventoryHandler: async () => new Response('inventory'),
@@ -81,34 +122,57 @@ test('finance gateway enforces CSRF before the domain and fails closed when its 
   const csrfDenied = await rateLimited(new Request('https://api.skincos.com.br/finance/accounts', { method: 'POST', headers: { 'idempotency-key': 'x' } }), {}, {});
   assert.equal(csrfDenied.status, 403); assert.equal(domainCalls, 0);
 
-  const limiter = { idFromName: () => 'finance-limiter', get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: false }), { headers: { 'content-type': 'application/json' } }) }) };
-  const blocked = await rateLimited(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), { RATE_LIMITER: limiter }, {});
-  assert.equal(blocked.status, 429); assert.equal((await blocked.json()).error, 'FINANCE_RATE_LIMITED'); assert.equal(domainCalls, 0);
+  const allowed = await rateLimited(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), {}, {});
+  assert.equal(allowed.status, 200); assert.equal(domainCalls, 1);
 });
 
-test('finance gateway passes only an authenticated, CSRF-valid request after the limiter allows it', async () => {
+test('Finance health probes bypass user identity but remain isolated to the Finance binding', async () => {
+  resetBoundServiceResilienceForTest();
+  let receivedPath = null;
+  const response = await handleGatewayRequest(new Request('https://api.skincos.com.br/finance/health'), {
+    FINANCE: { fetch: async (request) => { receivedPath = new URL(request.url).pathname; return new Response(JSON.stringify({ ok: true, unit: 'finance' }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {});
+  assert.equal(response.status, 200);
+  assert.equal(receivedPath, '/health');
+  assert.equal((await response.json()).unit, 'finance');
+});
+
+test('finance gateway passes only an authenticated, CSRF-valid request', async () => {
   let seenPath = null;
   const gateway = createApiGateway({
     inventoryHandler: async () => new Response('inventory'),
     financeDomainHandler: async (request) => { seenPath = new URL(request.url).pathname; return new Response('finance-ok'); },
     resolveActor: async () => ({ actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' }),
   });
-  const limiter = { idFromName: () => 'finance-limiter', get: () => ({ fetch: async () => new Response(JSON.stringify({ allowed: true }), { headers: { 'content-type': 'application/json' } }) }) };
-  const allowed = await gateway(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), { RATE_LIMITER: limiter }, {});
+  const allowed = await gateway(new Request('https://api.skincos.com.br/finance/imports', { method: 'POST', headers: { 'x-csrf-token': 'csrf-ok', 'idempotency-key': 'x' } }), {}, {});
   assert.equal(allowed.status, 200); assert.equal(seenPath, '/imports');
 });
 
-test('finance rate limits reads, writes and imports in independent buckets', async () => {
-  const limiterRequests = [];
-  const limiter = { idFromName: () => 'finance-limiter', get: () => ({ fetch: async (input) => { limiterRequests.push(String(input)); return new Response(JSON.stringify({ allowed: true }), { headers: { 'content-type': 'application/json' } }); } }) };
-  const env = { RATE_LIMITER: limiter };
-  const actor = { username: 'pilot' };
-  await enforceFinanceRateLimit(new Request('https://api.skincos.com.br/overview'), env, actor);
-  await enforceFinanceRateLimit(new Request('https://api.skincos.com.br/accounts', { method: 'POST' }), env, actor);
-  await enforceFinanceRateLimit(new Request('https://api.skincos.com.br/imports', { method: 'POST' }), env, actor);
-  expectQuery(limiterRequests[0], 'key=finance:read&limit=240');
-  expectQuery(limiterRequests[1], 'key=finance:write&limit=60');
-  expectQuery(limiterRequests[2], 'key=finance:import&limit=12');
+test('an unavailable Identity resolver is contained to Finance', async () => {
+  let financeCalls = 0;
+  const isolated = createApiGateway({
+    inventoryHandler: async () => new Response('inventory-ok'),
+    resolveActor: async () => ({ actor: null, csrf: null, unavailable: true }),
+    financeDomainHandler: async () => { financeCalls += 1; return new Response('must-not-run'); },
+  });
+  const finance = await isolated(new Request('https://api.skincos.com.br/finance/overview'), {}, {});
+  assert.equal(finance.status, 503);
+  assert.equal((await finance.json()).error, 'IDENTITY_UNAVAILABLE');
+  assert.equal(financeCalls, 0);
+  const inventory = await isolated(new Request('https://api.skincos.com.br/inventory/insumos'), {}, {});
+  assert.equal(inventory.status, 200);
+  assert.equal(await inventory.text(), 'inventory-ok');
 });
 
-function expectQuery(url, expected) { assert.ok(url.includes(expected), `${url} should include ${expected}`); }
+test('Finance is reached through an explicit service binding with a short-lived signed actor context', async () => {
+  let received = null;
+  const response = await forwardFinanceToService(new Request('https://api.skincos.com.br/overview', { headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-binding-1' } }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
+    FINANCE: { fetch: async (request) => { received = request; return new Response('finance-binding-ok'); } },
+  }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), 'finance-binding-ok');
+  assert.equal(received.headers.get('cookie'), null);
+  assert.equal(received.headers.get('x-csrf-token'), null);
+  assert.equal((await verifySignedDomainContext(received, 'finance-secret', 'finance')).actor.username, 'pilot');
+});
