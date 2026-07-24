@@ -23,3 +23,5 @@ jobs:
         run: node .github/scripts/validate-domain-boundaries.mjs
       - name: Validate reproducible staging manifest
         run: node .github/scripts/validate-staging-manifest.mjs
+      - name: Validate staging bootstrap safety guards
+        run: node .github/scripts/validate-staging-scripts.mjs
