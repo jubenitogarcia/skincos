@@ -1,7 +1,7 @@
 # Pacote de piloto do Financeiro — proposta para aprovação nominal
 
-**Estado:** rascunho bloqueado; não autoriza ativação.  
-**Maturidade atual:** `experimental`.  
+**Estado:** rascunho bloqueado; não autoriza ativação.
+**Maturidade atual:** `experimental`.
 **Ambiente:** o pacote só poderá ser usado depois de evidência completa em staging e de uma aprovação nominal independente para produção.
 
 Este documento é deliberadamente um contrato de revisão. Campos marcados como
