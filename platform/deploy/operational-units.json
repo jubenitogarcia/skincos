@@ -4,13 +4,35 @@
     {
       "id": "core-workers",
       "workflow": ".github/workflows/deploy-core-workers.yml",
-      "concurrencyPrefix": "deploy-core-workers-",
+      "concurrencyPrefix": "deploy-core-worker-",
       "publishes": ["Worker:skincos-api", "Worker:skincos-insumos"],
       "resources": ["api gateway Worker", "inventory Worker", "skincos-db", "skincos-db-staging"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
       "migrationPaths": ["inventory/migrations"],
       "environments": ["preview", "staging", "production"],
       "promotion": {"stagingSupported": true, "financeIncluded": true}
+    },
+    {
+      "id": "finance",
+      "workflow": ".github/workflows/deploy-finance.yml",
+      "concurrencyPrefix": "deploy-finance-",
+      "publishes": ["Worker:skincos-finance", "Worker:skincos-finance-staging"],
+      "resources": ["Finance Worker", "skincos-finance D1", "skincos-finance-staging D1", "Finance module-control KV per environment"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "FINANCE_SERVICE_AUTH_SECRET", "FINANCE_BACKUP_PASSPHRASE"],
+      "migrationPaths": ["finance/migrations"],
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled"}
+    },
+    {
+      "id": "finance-ui",
+      "workflow": ".github/workflows/deploy-finance-ui.yml",
+      "concurrencyPrefix": "deploy-finance-ui-",
+      "publishes": ["Pages:skincos-finance-ui", "Pages:skincos-finance-ui-staging"],
+      "resources": ["Finance Pages bundle", "skincos-finance-ui Pages project", "skincos-finance-ui-staging Pages project"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
+      "migrationPaths": [],
+      "environments": ["preview", "staging", "production"],
+      "promotion": {"stagingSupported": true, "featureFlagDefault": "disabled"}
     },
     {
       "id": "crm-pages",

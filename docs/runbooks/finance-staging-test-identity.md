@@ -14,6 +14,12 @@
 
 A senha não fica no Git, em secret de produção, cookie ou sessão compartilhada. A credencial atual fica cifrada por DPAPI no runtime privado do operador. Cookies emitidos pelo login são host-only para `api-staging.skincos.com.br` e não devem ser enviados a nenhuma origem de produção.
 
+Para o canary automatizado, a mesma senha é copiada apenas para o secret do
+environment GitHub `staging` chamado `FINANCE_STAGING_CANARY_PASSWORD`. Não há
+fallback para secret de repositório ou produção. O workflow
+`finance-staging-canary.yml` fixa o username e o escopo acima e restaura o
+grant `viewer` e `module_enabled=false` mesmo quando a jornada falha.
+
 ## Criação
 
 1. Confirme o alvo com `npx wrangler d1 info skincos-db-staging` e confirme que `finance_settings.module_enabled=false` antes de escrever.

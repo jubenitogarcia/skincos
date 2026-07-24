@@ -37,6 +37,34 @@
       "paths": ["shared/module-sdk/**"],
       "consumers": ["*"],
       "owner": "shared"
+    },
+    {
+      "id": "service-binding-adapter-v1",
+      "kind": "adapter",
+      "paths": ["shared/service-adapters/**"],
+      "consumers": ["api", "finance"],
+      "owner": "platform"
+    },
+    {
+      "id": "module-availability-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/module-availability/**"],
+      "consumers": ["finance", "workforce"],
+      "owner": "platform"
+    },
+    {
+      "id": "observability-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/observability/**"],
+      "consumers": ["api", "finance", "workforce"],
+      "owner": "platform"
+    },
+    {
+      "id": "resilience-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/resilience/**"],
+      "consumers": ["shared"],
+      "owner": "platform"
     }
   ],
   "recommendedContracts": [
@@ -57,9 +85,9 @@
     {
       "from": "api",
       "to": "finance",
-      "contractId": "module-sdk-v1",
-      "path": "shared/module-sdk/README.md",
-      "usage": "publish a gateway-to-Finance adapter before importing Finance implementation"
+      "contractId": "service-binding-adapter-v1",
+      "path": "shared/service-adapters/cloudflare-service-binding.js",
+      "usage": "use the service-binding adapter instead of importing Finance implementation"
     },
     {
       "from": "finance",
@@ -78,25 +106,11 @@
   ],
   "legacyDirectImports": [
     {
-      "from": "api/src/gateway.js",
-      "specifier": "../../inventory/src/worker.js",
-      "replacementContractId": "module-sdk-v1",
-      "deadline": "2026-09-30",
-      "reason": "The gateway currently mounts the Inventory Worker implementation while the service-binding adapter is introduced."
-    },
-    {
       "from": "api/workers/index.js",
       "specifier": "../../inventory/src/worker.js",
       "replacementContractId": "module-sdk-v1",
       "deadline": "2026-09-30",
       "reason": "The gateway entrypoint re-exports Inventory runtime classes and must move to a stable service boundary."
-    },
-    {
-      "from": "api/src/gateway.js",
-      "specifier": "../../finance/api/worker.js",
-      "replacementContractId": "module-sdk-v1",
-      "deadline": "2026-09-30",
-      "reason": "Finance remains mounted by the gateway until its independently deployed service adapter is available."
     },
     {
       "from": "crm/console/tests/insumosShareRoutes.test.ts",

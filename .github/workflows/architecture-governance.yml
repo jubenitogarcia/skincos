@@ -29,3 +29,5 @@ jobs:
         run: node .github/scripts/validate-staging-postgres.mjs
       - name: Validate external observability catalog
         run: node scripts/observability/validate-catalog.mjs
+      - name: Validate Finance synthetic canary policy
+        run: node .github/scripts/validate-finance-canary-policy.mjs

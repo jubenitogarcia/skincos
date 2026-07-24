@@ -150,7 +150,10 @@ export function createFinanceHandler() {
       if (registrationLifecycleMatch && request.method === 'POST') { requireScope(true); const [, collection, entityId, action] = registrationLifecycleMatch; const payload = await body(); const result = await mutate(payload, async () => {
         const table = { accounts: 'finance_accounts', categories: 'finance_categories', payees: 'finance_payees', tags: 'finance_tags', 'cost-centers': 'finance_cost_centers' }[collection]; const entityType = { accounts: 'account', categories: 'category', payees: 'payee', tags: 'tag', 'cost-centers': 'costCenter' }[collection];
         const record = await scoped(table, entityId); if (!record) throw new FinanceContractError('NOT_FOUND', 'Cadastro não encontrado.');
-        const active = action === 'restore' ? 1 : 0; const changed = Number(record.active) !== active; const statements = [env.DB.prepare(`UPDATE ${table} SET active=?,updated_at=? WHERE id=? AND scope_id=?`).bind(active, now(), entityId, scopeId)];
+        const active = action === 'restore' ? 1 : 0; const changed = Number(record.active) !== active; const lifecycleUpdate = collection === 'tags'
+          ? env.DB.prepare(`UPDATE finance_tags SET active=? WHERE id=? AND scope_id=?`).bind(active, entityId, scopeId)
+          : env.DB.prepare(`UPDATE ${table} SET active=?,updated_at=? WHERE id=? AND scope_id=?`).bind(active, now(), entityId, scopeId);
+        const statements = [lifecycleUpdate];
         if (record.ledger_account_id) statements.push(env.DB.prepare(`UPDATE finance_ledger_accounts SET active=? WHERE id=? AND scope_id=?`).bind(active, record.ledger_account_id, scopeId));
         statements.push(auditStatement(`${entityType.replace(/([A-Z])/g, '_$1').toUpperCase()}_${action === 'restore' ? 'RESTORED' : 'ARCHIVED'}`, entityType, entityId, { active: Number(record.active) }, { active }));
         return { data: { ok: true, id: entityId, active: Boolean(active), changed }, statements };

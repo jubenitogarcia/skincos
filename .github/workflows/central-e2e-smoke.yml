@@ -34,6 +34,8 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Start frontend (dev server)
+        env:
+          VITE_FINANCE_MODULE_URL: http://127.0.0.1:5173/finance-module.js
         run: |
           set -euxo pipefail
           cd crm/console

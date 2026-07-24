@@ -1,0 +1,208 @@
+name: Deploy Finance Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Isolated environment
+        required: true
+        default: staging
+        type: choice
+        options: [preview, staging, production]
+      release_sha:
+        description: Immutable main commit to promote or restore
+        required: true
+        type: string
+      operation:
+        description: Deploy a release or restore a previous release SHA
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback]
+      bootstrap_service_secret:
+        description: Set the Finance service secret once before the first staging version upload
+        required: true
+        default: false
+        type: boolean
+      staging_run_id:
+        description: Required for production; successful Finance staging run for this exact SHA
+        required: false
+        type: string
+      preview_run_id:
+        description: Required for staging; successful Finance preview for this exact SHA
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-finance-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  promotion:
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: finance
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+  release:
+    needs: promotion
+    if: ${{ inputs.target != 'preview' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+      - name: Verify immutable release
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checked-out source does not match promotion evidence'; exit 1; }
+      - name: Guard isolated bindings and secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_ID: ${{ inputs.target == 'production' && vars.FINANCE_D1_PRODUCTION_ID || vars.FINANCE_D1_STAGING_ID }}
+          CONTROL_KV_ID: ${{ inputs.target == 'production' && vars.FINANCE_CONTROL_PRODUCTION_KV_ID || vars.FINANCE_CONTROL_STAGING_KV_ID }}
+          STAGING_WORKER_URL: ${{ vars.FINANCE_STAGING_WORKER_URL }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID CONTROL_KV_ID; do [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }; done
+          [[ "$D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid Finance D1 id'; exit 1; }
+          [[ "$CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid Finance control KV id'; exit 1; }
+          if [[ "$TARGET" == staging ]]; then
+            [[ "$STAGING_WORKER_URL" =~ ^https://[^/]+$ ]] || { echo 'Missing or invalid FINANCE_STAGING_WORKER_URL'; exit 1; }
+          fi
+      - name: Validate Finance release source
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          npm --prefix finance ci --ignore-scripts
+          npm --prefix finance run check
+          npm --prefix finance test
+      - name: Render only target bindings in ephemeral checkout
+        env:
+          TARGET: ${{ inputs.target }}
+          D1_ID: ${{ inputs.target == 'production' && vars.FINANCE_D1_PRODUCTION_ID || vars.FINANCE_D1_STAGING_ID }}
+          CONTROL_KV_ID: ${{ inputs.target == 'production' && vars.FINANCE_CONTROL_PRODUCTION_KV_ID || vars.FINANCE_CONTROL_STAGING_KV_ID }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then
+            sed -i "s/__CONFIGURE_FINANCE_D1_ID__/$D1_ID/;s/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/$CONTROL_KV_ID/;s/__RELEASE_SHA__/$RELEASE_SHA/g" finance/wrangler.toml
+          else
+            sed -i "s/__CONFIGURE_FINANCE_STAGING_D1_ID__/$D1_ID/;s/__CONFIGURE_MODULE_CONTROL_STAGING_KV_ID__/$CONTROL_KV_ID/;s/__RELEASE_SHA__/$RELEASE_SHA/g" finance/wrangler.toml
+          fi
+      - name: Capture encrypted D1 checkpoint before migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+          FINANCE_BACKUP_PASSPHRASE: ${{ secrets.FINANCE_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          [[ -n "${FINANCE_BACKUP_PASSPHRASE:-}" ]] || { echo 'Missing FINANCE_BACKUP_PASSPHRASE'; exit 1; }
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-finance; else ENV_ARGS=(--env staging); DB=skincos-finance-staging; fi
+          plain="$RUNNER_TEMP/finance-${TARGET}-pre-migration-${GITHUB_SHA}.sql"
+          encrypted="${plain}.gpg"
+          npx --yes wrangler@4.112.0 d1 export "$DB" --remote --output "$plain" --config finance/wrangler.toml "${ENV_ARGS[@]}"
+          printf '%s' "$FINANCE_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
+          rm -f "$plain"
+          echo "CHECKPOINT=$encrypted" >> "$GITHUB_ENV"
+      - name: Upload encrypted D1 checkpoint
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: finance-${{ inputs.target }}-pre-migration-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ env.CHECKPOINT }}
+          retention-days: 30
+          if-no-files-found: error
+      - name: Apply additive migrations and upload immutable Finance version
+        if: inputs.operation == 'deploy'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SERVICE_SECRET: ${{ secrets.FINANCE_SERVICE_AUTH_SECRET }}
+          TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          BOOTSTRAP_SERVICE_SECRET: ${{ inputs.bootstrap_service_secret }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-finance; else ENV_ARGS=(--env staging); DB=skincos-finance-staging; fi
+          # D1 migrations must be atomic: execute each versioned SQL file together with
+          # its journal insert. `d1 migrations apply` splits trigger bodies and can leave
+          # a failed file without a journal entry; `d1 execute --file` imports atomically.
+          npx --yes wrangler@4.114.0 d1 execute "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}" --command 'CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL);'
+          for migration in finance/migrations/*.sql; do
+            name="$(basename "$migration")"
+            applied="$(npx --yes wrangler@4.114.0 d1 execute "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}" --command "SELECT 1 AS applied FROM d1_migrations WHERE name='$name' LIMIT 1;" --json | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));process.stdout.write(x[0]?.results?.[0]?.applied ? 'true' : 'false')")"
+            [[ "$applied" == true ]] && continue
+            batch="$RUNNER_TEMP/finance-migration-${name}"
+            { cat "$migration"; printf "\nINSERT INTO d1_migrations(name) VALUES ('%s');\n" "$name"; } > "$batch"
+            npx --yes wrangler@4.114.0 d1 execute "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}" --file "$batch"
+          done
+          if [[ "$BOOTSTRAP_SERVICE_SECRET" == "true" ]]; then
+            [[ "$TARGET" == "staging" ]] || { echo 'Finance service-secret bootstrap is staging-only.'; exit 1; }
+            [[ -n "${SERVICE_SECRET:-}" ]] || { echo 'Missing FINANCE_SERVICE_AUTH_SECRET.'; exit 1; }
+            printf '%s' "$SERVICE_SECRET" | npx --yes wrangler@4.112.0 secret put FINANCE_SERVICE_AUTH_SECRET --config finance/wrangler.toml "${ENV_ARGS[@]}"
+          fi
+          npx --yes wrangler@4.114.0 secret list --config finance/wrangler.toml "${ENV_ARGS[@]}" | grep -q 'FINANCE_SERVICE_AUTH_SECRET' || { echo 'FINANCE_SERVICE_AUTH_SECRET must be provisioned before release'; exit 1; }
+          upload_output="$(npx --yes wrangler@4.114.0 versions upload --config finance/wrangler.toml --keep-vars --message "finance:deploy:$RELEASE_SHA" "${ENV_ARGS[@]}")"
+          printf '%s\n' "$upload_output"
+          VERSION_ID="$(printf '%s\n' "$upload_output" | sed -n 's/^Worker Version ID: //p' | tail -n 1)"
+          [[ "$VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to capture immutable Finance Worker version ID'; exit 1; }
+          echo "FINANCE_VERSION_ID=$VERSION_ID" >> "$GITHUB_ENV"
+      - name: Resolve a previously uploaded version for rollback
+        if: inputs.operation == 'rollback'
+        env:
+          TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
+          FINANCE_VERSION_ID="$(npx --yes wrangler@4.112.0 versions list --config finance/wrangler.toml "${ENV_ARGS[@]}" --json | node -e "const fs=require('fs');const versions=JSON.parse(fs.readFileSync(0,'utf8'));const found=versions.find(x=>x.message===('finance:deploy:'+process.env.RELEASE_SHA));if(!found?.id)process.exit(1);process.stdout.write(found.id)")"
+          [[ -n "$FINANCE_VERSION_ID" ]] || { echo 'No prior Finance version for requested SHA'; exit 1; }
+          echo "FINANCE_VERSION_ID=$FINANCE_VERSION_ID" >> "$GITHUB_ENV"
+      - name: Deploy only the selected Finance version
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
+          [[ -n "${FINANCE_VERSION_ID:-}" ]] || { echo 'Finance version was not selected'; exit 1; }
+          npx --yes wrangler@4.112.0 versions deploy "${FINANCE_VERSION_ID}@100%" --yes --config finance/wrangler.toml "${ENV_ARGS[@]}"
+      - name: Smoke independently deployed Finance Worker
+        id: smoke
+        env:
+          TARGET: ${{ inputs.target }}
+          STAGING_WORKER_URL: ${{ vars.FINANCE_STAGING_WORKER_URL }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then URL=https://api.skincos.com.br/finance/health; else URL="$STAGING_WORKER_URL/health"; fi
+          code="$(curl --silent --show-error --output "$RUNNER_TEMP/finance-health.json" --write-out '%{http_code}' "$URL")"
+          [[ "$code" == 200 ]] || { cat "$RUNNER_TEMP/finance-health.json"; exit 1; }
+          node -e "const x=require(process.argv[1]);if(!x.ok||x.unit!=='finance')process.exit(1)" "$RUNNER_TEMP/finance-health.json"
+      - name: Write staging promotion evidence
+        if: inputs.target == 'staging'
+        env:
+          PROMOTION_UNIT: finance
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+      - if: inputs.target == 'staging'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-finance
+          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
+          retention-days: 14
