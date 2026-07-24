@@ -192,7 +192,7 @@ jobs:
           if [[ "$TARGET" == production ]]; then URL=https://api.skincos.com.br/finance/health; else URL="$STAGING_WORKER_URL/health"; fi
           code="$(curl --silent --show-error --output "$RUNNER_TEMP/finance-health.json" --write-out '%{http_code}' "$URL")"
           [[ "$code" == 200 ]] || { cat "$RUNNER_TEMP/finance-health.json"; exit 1; }
-          node -e "const x=require(process.argv[1]);if(!x.ok||x.module!=='finance')process.exit(1)" "$RUNNER_TEMP/finance-health.json"
+          node -e "const x=require(process.argv[1]);if(!x.ok||x.unit!=='finance')process.exit(1)" "$RUNNER_TEMP/finance-health.json"
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'
         env:
