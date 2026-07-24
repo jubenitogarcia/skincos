@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "jubenitogarcia/skincos",
+    "defaultBranch": "main",
+    "visibility": "public"
+  },
+  "target": {
+    "organization": null,
+    "repository": "skincos",
+    "visibility": "private",
+    "selectionRequired": ["organization slug", "two distinct GitHub owner accounts"]
+  },
+  "scopeGuards": {
+    "forbiddenInTransferWindow": ["production deploy", "database migration", "pilot activation", "feature-flag change"],
+    "previewMustNotDeploy": true,
+    "rollback": "Transfer the repository back to jubenitogarcia only while its original name remains available; otherwise preserve the private Organization repository and restore clone remotes to its verified URL."
+  },
+  "teamBlueprint": [
+    {"slug": "skincos-platform", "purpose": "GitHub, CI, deployment definitions, runbooks and shared operational controls", "permission": "maintain"},
+    {"slug": "skincos-crm", "purpose": "CRM shell, gateway, Identity compatibility and Atendimento", "permission": "push"},
+    {"slug": "skincos-finance", "purpose": "Finance domain, immutable releases and recovery evidence", "permission": "push"},
+    {"slug": "skincos-workforce", "purpose": "Ponto and Escala", "permission": "push"},
+    {"slug": "skincos-inventory", "purpose": "Inventory domain, stock recovery and data reconciliation", "permission": "push"},
+    {"slug": "skincos-web", "purpose": "Public website, advertising and social publication surfaces", "permission": "push"},
+    {"slug": "skincos-security", "purpose": "Rulesets, secret governance and incident review", "permission": "maintain"}
+  ],
+  "codeownersBlueprint": [
+    {"paths": ["/.github/", "/.githooks/", "/ops/", "/scripts/", "/docs/", "/orb/", "/db/"], "team": "skincos-platform"},
+    {"paths": ["/crm/", "/api/", "/backend/", "/frontend/", "/identity/", "/service/", "/booking/", "/integration/", "/messaging/"], "team": "skincos-crm"},
+    {"paths": ["/finance/"], "team": "skincos-finance"},
+    {"paths": ["/workforce/"], "team": "skincos-workforce"},
+    {"paths": ["/inventory/"], "team": "skincos-inventory"},
+    {"paths": ["/website/", "/ads/", "/social/"], "team": "skincos-web"},
+    {"paths": ["/shared/", "/platform/", "/.github/governance/"], "team": "skincos-security"}
+  ],
+  "requiredPostTransferChecks": [
+    "repository is private and has two Organization owners",
+    "team access and CODEOWNERS resolve to Organization teams",
+    "repository ruleset blocks force-push and deletion on main",
+    "staging and production environments remain distinct with protected branches",
+    "every GitHub Action remains SHA-pinned",
+    "CI succeeds without changing secrets, flags, migrations or deployments",
+    "a preview-only workflow proves the new owner/repository references without publishing"
+  ]
+}
