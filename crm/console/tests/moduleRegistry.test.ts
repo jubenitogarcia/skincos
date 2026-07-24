@@ -34,6 +34,6 @@ describe('CRM module registry', () => {
   })
 
   it('turns a rendering exception into an isolated module recovery state', () => {
-    expect(ModuleErrorBoundary.getDerivedStateFromError(new Error('synthetic render failure'))).toEqual({ error: true })
+    expect(ModuleErrorBoundary.getDerivedStateFromError()).toEqual({ error: true })
   })
 })

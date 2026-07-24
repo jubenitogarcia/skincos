@@ -30,6 +30,7 @@ async function mockAuthenticatedShell(page: Page, allowedModules: string[] = ['f
 }
 
 test('direct URLs retain an isolated maintenance state and keep other modules reachable', async ({ page }) => {
+  test.skip(process.env.E2E_MODULE_MAINTENANCE_KEY !== 'atendimento', 'Requires VITE_CRM_MAINTENANCE_MODULES=atendimento in the test server.')
   await mockAuthenticatedShell(page)
   await page.goto('/?module=atendimento')
 
