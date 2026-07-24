@@ -2,6 +2,19 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-24T22:20:00Z",
+      "surface": "github-and-staging",
+      "scope": "P0 Insumos lineage reconciliation",
+      "state": "staging evidence stale",
+      "method": "origin/main ancestry, PR merge metadata #763 and #771–#779, artifact manifests from preview/staging runs 30125747962, 30125749745, 30125805545, 30125807334, journey run 30129792473, and source comparison f276… versus merge #776",
+      "result": "origin/main is b8c356baf90b33cef834417cb75ddd172a0b0a9. All historical artifacts and the journey explicitly attest f276919ce6a63b337bd02bd0c3799dbf38f13b97 with sourceTree 785a37a569674aee3ee9cfa6c01d8c55878fd066. That SHA is merge #770, before #771–#779. Functional PR #776 merged as 7ba0c11d8a98ff87262b13e268892191120c8544 and changes InsumosModule canUseApi to require authenticated identity and an authorized unit; the fail-closed expression is absent from f276…",
+      "limitation": "The synthetic journey remains valid as historical evidence for the older artifact but is stale for production. No production deploy, user, flag, grant or data mutation occurred in this reconciliation. A new candidate from current main and a complete preview/staging/journey cycle are required.",
+      "sha": "b8c356baf90b33cef834417cb75ddd172a0b0a9",
+      "pr": null,
+      "historical_runs": [30125747962, 30125749745, 30125805545, 30125807334, 30129792473],
+      "missing_functional_merge": "7ba0c11d8a98ff87262b13e268892191120c8544"
+    },
+    {
       "observed_at": "2026-07-24T22:06:03Z",
       "surface": "github-and-staging",
       "scope": "P0 Insumos unit access closure",
