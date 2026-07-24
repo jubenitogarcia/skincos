@@ -86,6 +86,20 @@ units=(
   orb-backup.service
 )
 
+# crm-jobs is rendered and installed with the native release, but it remains
+# disabled until a reviewed staging run explicitly enables it. This prevents a
+# general lifecycle install or host reboot from activating a new worker path.
+enabled_units=(
+  orb.service
+  orb-proxy.service
+  messaging-whatsapp.service
+  crm.service
+  booking.service
+  cloudflare-orb.service
+  cloudflare-runtime.service
+  orb-backup.service
+)
+
 render_dir="$(mktemp -d)"
 trap 'rm -rf "$render_dir"' EXIT
 rendered=()
@@ -121,6 +135,6 @@ if [[ "$APPLY" == "1" ]]; then
     sudo -n install -m 0644 "${rendered[$index]}" "$UNIT_DEST/${units[$index]}"
   done
   sudo -n systemctl daemon-reload
-  sudo -n systemctl enable "${units[@]}" >/dev/null
-  echo "Lifecycle units installed. Windows Task Scheduler exclusively owns the Orb backup schedule."
+  sudo -n systemctl enable "${enabled_units[@]}" >/dev/null
+  echo "Lifecycle units installed. crm-jobs.service remains disabled until the reviewed staging runbook enables it. Windows Task Scheduler exclusively owns the Orb backup schedule."
 fi

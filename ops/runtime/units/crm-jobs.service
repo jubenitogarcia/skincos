@@ -10,6 +10,7 @@ Group=skincos
 WorkingDirectory=__REPO_ROOT__
 Environment=CRM_RUNTIME_HOME=__STATE_ROOT__/crm
 Environment=SKINCOS_CRM_API_ENV_FILE=__CONFIG_ROOT__/crm.env
+Environment=SKINCOS_CRM_JOBS_ENV_FILE=__CONFIG_ROOT__/crm-jobs.env
 Environment=VAR_DIR=__STATE_ROOT__/crm/var
 Environment=CRM_CONTINUOUS_WORKER_PORT=8102
 EnvironmentFile=-__CONFIG_ROOT__/crm.env
