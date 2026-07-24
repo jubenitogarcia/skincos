@@ -156,8 +156,10 @@ jobs:
             printf '%s' "$SERVICE_SECRET" | npx --yes wrangler@4.112.0 secret put FINANCE_SERVICE_AUTH_SECRET --config finance/wrangler.toml "${ENV_ARGS[@]}"
           fi
           npx --yes wrangler@4.114.0 secret list --config finance/wrangler.toml "${ENV_ARGS[@]}" | grep -q 'FINANCE_SERVICE_AUTH_SECRET' || { echo 'FINANCE_SERVICE_AUTH_SECRET must be provisioned before release'; exit 1; }
-          WRANGLER_OUTPUT_FILE="$RUNNER_TEMP/finance-upload.jsonl" npx --yes wrangler@4.112.0 versions upload --config finance/wrangler.toml --keep-vars --message "finance:deploy:$RELEASE_SHA" "${ENV_ARGS[@]}"
-          VERSION_ID="$(node -e "const fs=require('fs');const items=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).map(JSON.parse);const item=items.reverse().find(x=>x.type==='version-upload');if(!item?.version_id)process.exit(1);process.stdout.write(item.version_id)" "$RUNNER_TEMP/finance-upload.jsonl")"
+          upload_output="$(npx --yes wrangler@4.114.0 versions upload --config finance/wrangler.toml --keep-vars --message "finance:deploy:$RELEASE_SHA" "${ENV_ARGS[@]}")"
+          printf '%s\n' "$upload_output"
+          VERSION_ID="$(printf '%s\n' "$upload_output" | sed -n 's/^Worker Version ID: //p' | tail -n 1)"
+          [[ "$VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to capture immutable Finance Worker version ID'; exit 1; }
           echo "FINANCE_VERSION_ID=$VERSION_ID" >> "$GITHUB_ENV"
       - name: Resolve a previously uploaded version for rollback
         if: inputs.operation == 'rollback'
