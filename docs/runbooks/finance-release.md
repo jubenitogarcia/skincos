@@ -7,14 +7,28 @@
 3. `deploy-finance.yml` em `preview` para o SHA de `main`.
 4. `deploy-finance.yml` e `deploy-finance-ui.yml` em `staging`, ambos com o mesmo `release_sha` e `preview_run_id`. Cada migration Financeiro é importada junto ao seu registro em `d1_migrations`, de forma atômica; uma falha não deixa schema sem journal.
 5. Conferir `health`, `readiness`, versão, dependências, logs estruturados, alertas e os artefatos `promotion-evidence-finance` e `promotion-evidence-finance-ui`.
-6. Ativar `canary` pelo `module-availability.yml` apenas para atores-piloto; manter `module_enabled=false` até os grants e dados de teste controlados estarem confirmados.
+6. Executar `finance-staging-canary.yml` somente depois do deploy de staging do mesmo SHA. O workflow é o único caminho que abre `canary`: ele exige a evidência do run de staging, aplica allowlist do ator sintético, coorte de unidade, percentual determinístico e SHA do Worker. O `module-availability.yml` não abre canary.
 7. Para produção, usar o mesmo SHA e os dois `staging_run_id`; a aprovação do Environment é manual.
 
 ## Kill switch e manutenção
 
 - `maintenance`: responde 503 somente para Financeiro, com `x-skincos-module-state=maintenance`.
 - `disabled`: responde 423 somente para Financeiro; CRM, Inventory, Ponto e navegação continuam disponíveis.
-- `canary`: só os atores explicitamente listados no controle podem alcançar a API; demais usuários recebem 403.
+- `canary`: exige simultaneamente allowlist, unidade, bucket percentual determinístico e SHA promovido; qualquer campo ausente falha fechado com 403/503. A política atual permite somente `finance-staging-monitor` em `novo-hamburgo` no staging.
+
+## Canary sintético e limites automáticos
+
+`ops/module-governance/finance-staging-canary-policy.json` é validado pelo CI e
+declara os únicos ator e unidade permitidos, além dos limites para erros, p95,
+autenticação, jornada, divergência de dados, auditoria e dependências. O
+workflow registra relatório sanitizado e decisão como artefato por 90 dias.
+
+Ao exceder qualquer limite, o workflow grava `disabled` no KV, define
+`module_enabled=false` antes de restaurar a baseline segura (`active` com a
+feature desligada) e encerra com falha explícita. `mode=abort-drill` injeta uma
+violação de métrica sem indisponibilizar dependências, para comprovar esse
+caminho apenas em staging. Nenhuma dessas execuções altera produção, grants de
+usuários reais ou a coorte de produção.
 
 ## Rollback e restore
 
