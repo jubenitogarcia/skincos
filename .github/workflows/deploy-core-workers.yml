@@ -96,6 +96,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           FINANCE_SERVICE_AUTH_SECRET: ${{ secrets.FINANCE_SERVICE_AUTH_SECRET }}
+          IDENTITY_PII_KEY: ${{ secrets.IDENTITY_PII_KEY }}
+          IDENTITY_WORKFORCE_HMAC_KEY: ${{ secrets.IDENTITY_WORKFORCE_HMAC_KEY }}
           TARGET: ${{ inputs.target }}
           UNIT: ${{ inputs.unit }}
           BOOTSTRAP_FINANCE_CONTEXT: ${{ inputs.bootstrap_finance_context }}
@@ -110,6 +112,10 @@ jobs:
             environment_var=(--var "ENVIRONMENT:production")
           fi
           if [[ "$UNIT" == "inventory" || "$UNIT" == "all" ]]; then
+            [[ -n "${IDENTITY_PII_KEY:-}" && -n "${IDENTITY_WORKFORCE_HMAC_KEY:-}" ]] || { echo 'Missing Identity onboarding secrets.'; exit 1; }
+            for name in IDENTITY_PII_KEY IDENTITY_WORKFORCE_HMAC_KEY; do
+              printf '%s' "${!name}" | npx --yes wrangler@3 secret put "$name" --config inventory/wrangler.toml "${env_args[@]}" >/dev/null
+            done
             npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars "${env_args[@]}"
           fi
           if [[ "$UNIT" == "api" || "$UNIT" == "all" ]]; then

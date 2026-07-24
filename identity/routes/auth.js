@@ -631,6 +631,12 @@ export async function handleAuthRoutes({
                 if (!changed?.[0]?.meta?.changes || !changed?.[1]?.meta?.changes) {
                     return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXHAUSTED" }), { status: 409 }, appOrigin);
                 }
+                try {
+                    await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='ACTIVE', updated_at=? WHERE invite_id=? AND account_status='INVITED'").bind(currentTime, invite.id).run();
+                } catch {
+                    // Additive onboarding migration may not be deployed yet;
+                    // successful legacy invitation registration stays valid.
+                }
 
                 const userDb = await d1.getUserByUsername(candidate);
                 const user = userDb

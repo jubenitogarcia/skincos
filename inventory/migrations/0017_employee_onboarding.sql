@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS crm_employee_onboarding (
   units_json TEXT NOT NULL,
   account_status TEXT NOT NULL CHECK (account_status IN ('PENDING_ACCESS','INVITED','ACTIVE','SUSPENDED','TERMINATED')),
   invite_id TEXT,
+  workforce_employee_id TEXT,
   idempotency_key TEXT,
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL,

@@ -5,7 +5,7 @@ import { resolveCrmTables } from '../d1Store.js';
 import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
 import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
-import { canCreateEmployee, displayJobTitle, publicOnboarding, validateOnboardingInput } from '../../../identity/policy/employeeOnboarding.js';
+import { canCreateEmployee, displayJobTitle, publicOnboarding, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'];
 const ROLE_INVITES = ['GESTOR'];
@@ -209,6 +209,35 @@ async function encryptOnboardingPii(env, value) {
   return `v1.${bytesToB64UrlPii(iv)}.${bytesToB64UrlPii(new Uint8Array(encrypted))}`;
 }
 
+async function workforceSignature(secret, timestamp, bodyHash) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${bodyHash}`));
+  return btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function syncWorkforceOnboarding(env, payload) {
+  if (!env?.WORKFORCE?.fetch) throw new Error('WORKFORCE_SERVICE_NOT_CONFIGURED');
+  const secret = String(env?.IDENTITY_WORKFORCE_HMAC_KEY || '').trim();
+  if (!secret) throw new Error('IDENTITY_WORKFORCE_HMAC_KEY_NOT_CONFIGURED');
+  const raw = JSON.stringify(payload);
+  const bodyHash = await sha256Hex(raw);
+  const timestamp = String(Date.now());
+  const response = await env.WORKFORCE.fetch('https://workforce/api/ponto/internal/onboarding', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-skincos-service': 'identity',
+      'x-skincos-workforce-ts': timestamp,
+      'x-skincos-workforce-sig': await workforceSignature(secret, timestamp, bodyHash),
+      'x-request-id': `identity-onboarding-${payload.onboardingId}`,
+    },
+    body: raw,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result?.ok) throw new Error(String(result?.error || `WORKFORCE_SYNC_${response.status}`));
+  return result.data || null;
+}
+
 export async function handleAdminRoutes({
   request,
   url,
@@ -283,12 +312,25 @@ export async function handleAdminRoutes({
       if (existingOnboarding) return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
 
       const at = new Date().toISOString();
-      const id = crypto.randomUUID();
+      // Stable across a safe client retry: Workforce can identify a prior
+      // successful synchronization even if Identity fails before persistence.
+      const id = await sha256Hex(`employee-onboarding:v1:${input.corporateEmail}`);
       const needsAccessConfiguration = input.accountStatus === 'PENDING_ACCESS';
       // Fail before creating a usable invite if the PII encryption boundary is
       // not configured in this deployment.
       const encryptedPersonal = await encryptOnboardingPii(env, input.personalEmail);
       const encryptedPhone = await encryptOnboardingPii(env, input.mobilePhone);
+      const workforce = await syncWorkforceOnboarding(env, {
+        onboardingId: id,
+        fullName: input.fullName,
+        corporateEmail: input.corporateEmail,
+        mobilePhoneHash: await sha256Hex(input.mobilePhone),
+        units: input.units,
+        profile: input.profile,
+        jobTitle: displayJobTitle(input.profile),
+        department: input.department,
+        createdBy: String(auth?.user?.username || ''),
+      });
       let inviteId = null;
       if (!needsAccessConfiguration) {
         const token = randomInviteToken();
@@ -307,11 +349,11 @@ export async function handleAdminRoutes({
           throw error;
         }
       }
-      await env.DB.prepare(`INSERT INTO crm_employee_onboarding (id, full_name, corporate_email, personal_email_encrypted, personal_email_hash, mobile_phone_encrypted, mobile_phone_hash, profile, job_title, department_name, units_json, account_status, invite_id, idempotency_key, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
-        id, input.fullName, input.corporateEmail, encryptedPersonal, await sha256Hex(input.personalEmail), encryptedPhone, await sha256Hex(input.mobilePhone), input.profile, displayJobTitle(input.profile), input.department, JSON.stringify(input.units), input.accountStatus, inviteId, idempotency || null, String(auth?.user?.username || ''), at, at,
+      await env.DB.prepare(`INSERT INTO crm_employee_onboarding (id, full_name, corporate_email, personal_email_encrypted, personal_email_hash, mobile_phone_encrypted, mobile_phone_hash, profile, job_title, department_name, units_json, account_status, invite_id, workforce_employee_id, idempotency_key, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        id, input.fullName, input.corporateEmail, encryptedPersonal, await sha256Hex(input.personalEmail), encryptedPhone, await sha256Hex(input.mobilePhone), input.profile, displayJobTitle(input.profile), input.department, JSON.stringify(input.units), input.accountStatus, inviteId, workforce?.employeeId || null, idempotency || null, String(auth?.user?.username || ''), at, at,
       ).run();
       const created = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(id).first();
-      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId } });
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId, workforceEmployeeId: workforce?.employeeId || null } });
       return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created) }), { status: 201 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_FAILED');
