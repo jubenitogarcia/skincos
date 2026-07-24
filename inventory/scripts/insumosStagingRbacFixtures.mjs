@@ -63,7 +63,9 @@ if (action === 'provision') {
   const statements = [];
   for (const scenario of fixtures.scenarios) {
     statements.push(`DELETE FROM crm_users WHERE username = ${sql(scenario.username)};`);
-    statements.push(`INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at, session_version) VALUES (${sql(scenario.username)}, ${sql(scenario.email)}, ${sql(`Synthetic Insumos RBAC ${scenario.id}`)}, ${sql(passwordHash(scenario.password))}, ${sql(scenario.role)}, '', ${sql(JSON.stringify(scenario.allowedUnits))}, ${sql(JSON.stringify(['inventory']))}, 1, ${sql(now)}, ${sql(now)}, 0);`);
+    // `insumos` is the runtime module permission enforced by the Inventory
+    // Worker. `inventory` is a domain label, not an authorization scope.
+    statements.push(`INSERT INTO crm_users (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at, session_version) VALUES (${sql(scenario.username)}, ${sql(scenario.email)}, ${sql(`Synthetic Insumos RBAC ${scenario.id}`)}, ${sql(passwordHash(scenario.password))}, ${sql(scenario.role)}, '', ${sql(JSON.stringify(scenario.allowedUnits))}, ${sql(JSON.stringify(['insumos']))}, 1, ${sql(now)}, ${sql(now)}, 0);`);
     statements.push(audit('STAGING_SYNTHETIC_IDENTITY_PROVISIONED', scenario.username, { runId, scope: scenario.allowedUnits, role: scenario.role }));
   }
   writeFileSync(sqlPath, `${statements.join('\n')}\n`, { mode: 0o600 });
