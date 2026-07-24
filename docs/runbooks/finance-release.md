@@ -2,8 +2,8 @@
 
 ## Ordem obrigatória
 
-1. No primeiro uso de cada ambiente, publicar o gateway uma única vez pelo `deploy-core-workers.yml`, com `unit=api` e `bootstrap_finance_context=true`; isso instala a service binding e o segredo de contexto sem publicar Inventory.
-2. No primeiro uso de cada ambiente, executar `deploy-finance.yml` com `bootstrap_service_secret=true`; nas execuções posteriores, manter esse campo como `false`.
+1. No primeiro uso de staging, executar `deploy-finance.yml` com `bootstrap_service_secret=true`; nas execuções posteriores, manter esse campo como `false`. O Worker Financeiro deve existir antes de um gateway poder declarar sua service binding.
+2. Depois, publicar somente o gateway pelo `deploy-core-workers.yml`, com `unit=api` e `bootstrap_finance_context=true`; isso instala a service binding e o segredo de contexto sem publicar Inventory. O smoke inicial do Worker usa `FINANCE_STAGING_WORKER_URL`; a verificação pelo gateway ocorre após este passo.
 3. `deploy-finance.yml` em `preview` para o SHA de `main`.
 4. `deploy-finance.yml` e `deploy-finance-ui.yml` em `staging`, ambos com o mesmo `release_sha` e `preview_run_id`.
 5. Conferir `health`, `readiness`, versão, dependências, logs estruturados, alertas e os artefatos `promotion-evidence-finance` e `promotion-evidence-finance-ui`.
