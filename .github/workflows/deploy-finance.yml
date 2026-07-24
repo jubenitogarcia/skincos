@@ -138,7 +138,18 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-finance; else ENV_ARGS=(--env staging); DB=skincos-finance-staging; fi
-          npx --yes wrangler@4.112.0 d1 migrations apply "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}"
+          # D1 migrations must be atomic: execute each versioned SQL file together with
+          # its journal insert. `d1 migrations apply` splits trigger bodies and can leave
+          # a failed file without a journal entry; `d1 execute --file` imports atomically.
+          npx --yes wrangler@4.114.0 d1 execute "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}" --command 'CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL);'
+          for migration in finance/migrations/*.sql; do
+            name="$(basename "$migration")"
+            applied="$(npx --yes wrangler@4.114.0 d1 execute "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}" --command "SELECT 1 AS applied FROM d1_migrations WHERE name='$name' LIMIT 1;" --json | node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));process.stdout.write(x[0]?.results?.[0]?.applied ? 'true' : 'false')")"
+            [[ "$applied" == true ]] && continue
+            batch="$RUNNER_TEMP/finance-migration-${name}"
+            { cat "$migration"; printf "\nINSERT INTO d1_migrations(name) VALUES ('%s');\n" "$name"; } > "$batch"
+            npx --yes wrangler@4.114.0 d1 execute "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}" --file "$batch"
+          done
           if [[ "$BOOTSTRAP_SERVICE_SECRET" == "true" ]]; then
             [[ "$TARGET" == "staging" ]] || { echo 'Finance service-secret bootstrap is staging-only.'; exit 1; }
             [[ -n "${SERVICE_SECRET:-}" ]] || { echo 'Missing FINANCE_SERVICE_AUTH_SECRET.'; exit 1; }
