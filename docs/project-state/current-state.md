@@ -50,6 +50,23 @@ No production deploy occurred, and no production user, flag, grant or data was
 changed. The real CRM actor still requires read-only correlation before any
 production consideration.
 
+## Current CRM actor correlation — 2026-07-24
+
+The live authenticated CRM session returned `/api/auth/me` with HTTP 200 and a
+`GESTOR` actor. A read-only query against production D1 `skincos-db` matched
+exactly one active `crm_users` row. The row has the two canonical units
+`novo-hamburgo` and `barra-shopping-sul`, the five existing modules
+`ponto`, `atendimento`, `conversa`, `finance` and `insumos`, and
+`session_version=0`. No username, email, IP or credential is stored here; the
+sanitized private evidence is kept outside the repository.
+
+The active non-ADMIN empty-unit query returned zero rows, so the authenticated
+actor is not among the affected empty-scope set. Administrative history shows
+one scope configuration at `2026-07-24T18:02:25Z`; role and session version were
+preserved while the two units and existing modules were recorded. D1 reported
+zero changes and zero rows written. This is an identification result only:
+there is no repair SQL, grant change or production mutation to roll back.
+
 ## Lineage reconciliation — 2026-07-24
 
 The pre-candidate `origin/main` was `b8c356baf90b33cef834417cb75ddd172a0b0a9a`.
