@@ -1,0 +1,1 @@
+$root=git rev-parse --show-toplevel; Set-Location $root; git fetch --prune origin; [pscustomobject]@{head=(git rev-parse HEAD);main=(git rev-parse origin/main);dirty=[bool](git status --porcelain)}|ConvertTo-Json -Compress; if(Get-Command gh -ErrorAction SilentlyContinue){gh pr list --state open --limit 20 --json number,headRefName,mergeStateStatus,url}
