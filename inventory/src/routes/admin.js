@@ -5,8 +5,9 @@ import { resolveCrmTables } from '../d1Store.js';
 import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
 import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
+import { canCreateEmployee, displayJobTitle, publicOnboarding, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
 
-const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE'];
+const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'];
 const ROLE_INVITES = ['GESTOR'];
 const PASSWORD_MIN_LENGTH = 12;
 
@@ -192,6 +193,51 @@ async function sha256Hex(input) {
     .join('');
 }
 
+function bytesToB64UrlPii(bytes) {
+  let out = '';
+  for (const byte of bytes) out += String.fromCharCode(byte);
+  return btoa(out).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function encryptOnboardingPii(env, value) {
+  const secret = String(env?.IDENTITY_PII_KEY || '').trim();
+  if (!secret) throw new Error('IDENTITY_PII_KEY_NOT_CONFIGURED');
+  const rawKey = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
+  const key = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(String(value || '')));
+  return `v1.${bytesToB64UrlPii(iv)}.${bytesToB64UrlPii(new Uint8Array(encrypted))}`;
+}
+
+async function workforceSignature(secret, timestamp, bodyHash) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${bodyHash}`));
+  return btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function syncWorkforceOnboarding(env, payload) {
+  if (!env?.WORKFORCE?.fetch) throw new Error('WORKFORCE_SERVICE_NOT_CONFIGURED');
+  const secret = String(env?.IDENTITY_WORKFORCE_HMAC_KEY || '').trim();
+  if (!secret) throw new Error('IDENTITY_WORKFORCE_HMAC_KEY_NOT_CONFIGURED');
+  const raw = JSON.stringify(payload);
+  const bodyHash = await sha256Hex(raw);
+  const timestamp = String(Date.now());
+  const response = await env.WORKFORCE.fetch('https://workforce/api/ponto/internal/onboarding', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-skincos-service': 'identity',
+      'x-skincos-workforce-ts': timestamp,
+      'x-skincos-workforce-sig': await workforceSignature(secret, timestamp, bodyHash),
+      'x-request-id': `identity-onboarding-${payload.onboardingId}`,
+    },
+    body: raw,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result?.ok) throw new Error(String(result?.error || `WORKFORCE_SYNC_${response.status}`));
+  return result.data || null;
+}
+
 export async function handleAdminRoutes({
   request,
   url,
@@ -242,6 +288,88 @@ export async function handleAdminRoutes({
   const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
   const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
   const invitesHasInviteeEmail = await tableHasColumn(env, invitesTable, 'invitee_email');
+
+  // POST /admin/onboarding
+  // The client supplies employment facts only. Profile, scopes and invite state
+  // are derived here so no browser can grant modules or a wider unit scope.
+  if (url.pathname === '/admin/onboarding' && request.method === 'POST') {
+    try {
+      const body = await request.json().catch(() => ({}));
+      const input = validateOnboardingInput(body);
+      if (!input) return withCORS(JSON.stringify({ success: false, error: 'Dados de cadastro inválidos', code: 'ONBOARDING_INVALID' }), { status: 400 }, appOrigin);
+      const denied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: input.profile, units: input.units });
+      if (denied) return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para cadastrar este cargo ou unidade', code: denied }), { status: 403 }, appOrigin);
+      if (!invitesHasModules || !invitesHasInviteeEmail) return withCORS(JSON.stringify({ success: false, error: 'Migração de convites pendente', code: 'INVITE_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+
+      const idempotency = String(request.headers.get('idempotency-key') || body.idempotencyKey || '').trim().slice(0, 180);
+      if (idempotency) {
+        const existing = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE idempotency_key=? LIMIT 1').bind(idempotency).first();
+        if (existing) return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
+      }
+      const existingUser = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(input.corporateEmail).first();
+      if (existingUser?.username) return withCORS(JSON.stringify({ success: false, error: 'Este e-mail corporativo já está cadastrado', code: 'EMAIL_TAKEN' }), { status: 409 }, appOrigin);
+      const existingOnboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(input.corporateEmail).first();
+      if (existingOnboarding) return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
+
+      const at = new Date().toISOString();
+      // Stable across a safe client retry: Workforce can identify a prior
+      // successful synchronization even if Identity fails before persistence.
+      const id = await sha256Hex(`employee-onboarding:v1:${input.corporateEmail}`);
+      const needsAccessConfiguration = input.accountStatus === 'PENDING_ACCESS';
+      // Fail before creating a usable invite if the PII encryption boundary is
+      // not configured in this deployment.
+      const encryptedPersonal = await encryptOnboardingPii(env, input.personalEmail);
+      const encryptedPhone = await encryptOnboardingPii(env, input.mobilePhone);
+      const workforce = await syncWorkforceOnboarding(env, {
+        onboardingId: id,
+        fullName: input.fullName,
+        corporateEmail: input.corporateEmail,
+        mobilePhoneHash: await sha256Hex(input.mobilePhone),
+        units: input.units,
+        profile: input.profile,
+        jobTitle: displayJobTitle(input.profile),
+        department: input.department,
+        createdBy: String(auth?.user?.username || ''),
+      });
+      let inviteId = null;
+      if (!needsAccessConfiguration) {
+        const token = randomInviteToken();
+        const tokenHash = await sha256Hex(token);
+        inviteId = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        await env.DB.prepare(`INSERT INTO ${invitesTable} (id, token_hash, token_hint, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, ?)`).bind(
+          inviteId, tokenHash, `${token.slice(0, 4)}…${token.slice(-4)}`, input.corporateEmail, input.profile, JSON.stringify(input.units), JSON.stringify(input.modules), expiresAt, `Onboarding ${input.department}`, String(auth?.user?.username || ''), at,
+        ).run();
+        try {
+          // The invite is bound to the corporate identity, but delivered to the
+          // protected personal contact address.
+          await sendAccountInviteEmail({ env, to: input.personalEmail, token, expiresAt, appUrl: String(env?.AUTH_INVITE_APP_URL || appOrigin) });
+        } catch (error) {
+          await env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=?`).bind(inviteId).run();
+          throw error;
+        }
+      }
+      await env.DB.prepare(`INSERT INTO crm_employee_onboarding (id, full_name, corporate_email, personal_email_encrypted, personal_email_hash, mobile_phone_encrypted, mobile_phone_hash, profile, job_title, department_name, units_json, account_status, invite_id, workforce_employee_id, idempotency_key, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        id, input.fullName, input.corporateEmail, encryptedPersonal, await sha256Hex(input.personalEmail), encryptedPhone, await sha256Hex(input.mobilePhone), input.profile, displayJobTitle(input.profile), input.department, JSON.stringify(input.units), input.accountStatus, inviteId, workforce?.employeeId || null, idempotency || null, String(auth?.user?.username || ''), at, at,
+      ).run();
+      const created = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(id).first();
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId, workforceEmployeeId: workforce?.employeeId || null } });
+      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created) }), { status: 201 }, appOrigin);
+    } catch (error) {
+      const message = String(error?.message || 'ONBOARDING_FAILED');
+      const status = message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' ? 503 : 500;
+      return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Configuração segura de cadastro pendente' : 'Não foi possível concluir o cadastro', code: message }), { status }, appOrigin);
+    }
+  }
+
+  if (url.pathname === '/admin/onboarding' && request.method === 'GET') {
+    try {
+      const rows = await env.DB.prepare('SELECT * FROM crm_employee_onboarding ORDER BY created_at DESC LIMIT 100').all();
+      return withCORS(JSON.stringify({ success: true, data: (rows?.results || []).map(publicOnboarding) }), { status: 200 }, appOrigin);
+    } catch {
+      return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+    }
+  }
 
   // GET /admin/categories
   if (url.pathname === '/admin/categories' && request.method === 'GET') {
@@ -752,6 +880,7 @@ export async function handleAdminRoutes({
                allowed_units_json = COALESCE(?, allowed_units_json),
                allowed_modules_json = COALESCE(?, allowed_modules_json),
                ativo = COALESCE(?, ativo),
+               session_version = COALESCE(session_version, 0) + 1,
                updated_at = ?
            WHERE LOWER(username) = LOWER(?)`
         : `UPDATE ${usersTable}
@@ -761,6 +890,7 @@ export async function handleAdminRoutes({
                photo_url = COALESCE(?, photo_url),
                allowed_units_json = COALESCE(?, allowed_units_json),
                ativo = COALESCE(?, ativo),
+               session_version = COALESCE(session_version, 0) + 1,
                updated_at = ?
            WHERE LOWER(username) = LOWER(?)`;
 
