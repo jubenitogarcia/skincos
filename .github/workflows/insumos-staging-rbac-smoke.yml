@@ -34,6 +34,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 25
+    env:
+      # This journey may write only ephemeral identities to the staging D1. Do
+      # not replace this with the unqualified production database name.
+      STAGING_D1_DATABASE: skincos-db-staging
     steps:
       - name: Validate immutable source and staging-only target
         env:
@@ -92,7 +96,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'staging Cloudflare credentials are required'; exit 1; }
-          npx --yes wrangler@3 d1 execute skincos-db --config inventory/wrangler.toml --env staging --remote --file "$SQL_FILE" >/dev/null
+          [[ "$STAGING_D1_DATABASE" == 'skincos-db-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
+          npx --yes wrangler@3 d1 execute "$STAGING_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$SQL_FILE" >/dev/null
 
       - name: Execute authenticated unit-scope journey
         env:
@@ -112,8 +117,9 @@ jobs:
         run: |
           set -euo pipefail
           [[ -f "$FIXTURES" ]] || exit 0
+          [[ "$STAGING_D1_DATABASE" == 'skincos-db-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
           node inventory/scripts/insumosStagingRbacFixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$FIXTURES" --sql "$SQL_FILE"
-          npx --yes wrangler@3 d1 execute skincos-db --config inventory/wrangler.toml --env staging --remote --file "$SQL_FILE" >/dev/null
+          npx --yes wrangler@3 d1 execute "$STAGING_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$SQL_FILE" >/dev/null
           rm -f "$FIXTURES" "$SQL_FILE"
 
       - name: Upload sanitised journey evidence
