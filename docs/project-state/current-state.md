@@ -1,12 +1,13 @@
 # Current state
 
-## P0 incident resolved in staging
+## P0 incident — staging evidence stale
 
-`P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos` was
-closed with controlled, synthetic staging evidence. This unfreezes the
-orchestrator queue, but it does not authorize Finance, production, pilot,
-GitHub Organization, Ponto, Atendimento, flags, grants, or other module work
-without their own gates and instructions.
+`P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos` is
+blocked again as `staging evidence stale`. The historical synthetic journey
+was real, but its artifact was built from `f276919ce6a63b337bd02bd0c3799dbf38f13b97`,
+which predates functional PR #776. It cannot be used as production evidence.
+Finance, production, pilot, GitHub Organization, Ponto, Atendimento, flags,
+grants and unrelated module work remain frozen.
 
 PR #763 (`fix(insumos): corrige RBAC por unidade`) merged into main as
 `4a8b2074`. It was rebased on the P0 freeze, and its Central E2E Smoke (run
@@ -34,8 +35,17 @@ fail-closed when no authorized unit exists, and excluded the authenticated
 preferences control route from data-request diagnostics.
 
 No production deploy occurred. The custom alias `crm-staging.skincos.com.br`
-remains DNS-unresolved, so the immutable Pages deployment URL remains the
-attested staging entry point. A pre-guard harness target-name defect was fixed
-before the successful isolated run; a read-only review of historical production
-audit residue remains required before making any retrospective claim about that
-earlier attempt.
+remains DNS-unresolved. A pre-guard harness target-name defect was fixed before
+the successful isolated run, but the complete artifact lineage is not valid for
+production because #776 was absent. The prior result remains historical evidence
+only; a new candidate from current `main` must be promoted and re-tested.
+
+## Lineage reconciliation — 2026-07-24
+
+Current `origin/main` is `b8c356baf90b33cef834417cb75ddd172a0b0a9a`. PRs #763 and
+#771–#779 are merged, but the four preview/staging artifacts and journey all
+reference `f276919ce6a63b337bd02bd0c3799dbf38f13b97` (merge #770). The functional
+change from #776 is the `InsumosModule` fail-closed gate requiring an authenticated
+actor with an authorized unit; that expression is absent from `f276…` and present
+only after merge `7ba0c11d8a98ff87262b13e268892191120c8544`. A new current-main
+candidate is therefore required before any production consideration.
