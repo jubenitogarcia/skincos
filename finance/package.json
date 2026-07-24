@@ -5,5 +5,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "node --check api/worker.js"
+  },
+  "devDependencies": {
+    "miniflare": "4.20260722.0"
   }
 }

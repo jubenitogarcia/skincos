@@ -3,6 +3,14 @@ main = "workers/index.js"
 compatibility_date = "2024-11-20"
 routes = ["api.skincos.com.br/*"]
 
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+APP_VERSION = "unreleased"
+ENVIRONMENT = "production"
+
 [triggers]
 crons = ["0 * * * *"]
 
@@ -38,6 +46,14 @@ bucket_name = "skincos-backups"
 [env.staging]
 name = "skincos-api-staging"
 routes = ["api-staging.skincos.com.br/*"]
+
+[env.staging.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.staging.vars]
+APP_VERSION = "unreleased"
+ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]
 name = "RATE_LIMITER"

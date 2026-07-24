@@ -1,0 +1,14 @@
+{
+  "title": "SKINCOS Operations",
+  "uid": "skincos-operations",
+  "tags": ["skincos", "operations", "external-monitor"],
+  "description": "Import into Grafana when provisioned. The running Windows monitor also produces a dependency-free HTML dashboard from the same catalog.",
+  "templating": { "list": [{ "name": "environment", "type": "custom", "query": "production,staging" }, { "name": "unit", "type": "custom", "query": "api,crm-pages,escala,orb,finance,timekeeping" }] },
+  "panels": [
+    { "title": "Availability by unit", "type": "stat", "query": "skincos_probe_success{environment=\"$environment\",unit=~\"$unit\"}" },
+    { "title": "Probe latency", "type": "timeseries", "query": "skincos_probe_duration_ms{environment=\"$environment\",unit=~\"$unit\"}" },
+    { "title": "Hard dependency state", "type": "table", "query": "skincos_dependency_state{environment=\"$environment\",unit=~\"$unit\"}" },
+    { "title": "Alert transitions", "type": "table", "query": "skincos_alert_transition{environment=\"$environment\",unit=~\"$unit\"}" }
+  ],
+  "alertRuleContract": { "requiredLabels": ["unit", "environment", "version", "impact", "probable_cause", "healthy_modules", "request_id"], "runbook": "docs/observability.md" }
+}

@@ -25,6 +25,33 @@ function isInternalServiceRequest(request, env) {
     return received.length === expected.length && received === expected;
 }
 
+function operationalPayload(env, requestId, ready, dependencies) {
+    return {
+        ok: Boolean(ready),
+        service: 'api',
+        unit: 'api',
+        version: String(env.APP_VERSION || 'unknown'),
+        environment: String(env.ENVIRONMENT || 'production'),
+        ready: Boolean(ready),
+        dependencies,
+        request_id: requestId,
+        // Legacy compatibility while consumers move to the snake_case contract.
+        requestId,
+    };
+}
+
+function operationalLog(env, requestId, status, route) {
+    console.log({
+        domain: 'api',
+        version: String(env.APP_VERSION || 'unknown'),
+        environment: String(env.ENVIRONMENT || 'production'),
+        request_id: requestId,
+        duration_ms: 0,
+        status,
+        route,
+    });
+}
+
 /**
  * Creates the public HTTP boundary for domain-owned handlers.
  *
@@ -40,7 +67,23 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
         const url = new URL(request.url);
 
         if (url.pathname === '/health') {
-            return json(200, { ok: true, service: 'api', requestId }, requestId);
+            const dependencies = { d1: { required: true, state: env.DB ? 'configured' : 'unavailable' } };
+            operationalLog(env, requestId, 200, '/health');
+            return json(200, operationalPayload(env, requestId, true, dependencies), requestId);
+        }
+
+        if (url.pathname === '/readiness') {
+            try {
+                if (!env.DB?.prepare) throw new Error('DB_NOT_CONFIGURED');
+                await env.DB.prepare('SELECT 1 AS ok').first();
+                const dependencies = { d1: { required: true, state: 'healthy' } };
+                operationalLog(env, requestId, 200, '/readiness');
+                return json(200, operationalPayload(env, requestId, true, dependencies), requestId);
+            } catch {
+                const dependencies = { d1: { required: true, state: 'unavailable' } };
+                operationalLog(env, requestId, 503, '/readiness');
+                return json(503, operationalPayload(env, requestId, false, dependencies), requestId);
+            }
         }
 
         if (url.pathname === '/api/ponto' || url.pathname.startsWith('/api/ponto/')) {

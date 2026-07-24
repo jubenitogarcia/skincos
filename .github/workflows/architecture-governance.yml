@@ -21,3 +21,11 @@ jobs:
         run: node .github/scripts/validate-module-catalog.mjs && node .github/scripts/validate-module-maturity.mjs
       - name: Validate domain import boundaries
         run: node .github/scripts/validate-domain-boundaries.mjs
+      - name: Validate reproducible staging manifest
+        run: node .github/scripts/validate-staging-manifest.mjs
+      - name: Validate staging bootstrap safety guards
+        run: node .github/scripts/validate-staging-scripts.mjs
+      - name: Validate staging PostgreSQL role template
+        run: node .github/scripts/validate-staging-postgres.mjs
+      - name: Validate external observability catalog
+        run: node scripts/observability/validate-catalog.mjs
