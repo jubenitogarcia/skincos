@@ -6,6 +6,8 @@ import { sendAccountInviteEmail } from '../smtpMailer.js';
 import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } from '../invitePolicy.js';
 import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
 import { canCreateEmployee, displayJobTitle, publicOnboarding, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
+import { syncIdentityWorkforceOnboarding, syncIdentityWorkforceStatus } from '../../../shared/identity-runtime/workforce-onboarding.js';
+import { shouldIssueInvite } from '../../../shared/identity-runtime/onboarding-state.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'];
 const ROLE_INVITES = ['GESTOR'];
@@ -58,7 +60,7 @@ function normalizeAllowedModules(value) {
 async function tableHasColumn(env, tableName, columnName) {
   if (!env?.DB || !tableName || !columnName) return false;
   const t = String(tableName);
-  if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites'].includes(t)) return false;
+  if (!['crm_users', 'insumos_users', 'crm_invites', 'insumos_invites', 'crm_employee_onboarding'].includes(t)) return false;
   try {
     const res = await env.DB.prepare(`PRAGMA table_info(${t})`).all();
     const cols = (res?.results || []).map((r) => String(r?.name || '').toLowerCase());
@@ -209,33 +211,19 @@ async function encryptOnboardingPii(env, value) {
   return `v1.${bytesToB64UrlPii(iv)}.${bytesToB64UrlPii(new Uint8Array(encrypted))}`;
 }
 
-async function workforceSignature(secret, timestamp, bodyHash) {
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${bodyHash}`));
-  return btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+function b64UrlToBytes(value) {
+  const raw = String(value || '').replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(String(value || '').length / 4) * 4, '=');
+  return Uint8Array.from(atob(raw), (char) => char.charCodeAt(0));
 }
 
-async function syncWorkforceOnboarding(env, payload) {
-  if (!env?.WORKFORCE?.fetch) throw new Error('WORKFORCE_SERVICE_NOT_CONFIGURED');
-  const secret = String(env?.IDENTITY_WORKFORCE_HMAC_KEY || '').trim();
-  if (!secret) throw new Error('IDENTITY_WORKFORCE_HMAC_KEY_NOT_CONFIGURED');
-  const raw = JSON.stringify(payload);
-  const bodyHash = await sha256Hex(raw);
-  const timestamp = String(Date.now());
-  const response = await env.WORKFORCE.fetch('https://workforce/api/ponto/internal/onboarding', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-skincos-service': 'identity',
-      'x-skincos-workforce-ts': timestamp,
-      'x-skincos-workforce-sig': await workforceSignature(secret, timestamp, bodyHash),
-      'x-request-id': `identity-onboarding-${payload.onboardingId}`,
-    },
-    body: raw,
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result?.ok) throw new Error(String(result?.error || `WORKFORCE_SYNC_${response.status}`));
-  return result.data || null;
+async function decryptOnboardingToken(env, value) {
+  const secret = String(env?.IDENTITY_PII_KEY || '').trim();
+  const parts = String(value || '').split('.');
+  if (!secret || parts.length !== 3 || parts[0] !== 'v1') return '';
+  const rawKey = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
+  const key = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, false, ['decrypt']);
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64UrlToBytes(parts[1]) }, key, b64UrlToBytes(parts[2]));
+  return new TextDecoder().decode(plain);
 }
 
 export async function handleAdminRoutes({
@@ -288,6 +276,7 @@ export async function handleAdminRoutes({
   const usersHasModules = await tableHasColumn(env, usersTable, 'allowed_modules_json');
   const invitesHasModules = await tableHasColumn(env, invitesTable, 'allowed_modules_json');
   const invitesHasInviteeEmail = await tableHasColumn(env, invitesTable, 'invitee_email');
+  const onboardingHasSaga = await tableHasColumn(env, 'crm_employee_onboarding', 'provisioning_state') && await tableHasColumn(env, 'crm_employee_onboarding', 'invite_token_encrypted');
 
   // POST /admin/onboarding
   // The client supplies employment facts only. Profile, scopes and invite state
@@ -299,66 +288,130 @@ export async function handleAdminRoutes({
       if (!input) return withCORS(JSON.stringify({ success: false, error: 'Dados de cadastro inválidos', code: 'ONBOARDING_INVALID' }), { status: 400 }, appOrigin);
       const denied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: input.profile, units: input.units });
       if (denied) return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para cadastrar este cargo ou unidade', code: denied }), { status: 403 }, appOrigin);
-      if (!invitesHasModules || !invitesHasInviteeEmail) return withCORS(JSON.stringify({ success: false, error: 'Migração de convites pendente', code: 'INVITE_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      if (!invitesHasModules || !invitesHasInviteeEmail || !onboardingHasSaga) return withCORS(JSON.stringify({ success: false, error: 'Migração de onboarding pendente', code: 'ONBOARDING_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
 
       const idempotency = String(request.headers.get('idempotency-key') || body.idempotencyKey || '').trim().slice(0, 180);
       if (idempotency) {
         const existing = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE idempotency_key=? LIMIT 1').bind(idempotency).first();
-        if (existing) return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
+        if (existing?.provisioning_state === 'COMPLETED') return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existing), replayed: true }), { status: 200 }, appOrigin);
       }
       const existingUser = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(email)=LOWER(?) LIMIT 1`).bind(input.corporateEmail).first();
       if (existingUser?.username) return withCORS(JSON.stringify({ success: false, error: 'Este e-mail corporativo já está cadastrado', code: 'EMAIL_TAKEN' }), { status: 409 }, appOrigin);
-      const existingOnboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(input.corporateEmail).first();
-      if (existingOnboarding) return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
-
       const at = new Date().toISOString();
-      // Stable across a safe client retry: Workforce can identify a prior
-      // successful synchronization even if Identity fails before persistence.
       const id = await sha256Hex(`employee-onboarding:v1:${input.corporateEmail}`);
-      const needsAccessConfiguration = input.accountStatus === 'PENDING_ACCESS';
-      // Fail before creating a usable invite if the PII encryption boundary is
-      // not configured in this deployment.
+      const requestId = String(request.headers.get('x-request-id') || `identity-onboarding-${id}`).slice(0, 180);
+      const existingOnboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
+      if (existingOnboarding?.provisioning_state === 'COMPLETED') {
+        return withCORS(JSON.stringify({ success: true, data: publicOnboarding(existingOnboarding), replayed: true }), { status: 200 }, appOrigin);
+      }
       const encryptedPersonal = await encryptOnboardingPii(env, input.personalEmail);
       const encryptedPhone = await encryptOnboardingPii(env, input.mobilePhone);
-      const workforce = await syncWorkforceOnboarding(env, {
-        onboardingId: id,
-        fullName: input.fullName,
-        corporateEmail: input.corporateEmail,
-        mobilePhoneHash: await sha256Hex(input.mobilePhone),
-        units: input.units,
-        profile: input.profile,
-        jobTitle: displayJobTitle(input.profile),
-        department: input.department,
-        createdBy: String(auth?.user?.username || ''),
-      });
-      let inviteId = null;
-      if (!needsAccessConfiguration) {
-        const token = randomInviteToken();
-        const tokenHash = await sha256Hex(token);
-        inviteId = crypto.randomUUID();
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-        await env.DB.prepare(`INSERT INTO ${invitesTable} (id, token_hash, token_hint, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, ?)`).bind(
-          inviteId, tokenHash, `${token.slice(0, 4)}…${token.slice(-4)}`, input.corporateEmail, input.profile, JSON.stringify(input.units), JSON.stringify(input.modules), expiresAt, `Onboarding ${input.department}`, String(auth?.user?.username || ''), at,
-        ).run();
+      if (!existingOnboarding) {
         try {
-          // The invite is bound to the corporate identity, but delivered to the
-          // protected personal contact address.
-          await sendAccountInviteEmail({ env, to: input.personalEmail, token, expiresAt, appUrl: String(env?.AUTH_INVITE_APP_URL || appOrigin) });
+          await env.DB.prepare(`INSERT INTO crm_employee_onboarding (id, full_name, corporate_email, personal_email_encrypted, personal_email_hash, mobile_phone_encrypted, mobile_phone_hash, profile, job_title, department_name, units_json, account_status, invite_id, workforce_employee_id, idempotency_key, created_by, created_at, updated_at, provisioning_state, invite_token_encrypted, compensation_state, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 'PROVISIONING', NULL, NULL, ?)`).bind(
+            id, input.fullName, input.corporateEmail, encryptedPersonal, await sha256Hex(input.personalEmail), encryptedPhone, await sha256Hex(input.mobilePhone), input.profile, displayJobTitle(input.profile), input.department, JSON.stringify(input.units), input.accountStatus, idempotency || null, String(auth?.user?.username || ''), at, at, requestId,
+          ).run();
+        } catch (insertError) {
+          const raced = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? OR LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(id, input.corporateEmail).first();
+          if (!raced) throw insertError;
+        }
+      }
+
+      let current = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(id).first();
+      let workforce = current?.workforce_employee_id ? { employeeId: current.workforce_employee_id } : null;
+      if (!workforce) {
+        try {
+          workforce = await syncIdentityWorkforceOnboarding(env, {
+            onboardingId: id,
+            fullName: input.fullName,
+            corporateEmail: input.corporateEmail,
+            mobilePhoneHash: await sha256Hex(input.mobilePhone),
+            units: input.units,
+            profile: input.profile,
+            accountStatus: input.accountStatus,
+            jobTitle: displayJobTitle(input.profile),
+            department: input.department,
+            createdBy: String(auth?.user?.username || ''),
+          }, requestId);
+          await env.DB.prepare('UPDATE crm_employee_onboarding SET workforce_employee_id=?, provisioning_state=?, updated_at=?, last_error_code=NULL WHERE id=?').bind(workforce?.employeeId || null, 'WORKFORCE_SYNCED', new Date().toISOString(), id).run();
         } catch (error) {
-          await env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=?`).bind(inviteId).run();
+          await env.DB.prepare('UPDATE crm_employee_onboarding SET provisioning_state=?, last_error_code=?, updated_at=? WHERE id=?').bind('FAILED', String(error?.message || 'WORKFORCE_SYNC_FAILED').slice(0, 120), new Date().toISOString(), id).run().catch(() => {});
+          await Promise.resolve(appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_FAILED', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { stage: 'WORKFORCE_SYNC', compensated: false, requestId } })).catch(() => {});
           throw error;
         }
       }
-      await env.DB.prepare(`INSERT INTO crm_employee_onboarding (id, full_name, corporate_email, personal_email_encrypted, personal_email_hash, mobile_phone_encrypted, mobile_phone_hash, profile, job_title, department_name, units_json, account_status, invite_id, workforce_employee_id, idempotency_key, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
-        id, input.fullName, input.corporateEmail, encryptedPersonal, await sha256Hex(input.personalEmail), encryptedPhone, await sha256Hex(input.mobilePhone), input.profile, displayJobTitle(input.profile), input.department, JSON.stringify(input.units), input.accountStatus, inviteId, workforce?.employeeId || null, idempotency || null, String(auth?.user?.username || ''), at, at,
-      ).run();
+
+      let inviteId = current?.invite_id || null;
+      let token = '';
+      let expiresAt = '';
+      if (shouldIssueInvite(input.accountStatus)) {
+        if (inviteId) {
+          const invite = await env.DB.prepare(`SELECT id, expires_at, revoked FROM ${invitesTable} WHERE id=? LIMIT 1`).bind(inviteId).first();
+          expiresAt = String(invite?.expires_at || '');
+          if (Number(invite?.revoked || 0) || !expiresAt || Date.now() >= new Date(expiresAt).getTime()) inviteId = null;
+        }
+        if (!inviteId) {
+          token = randomInviteToken();
+          expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          inviteId = crypto.randomUUID();
+          await env.DB.prepare(`INSERT INTO ${invitesTable} (id, token_hash, token_hint, invitee_email, role, allowed_units_json, allowed_modules_json, max_uses, uses_count, expires_at, revoked, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, ?)`).bind(
+            inviteId, await sha256Hex(token), `${token.slice(0, 4)}…${token.slice(-4)}`, input.corporateEmail, input.profile, JSON.stringify(input.units), JSON.stringify(input.modules), expiresAt, `Onboarding ${input.department}`, String(auth?.user?.username || ''), at,
+          ).run();
+          const encryptedToken = await encryptOnboardingPii(env, token);
+          await env.DB.prepare('UPDATE crm_employee_onboarding SET invite_id=?, invite_token_encrypted=?, provisioning_state=?, updated_at=? WHERE id=?').bind(inviteId, encryptedToken, 'INVITE_PENDING', new Date().toISOString(), id).run();
+        } else if (!token && current?.invite_token_encrypted) {
+          token = await decryptOnboardingToken(env, current.invite_token_encrypted);
+        }
+        if (!token) throw new Error('INVITE_TOKEN_UNAVAILABLE');
+        try {
+          await sendAccountInviteEmail({ env, to: input.personalEmail, token, expiresAt, appUrl: String(env?.AUTH_INVITE_APP_URL || appOrigin) });
+        } catch (error) {
+          await env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=?`).bind(inviteId).run().catch(() => {});
+          await syncIdentityWorkforceStatus(env, { onboardingId: id, employeeId: workforce?.employeeId, accountStatus: 'PENDING_ACCESS' }, requestId).catch(() => {});
+          await env.DB.prepare('UPDATE crm_employee_onboarding SET provisioning_state=?, compensation_state=?, last_error_code=?, updated_at=? WHERE id=?').bind('FAILED', 'WORKFORCE_PENDING_ACCESS', 'EMAIL_DELIVERY_FAILED', new Date().toISOString(), id).run().catch(() => {});
+          await Promise.resolve(appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_COMPENSATED', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { stage: 'EMAIL_DELIVERY', workforceAccessState: 'PENDING_ACCESS', inviteRevoked: true, requestId } })).catch(() => {});
+          throw error;
+        }
+      }
+      await env.DB.prepare('UPDATE crm_employee_onboarding SET invite_id=?, workforce_employee_id=?, provisioning_state=?, updated_at=?, last_error_code=NULL WHERE id=?').bind(inviteId, workforce?.employeeId || null, 'COMPLETED', new Date().toISOString(), id).run();
       const created = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(id).first();
-      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId, workforceEmployeeId: workforce?.employeeId || null } });
-      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created) }), { status: 201 }, appOrigin);
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, idempotencyKey: idempotency, action: 'EMPLOYEE_ONBOARDING_CREATE', entity: 'EMPLOYEE_ONBOARDING', entityId: id, unidade: input.units.join(','), after: { profile: input.profile, jobTitle: displayJobTitle(input.profile), department: input.department, units: input.units, accountStatus: input.accountStatus, inviteIssued: !!inviteId, workforceEmployeeId: workforce?.employeeId || null, provisioningState: 'COMPLETED' } });
+      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(created) }), { status: existingOnboarding ? 200 : 201 }, appOrigin);
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_FAILED');
-      const status = message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' ? 503 : 500;
+      const status = message === 'IDENTITY_PII_KEY_NOT_CONFIGURED' || message === 'AUTH_EMAIL_NOT_CONFIGURED' || /^WORKFORCE_|^SMTP_|^EMAIL_/.test(message) ? 503 : 500;
       return withCORS(JSON.stringify({ success: false, error: status === 503 ? 'Configuração segura de cadastro pendente' : 'Não foi possível concluir o cadastro', code: message }), { status }, appOrigin);
+    }
+  }
+
+  // Activation is a resumable compensation boundary for the one-time invite
+  // flow. The invite remains consumed; only a privileged operator can retry
+  // the Identity -> Workforce status transition after a transient failure.
+  const activationMatch = url.pathname.match(/^\/admin\/onboarding\/([^/]+)\/activate$/);
+  if (activationMatch && request.method === 'POST') {
+    try {
+      if (!onboardingHasSaga) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const onboardingId = decodeURIComponent(activationMatch[1] || '').trim();
+      const onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding?.workforce_employee_id || !['INVITED', 'ACTIVE'].includes(String(onboarding.account_status || '').toUpperCase())) {
+        return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_ACTIVATION_NOT_READY' }), { status: 409 }, appOrigin);
+      }
+      if (String(onboarding.account_status).toUpperCase() === 'ACTIVE') {
+        return withCORS(JSON.stringify({ success: true, data: publicOnboarding(onboarding), replayed: true }), { status: 200 }, appOrigin);
+      }
+      const requestId = String(request.headers.get('x-request-id') || `identity-activation-${onboardingId}`).slice(0, 180);
+      await syncIdentityWorkforceStatus(env, { onboardingId, employeeId: onboarding.workforce_employee_id, accountStatus: 'ACTIVE' }, requestId);
+      const at = new Date().toISOString();
+      await env.DB.batch([
+        env.DB.prepare(`UPDATE ${usersTable} SET ativo=1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(at, onboarding.corporate_email),
+        env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='ACTIVE', provisioning_state='COMPLETED', compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?").bind(at, onboardingId),
+      ]);
+      const activated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=?').bind(onboardingId).first();
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_ACTIVATION_RETRY', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, after: { accountStatus: 'ACTIVE', requestId } });
+      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(activated) }), { status: 200 }, appOrigin);
+    } catch (error) {
+      const message = String(error?.message || 'ONBOARDING_ACTIVATION_FAILED');
+      return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_ACTIVATION_PENDING', code: message }), { status: 503 }, appOrigin);
     }
   }
 
