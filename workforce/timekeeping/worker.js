@@ -3,6 +3,7 @@ import { biometricDistance, constantTimeEqual, decryptSensitiveText, decryptTemp
 import { readModuleAvailability, moduleUnavailableResponse } from '../../shared/module-availability/worker.js'
 import { dependencyState, operationalStatus } from '../../shared/observability/contract.js'
 import { normalizeAllowedUnits, unknownUnitScopes } from '../../shared/identity-contract/index.js'
+import { isValidAccountTransition, normalizeAccountState, workforceStatusForAccount } from '../../shared/identity-runtime/onboarding-state.js'
 
 const encoder = new TextEncoder()
 const json = (status, payload, requestId) => new Response(JSON.stringify({ ...payload, requestId }), {
@@ -126,7 +127,8 @@ function requireUnit(actor, unitId) {
 }
 
 function publicEmployee(row) {
-  return row ? { id: row.id, employeeId: row.canonical_employee_id, name: row.display_name, email: row.login_email || null, status: row.status, terminatedAt: row.terminated_at || null } : null
+  const accessState = normalizeAccountState(row?.access_state || (row?.status === 'ACTIVE' ? 'ACTIVE' : row?.status === 'TERMINATED' ? 'TERMINATED' : 'SUSPENDED')) || 'SUSPENDED'
+  return row ? { id: row.id, employeeId: row.canonical_employee_id, name: row.display_name, email: row.login_email || null, status: row.status, accessState, terminatedAt: row.terminated_at || null } : null
 }
 
 const profilePrivateFields = ['cpf', 'mobilePhone', 'pis', 'rgNumber', 'rgIssuer', 'rgIssuerState', 'rgIssuedAt', 'motherName', 'fatherName', 'zipCode', 'street', 'addressNumber', 'addressComplement', 'neighborhood']
@@ -582,13 +584,21 @@ async function enforceReplayProtection(request, db, requestId, actor) {
   } catch { return false }
 }
 
-async function identityServiceAuthorized(request, env, bodyHash) {
-  if (String(request.headers.get('x-skincos-service') || '') !== 'identity') return false
+async function identityServiceAuthorized(request, env, bodyHash, db) {
+  if (String(request.headers.get('x-skincos-service') || '') !== 'identity') return { ok: false, error: 'SERVICE_UNAUTHORIZED' }
   const secret = String(env.IDENTITY_WORKFORCE_HMAC_KEY || '')
   const timestamp = String(request.headers.get('x-skincos-workforce-ts') || '')
   const signature = String(request.headers.get('x-skincos-workforce-sig') || '')
-  if (!secret || !timestamp || !signature || !Number.isFinite(Number(timestamp)) || Math.abs(Date.now() - Number(timestamp)) > 300000) return false
-  return equal(await hmac(secret, `${timestamp}.${bodyHash}`), signature)
+  const nonce = String(request.headers.get('x-skincos-workforce-nonce') || '').trim()
+  if (!secret || !timestamp || !signature || !nonce || !Number.isFinite(Number(timestamp)) || Math.abs(Date.now() - Number(timestamp)) > 300000) return { ok: false, error: 'SERVICE_UNAUTHORIZED' }
+  if (!equal(await hmac(secret, `${timestamp}.${bodyHash}`), signature)) return { ok: false, error: 'SERVICE_UNAUTHORIZED' }
+  try {
+    await db.prepare('DELETE FROM timekeeping_request_nonces WHERE expires_at<?').bind(now()).run()
+    await db.prepare('INSERT INTO timekeeping_request_nonces (nonce, expires_at, request_id, created_at) VALUES (?, ?, ?, ?)').bind(nonce, new Date(Date.now() + 10 * 60 * 1000).toISOString(), request.headers.get('x-request-id') || null, now()).run()
+  } catch {
+    return { ok: false, error: 'SERVICE_REPLAY' }
+  }
+  return { ok: true }
 }
 
 async function syncIdentityOnboarding(db, body, requestId) {
@@ -596,16 +606,21 @@ async function syncIdentityOnboarding(db, body, requestId) {
   const name = cleanText(body?.fullName, 180)
   const email = cleanText(body?.corporateEmail, 240).toLowerCase()
   const profile = cleanText(body?.profile, 40).toUpperCase()
+  const accountStatus = normalizeAccountState(body?.accountStatus || (profile === 'SUPERVISOR' || profile === 'INJETOR' ? 'PENDING_ACCESS' : 'INVITED'))
   const jobTitle = cleanText(body?.jobTitle, 160)
   const departmentName = normalizeDepartmentName(body?.department)
   const units = normalizeAllowedUnits(body?.units)
   const unknownUnits = unknownUnitScopes(body?.units)
-  if (!onboardingId || !name || !/^\S+@\S+\.\S+$/.test(email) || !jobTitle || !departmentName || !units.length || unknownUnits.length || !['GESTOR', 'GERENTE', 'SUPERVISOR', 'INJETOR', 'CONSULTOR'].includes(profile)) throw new Error('INVALID_ONBOARDING')
+  if (!onboardingId || !name || !/^\S+@\S+\.\S+$/.test(email) || !jobTitle || !departmentName || !units.length || unknownUnits.length || !accountStatus || !['GESTOR', 'GERENTE', 'SUPERVISOR', 'INJETOR', 'CONSULTOR'].includes(profile)) throw new Error('INVALID_ONBOARDING')
   const existing = await db.prepare('SELECT * FROM workforce_employees WHERE lower(login_email)=lower(?) LIMIT 1').bind(email).first()
   if (existing) {
     let metadata = {}
     try { metadata = JSON.parse(existing.metadata_json || '{}') } catch {}
     if (metadata?.identityOnboardingId !== onboardingId) throw new Error('LOGIN_EMAIL_ALREADY_IN_USE')
+    const existingState = normalizeAccountState(existing.access_state || (existing.status === 'ACTIVE' ? 'ACTIVE' : existing.status === 'TERMINATED' ? 'TERMINATED' : 'SUSPENDED'))
+    if (existingState !== accountStatus && ['PENDING_ACCESS', 'INVITED'].includes(accountStatus)) {
+      await syncIdentityOnboardingStatus(db, { onboardingId, employeeId: existing.id, accountStatus, allowFailClosedRepair: true }, requestId)
+    }
     return { employeeId: existing.id, canonicalEmployeeId: existing.canonical_employee_id, idempotent: true }
   }
   const at = now(); const employeeId = crypto.randomUUID(); const canonicalEmployeeId = `identity:${onboardingId}`
@@ -617,12 +632,15 @@ async function syncIdentityOnboarding(db, body, requestId) {
     statements.push(db.prepare('INSERT INTO workforce_departments (id, name, normalized_name, active, created_at, updated_at, updated_by) VALUES (?, ?, ?, 1, ?, ?, ?)').bind(department.id, departmentName, departmentKey, at, at, 'identity-service'))
   }
   statements.push(
-    db.prepare('INSERT INTO workforce_employees (id, canonical_employee_id, login_email, display_name, status, created_at, updated_at, phone_hash, job_title, metadata_json) VALUES (?, ?, ?, ?, \'ACTIVE\', ?, ?, ?, ?, ?)').bind(employeeId, canonicalEmployeeId, email, name, at, at, cleanText(body?.mobilePhoneHash, 128) || null, jobTitle, JSON.stringify({ source: 'IDENTITY_ONBOARDING', identityOnboardingId: onboardingId })),
+    db.prepare('INSERT INTO workforce_employees (id, canonical_employee_id, login_email, display_name, status, created_at, updated_at, phone_hash, job_title, metadata_json, access_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(employeeId, canonicalEmployeeId, email, name, workforceStatusForAccount(accountStatus), at, at, cleanText(body?.mobilePhoneHash, 128) || null, jobTitle, JSON.stringify({ source: 'IDENTITY_ONBOARDING', identityOnboardingId: onboardingId }), accountStatus),
   )
   const managerByUnit = {}
+  const ambiguousManagerUnits = []
   for (const unit of units) {
-    const route = await db.prepare('SELECT manager_employee_id FROM workforce_department_routes WHERE unit_id=? AND department_id=? AND employee_profile=? AND active=1 LIMIT 1').bind(unit, department.id, profile).first()
-    const managerId = route?.manager_employee_id || null
+    const routes = await db.prepare('SELECT r.manager_employee_id, e.status, e.access_state FROM workforce_department_routes r LEFT JOIN workforce_employees e ON e.id=r.manager_employee_id WHERE r.unit_id=? AND r.department_id=? AND r.employee_profile=? AND r.active=1').bind(unit, department.id, profile).all()
+    const candidates = (routes?.results || []).filter((route) => route?.manager_employee_id && route.status === 'ACTIVE' && (!route.access_state || route.access_state === 'ACTIVE'))
+    const managerId = candidates.length === 1 ? candidates[0].manager_employee_id : null
+    if (candidates.length > 1) ambiguousManagerUnits.push(unit)
     managerByUnit[unit] = managerId
     statements.push(
       db.prepare('INSERT INTO timekeeping_employee_units (id, employee_id, unit_id, effective_from, created_at) VALUES (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), employeeId, unit, at.slice(0, 10), at),
@@ -630,9 +648,34 @@ async function syncIdentityOnboarding(db, body, requestId) {
     )
   }
   const actor = { id: 'identity-service', role: 'ADMIN', email: 'identity-service@internal', allowedUnits: units, name: 'Identity service' }
-  statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_SYNC', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, canonicalEmployeeId, profile, departmentId: department.id, units, managerConfiguredByUnit: Object.fromEntries(Object.entries(managerByUnit).map(([unit, managerId]) => [unit, !!managerId])) } }))
+  statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_SYNC', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, canonicalEmployeeId, profile, accountStatus, departmentId: department.id, units, managerConfiguredByUnit: Object.fromEntries(Object.entries(managerByUnit).map(([unit, managerId]) => [unit, !!managerId])) } }))
+  if (ambiguousManagerUnits.length) statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_AMBIGUOUS', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: ambiguousManagerUnits, resolution: 'MANUAL_REVIEW' } }))
   await db.batch(statements)
   return { employeeId, canonicalEmployeeId, idempotent: false }
+}
+
+async function syncIdentityOnboardingStatus(db, body, requestId) {
+  const onboardingId = cleanText(body?.onboardingId, 120)
+  const employeeId = cleanText(body?.employeeId, 120)
+  const nextState = normalizeAccountState(body?.accountStatus)
+  if (!onboardingId || !nextState) throw new Error('INVALID_ONBOARDING_STATUS')
+  const employee = await db.prepare('SELECT * FROM workforce_employees WHERE id=? OR canonical_employee_id=? LIMIT 1').bind(employeeId || `identity:${onboardingId}`, employeeId || `identity:${onboardingId}`).first()
+  if (!employee) throw new Error('ONBOARDING_NOT_FOUND')
+  let metadata = {}
+  try { metadata = JSON.parse(employee.metadata_json || '{}') } catch {}
+  if (metadata?.identityOnboardingId !== onboardingId) throw new Error('ONBOARDING_ID_MISMATCH')
+  const currentState = normalizeAccountState(employee.access_state || (employee.status === 'ACTIVE' ? 'ACTIVE' : employee.status === 'TERMINATED' ? 'TERMINATED' : 'SUSPENDED'))
+  const failClosedRepair = body?.allowFailClosedRepair === true && ['PENDING_ACCESS', 'INVITED'].includes(nextState)
+  if (!isValidAccountTransition(currentState, nextState) && !failClosedRepair) throw new Error('INVALID_STATUS_TRANSITION')
+  if (currentState === nextState) return { employeeId: employee.id, accountStatus: nextState, idempotent: true }
+  const nextTechnicalStatus = workforceStatusForAccount(nextState)
+  const terminatedAt = nextState === 'TERMINATED' ? (employee.terminated_at || now()) : null
+  const actor = { id: 'identity-service', role: 'ADMIN', email: 'identity-service@internal', allowedUnits: [], name: 'Identity service' }
+  await db.batch([
+    db.prepare('UPDATE workforce_employees SET status=?, access_state=?, terminated_at=?, updated_at=? WHERE id=?').bind(nextTechnicalStatus, nextState, terminatedAt, now(), employee.id),
+    await audit(db, { actor, action: failClosedRepair ? 'IDENTITY_ONBOARDING_FAIL_CLOSED_REPAIR' : 'IDENTITY_ONBOARDING_STATUS', entityType: 'workforce_employee', entityId: employee.id, requestId, before: { accountStatus: currentState }, after: { accountStatus: nextState, status: nextTechnicalStatus } }),
+  ])
+  return { employeeId: employee.id, accountStatus: nextState, idempotent: false }
 }
 
 export async function handleTimekeeping(request, env) {
@@ -665,13 +708,26 @@ export async function handleTimekeeping(request, env) {
   }
   const db = env.DB
   if (path === '/api/ponto/internal/onboarding' && request.method === 'POST') {
-    if (!await identityServiceAuthorized(request, env, bodyHash)) return json(401, { ok: false, error: 'SERVICE_UNAUTHORIZED' }, requestId)
+    const serviceAuth = await identityServiceAuthorized(request, env, bodyHash, db)
+    if (!serviceAuth.ok) return json(serviceAuth.error === 'SERVICE_REPLAY' ? 409 : 401, { ok: false, error: serviceAuth.error }, requestId)
     try {
       const data = await syncIdentityOnboarding(db, await readJson(request), requestId)
       return json(data.idempotent ? 200 : 201, { ok: true, data }, requestId)
     } catch (error) {
       const code = String(error?.message || 'ONBOARDING_FAILED')
       const status = code === 'LOGIN_EMAIL_ALREADY_IN_USE' ? 409 : code === 'INVALID_ONBOARDING' ? 400 : /no such table/i.test(code) ? 503 : 500
+      return failure(status, status === 503 ? 'ONBOARDING_MIGRATION_REQUIRED' : code, requestId)
+    }
+  }
+  if (path === '/api/ponto/internal/onboarding/status' && request.method === 'POST') {
+    const serviceAuth = await identityServiceAuthorized(request, env, bodyHash, db)
+    if (!serviceAuth.ok) return json(serviceAuth.error === 'SERVICE_REPLAY' ? 409 : 401, { ok: false, error: serviceAuth.error }, requestId)
+    try {
+      const data = await syncIdentityOnboardingStatus(db, await readJson(request), requestId)
+      return json(data.idempotent ? 200 : 200, { ok: true, data }, requestId)
+    } catch (error) {
+      const code = String(error?.message || 'ONBOARDING_STATUS_FAILED')
+      const status = /no such table|no such column/i.test(code) ? 503 : ['INVALID_ONBOARDING_STATUS', 'INVALID_STATUS_TRANSITION', 'ONBOARDING_ID_MISMATCH'].includes(code) ? 409 : code === 'ONBOARDING_NOT_FOUND' ? 404 : 500
       return failure(status, status === 503 ? 'ONBOARDING_MIGRATION_REQUIRED' : code, requestId)
     }
   }
@@ -1173,4 +1229,4 @@ export async function handleTimekeeping(request, env) {
 }
 
 export default { fetch: handleTimekeeping }
-export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential, profileInput, profileDocumentStatus, normalizeNetworks, ipInNetwork, locationEvidence, normalizePresenceMode, normalizeNetworkPolicy, identityServiceAuthorized, normalizedDepartmentKey }
+export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential, profileInput, profileDocumentStatus, normalizeNetworks, ipInNetwork, locationEvidence, normalizePresenceMode, normalizeNetworkPolicy, identityServiceAuthorized, normalizedDepartmentKey, publicEmployee, syncIdentityOnboardingStatus }

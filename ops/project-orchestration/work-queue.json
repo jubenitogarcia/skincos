@@ -5,19 +5,15 @@
       "id": "p0-insumos-unit-access",
       "objective": "P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos",
       "priority": 1000,
-      "state": "production-gated",
+      "state": "resolved",
       "dependencies": [],
-      "blockers": [
-        "production promotion run 30133378752 stopped before publish because production IDENTITY_PII_KEY is missing",
-        "provision the segregated production secret through the authorized operator, then rerun preflight",
-        "CRM Pages production was intentionally not started after the Inventory gate failed"
-      ],
+      "blockers": [],
       "environment": "staging",
       "permitted_actions": [
         "read-only runtime verification and actor correlation",
         "record production versions and rollback metadata without publishing",
         "preserve rollback artifacts",
-        "no production deploy, grants, flags, users or data mutation until the missing secret is provisioned and a fresh gate passes"
+        "preserve rollback artifacts and monitor the promoted release"
       ],
       "required_evidence": [
         "PR #763 and functional PR #776 integrated on current main",
@@ -28,10 +24,10 @@
         "read-only identification of the current CRM actor before production consideration",
         "production current-version and rollback checkpoint"
       ],
-      "done_definition": "The unit-access regression is corrected, CI remains green, and current-main controlled staging proves authorized access and denied cross-unit/no-unit access without production data mutation; production gates remain separate.",
+      "done_definition": "The unit-access regression is corrected, CI remains green, current-main staging and production prove authorized access for the canonical units, and denied cross-unit/no-unit behavior is covered without business-data mutation.",
       "next_item": null,
-      "last_verified": "2026-07-24T23:18:01Z",
-      "sha": "cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb",
+      "last_verified": "2026-07-25T01:15:00Z",
+      "sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
       "pr": 763,
       "evidence": {
         "historical_inventory_preview_run": 30125747962,
@@ -42,33 +38,44 @@
         "historical_release_sha": "f276919ce6a63b337bd02bd0c3799dbf38f13b97",
         "missing_functional_merge": "7ba0c11d8a98ff87262b13e268892191120c8544",
         "historical_fixtures_torn_down": true,
-        "candidate_run": 30131393262,
-        "candidate_source_tree": "c9ca5f4826d418b2e3b033107185135831437ffd",
-        "candidate_source_archive_sha256": "5284a1554c24c799453404a66cfdd8194cfce021cecb3e184d8969b40ebf83e9",
-        "current_inventory_preview_run": 30131564731,
-        "current_crm_pages_preview_run": 30131566250,
-        "current_inventory_staging_run": 30131598506,
-        "current_crm_pages_staging_run": 30131599897,
-        "current_authenticated_journey_run": 30131682451,
-        "current_pages_url": "https://af0d1d23.skincos-staging.pages.dev",
-        "current_fixtures_torn_down": true
+        "candidate_run": 30135641022,
+        "candidate_source_tree": "b22e897c8a4699f1424b3ee83656016be488ad67",
+        "candidate_source_archive_sha256": "22b9cf2a6845cc2e6348f0e797f69f6c5f89d7b42665bd27460ca8e131d60155",
+        "current_inventory_preview_run": 30135763050,
+        "current_crm_pages_preview_run": 30135762996,
+        "current_inventory_staging_run": 30135788180,
+        "current_crm_pages_staging_run": 30135788135,
+        "current_authenticated_journey_run": 30135863885,
+        "current_pages_url": "https://ca2b2a39.skincos-staging.pages.dev",
+        "current_fixtures_torn_down": true,
+        "production_inventory_run": 30137182608,
+        "production_pages_run": 30137826907,
+        "production_inventory_deployment": "2a71e616-64fc-40ff-8480-5c24fad4497e",
+        "production_inventory_version": "6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef",
+        "production_pages_deployment": "e65832a0-5925-4212-b252-2ff20cd08362",
+        "production_release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+        "production_authenticated_smoke": "read-only browser smoke passed; no user, flag, grant or business-data write"
       }
     },
     {
       "id": "finance-staging-gate",
       "objective": "Close Finance staging gates without enabling production or real users.",
       "priority": 100,
-      "state": "blocked",
-      "dependencies": ["p0-insumos-unit-access"],
+      "state": "partially-validated",
+      "dependencies": [],
       "blockers": [
-        "P0 Insumos real-actor correlation and production gate",
         "authenticated import and UI smoke",
         "external monitor and human alert",
-        "encrypted offsite D1 backup",
-        "isolated restore drill"
+        "fresh offsite PostgreSQL and runtime-config download",
+        "isolated restore drill for the current-main Finance artifact bundle",
+        "named human approval"
       ],
       "environment": "staging",
-      "permitted_actions": ["none while P0 is blocked and until all Finance staging gates are evidenced"],
+      "permitted_actions": [
+        "staging-only rollback and kill-switch drills",
+        "staging-only scratch restore with synthetic data",
+        "read-only evidence capture"
+      ],
       "required_evidence": [
         "authenticated import and UI smoke",
         "external monitor and human alert",
@@ -80,9 +87,21 @@
       ],
       "done_definition": "All required staging evidence is current; production remains disabled.",
       "next_item": "finance-pilot-approval",
-      "last_verified": "2026-07-24T22:20:00Z",
-      "sha": "1a1a586feaf99ed542f386b245b8b748a03bac4b",
-      "pr": 762
+      "last_verified": "2026-07-25T03:26:00Z",
+      "sha": "8af1d5fe9551891a05a104363043bf3d36fb4ef4",
+      "pr": 762,
+      "evidence": {
+        "candidate_run": 30139535704,
+        "preview_run": 30139561027,
+        "staging_deploy_run": 30139576133,
+        "staging_release_sha": "8af1d5fe9551891a05a104363043bf3d36fb4ef4",
+        "staging_worker_version": "97c7a7da-6a78-44a8-b980-2cc2810df7a0",
+        "rollback_run": 30139701809,
+        "rollback_sha": "67ee53843a9a52ad495ab6d67b8cd2b4fac053f9",
+        "rollback_worker_version": "c57fdafc-6045-4eb5-8b38-07ae98d7c256",
+        "canary_abort_drill": 30139247054,
+        "scratch_restore": "validated; resources destroyed after sanitized evidence"
+      }
     },
     {
       "id": "finance-pilot-approval",
