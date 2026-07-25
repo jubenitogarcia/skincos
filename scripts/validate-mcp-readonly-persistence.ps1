@@ -33,7 +33,8 @@ if (-not $SkipShutdown) {
     Start-ScheduledTask -TaskName SkincosWslRuntimeKeepalive
     $recovered = $false
     for ($attempt = 1; $attempt -le 30; $attempt++) {
-        if ((Invoke-WslProbe 'systemctl is-active orb skincos-orb-mcp-readonly') -match 'active') { $recovered = $true; break }
+        $serviceState = (Invoke-WslProbe 'systemctl is-active orb orb-proxy cloudflare-orb skincos-orb-mcp-readonly') -split "`r?`n" | Where-Object { $_.Trim() }
+        if ($serviceState.Count -eq 4 -and @($serviceState | Where-Object { $_.Trim() -ne 'active' }).Count -eq 0) { $recovered = $true; break }
         Start-Sleep -Seconds 2
     }
     if (-not $recovered) { throw 'Official WSL keepalive did not recover Orb and gateway within 60 seconds.' }
