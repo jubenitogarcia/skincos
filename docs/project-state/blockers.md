@@ -20,8 +20,21 @@ and named human approval; it is frozen independently of the resolved P0 item.
 
 ## Finance staging gate — current status
 
-PR #740 is integrated; follow-up state/evidence PRs #800, #801, #802 and #804
-leave main at `fe0ccbee28ad36e0444937a553a8c11cb48112d8`.
+The current-main rollback/restore exercise is now complete for candidate SHA
+`b869485b6a33fae5a5dbe504b41660f842fb4ca9`. Worker preview/staging runs
+`30143039262`/`30143051826` promoted it, rollback `30143185583` restored the
+reachable immutable SHA `8af1d5fe9551891a05a104363043bf3d36fb4ef4`, and the
+scratch D1/KV/R2/Worker restore passed its synthetic authenticated journey.
+The UI staging artifact was built from the same candidate (`30143594297`).
+The kill switch was validated against remote KV by `30143674681` and restored
+by `30143742671`; the shell remained healthy while Finance returned 423.
+Scratch resources were destroyed after checksums and functional evidence were
+captured. This is evidence for rollback and recovery, not a production or pilot
+approval. The sanitized private record is retained outside the repository.
+
+PR #740 is integrated; follow-up state/evidence PRs #800, #801, #802, #804,
+#805, #806 and #807 are integrated. Current main is
+`68f88e070629e4077a1a1754b3347e60dc89be18`.
 The offsite drill now has valid D1 retrieval/restore evidence and matching
 PostgreSQL/configuration ciphertext hashes, but a fresh streamed download of
 the two large Drive objects was not captured because the connector exceeded

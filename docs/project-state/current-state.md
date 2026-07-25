@@ -1,5 +1,56 @@
 # Current state
 
+## Finance current-main rollback and scratch restore — 2026-07-25
+
+The current main SHA after PR #807 is `68f88e070629e4077a1a1754b3347e60dc89be18`.
+The Finance candidate exercised in staging was the immediately preceding
+main SHA `b869485b6a33fae5a5dbe504b41660f842fb4ca9`; it was promoted through
+the canonical Worker preview/staging runs `30143039262`/`30143051826`, then
+rolled back by `30143185583` to the known reachable immutable SHA
+`8af1d5fe9551891a05a104363043bf3d36fb4ef4` (Worker version
+`97c7a7da-6a78-44a8-b980-2cc2810df7a0`). The earlier active staging version
+pointed at an unreachable local SHA and was rejected by the rollback guard;
+that rejection is retained as a safety finding. No production target was
+selected and no unrelated module was published.
+
+The Finance UI was independently built and staged from the same candidate SHA
+(`30143580303` preview, `30143594297` staging, Pages artifact evidence
+`8615284211`, module URL returned HTTP 200). Because the Worker was intentionally
+left at its rollback target while the UI remained at the candidate, staging is
+currently a rollback-exercise state, not a pilot-ready single-version release.
+
+The corrected remote-KV kill-switch workflow is PR #807, merged as
+`68f88e070629e4077a1a1754b3347e60dc89be18`. Its controlled staging run
+`30143674681` wrote the disabled state to the remote namespace (the prior run
+proved only local KV and is not valid evidence). After propagation, Finance
+health returned `ok=false`, readiness false and `MODULE_DISABLED` returned 423
+while the CRM shell stayed HTTP 200. Run `30143742671` restored the active
+state; health then returned 200. The observed propagation delay was roughly
+one to two minutes and is now an explicit operational limitation.
+
+An isolated scratch restore used the candidate Worker source SHA and a synthetic
+Finance actor. The staging D1 export was 53,101 bytes with SHA-256
+`a24db616e94e156c7da5a26a319094b210e7c078a80df11ce0648bea36c9692a`.
+Before the synthetic exercise, counts matched the source (settings 1, scopes 3,
+grants 1, accounts 0, movements 0, journal 0, audit 13, migrations 12).
+The authenticated functional journey passed health, readiness, bootstrap,
+read-only account/category queries, cross-unit denial (403), synthetic create,
+compensation and audit. Only two synthetic audit rows were added; no production
+data or sessions were touched. The R2 sentinel round-tripped with SHA-256
+`e8e08acced00c3c414b3d167fe5958b672acce3352c795ec4e118d9776f981ef`, KV readback
+was active, and the scratch D1 post-exercise export was 55,070 bytes with SHA-256
+`082188fec4cd48bce08ff2a73c8104acb181f6c2c94239d4ae3d7f9c767b34ca`.
+The measured checkpoint-to-functional-smoke interval was 16 minutes. Scratch
+Worker, D1, KV and R2 were destroyed after evidence capture; the sanitized
+private record is
+`C:\\CodexRuntime\\operator\\admin\\skincos\\finance-recovery-drills\\20260725T-current-main-b869485b\\restore-evidence.sanitized.json`.
+
+This closes the current-main staging rollback and scratch-restore exercise, but
+does not unlock the Finance pilot. Fresh offsite retrieval of the large
+PostgreSQL/runtime-config objects, continuous external human alert evidence,
+authenticated UI/import smoke against a single promoted SHA, and named pilot
+approval remain required. `module_enabled` and real grants remain unchanged.
+
 ## Inventory release reconciliation and `IDENTITY_PII_KEY` audit — 2026-07-25
 
 Fresh source-of-truth check is based on `origin/main`

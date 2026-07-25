@@ -2,6 +2,18 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T04:25:00Z",
+      "surface": "github-cloudflare-staging-scratch",
+      "scope": "Finance current-main immutable rollback, remote kill switch and scratch restore",
+      "state": "rollback-and-restore-proven-pilot-blocked",
+      "method": "Canonical Finance Worker/UI preview and staging runs, explicit SHA rollback, Wrangler health/readiness/version checks, remote KV write/readback, isolated D1/R2/KV/Worker scratch restore and synthetic authenticated journey",
+      "result": "Candidate b869485b6a33fae5a5dbe504b41660f842fb4ca9 was promoted by runs 30143039262/30143051826 and rolled back by 30143185583 to reachable SHA 8af1d5fe9551891a05a104363043bf3d36fb4ef4 (Worker 97c7a7da-6a78-44a8-b980-2cc2810df7a0). UI staging run 30143594297 used the candidate SHA. Remote kill switch run 30143674681 returned Finance 423/disabled after propagation while CRM health stayed 200; run 30143742671 restored active. Scratch D1 counts matched before the synthetic exercise, R2 sentinel and KV round-tripped, and health/readiness/bootstrap/cross-unit denial/create-compensate/audit all passed. Scratch resources were destroyed after capture.",
+      "limitation": "The Worker was intentionally left at the rollback target while UI staging remained at the candidate, so staging is not a single-SHA pilot release. The measured 16-minute checkpoint-to-functional interval is a scratch drill timing, not a production SLO. Fresh offsite PostgreSQL/runtime-config retrieval, continuous external human alert evidence, authenticated UI/import smoke and named approval remain open.",
+      "release_sha": "b869485b6a33fae5a5dbe504b41660f842fb4ca9",
+      "runs": [30143039262,30143051826,30143185583,30143580303,30143594297,30143674681,30143742671],
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\finance-recovery-drills\\20260725T-current-main-b869485b\\restore-evidence.sanitized.json"
+    },
+    {
       "observed_at": "2026-07-25T03:36:00Z",
       "surface": "github-cloudflare-staging",
       "scope": "Post-PR-803 staging-only verification and production observation",
