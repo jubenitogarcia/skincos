@@ -1,0 +1,132 @@
+name: Insumos staging RBAC journey
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Immutable main SHA already promoted to staging
+        required: true
+        type: string
+      inventory_staging_run_id:
+        description: Canonical Inventory staging run containing promotion evidence
+        required: true
+        type: string
+      crm_pages_staging_run_id:
+        description: Canonical CRM Pages staging run containing promotion evidence
+        required: true
+        type: string
+      pages_url:
+        description: Immutable skincos-staging Pages deployment URL
+        required: true
+        type: string
+
+concurrency:
+  group: insumos-staging-rbac-${{ inputs.release_sha }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  journey:
+    name: synthetic staging journey
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 25
+    env:
+      # This journey may write only ephemeral identities to the staging D1. Do
+      # not replace this with the unqualified production database name.
+      STAGING_D1_DATABASE: skincos-db-staging
+    steps:
+      - name: Validate immutable source and staging-only target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          INVENTORY_RUN: ${{ inputs.inventory_staging_run_id }}
+          CRM_PAGES_RUN: ${{ inputs.crm_pages_staging_run_id }}
+          PAGES_URL: ${{ inputs.pages_url }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
+          [[ "$INVENTORY_RUN" =~ ^[0-9]+$ && "$CRM_PAGES_RUN" =~ ^[0-9]+$ ]] || { echo 'canonical run IDs must be numeric'; exit 1; }
+          [[ "$PAGES_URL" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'pages_url must be an immutable skincos-staging.pages.dev URL'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/promotion-evidence/inventory" "$RUNNER_TEMP/promotion-evidence/crm-pages"
+          gh run download "$INVENTORY_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-inventory --dir "$RUNNER_TEMP/promotion-evidence/inventory"
+          gh run download "$CRM_PAGES_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-crm-pages --dir "$RUNNER_TEMP/promotion-evidence/crm-pages"
+          for evidence in "$RUNNER_TEMP/promotion-evidence/inventory/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/crm-pages/promotion-evidence.json"; do
+            node -e "const e=require(process.argv[1]); if(e.sourceSha!==process.env.RELEASE_SHA||e.target!=='staging') process.exit(1)" "$evidence"
+          done
+
+      - name: Checkout smoke harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: crm/console/package-lock.json
+
+      - name: Install browser dependencies
+        run: npm ci
+        working-directory: crm/console
+
+      - name: Install Playwright Chromium
+        run: npx --yes playwright install --with-deps chromium
+        working-directory: crm/console
+
+      - name: Generate private synthetic staging identities
+        id: fixture
+        env:
+          FIXTURES: ${{ runner.temp }}/insumos-rbac-fixtures.json
+          SQL_FILE: ${{ runner.temp }}/insumos-rbac-provision.sql
+        run: |
+          set -euo pipefail
+          node inventory/scripts/insumosStagingRbacFixtures.mjs --action provision --run-id "$GITHUB_RUN_ID" --fixtures "$FIXTURES" --sql "$SQL_FILE"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Provision only synthetic identities in staging D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SQL_FILE: ${{ runner.temp }}/insumos-rbac-provision.sql
+        run: |
+          set -euo pipefail
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'staging Cloudflare credentials are required'; exit 1; }
+          [[ "$STAGING_D1_DATABASE" == 'skincos-db-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
+          npx --yes wrangler@3 d1 execute "$STAGING_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$SQL_FILE" >/dev/null
+
+      - name: Execute authenticated unit-scope journey
+        env:
+          INSUMOS_STAGING_CRM_URL: ${{ inputs.pages_url }}
+          INSUMOS_STAGING_FIXTURES_FILE: ${{ runner.temp }}/insumos-rbac-fixtures.json
+          INSUMOS_STAGING_REPORT_FILE: ${{ runner.temp }}/insumos-rbac-report.json
+          NODE_PATH: crm/console/node_modules
+        run: node crm/console/scripts/insumos-staging-rbac-smoke.cjs
+
+      - name: Tear down only this run's synthetic staging identities
+        if: ${{ always() }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FIXTURES: ${{ runner.temp }}/insumos-rbac-fixtures.json
+          SQL_FILE: ${{ runner.temp }}/insumos-rbac-teardown.sql
+        run: |
+          set -euo pipefail
+          [[ -f "$FIXTURES" ]] || exit 0
+          [[ "$STAGING_D1_DATABASE" == 'skincos-db-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
+          node inventory/scripts/insumosStagingRbacFixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$FIXTURES" --sql "$SQL_FILE"
+          npx --yes wrangler@3 d1 execute "$STAGING_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$SQL_FILE" >/dev/null
+          rm -f "$FIXTURES" "$SQL_FILE"
+
+      - name: Upload sanitised journey evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: insumos-staging-rbac-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/insumos-rbac-report.json
+          retention-days: 30
+          if-no-files-found: warn

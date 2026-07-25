@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import worker, { __testables } from './worker.js'
+import { signHmac } from './security.js'
 
 test('health is public and does not disclose secrets', async () => {
   const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/health'), { APP_VERSION: 'test', DB: {} })
@@ -68,6 +69,18 @@ test('manager and supervisor scopes are horizontal while admin remains organizat
   assert.equal(__testables.requireUnit({ role: 'SUPERVISOR', allowedUnits: ['UNIT_A'] }, 'UNIT_A'), true)
   assert.equal(__testables.requireUnit({ role: 'SUPERVISOR', allowedUnits: ['UNIT_A'] }, 'UNIT_B'), false)
   assert.equal(__testables.requireUnit({ role: 'ADMIN', allowedUnits: [] }, 'UNIT_B'), true)
+})
+
+test('Identity onboarding service binding requires a fresh HMAC and cannot be forged by a browser', async () => {
+  const secret = 'identity-workforce-test-secret'
+  const timestamp = String(Date.now())
+  const bodyHash = 'body-hash'
+  const signature = await signHmac(secret, `${timestamp}.${bodyHash}`)
+  const signed = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { 'x-skincos-service': 'identity', 'x-skincos-workforce-ts': timestamp, 'x-skincos-workforce-sig': signature } })
+  assert.equal(await __testables.identityServiceAuthorized(signed, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash), true)
+  const unsigned = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { 'x-skincos-service': 'identity', 'x-skincos-workforce-ts': timestamp, 'x-skincos-workforce-sig': 'forged' } })
+  assert.equal(await __testables.identityServiceAuthorized(unsigned, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash), false)
+  assert.equal(__testables.normalizedDepartmentKey('  Atendimento Técnico  '), 'atendimento tecnico')
 })
 
 test('CSV cells neutralize formulas and follow CSV quote escaping', () => {
