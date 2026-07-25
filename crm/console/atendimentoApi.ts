@@ -67,7 +67,49 @@ export type AtendimentoReferences = {
   units: Array<{ slug: string; name: string }>
   professionals: Array<{ id: string; canonicalId?: string; name: string; role?: string; status?: string; units?: string[]; shift?: string; roles?: string[]; turnos?: string[]; backgroundColor?: string; fontColor?: string; fontFamily?: string; fontSize?: number | null; fontWeight?: string; fontStyle?: string; alias?: string; phone?: string; email?: string; instagram?: string }>
   actorConsultantByUnit?: Record<string, { canonicalId: string | null; name: string | null; origin: 'actor' | 'unresolved'; reason?: string }>
-  procedures: Array<{ id: string; name: string; codes: string[] }>
+  procedures: Array<{ id: string; name: string; aliases?: string[]; codes: string[] }>
+}
+
+export type AtendimentoCommercialOffer = {
+  schemaVersion: 'crm-commercial-offer/v1' | string
+  offerId: string
+  offerKey: string
+  revision: number
+  unitSlug: string
+  title: string
+  description: string
+  status: 'draft' | 'approved' | 'active' | 'expired' | 'archived' | string
+  priceCents: number | null
+  currency: 'BRL' | string
+  priceQualifier: 'exact' | 'from' | 'on_request' | string
+  installmentCount: number | null
+  installmentValueCents: number | null
+  discountPercent: number | null
+  conditions: string
+  validityStart: string | null
+  validityEnd: string | null
+  procedures: Array<{ id: string; name: string; aliases: string[]; quantity: number; quantityUnit: string }>
+  approvedBy: string | null
+  approvedAt: string | null
+  updatedAt: string | null
+  contextHash: string
+}
+
+export type AtendimentoCommercialOfferMutation = {
+  unitSlug: string
+  offerKey?: string
+  title: string
+  description?: string
+  status: 'draft' | 'approved' | 'active' | 'expired' | 'archived'
+  priceCents?: number | null
+  priceQualifier?: 'exact' | 'from' | 'on_request'
+  installmentCount?: number | null
+  installmentValueCents?: number | null
+  discountPercent?: number | null
+  conditions?: string
+  validityStart?: string | null
+  validityEnd?: string | null
+  procedures: Array<{ procedureId: string; quantity?: number; quantityUnit?: string }>
 }
 
 export type AtendimentoClientSuggestion = {
@@ -602,6 +644,18 @@ export async function importAtendimentoGoogleSheet(dryRun = true) {
 
 export async function fetchAtendimentoManagementCatalog() {
   return api<AtendimentoManagementCatalog>('/management/catalog')
+}
+
+export async function fetchAtendimentoCommercialOffers(filters: { unit?: string; status?: string } = {}) {
+  const params = new URLSearchParams()
+  if (filters.unit && filters.unit !== 'all') params.set('unit', filters.unit)
+  if (filters.status && filters.status !== 'all') params.set('status', filters.status)
+  const qs = params.toString()
+  return api<{ offers: AtendimentoCommercialOffer[] }>(`/offers${qs ? `?${qs}` : ''}`)
+}
+
+export async function saveAtendimentoCommercialOffer(payload: AtendimentoCommercialOfferMutation) {
+  return api<{ offer: AtendimentoCommercialOffer }>('/offers', { method: 'PUT', body: payload })
 }
 
 export async function fetchAtendimentoManagementCommercial(filters: AtendimentoFilters) {
