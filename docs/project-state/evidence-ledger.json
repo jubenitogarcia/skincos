@@ -2,6 +2,44 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T01:15:00Z",
+      "surface": "crm-and-production",
+      "scope": "P0 Insumos production promotion and authenticated read-only smoke",
+      "state": "stable",
+      "method": "Canonical Inventory/Core Worker run 30137182608 and corrected CRM Pages run 30137826907 with explicit RELEASE_SHA c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d; post-deploy health probes and an authenticated browser smoke with no writes",
+      "result": "Inventory active deployment 2a71e616-64fc-40ff-8480-5c24fad4497e, Worker version 6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef (5135), and CRM Pages active deployment e65832a0-5925-4212-b252-2ff20cd08362 all attest the same release. CRM shell, Inventory, Ponto and Atendimento health probes returned HTTP 200. The authenticated smoke opened Insumos, rendered overview and movements, exposed only Novo Hamburgo and Barra Shopping Sul, switched units, reloaded and reopened without visible 401/403/500 or RBAC_UNIT_DENIED. No create/edit/delete action was invoked.",
+      "limitation": "The browser sandbox did not permit direct localStorage inspection or a mechanical resource-count probe; request-storm absence is observational. /insumos/readiness, /insumos/version and /insumos/dependencies are not public unauthenticated routes and returned 401; health plus deployment metadata are the available evidence.",
+      "sha": "cb658ad1e25413c2a307c846c9be99d1207eabb5",
+      "release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "runs": [30137182608,30137826907],
+      "rollback_checkpoint": {
+        "inventory_worker_deployment": "f0037d0a-bc21-4a26-8a8b-59a010c85ba6",
+        "inventory_worker_version": "6104273d-a14c-4a84-8bb1-889a681969dc",
+        "crm_pages_deployment": "0b8657b8-d162-4c0e-8a4a-e542255ec1a4",
+        "crm_pages_source": "fdf8cda"
+      }
+    },
+    {
+      "observed_at": "2026-07-25T00:40:42Z",
+      "surface": "github-production-environment",
+      "scope": "IDENTITY_PII_KEY production secret provisioning",
+      "state": "provisioned-no-deploy",
+      "method": "Generated a fresh CSPRNG value and stored it only as the GitHub production environment secret; value was never printed, logged or committed",
+      "result": "Secret metadata confirms IDENTITY_PII_KEY exists in the production environment. Production D1 read-only schema has no crm_employee_onboarding or crm_identity_sessions tables and no encrypted onboarding payload was evidenced, so no existing data required decryption during this release.",
+      "limitation": "The secret value, credentials and escrow material are intentionally absent from the repository and ledger. Rotation/escrow ownership must remain in the external secret-management procedure.",
+      "sha": "cb658ad1e25413c2a307c846c9be99d1207eabb5"
+    },
+    {
+      "observed_at": "2026-07-25T01:00:00Z",
+      "surface": "github-cloudflare-production-preflight",
+      "scope": "Inventory production promotion preflight on current main",
+      "state": "passed",
+      "method": "Clean archive of origin/main cb658ad1e25413c2a307c846c9be99d1207eabb5 running scripts/codex-preflight.sh",
+      "result": "Summary: failures=0 warnings=0. GitHub and Cloudflare authentication, required repository secrets and variables, security exception dates, canonical workflow files, CRM shell/API, Inventory, Ponto and Meta Ads health checks passed.",
+      "limitation": "Archive execution used a disposable local checkout; no repository or production state was changed.",
+      "sha": "cb658ad1e25413c2a307c846c9be99d1207eabb5"
+    },
+    {
       "observed_at": "2026-07-25T00:25:00Z",
       "surface": "github-cloudflare-production-preflight",
       "scope": "Inventory production promotion preflight, read-only",
