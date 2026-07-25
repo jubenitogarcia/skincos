@@ -5,6 +5,7 @@ import { resolveIdentityTables } from '../store/d1.js';
 import { hasPasswordResetMailerConfig, sendPasswordResetEmail } from '../notifications/smtpMailer.js';
 import { hasRequiredInviteScope, normalizeInviteEmail } from '../policy/invitePolicy.js';
 import { normalizeAllowedUnits } from '../../shared/identity-contract/index.js';
+import { syncIdentityWorkforceStatus } from '../../shared/identity-runtime/workforce-onboarding.js';
 
 function b64UrlBytes(value) {
     const base64 = String(value || '').replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(String(value || '').length / 4) * 4, '=');
@@ -30,6 +31,7 @@ export async function handleAuthRoutes({
     withCORS,
     sessionUsername,
     sessionVersion,
+    sessionId,
     sessionCsrf,
     cookies,
     bcrypt,
@@ -333,7 +335,7 @@ export async function handleAuthRoutes({
 		            return base.length >= 3 ? base : `${base}${randomInt(100, 999)}`;
 		        };
 
-		        const ensureUniqueUsername = async (base) => {
+        const ensureUniqueUsername = async (base) => {
 		            const b = String(base || '').trim();
 		            if (!b) return null;
 		            // 1) try base
@@ -346,8 +348,58 @@ export async function handleAuthRoutes({
 		                const taken = await env.DB.prepare(`SELECT 1 FROM ${usersTable} WHERE LOWER(username)=LOWER(?) LIMIT 1`).bind(candidate).first();
 		                if (!taken) return candidate;
 		            }
-		            return null;
-		        };
+            return null;
+        };
+
+        const sessionMutationAllowed = () => {
+            if (!sessionUsername || !sessionCsrf) return false;
+            const header = String(request.headers.get('x-csrf-token') || request.headers.get('X-CSRF-Token') || '').trim();
+            return Boolean(header && header === sessionCsrf);
+        };
+
+        if (url.pathname === '/auth/sessions' && request.method === 'GET') {
+            if (!sessionUsername) return withCORS(JSON.stringify({ error: 'Not authenticated' }), { status: 401 }, appOrigin);
+            try {
+                const userDb = await d1.getUserByUsername(sessionUsername);
+                if (!isCurrentSession(userDb)) return withCORS(JSON.stringify({ error: 'Not authenticated' }), { status: 401, headers: deleteAuthCookies() }, appOrigin);
+                const rows = await env.DB.prepare('SELECT id, device_label, created_at, last_seen_at, revoked_at FROM crm_identity_sessions WHERE username=? AND session_version=? ORDER BY last_seen_at DESC LIMIT 50').bind(sessionUsername, toInt(userDb.sessionVersion, 0)).all();
+                return withCORS(JSON.stringify({ success: true, sessions: (rows?.results || []).map((row) => ({ id: row.id, deviceLabel: row.device_label || null, createdAt: row.created_at, lastSeenAt: row.last_seen_at, revoked: Boolean(row.revoked_at), current: row.id === sessionId })) }), { status: 200 }, appOrigin);
+            } catch {
+                return withCORS(JSON.stringify({ success: false, error: 'SESSION_INVENTORY_UNAVAILABLE' }), { status: 503 }, appOrigin);
+            }
+        }
+
+        if (url.pathname.startsWith('/auth/sessions/') && request.method === 'POST') {
+            if (!sessionUsername) return withCORS(JSON.stringify({ error: 'Not authenticated' }), { status: 401 }, appOrigin);
+            if (!sessionMutationAllowed()) return withCORS(JSON.stringify({ success: false, error: 'CSRF_INVALID' }), { status: 403 }, appOrigin);
+            const action = url.pathname.slice('/auth/sessions/'.length);
+            try {
+                const userDb = await d1.getUserByUsername(sessionUsername);
+                if (!isCurrentSession(userDb)) return withCORS(JSON.stringify({ error: 'Not authenticated' }), { status: 401, headers: deleteAuthCookies() }, appOrigin);
+                if (action === 'revoke-others') {
+                    await env.DB.prepare('UPDATE crm_identity_sessions SET revoked_at=?, revoke_reason=? WHERE username=? AND id<>? AND revoked_at IS NULL').bind(new Date().toISOString(), 'REVOKE_OTHERS', sessionUsername, sessionId || '').run();
+                    await appendAuditLog?.({ env, actor: sessionUsername, role: userDb.role || '', action: 'AUTH_SESSIONS_REVOKE_OTHERS', entity: 'IDENTITY_SESSION', entityId: sessionUsername, after: { currentPreserved: true } });
+                    return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
+                }
+                if (action === 'revoke-all') {
+                    const at = new Date().toISOString();
+                    await env.DB.batch([
+                        env.DB.prepare('UPDATE crm_identity_sessions SET revoked_at=?, revoke_reason=? WHERE username=? AND revoked_at IS NULL').bind(at, 'REVOKE_ALL', sessionUsername),
+                        env.DB.prepare(`UPDATE ${usersTable} SET session_version=COALESCE(session_version,0)+1, updated_at=? WHERE username=?`).bind(at, sessionUsername),
+                    ]);
+                    await appendAuditLog?.({ env, actor: sessionUsername, role: userDb.role || '', action: 'AUTH_SESSIONS_REVOKE_ALL', entity: 'IDENTITY_SESSION', entityId: sessionUsername, after: { sessionVersionIncremented: true } });
+                    return withCORS(JSON.stringify({ success: true }), { status: 200, headers: deleteAuthCookies() }, appOrigin);
+                }
+                const target = decodeURIComponent(action.endsWith('/revoke') ? action.slice(0, -'/revoke'.length) : action).trim();
+                if (!target || target.length > 100) return withCORS(JSON.stringify({ success: false, error: 'SESSION_ID_INVALID' }), { status: 400 }, appOrigin);
+                await env.DB.prepare('UPDATE crm_identity_sessions SET revoked_at=?, revoke_reason=? WHERE id=? AND username=? AND revoked_at IS NULL').bind(new Date().toISOString(), 'REVOKE_SESSION', target, sessionUsername).run();
+                await appendAuditLog?.({ env, actor: sessionUsername, role: userDb.role || '', action: 'AUTH_SESSION_REVOKE', entity: 'IDENTITY_SESSION', entityId: target, after: { revoked: true } });
+                const headers = target === sessionId ? deleteAuthCookies() : undefined;
+                return withCORS(JSON.stringify({ success: true }), { status: 200, headers }, appOrigin);
+            } catch {
+                return withCORS(JSON.stringify({ success: false, error: 'SESSION_OPERATION_UNAVAILABLE' }), { status: 503 }, appOrigin);
+            }
+        }
 
         // GET /auth/me
         if (url.pathname === "/auth/me") {
@@ -607,7 +659,7 @@ export async function handleAuthRoutes({
                 const registration = env.DB.prepare(
                     `INSERT INTO ${usersTable}
                      (username, email, display_name, password_hash, role, photo_url, allowed_units_json, allowed_modules_json, ativo, created_at, updated_at)
-                     SELECT ?, invitee_email, ?, ?, role, '', ?, ?, 1, ?, ?
+                     SELECT ?, invitee_email, ?, ?, role, '', ?, ?, 0, ?, ?
                      FROM ${invitesTable}
                      WHERE token_hash = ?
                        AND invitee_email = ?
@@ -631,11 +683,33 @@ export async function handleAuthRoutes({
                 if (!changed?.[0]?.meta?.changes || !changed?.[1]?.meta?.changes) {
                     return withCORS(JSON.stringify({ success: false, error: "TOKEN_EXHAUSTED" }), { status: 409 }, appOrigin);
                 }
+                let onboarding = null;
                 try {
-                    await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='ACTIVE', updated_at=? WHERE invite_id=? AND account_status='INVITED'").bind(currentTime, invite.id).run();
+                    onboarding = await env.DB.prepare('SELECT id, workforce_employee_id, account_status FROM crm_employee_onboarding WHERE invite_id=? LIMIT 1').bind(invite.id).first();
                 } catch {
-                    // Additive onboarding migration may not be deployed yet;
-                    // successful legacy invitation registration stays valid.
+                    onboarding = null;
+                }
+                if (onboarding?.workforce_employee_id) {
+                    try {
+                        await syncIdentityWorkforceStatus(env, { onboardingId: onboarding.id, employeeId: onboarding.workforce_employee_id, accountStatus: 'ACTIVE' }, request.headers.get('x-request-id') || `identity-register-${invite.id}`);
+                        await env.DB.batch([
+                            env.DB.prepare(`UPDATE ${usersTable} SET ativo=1, updated_at=? WHERE username=? AND ativo=0`).bind(currentTime, candidate),
+                            env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='ACTIVE', provisioning_state='COMPLETED', updated_at=?, last_error_code=NULL WHERE id=? AND account_status='INVITED'").bind(currentTime, onboarding.id),
+                        ]);
+                    } catch (activationError) {
+                        await env.DB.prepare(`UPDATE crm_employee_onboarding SET provisioning_state='FAILED', last_error_code='WORKFORCE_ACTIVATION_FAILED', updated_at=? WHERE id=?`).bind(currentTime, onboarding.id).run().catch(() => {});
+                        await logAuthAudit({ action: 'AUTH_INVITE_ACTIVATION_FAILED', actor: candidate, role, detail: { requestId: request.headers.get('x-request-id') || null } });
+                        return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_ACTIVATION_PENDING' }), { status: 503 }, appOrigin);
+                    }
+                } else {
+                    // Legacy invitations have no Workforce ledger and retain
+                    // their historical activation behavior.
+                    await env.DB.prepare(`UPDATE ${usersTable} SET ativo=1, updated_at=? WHERE username=? AND ativo=0`).bind(currentTime, candidate).run();
+                    try {
+                        await env.DB.prepare("UPDATE crm_employee_onboarding SET account_status='ACTIVE', provisioning_state='COMPLETED', updated_at=? WHERE invite_id=? AND account_status='INVITED'").bind(currentTime, invite.id).run();
+                    } catch {
+                        // Additive onboarding migration may not be deployed yet.
+                    }
                 }
 
                 const userDb = await d1.getUserByUsername(candidate);
@@ -673,15 +747,16 @@ export async function handleAuthRoutes({
             const body = await request.json().catch(() => ({}));
             const email = normalizeIdentifier(body.email);
             if (!isValidEmail(email)) {
-                return withCORS(JSON.stringify({ success: false, error: "EMAIL_REQUIRED" }), { status: 400 }, appOrigin);
+                return withCORS(JSON.stringify({ success: true, message: 'Se a conta existir, enviaremos instruções ao contato cadastrado.' }), { status: 200 }, appOrigin);
             }
             try {
                 const userDb = await d1.getUserByIdentifier(email);
                 if (!userDb?.ativo || normalizeIdentifier(userDb.email) !== email) {
-                    return withCORS(JSON.stringify({ success: false, error: 'EMAIL_NOT_REGISTERED' }), { status: 404 }, appOrigin);
+                    return withCORS(JSON.stringify({ success: true, message: 'Se a conta existir, enviaremos instruções ao contato cadastrado.' }), { status: 200 }, appOrigin);
                 }
                 if (!hasPasswordResetMailerConfig(env) || !resetPepper) {
-                    return withCORS(JSON.stringify({ success: false, error: 'PASSWORD_RECOVERY_UNAVAILABLE' }), { status: 503 }, appOrigin);
+                    await logAuthAudit({ action: 'AUTH_PASSWORD_RESET_UNAVAILABLE', actor: userDb.username, role: userDb.role || '', detail: { reason: 'CONFIGURATION' } });
+                    return withCORS(JSON.stringify({ success: true, message: 'Se a conta existir, enviaremos instruções ao contato cadastrado.' }), { status: 200 }, appOrigin);
                 }
                 const cooldownSeconds = Math.max(30, toInt(env?.AUTH_RESET_COOLDOWN_SECONDS, 60));
                 const cooldownSince = new Date(Date.now() - cooldownSeconds * 1000).toISOString();

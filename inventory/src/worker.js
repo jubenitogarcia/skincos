@@ -1447,6 +1447,7 @@ export default {
             withCORS,
             sessionUsername,
             sessionVersion,
+            sessionId: session?.sid ? String(session.sid) : null,
             sessionCsrf,
             cookies,
             bcrypt,

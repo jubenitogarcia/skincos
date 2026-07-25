@@ -134,8 +134,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAGES_PROJECT: ${{ steps.guard.outputs.project }}
           BRANCH_NAME: ${{ steps.guard.outputs.branch }}
-          GIT_SHA: ${{ github.sha }}
-          GIT_MESSAGE: ${{ github.event.head_commit.message || github.sha }}
+          # The deployment metadata must identify the immutable artifact that
+          # passed the promotion gate, not the workflow-dispatch ref.
+          GIT_SHA: ${{ needs.promotion.outputs.source_sha }}
+          GIT_MESSAGE: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
           PROJECT="${PAGES_PROJECT:-skincos}"

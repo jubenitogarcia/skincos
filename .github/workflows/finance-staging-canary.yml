@@ -82,7 +82,7 @@ jobs:
           const policy = require('./ops/module-governance/finance-staging-canary-policy.json');
           process.stdout.write(JSON.stringify({ state: 'canary', message: 'Synthetic staging canary only.', pilotActors: policy.cohort.pilotActors, pilotUnits: policy.cohort.pilotUnits, percentage: policy.cohort.percentage, releaseSha: process.env.RELEASE_SHA, syntheticOnly: true, changedAt: new Date().toISOString(), changedBy: process.env.GITHUB_ACTOR }));
           NODE
-          npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$(cat "$RUNNER_TEMP/canary-control.json")" --namespace-id "$CONTROL_KV_ID"
+          npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$(cat "$RUNNER_TEMP/canary-control.json")" --namespace-id "$CONTROL_KV_ID" --remote
           npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','true',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='true',updated_at=CURRENT_TIMESTAMP; UPDATE finance_access_grants SET permission='operator' WHERE username='finance-staging-monitor' AND scope_id='finance-scope-novo-hamburgo';"
       - name: Run authenticated synthetic canary journey
         id: journey
@@ -122,7 +122,7 @@ jobs:
         run: |
           set -euo pipefail
           payload="$(node -e "process.stdout.write(JSON.stringify({state:'disabled',message:'Synthetic canary stop limit breached.',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
-          npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$payload" --namespace-id "$CONTROL_KV_ID"
+          npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$payload" --namespace-id "$CONTROL_KV_ID" --remote
           npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','false',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='false',updated_at=CURRENT_TIMESTAMP;"
       - name: Restore non-enabled staging baseline and synthetic grant
         if: always()
@@ -135,7 +135,7 @@ jobs:
           set -euo pipefail
           [[ "$ORIGINAL_PERMISSION" =~ ^(viewer|operator|manager)$ ]] || { echo 'No safe grant baseline available'; exit 1; }
           payload="$(node -e "process.stdout.write(JSON.stringify({state:'active',message:'',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
-          npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$payload" --namespace-id "$CONTROL_KV_ID"
+          npx --yes wrangler@4.112.0 kv key put 'module-control:finance' "$payload" --namespace-id "$CONTROL_KV_ID" --remote
           npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --command "INSERT INTO finance_settings(key,value,updated_at) VALUES ('module_enabled','false',CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value='false',updated_at=CURRENT_TIMESTAMP; UPDATE finance_access_grants SET permission='$ORIGINAL_PERMISSION' WHERE username='finance-staging-monitor' AND scope_id='finance-scope-novo-hamburgo';"
       - name: Upload sanitized canary evidence
         if: always()

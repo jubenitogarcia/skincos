@@ -215,12 +215,15 @@ PY
 
 check_workflows() {
   local workflows=(
-    .github/workflows/codex-automerge.yml
-    .github/workflows/dispatch-after-automerge-fallback.yml
-    .github/workflows/deploy-crm-pages-after-automerge.yml
-    .github/workflows/deploy-workers-after-automerge.yml
+    # The former automerge/after-merge workflows were retired when canonical
+    # operational publishers became authoritative. Keep this list aligned
+    # with the workflows that actually exist on main.
     .github/workflows/cloudflare-audit.yml
     .github/workflows/security-secrets-audit.yml
+    .github/workflows/deploy-core-workers.yml
+    .github/workflows/deploy-crm-pages.yml
+    .github/workflows/prepare-release-candidate.yml
+    .github/workflows/promotion-gate.yml
   )
   local file
   for file in "${workflows[@]}"; do
