@@ -2,7 +2,8 @@
 
 ## Offsite restore evidence and next Finance gate — 2026-07-25
 
-Main is now `1b8a9d4f10f005e05b3475baba75af1d9183c046` after PR #740. The
+Main is now `5dae441997916ac610d97f7d10f2a3bd6db9c35c` after PRs #740, #800
+and #801. The
 provider-separated Drive vault is reachable with the restricted `drive.file`
 client. The D1 ciphertext was retrieved and restored in an isolated scratch;
 HMAC/plaintext checksums passed, with 58 tables, 16 migrations, zero FK
@@ -40,7 +41,7 @@ changes. The production release therefore correctly used the newer immutable
 SHA `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d`.
 
 The delta from `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d` to the current main
-`d006157297c02e2a7bace9fcd1abad654b546d06` contains only workflow/preflight,
+`5dae441997916ac610d97f7d10f2a3bd6db9c35c` contains only workflow/preflight,
 Finance canary/rollback, orchestration and evidence-documentation changes:
 `.github/workflows/*`, `scripts/codex-preflight.sh`,
 `docs/project-state/*` and `ops/project-orchestration/work-queue.json`. It
