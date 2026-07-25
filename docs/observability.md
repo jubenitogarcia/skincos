@@ -12,6 +12,26 @@ Este documento define os SLOs mínimos, a rota de alerta e a disciplina operacio
 - Todo alerta precisa de owner e runbook.
 - Toda resposta operacional precisa de um identificador de correlação por request ou incidente.
 
+## Monitor primário fora de GitHub e Cloudflare
+
+O primário é o `SkincosObservabilityProbe`, uma tarefa agendada no Windows do operador. Ela executa probes públicos a cada minuto, grava estado, histórico, métricas Prometheus e um dashboard HTML em `C:\\CodexRuntime\\operator\\admin\\skincos\\observability`. Não depende de GitHub Actions nem de Workers para detectar uma indisponibilidade.
+
+- Catálogo autoritativo: `ops/observability/catalog.json`.
+- Dashboard local: `dashboard.html`; dashboard Grafana importável: `ops/observability/dashboards/skincos-operations.json`.
+- Métricas: `metrics.prom`; o coletor/servidor Grafana/Prometheus é opcional e não muda o monitor primário.
+- O pipeline canônico de Core Workers injeta o SHA promovido em `APP_VERSION`; a resposta não usa um nome de branch como versão.
+- Alerta local obrigatório: Windows Application Event Log, source `SkincosObservability` (1001 alerta, 1002 recuperação). Webhook HTTPS é secundário e só pode ser configurado com credencial segregada fora do repositório.
+- Probes de módulos ainda não implantados ficam `disabled` com motivo explícito; não geram falso verde.
+
+Instalação/reversão no host do operador:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ops\observability\scripts\Install-SkincosObservability.ps1
+# rollback: Unregister-ScheduledTask -TaskName SkincosObservabilityProbe -Confirm:$false
+```
+
+Uma jornada sintética autenticada exige ator exclusivo de staging, segredo fora do Git e passos sem escrita. Enquanto Identity/Finance não estiverem implantados em staging, o catálogo a mantém desabilitada em vez de reutilizar uma sessão humana.
+
 ## SLOs propostos
 
 - **Disponibilidade (mensal)**: 99,9%

@@ -11,10 +11,6 @@ Garantir que segredos críticos (GitHub, Cloudflare, backend) tenham **escopo m�
 - `CLOUDFLARE_ALERTS_API_TOKEN` (alerting/notifications — escopo mínimo, sem permissões de deploy)
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_ALERT_WEBHOOK_URL` (opcional)
-- `CRM_API_SSH_HOST`
-- `CRM_API_SSH_USER`
-- `CRM_API_SSH_KEY`
-- `CRM_API_SSH_PORT` (opcional)
 - `GITLEAKS_LICENSE` (opcional)
 - `SEMGREP_APP_TOKEN` (opcional)
 
@@ -25,7 +21,7 @@ Garantir que segredos críticos (GitHub, Cloudflare, backend) tenham **escopo m�
 NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
 
 ### CRM API / Infra
-- Chaves SSH do deploy (mesmas de GitHub)
+- Credenciais do lifecycle nativo, mantidas fora do GitHub e documentadas em `docs/runbooks/lifecycle-runtime-cutover.md`
 - Tokens internos de módulos (ex.: `CRM_UNIT_MONITOR_PROXY_TOKEN`, `WEBHOOK_SECRET`)
 
 ## Política de rotação
@@ -56,7 +52,7 @@ NOTE: Sheets credentials were removed (Insumos is D1-only). Do not re-add.
 1. Gerar nova chave SSH.
 2. Atualizar `authorized_keys` no servidor.
 3. Atualizar `CRM_API_SSH_KEY` (GitHub).
-4. Executar workflow `deploy-crm-api`.
+4. Executar o procedimento de promoção nativa; não criar uma via SSH pelo GitHub Actions.
 
 ## Medidas de segurança recomendadas
 - Escopo mínimo em tokens (Cloudflare/GitHub).

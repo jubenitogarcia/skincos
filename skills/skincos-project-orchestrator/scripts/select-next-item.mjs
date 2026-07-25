@@ -1,0 +1,1 @@
+import {readFileSync} from 'node:fs';const q=JSON.parse(readFileSync(process.argv[2]||'ops/project-orchestration/work-queue.json'));const a=q.items.filter(x=>x.state==='ready'&&x.dependencies.every(id=>q.items.find(y=>y.id===id)?.state==='done')).sort((a,b)=>b.priority-a.priority)[0];if(!a)process.exit(2);console.log(JSON.stringify(a));

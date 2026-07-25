@@ -74,6 +74,93 @@ test('scopes atendimento router access by consuming module', () => {
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/catalog', 'GET'), false)
 })
 
+test('initializes Atendimento schema once when concurrent reads arrive', async () => {
+    let transactions = 0
+    const fakePool = createFakePool([
+        (sql) => {
+            if (sql === 'begin') transactions += 1
+            return null
+        },
+        (sql) => sql.includes('select slug, name from crm_atendimento.units order by name') && {
+            rows: [{ slug: 'novo-hamburgo', name: 'Novo Hamburgo' }], rowCount: 1,
+        },
+        (sql) => sql.includes('from crm_atendimento.professionals') && { rows: [], rowCount: 0 },
+        (sql) => sql.includes('from crm_atendimento.procedures') && { rows: [], rowCount: 0 },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+
+    await Promise.all([
+        store.references({ role: 'GESTOR' }),
+        store.references({ role: 'GESTOR' }),
+        store.references({ role: 'GESTOR' }),
+    ])
+
+    assert.equal(transactions, 1)
+})
+
+test('retries Atendimento schema initialization after a transient failure', async () => {
+    let firstMigration = true
+    let transactions = 0
+    const fakePool = createFakePool([
+        (sql) => {
+            if (sql === 'begin') transactions += 1
+            if (sql.includes('create extension if not exists pgcrypto') && firstMigration) {
+                firstMigration = false
+                throw new Error('transient migration failure')
+            }
+            return null
+        },
+        (sql) => sql.includes('select slug, name from crm_atendimento.units order by name') && {
+            rows: [{ slug: 'novo-hamburgo', name: 'Novo Hamburgo' }], rowCount: 1,
+        },
+        (sql) => sql.includes('from crm_atendimento.professionals') && { rows: [], rowCount: 0 },
+        (sql) => sql.includes('from crm_atendimento.procedures') && { rows: [], rowCount: 0 },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+
+    await assert.rejects(() => store.references({ role: 'GESTOR' }), /transient migration failure/)
+    await store.references({ role: 'GESTOR' })
+
+    assert.equal(transactions, 2)
+})
+
+test('imports source rows with one actor value for both audit columns', async () => {
+    const queries = []
+    const fakePool = createFakePool([
+        (sql, params) => {
+            queries.push({ sql, params })
+            if (sql.startsWith('insert into crm_atendimento.units(')) {
+                return { rows: [{ id: 'unit-1', slug: 'novo-hamburgo', name: 'Novo Hamburgo' }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.procedures(')) {
+                return { rows: [{ id: 'procedure-1', name: 'Botox' }], rowCount: 1 }
+            }
+            if (sql.startsWith('insert into crm_atendimento.attendances(')) {
+                return { rows: [{ id: 'attendance-1', inserted: true }], rowCount: 1 }
+            }
+            return null
+        },
+    ])
+    const store = createAtendimentoStore({ pool: fakePool })
+
+    const result = await store.importRecords({
+        records: [{
+            unitSlug: 'novo-hamburgo', unitName: 'Novo Hamburgo', date: '2026-07-24',
+            clientName: 'Cliente', procedureName: 'Botox', code: '#0699', quantity: 1,
+            discount: false, otherValue: 0, roundValue: false, value: 699,
+            injectorName: '', consultantName: '', observation: '',
+            sourceSheetId: 'sheet-1', sourceTab: 'Novo Hamburgo', sourceRow: 3,
+        }],
+        cache: { procedures: [], professionals: [], procedureCodes: [], schedules: [] },
+        actor: { id: 'google-sheet-import', role: 'GESTOR' },
+    })
+
+    assert.deepEqual(result, { dryRun: false, records: 1, inserted: 1, updated: 0, skipped: 0 })
+    const write = queries.find(({ sql }) => sql.startsWith('insert into crm_atendimento.attendances('))
+    assert.match(write.sql, /values \(\$1,\$2,\$3,\$4,\$5,\$6,\$7,\$8,\$9,\$10,\$11,\$12,\$13,\$14,\$15,\$16,\$17,\$18,\$19,\$19\)/)
+    assert.equal(write.params.at(-1), 'google-sheet-import')
+})
+
 test('rejects a direct non-manager attempt to replace the persisted consultant before any write', async () => {
     const queries = []
     const fakePool = createFakePool([

@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "description": "Only registered contracts, SDKs and adapters under shared/ may cross a module boundary. Direct implementation imports are rejected unless listed as time-boxed migration debt.",
+  "contracts": [
+    {
+      "id": "finance-contracts-v1",
+      "kind": "contract",
+      "paths": ["shared/finance-contracts/**"],
+      "consumers": ["finance", "integration"],
+      "owner": "finance"
+    },
+    {
+      "id": "crm-auth-adapter-v1",
+      "kind": "adapter",
+      "paths": ["shared/crm-auth/**"],
+      "consumers": ["api"],
+      "owner": "crm"
+    },
+    {
+      "id": "identity-actor-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/identity-contract/**"],
+      "consumers": ["api", "crm", "finance", "identity", "inventory", "workforce"],
+      "owner": "identity"
+    },
+    {
+      "id": "identity-runtime-adapter-v1",
+      "kind": "adapter",
+      "paths": ["shared/identity-runtime/**"],
+      "consumers": ["api", "identity", "inventory", "workforce"],
+      "owner": "identity",
+      "providesFor": "identity"
+    },
+    {
+      "id": "module-sdk-v1",
+      "kind": "sdk",
+      "paths": ["shared/module-sdk/**"],
+      "consumers": ["*"],
+      "owner": "shared"
+    },
+    {
+      "id": "service-binding-adapter-v1",
+      "kind": "adapter",
+      "paths": ["shared/service-adapters/**"],
+      "consumers": ["api", "finance"],
+      "owner": "platform"
+    },
+    {
+      "id": "module-availability-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/module-availability/**"],
+      "consumers": ["finance", "workforce"],
+      "owner": "platform"
+    },
+    {
+      "id": "observability-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/observability/**"],
+      "consumers": ["api", "finance", "workforce"],
+      "owner": "platform"
+    },
+    {
+      "id": "resilience-contract-v1",
+      "kind": "contract",
+      "paths": ["shared/resilience/**"],
+      "consumers": ["shared"],
+      "owner": "platform"
+    }
+  ],
+  "recommendedContracts": [
+    {
+      "from": "crm",
+      "to": "inventory",
+      "contractId": "module-sdk-v1",
+      "path": "shared/module-sdk/README.md",
+      "usage": "publish an Inventory HTTP contract or SDK before consuming Inventory from CRM"
+    },
+    {
+      "from": "api",
+      "to": "inventory",
+      "contractId": "module-sdk-v1",
+      "path": "shared/module-sdk/README.md",
+      "usage": "publish a gateway-to-Inventory adapter before importing Inventory implementation"
+    },
+    {
+      "from": "api",
+      "to": "finance",
+      "contractId": "service-binding-adapter-v1",
+      "path": "shared/service-adapters/cloudflare-service-binding.js",
+      "usage": "use the service-binding adapter instead of importing Finance implementation"
+    },
+    {
+      "from": "finance",
+      "to": "crm",
+      "contractId": "module-sdk-v1",
+      "path": "shared/module-sdk/README.md",
+      "usage": "provide a Finance-owned test-runtime adapter instead of borrowing CRM dependencies"
+    },
+    {
+      "from": "inventory",
+      "to": "identity",
+      "contractId": "identity-runtime-adapter-v1",
+      "path": "shared/identity-runtime/README.md",
+      "usage": "use the registered Identity runtime adapter; do not import Identity implementation directly"
+    }
+  ],
+  "legacyDirectImports": [
+    {
+      "from": "api/workers/index.js",
+      "specifier": "../../inventory/src/worker.js",
+      "replacementContractId": "module-sdk-v1",
+      "deadline": "2026-09-30",
+      "reason": "The gateway entrypoint re-exports Inventory runtime classes and must move to a stable service boundary."
+    },
+    {
+      "from": "crm/console/tests/insumosShareRoutes.test.ts",
+      "specifier": "../../../inventory/src/routes/share.js",
+      "replacementContractId": "module-sdk-v1",
+      "deadline": "2026-08-31",
+      "reason": "The CRM test reaches an Inventory implementation instead of asserting its public contract."
+    },
+    {
+      "from": "finance/scripts/staging-ui-smoke.mjs",
+      "specifier": "../../crm/console/node_modules/playwright",
+      "replacementContractId": "module-sdk-v1",
+      "deadline": "2026-08-31",
+      "reason": "The Finance smoke borrows CRM's dependency tree and needs a Finance-owned test-runtime adapter."
+    }
+  ]
+}

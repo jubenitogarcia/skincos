@@ -1,22 +1,47 @@
-# Default owner
+# Fallback. Every active root is explicitly repeated below so ownership changes
+# remain reviewable as the domain map evolves.
 * @jubenitogarcia
 
-# CI / workflows
+# Governance, automation and repository controls
 /.github/ @jubenitogarcia
+/.githooks/ @jubenitogarcia
+/.codex/ @jubenitogarcia
+/docs/ @jubenitogarcia
+/ops/ @jubenitogarcia
+/platform/ @jubenitogarcia
+/scripts/ @jubenitogarcia
+/skills/ @jubenitogarcia
+/shared/ @jubenitogarcia
 
-# Public website
+# Active domain roots
+/ads/ @jubenitogarcia
+/api/ @jubenitogarcia
+/booking/ @jubenitogarcia
+/crm/ @jubenitogarcia
+/finance/ @jubenitogarcia
+/identity/ @jubenitogarcia
+/integration/ @jubenitogarcia
+/inventory/ @jubenitogarcia
+/messaging/ @jubenitogarcia
+/orb/ @jubenitogarcia
+/social/ @jubenitogarcia
 /website/ @jubenitogarcia
+/workforce/ @jubenitogarcia
 
-# CRM / Pages frontend
-/frontend/ @jubenitogarcia
-
-# Backend services
+# Transitional and data roots remain explicitly owned until their migration ends.
 /backend/ @jubenitogarcia
+/db/ @jubenitogarcia
 
-# Repo hygiene
-/.pre-commit-config.yaml @jubenitogarcia
-/.flake8 @jubenitogarcia
+# Root operational files
+/AGENTS.md @jubenitogarcia
+/CODEX_CONTEXT.md @jubenitogarcia
+/DECISIONS.md @jubenitogarcia
+/TASKS.md @jubenitogarcia
 /.editorconfig @jubenitogarcia
+/.flake8 @jubenitogarcia
+/.gitleaks.toml @jubenitogarcia
+/.pre-commit-config.yaml @jubenitogarcia
 /Makefile @jubenitogarcia
 /README.md @jubenitogarcia
-/docs/ @jubenitogarcia
+/package.json @jubenitogarcia
+/package-lock.json @jubenitogarcia

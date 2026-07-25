@@ -4,7 +4,7 @@ import { safeJson, safeJsonNoTruncate } from './lib/json.js';
 import { qrSvg } from './lib/qr.js';
 import { getClientIp, getUserAgent } from './lib/request.js';
 import { handleBackupRoutes } from './routes/backup.js';
-import { handleAuthRoutes } from './routes/auth.js';
+import { createIdentityD1Store, handleAuthRoutes } from './routes/auth.js';
 import { handleAdminRoutes } from './routes/admin.js';
 import { handleExportsRoutes } from './routes/exports.js';
 import { handleAuditRoutes } from './routes/audit.js';
@@ -30,11 +30,8 @@ import {
     d1DeleteMovimentacao,
     d1ListInsumosPaged,
     d1ListInsumosOptions,
-    d1GetUserByUsername,
-    d1GetUserByIdentifier,
-    d1UpdateUserProfile,
-    resolveCrmTables,
 } from './d1Store.js';
+import { hasUnitScopeAccess, normalizeUnitScope } from '../../shared/identity-contract/index.js';
 
 const MAX_PROFILE_PHOTO_URL_CHARS = 45000;
 
@@ -53,20 +50,6 @@ function safeJsonParse(raw) {
     }
 }
 
-function slugifyUnidade(value) {
-    const s0 = String(value || '').trim().toLowerCase();
-    if (!s0) return '';
-    if (s0 === '*' || s0 === 'all' || s0 === 'todas') return '*';
-    if (s0 === 'novo-hamburgo' || s0 === 'novohamburgo' || s0 === 'novo hamburgo' || s0 === 'nh') return 'novo-hamburgo';
-    if (s0 === 'barra-shopping-sul' || s0 === 'barrashoppingsul' || s0 === 'barra shopping sul' || s0 === 'bss') return 'barra-shopping-sul';
-    const s = s0
-        .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-    return s;
-}
-
 function getInsumosConfig(env) {
     const unidadesRaw = String(env?.UNIDADES || '').trim();
     const unidades = unidadesRaw
@@ -74,8 +57,8 @@ function getInsumosConfig(env) {
             new Set(
                 unidadesRaw
                     .split(/[,;|]/g)
-                    .map((u) => slugifyUnidade(u))
-                    .filter((u) => u && u !== '*')
+                    .map((u) => normalizeUnitScope(u))
+                    .filter(Boolean)
             )
         )
         : DEFAULT_UNIDADES;
@@ -85,9 +68,9 @@ function getInsumosConfig(env) {
     const unidadeHeaders = {};
     if (unitHeadersParsed && typeof unitHeadersParsed === 'object') {
         for (const [k, v] of Object.entries(unitHeadersParsed)) {
-            const slug = slugifyUnidade(k);
+            const slug = normalizeUnitScope(k);
             const key = String(v || '').toLowerCase().trim();
-            if (slug && slug !== '*' && key) unidadeHeaders[slug] = key;
+            if (slug && key) unidadeHeaders[slug] = key;
         }
     }
 
@@ -958,7 +941,7 @@ async function enqueueNotificationsRefresh(env, unidade) {
 async function refreshNotificationsSnapshotInD1({ env, unidade }) {
     if (!env?.DB) return;
     const config = getInsumosConfig(env);
-    const unit = unidade ? slugifyUnidade(unidade) : null;
+    const unit = unidade ? normalizeUnitScope(unidade) : null;
     const unidades = unit ? [unit] : config.unidades;
 
     for (const u of unidades) {
@@ -1042,7 +1025,10 @@ export default {
             // ignore
         }
         const defaultUnidade = UNIDADES[0] || 'novo-hamburgo';
-        const unidade = slugifyUnidade(url.searchParams.get('unidade') || '') || defaultUnidade;
+        const unidadeParam = String(url.searchParams.get('unidade') || '').trim();
+        const normalizedRequestedUnit = normalizeUnitScope(unidadeParam);
+        const invalidRequestedUnit = !!unidadeParam && !normalizedRequestedUnit;
+        const unidade = normalizedRequestedUnit || defaultUnidade;
         const cookies = parseCookies(request.headers.get('cookie') || '');
         const ip = getClientIp(request);
         const userAgent = getUserAgent(request);
@@ -1136,6 +1122,14 @@ export default {
             else console.log(serializedPayload);
             return res;
         };
+
+        if (invalidRequestedUnit) {
+            return withCORS(
+                JSON.stringify({ success: false, error: 'Unidade inválida', code: 'UNIT_INVALID' }),
+                { status: 400 },
+                appOrigin
+            );
+        }
 
         const enforceRateLimit = async (kind) => {
             if (!env.RATE_LIMITER) return { allowed: true };
@@ -1258,6 +1252,7 @@ export default {
 
         // D1-only: legacy Sheets credentials/ranges are intentionally not loaded.
 
+        const identityD1 = createIdentityD1Store(env);
         const sessionSecret = String(env.SESSION_SECRET || '').trim();
         if (!sessionSecret) {
             return withCORS(JSON.stringify({ error: "SESSION_SECRET not configured" }), { status: 500 }, appOrigin);
@@ -1266,7 +1261,21 @@ export default {
         const issueAuthCookies = async (sessionPayload) => {
             const csrf = crypto.randomUUID();
             const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
-            const payload = { ...sessionPayload, csrf, exp };
+            const sid = crypto.randomUUID();
+            const payload = { ...sessionPayload, sid, csrf, exp };
+            // Best-effort only while the additive migration rolls out. A cookie
+            // remains compatible with existing valid sessions, while all new
+            // sessions gain a durable revocation inventory.
+            try {
+                const digest = async (value) => {
+                    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value || '')));
+                    return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('');
+                };
+                const at = new Date().toISOString();
+                await env.DB.prepare('INSERT INTO crm_identity_sessions (id, username, session_version, device_label, user_agent_hash, ip_hash, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+                    .bind(sid, String(sessionPayload?.username || ''), Number(sessionPayload?.sv || 0), String(request.headers.get('sec-ch-ua-platform') || '').slice(0, 80) || null, await digest(request.headers.get('user-agent')), await digest(request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for')), at, at)
+                    .run();
+            } catch { /* migration may not yet be deployed; signed session remains valid */ }
             const token = await encodeSessionV2(payload, sessionSecret);
 
             // Dev (http) cannot set Secure cookies; SameSite=None also requires Secure.
@@ -1309,20 +1318,25 @@ export default {
                 return sessionUser;
             }
             if (!sessionUsername) return null;
-            const userDb = await d1GetUserByUsername(env, sessionUsername);
+            const userDb = await identityD1.getUserByUsername(sessionUsername);
             if (!userDb || !userDb.ativo) return null;
             if (Number(userDb.sessionVersion || 0) !== sessionVersion) return null;
+            if (session?.sid) {
+                try {
+                    const stored = await env.DB.prepare('SELECT id FROM crm_identity_sessions WHERE id=? AND username=? AND session_version=? AND revoked_at IS NULL LIMIT 1')
+                        .bind(String(session.sid), sessionUsername, sessionVersion).first();
+                    if (!stored?.id) return null;
+                    await env.DB.prepare('UPDATE crm_identity_sessions SET last_seen_at=? WHERE id=?').bind(new Date().toISOString(), String(session.sid)).run();
+                } catch {
+                    // Do not invalidate legacy sessions just because the additive
+                    // session migration has not reached this environment.
+                }
+            }
             sessionUser = { ...userDb, role: normalizeRole(userDb.role || 'CONSULTOR') };
             return sessionUser;
         };
 
-        const hasUnitAccess = (u, unit) => {
-            if (!u) return false;
-            if (String(u.role || '').toUpperCase() === 'ADMIN') return true;
-            const allowed = Array.isArray(u.allowedUnits) ? u.allowedUnits.filter(Boolean) : [];
-            if (!allowed.length) return false;
-            return allowed.includes(unit);
-        };
+        const hasUnitAccess = (u, unit) => !!u && hasUnitScopeAccess(u, unit);
 
         const getAllowedModules = (u) => {
             const raw = Array.isArray(u?.allowedModules) ? u.allowedModules : [];
@@ -1433,6 +1447,7 @@ export default {
             withCORS,
             sessionUsername,
             sessionVersion,
+            sessionId: session?.sid ? String(session.sid) : null,
             sessionCsrf,
             cookies,
             bcrypt,
@@ -1442,12 +1457,7 @@ export default {
             MAX_PROFILE_PHOTO_URL_CHARS,
             devBypass: devBypassActive,
             devBypassUser,
-            d1: {
-                enabled: true,
-                getUserByUsername: (u) => d1GetUserByUsername(env, u),
-                getUserByIdentifier: (id) => d1GetUserByIdentifier(env, id),
-                updateUserProfile: d1UpdateUserProfile,
-            },
+            d1: identityD1,
             appendAuditLog,
             ip,
             userAgent,

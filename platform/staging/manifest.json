@@ -1,0 +1,78 @@
+{
+  "$schema": "./manifest.schema.json",
+  "schemaVersion": 1,
+  "environment": "staging",
+  "purpose": "reproducible, non-production isolation foundation",
+  "owners": {
+    "operational": "@skincos/platform",
+    "identity": "@skincos/identity",
+    "inventory": "@skincos/inventory",
+    "finance": "@skincos/finance"
+  },
+  "safety": {
+    "customRoutesAllowed": false,
+    "productionDataAllowed": false,
+    "defaultFeatureFlags": {
+      "module_enabled": false
+    },
+    "requiredApplyAcknowledgement": "SKINCOS_STAGING_APPLY=1",
+    "privateStateDirectoryVariable": "SKINCOS_STAGING_STATE_DIR"
+  },
+  "pages": [
+    {
+      "logicalId": "crm-shell",
+      "projectName": "skincos-staging",
+      "owner": "@skincos/crm",
+      "purpose": "isolated CRM shell preview",
+      "bindings": []
+    }
+  ],
+  "domains": [
+    {
+      "id": "identity",
+      "owner": "@skincos/identity",
+      "worker": "skincos-identity-staging-foundation",
+      "d1": "skincos-identity-staging",
+      "kv": "SKINCOS_IDENTITY_STAGING_FLAGS",
+      "r2": "skincos-identity-staging-data",
+      "queue": "skincos-identity-events-staging",
+      "deadLetterQueue": "skincos-identity-events-dlq-staging",
+      "bindings": ["DB", "FLAGS", "DATA_BUCKET", "EVENT_QUEUE"],
+      "secretNames": ["STAGING_CONTROL_TOKEN"]
+    },
+    {
+      "id": "inventory",
+      "owner": "@skincos/inventory",
+      "worker": "skincos-inventory-staging-foundation",
+      "d1": "skincos-inventory-staging",
+      "kv": "SKINCOS_INVENTORY_STAGING_FLAGS",
+      "r2": "skincos-inventory-staging-data",
+      "queue": "skincos-inventory-events-staging",
+      "deadLetterQueue": "skincos-inventory-events-dlq-staging",
+      "bindings": ["DB", "FLAGS", "DATA_BUCKET", "EVENT_QUEUE"],
+      "secretNames": ["STAGING_CONTROL_TOKEN"]
+    },
+    {
+      "id": "finance",
+      "owner": "@skincos/finance",
+      "worker": "skincos-finance-staging-foundation",
+      "d1": "skincos-finance-staging",
+      "kv": "SKINCOS_FINANCE_STAGING_FLAGS",
+      "r2": "skincos-finance-staging-data",
+      "queue": "skincos-finance-events-staging",
+      "deadLetterQueue": "skincos-finance-events-dlq-staging",
+      "bindings": ["DB", "FLAGS", "DATA_BUCKET", "EVENT_QUEUE"],
+      "secretNames": ["STAGING_CONTROL_TOKEN"]
+    }
+  ],
+  "postgresql": {
+    "database": "skincos_staging",
+    "ownerRole": "skincos_staging_owner",
+    "migrationRole": "skincos_staging_migrator",
+    "domains": [
+      { "id": "identity", "schema": "identity", "ownerRole": "skincos_staging_identity_owner", "runtimeRole": "skincos_staging_identity_runtime" },
+      { "id": "inventory", "schema": "inventory", "ownerRole": "skincos_staging_inventory_owner", "runtimeRole": "skincos_staging_inventory_runtime" },
+      { "id": "finance", "schema": "finance", "ownerRole": "skincos_staging_finance_owner", "runtimeRole": "skincos_staging_finance_runtime" }
+    ]
+  }
+}

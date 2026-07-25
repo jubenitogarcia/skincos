@@ -18,7 +18,9 @@ API_DEV_VARS_LINK="$ROOT_DIR/api/.dev.vars"
 CRM_PID_FILE="$RUNTIME_ROOT/crm-launcher.pid"
 CRM_LOG_FILE="$RUNTIME_ROOT/crm-local.log"
 GATEWAY_PORT="${FINANCE_GATEWAY_PORT:-8792}"
-CRM_VITE_PORT="${FINANCE_CRM_VITE_PORT:-5182}"
+# Keep the Finance runtime out of the generic CRM Vite range.  It avoids the
+# Windows relay that commonly owns :5182 while other local CRM workflows run.
+CRM_VITE_PORT="${FINANCE_CRM_VITE_PORT:-5192}"
 CRM_PAGES_PORT="${FINANCE_CRM_PAGES_PORT:-8793}"
 SCENARIO="${FINANCE_LOCAL_SCENARIO:-both}"
 OPEN_BROWSER="${FINANCE_OPEN_BROWSER:-1}"
@@ -101,7 +103,13 @@ terminate_tree() { local root="$1" children; kill -0 "$root" >/dev/null 2>&1 || 
 belongs_to_finance_runtime() { local pid="$1" candidate="$1" args cwd; while [[ "$candidate" =~ ^[0-9]+$ && "$candidate" != 1 ]]; do args="$(ps -p "$candidate" -o args= 2>/dev/null || true)"; cwd="$(readlink "/proc/$candidate/cwd" 2>/dev/null || true)"; if [[ "$args" == *'run-local-finance.sh'* && ( "$args" == *"$ROOT_DIR"* || "$cwd" == "$ROOT_DIR" ) ]]; then return 0; fi; candidate="$(ps -p "$candidate" -o ppid= 2>/dev/null | tr -d ' ' || true)"; done; return 1; }
 belongs_to_finance_gateway() { local pid="$1" args; args="$(ps -p "$pid" -o args= 2>/dev/null || true)"; [[ "$args" == *'wrangler dev'* && "$args" == *'api/wrangler.toml'* && "$args" == *"$D1_STATE_DIR"* ]]; }
 state_value() { [[ -f "$STATE_FILE" ]] && sed -n "s/^$1=//p" "$STATE_FILE" | head -n 1 || true; }
-port_is_free() { ! lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+# A Windows-side relay can answer on localhost without appearing in WSL's
+# lsof output. Probe HTTP as well so the Finance launcher selects another
+# port before the CRM launcher rejects an external listener.
+port_is_free() {
+  ! lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1 \
+    && ! curl -sS --connect-timeout 1 --max-time 1 -o /dev/null "http://127.0.0.1:$1" 2>/dev/null
+}
 select_port() { local preferred="$1" candidate; for ((candidate=preferred; candidate<=preferred+30; candidate++)); do port_is_free "$candidate" && { printf '%s' "$candidate"; return; }; done; echo "Não há porta livre para gateway Financeiro perto de $preferred." >&2; exit 1; }
 wait_for_http() { local url="$1" retries="${2:-90}"; while (( retries > 0 )); do curl -fsS --max-time 3 "$url" >/dev/null 2>&1 && return 0; sleep 1; retries=$((retries - 1)); done; return 1; }
 wrangler_bin() { printf '%s' "$FRONTEND_RUNTIME_DIR/node_modules/.bin/wrangler"; }
@@ -209,11 +217,18 @@ echo '[finance-local] Aplicando migrations CRM mínimas no D1 local...'
 apply_finance_migrations
 
 fixture_sql="$RUNTIME_ROOT/fixture.sql"
-fixture="$(node "$ROOT_DIR/finance/scripts/write-local-fixture.mjs" --scenario "$SCENARIO" --output "$fixture_sql")"
+# Each launch gets a bounded local actor identifier. This prevents the
+# persistent local Durable Object rate-limit window from leaking into the next
+# controlled fixture, without weakening or bypassing the limiter itself.
+LOCAL_FINANCE_ACTOR="finance-local-$(date +%s)-$RANDOM"
+fixture="$(node "$ROOT_DIR/finance/scripts/write-local-fixture.mjs" --scenario "$SCENARIO" --actor "$LOCAL_FINANCE_ACTOR" --output "$fixture_sql")"
 d1 execute skincos-db --config "$ROOT_DIR/api/wrangler.toml" --file "$fixture_sql" >/dev/null
 
 case "$SCENARIO" in
-  disabled|no-module) LOCAL_MODULES='' ;;
+  # A disabled module must still reach Finance with its explicit module grant;
+  # otherwise the local scenario only tests NO_MODULE and never exercises the
+  # global feature flag gate.
+  no-module) LOCAL_MODULES='' ;;
   *) LOCAL_MODULES='finance' ;;
 esac
 
@@ -226,7 +241,7 @@ fi
 umask 077
 {
   printf 'LOCAL_FINANCE_AUTH_BYPASS=true\n'
-  printf 'LOCAL_FINANCE_ACTOR=finance-local\n'
+  printf 'LOCAL_FINANCE_ACTOR=%s\n' "$LOCAL_FINANCE_ACTOR"
   printf 'LOCAL_FINANCE_ALLOWED_MODULES=%s\n' "$LOCAL_MODULES"
   printf 'LOCAL_FINANCE_CSRF_TOKEN=finance-local-csrf\n'
 } > "$GATEWAY_ENV_FILE"
@@ -268,13 +283,17 @@ if ! wait_for_http "http://127.0.0.1:${GATEWAY_PORT}/health"; then echo "Gateway
 case "$SCENARIO" in nh) LOCAL_UNITS='novo-hamburgo';; bss) LOCAL_UNITS='barra-shopping-sul';; both) LOCAL_UNITS='novo-hamburgo,barra-shopping-sul';; *) LOCAL_UNITS='';; esac
 
 echo "[finance-local] Iniciando CRM Pages local para cenário $SCENARIO"
+# Finance local must exercise the same explicit-module gate as production.
+# The generic CRM launcher defaults this switch to an all-modules test admin,
+# which would hide the difference between the shell authorization and the
+# Finance gateway grants.
 (
   cd "$ROOT_DIR"
   CRM_VITE_PORT="$CRM_VITE_PORT" CRM_PAGES_PORT="$CRM_PAGES_PORT" CRM_PID_FILE="$CRM_PID_FILE" CRM_LOG_FILE="$CRM_LOG_FILE" \
-  CRM_WITH_WHATSAPP=0 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_GATE_STRICT=0 CRM_BUILD_BEFORE_START=1 \
-  LOCAL_AUTH_USERNAME=finance-local LOCAL_AUTH_EMAIL=finance-local@localhost LOCAL_AUTH_NAME='Finance Local' \
+  CRM_WITH_WHATSAPP=0 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_GATE_STRICT=0 CRM_BUILD_BEFORE_START="${FINANCE_CRM_BUILD_BEFORE_START:-1}" \
+  LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_USERNAME="$LOCAL_FINANCE_ACTOR" LOCAL_AUTH_EMAIL="${LOCAL_FINANCE_ACTOR}@localhost" LOCAL_AUTH_NAME='Finance Local' \
   LOCAL_AUTH_ALLOWED_MODULES="$LOCAL_MODULES" LOCAL_AUTH_ALLOWED_UNITS="$LOCAL_UNITS" \
-  LOCAL_FINANCE_API_TARGET="http://127.0.0.1:${GATEWAY_PORT}" LOCAL_FINANCE_ACTOR=finance-local LOCAL_FINANCE_CSRF_TOKEN=finance-local-csrf \
+  LOCAL_FINANCE_API_TARGET="http://127.0.0.1:${GATEWAY_PORT}" LOCAL_FINANCE_ACTOR="$LOCAL_FINANCE_ACTOR" LOCAL_FINANCE_CSRF_TOKEN=finance-local-csrf \
   setsid "$ROOT_DIR/scripts/run-local-crm.sh" --module finance --without-whatsapp --no-browser
 ) >>"$CRM_LOG_FILE" 2>&1 &
 CRM_PID=$!

@@ -3,6 +3,14 @@ main = "workers/index.js"
 compatibility_date = "2024-11-20"
 routes = ["api.skincos.com.br/*"]
 
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+APP_VERSION = "unreleased"
+ENVIRONMENT = "production"
+
 [triggers]
 crons = ["0 * * * *"]
 
@@ -28,8 +36,16 @@ database_name = "skincos-db"
 database_id = "13e59612-99ba-450e-9014-ddefbee72965"
 
 [[services]]
+binding = "INVENTORY"
+service = "skincos-insumos"
+
+[[services]]
 binding = "TIMEKEEPING"
 service = "skincos-timekeeping"
+
+[[services]]
+binding = "FINANCE"
+service = "skincos-finance"
 
 [[r2_buckets]]
 binding = "BACKUP_BUCKET"
@@ -38,6 +54,14 @@ bucket_name = "skincos-backups"
 [env.staging]
 name = "skincos-api-staging"
 routes = ["api-staging.skincos.com.br/*"]
+
+[env.staging.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.staging.vars]
+APP_VERSION = "unreleased"
+ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]
 name = "RATE_LIMITER"
@@ -53,8 +77,16 @@ database_name = "skincos-db-staging"
 database_id = "4bdd7995-ad69-465a-917c-0aab22db5c4e"
 
 [[env.staging.services]]
+binding = "INVENTORY"
+service = "skincos-insumos-staging"
+
+[[env.staging.services]]
 binding = "TIMEKEEPING"
 service = "skincos-timekeeping-staging"
+
+[[env.staging.services]]
+binding = "FINANCE"
+service = "skincos-finance-staging"
 
 [[env.staging.r2_buckets]]
 binding = "BACKUP_BUCKET"

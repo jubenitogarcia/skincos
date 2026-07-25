@@ -1,19 +1,41 @@
 name: Deploy CRM (Cloudflare Pages)
 
 on:
-  push:
-    branches: [ main, staging ]
-    paths:
-      - "crm/console/**"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target environment"
+        required: true
+        default: staging
+        type: choice
+        options: [preview, staging, production]
+      release_sha: { description: "Immutable commit SHA", required: false, type: string }
+      preview_run_id: { description: "Required for staging", required: false, type: string }
+      staging_run_id: { description: "Required for production", required: false, type: string }
 
 concurrency:
-  group: deploy-crm-pages
+  group: deploy-crm-pages-${{ inputs.target }}
   cancel-in-progress: false
 
+permissions:
+  actions: read
+  contents: read
+
 jobs:
+  promotion:
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: crm-pages
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+    secrets: inherit
   deploy:
+    needs: promotion
+    if: ${{ inputs.target != 'preview' }}
     runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
     permissions:
       contents: read
 
@@ -27,7 +49,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT_PROD: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
           PROJECT_STAGING: ${{ vars.CLOUDFLARE_PAGES_PROJECT_STAGING }}
-          BRANCH_NAME: ${{ github.ref_name }}
+          BRANCH_NAME: ${{ inputs.target == 'staging' && 'staging' || 'main' }}
         run: |
           set -euo pipefail
           if [[ "$BRANCH_NAME" == "staging" ]]; then
@@ -53,11 +75,14 @@ jobs:
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 2
 
       - name: Setup Node
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.12.0"
           cache: "npm"
@@ -68,8 +93,7 @@ jobs:
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
           ALLOW_FINANCE_PRODUCTION: ${{ vars.ENABLE_FINANCE_PRODUCTION_DEPLOY }}
-          BRANCH_NAME: ${{ github.ref_name }}
-          GITHUB_BEFORE_SHA: ${{ github.event.before }}
+          BRANCH_NAME: ${{ inputs.target == 'staging' && 'staging' || 'main' }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -77,7 +101,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed="$(git diff --name-only "$GITHUB_BEFORE_SHA" "$GITHUB_SHA" 2>/dev/null || true)"
+          changed="$(git diff --name-only HEAD^ HEAD 2>/dev/null || true)"
           if grep -Eq '^crm/console/(App\.tsx|Finance|financeApi|functions/api/finance/|public/_routes\.json|scripts/finance-)' <<< "$changed"; then
             echo "Finance production release requires ENABLE_FINANCE_PRODUCTION_DEPLOY=true; Pages deploy held."
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -98,7 +122,8 @@ jobs:
       - name: Build frontend
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         env:
-          VITE_BUILD_SHA: ${{ github.sha }}
+          VITE_BUILD_SHA: ${{ needs.promotion.outputs.source_sha }}
+          VITE_FINANCE_MODULE_URL: ${{ vars.FINANCE_UI_MODULE_URL }}
         run: npm run build
         working-directory: crm/console
 
@@ -109,11 +134,20 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAGES_PROJECT: ${{ steps.guard.outputs.project }}
           BRANCH_NAME: ${{ steps.guard.outputs.branch }}
-          GIT_SHA: ${{ github.sha }}
-          GIT_MESSAGE: ${{ github.event.head_commit.message || github.sha }}
+          # The deployment metadata must identify the immutable artifact that
+          # passed the promotion gate, not the workflow-dispatch ref.
+          GIT_SHA: ${{ needs.promotion.outputs.source_sha }}
+          GIT_MESSAGE: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
           PROJECT="${PAGES_PROJECT:-skincos}"
+          if [[ "$BRANCH_NAME" == "staging" ]]; then
+            # Pages reads only wrangler.toml from its working directory. This
+            # checkout is ephemeral, so stage the isolated config in place
+            # rather than letting the staging project inherit production
+            # proxy targets from the repository default.
+            cp .wrangler-staging/wrangler.toml wrangler.toml
+          fi
           echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
           npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
         working-directory: crm/console
@@ -131,3 +165,18 @@ jobs:
             --sleep-seconds 10 \
             --allow-ponto-disabled \
             --user-agent "Mozilla/5.0 (compatible; PontoSmoke/1.0)"
+      - name: Write staging promotion evidence
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && inputs.target == 'staging' }}
+        env:
+          PROMOTION_UNIT: crm-pages
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+      - name: Upload staging promotion evidence
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && inputs.target == 'staging' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-crm-pages
+          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error

@@ -2655,10 +2655,20 @@ async function queryIdentityReviewQueue(pgPool, query = {}) {
 
 export function createAtendimentoStore(options = {}) {
     const pgPool = options.pool || createAtendimentoPool(options.databaseUrl)
+    let readinessPromise = null
 
     async function ensureReady() {
         requirePool(pgPool)
-        await withPgTransaction(pgPool, migrateAtendimento)
+        if (!readinessPromise) {
+            readinessPromise = withPgTransaction(pgPool, migrateAtendimento)
+                .catch((error) => {
+                    // Do not cache a failed initialization: an operator may repair the
+                    // database state and the next request must be allowed to retry.
+                    readinessPromise = null
+                    throw error
+                })
+        }
+        await readinessPromise
     }
 
     return {
@@ -3644,7 +3654,7 @@ export function createAtendimentoStore(options = {}) {
                             unit_id, service_date, client_name, procedure_id, code, quantity,
                             discount, other_value, round_value, value, injector_id, consultant_id, injector_source_name, consultant_source_name,
                             observation, source_sheet_id, source_tab, source_row, created_by, updated_by
-                        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)
+                        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)
                         on conflict(source_sheet_id, source_tab, source_row) where source_sheet_id is not null and source_tab is not null and source_row is not null
                         do update set
                             unit_id = excluded.unit_id,

@@ -61,6 +61,7 @@ import { useInsumosInventoryMutationsController } from '@/useInsumosInventoryMut
 import { useInsumosMovementsController } from '@/useInsumosMovementsController'
 import { useInsumosQuickLookupController } from '@/useInsumosQuickLookupController'
 import { useInsumosQuickOperationsController } from '@/useInsumosQuickOperationsController'
+import { resolveInsumosUnitAccess } from '@/insumosUnitAccess'
 import {
   CANONICAL_TIPOS_UNIDADE,
   brToIsoDate,
@@ -273,6 +274,7 @@ export function InsumosModule() {
   const [authLoading, setAuthLoading] = React.useState(true)
   const [healthLoaded, setHealthLoaded] = React.useState(false)
   const [authLoaded, setAuthLoaded] = React.useState(false)
+  const [unitAccessReady, setUnitAccessReady] = React.useState(false)
   const [overviewLoaded, setOverviewLoaded] = React.useState(false)
   const [insumosLoaded, setInsumosLoaded] = React.useState(false)
   const [movLoaded, setMovLoaded] = React.useState(false)
@@ -660,13 +662,20 @@ export function InsumosModule() {
     return () => observer.disconnect()
   }, [])
 
-  const canUseApi = Boolean(
+  const serviceReady = Boolean(
     typeof health?.ready === 'boolean'
       ? health.ready
       : (typeof health?.dbConfigured === 'boolean' ? health.dbConfigured : health?.ok)
   )
   const isAuthed = !!user?.username
-  const allowedUnits = Array.isArray(user?.allowedUnits) ? user!.allowedUnits!.filter(Boolean) : []
+  const unitAccess = React.useMemo(
+    () => resolveInsumosUnitAccess({ role: user?.role, allowedUnits: user?.allowedUnits, savedUnit: unidade }),
+    [unidade, user?.allowedUnits, user?.role],
+  )
+  const allowedUnits = unitAccess.allowedUnits
+  // Inventory data is never public: until identity is resolved, and whenever
+  // the actor has no authorized unit, fail closed without issuing data calls.
+  const canUseApi = serviceReady && unitAccessReady && isAuthed && unitAccess.hasAuthorizedUnit
 
   const isManagerRole = ['GESTOR', 'GERENTE'].includes(String(user?.role || '').toUpperCase())
 
@@ -1787,10 +1796,8 @@ export function InsumosModule() {
   }, [])
 
   const unidadeOptions = React.useMemo(() => {
-    if (!allowedUnits.length) return allUnidades
-    const filtered = allUnidades.filter((u) => allowedUnits.includes(u))
-    return filtered.length ? filtered : allUnidades
-  }, [allUnidades.join('|'), allowedUnits.join('|')])
+    return resolveInsumosUnitAccess({ role: user?.role, allowedUnits, savedUnit: unidade, availableUnits: allUnidades }).visibleUnits
+  }, [allUnidades.join('|'), allowedUnits.join('|'), unidade, user?.role])
 
   const unidadeLabel = React.useCallback((u: string) => {
     return String(u || '')
@@ -1799,6 +1806,17 @@ export function InsumosModule() {
       .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
       .join(' ')
   }, [])
+
+  const selectAuthorizedUnit = React.useCallback((value: string) => {
+    const requested = resolveInsumosUnitAccess({ role: user?.role, allowedUnits, savedUnit: value, availableUnits: allUnidades })
+    if (!requested.requestedUnit || !requested.visibleUnits.includes(requested.requestedUnit)) return
+    setUnidade(requested.requestedUnit)
+    try {
+      window.localStorage.setItem(INSUMOS_UNIT_KEY, requested.requestedUnit)
+    } catch {
+      // Request gating remains authoritative if persistence is unavailable.
+    }
+  }, [INSUMOS_UNIT_KEY, allUnidades, allowedUnits, user?.role])
 
 	  const applyShareToForm = React.useCallback((payload: SharePayload & { id?: string }) => {
 	    setCreateOpen(true)
@@ -2214,6 +2232,7 @@ export function InsumosModule() {
 
   const loadMe = React.useCallback(async () => {
     setAuthLoading(true)
+    setUnitAccessReady(false)
     try {
       const out = await apiJson<{ success?: boolean; user?: InsumosUser; csrfToken?: string }>('/auth/me')
       setUser(out?.user || null)
@@ -2226,6 +2245,23 @@ export function InsumosModule() {
       setAuthLoading(false)
     }
   }, [])
+
+  React.useEffect(() => {
+    if (!authLoaded) return
+    if (!isAuthed) {
+      setUnitAccessReady(true)
+      return
+    }
+    const next = resolveInsumosUnitAccess({ role: user?.role, allowedUnits: user?.allowedUnits, savedUnit: unidade })
+    if (next.selectedUnit && next.selectedUnit !== unidade) setUnidade(next.selectedUnit)
+    try {
+      if (next.selectedUnit) window.localStorage.setItem(INSUMOS_UNIT_KEY, next.selectedUnit)
+      else window.localStorage.removeItem(INSUMOS_UNIT_KEY)
+    } catch {
+      // Storage reconciliation is best-effort; request gating remains fail-closed.
+    }
+    setUnitAccessReady(true)
+  }, [INSUMOS_UNIT_KEY, authLoaded, isAuthed, unidade, user?.allowedUnits, user?.role])
 
   const loadProxyStatus = React.useCallback(async () => {
     try {
@@ -2306,7 +2342,7 @@ export function InsumosModule() {
         return
       }
       if (issueUnit && issueUnit !== unidade) {
-        setUnidade(issueUnit)
+        selectAuthorizedUnit(issueUnit)
       }
 
       if (issueCode === 'DUPLICATE_BARCODE' && codigo) {
@@ -2368,7 +2404,7 @@ export function InsumosModule() {
 
       toast.error('Insumo não encontrado para edição rápida.')
     },
-    [isAuthed, lookupInsumosByCodigo, openEditDialog, unidade]
+    [isAuthed, lookupInsumosByCodigo, openEditDialog, selectAuthorizedUnit, unidade]
   )
 
   const loadInsumosPaged = React.useCallback(
@@ -2661,7 +2697,7 @@ export function InsumosModule() {
     setOverviewCustomFrom,
     setOverviewCustomTo,
     setOverviewPeriod,
-    setSelectedUnit: setUnidade,
+    setSelectedUnit: selectAuthorizedUnit,
     showOverviewLoadingProgress,
     status: headerStatus,
     storageKey: INSUMOS_UNIT_KEY,
@@ -3838,6 +3874,11 @@ export function InsumosModule() {
           }}
         />
       ) : null}
+      {authLoaded && isAuthed && unitAccessReady && !unitAccess.hasAuthorizedUnit ? (
+        <div className="rounded-xl border border-amber-300/30 bg-amber-950/40 px-4 py-3 text-sm text-amber-100">
+          Seu acesso ao Insumos ainda não possui uma unidade autorizada. Solicite a configuração de acesso; nenhuma consulta foi enviada.
+        </div>
+      ) : null}
       <DragDropContext onDragStart={onDragStartLayout} onDragEnd={onDragEndLayout}>
       <InsumosInventoryDialog
         open={insumosListModalOpen}
@@ -4398,7 +4439,9 @@ export function InsumosModule() {
               isAuthed={isAuthed}
               rows={movementRows}
               emptyContent={
-                movLoadError && !movLoading && isAuthed ? (
+                unitAccessReady && isAuthed && !unitAccess.hasAuthorizedUnit ? (
+                  <span className="text-amber-100">Aguardando configuração de acesso por unidade.</span>
+                ) : movLoadError && !movLoading && isAuthed ? (
                   <span className="text-red-200">
                     Erro ao carregar movimentações ({movLoadError.status || 'erro'}
                     {movLoadError.code ? `/${movLoadError.code}` : ''}): {movLoadError.message}

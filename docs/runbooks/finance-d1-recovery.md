@@ -3,7 +3,8 @@
 Este procedimento é para staging ou produção e não deve ser executado como parte
 do desenvolvimento local.
 
-1. Desligue a flag `finance_settings.module_enabled` antes de intervir; não
+1. Desligue a flag em `finance_settings` (`key='module_enabled'`,
+   `value='false'`) antes de intervir; não
    remova grants nem apague evidências.
 2. Registre `request_id`, lote, escopo, período e o último evento de auditoria.
 3. Gere e valide um backup/export do D1 no armazenamento privado de operação

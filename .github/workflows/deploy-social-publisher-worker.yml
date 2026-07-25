@@ -1,16 +1,37 @@
 name: Deploy Social Publisher Worker
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "social/publisher/**"
-      - ".github/workflows/deploy-social-publisher-worker.yml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      target: { description: Target stage, required: true, default: preview, type: choice, options: [preview, staging, production] }
+      release_sha: { description: Immutable commit SHA, required: false, type: string }
+      preview_run_id: { description: Required for staging, required: false, type: string }
+      staging_run_id: { description: Required for production, required: false, type: string }
+
+concurrency:
+  group: deploy-social-publisher-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
 
 jobs:
+  promotion:
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: social-publisher
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
+      staging_supported: false
+    secrets: inherit
   deploy:
+    needs: promotion
+    if: ${{ inputs.target != 'preview' }}
     runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
     permissions:
       contents: read
 
@@ -31,11 +52,13 @@ jobs:
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
 
       - name: Setup Node
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.12.0"
 
@@ -47,4 +70,3 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@3 deploy --config social/publisher/wrangler.toml --keep-vars
-

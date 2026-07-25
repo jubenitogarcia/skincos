@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import worker, { __testables } from './worker.js'
+import { signHmac } from './security.js'
 
 test('health is public and does not disclose secrets', async () => {
   const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/health'), { APP_VERSION: 'test', DB: {} })
@@ -68,6 +69,40 @@ test('manager and supervisor scopes are horizontal while admin remains organizat
   assert.equal(__testables.requireUnit({ role: 'SUPERVISOR', allowedUnits: ['UNIT_A'] }, 'UNIT_A'), true)
   assert.equal(__testables.requireUnit({ role: 'SUPERVISOR', allowedUnits: ['UNIT_A'] }, 'UNIT_B'), false)
   assert.equal(__testables.requireUnit({ role: 'ADMIN', allowedUnits: [] }, 'UNIT_B'), true)
+})
+
+test('Identity onboarding service binding requires a fresh HMAC and cannot be forged by a browser', async () => {
+  const secret = 'identity-workforce-test-secret'
+  const timestamp = String(Date.now())
+  const bodyHash = 'body-hash'
+  const signature = await signHmac(secret, `${timestamp}.${bodyHash}`)
+  const seen = new Set()
+  const db = { prepare(sql) { return { bind(...values) { this.values = values; return this }, async run() { if (sql.includes('INSERT INTO')) { if (seen.has(this.values[0])) throw new Error('UNIQUE') ; seen.add(this.values[0]) } return { meta: { changes: 1 } } } } } }
+  const headers = { 'x-skincos-service': 'identity', 'x-skincos-workforce-ts': timestamp, 'x-skincos-workforce-sig': signature, 'x-skincos-workforce-nonce': 'nonce-1', 'x-request-id': 'req-1' }
+  const signed = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers })
+  assert.deepEqual(await __testables.identityServiceAuthorized(signed, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: true })
+  const replay = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers })
+  assert.deepEqual(await __testables.identityServiceAuthorized(replay, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_REPLAY' })
+  const unsigned = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { ...headers, 'x-skincos-workforce-sig': 'forged', 'x-skincos-workforce-nonce': 'nonce-2' } })
+  assert.deepEqual(await __testables.identityServiceAuthorized(unsigned, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
+  const missingNonce = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { ...headers, 'x-skincos-workforce-nonce': '' } })
+  assert.deepEqual(await __testables.identityServiceAuthorized(missingNonce, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
+  const altered = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { ...headers, 'x-skincos-workforce-nonce': 'nonce-3' } })
+  assert.deepEqual(await __testables.identityServiceAuthorized(altered, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, 'altered-body', db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
+  const expiredTimestamp = String(Date.now() - 301000)
+  const expiredSig = await signHmac(secret, `${expiredTimestamp}.${bodyHash}`)
+  const expired = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { ...headers, 'x-skincos-workforce-ts': expiredTimestamp, 'x-skincos-workforce-sig': expiredSig, 'x-skincos-workforce-nonce': 'nonce-4' } })
+  assert.deepEqual(await __testables.identityServiceAuthorized(expired, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
+  assert.equal(__testables.normalizedDepartmentKey('  Atendimento Técnico  '), 'atendimento tecnico')
+})
+
+test('Workforce never presents pending or invited onboarding as operational', () => {
+  const pending = __testables.publicEmployee({ id: 'e1', canonical_employee_id: 'identity:o1', display_name: 'Synthetic', login_email: 'synthetic@example.invalid', status: 'LEAVE', access_state: 'PENDING_ACCESS' })
+  const invited = __testables.publicEmployee({ id: 'e2', canonical_employee_id: 'identity:o2', display_name: 'Synthetic', login_email: 'synthetic2@example.invalid', status: 'LEAVE', access_state: 'INVITED' })
+  assert.equal(pending.accessState, 'PENDING_ACCESS')
+  assert.equal(invited.accessState, 'INVITED')
+  assert.equal(pending.status, 'LEAVE')
+  assert.equal(invited.status, 'LEAVE')
 })
 
 test('CSV cells neutralize formulas and follow CSV quote escaping', () => {

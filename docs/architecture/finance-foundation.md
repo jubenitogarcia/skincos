@@ -2,13 +2,13 @@
 
 ## Fonte de verdade e propriedade
 
-`finance/` é o único dono de movimentos, partidas, importações, conciliação, auditoria e relatórios. O D1 `skincos-db` é acessado pelo gateway em `api.skincos.com.br/finance/*`. `integration/` apenas coleta e normaliza entradas externas; `crm/console` não calcula nem persiste regras financeiras. O gateway chama o handler Financeiro diretamente; ele não encaminha mais `/finance` pelo Worker de Inventário. `shared/crm-auth` é somente o adaptador da sessão CRM existente e usa o repositório atual de usuários até que a identidade CRM seja extraída do domínio Inventário.
+`finance/` é o único dono de movimentos, partidas, importações, conciliação, auditoria e relatórios. O gateway encaminha apenas `/finance/*` por service binding; `crm/console` não calcula nem persiste regras financeiras. `Identity` valida a sessão existente e entrega ao Financeiro somente um ator autenticado e seus escopos por contrato assinado de curta duração. O domínio não lê usuários, hashes, sessões ou D1 de Inventory.
 
 O antigo `backend/apps/actual-server` não é serviço, banco, autenticação ou dependência do Financeiro. Sua licença MIT permite referência seletiva, mas não há código nem estado importado dele.
 
 ## Acesso e ativação
 
-O acesso exige sessão CRM válida, `allowedModules` contendo literalmente `finance`, feature flag `finance_settings.module_enabled=true` e um grant em `finance_access_grants`. Não existe herança por papel, lista vazia ou administrador. A tela só aparece após o bootstrap confirmar esses três gates.
+O acesso exige sessão CRM válida, `allowedModules` contendo literalmente `finance`, a feature flag `finance_settings` com `key='module_enabled'` e `value='true'`, e um grant em `finance_access_grants`. Não existe herança por papel, lista vazia ou administrador. A tela só aparece após o bootstrap confirmar esses três gates.
 
 Os escopos empresariais são Novo Hamburgo e BarraShoppingSul. O escopo pessoal é criado inativo e não recebe grant. Consolidado é somente uma consulta futura sobre escopos empresariais explicitamente autorizados.
 

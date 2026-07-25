@@ -4,7 +4,7 @@ import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
+const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql', '0008_finance_draft_revision.sql', '0009_finance_registration_lifecycle.sql', '0010_finance_reconciliation_workflow.sql', '0011_finance_obligations.sql', '0012_finance_obligation_recurrences.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';
@@ -22,7 +22,7 @@ function sqlStatements(migration) {
 }
 
 async function fixture({ enabled = true, actor = { username: 'pilot', allowedModules: ['finance'] } } = {}) {
-  const mf = new Miniflare({ modules: true, script: 'export default { fetch() { return new Response("ok") } }', compatibilityDate: '2024-11-20', d1Databases: ['DB'] });
+  const mf = new Miniflare({ modules: true, script: 'export default { fetch() { return new Response("ok") } }', compatibilityDate: '2024-11-20', d1Databases: { DB: '00000000-0000-0000-0000-000000000001' } });
   const DB = await mf.getD1Database('DB');
   for (const migration of migrations) for (const statement of sqlStatements(migration)) { try { await DB.prepare(statement).run(); } catch (error) { throw new Error(`${error.message}\nSQL:\n${statement}`); } }
   await DB.prepare(`UPDATE finance_settings SET value=? WHERE key='module_enabled'`).bind(enabled ? 'true' : 'false').run();
@@ -85,6 +85,47 @@ test('D1 local: idempotency replays only the identical actor/route payload and r
   const conflict = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`, { method: 'POST', key: 'account-key', body: { name: 'Outro banco', type: 'bank', currency: 'BRL' } });
   assert.equal(first.response.status, 201); assert.equal(second.response.status, 201); assert.equal(second.body.replayed, true);
   assert.equal(first.body.account.id, second.body.account.id); assert.equal(conflict.response.status, 409);
+});
+
+test('D1 local: registrations are archived instead of deleted and stay isolated by scope', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
+  const archived = await account(ctx.env, ctx.actor, scopeNh, 'Conta encerrada', 'archive-account');
+  const result = await request(ctx.env, ctx.actor, `/accounts/${archived.id}/archive?scopeId=${scopeNh}`, { method: 'POST', key: 'archive-account', body: {} });
+  assert.equal(result.response.status, 201, JSON.stringify(result.body)); assert.equal(result.body.active, false);
+  const list = await request(ctx.env, ctx.actor, `/accounts?scopeId=${scopeNh}`); assert.equal(list.body.accounts.some((row) => row.id === archived.id), false);
+  const ledger = await ctx.DB.prepare(`SELECT active FROM finance_ledger_accounts WHERE id=?`).bind(archived.ledgerAccountId).first(); assert.equal(Number(ledger.active), 0);
+  assert.equal((await request(ctx.env, ctx.actor, `/accounts/${archived.id}/restore?scopeId=${scopeBss}`, { method: 'POST', key: 'cross-archive', body: {} })).response.status, 404);
+  await assert.rejects(ctx.DB.prepare(`DELETE FROM finance_accounts WHERE id=?`).bind(archived.id).run(), /archived, not deleted/);
+  const restored = await request(ctx.env, ctx.actor, `/accounts/${archived.id}/restore?scopeId=${scopeNh}`, { method: 'POST', key: 'restore-account', body: {} }); assert.equal(restored.response.status, 201); assert.equal(restored.body.active, true);
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${archived.id}&entityType=account`); assert.equal(audit.body.events.some((event) => event.action === 'ACCOUNT_ARCHIVED'), true); assert.equal(audit.body.events.some((event) => event.action === 'ACCOUNT_RESTORED'), true);
+});
+
+test('D1 local: a synthetic tag can be archived with an auditable compensation', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const created = await request(ctx.env, ctx.actor, `/tags?scopeId=${scopeNh}`, { method: 'POST', key: 'synthetic-tag-create', body: { name: 'Synthetic canary tag' } });
+  assert.equal(created.response.status, 201, JSON.stringify(created.body));
+  const tagId = created.body.tag.id;
+  const archived = await request(ctx.env, ctx.actor, `/tags/${tagId}/archive?scopeId=${scopeNh}`, { method: 'POST', key: 'synthetic-tag-archive', body: {} });
+  assert.equal(archived.response.status, 201, JSON.stringify(archived.body)); assert.equal(archived.body.active, false);
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${tagId}&entityType=tag`);
+  assert.equal(audit.body.events.some((event) => event.action === 'TAG_CREATED'), true); assert.equal(audit.body.events.some((event) => event.action === 'TAG_ARCHIVED'), true);
+});
+
+test('D1 local: reconciliation lines, exact suggestions and confirmations are scoped, balanced and auditable', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco conciliado', 'reconciliation-bank'); const income = await category(ctx.env, ctx.actor, scopeNh, 'Receita conciliada', 'income', 'reconciliation-income'); const expense = await category(ctx.env, ctx.actor, scopeNh, 'Despesa conciliada', 'expense', 'reconciliation-expense');
+  const incoming = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-income-movement', body: { type: 'income', accountId: bank.id, categoryId: income.id, description: 'Recebimento extrato', amountMinor: 1250, currency: 'BRL', competenceDate: '2026-08-01' } }); assert.equal(incoming.response.status, 201, JSON.stringify(incoming.body));
+  const outgoing = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-expense-movement', body: { type: 'expense', accountId: bank.id, categoryId: expense.id, description: 'Pagamento extrato', amountMinor: 700, currency: 'BRL', competenceDate: '2026-08-02' } }); assert.equal(outgoing.response.status, 201, JSON.stringify(outgoing.body));
+  const line = await request(ctx.env, ctx.actor, `/reconciliation/lines?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-line', body: { accountId: bank.id, postedDate: '2026-08-01', amountMinor: 1250, currency: 'BRL', description: 'Recebimento no banco', externalId: 'statement-001' } }); assert.equal(line.response.status, 201, JSON.stringify(line.body));
+  const duplicate = await request(ctx.env, ctx.actor, `/reconciliation/lines?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-line-duplicate', body: { accountId: bank.id, postedDate: '2026-08-01', amountMinor: 1250, currency: 'BRL', externalId: 'statement-001' } }); assert.equal(duplicate.response.status, 409);
+  const suggestions = await request(ctx.env, ctx.actor, `/reconciliation/lines/${line.body.line.id}/suggestions?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-suggest', body: {} }); assert.equal(suggestions.response.status, 201, JSON.stringify(suggestions.body)); assert.deepEqual(suggestions.body.suggestedMovementIds, [incoming.body.movement.id]);
+  const mismatch = await request(ctx.env, ctx.actor, `/reconciliation/lines/${line.body.line.id}/matches?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-mismatch', body: { movementId: outgoing.body.movement.id, decision: 'confirm' } }); assert.equal(mismatch.response.status, 400);
+  const confirmed = await request(ctx.env, ctx.actor, `/reconciliation/lines/${line.body.line.id}/matches?scopeId=${scopeNh}`, { method: 'POST', key: 'reconciliation-confirm', body: { movementId: incoming.body.movement.id, decision: 'confirm' } }); assert.equal(confirmed.response.status, 201, JSON.stringify(confirmed.body));
+  const movement = await request(ctx.env, ctx.actor, `/movements/${incoming.body.movement.id}?scopeId=${scopeNh}`); assert.equal(movement.body.movement.operational_status, 'reconciled');
+  const listed = await request(ctx.env, ctx.actor, `/reconciliation/lines?scopeId=${scopeNh}&accountId=${bank.id}`); assert.equal(listed.body.lines[0].matches[0].status, 'confirmed');
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${confirmed.body.matchId}&entityType=reconciliation_match`); assert.equal(audit.body.events.some((event) => event.action === 'RECONCILIATION_MATCH_CONFIRMED'), true);
+  assert.equal((await request(ctx.env, ctx.actor, `/reconciliation/lines/${line.body.line.id}/suggestions?scopeId=${scopeBss}`, { method: 'POST', key: 'reconciliation-cross-scope', body: {} })).response.status, 404);
+  await assert.rejects(ctx.DB.prepare(`DELETE FROM finance_reconciliation_lines WHERE id=?`).bind(line.body.line.id).run(), /append-only/);
 });
 
 test('D1 local: concurrent identical idempotency keys converge on one persisted operation', async (t) => {
@@ -200,6 +241,31 @@ test('D1 local: splits, base currency, installments and operational lifecycle re
   await assert.rejects(ctx.DB.exec(`UPDATE finance_movement_revisions SET kind='tampered'`), /append-only/);
 });
 
+test('D1 local: only a pending draft can be revised atomically with an optimistic revision and audit trail', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco revisável', 'draft-revision-bank');
+  const originalCategory = await category(ctx.env, ctx.actor, scopeNh, 'Receita original', 'income', 'draft-revision-original');
+  const revisedCategory = await category(ctx.env, ctx.actor, scopeNh, 'Receita revisada', 'income', 'draft-revision-revised');
+  const created = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'draft-revision-create', body: { type: 'income', operationalStatus: 'pending', accountId: bank.id, categoryId: originalCategory.id, description: 'Rascunho original', amountMinor: 1_000, currency: 'BRL', competenceDate: '2026-07-21', installments: [{ dueDate: '2026-08-01', amountMinor: 1_000 }] } });
+  assert.equal(created.response.status, 201, JSON.stringify(created.body));
+  const movementId = created.body.movement.id;
+  const revisedPayload = { expectedRevision: 1, type: 'income', accountId: bank.id, categoryId: revisedCategory.id, description: 'Rascunho revisado', amountMinor: 2_500, currency: 'BRL', competenceDate: '2026-07-22', dueDate: '2026-08-02', installments: [{ dueDate: '2026-08-02', amountMinor: 2_500 }] };
+  const revised = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`, { method: 'PUT', key: 'draft-revision-save', body: revisedPayload });
+  assert.equal(revised.response.status, 201, JSON.stringify(revised.body)); assert.equal(revised.body.revision, 2);
+  const replay = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`, { method: 'PUT', key: 'draft-revision-save', body: revisedPayload });
+  assert.equal(replay.response.status, 201); assert.equal(replay.body.replayed, true);
+  const detail = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`);
+  assert.equal(detail.body.movement.description, 'Rascunho revisado'); assert.equal(detail.body.movement.amount_minor, 2_500); assert.equal(detail.body.movement.revision, 2); assert.equal(detail.body.splits[0].category_id, revisedCategory.id); assert.equal(detail.body.installments[0].amount_minor, 2_500);
+  const stale = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`, { method: 'PUT', key: 'draft-revision-stale', body: revisedPayload });
+  assert.equal(stale.response.status, 409); assert.equal(stale.body.error, 'DRAFT_REVISION_CONFLICT');
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${movementId}&entityType=movement`);
+  assert.equal(audit.body.events.some((event) => event.action === 'MOVEMENT_DRAFT_REVISED'), true);
+  const confirmed = await request(ctx.env, ctx.actor, `/movements/${movementId}/confirm?scopeId=${scopeNh}`, { method: 'POST', key: 'draft-revision-confirm', body: {} }); assert.equal(confirmed.response.status, 201);
+  const prohibited = await request(ctx.env, ctx.actor, `/movements/${movementId}?scopeId=${scopeNh}`, { method: 'PUT', key: 'draft-revision-posted', body: { ...revisedPayload, expectedRevision: 2 } });
+  assert.equal(prohibited.response.status, 400);
+  await assert.rejects(ctx.DB.prepare(`UPDATE finance_movements SET description='alteração indevida' WHERE id=?`).bind(movementId).run(), /immutable/);
+});
+
 test('D1 local: scope and monetary safeguards reject cross-scope, unbalanced and reused cross-scope operations', async (t) => {
   const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
   const nhAccount = await account(ctx.env, ctx.actor, scopeNh, 'NH Banco', 'nh-account'); const bssAccount = await account(ctx.env, ctx.actor, scopeBss, 'BSS Banco', 'bss-account');
@@ -249,13 +315,17 @@ test('D1 local: movement search and audit details remain scoped and paginated', 
   const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
   const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco', 'search-bank');
   const categoryRow = await category(ctx.env, ctx.actor, scopeNh, 'Procedimentos', 'income', 'search-category');
+  const costCenter = await request(ctx.env, ctx.actor, `/cost-centers?scopeId=${scopeNh}`, { method: 'POST', key: 'search-center', body: { name: 'Unidade clínica' } });
   const payee = await request(ctx.env, ctx.actor, `/payees?scopeId=${scopeNh}`, { method: 'POST', key: 'search-payee', body: { name: 'Paciente Ana' } });
-  const created = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'search-movement', body: { type: 'income', accountId: bank.id, categoryId: categoryRow.id, payeeId: payee.body.payee.id, description: 'Procedimento facial', amountMinor: 12000, currency: 'BRL', competenceDate: '2026-07-21' } });
+  const created = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'search-movement', body: { type: 'income', accountId: bank.id, categoryId: categoryRow.id, costCenterId: costCenter.body.costCenter.id, payeeId: payee.body.payee.id, description: 'Procedimento facial', amountMinor: 12000, currency: 'BRL', competenceDate: '2026-07-21' } });
   assert.equal(created.response.status, 201, JSON.stringify(created.body));
   const byDescription = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&q=facial&limit=1`);
   assert.equal(byDescription.response.status, 200); assert.equal(byDescription.body.total, 1); assert.equal(byDescription.body.movements[0].id, created.body.movement.id);
   const byPayee = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&q=ana`);
   assert.equal(byPayee.body.movements.length, 1); assert.equal(byPayee.body.movements[0].payee_name, 'Paciente Ana');
+  const byCategory = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&categoryId=${categoryRow.id}`);
+  const byCostCenter = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}&costCenterId=${costCenter.body.costCenter.id}`);
+  assert.equal(byCategory.body.movements[0].id, created.body.movement.id); assert.equal(byCostCenter.body.movements[0].id, created.body.movement.id);
   const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${created.body.movement.id}&entityType=movement`);
   assert.equal(audit.response.status, 200); assert.equal(audit.body.total, 1); assert.equal(audit.body.events[0].action, 'MOVEMENT_CREATED');
   const denied = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeBss}&entityId=${created.body.movement.id}`);
@@ -278,4 +348,50 @@ test('D1 local: posted journal evidence is balanced and immutable at the databas
   await ctx.DB.prepare(`INSERT INTO finance_journal_lines(id,entry_id,ledger_account_id,direction,amount_minor,currency,created_at) VALUES(?,?,?,?,?,?,?)`).bind('unbalanced-line', 'unbalanced-entry', ledger.ledger_account_id, 'debit', 100, 'BRL', new Date().toISOString()).run();
   await assert.rejects(ctx.DB.prepare(`UPDATE finance_journal_entries SET status='posted' WHERE id=?`).bind('unbalanced-entry').run(), /balanced/);
   assert.ok(entry.id);
+});
+
+test('D1 local: AP/AR obligations settle only through scoped confirmed ledger evidence', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco de títulos', 'obligation-bank');
+  const expense = await category(ctx.env, ctx.actor, scopeNh, 'Fornecedores', 'expense', 'obligation-expense');
+  const payee = await request(ctx.env, ctx.actor, `/payees?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-payee', body: { name: 'Fornecedor auditável' } }); assert.equal(payee.response.status, 201);
+  const created = await request(ctx.env, ctx.actor, `/obligations?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-create', body: { kind: 'payable', categoryId: expense.id, payeeId: payee.body.payee.id, description: 'Aluguel agosto', amountMinor: 10_000, currency: 'BRL', competenceDate: '2026-08-01', dueDate: '2026-08-10' } });
+  assert.equal(created.response.status, 201, JSON.stringify(created.body)); const obligationId = created.body.obligation.id;
+  const replay = await request(ctx.env, ctx.actor, `/obligations?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-create', body: { kind: 'payable', categoryId: expense.id, payeeId: payee.body.payee.id, description: 'Aluguel agosto', amountMinor: 10_000, currency: 'BRL', competenceDate: '2026-08-01', dueDate: '2026-08-10' } }); assert.equal(replay.body.replayed, true);
+  assert.equal((await request(ctx.env, ctx.actor, `/obligations/${obligationId}?scopeId=${scopeBss}`)).response.status, 404);
+  const payment = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-payment-one', body: { type: 'expense', accountId: bank.id, categoryId: expense.id, payeeId: payee.body.payee.id, description: 'Pagamento parcial aluguel', amountMinor: 7_500, currency: 'BRL', competenceDate: '2026-08-10', paidDate: '2026-08-10' } }); assert.equal(payment.response.status, 201, JSON.stringify(payment.body));
+  const firstSettlementPayload = { movementId: payment.body.movement.id, principalAmountMinor: 8_000, discountMinor: 500, paidDate: '2026-08-10' };
+  const settlement = await request(ctx.env, ctx.actor, `/obligations/${obligationId}/settlements?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-settlement-one', body: firstSettlementPayload }); assert.equal(settlement.response.status, 201, JSON.stringify(settlement.body)); assert.equal(settlement.body.status, 'partially_settled'); assert.equal(settlement.body.remainingMinor, 2_000);
+  const settlementReplay = await request(ctx.env, ctx.actor, `/obligations/${obligationId}/settlements?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-settlement-one', body: firstSettlementPayload }); assert.equal(settlementReplay.body.replayed, true);
+  const duplicateMovement = await request(ctx.env, ctx.actor, `/obligations/${obligationId}/settlements?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-settlement-duplicate', body: firstSettlementPayload }); assert.equal(duplicateMovement.response.status, 409); assert.equal(duplicateMovement.body.error, 'DUPLICATE_SETTLEMENT');
+  const finalPayment = await request(ctx.env, ctx.actor, `/movements?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-payment-two', body: { type: 'expense', accountId: bank.id, categoryId: expense.id, payeeId: payee.body.payee.id, description: 'Saldo aluguel', amountMinor: 2_000, currency: 'BRL', competenceDate: '2026-08-11', paidDate: '2026-08-11' } }); assert.equal(finalPayment.response.status, 201, JSON.stringify(finalPayment.body));
+  const finalSettlement = await request(ctx.env, ctx.actor, `/obligations/${obligationId}/settlements?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-settlement-two', body: { movementId: finalPayment.body.movement.id, principalAmountMinor: 2_000, paidDate: '2026-08-11' } }); assert.equal(finalSettlement.response.status, 201, JSON.stringify(finalSettlement.body)); assert.equal(finalSettlement.body.status, 'settled');
+  const detail = await request(ctx.env, ctx.actor, `/obligations/${obligationId}?scopeId=${scopeNh}`); assert.equal(detail.body.remainingMinor, 0); assert.equal(detail.body.settlements.length, 2); await assert.rejects(ctx.DB.exec(`UPDATE finance_obligation_settlements SET principal_amount_minor=1`), /append-only/); await assert.rejects(ctx.DB.exec(`DELETE FROM finance_obligations WHERE id='${obligationId}'`), /cannot be deleted/);
+  const cancellable = await request(ctx.env, ctx.actor, `/obligations?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-cancellable', body: { kind: 'payable', description: 'Contrato cancelado', amountMinor: 1_000, currency: 'BRL', competenceDate: '2026-08-01', dueDate: '2026-08-12' } }); const cancelled = await request(ctx.env, ctx.actor, `/obligations/${cancellable.body.obligation.id}/cancel?scopeId=${scopeNh}`, { method: 'POST', key: 'obligation-cancel', body: { reason: 'Contrato não aprovado' } }); assert.equal(cancelled.response.status, 201); const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${obligationId}&entityType=obligation`); assert.equal(audit.body.events.some((event) => event.action === 'OBLIGATION_SETTLED'), true);
+});
+
+test('D1 local: AP/AR planning summary stays scoped, currency-separated and excludes cancelled titles', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
+  const receivable = await request(ctx.env, ctx.actor, `/obligations?scopeId=${scopeNh}`, { method: 'POST', key: 'summary-receivable', body: { kind: 'receivable', description: 'Recebível vencido', amountMinor: 12_000, currency: 'BRL', competenceDate: '2026-07-01', dueDate: '2026-08-01', plannedDate: '2026-08-01' } }); assert.equal(receivable.response.status, 201, JSON.stringify(receivable.body));
+  const payable = await request(ctx.env, ctx.actor, `/obligations?scopeId=${scopeNh}`, { method: 'POST', key: 'summary-payable', body: { kind: 'payable', description: 'Conta a vencer', amountMinor: 8_000, currency: 'BRL', competenceDate: '2026-08-01', dueDate: '2026-08-20', plannedDate: '2026-08-20' } }); assert.equal(payable.response.status, 201, JSON.stringify(payable.body));
+  const cancelled = await request(ctx.env, ctx.actor, `/obligations?scopeId=${scopeNh}`, { method: 'POST', key: 'summary-cancelled', body: { kind: 'payable', description: 'Não deve entrar', amountMinor: 99_000, currency: 'BRL', competenceDate: '2026-08-01', dueDate: '2026-08-15' } }); assert.equal(cancelled.response.status, 201); assert.equal((await request(ctx.env, ctx.actor, `/obligations/${cancelled.body.obligation.id}/cancel?scopeId=${scopeNh}`, { method: 'POST', key: 'summary-cancel', body: { reason: 'Teste de previsão' } })).response.status, 201);
+  const summary = await request(ctx.env, ctx.actor, `/obligations/summary?scopeId=${scopeNh}&asOf=2026-08-10&horizonDays=30`); assert.equal(summary.response.status, 200, JSON.stringify(summary.body)); assert.equal(summary.body.horizonEnd, '2026-09-09');
+  assert.deepEqual(summary.body.totals, [{ kind: 'payable', currency: 'BRL', open_minor: 8000, overdue_minor: 0, due_within_horizon_minor: 8000 }, { kind: 'receivable', currency: 'BRL', open_minor: 12000, overdue_minor: 12000, due_within_horizon_minor: 0 }]);
+  assert.equal(summary.body.aging.some((row) => row.kind === 'receivable' && row.bucket === '1_30' && Number(row.amount_minor) === 12000), true); assert.equal(summary.body.schedule.some((row) => row.kind === 'payable' && row.planned_date === '2026-08-20' && Number(row.amount_minor) === 8000), true);
+  assert.equal((await request(ctx.env, ctx.actor, `/obligations/summary?scopeId=${scopeBss}&asOf=2026-08-10`)).body.totals.length, 0); assert.equal((await request(ctx.env, ctx.actor, `/obligations/summary?scopeId=${scopePersonal}&asOf=2026-08-10`)).response.status, 403); assert.equal((await request(ctx.env, ctx.actor, `/obligations/summary?scopeId=${scopeNh}&horizonDays=999`)).response.status, 400);
+});
+
+test('D1 local: recurrence materializes scoped AP/AR titles idempotently without posting cash', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh); await grant(ctx.DB, 'pilot', scopeBss);
+  const rule = await request(ctx.env, ctx.actor, `/recurrences?scopeId=${scopeNh}`, { method: 'POST', key: 'recurrence-create', body: { kind: 'payable', frequency: 'monthly', description: 'Aluguel recorrente', amountMinor: 50000, currency: 'BRL', competenceDay: 5, dueDay: 10, startsOn: '2026-08-10' } }); assert.equal(rule.response.status, 201, JSON.stringify(rule.body));
+  const materialized = await request(ctx.env, ctx.actor, `/recurrences/${rule.body.recurrence.id}/materialize?scopeId=${scopeNh}`, { method: 'POST', key: 'recurrence-materialize', body: { throughDate: '2026-10-10' } }); assert.equal(materialized.response.status, 201, JSON.stringify(materialized.body)); assert.equal(materialized.body.created.length, 3); assert.equal(materialized.body.nextDueDate, '2026-11-10');
+  const replay = await request(ctx.env, ctx.actor, `/recurrences/${rule.body.recurrence.id}/materialize?scopeId=${scopeNh}`, { method: 'POST', key: 'recurrence-materialize', body: { throughDate: '2026-10-10' } }); assert.equal(replay.body.replayed, true); const titles = await request(ctx.env, ctx.actor, `/obligations?scopeId=${scopeNh}&from=2026-08-01&to=2026-10-31`); assert.equal(titles.body.total, 3); const firstTitle = await ctx.DB.prepare(`SELECT competence_date,due_date FROM finance_obligations WHERE scope_id=? ORDER BY due_date LIMIT 1`).bind(scopeNh).first(); assert.deepEqual(firstTitle, { competence_date: '2026-08-05', due_date: '2026-08-10' }); const journals = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_journal_entries`).first(); assert.equal(Number(journals.count), 0); assert.equal((await request(ctx.env, ctx.actor, `/recurrences/${rule.body.recurrence.id}/materialize?scopeId=${scopeBss}`, { method: 'POST', key: 'recurrence-cross-scope', body: { throughDate: '2026-10-10' } })).response.status, 404);
+});
+
+test('D1 local: recurrence aligns first occurrence and rejects inactive registrations', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const category = await request(ctx.env, ctx.actor, `/categories?scopeId=${scopeNh}`, { method: 'POST', key: 'recurrence-category', body: { name: 'Aluguel', direction: 'expense' } });
+  await request(ctx.env, ctx.actor, `/categories/${category.body.category.id}/archive?scopeId=${scopeNh}`, { method: 'POST', key: 'recurrence-category-archive', body: {} });
+  const rejected = await request(ctx.env, ctx.actor, `/recurrences?scopeId=${scopeNh}`, { method: 'POST', key: 'recurrence-inactive-category', body: { kind: 'payable', description: 'Não criar', amountMinor: 1000, currency: 'BRL', competenceDay: 1, dueDay: 10, startsOn: '2026-08-15', categoryId: category.body.category.id } }); assert.equal(rejected.response.status, 400);
+  const accepted = await request(ctx.env, ctx.actor, `/recurrences?scopeId=${scopeNh}`, { method: 'POST', key: 'recurrence-aligned-start', body: { kind: 'payable', description: 'Criar', amountMinor: 1000, currency: 'BRL', competenceDay: 5, dueDay: 10, startsOn: '2026-08-15' } }); assert.equal(accepted.response.status, 201, JSON.stringify(accepted.body)); assert.equal(accepted.body.recurrence.nextDueDate, '2026-09-10');
 });

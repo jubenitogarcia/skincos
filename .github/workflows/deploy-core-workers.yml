@@ -1,17 +1,51 @@
-name: Deploy Core Workers (api + insumos)
+name: Deploy Core Worker
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "api/**"
-      - "inventory/**"
-      - ".github/workflows/deploy-core-workers.yml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target environment"
+        required: true
+        default: staging
+        type: choice
+        options: [preview, staging, production]
+      unit:
+        description: "Operational unit to publish; use api for gateway-only routing changes"
+        required: true
+        default: all
+        type: choice
+        options: [api, inventory, all]
+      bootstrap_finance_context:
+        description: "Set the Finance service secret in the selected staging API once"
+        required: true
+        default: false
+        type: boolean
+      release_sha: { description: "Immutable commit SHA", required: false, type: string }
+      preview_run_id: { description: "Required for staging", required: false, type: string }
+      staging_run_id: { description: "Required for production", required: false, type: string }
+
+concurrency:
+  group: deploy-core-worker-${{ inputs.unit }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
 
 jobs:
+  promotion:
+    uses: ./.github/workflows/promotion-gate.yml
+    with:
+      unit: core-${{ inputs.unit }}
+      target: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      preview_run_id: ${{ inputs.preview_run_id }}
+      staging_run_id: ${{ inputs.staging_run_id }}
   deploy:
+    needs: promotion
+    if: ${{ inputs.target != 'preview' }}
     runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
     permissions:
       contents: read
 
@@ -38,15 +72,17 @@ jobs:
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
 
       - name: Setup Node
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.12.0"
 
-      - name: Install worker deps (insumos + api)
+      - name: Install worker deps
         if: ${{ steps.guard.outputs.skip != 'true' }}
         run: |
           set -euo pipefail
@@ -54,21 +90,102 @@ jobs:
           (cd ../api && npm install --no-package-lock --no-audit --no-fund)
         working-directory: inventory
 
-      - name: Deploy Workers (wrangler)
+      - name: Deploy only the selected operational unit
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FINANCE_SERVICE_AUTH_SECRET: ${{ secrets.FINANCE_SERVICE_AUTH_SECRET }}
+          IDENTITY_PII_KEY: ${{ secrets.IDENTITY_PII_KEY }}
+          IDENTITY_WORKFORCE_HMAC_KEY: ${{ secrets.IDENTITY_WORKFORCE_HMAC_KEY }}
+          AUTH_RESET_SMTP_HOST: ${{ secrets.AUTH_RESET_SMTP_HOST }}
+          AUTH_RESET_SMTP_PORT: ${{ secrets.AUTH_RESET_SMTP_PORT }}
+          AUTH_RESET_SMTP_USERNAME: ${{ secrets.AUTH_RESET_SMTP_USERNAME }}
+          AUTH_RESET_SMTP_PASSWORD: ${{ secrets.AUTH_RESET_SMTP_PASSWORD }}
+          AUTH_RESET_EMAIL_FROM: ${{ secrets.AUTH_RESET_EMAIL_FROM }}
+          AUTH_RESET_CODE_PEPPER: ${{ secrets.AUTH_RESET_CODE_PEPPER }}
+          TARGET: ${{ inputs.target }}
+          UNIT: ${{ inputs.unit }}
+          BOOTSTRAP_FINANCE_CONTEXT: ${{ inputs.bootstrap_finance_context }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars
-          npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars
+          if [[ "$TARGET" == "staging" ]]; then
+            env_args=(--env staging)
+            environment_var=(--var "ENVIRONMENT:staging")
+            inventory_d1_name=skincos-db-staging
+          else
+            env_args=()
+            environment_var=(--var "ENVIRONMENT:production")
+            inventory_d1_name=skincos-db
+          fi
+          if [[ "$UNIT" == "inventory" || "$UNIT" == "all" ]]; then
+            # D1 migrations must precede the Worker that requires them. They
+            # are versioned, additive and executed only through this guarded
+            # promotion workflow, never from a developer workstation.
+            npx --yes wrangler@3 d1 migrations apply "$inventory_d1_name" --remote --config inventory/wrangler.toml "${env_args[@]}"
+            [[ -n "${IDENTITY_PII_KEY:-}" && -n "${IDENTITY_WORKFORCE_HMAC_KEY:-}" ]] || { echo 'Missing Identity onboarding secrets.'; exit 1; }
+            for name in IDENTITY_PII_KEY IDENTITY_WORKFORCE_HMAC_KEY; do
+              printf '%s' "${!name}" | npx --yes wrangler@3 secret put "$name" --config inventory/wrangler.toml "${env_args[@]}" >/dev/null
+            done
+            if [[ "$TARGET" == "staging" ]]; then
+              # Email delivery is optional for ordinary Worker deploys, but a
+              # partial configuration must fail closed. No production mail
+              # secret is ever selected by this staging-only branch.
+              mail_values=("$AUTH_RESET_SMTP_HOST" "$AUTH_RESET_SMTP_USERNAME" "$AUTH_RESET_SMTP_PASSWORD" "$AUTH_RESET_EMAIL_FROM" "$AUTH_RESET_CODE_PEPPER")
+              configured=0
+              for value in "${mail_values[@]}"; do [[ -n "$value" ]] && configured=$((configured + 1)); done
+              if [[ "$configured" == "0" ]]; then
+                echo 'Staging onboarding email transport is not configured; invite/recovery smoke remains blocked.'
+              elif [[ "$configured" != "${#mail_values[@]}" ]]; then
+                echo 'Partial staging onboarding email transport configuration; refusing to deploy.'
+                exit 1
+              else
+                for name in AUTH_RESET_SMTP_HOST AUTH_RESET_SMTP_PORT AUTH_RESET_SMTP_USERNAME AUTH_RESET_SMTP_PASSWORD AUTH_RESET_EMAIL_FROM AUTH_RESET_CODE_PEPPER; do
+                  [[ -n "${!name:-}" ]] || continue
+                  printf '%s' "${!name}" | npx --yes wrangler@3 secret put "$name" --config inventory/wrangler.toml --env staging >/dev/null
+                done
+              fi
+            fi
+            npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars "${env_args[@]}"
+          fi
+          if [[ "$UNIT" == "api" || "$UNIT" == "all" ]]; then
+            if [[ "$BOOTSTRAP_FINANCE_CONTEXT" == "true" ]]; then
+              [[ "$TARGET" == "staging" ]] || { echo 'Finance context bootstrap is staging-only.'; exit 1; }
+              [[ -n "${FINANCE_SERVICE_AUTH_SECRET:-}" ]] || { echo 'Missing FINANCE_SERVICE_AUTH_SECRET.'; exit 1; }
+              printf '%s' "$FINANCE_SERVICE_AUTH_SECRET" | npx --yes wrangler@3 secret put FINANCE_SERVICE_AUTH_SECRET --config api/wrangler.toml --env staging
+            fi
+            npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars "${env_args[@]}" \
+              --var "APP_VERSION:$RELEASE_SHA" "${environment_var[@]}"
+          fi
 
-      - name: Smoke check API + Inventory Workers (production)
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+      - name: Smoke selected core Worker (production)
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/workers_smoke.py \
-            --attempts 5 \
-            --sleep-seconds 6 \
-            --user-agent "Mozilla/5.0 (compatible; CoreWorkerSmoke/1.0)"
+          if [[ "$UNIT" == "api" ]]; then
+            curl --fail --silent --show-error --max-time 15 https://api.skincos.com.br/health >/dev/null
+          else
+            python3 .github/scripts/workers_smoke.py \
+              --attempts 5 \
+              --sleep-seconds 6 \
+              --user-agent "Mozilla/5.0 (compatible; CoreWorkerSmoke/1.0)"
+          fi
+        env:
+          UNIT: ${{ inputs.unit }}
+
+      - name: Write staging promotion evidence
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
+        env:
+          PROMOTION_UNIT: core-${{ inputs.unit }}
+          PROMOTION_TARGET: staging
+          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
+      - name: Upload staging promotion evidence
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'staging' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-core-${{ inputs.unit }}
+          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
+          retention-days: 14
+          if-no-files-found: error

@@ -34,6 +34,12 @@
 - Prefer repo evidence and live endpoints over generic assumptions.
 - If the user asks briefly ("proceda", "verifique", "publique", "corrija"),
   infer the standard Skincos flow instead of asking them to restate context.
+- Use `skills/skincos-project-orchestrator` for SKINCOS handoff, audit, status,
+  PR/CI/deploy review, or next-step requests. “retome o SKINCOS”, “continue o
+  projeto”, “prossiga do ponto atual”, “execute o próximo passo” and “use o
+  orquestrador” mean `resume-execute`; only `status`, “somente audite”, or
+  “somente analise” mean read-only. Continue authorized work through PR/CI and
+  staging evidence instead of stopping at a report.
 
 ## Source of Truth
 
@@ -46,6 +52,12 @@
 
 ## Production and Deploys
 
+- **Operational change contract:** before planning or applying any change,
+  read and follow
+  [docs/decisions/operational-change-policy.md](docs/decisions/operational-change-policy.md).
+  It is mandatory for branches/PRs, flags, migrations, rollback, validation,
+  and every staging or production action. A missing explicit pre-production
+  validation record means production changes are not authorized.
 - When the user asks for a live fix, prioritize fix, deploy, and online
   verification.
 - Before deploys, inspect the intended target, current git state, and relevant

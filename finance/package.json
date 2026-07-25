@@ -3,7 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "check": "node --check api/worker.js"
+    "test": "node --test --test-timeout=180000 test/*.test.mjs",
+    "check": "node --check api/worker.js && node --check worker.js"
+  },
+  "devDependencies": {
+    "miniflare": "4.20260722.0"
   }
 }

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "purpose": "Reviewed evidence required before a module may advance its official maturity state. References identify runbooks, tests or immutable evidence; they never contain secrets or personal data.",
+  "criteria": {
+    "experimental": ["permissions", "tests", "featureFlag", "fallback", "documentation"],
+    "staging": ["permissions", "tests", "featureFlag", "backup", "observability", "fallback", "documentation", "restore", "rollback"],
+    "pilot": ["permissions", "tests", "featureFlag", "backup", "observability", "fallback", "documentation", "restore", "rollback", "pilotGroup", "training", "support"],
+    "operational": ["permissions", "tests", "featureFlag", "backup", "observability", "fallback", "documentation", "restore", "rollback", "slo", "canaryEvidence"],
+    "critical": ["permissions", "tests", "featureFlag", "backup", "observability", "fallback", "documentation", "restore", "rollback", "slo", "canaryEvidence", "offsiteRecovery", "onCall", "rtoExercise"]
+  },
+  "defaults": {
+    "experimental": {
+      "permissions": "module catalog featureFlag/enforcement and domain authorization contract",
+      "tests": "module testCommands declared in the technical catalog",
+      "featureFlag": "disabled-by-default or not-applicable flag explicitly declared",
+      "fallback": "fallback and rollback fields declared in the technical catalog",
+      "documentation": "docs/architecture/module-catalog.md"
+    }
+  },
+  "promotions": {}
+}

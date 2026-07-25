@@ -1,0 +1,66 @@
+name: Set module availability
+
+on:
+  workflow_dispatch:
+    inputs:
+      module:
+        description: Module to control
+        required: true
+        type: choice
+        options: [finance, timekeeping]
+      target:
+        description: Isolated environment
+        required: true
+        type: choice
+        options: [staging, production]
+      state:
+        description: Runtime state; no artifact is published
+        required: true
+        type: choice
+        options: [active, maintenance, disabled]
+      message:
+        description: User-visible maintenance reason (optional)
+        required: false
+        type: string
+
+concurrency:
+  group: module-availability-${{ inputs.module }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  set-state:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - name: Guard isolated control store
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NAMESPACE_ID: ${{ inputs.module == 'finance' && (inputs.target == 'production' && vars.FINANCE_CONTROL_PRODUCTION_KV_ID || vars.FINANCE_CONTROL_STAGING_KV_ID) || (inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID) }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID NAMESPACE_ID; do [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }; done
+          # Cloudflare KV namespace IDs are 32 hexadecimal characters, unlike
+          # the 36-character UUID used by D1 databases.
+          [[ "$NAMESPACE_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid module-control KV id'; exit 1; }
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - name: Set isolated runtime state
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NAMESPACE_ID: ${{ inputs.module == 'finance' && (inputs.target == 'production' && vars.FINANCE_CONTROL_PRODUCTION_KV_ID || vars.FINANCE_CONTROL_STAGING_KV_ID) || (inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID) }}
+          MODULE: ${{ inputs.module }}
+          STATE: ${{ inputs.state }}
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          set -euo pipefail
+          # Canary is intentionally absent here: only finance-staging-canary.yml
+          # can open it after immutable staging evidence and synthetic-only guards.
+          payload="$(node -e "process.stdout.write(JSON.stringify({state:process.env.STATE,message:process.env.MESSAGE||'',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
+          # The control plane is the remote staging/production KV. Omitting
+          # --remote silently writes only the runner's ephemeral local KV and
+          # makes a successful kill-switch run a false positive.
+          npx --yes wrangler@4.112.0 kv key put "module-control:$MODULE" "$payload" --namespace-id "$NAMESPACE_ID" --remote
