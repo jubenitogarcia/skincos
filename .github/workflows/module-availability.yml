@@ -60,4 +60,7 @@ jobs:
           # Canary is intentionally absent here: only finance-staging-canary.yml
           # can open it after immutable staging evidence and synthetic-only guards.
           payload="$(node -e "process.stdout.write(JSON.stringify({state:process.env.STATE,message:process.env.MESSAGE||'',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
-          npx --yes wrangler@4.112.0 kv key put "module-control:$MODULE" "$payload" --namespace-id "$NAMESPACE_ID"
+          # The control plane is the remote staging/production KV. Omitting
+          # --remote silently writes only the runner's ephemeral local KV and
+          # makes a successful kill-switch run a false positive.
+          npx --yes wrangler@4.112.0 kv key put "module-control:$MODULE" "$payload" --namespace-id "$NAMESPACE_ID" --remote
