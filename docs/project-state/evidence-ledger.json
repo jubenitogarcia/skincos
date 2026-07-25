@@ -2,6 +2,17 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T02:30:32Z",
+      "surface": "google-drive-offsite-scratch",
+      "scope": "Offsite recovery drill — platform payloads",
+      "state": "d1-offsite-proven-pg-config-local-match",
+      "method": "Restricted drive.file retrieval, HMAC verification, restore-offsite-archive.ps1, isolated SQLite/PostgreSQL scratch, count/checksum/functional checks and explicit scratch destruction",
+      "result": "D1 ciphertext was retrieved from the provider-separated Drive vault and restored with 58 tables, 16 migrations, zero foreign-key violations and Finance counts (3 scopes, 2 grants, 1 setting, 0 movements, 0 journal entries, 12 release migrations). PostgreSQL and runtime configuration ciphertexts in the private runtime matched the same Drive manifest byte-for-byte and restored with 58 tables/43 workflows/246 executions/44 credentials and 33 tar entries. Plaintext hashes matched the manifest; PostgreSQL restore measured 25.643 seconds.",
+      "limitation": "A fresh raw download of the large PostgreSQL and configuration objects exceeded the connector IPC limit in this execution, so their offsite transfer remains a technical gate. This is not Finance recoveryProof, does not restore a Worker or frontend bundle and does not promote the module. Scratch and plaintexts were destroyed; only sanitized private evidence remains.",
+      "key_id": "offsite-20260724-v1",
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\offsite-recovery\\20260725T-current-main-offsite-restore-evidence.sanitized.json"
+    },
+    {
       "observed_at": "2026-07-25T02:15:00Z",
       "surface": "github-cloudflare-production",
       "scope": "Inventory definitive release SHA reconciliation",
