@@ -66,8 +66,8 @@
       "blockers": [
         "authenticated import and UI smoke",
         "external monitor and human alert",
-        "encrypted offsite D1 backup",
-        "isolated restore drill for the current-main artifact",
+        "fresh offsite PostgreSQL and runtime-config download",
+        "isolated restore drill for the current-main Finance artifact bundle",
         "named human approval"
       ],
       "environment": "staging",
@@ -87,7 +87,7 @@
       ],
       "done_definition": "All required staging evidence is current; production remains disabled.",
       "next_item": "finance-pilot-approval",
-      "last_verified": "2026-07-25T02:05:02Z",
+      "last_verified": "2026-07-25T03:26:00Z",
       "sha": "8af1d5fe9551891a05a104363043bf3d36fb4ef4",
       "pr": 762,
       "evidence": {
