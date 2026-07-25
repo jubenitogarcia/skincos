@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Local-only adapter for the CRM Pages shell. It reuses the Evolution credential
-# from the protected native runtime without copying it into the checkout, Pages
-# bindings, browser, or logs.
+# Local-only adapter for the CRM Pages shell. It reuses protected native
+# runtime configuration without copying it into the checkout, Pages bindings,
+# browser, or logs.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${CRM_LOCAL_WA_ORCHESTRATOR_PORT:-8110}"
 ENV_FILE="${CRM_LOCAL_WA_NATIVE_ENV_FILE:-/etc/skincos/crm-whatsapp.env}"
-RUNTIME_HOME="${CRM_LOCAL_WA_RUNTIME_HOME:-/mnt/c/CodexRuntime/operator/admin/skincos/whatsapp-local-adapter}"
-RUN_AS_USER="${CRM_LOCAL_WA_RUN_AS_USER:-$(id -un)}"
-SOURCE_HOME="${CRM_LOCAL_WA_SOURCE_HOME:-/home/$RUN_AS_USER/.cache/skincos/whatsapp-local-adapter/source}"
+CRM_API_ENV_FILE="${CRM_LOCAL_API_NATIVE_ENV_FILE:-/etc/skincos/crm.env}"
+RUN_AS_USER="${CRM_LOCAL_WA_RUN_AS_USER:-skincos}"
+RUNTIME_HOME="${CRM_LOCAL_WA_RUNTIME_HOME:-/var/lib/skincos-runtime/crm-local-adapter}"
+SOURCE_HOME="${CRM_LOCAL_WA_SOURCE_HOME:-$RUNTIME_HOME/source}"
 
 if ! sudo -n test -f "$ENV_FILE"; then
   echo "[whatsapp-local] Configuração nativa ausente: CRM_LOCAL_WA_NATIVE_ENV_FILE" >&2
@@ -22,8 +23,14 @@ if ! sudo -n test -r "$ENV_FILE"; then
   exit 2
 fi
 
+if ! sudo -n test -r "$CRM_API_ENV_FILE"; then
+  echo "[whatsapp-local] Não foi possível ler o ambiente local da API CRM. Configure CRM_LOCAL_API_NATIVE_ENV_FILE ou a permissão local necessária." >&2
+  exit 2
+fi
+
 export LOCAL_WA_ADAPTER_ROOT="$ROOT_DIR"
 export LOCAL_WA_ADAPTER_ENV_FILE="$ENV_FILE"
+export LOCAL_WA_ADAPTER_CRM_API_ENV_FILE="$CRM_API_ENV_FILE"
 export LOCAL_WA_ADAPTER_PORT="$PORT"
 export LOCAL_WA_ADAPTER_RUNTIME_HOME="$RUNTIME_HOME"
 export LOCAL_WA_ADAPTER_SOURCE_HOME="$SOURCE_HOME"
@@ -34,6 +41,7 @@ export LOCAL_WA_ADAPTER_ROLE="${LOCAL_AUTH_ROLE:-GESTOR}"
 exec sudo -n /usr/bin/env \
   LOCAL_WA_ADAPTER_ROOT="$LOCAL_WA_ADAPTER_ROOT" \
   LOCAL_WA_ADAPTER_ENV_FILE="$LOCAL_WA_ADAPTER_ENV_FILE" \
+  LOCAL_WA_ADAPTER_CRM_API_ENV_FILE="$LOCAL_WA_ADAPTER_CRM_API_ENV_FILE" \
   LOCAL_WA_ADAPTER_PORT="$LOCAL_WA_ADAPTER_PORT" \
   LOCAL_WA_ADAPTER_RUNTIME_HOME="$LOCAL_WA_ADAPTER_RUNTIME_HOME" \
   LOCAL_WA_ADAPTER_SOURCE_HOME="$LOCAL_WA_ADAPTER_SOURCE_HOME" \
@@ -45,10 +53,19 @@ exec sudo -n /usr/bin/env \
   set -a
   # The file belongs to the native runtime. Never print or persist its values.
   source "$LOCAL_WA_ADAPTER_ENV_FILE"
+  # Atendimento/Financeiro run against the private local PostgreSQL mirror.
+  # Load it inside the privileged bootstrap only; it is never copied into the
+  # checkout, Pages bindings, browser, or logs.
+  source "$LOCAL_WA_ADAPTER_CRM_API_ENV_FILE"
   set +a
 
   : "${EVOLUTION_API_URL:?EVOLUTION_API_URL is required in the native WhatsApp environment}"
   : "${EVOLUTION_API_KEY:?EVOLUTION_API_KEY is required in the native WhatsApp environment}"
+  : "${DATABASE_URL:?DATABASE_URL is required in the native CRM API environment}"
+
+  # Pages deliberately sends an unsigned actor only to this loopback runtime.
+  # Do not inherit production actor keys from the native CRM API environment.
+  unset ATENDIMENTO_ACTOR_HMAC_KEY CAIXA_ACTOR_HMAC_KEY ESCALA_ACTOR_HMAC_KEY CRM_ESCALA_HMAC_KEY
 
   install -d -m 0750 -o "$LOCAL_WA_ADAPTER_RUN_AS_USER" -g "$LOCAL_WA_ADAPTER_RUN_AS_USER" \
     "$LOCAL_WA_ADAPTER_RUNTIME_HOME" "$LOCAL_WA_ADAPTER_RUNTIME_HOME/var" \
