@@ -1,5 +1,19 @@
 # Current state
 
+## Orb / Meta Ads Publish operational hold — 2026-07-25T17:24Z
+
+The live Meta Ads – Publish workflow (eFJhFg79lyaycjlm) remains inactive.
+The Orb service was found stopped, producing a public 502; it was restored using
+the existing native release only, and local /healthz returned HTTP 200.
+The latest retained manual execution is 277, which ended with error at
+2026-07-25T16:53:42.699Z. No workflow, credential, CRM database, secret,
+Meta object or advertisement was changed in this recovery.
+
+The current TASKS.md P0 hold prohibits deploys and production mutations, and
+the mandatory operational-change policy also requires staging plus explicit
+pre-production validation before any real Meta side effect. The new CRM
+commercial-catalog branch is local-only until those gates are recorded.
+
 ## Fresh runtime-config verification — 2026-07-25T05:05Z
 
 The fresh provider transfer of the encrypted runtime configuration was

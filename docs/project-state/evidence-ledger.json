@@ -340,6 +340,15 @@
       "pr": null
     },
     {
+      "observed_at": "2026-07-25T17:24:00Z",
+      "surface": "production-runtime",
+      "scope": "Orb Meta Ads Publish availability and controlled-publication gate",
+      "state": "production-publication-blocked",
+      "method": "systemd status and local health probe; authenticated Orb editor visual inspection; read-only n8n PostgreSQL execution metadata",
+      "result": "orb.service was found inactive and orb.skincos.com.br returned Cloudflare 502. The service was restored without changing workflow, credentials or Meta state; local /healthz returned 200 and the workflow editor loaded. Meta Ads Publish workflow eFJhFg79lyaycjlm remains inactive. Latest retained manual execution 277 ended with status error at 2026-07-25T16:53:42.699Z.",
+      "limitation": "No CRM/Orb deploy, database migration, secret change, workflow edit, workflow activation or Meta publication was performed. TASKS.md retains the P0 freeze that prohibits deploys and production mutations, and the mandatory operational policy requires staging and explicit pre-production validation before a real Meta side effect."
+    },
+    {
       "observed_at": "2026-07-24T18:30:00Z",
       "surface": "local",
       "scope": "project-orchestrator update",
