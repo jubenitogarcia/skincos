@@ -1,5 +1,31 @@
 # Current state
 
+## Offsite restore evidence and next Finance gate — 2026-07-25
+
+Main is now `1b8a9d4f10f005e05b3475baba75af1d9183c046` after PR #740. The
+provider-separated Drive vault is reachable with the restricted `drive.file`
+client. The D1 ciphertext was retrieved and restored in an isolated scratch;
+HMAC/plaintext checksums passed, with 58 tables, 16 migrations, zero FK
+violations and Finance counts of 3 scopes, 2 grants, 1 setting, 0 movements,
+0 journal entries and 12 release migrations. PostgreSQL and runtime-config
+ciphertexts already held in the private runtime match the vault manifest
+byte-for-byte and restored successfully (58 tables/43 workflows/246
+executions/44 credentials; config tar 33 entries; PostgreSQL restore 25.643 s).
+
+The scratch and plaintexts were destroyed; sanitized evidence is private at
+`C:\CodexRuntime\operator\admin\skincos\offsite-recovery\20260725T-current-main-offsite-restore-evidence.sanitized.json`.
+The raw connector cannot return a fresh download of the large PostgreSQL and
+configuration objects within its IPC limit, so that transfer remains
+unproven. This closes neither Finance `recoveryProof` nor the pilot gate: the
+Finance Worker/frontend artifact restore, authenticated UI/import smoke,
+continuous external monitor with human alert and named approval are still
+required. `module_enabled` and all grants remain unchanged and disabled.
+
+Next safe action: obtain an auditable fresh download of the two large Drive
+objects through a streaming client, then repeat the Finance-specific artifact
+restore in staging. Do not promote production or activate pilot until both
+evidences and the nominal package are approved.
+
 ## Inventory release-SHA reconciliation — 2026-07-25
 
 The old candidate `cb04cb8b8ca87353c4c672fa5707bf3d36fb4ef4` is not the
