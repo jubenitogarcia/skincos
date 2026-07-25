@@ -2,6 +2,17 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T04:44:28Z",
+      "surface": "git-github-cloudflare-production",
+      "scope": "Continuation audit of attached Inventory/Identity/Finance production-cycle instructions",
+      "state": "inventory-stable-finance-gates-open",
+      "method": "Fresh origin/main ancestry and PR metadata, current-main push checks, workflow logs 30137182608/30137826907, Wrangler D1 migration status, GitHub secret-name listings, read-only live health probes and source inspection",
+      "result": "Remote main is 88891143420372fac5024f4ca95f181443cb54ad with current-main checks green. PR #787 is documentation-only; c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d remains the authorized Inventory/Pages production SHA. Core Worker run 30137182608 deployed c64 and Worker 6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef; Pages run 30137826907 deployed the same c64 and active deployment e65832a0-5925-4212-b252-2ff20cd08362. Inventory health is 200/ready and CRM health is 200; D1 reports no pending migrations. IDENTITY_PII_KEY names exist in staging/production GitHub environments and Worker secret metadata without exposing values.",
+      "limitation": "Unauthenticated readiness/version endpoints return 401, so no new authenticated user smoke was run in this continuation. Secret external custody/escrow remains unproven (case 5); no production mutation was performed. Finance remains experimental and its offsite PG/config retrieval, external human alert, single-SHA UI/import smoke and named approval gates remain open.",
+      "release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "runs": [30137182608,30137826907,30144394332,30144394336,30144394341,30144394342,30144394346,30144394349,30144394352]
+    },
+    {
       "observed_at": "2026-07-25T04:25:00Z",
       "surface": "github-cloudflare-staging-scratch",
       "scope": "Finance current-main immutable rollback, remote kill switch and scratch restore",

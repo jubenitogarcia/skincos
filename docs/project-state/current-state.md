@@ -1,5 +1,48 @@
 # Current state
 
+## Orchestrator continuation audit — 2026-07-25T04:44Z
+
+The attached production-cycle instructions were re-read and reconciled against
+fresh source and live evidence. Remote `main` is
+`88891143420372fac5024f4ca95f181443cb54ad`; its push checks for architecture,
+CI smoke, security/secrets, coverage, lint and Central E2E all completed
+successfully in runs `30144394332`, `30144394336`, `30144394341`,
+`30144394342`, `30144394346`, `30144394349` and `30144394352`. The local
+checkout remains the unrelated dirty `codex/admin/content-studio-v2` branch;
+its changes were not used or modified.
+
+The Inventory reconciliation from the attached text is superseded by the
+direct evidence already recorded here: PR #787 itself changed only
+documentation and the orchestration queue, while the runtime delta from the
+old `cb04cb8…` candidate includes the executable `c64ff2b…` D1/environment and
+Identity compatibility changes. The sole authorized production release remains
+`c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d`. Production Core Worker run
+`30137182608` checked out that SHA, applied the additive migration and created
+Worker version `6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef`; read-only D1 migration
+status is `No migrations to apply`. Pages run `30137826907` used the same SHA
+and active deployment `e65832a0-5925-4212-b252-2ff20cd08362`.
+
+Fresh probes returned Inventory `/insumos/health` HTTP 200 with `ready=true`
+and CRM HTTP 200. The protected `/insumos/readiness` and `/insumos/version`
+paths returned 401 without an authenticated session, so deployment metadata and
+health are the available unauthenticated evidence. No production deploy,
+secret, user, grant, flag or business-data mutation was executed in this
+continuation.
+
+`IDENTITY_PII_KEY` is referenced by the canonical current-main Core Worker
+workflow through the environment-scoped secret and is forwarded to the
+Inventory Worker; its name is present in GitHub `staging` and `production` and
+in the Worker secret listing. Values were not read. Production onboarding and
+encrypted personal-data payloads remain zero in the prior read-only D1 evidence,
+but external custody/escrow, recovery owner and rotation record remain
+unproven (case 5). No new key was generated or copied.
+
+The P0 Insumos production cycle is therefore evidenced as stable by the prior
+release, authenticated smoke and rollback checkpoints. The current safe state
+is to keep Finance frozen: its current-main rollback/restore drill is valid, but
+offsite PostgreSQL/configuration retrieval, continuous external alert evidence,
+single-SHA authenticated UI/import smoke and nominal pilot approval remain open.
+
 ## Finance current-main rollback and scratch restore — 2026-07-25
 
 The current main SHA after PR #807 is `68f88e070629e4077a1a1754b3347e60dc89be18`.
