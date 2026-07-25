@@ -94,12 +94,23 @@ restore local/same-provider, mas não de offsite.
 
 Em `20260724T0620Z`, um cofre Google Drive privado recebeu ciphertexts novos
 de D1, PostgreSQL e configuração, com AES-256-CBC + HMAC-SHA-256 e escrow de
-chave separado em GitHub Actions. A cópia satisfaz separação de fornecedor e
-de material criptográfico, mas **a restauração a partir do Drive ainda não foi
-aceita como prova**: a autorização OAuth de escopo restrito do cliente de
-recovery está pendente. Não há `recoveryProof` novo, promoção ou alteração de
-produção até que o download do cofre, a restauração scratch, os checksums, a
-jornada funcional e a destruição do scratch sejam registrados.
+chave separado em GitHub Actions. Em `20260725T-offsite-restore-current-main`,
+o cliente `drive.file` recuperou o ciphertext D1 e validou-o no scratch. Os
+ciphertexts PostgreSQL e configuração presentes no runtime privado coincidem
+byte-a-byte com o manifesto do Drive e foram restaurados no mesmo scratch; a
+captura de download fresh desses dois arquivos não foi considerada prova nesta
+execução porque o conector raw excede o limite IPC. Os resultados restaurados
+foram D1 com 58 tabelas/16 migrations/zero FK violations, PostgreSQL com 58
+tabelas e configuração com 33 entradas. O restore PostgreSQL mediu 25,643 s; o
+scratch e os plaintexts foram destruídos após a jornada funcional. A prova
+sanitizada está no runtime privado do operador.
+
+Este restore fecha a prova técnica offsite de D1 e a prova criptográfica/
+funcional local dos outros payloads; o download auditável de PostgreSQL e
+configuração ainda é gate técnico. Também não
+cria `recoveryProof` de nenhum módulo nem promove o Financeiro: bundle/Worker,
+flags, grants e smoke autenticado do Financeiro continuam gates separados, e
+`module_enabled` permanece desligado.
 
 Também permanece P1 a migração desse cofre privado para Shared Drive com conta
 de serviço e owner corporativo; isso evita dependência de uma conta humana sem

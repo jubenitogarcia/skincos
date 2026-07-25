@@ -46,9 +46,33 @@ protegida por DPAPI e registrada separadamente como Environment Secret no
 GitHub Actions; hashes
 e metadados sanitizados estão na evidência privada do operador.
 
-O upload externo e a separação de fornecedor estão comprovados. A recuperação
-por download ainda não é evidência válida: a autorização OAuth `drive.file` do
-cliente de restore ficou pendente, portanto não houve import D1, restore
-PostgreSQL, extração de configuração, validação de checksum nem medição nova de
-RPO/RTO a partir do Drive. O gate permanece fechado, e esta atualização não
-promove nenhum módulo.
+O upload externo e a separação de fornecedor estão comprovados. Em
+`20260725T-offsite-restore-current-main`, o cliente com escopo `drive.file`
+recuperou o ciphertext D1 do Drive. Os ciphertexts PostgreSQL e configuração
+já presentes no runtime privado foram conferidos byte-a-byte contra o
+manifesto do mesmo cofre e restaurados no scratch privado; a transferência
+fresh desses dois arquivos não foi rebaixada a prova nesta execução porque o
+conector raw excede o limite IPC. A verificação HMAC, os três hashes plaintext
+e a validação funcional passaram para os arquivos restaurados:
+
+- D1: 58 tabelas, 16 migrations (última `0016_personal_invites.sql`), zero
+  violações de FK; Financeiro com 3 scopes, 2 grants, 1 setting, 0 movimentos,
+  0 lançamentos e 12 migrations de release.
+- PostgreSQL: restore custom dump em banco isolado, 58 tabelas, 43 workflows,
+  246 executions e 44 credentials; restore em 25,643 s.
+- Configuração: tar legível com 33 entradas e SHA-256 idêntico; o restore
+  criptográfico levou 0,479 s (D1 0,637 s).
+
+O scratch e os arquivos plaintext foram destruídos após a validação; resta apenas
+`C:\CodexRuntime\operator\admin\skincos\offsite-recovery\20260725T-current-main-offsite-restore-evidence.sanitized.json`.
+Isto fecha a prova técnica offsite de D1 e a prova criptográfica/funcional local
+dos outros dois payloads; o restore offsite de PostgreSQL/configuração ainda
+precisa de uma captura de download auditável para fechar o conjunto. Ela
+não é `recoveryProof` do módulo Financeiro: não restaura o bundle/Worker do
+Financeiro nem aprova piloto, e `module_enabled` permanece desligado.
+
+O snapshot tinha 76.272,151 s de idade no momento do restore; isso é uma
+observação do exercício, não um RPO de produção. Permanece P1 a migração do
+cofre para Shared Drive com conta de serviço/owner corporativo e o escrow em KMS
+externo ao GitHub; a chave atual está separada como Environment Secret de
+`recovery` e protegida por DPAPI no runtime privado.
