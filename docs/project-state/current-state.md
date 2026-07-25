@@ -26,6 +26,11 @@ objects through a streaming client, then repeat the Finance-specific artifact
 restore in staging. Do not promote production or activate pilot until both
 evidences and the nominal package are approved.
 
+The first streaming attempt with rclone 1.60.1 was rejected by Google Drive
+with `RATE_LIMIT_EXCEEDED` before any bytes were downloaded. It made no
+external or repository mutation; the blocker is the provider quota window or
+the need for an authorized service-account client.
+
 ## Inventory release-SHA reconciliation — 2026-07-25
 
 The old candidate `cb04cb8b8ca87353c4c672fa5707bf3d36fb4ef4` is not the

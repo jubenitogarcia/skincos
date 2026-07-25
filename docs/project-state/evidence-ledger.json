@@ -2,6 +2,16 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T03:08:00Z",
+      "surface": "google-drive-offsite-stream",
+      "scope": "Fresh streamed retrieval of large recovery payloads",
+      "state": "blocked-provider-quota",
+      "method": "rclone 1.60.1 using the existing private drive.file config, 10s connect/transfer timeout, one retry and no output of credentials",
+      "result": "The streaming client reached Google Drive but the provider returned RATE_LIMIT_EXCEEDED for drive.googleapis.com/default. No payload was downloaded, decrypted, uploaded or deleted by this attempt.",
+      "limitation": "A fresh auditable download of PostgreSQL and runtime-config remains unproven until the Drive quota window resets or an authorized provider account/streaming client is supplied. No production, D1, flags, grants or Finance users were touched.",
+      "next_action": "Retry from a quota-authorized service account or after the provider quota window resets; preserve the same manifest/key and verify hashes before scratch restore."
+    },
+    {
       "observed_at": "2026-07-25T02:30:32Z",
       "surface": "google-drive-offsite-scratch",
       "scope": "Offsite recovery drill — platform payloads",

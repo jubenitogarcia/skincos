@@ -27,6 +27,13 @@ the two large Drive objects was not captured because the connector exceeded
 its IPC limit. The complete offsite gate therefore remains open. No module
 promotion, flag, grant or production change is authorized by this evidence.
 
+A follow-up streaming attempt with rclone 1.60.1 reached the same restricted
+Drive vault but was rejected with provider `RATE_LIMIT_EXCEEDED`; it downloaded
+no bytes and changed no state. The next action is to wait for the quota window
+or use an authorized service account, then repeat hash verification and scratch
+restore. This is an external-provider blocker, not a reason to activate
+Finance.
+
 The current-main SHA `8af1d5fe9551891a05a104363043bf3d36fb4ef4` has a successful
 candidate (`30139535704`), preview (`30139561027`) and staging deployment
 (`30139576133`) with Worker version
