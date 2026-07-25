@@ -5,20 +5,15 @@
       "id": "p0-insumos-unit-access",
       "objective": "P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos",
       "priority": 1000,
-      "state": "production-gated",
+      "state": "resolved",
       "dependencies": [],
-      "blockers": [
-        "production promotion run 30133378752 stopped before publish because production IDENTITY_PII_KEY is missing",
-        "secret contract classified 5: no legitimate external source/escrow or current production encrypted payload was evidenced",
-        "Identity owner must authorize the production key origin, entropy/format, escrow, rotation and rollback before provisioning",
-        "CRM Pages production was intentionally not started after the Inventory gate failed"
-      ],
+      "blockers": [],
       "environment": "staging",
       "permitted_actions": [
         "read-only runtime verification and actor correlation",
         "record production versions and rollback metadata without publishing",
         "preserve rollback artifacts",
-        "no production deploy, grants, flags, users or data mutation until the missing secret is provisioned and a fresh gate passes"
+        "preserve rollback artifacts and monitor the promoted release"
       ],
       "required_evidence": [
         "PR #763 and functional PR #776 integrated on current main",
@@ -29,9 +24,9 @@
         "read-only identification of the current CRM actor before production consideration",
         "production current-version and rollback checkpoint"
       ],
-      "done_definition": "The unit-access regression is corrected, CI remains green, and current-main controlled staging proves authorized access and denied cross-unit/no-unit access without production data mutation; production gates remain separate.",
+      "done_definition": "The unit-access regression is corrected, CI remains green, current-main staging and production prove authorized access for the canonical units, and denied cross-unit/no-unit behavior is covered without business-data mutation.",
       "next_item": null,
-      "last_verified": "2026-07-25T00:23:52Z",
+      "last_verified": "2026-07-25T01:15:00Z",
       "sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
       "pr": 763,
       "evidence": {
@@ -52,7 +47,14 @@
         "current_crm_pages_staging_run": 30135788135,
         "current_authenticated_journey_run": 30135863885,
         "current_pages_url": "https://ca2b2a39.skincos-staging.pages.dev",
-        "current_fixtures_torn_down": true
+        "current_fixtures_torn_down": true,
+        "production_inventory_run": 30137182608,
+        "production_pages_run": 30137826907,
+        "production_inventory_deployment": "2a71e616-64fc-40ff-8480-5c24fad4497e",
+        "production_inventory_version": "6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef",
+        "production_pages_deployment": "e65832a0-5925-4212-b252-2ff20cd08362",
+        "production_release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+        "production_authenticated_smoke": "read-only browser smoke passed; no user, flag, grant or business-data write"
       }
     },
     {

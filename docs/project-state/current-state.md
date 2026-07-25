@@ -1,63 +1,80 @@
 # Current state
 
-## Current Inventory release candidate — 2026-07-25T00:23Z
+## Current Inventory production evidence — 2026-07-25
 
-The historical `cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb` candidate is superseded:
-deployable files changed between it and the current `origin/main`. The current
-release candidate is therefore the explicit `RELEASE_SHA`
+The deployable release is the explicit immutable `RELEASE_SHA`
 `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d` (source tree
 `b22e897c8a4699f1424b3ee83656016be488ad67`; source archive SHA-256
-`22b9cf2a6845cc2e6348f0e797f69f6c5f89d7b42665bd27460ca8e131d60155`). Candidate
-run `30135641022`, Inventory/Core preview `30135763050`, CRM Pages preview
-`30135762996`, Inventory staging `30135788180`, and CRM Pages staging
-`30135788135` are all explicit-SHA runs; the authenticated synthetic RBAC journey
-`30135863885` passed and tore down its fixtures. The immutable Pages staging URL
-is `https://ca2b2a39.skincos-staging.pages.dev`. The duplicate Pages staging run
-`30135790724` was cancelled by concurrency and is not release evidence.
+`22b9cf2a6845cc2e6348f0e797f69f6c5f89d7b42665bd27460ca8e131d60155`). The
+candidate, preview and staging runs (`30135641022`, `30135763050`,
+`30135762996`, `30135788180`, `30135788135`) and the synthetic RBAC journey
+(`30135863885`) all attest this SHA. The cancelled duplicate staging run
+`30135790724` is not release evidence.
 
-The production gate is not yet executable. `IDENTITY_PII_KEY` is referenced by
-the employee-onboarding compatibility path: Inventory derives an AES-256 key by
-SHA-256 of the secret and stores `v1.<iv>.<ciphertext+tag>`; Identity decrypts the
-same format. The workflow requires the secret before publishing the selected
-Worker. Secret metadata shows it exists in staging, while the production Worker
-has no listed secret and the production D1 read-only schema query found no
-`crm_employee_onboarding` or `crm_identity_sessions` tables. No legitimate
-external source/escrow or current production encrypted payload was identified.
-This is classification 5 (insufficient evidence to provision): do not copy the
-staging key or generate a production key until the Identity owner explicitly
-authorizes an origin and rotation/escrow plan. No production mutation occurred.
+`IDENTITY_PII_KEY` was classified as case 3 after read-only schema and source
+review: the compatibility path is present, but production D1 has no
+`crm_employee_onboarding` or `crm_identity_sessions` tables and no encrypted
+payload was evidenced. A new CSPRNG value was provisioned only to the GitHub
+`production` environment on 2026-07-25T00:40:42Z; the value is not stored or
+printed here. No production data, user, grant or feature flag was changed.
 
-The read-only production preflight on 2026-07-25 completed with one unrelated
-repository failure: `.github/workflows/codex-automerge.yml` is absent. All
-credential-presence, Cloudflare auth, endpoint-health, security-exception and
-other workflow checks passed; the shared checkout warning reflects unrelated
-dirty Content Studio work and was not modified. This failure does not authorize
-a deploy or justify bypassing the secret gate.
+The clean preflight from an archive of current `origin/main`
+`cb658ad1e25413c2a307c846c9be99d1207eabb5` completed with
+`failures=0 warnings=0`. It verified GitHub/Cloudflare authentication, required
+secrets and variables, workflow inventory and live health endpoints.
 
-## P0 production gate — blocked by missing segregated secret (2026-07-24)
+### Production promotion and checkpoints
 
-The explicit production promotion of the validated `cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb`
-candidate was attempted only through the canonical Inventory/Core Worker workflow
-`30133378752`, with staging predecessor `30131598506`. The immutable promotion gate
-passed ancestry and predecessor evidence, and the remote migration step reported
-`No migrations to apply`. The deploy then stopped before publishing because the
-production environment lacks `IDENTITY_PII_KEY`; no Worker version, flag, grant,
-user or production data changed.
+* Inventory/Core Workers: canonical run `30137182608`, explicit checkout and
+  `RELEASE_SHA` `c64ff2b`; migration step reported no pending migrations. The
+  active deployment is `2a71e616-64fc-40ff-8480-5c24fad4497e`, Worker version
+  `6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef` (version 5135), at 100% traffic.
+* CRM Pages: canonical corrected run `30137826907`, explicit checkout and
+  metadata `GIT_SHA` `c64ff2b`. The active production deployment is
+  `e65832a0-5925-4212-b252-2ff20cd08362`, source `c64ff2b`, URL
+  `https://e65832a0.skincos.pages.dev`.
+* Previous rollback checkpoints remain Inventory deployment
+  `f0037d0a-bc21-4a26-8a8b-59a010c85ba6` / version
+  `6104273d-a14c-4a84-8bb1-889a681969dc` (5132) and Pages deployment
+  `0b8657b8-d162-4c0e-8a4a-e542255ec1a4` / source `fdf8cda`.
+* The first Pages run `30137398895` is superseded because its metadata used the
+  workflow SHA; it was replaced by `30137826907` without a code change. The
+  stale sync run `30137411063` failed before deployment and PR #793 removed its
+  obsolete automatic dispatch path. No duplicate active publisher remains.
 
-The production rollback checkpoint remains intact: Inventory Worker deployment
-`f0037d0a-bc21-4a26-8a8b-59a010c85ba6` / version
-`6104273d-a14c-4a84-8bb1-889a681969dc` (version 5132), and CRM Pages deployment
-`0b8657b8-d162-4c0e-8a4a-e542255ec1a4` / commit `fdf8cda8ab1df4e41a06897231fad3e9d41042a0`.
-Post-failure Insumos health remained HTTP 200. CRM Pages was intentionally not
-started, so there is no partial promotion to reconcile. The only next production
-action is an authorized operator provisioning the segregated production secret,
-followed by a fresh preflight; Finance and unrelated modules remain frozen.
+Health probes after both promotions returned HTTP 200 for the CRM shell,
+Inventory `/insumos/health`, Ponto, Atendimento and CRM API. Inventory health
+reported `ready=true`, D1 configured and the two canonical units. The public
+`/insumos/readiness`, `/insumos/version` and `/insumos/dependencies` paths are
+not implemented as unauthenticated endpoints (401); deployment metadata and
+the health response are the authoritative version/readiness evidence.
+
+### Authenticated production smoke
+
+Using the existing authenticated CRM browser session, the read-only smoke opened
+`?module=insumos`, rendered stock overview and movements, exposed exactly the
+two authorized unit options, switched to Barra Shopping Sul, reloaded, and
+closed/reopened the module. The sanitized browser observations contained no
+`401`, `403`, `500` or `RBAC_UNIT_DENIED`, and the shell remained usable. No
+create/edit/delete control was invoked. Direct localStorage inspection and a
+mechanical resource-count probe were not available in the browser sandbox, so
+request-storm absence is observational rather than a counted metric.
+
+Finance pilot activation and all unrelated module changes remain frozen until a
+separate explicit Finance staging rollback/restore gate is completed.
+
+## Historical P0 production gate attempt — superseded
+
+Workflow `30133378752` stopped before publish because the production secret was
+then absent. Its rollback checkpoint and staging evidence are retained below as
+historical audit context; they are superseded by the successful production
+promotion above.
 
 ## P0 incident — current staging evidence validated
 
-`P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos` remains
-operationally open for the production identity/release gates, but current
-staging evidence is now valid. The historical synthetic journey
+`P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos` is
+stable after the explicit production Inventory and CRM Pages promotions recorded
+above. The historical synthetic journey
 was real, but its artifact was built from `f276919ce6a63b337bd02bd0c3799dbf38f13b97`,
 which predates functional PR #776. It cannot be used as production evidence.
 Finance, production, pilot, GitHub Organization, Ponto, Atendimento, flags,
@@ -99,9 +116,9 @@ teardown completed. Follow-up PRs #771–#778 made the harness staging-targeted,
 fail-closed when no authorized unit exists, and excluded the authenticated
 preferences control route from data-request diagnostics.
 
-No production deploy occurred, and no production user, flag, grant or data was
-changed. The real CRM actor still requires read-only correlation before any
-production consideration.
+No production user, flag, grant or D1 business data was changed. The real CRM
+actor was already correlated read-only and the authenticated smoke used that
+existing session without writes.
 
 ## Current CRM actor correlation — 2026-07-24
 
