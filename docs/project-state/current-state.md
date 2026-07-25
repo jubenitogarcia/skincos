@@ -1,8 +1,57 @@
 # Current state
 
+## Inventory release reconciliation and `IDENTITY_PII_KEY` audit — 2026-07-25
+
+Fresh source-of-truth check is based on `origin/main`
+`6e6dd5bb97c27fb070a73c4aeae747a986e4bbc9` and the production/staging
+metadata available at 2026-07-25T03:26Z. PR #787 itself contains only
+`docs/project-state/current-state.md`, `docs/project-state/evidence-ledger.json`
+and `ops/project-orchestration/work-queue.json`; it does not change Inventory,
+Identity, CRM frontend, Pages build inputs, migrations, bindings or executable
+deploy configuration.
+
+The historical candidate `cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb` is not
+the current release candidate because it precedes the executable
+`c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d` change that selected the D1 by
+environment and the subsequent onboarding compatibility changes. The unique
+authorized `RELEASE_SHA` remains `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d`:
+the current-main delta after that SHA contains only workflows, preflight,
+Finance, orchestration and evidence documentation, with no Inventory/Identity
+runtime, migration, binding or deployable Pages artifact changes.
+
+The production workflow logs prove the same immutable SHA for both units:
+Inventory run `30137182608` checked out and deployed `c64ff2…` after staging
+run `30135788180`; CRM Pages run `30137826907` built with `VITE_BUILD_SHA` and
+`GIT_SHA` equal to `c64ff2…` after staging run `30135788135`. Current active
+metadata is Inventory Worker version
+`6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef` at 100% and Pages deployment
+`e65832a0-5925-4212-b252-2ff20cd08362`; `/insumos/health` and the CRM health
+probe returned HTTP 200. No deploy was run in this audit.
+
+`IDENTITY_PII_KEY` is an environment-scoped secret, listed independently in
+GitHub `staging` and `production` and also present by name in the corresponding
+Cloudflare Worker secret lists; secret values were never read or logged. The
+Inventory and Identity implementations derive the same 32-byte AES-GCM key
+from SHA-256(secret), use a 12-byte random IV, and exchange
+`v1.<base64url-iv>.<base64url-ciphertext>` values. The exact key must therefore
+be shared between the two domains for existing ciphertexts, while staging and
+production keys must remain distinct. Production D1 read-only counts are zero
+onboarding rows and zero encrypted personal-email/phone rows.
+
+Classification is **case 5 — evidência insuficiente para prosseguir** for key
+custody: the production secret exists, but no authorized external vault/escrow,
+owner or recovery record is evidenced. This audit neither generated, rotated,
+copied nor changed the secret. Rotation is safe only before encrypted payloads
+exist or through an explicit dual-key re-encryption procedure; rollback must
+retain the previous key until all ciphertexts are re-encrypted and verified.
+
+The clean current-main `scripts/codex-preflight.sh` run passed with
+`failures=0 warnings=0`. The remaining action is administrative evidence of
+external custody, not another Inventory deploy.
+
 ## Offsite restore evidence and next Finance gate — 2026-07-25
 
-Main is now `5dae441997916ac610d97f7d10f2a3bd6db9c35c` after PRs #740, #800
+Main was `5dae441997916ac610d97f7d10f2a3bd6db9c35c` after PRs #740, #800
 and #801. The
 provider-separated Drive vault is reachable with the restricted `drive.file`
 client. The D1 ciphertext was retrieved and restored in an isolated scratch;
@@ -41,7 +90,7 @@ changes. The production release therefore correctly used the newer immutable
 SHA `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d`.
 
 The delta from `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d` to the current main
-`5dae441997916ac610d97f7d10f2a3bd6db9c35c` contains only workflow/preflight,
+`6e6dd5bb97c27fb070a73c4aeae747a986e4bbc9` contains only workflow/preflight,
 Finance canary/rollback, orchestration and evidence-documentation changes:
 `.github/workflows/*`, `scripts/codex-preflight.sh`,
 `docs/project-state/*` and `ops/project-orchestration/work-queue.json`. It
