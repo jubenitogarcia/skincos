@@ -43,11 +43,15 @@ approval. The sanitized private record is retained outside the repository.
 PR #740 is integrated; follow-up state/evidence PRs #800, #801, #802, #804,
 #805, #806 and #807 are integrated. Current main is
 `68f88e070629e4077a1a1754b3347e60dc89be18`.
-The offsite drill now has valid D1 retrieval/restore evidence and matching
-PostgreSQL/configuration ciphertext hashes, but a fresh streamed download of
-the two large Drive objects was not captured because the connector exceeded
-its IPC limit. The complete offsite gate therefore remains open. No module
-promotion, flag, grant or production change is authorized by this evidence.
+The offsite drill has valid D1 retrieval/restore evidence and matching
+PostgreSQL/configuration ciphertext hashes. A fresh runtime-config transfer
+was subsequently fetched and decrypted with the versioned restore script; its
+plaintext SHA matched the manifest and the plaintext was destroyed after
+sanitized inspection. The fresh PostgreSQL transfer remains blocked because
+the connector exceeds its IPC limit for the 90,908,667-byte object and the
+alternate provider path lacks authorization. The complete offsite gate
+therefore remains open. No module promotion, flag, grant or production change
+is authorized by this evidence.
 
 A follow-up streaming attempt with rclone 1.60.1 reached the same restricted
 Drive vault but was rejected with provider `RATE_LIMIT_EXCEEDED`; it downloaded
