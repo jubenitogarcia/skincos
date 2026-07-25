@@ -187,6 +187,37 @@ test('D1 local: CSV workflow retains source, maps Brazilian rows, records decisi
   const operations = await ctx.DB.prepare(`SELECT kind FROM finance_import_operations WHERE batch_id=? ORDER BY created_at`).bind(staged.body.batchId).all(); assert.deepEqual(operations.results.map((row) => row.kind), ['commit', 'undo']);
 });
 
+test('D1 local: an explicit import decision persists before preview, commits only valid approved rows and rejects a second commit', async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
+  const bank = await account(ctx.env, ctx.actor, scopeNh, 'Banco máquina de estados', 'state-bank');
+  const income = await category(ctx.env, ctx.actor, scopeNh, 'Receita máquina de estados', 'income', 'state-income');
+  const csv = 'data,descricao,valor,tipo\n2026-07-21,Importação controlada,10.00,receita\n';
+  const staged = await request(ctx.env, ctx.actor, `/imports?scopeId=${scopeNh}`, { method: 'POST', key: 'state-stage', body: { filename: 'state-machine.csv', csv } });
+  assert.equal(staged.response.status, 201, JSON.stringify(staged.body));
+  let loaded = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}?scopeId=${scopeNh}`);
+  const row = loaded.body.rows.find((item) => item.status === 'valid');
+  assert.ok(row, JSON.stringify(loaded.body.rows));
+  const decision = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/decisions?scopeId=${scopeNh}`, { method: 'POST', key: 'state-decision', body: { rowId: row.id, decision: 'import' } });
+  assert.equal(decision.response.status, 201, JSON.stringify(decision.body));
+  loaded = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}?scopeId=${scopeNh}`);
+  const persisted = loaded.body.rows.find((item) => item.id === row.id);
+  assert.equal(persisted.decision, 'import');
+  const preview = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/preview?scopeId=${scopeNh}`, { method: 'POST', key: 'state-preview', body: {} });
+  assert.equal(preview.response.status, 200, JSON.stringify(preview.body)); assert.equal(preview.body.ready, 1);
+  const committed = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/commit?scopeId=${scopeNh}`, { method: 'POST', key: 'state-commit', body: { defaultAccountId: bank.id, incomeCategoryId: income.id } });
+  assert.equal(committed.response.status, 201, JSON.stringify(committed.body)); assert.equal(committed.body.committed, 1);
+  const repeat = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/commit?scopeId=${scopeNh}`, { method: 'POST', key: 'state-commit-again', body: { defaultAccountId: bank.id, incomeCategoryId: income.id } });
+  assert.equal(repeat.response.status, 409, JSON.stringify(repeat.body)); assert.equal(repeat.body.error, 'IMPORT_ALREADY_COMMITTED');
+  const audit = await request(ctx.env, ctx.actor, `/audit?scopeId=${scopeNh}&entityId=${row.id}&entityType=import_row`);
+  assert.equal(audit.body.events.some((event) => event.action === 'IMPORT_ROW_DECIDED'), true);
+  const undo = await request(ctx.env, ctx.actor, `/imports/${staged.body.batchId}/undo?scopeId=${scopeNh}`, { method: 'POST', key: 'state-undo', body: { reason: 'state machine test compensation' } });
+  assert.equal(undo.response.status, 201, JSON.stringify(undo.body)); assert.equal(undo.body.undone, 1);
+  const movementCount = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_movements WHERE source='csv' AND scope_id=?`).bind(scopeNh).first();
+  assert.equal(Number(movementCount.count), 1);
+  const cancelled = await ctx.DB.prepare(`SELECT COUNT(*) count FROM finance_movements WHERE source='csv' AND scope_id=? AND operational_status='cancelled'`).bind(scopeNh).first();
+  assert.equal(Number(cancelled.count), 1);
+});
+
 test('D1 local: MoneyWiz adapter stages source metadata and transfer candidates without posting either side', async (t) => {
   const ctx = await fixture(); t.after(() => ctx.mf.dispose()); await grant(ctx.DB, 'pilot', scopeNh);
   await account(ctx.env, ctx.actor, scopeNh, 'Conta Principal', 'mw-source'); await account(ctx.env, ctx.actor, scopeNh, 'Cartão Corporativo', 'mw-destination');
