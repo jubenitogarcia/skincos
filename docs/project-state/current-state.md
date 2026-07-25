@@ -3,7 +3,7 @@
 ## Inventory release reconciliation and `IDENTITY_PII_KEY` audit — 2026-07-25
 
 Fresh source-of-truth check is based on `origin/main`
-`6e6dd5bb97c27fb070a73c4aeae747a986e4bbc9` and the production/staging
+`fe0ccbee28ad36e0444937a553a8c11cb48112d8` and the production/staging
 metadata available at 2026-07-25T03:26Z. PR #787 itself contains only
 `docs/project-state/current-state.md`, `docs/project-state/evidence-ledger.json`
 and `ops/project-orchestration/work-queue.json`; it does not change Inventory,
@@ -48,6 +48,14 @@ retain the previous key until all ciphertexts are re-encrypted and verified.
 The clean current-main `scripts/codex-preflight.sh` run passed with
 `failures=0 warnings=0`. The remaining action is administrative evidence of
 external custody, not another Inventory deploy.
+
+After PR #803, the canonical workflows produced new staging-only evidence for
+the workflow-sync SHA `6e6dd5bb97c27fb070a73c4aeae747a986e4bbc9`: core-all
+preview/staging `30142251628`/`30142271109`, CRM Pages preview/staging
+`30142340101`/`30142359030`, and core-inventory preview/staging
+`30142438522`/`30142457474`. These runs used target `staging` and did not
+publish production. They do not replace the already active `c64ff2…` release;
+the runtime files are unchanged and no new production promotion is required.
 
 ## Offsite restore evidence and next Finance gate — 2026-07-25
 

@@ -2,6 +2,18 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T03:36:00Z",
+      "surface": "github-cloudflare-staging",
+      "scope": "Post-PR-803 staging-only verification and production observation",
+      "state": "staging-current-workflow-sync-production-unchanged",
+      "method": "Canonical preview/staging workflow logs with explicit target and release SHA; production run list; Wrangler deployment status; read-only health probes",
+      "result": "Core-all preview/staging 30142251628/30142271109, CRM Pages preview/staging 30142340101/30142359030 and core-inventory preview/staging 30142438522/30142457474 used SHA 6e6dd5bb97c27fb070a73c4aeae747a986e4bbc9 and target staging. No production target was selected. Production remains Inventory RELEASE_SHA c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d, Worker version 6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef and Pages deployment e65832a0-5925-4212-b252-2ff20cd08362; /insumos/health and CRM health returned 200.",
+      "limitation": "The staging runs validate workflow-only changes and are not a new production release candidate. No production deploy, migration, flag, grant, user or data mutation was performed.",
+      "release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "staging_workflow_sha": "6e6dd5bb97c27fb070a73c4aeae747a986e4bbc9",
+      "runs": [30142251628, 30142271109, 30142340101, 30142359030, 30142438522, 30142457474]
+    },
+    {
       "observed_at": "2026-07-25T03:26:00Z",
       "surface": "github-cloudflare-production-staging",
       "scope": "Inventory candidate reconciliation and IDENTITY_PII_KEY contract",

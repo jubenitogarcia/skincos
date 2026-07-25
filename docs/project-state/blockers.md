@@ -20,8 +20,8 @@ and named human approval; it is frozen independently of the resolved P0 item.
 
 ## Finance staging gate — current status
 
-PR #740 is integrated; follow-up state/evidence PRs #800, #801 and #802 leave
-main at `11bbde1928d8e59e1164ebd64f0c820a740195b0`.
+PR #740 is integrated; follow-up state/evidence PRs #800, #801, #802 and #804
+leave main at `fe0ccbee28ad36e0444937a553a8c11cb48112d8`.
 The offsite drill now has valid D1 retrieval/restore evidence and matching
 PostgreSQL/configuration ciphertext hashes, but a fresh streamed download of
 the two large Drive objects was not captured because the connector exceeded
