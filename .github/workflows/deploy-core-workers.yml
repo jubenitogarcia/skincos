@@ -107,15 +107,17 @@ jobs:
           if [[ "$TARGET" == "staging" ]]; then
             env_args=(--env staging)
             environment_var=(--var "ENVIRONMENT:staging")
+            inventory_d1_name=skincos-db-staging
           else
             env_args=()
             environment_var=(--var "ENVIRONMENT:production")
+            inventory_d1_name=skincos-db
           fi
           if [[ "$UNIT" == "inventory" || "$UNIT" == "all" ]]; then
             # D1 migrations must precede the Worker that requires them. They
             # are versioned, additive and executed only through this guarded
             # promotion workflow, never from a developer workstation.
-            npx --yes wrangler@3 d1 migrations apply skincos-db --remote --config inventory/wrangler.toml "${env_args[@]}"
+            npx --yes wrangler@3 d1 migrations apply "$inventory_d1_name" --remote --config inventory/wrangler.toml "${env_args[@]}"
             [[ -n "${IDENTITY_PII_KEY:-}" && -n "${IDENTITY_WORKFORCE_HMAC_KEY:-}" ]] || { echo 'Missing Identity onboarding secrets.'; exit 1; }
             for name in IDENTITY_PII_KEY IDENTITY_WORKFORCE_HMAC_KEY; do
               printf '%s' "${!name}" | npx --yes wrangler@3 secret put "$name" --config inventory/wrangler.toml "${env_args[@]}" >/dev/null
