@@ -2,6 +2,73 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T05:05:34Z",
+      "surface": "google-drive-offsite-runtime-config",
+      "scope": "Fresh runtime-config ciphertext and scratch decrypt",
+      "state": "offsite-transfer-integrity-validated",
+      "method": "Fresh private provider fetch, versioned AES-CBC/HMAC restore script 3071cb95f60d6f91f6b26b201f5f4935e5667155, manifest SHA comparison, entry-name-only inspection and plaintext destruction",
+      "result": "The 82,011-byte ciphertext passed integrity/decryption and the plaintext SHA matched the manifest 224236f91f2009974403aabdca33f11cf62e480a1539c7cd363281a05a15d7fc. No plaintext, secrets or archive contents were retained in the repository.",
+      "limitation": "This does not close the offsite gate: the 90,908,667-byte PostgreSQL object remains unproven because connector retrieval exceeds the 64 MiB IPC frame and the alternate provider path lacks authorization. Finance remains experimental.",
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\offsite-recovery\\20260725T-retry"
+    },
+    {
+      "observed_at": "2026-07-25T04:55:00Z",
+      "surface": "google-drive-offsite-stream",
+      "scope": "Fresh PostgreSQL/runtime-config retrieval retry",
+      "state": "blocked-provider-transfer",
+      "method": "Drive folder metadata/list, connector download reference, raw connector fetch attempt, private rclone drive.file listing and direct token range probe; temporary private artifacts removed",
+      "result": "The provider folder and manifest/D1/PostgreSQL/runtime-config objects are visible by metadata. Connector download returned a provider file reference, but raw retrieval exceeded the 64 MiB IPC frame limit (121214224 bytes). rclone could not list the restricted folder and the direct API path returned HTTP 403 at byte zero. No bytes were written, decrypted, restored, uploaded or deleted by this retry.",
+      "limitation": "The local encrypted PostgreSQL/runtime-config copies still match the prior manifest, but this retry does not prove a fresh offsite transfer. Finance backup/recovery and pilot gates remain open.",
+      "next_action": "Use an authorized provider-approved service account or chunked streaming client with access to the recovery folder, then hash and scratch-restore both objects."
+    },
+    {
+      "observed_at": "2026-07-25T04:44:28Z",
+      "surface": "git-github-cloudflare-production",
+      "scope": "Continuation audit of attached Inventory/Identity/Finance production-cycle instructions",
+      "state": "inventory-stable-finance-gates-open",
+      "method": "Fresh origin/main ancestry and PR metadata, current-main push checks, workflow logs 30137182608/30137826907, Wrangler D1 migration status, GitHub secret-name listings, read-only live health probes and source inspection",
+      "result": "Remote main is 88891143420372fac5024f4ca95f181443cb54ad with current-main checks green. PR #787 is documentation-only; c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d remains the authorized Inventory/Pages production SHA. Core Worker run 30137182608 deployed c64 and Worker 6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef; Pages run 30137826907 deployed the same c64 and active deployment e65832a0-5925-4212-b252-2ff20cd08362. Inventory health is 200/ready and CRM health is 200; D1 reports no pending migrations. IDENTITY_PII_KEY names exist in staging/production GitHub environments and Worker secret metadata without exposing values.",
+      "limitation": "Unauthenticated readiness/version endpoints return 401, so no new authenticated user smoke was run in this continuation. Secret external custody/escrow remains unproven (case 5); no production mutation was performed. Finance remains experimental and its offsite PG/config retrieval, external human alert, single-SHA UI/import smoke and named approval gates remain open.",
+      "release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "runs": [30137182608,30137826907,30144394332,30144394336,30144394341,30144394342,30144394346,30144394349,30144394352]
+    },
+    {
+      "observed_at": "2026-07-25T04:25:00Z",
+      "surface": "github-cloudflare-staging-scratch",
+      "scope": "Finance current-main immutable rollback, remote kill switch and scratch restore",
+      "state": "rollback-and-restore-proven-pilot-blocked",
+      "method": "Canonical Finance Worker/UI preview and staging runs, explicit SHA rollback, Wrangler health/readiness/version checks, remote KV write/readback, isolated D1/R2/KV/Worker scratch restore and synthetic authenticated journey",
+      "result": "Candidate b869485b6a33fae5a5dbe504b41660f842fb4ca9 was promoted by runs 30143039262/30143051826 and rolled back by 30143185583 to reachable SHA 8af1d5fe9551891a05a104363043bf3d36fb4ef4 (Worker 97c7a7da-6a78-44a8-b980-2cc2810df7a0). UI staging run 30143594297 used the candidate SHA. Remote kill switch run 30143674681 returned Finance 423/disabled after propagation while CRM health stayed 200; run 30143742671 restored active. Scratch D1 counts matched before the synthetic exercise, R2 sentinel and KV round-tripped, and health/readiness/bootstrap/cross-unit denial/create-compensate/audit all passed. Scratch resources were destroyed after capture.",
+      "limitation": "The Worker was intentionally left at the rollback target while UI staging remained at the candidate, so staging is not a single-SHA pilot release. The measured 16-minute checkpoint-to-functional interval is a scratch drill timing, not a production SLO. Fresh offsite PostgreSQL/runtime-config retrieval, continuous external human alert evidence, authenticated UI/import smoke and named approval remain open.",
+      "release_sha": "b869485b6a33fae5a5dbe504b41660f842fb4ca9",
+      "runs": [30143039262,30143051826,30143185583,30143580303,30143594297,30143674681,30143742671],
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\finance-recovery-drills\\20260725T-current-main-b869485b\\restore-evidence.sanitized.json"
+    },
+    {
+      "observed_at": "2026-07-25T03:36:00Z",
+      "surface": "github-cloudflare-staging",
+      "scope": "Post-PR-803 staging-only verification and production observation",
+      "state": "staging-current-workflow-sync-production-unchanged",
+      "method": "Canonical preview/staging workflow logs with explicit target and release SHA; production run list; Wrangler deployment status; read-only health probes",
+      "result": "Core-all preview/staging 30142251628/30142271109, CRM Pages preview/staging 30142340101/30142359030 and core-inventory preview/staging 30142438522/30142457474 used SHA 6e6dd5bb97c27fb070a73c4aeae747a986e4bbc9 and target staging. No production target was selected. Production remains Inventory RELEASE_SHA c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d, Worker version 6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef and Pages deployment e65832a0-5925-4212-b252-2ff20cd08362; /insumos/health and CRM health returned 200.",
+      "limitation": "The staging runs validate workflow-only changes and are not a new production release candidate. No production deploy, migration, flag, grant, user or data mutation was performed.",
+      "release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "staging_workflow_sha": "6e6dd5bb97c27fb070a73c4aeae747a986e4bbc9",
+      "runs": [30142251628, 30142271109, 30142340101, 30142359030, 30142438522, 30142457474]
+    },
+    {
+      "observed_at": "2026-07-25T03:26:00Z",
+      "surface": "github-cloudflare-production-staging",
+      "scope": "Inventory candidate reconciliation and IDENTITY_PII_KEY contract",
+      "state": "c64-authorized-cb04-superseded-secret-custody-unproven",
+      "method": "origin/main 6e6dd5bb97c27fb070a73c4aeae747a986e4bbc9 ancestry and name-status comparison; PR #787 file list; production/staging GitHub and Cloudflare secret-name metadata; workflow logs 30137182608 and 30137826907; read-only D1 counts; clean scripts/codex-preflight.sh",
+      "result": "PR #787 changed only evidence/documentation and queue files. The candidate cb04 precedes executable c64 changes and is not reusable. c64 remains the only authorized RELEASE_SHA; Inventory and CRM Pages both checked out or built exactly c64, with active Worker version 6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef and Pages deployment e65832a0-5925-4212-b252-2ff20cd08362. Production D1 has zero onboarding rows and zero encrypted email/phone rows. IDENTITY_PII_KEY is present by name in both environments and Worker secret lists; values were not read.",
+      "limitation": "No authorized external vault/escrow or recovery owner for the production key is evidenced. No deploy, migration, flag, grant, user or data mutation was performed in this audit.",
+      "release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "runs": [30137182608, 30137826907],
+      "classification": "case-5-insufficient-evidence-for-secret-custody"
+    },
+    {
       "observed_at": "2026-07-25T03:08:00Z",
       "surface": "google-drive-offsite-stream",
       "scope": "Fresh streamed retrieval of large recovery payloads",

@@ -1,6 +1,6 @@
 # Pacote de piloto do Financeiro — proposta para aprovação nominal
 
-**Estado:** rascunho bloqueado; não autoriza ativação.
+**Estado:** reavaliado em 2026-07-25, ainda bloqueado; não autoriza ativação.
 **Maturidade atual:** `experimental`.
 **Ambiente:** o pacote só poderá ser usado depois de evidência completa em staging e de uma aprovação nominal independente para produção. Os deploys e canários abaixo são parciais: não autorizam produção.
 
@@ -19,16 +19,45 @@ listas vazias ou herança administrativa.
 - a ativação somente poderá ocorrer depois da aprovação nominal registrada na
   seção final.
 
+## Reavaliação após rollback e restore do SHA atual — 2026-07-25
+
+O SHA candidato exercitado a partir da main foi
+`b869485b6a33fae5a5dbe504b41660f842fb4ca9`. O Worker passou pelo preview e
+staging canônicos (`30143039262` e `30143051826`) e o rollback independente
+(`30143185583`) voltou ao SHA alcançável `8af1d5fe9551891a05a104363043bf3d36fb4ef4`,
+Worker `97c7a7da-6a78-44a8-b980-2cc2810df7a0`, sem migrations nem publicação de
+outros módulos. O bundle de UI foi gerado do mesmo candidato (`30143580303`,
+`30143594297`, artefato `8615284211`). O kill switch remoto foi validado em
+`30143674681` e restaurado em `30143742671`; Finance retornou 423/disabled após
+a propagação e o shell permaneceu saudável.
+
+O restore scratch isolado importou D1, KV, R2 e Worker com actor sintético.
+Contagens de D1 foram iguais antes do exercício (settings 1, scopes 3, grants
+1, accounts 0, movements 0, journal 0, audit 13, migrations 12), o smoke
+autenticado passou health/readiness/bootstrap/leituras, negação cross-unit,
+criação/compensação sintéticas e auditoria, e o intervalo medido do checkpoint
+à jornada funcional foi 16 minutos. O scratch foi destruído depois da coleta;
+as somas e o relatório sanitizado estão no ledger de evidências e no arquivo
+privado do operador.
+
+**Decisão:** os gates de rollback, kill switch e restore scratch estão válidos,
+mas o pacote continua `experimental`. Ainda bloqueiam o piloto: download
+offsite fresco e auditável de PostgreSQL/configuração (a tentativa atual foi
+rejeitada por quota do fornecedor), monitor externo contínuo com alerta humano,
+smoke autenticado completo da UI/importação contra uma única versão promovida,
+e owner operacional/revisor/unidade/participantes nomeados. `module_enabled`,
+grants, usuários, sessões e produção permanecem inalterados.
+
 ## Pré-condições bloqueantes
 
-| Gate | Evidência exigida | Situação em 2026-07-24 |
+| Gate | Evidência exigida | Situação em 2026-07-25 |
 | --- | --- | --- |
-| Artefato imutável em staging | SHA, Worker, UI e migrations atestados | Parcial: o Worker no SHA `fdf8cda8…` foi publicado no run `30111830881`; a evidência do artefato UI correspondente não está anexada a este pacote. |
-| Rollback independente | retorno para SHA anterior, sem usar HEAD, sessão preservada, smoke e RTO medido | Parcial: PR #761 foi mergeada e o abort drill `30121676670` restaurou o baseline; falta evidência independente de rollback de UI, sessão e RTO. |
-| Kill switch sem deploy | `disabled` e retorno ao baseline por `module-availability.yml` | Evidenciado pelo abort drill `30121676670`, que restaurou o baseline antes de concluir como falha intencional. |
-| Jornada autenticada | ator exclusivo, escopo, importação/compensação, auditoria e isolamento | Parcial: canary autenticado de leitura passou no run `30121622991`; ainda falta smoke autenticado de importação e UI. |
-| Observabilidade e alerta humano | monitor contínuo externo, alerta recebido e recuperação registrados | Não há evidência de monitor externo contínuo, alerta recebido e recuperação anexada a este pacote. |
-| Backup, restore e RTO | cópia offsite, restore isolado e RPO/RTO medidos | Não há evidência de cópia offsite, restore isolado e RPO/RTO anexada a este pacote. |
+| Artefato imutável em staging | SHA, Worker, UI e migrations atestados | **Atendido para staging:** Worker `b869485b…` nos runs `30143039262`/`30143051826`; UI no `30143594297`; migrations e versão foram verificadas. |
+| Rollback independente | retorno para SHA anterior, sem usar HEAD, sessão preservada, smoke e RTO medido | **Atendido em staging:** rollback `30143185583` para SHA `8af1d5fe…`, sem migrations ou republicação externa; health/readiness passaram. Sessão de produção não foi tocada. RTO medido é do drill (16 min), não SLO produtivo. |
+| Kill switch sem deploy | `disabled` e retorno ao baseline por `module-availability.yml` | **Atendido em staging:** `30143674681` escreveu KV remoto, Finance 423/disabled e shell 200; `30143742671` restaurou active. Propagação observada: ~1–2 min. |
+| Jornada autenticada | ator exclusivo, escopo, importação/compensação, auditoria e isolamento | **Parcial:** restore scratch passou actor sintético, leituras, negação cross-unit, criação/compensação e auditoria; falta smoke completo da UI/importação no staging com uma única versão Worker/UI. |
+| Observabilidade e alerta humano | monitor contínuo externo, alerta recebido e recuperação registrados | **Bloqueado:** não há evidência anexada de monitor externo contínuo, alerta humano recebido e recuperação. |
+| Backup, restore e RTO | cópia offsite, restore isolado e RPO/RTO medidos | **Parcial:** restore scratch Finance D1/KV/R2/Worker passou e RTO do drill foi 16 min; download offsite fresco de PostgreSQL/configuração ainda foi rejeitado por quota, portanto o gate empresarial permanece aberto. |
 | Segurança de integração | checks obrigatórios verdes e revisão concluída | PRs #761 e #762 tiveram seus checks obrigatórios concluídos com sucesso; isso não substitui as evidências operacionais pendentes. |
 
 Enquanto qualquer linha estiver bloqueada, o módulo permanece `experimental` e
