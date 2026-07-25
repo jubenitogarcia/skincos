@@ -2,6 +2,16 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T04:55:00Z",
+      "surface": "google-drive-offsite-stream",
+      "scope": "Fresh PostgreSQL/runtime-config retrieval retry",
+      "state": "blocked-provider-transfer",
+      "method": "Drive folder metadata/list, connector download reference, raw connector fetch attempt, private rclone drive.file listing and direct token range probe; temporary private artifacts removed",
+      "result": "The provider folder and manifest/D1/PostgreSQL/runtime-config objects are visible by metadata. Connector download returned a provider file reference, but raw retrieval exceeded the 64 MiB IPC frame limit (121214224 bytes). rclone could not list the restricted folder and the direct API path returned HTTP 403 at byte zero. No bytes were written, decrypted, restored, uploaded or deleted by this retry.",
+      "limitation": "The local encrypted PostgreSQL/runtime-config copies still match the prior manifest, but this retry does not prove a fresh offsite transfer. Finance backup/recovery and pilot gates remain open.",
+      "next_action": "Use an authorized provider-approved service account or chunked streaming client with access to the recovery folder, then hash and scratch-restore both objects."
+    },
+    {
       "observed_at": "2026-07-25T04:44:28Z",
       "surface": "git-github-cloudflare-production",
       "scope": "Continuation audit of attached Inventory/Identity/Finance production-cycle instructions",
