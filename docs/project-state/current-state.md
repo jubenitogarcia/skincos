@@ -1,5 +1,36 @@
 # Current state
 
+## Inventory release-SHA reconciliation — 2026-07-25
+
+The old candidate `cb04cb8b8ca87353c4c672fa5707bf3d36fb4ef4` is not the
+authorized production SHA: the delta to `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d`
+contains the additive Identity onboarding migration and runtime compatibility
+changes. The production release therefore correctly used the newer immutable
+SHA `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d`.
+
+The delta from `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d` to the current main
+`d006157297c02e2a7bace9fcd1abad654b546d06` contains only workflow/preflight,
+Finance canary/rollback, orchestration and evidence-documentation changes:
+`.github/workflows/*`, `scripts/codex-preflight.sh`,
+`docs/project-state/*` and `ops/project-orchestration/work-queue.json`. It
+contains no Inventory/Identity/CRM frontend runtime, migration, binding or
+deployable Pages artifact change. `c64ff2…` remains the single authorized
+`RELEASE_SHA`; no new Inventory/Pages promotion is required.
+
+The exact production workflow inputs prove the same release lineage: Inventory
+run `30137182608` used `RELEASE_SHA=c64ff2…` and staging predecessor
+`30135788180`; Pages run `30137826907` stamped `GIT_SHA=c64ff2…`. Active
+production resources are Inventory deployment
+`2a71e616-64fc-40ff-8480-5c24fad4497e` / Worker version
+`6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef` and Pages deployment
+`e65832a0-5925-4212-b252-2ff20cd08362`, source `c64ff2…`.
+
+The Inventory promotion did apply the additive
+`0017_employee_onboarding.sql` migration. A current read-only D1 query finds
+the journal row and zero onboarding rows / zero encrypted-email or phone rows;
+`d1 migrations list` now reports no pending migrations. This supersedes the
+earlier wording that the promotion had no migrations to apply.
+
 ## Finance staging rollback gate — 2026-07-25
 
 The Finance staging release was re-run from the current `origin/main` SHA
@@ -62,11 +93,14 @@ candidate, preview and staging runs (`30135641022`, `30135763050`,
 `30135790724` is not release evidence.
 
 `IDENTITY_PII_KEY` was classified as case 3 after read-only schema and source
-review: the compatibility path is present, but production D1 has no
-`crm_employee_onboarding` or `crm_identity_sessions` tables and no encrypted
-payload was evidenced. A new CSPRNG value was provisioned only to the GitHub
-`production` environment on 2026-07-25T00:40:42Z; the value is not stored or
-printed here. No production data, user, grant or feature flag was changed.
+review. The additive `crm_employee_onboarding` table now exists, but production
+D1 has zero onboarding rows and zero encrypted personal-email/phone payloads;
+`crm_identity_sessions` is absent. A fresh CSPRNG value was provisioned only to
+the GitHub `production` environment on 2026-07-25T00:40:42Z; the value is not
+stored or printed here. The staging and production secret names are present,
+but an external vault/escrow record for the generated production key is not
+evidenced and remains an operational security debt. No production user, grant
+or feature flag was changed.
 
 The clean preflight from an archive of current `origin/main`
 `cb658ad1e25413c2a307c846c9be99d1207eabb5` completed with
@@ -76,7 +110,8 @@ secrets and variables, workflow inventory and live health endpoints.
 ### Production promotion and checkpoints
 
 * Inventory/Core Workers: canonical run `30137182608`, explicit checkout and
-  `RELEASE_SHA` `c64ff2b`; migration step reported no pending migrations. The
+  `RELEASE_SHA` `c64ff2b`; migration `0017_employee_onboarding.sql` applied
+  successfully, and a subsequent read-only check reports no pending migrations. The
   active deployment is `2a71e616-64fc-40ff-8480-5c24fad4497e`, Worker version
   `6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef` (version 5135), at 100% traffic.
 * CRM Pages: canonical corrected run `30137826907`, explicit checkout and
