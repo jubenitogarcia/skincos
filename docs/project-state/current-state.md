@@ -1,5 +1,32 @@
 # Current state
 
+## Current Inventory release candidate — 2026-07-25T00:23Z
+
+The historical `cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb` candidate is superseded:
+deployable files changed between it and the current `origin/main`. The current
+release candidate is therefore the explicit `RELEASE_SHA`
+`c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d` (source tree
+`b22e897c8a4699f1424b3ee83656016be488ad67`; source archive SHA-256
+`22b9cf2a6845cc2e6348f0e797f69f6c5f89d7b42665bd27460ca8e131d60155`). Candidate
+run `30135641022`, Inventory/Core preview `30135763050`, CRM Pages preview
+`30135762996`, Inventory staging `30135788180`, and CRM Pages staging
+`30135788135` are all explicit-SHA runs; the authenticated synthetic RBAC journey
+`30135863885` passed and tore down its fixtures. The immutable Pages staging URL
+is `https://ca2b2a39.skincos-staging.pages.dev`. The duplicate Pages staging run
+`30135790724` was cancelled by concurrency and is not release evidence.
+
+The production gate is not yet executable. `IDENTITY_PII_KEY` is referenced by
+the employee-onboarding compatibility path: Inventory derives an AES-256 key by
+SHA-256 of the secret and stores `v1.<iv>.<ciphertext+tag>`; Identity decrypts the
+same format. The workflow requires the secret before publishing the selected
+Worker. Secret metadata shows it exists in staging, while the production Worker
+has no listed secret and the production D1 read-only schema query found no
+`crm_employee_onboarding` or `crm_identity_sessions` tables. No legitimate
+external source/escrow or current production encrypted payload was identified.
+This is classification 5 (insufficient evidence to provision): do not copy the
+staging key or generate a production key until the Identity owner explicitly
+authorizes an origin and rotation/escrow plan. No production mutation occurred.
+
 ## P0 production gate — blocked by missing segregated secret (2026-07-24)
 
 The explicit production promotion of the validated `cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb`

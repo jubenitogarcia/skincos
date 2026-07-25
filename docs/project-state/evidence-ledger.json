@@ -2,6 +2,17 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T00:23:52Z",
+      "surface": "github-cloudflare-d1",
+      "scope": "Inventory current-main release and IDENTITY_PII_KEY contract",
+      "state": "staging-validated-production-blocked",
+      "method": "origin/main c64ff2b ancestry and deploy manifests; candidate/preview/staging workflow runs 30135641022, 30135763050, 30135762996, 30135788180 and 30135863885; secret-name metadata only; read-only D1 sqlite_master/count queries; source inspection of Inventory/Identity crypto adapter",
+      "result": "cb04 is superseded by deployable changes. RELEASE_SHA c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d, sourceTree b22e897c8a4699f1424b3ee83656016be488ad67, archive SHA-256 22b9cf2a6845cc2e6348f0e797f69f6c5f89d7b42665bd27460ca8e131d60155. Preview, Inventory staging, CRM Pages staging and synthetic RBAC journey all attest c64; journey passed and tore down fixtures. IDENTITY_PII_KEY is SHA-256-derived AES-GCM compatibility encryption for onboarding PII, consumed by Inventory encryption and Identity decryption. Staging lists the secret; production has no listed secret. Production D1 has no onboarding/session tables and no current encrypted payload was evidenced.",
+      "limitation": "No legitimate external source, escrow, owner authorization, or approved generation/rotation plan for a production key was identified. Classification 5: do not provision, deploy, or copy staging secret. Production Worker, Pages, users, flags, grants and data remain unchanged.",
+      "sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "runs": [30135641022,30135763050,30135762996,30135788180,30135863885]
+    },
+    {
       "observed_at": "2026-07-24T23:18:01Z",
       "surface": "github-and-production-gate",
       "scope": "P0 Insumos explicit production promotion attempt",
