@@ -1,0 +1,26 @@
+[Unit]
+Description=Skincos Orb MCP read-only inspection gateway
+After=network-online.target postgresql.service orb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=skincos
+Group=skincos
+EnvironmentFile=/etc/skincos/orb-mcp-readonly-gateway.env
+WorkingDirectory=/opt/skincos/current/source/orb/engine/mcp-readonly-gateway
+ExecStart=/usr/bin/node /opt/skincos/current/source/orb/engine/mcp-readonly-gateway/server.mjs
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/skincos/current/source
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/skincos-runtime/orb-mcp-readonly /var/log/skincos/orb-mcp-readonly
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
