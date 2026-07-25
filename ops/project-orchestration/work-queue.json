@@ -61,17 +61,21 @@
       "id": "finance-staging-gate",
       "objective": "Close Finance staging gates without enabling production or real users.",
       "priority": 100,
-      "state": "blocked",
-      "dependencies": ["p0-insumos-unit-access"],
+      "state": "partially-validated",
+      "dependencies": [],
       "blockers": [
-        "P0 Insumos real-actor correlation and production gate",
         "authenticated import and UI smoke",
         "external monitor and human alert",
         "encrypted offsite D1 backup",
-        "isolated restore drill"
+        "isolated restore drill for the current-main artifact",
+        "named human approval"
       ],
       "environment": "staging",
-      "permitted_actions": ["none while P0 is blocked and until all Finance staging gates are evidenced"],
+      "permitted_actions": [
+        "staging-only rollback and kill-switch drills",
+        "staging-only scratch restore with synthetic data",
+        "read-only evidence capture"
+      ],
       "required_evidence": [
         "authenticated import and UI smoke",
         "external monitor and human alert",
@@ -83,9 +87,21 @@
       ],
       "done_definition": "All required staging evidence is current; production remains disabled.",
       "next_item": "finance-pilot-approval",
-      "last_verified": "2026-07-24T22:20:00Z",
-      "sha": "1a1a586feaf99ed542f386b245b8b748a03bac4b",
-      "pr": 762
+      "last_verified": "2026-07-25T02:05:02Z",
+      "sha": "8af1d5fe9551891a05a104363043bf3d36fb4ef4",
+      "pr": 762,
+      "evidence": {
+        "candidate_run": 30139535704,
+        "preview_run": 30139561027,
+        "staging_deploy_run": 30139576133,
+        "staging_release_sha": "8af1d5fe9551891a05a104363043bf3d36fb4ef4",
+        "staging_worker_version": "97c7a7da-6a78-44a8-b980-2cc2810df7a0",
+        "rollback_run": 30139701809,
+        "rollback_sha": "67ee53843a9a52ad495ab6d67b8cd2b4fac053f9",
+        "rollback_worker_version": "c57fdafc-6045-4eb5-8b38-07ae98d7c256",
+        "canary_abort_drill": 30139247054,
+        "scratch_restore": "validated; resources destroyed after sanitized evidence"
+      }
     },
     {
       "id": "finance-pilot-approval",

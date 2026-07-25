@@ -1,5 +1,55 @@
 # Current state
 
+## Finance staging rollback gate — 2026-07-25
+
+The Finance staging release was re-run from the current `origin/main` SHA
+`8af1d5fe9551891a05a104363043bf3d36fb4ef4`, not from a historical candidate.
+The immutable candidate run `30139535704` and Finance preview run
+`30139561027` passed. Staging run `30139576133` passed with migrations,
+encrypted D1 checkpoint, immutable Worker upload and health smoke. It created
+Worker version `97c7a7da-6a78-44a8-b980-2cc2810df7a0`, whose deployment message
+attests the exact current-main SHA. No production target was selected.
+
+The controlled rollback run `30139701809` restored the known immutable
+predecessor SHA `67ee53843a9a52ad495ab6d67b8cd2b4fac053f9` using preview
+evidence `30138491542`. It resolved and deployed the previously uploaded
+version `c57fdafc-6045-4eb5-8b38-07ae98d7c256` at 100% without applying
+migrations or publishing another module. The staging health endpoint returned
+`200`, `ready=true`, D1 and module-control healthy, and version `67ee…`.
+The rollback workflow elapsed from `02:03:07Z` to `02:05:02Z` (approximately
+115 seconds; this is workflow elapsed time, not a user-visible outage RTO).
+The current staging control state is `module_enabled=false`; no pilot actor or
+unit was enabled.
+
+The canary abort drill `30139247054` is valid synthetic evidence: it opened a
+remote KV canary, ran the authenticated synthetic journey, injected one
+controlled error, recorded `breaches=["errors"]`, executed the kill switch and
+restored the baseline. Its non-zero conclusion is intentional promotion
+interruption. Final remote KV was verified `state=active` and staging D1
+`module_enabled=false`. The earlier run `30139009328` is superseded because
+its KV writes were local rather than remote; PR #796 corrected this and was
+merged before the valid retry.
+
+The scratch restore drill imported the staging Finance D1 export into the
+isolated scratch database `9565bd3b-b9bc-4d7e-95d9-135490a3599e` from export
+SHA-256 `a24db616e94e156c7da5a26a319094b210e7c078a80df11ce0648bea36c9692a`.
+Sanitized counts/checksums matched for audit events (13/468), movements
+(0/0), journal lines (0/0), import batches (0/0), `d1_migrations` (12/407),
+settings (1/19) and grants (1/56). The scratch KV namespace was
+`8024e25c0b3d4eb0a82805bb38781bd4`; its synthetic control flag round-tripped
+with `releaseSha=fdf8cda…` and `syntheticOnly=true`. Finance has no R2 binding
+in its current Wrangler configuration, and no `finance_release_migrations`
+table exists; the journal of record is `d1_migrations`. These are explicit
+scope limitations, not inferred restores.
+
+The scratch D1 and KV resources were temporary staging-only resources and were
+deleted after evidence capture at approximately `2026-07-25T02:07Z` (D1
+`9565bd3b-b9bc-4d7e-95d9-135490a3599e`, KV
+`8024e25c0b3d4eb0a82805bb38781bd4`). Production Finance, flags, grants, users and
+business data remain untouched. Finance pilot remains blocked pending the
+separate authenticated UI/import smoke, external monitor/human alert,
+encrypted offsite backup/restore evidence and named approval.
+
 ## Current Inventory production evidence — 2026-07-25
 
 The deployable release is the explicit immutable `RELEASE_SHA`
