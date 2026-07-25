@@ -27,6 +27,13 @@ This is classification 5 (insufficient evidence to provision): do not copy the
 staging key or generate a production key until the Identity owner explicitly
 authorizes an origin and rotation/escrow plan. No production mutation occurred.
 
+The read-only production preflight on 2026-07-25 completed with one unrelated
+repository failure: `.github/workflows/codex-automerge.yml` is absent. All
+credential-presence, Cloudflare auth, endpoint-health, security-exception and
+other workflow checks passed; the shared checkout warning reflects unrelated
+dirty Content Studio work and was not modified. This failure does not authorize
+a deploy or justify bypassing the secret gate.
+
 ## P0 production gate — blocked by missing segregated secret (2026-07-24)
 
 The explicit production promotion of the validated `cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb`
