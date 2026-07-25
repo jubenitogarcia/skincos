@@ -412,17 +412,67 @@ function selectedTechnicalFrame(media) {
   };
 }
 
+function editorialOutputItems(payload) {
+  const preferred = asArray(payload.normalizedLiviaOutput).length
+    ? asArray(payload.normalizedLiviaOutput)
+    : asArray(payload.liviaOutput);
+  return preferred.flatMap((entry) => {
+    const current = asObject(asObject(entry).json || entry);
+    return asArray(current.items).map((item) => asObject(item));
+  });
+}
+
+function editorialFrameMatchesTechnical(media, editorial) {
+  const selection = asObject(asObject(editorial).bestFrame);
+  const selectedUrl = String(selection.selectedFrameUrl || '').trim();
+  const selectedRank = asNumber(selection.selectedFrameRank, undefined);
+  const selectedSeconds = asNumber(selection.bestTimestampSeconds ?? selection.bestFrameSeconds, undefined);
+  if (!selectedUrl && selectedRank === undefined && selectedSeconds === undefined) return false;
+  const candidates = [
+    ...asArray(asObject(media).bestFrame.candidates),
+    ...asArray(asObject(media).frameCandidates),
+    ...asArray(asObject(media).technicalFrameCandidates),
+  ].map((candidate) => asObject(candidate));
+  return candidates.some((candidate) => {
+    const candidateUrls = [candidate.url, candidate.thumbPath].map((value) => String(value || '').trim()).filter(Boolean);
+    if (selectedUrl && candidateUrls.includes(selectedUrl)) return true;
+    if (selectedUrl) return false;
+    const candidateRank = asNumber(candidate.rank, undefined);
+    const candidateSeconds = asNumber(candidate.timestampSeconds, undefined);
+    return selectedRank !== undefined && selectedSeconds !== undefined &&
+      candidateRank === selectedRank && candidateSeconds !== undefined &&
+      Math.abs(candidateSeconds - selectedSeconds) < 0.001;
+  });
+}
+
 function technicalFrameContext(payload) {
-  const entries = [
+  const rawEntries = [
     ...asArray(payload.normalizedCombinedMediaItems),
     ...asArray(payload.combinedMediaItems),
-  ];
+  ].map((entry) => asObject(entry));
+  const entries = [];
+  const seen = new Set();
+  for (const current of rawEntries) {
+    const key = [current.groupKey, current.groupOrder, current.id].map((value) => String(value || '').trim()).join('|');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    entries.push(current);
+  }
+  const editorialItems = editorialOutputItems(payload);
   const byGroup = {};
-  for (const media of entries) {
-    const current = asObject(media);
+  for (const [index, current] of entries.entries()) {
     const groupKey = String(current.groupKey || current.id || '').trim();
     if (!groupKey || byGroup[groupKey]) continue;
     const frame = selectedTechnicalFrame(current);
+    const editorial = editorialItems[index];
+    if (editorialFrameMatchesTechnical(current, editorial)) {
+      const selected = asObject(asObject(editorial).bestFrame);
+      frame.selectedFrameUrl = String(selected.selectedFrameUrl || frame.selectedFrameUrl || '').trim();
+      frame.bestFrameSeconds = asNumber(selected.bestTimestampSeconds ?? selected.bestFrameSeconds, frame.bestFrameSeconds);
+      frame.selectedFrameRank = asNumber(selected.selectedFrameRank, frame.selectedFrameRank);
+      frame.selectedFrameSource = 'editorial_verified';
+      frame.confidence = asNumber(selected.confidence, frame.confidence);
+    }
     if (frame.selectedFrameUrl || frame.bestFrameSeconds !== undefined) byGroup[groupKey] = frame;
   }
   return byGroup;
@@ -774,12 +824,135 @@ function loadResumeCompleted(jobs) {
   );
 }
 
+function normalizeExternalResult(result) {
+  const jsonItems = asArray(result)
+    .map((entry) => asObject(asObject(entry).json))
+    .filter((entry) => Object.keys(entry).length);
+
+  // compose2-current.js returns direct n8n items, while older builders return
+  // one envelope containing `jobs`. Accept only those two explicit contracts.
+  if (jsonItems.length === 1 && Array.isArray(jsonItems[0].jobs)) return jsonItems[0];
+  if (jsonItems.some((entry) => Array.isArray(entry.jobs))) {
+    fail(`${NODE_NAME}: mixed or multiple job envelopes are not supported.`);
+  }
+
+  const directJobs = jsonItems.filter((entry) => (
+    String(entry.platform || '').trim() &&
+    String(entry.phase || '').trim() &&
+    String(entry.method || '').trim() &&
+    String(entry.url || '').trim()
+  ));
+  if (directJobs.length === jsonItems.length && directJobs.length) {
+    return { jobs: directJobs, warnings: ['external_source_direct_job_items'] };
+  }
+
+  fail(`${NODE_NAME}: unsupported external job contract; expected one jobs envelope or direct n8n job items.`);
+}
+
+function assertOutputContract() {
+  const job = { platform: 'instagram', phase: 'upload', method: 'POST', url: 'https://example.invalid/media' };
+  const direct = normalizeExternalResult([{ json: job }]);
+  const enveloped = normalizeExternalResult([{ json: { jobs: [job] } }]);
+  if (direct.jobs.length !== 1 || enveloped.jobs.length !== 1) {
+    fail(`${NODE_NAME}: external output-contract assertion failed.`);
+  }
+  return { directItems: direct.jobs.length, envelopedItems: enveloped.jobs.length };
+}
+
+function normalizeFacebookReelsChecks(jobs) {
+  const expanded = [];
+  for (const job of jobs) {
+    const current = { ...job, __sourceRunIndex: Number(job.publishRunIndex) };
+    if (String(current.platform || '').toLowerCase() === 'facebook' &&
+        String(current.phase || '').toLowerCase() === 'checkstatus' &&
+        String(current.checkKind || '').toLowerCase() === 'fb_reels_video') {
+      current.checkKind = 'fb_reels_upload_ready';
+    }
+    expanded.push(current);
+    if (String(current.platform || '').toLowerCase() !== 'facebook' || String(current.step || '').toLowerCase() !== 'reels_finish') continue;
+    const uploadReady = [...expanded].reverse().find((candidate) =>
+      String(candidate.platform || '').toLowerCase() === 'facebook' &&
+      String(candidate.groupKey || '') === String(current.groupKey || '') &&
+      String(candidate.unit || '') === String(current.unit || '') &&
+      String(candidate.checkKind || '').toLowerCase() === 'fb_reels_upload_ready');
+    if (!uploadReady) fail(`${NODE_NAME}: Facebook Reel finish without an upload-ready check.`);
+    expanded.push({
+      ...uploadReady,
+      __sourceRunIndex: undefined,
+      checkKind: 'fb_reels_published',
+      checkFields: 'status',
+      statusFromPublishRunIndex: current.reelsStartFromPublishRunIndex ?? uploadReady.statusFromPublishRunIndex,
+      postPublishFromRunIndex: current.__sourceRunIndex,
+      warnings: [...asArray(uploadReady.warnings), 'fb_reels_post_publish_check'],
+    });
+  }
+  const remap = new Map();
+  expanded.forEach((job, index) => { if (Number.isFinite(job.__sourceRunIndex)) remap.set(job.__sourceRunIndex, index); job.publishRunIndex = index; });
+  const refs = ['statusFromPublishRunIndex', 'postPublishFromRunIndex', 'checkStatusFromPublishRunIndex', 'creationIdFromPublishRunIndex', 'lastUploadFromPublishRunIndex', 'reelsStartFromPublishRunIndex'];
+  for (const job of expanded) {
+    for (const key of refs) if (Number.isFinite(Number(job[key])) && remap.has(Number(job[key]))) job[key] = remap.get(Number(job[key]));
+    if (Array.isArray(job.attachedMediaFromPublishRunIndexes)) job.attachedMediaFromPublishRunIndexes = job.attachedMediaFromPublishRunIndexes.map((value) => remap.has(Number(value)) ? remap.get(Number(value)) : value);
+    delete job.__sourceRunIndex;
+  }
+  return expanded;
+}
+
+function assertPlatformContracts() {
+  const frames = technicalFrameContext({
+    normalizedCombinedMediaItems: [{
+      id: 'fixture-video',
+      groupKey: 'fixture-video',
+      groupOrder: 0,
+      bestFrame: { candidates: [{ rank: 2, timestampSeconds: 4, url: 'https://example.invalid/frame.jpg' }] },
+    }],
+    normalizedLiviaOutput: [{
+      items: [{
+        bestFrame: {
+          selectedFrameRank: 2,
+          bestTimestampSeconds: 4,
+          selectedFrameUrl: 'https://example.invalid/frame.jpg',
+          confidence: 0.91,
+        },
+      }],
+    }],
+  });
+  if (frames['fixture-video']?.selectedFrameSource !== 'editorial_verified') {
+    fail(`${NODE_NAME}: editorial frame-correlation assertion failed.`);
+  }
+
+  const facebookJobs = normalizeFacebookReelsChecks([
+    {
+      publishRunIndex: 0,
+      platform: 'facebook',
+      phase: 'checkStatus',
+      checkKind: 'fb_reels_video',
+      groupKey: 'fixture-video',
+      unit: 'bss',
+    },
+    {
+      publishRunIndex: 1,
+      platform: 'facebook',
+      phase: 'publish',
+      step: 'reels_finish',
+      groupKey: 'fixture-video',
+      unit: 'bss',
+      reelsStartFromPublishRunIndex: 0,
+    },
+  ]);
+  const ready = facebookJobs.filter((job) => job.checkKind === 'fb_reels_upload_ready');
+  const published = facebookJobs.filter((job) => job.checkKind === 'fb_reels_published');
+  if (ready.length !== 1 || published.length !== 1 || published[0].statusFromPublishRunIndex !== 0 || published[0].postPublishFromRunIndex !== 1) {
+    fail(`${NODE_NAME}: Facebook Reels post-publication assertion failed.`);
+  }
+  return { editorialFrame: true, facebookReelsChecks: facebookJobs.length };
+}
+
 function compactResult(result, payload, sourceFile) {
-  const firstJson = asObject(asArray(result)[0]?.json);
+  const firstJson = normalizeExternalResult(result);
   const facebookCredentials = facebookCredentialContext(payload);
   const credentialRefs = credentialReferences(payload);
   const frameContext = technicalFrameContext(payload);
-  const jobs = asArray(firstJson.jobs)
+  const jobs = normalizeFacebookReelsChecks(asArray(firstJson.jobs)
     .map((entry) => asObject(entry))
     .map((entry) => applyCaptionHygiene(entry))
     .map((entry) => applyTechnicalFrame(entry, frameContext))
@@ -788,7 +961,7 @@ function compactResult(result, payload, sourceFile) {
     .map((entry) => normalizeFacebookJob(entry, facebookCredentials))
     .map((entry) => normalizeThreadsCarouselJob(entry))
     .map((entry) => applyCredentialReference(entry, credentialRefs))
-    .filter((entry) => Object.keys(entry).length);
+    .filter((entry) => Object.keys(entry).length));
   if (!jobs.length) fail(`${NODE_NAME}: external source did not produce jobs.`);
   const resume = loadResumeCompleted(jobs);
   const resumeCompleted = resume.completed;
@@ -832,6 +1005,14 @@ function main() {
       sourceFile: source.filePath,
       compatibility: assertRuntimeCompatibility(source.jsCode),
     }));
+    return;
+  }
+  if (process.argv.includes('--assert-output-contract')) {
+    process.stdout.write(JSON.stringify({ ok: true, outputContract: assertOutputContract() }));
+    return;
+  }
+  if (process.argv.includes('--assert-platform-contracts')) {
+    process.stdout.write(JSON.stringify({ ok: true, platformContracts: assertPlatformContracts() }));
     return;
   }
   const payload = parsePayload();
