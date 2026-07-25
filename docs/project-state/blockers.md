@@ -20,6 +20,14 @@ and named human approval; it is frozen independently of the resolved P0 item.
 
 ## Finance staging gate — current status
 
+The fresh offsite retry at 2026-07-25T04:55Z did not close the remaining
+transfer gate. Drive metadata and the four expected objects were visible, but
+the connector's raw PostgreSQL download exceeded its IPC frame limit; the
+private rclone/direct-token attempts could not list or read the folder (403 or
+directory-not-found). No payload, secret, production data or scratch resource
+was changed. Existing local ciphertexts remain manifest-matched only and must
+not be relabeled as a fresh offsite restore.
+
 The current-main rollback/restore exercise is now complete for candidate SHA
 `b869485b6a33fae5a5dbe504b41660f842fb4ca9`. Worker preview/staging runs
 `30143039262`/`30143051826` promoted it, rollback `30143185583` restored the

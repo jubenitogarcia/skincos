@@ -1,5 +1,25 @@
 # Current state
 
+## Offsite retrieval retry — 2026-07-25T04:55Z
+
+The provider-separated Drive folder and four recovery objects remain present
+and accessible by metadata: `20260724T0620Z-manifest.json`, D1, PostgreSQL and
+runtime-config ciphertexts. A fresh connector download of the PostgreSQL object
+returned a provider file reference, but a raw fetch exceeded the connector IPC
+frame limit (121,214,224 bytes versus 67,108,864). A second direct streaming
+attempt using the private `drive.file` rclone credential could not list the
+folder, and the direct API token path returned HTTP 403. No bytes were written,
+decrypted, restored, uploaded or deleted by these attempts; temporary private
+credential copies and the empty output file were removed.
+
+The local encrypted ciphertexts still match the prior manifest evidence, but
+that is not a fresh offsite transfer. Consequently the Finance backup gate is
+still **unproven** for PostgreSQL/runtime-config transfer. Do not promote or
+activate Finance on this evidence. The smallest safe resolution is an
+authorized Drive service account or provider-approved streaming path that can
+retrieve the two large objects in chunks, followed by hash verification and a
+scratch restore.
+
 ## Orchestrator continuation audit — 2026-07-25T04:44Z
 
 The attached production-cycle instructions were re-read and reconciled against
