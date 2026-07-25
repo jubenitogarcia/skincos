@@ -2,6 +2,43 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T02:05:02Z",
+      "surface": "github-cloudflare-staging",
+      "scope": "Finance current-main deploy and immutable rollback",
+      "state": "staging-validated-rollback",
+      "method": "Candidate 30139535704, Finance preview 30139561027, staging deploy 30139576133 and rollback 30139701809; explicit release SHA inputs; Wrangler deployment metadata and /health probe",
+      "result": "Current main SHA 8af1d5fe9551891a05a104363043bf3d36fb4ef4 was deployed as Worker version 97c7a7da-6a78-44a8-b980-2cc2810df7a0. Rollback restored prior immutable SHA 67ee53843a9a52ad495ab6d67b8cd2b4fac053f9 via version c57fdafc-6045-4eb5-8b38-07ae98d7c256 at 100%; health returned 200 and ready=true. No migrations ran during rollback and no other unit was published.",
+      "limitation": "Elapsed workflow time was approximately 115 seconds and is not a user-visible outage RTO. Finance production, users, grants and flags were not touched.",
+      "sha": "8af1d5fe9551891a05a104363043bf3d36fb4ef4",
+      "runs": [30139535704,30139561027,30139576133,30139701809],
+      "rollback": {
+        "sha": "67ee53843a9a52ad495ab6d67b8cd2b4fac053f9",
+        "version": "c57fdafc-6045-4eb5-8b38-07ae98d7c256",
+        "preview_run": 30138491542
+      }
+    },
+    {
+      "observed_at": "2026-07-25T01:50:13Z",
+      "surface": "github-cloudflare-staging",
+      "scope": "Finance synthetic canary abort and kill switch",
+      "state": "validated-controlled-abort",
+      "method": "finance-staging-canary run 30139247054 in abort-drill mode with remote KV writes, synthetic authenticated journey, threshold evaluation and baseline restoration",
+      "result": "One deliberate error breached the errors threshold; the run recorded breaches=[errors], interrupted promotion, executed the kill switch and restored the baseline. Final remote KV was state=active and staging D1 module_enabled=false.",
+      "limitation": "The failed conclusion is expected for an abort drill. No production actor or data was used.",
+      "sha": "8af1d5fe9551891a05a104363043bf3d36fb4ef4",
+      "run": 30139247054
+    },
+    {
+      "observed_at": "2026-07-25T01:56:00Z",
+      "surface": "cloudflare-staging-scratch",
+      "scope": "Finance D1 and KV scratch restore",
+      "state": "validated-destroyed-after-evidence",
+      "method": "Remote D1 export/import, sanitized count/checksum queries and remote KV flag round trip in isolated temporary resources",
+      "result": "D1 export SHA-256 a24db616e94e156c7da5a26a319094b210e7c078a80df11ce0648bea36c9692a restored database 9565bd3b-b9bc-4d7e-95d9-135490a3599e. Counts/checksums matched: audit 13/468, movements 0/0, journal lines 0/0, import batches 0/0, d1_migrations 12/407, settings 1/19 and grants 1/56. KV namespace 8024e25c0b3d4eb0a82805bb38781bd4 round-tripped the synthetic flag.",
+      "limitation": "No R2 binding exists in the Finance configuration and no finance_release_migrations table exists; the journal is d1_migrations. Scratch resources contained no production data and were deleted after capture at approximately 2026-07-25T02:07Z.",
+      "sha": "67ee53843a9a52ad495ab6d67b8cd2b4fac053f9"
+    },
+    {
       "observed_at": "2026-07-25T01:15:00Z",
       "surface": "crm-and-production",
       "scope": "P0 Insumos production promotion and authenticated read-only smoke",
