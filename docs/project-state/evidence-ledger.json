@@ -2,6 +2,16 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T05:05:34Z",
+      "surface": "google-drive-offsite-runtime-config",
+      "scope": "Fresh runtime-config ciphertext and scratch decrypt",
+      "state": "offsite-transfer-integrity-validated",
+      "method": "Fresh private provider fetch, versioned AES-CBC/HMAC restore script 3071cb95f60d6f91f6b26b201f5f4935e5667155, manifest SHA comparison, entry-name-only inspection and plaintext destruction",
+      "result": "The 82,011-byte ciphertext passed integrity/decryption and the plaintext SHA matched the manifest 224236f91f2009974403aabdca33f11cf62e480a1539c7cd363281a05a15d7fc. No plaintext, secrets or archive contents were retained in the repository.",
+      "limitation": "This does not close the offsite gate: the 90,908,667-byte PostgreSQL object remains unproven because connector retrieval exceeds the 64 MiB IPC frame and the alternate provider path lacks authorization. Finance remains experimental.",
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\offsite-recovery\\20260725T-retry"
+    },
+    {
       "observed_at": "2026-07-25T04:55:00Z",
       "surface": "google-drive-offsite-stream",
       "scope": "Fresh PostgreSQL/runtime-config retrieval retry",

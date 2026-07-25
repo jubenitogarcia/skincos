@@ -1,5 +1,21 @@
 # Current state
 
+## Fresh runtime-config verification — 2026-07-25T05:05Z
+
+The fresh provider transfer of the encrypted runtime configuration was
+successfully verified with the versioned restore script from `origin/main`
+(`3071cb95f60d6f91f6b26b201f5f4935e5667155`). The 82,011-byte ciphertext
+passed HMAC/AES verification and its decrypted plaintext SHA matched the
+offsite manifest (`224236f91f2009974403aabdca33f11cf62e480a1539c7cd363281a05a15d7fc`).
+The archive was inspected only for entry names; plaintext was destroyed after
+the check. No secrets or archive contents are recorded in the repository.
+
+This closes only the fresh runtime-config leg. The 90,908,667-byte PostgreSQL
+object is still blocked by the connector's 64 MiB IPC frame limit and the
+alternate provider path remains unauthorized. No fresh PostgreSQL bytes were
+transferred or restored, so Finance stays `experimental` and its offsite
+backup/restore gate remains open.
+
 ## Offsite retrieval retry — 2026-07-25T04:55Z
 
 The provider-separated Drive folder and four recovery objects remain present
