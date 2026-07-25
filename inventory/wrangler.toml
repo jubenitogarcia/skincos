@@ -31,6 +31,10 @@ database_id = "13e59612-99ba-450e-9014-ddefbee72965"
 binding = "BACKUP_BUCKET"
 bucket_name = "skincos-backups"
 
+[[services]]
+binding = "WORKFORCE"
+service = "skincos-timekeeping"
+
 [vars]
 APP_ORIGIN = "https://crm.skincos.com.br"
 
@@ -55,6 +59,10 @@ database_id = "4bdd7995-ad69-465a-917c-0aab22db5c4e"
 binding = "BACKUP_BUCKET"
 bucket_name = "skincos-backups-staging"
 
+[[env.staging.services]]
+binding = "WORKFORCE"
+service = "skincos-timekeeping-staging"
+
 [env.staging.vars]
 APP_ORIGIN = "https://crm-staging.skincos.com.br"
 
@@ -67,3 +75,5 @@ APP_ORIGIN = "https://crm-staging.skincos.com.br"
 #
 # Secrets (set via `wrangler secret put`):
 # - SESSION_SECRET (required)
+# - IDENTITY_PII_KEY (required for employee onboarding)
+# - IDENTITY_WORKFORCE_HMAC_KEY (shared only with workforce/timekeeping)
