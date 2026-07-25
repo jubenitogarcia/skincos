@@ -34,3 +34,12 @@ remaining blockers are authenticated import/UI smoke, an external monitor with
 human alert evidence, encrypted offsite backup plus restore for the
 current-main artifact, and named approval. `module_enabled` remains false and
 no real user or unit is enabled.
+
+Inventory production is stable on the single reconciled `RELEASE_SHA`
+`c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d`. The additive
+`0017_employee_onboarding.sql` migration is present in the journal with zero
+onboarding payloads; no new promotion is required. `IDENTITY_PII_KEY` exists in
+the staging and production GitHub environments, but external vault/escrow and
+recovery ownership for the generated production key are not evidenced. This is
+an operational security debt and must be closed before onboarding data is
+created or the key is rotated; it does not justify another production deploy.

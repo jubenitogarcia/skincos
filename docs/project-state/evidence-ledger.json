@@ -2,6 +2,39 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T02:15:00Z",
+      "surface": "github-cloudflare-production",
+      "scope": "Inventory definitive release SHA reconciliation",
+      "state": "production-stable-single-release",
+      "method": "Git diff/name-status between cb04cb8b8ca87353c4c672fa5707bf2d5a9fcecb, c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d and current main d006157297c02e2a7bace9fcd1abad654b546d06; production workflow log 30137182608; Pages run 30137826907; live health probes and read-only D1 journal/count query",
+      "result": "cb04 is superseded by runtime Identity onboarding changes in the c64 delta. The c64-to-current-main delta contains only workflow/preflight, Finance, orchestration and evidence-documentation files, with no Inventory/Identity/CRM runtime, migration, binding or Pages artifact change. c64 remains the unique authorized RELEASE_SHA. Inventory run 30137182608 explicitly used c64 and Pages run 30137826907 stamped c64; active Worker 6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef and Pages deployment e65832a0-5925-4212-b252-2ff20cd08362 correspond to that release. Inventory health is HTTP 200/ready=true; CRM health is HTTP 200.",
+      "limitation": "Readiness/version/dependencies are authentication-protected and returned 401 without a session; health and deployment metadata are the available public evidence. No new deploy was run.",
+      "release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "runs": [30137182608,30137826907]
+    },
+    {
+      "observed_at": "2026-07-25T02:15:00Z",
+      "surface": "cloudflare-production-d1",
+      "scope": "Inventory migration and onboarding data verification",
+      "state": "migration-applied-zero-payload",
+      "method": "Production workflow log plus read-only wrangler d1 migrations list and SELECT COUNT query",
+      "result": "Run 30137182608 applied additive migration 0017_employee_onboarding.sql. Current D1 journal contains that migration; d1 migrations list reports no pending migrations; onboarding rows, encrypted-email rows and encrypted-phone rows are all zero. No data was written by the verification query.",
+      "limitation": "The migration is part of the already deployed c64 release and was not re-run in this audit.",
+      "release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "run": 30137182608
+    },
+    {
+      "observed_at": "2026-07-25T02:15:00Z",
+      "surface": "github-environments-and-source",
+      "scope": "IDENTITY_PII_KEY contract re-audit",
+      "state": "present-zero-production-payload-external-escrow-unproven",
+      "method": "Source inspection of Inventory/Identity AES-GCM adapters, deploy-core-workers workflow, secret-name metadata for staging and production, and read-only production D1 counts",
+      "result": "The workflow reads IDENTITY_PII_KEY from the environment-scoped secret and forwards it to the Inventory Worker. Both Inventory encryption and Identity decryption derive a SHA-256 32-byte AES-GCM key; ciphertext format is v1.<base64url-12-byte-IV>.<base64url-ciphertext>. Production and staging secret names exist. Production onboarding payload count is zero.",
+      "limitation": "The generated production value is intentionally not read or logged. An external authorized vault/escrow source and recovery owner are not evidenced; do not rotate or copy the key until that control is established.",
+      "secret_names": ["IDENTITY_PII_KEY"],
+      "environment_scopes": ["staging", "production"]
+    },
+    {
       "observed_at": "2026-07-25T02:05:02Z",
       "surface": "github-cloudflare-staging",
       "scope": "Finance current-main deploy and immutable rollback",
