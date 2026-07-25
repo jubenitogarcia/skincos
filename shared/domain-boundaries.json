@@ -27,7 +27,7 @@
       "id": "identity-runtime-adapter-v1",
       "kind": "adapter",
       "paths": ["shared/identity-runtime/**"],
-      "consumers": ["api", "inventory"],
+      "consumers": ["api", "identity", "inventory", "workforce"],
       "owner": "identity",
       "providesFor": "identity"
     },

@@ -79,6 +79,8 @@ export function publicOnboarding(row) {
     units: normalizeAllowedUnits(row.units_json),
     accountStatus: row.account_status,
     inviteId: row.invite_id || null,
+    provisioningState: row.provisioning_state || null,
+    compensationState: row.compensation_state || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
