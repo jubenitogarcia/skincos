@@ -2,6 +2,16 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-25T00:25:00Z",
+      "surface": "github-cloudflare-production-preflight",
+      "scope": "Inventory production promotion preflight, read-only",
+      "state": "blocked",
+      "method": "npm run codex:preflight / scripts/codex-preflight.sh on the shared checkout; no deploy, secret, D1, flag, grant or user mutation",
+      "result": "Cloudflare/GitHub authentication, required deploy secrets and variables, endpoint health, security exception dates, and all listed workflow checks passed. One failure remains: .github/workflows/codex-automerge.yml is absent. One warning reports unrelated dirty Content Studio changes in the shared checkout.",
+      "limitation": "The missing workflow is unrelated to the Inventory release but keeps the repository preflight non-green. The production IDENTITY_PII_KEY classification-5 gate remains independently blocking; no production promotion was attempted.",
+      "sha": "abb4e05d5ffa0bbadefff29eb917804a0345027b"
+    },
+    {
       "observed_at": "2026-07-25T00:23:52Z",
       "surface": "github-cloudflare-d1",
       "scope": "Inventory current-main release and IDENTITY_PII_KEY contract",
