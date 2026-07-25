@@ -20,6 +20,13 @@ and named human approval; it is frozen independently of the resolved P0 item.
 
 ## Finance staging gate — current status
 
+PR #740 is integrated at main `1b8a9d4f10f005e05b3475baba75af1d9183c046`.
+The offsite drill now has valid D1 retrieval/restore evidence and matching
+PostgreSQL/configuration ciphertext hashes, but a fresh streamed download of
+the two large Drive objects was not captured because the connector exceeded
+its IPC limit. The complete offsite gate therefore remains open. No module
+promotion, flag, grant or production change is authorized by this evidence.
+
 The current-main SHA `8af1d5fe9551891a05a104363043bf3d36fb4ef4` has a successful
 candidate (`30139535704`), preview (`30139561027`) and staging deployment
 (`30139576133`) with Worker version
