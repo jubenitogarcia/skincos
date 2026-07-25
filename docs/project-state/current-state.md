@@ -181,15 +181,15 @@ candidate, preview and staging runs (`30135641022`, `30135763050`,
 (`30135863885`) all attest this SHA. The cancelled duplicate staging run
 `30135790724` is not release evidence.
 
-`IDENTITY_PII_KEY` was classified as case 3 after read-only schema and source
-review. The additive `crm_employee_onboarding` table now exists, but production
-D1 has zero onboarding rows and zero encrypted personal-email/phone payloads;
+`IDENTITY_PII_KEY` was previously classified as case 3 for data feasibility:
+the additive `crm_employee_onboarding` table exists, but production D1 has zero
+onboarding rows and zero encrypted personal-email/phone payloads;
 `crm_identity_sessions` is absent. A fresh CSPRNG value was provisioned only to
 the GitHub `production` environment on 2026-07-25T00:40:42Z; the value is not
-stored or printed here. The staging and production secret names are present,
-but an external vault/escrow record for the generated production key is not
-evidenced and remains an operational security debt. No production user, grant
-or feature flag was changed.
+stored or printed here. The current operational classification is superseded to
+case 5 because an external vault/escrow record, owner and recovery procedure
+for that generated key remain unproven. No production user, grant or feature
+flag was changed.
 
 The clean preflight from an archive of current `origin/main`
 `cb658ad1e25413c2a307c846c9be99d1207eabb5` completed with
