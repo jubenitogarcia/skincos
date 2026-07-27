@@ -170,6 +170,10 @@ function Get-CrmLocalReviewRef {
     return $env:CRM_LOCAL_REVIEW_REF.Trim()
 }
 
+function Test-CrmLocalReviewRefExplicit {
+    return -not [string]::IsNullOrWhiteSpace($env:CRM_LOCAL_REVIEW_REF)
+}
+
 function Get-CrmLocalTargetCommit {
     $reviewRef = Get-CrmLocalReviewRef
     & git -C $ProjectRoot fetch origin --prune --quiet
@@ -540,7 +544,7 @@ function Start-CrmPersonaRuntime {
     )
     $targetLiteral = Convert-ToBashLiteral -Value $TargetCommit
     if ($Persona -eq "Gestor") {
-        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_GATE_STRICT=0 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh" -f `
+        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh" -f `
             $targetLiteral, `
             (Convert-ToBashLiteral -Value $crmGestorRuntimeRootWsl), `
             (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
@@ -574,6 +578,10 @@ function Invoke-CrmPersonaAction {
         }
     }
     if ($decision.Action -eq 'restart') {
+        if ($Persona -eq 'Gestor' -and -not (Test-CrmLocalReviewRefExplicit)) {
+            $activeCommit = if ($null -ne $decision.Manifest) { [string]$decision.Manifest.targetCommit } else { 'desconhecida' }
+            throw "CRM – Local (Gestor) já está ativo na revisão $activeCommit. Para proteger alterações locais compartilhadas, a ação padrão não irá substituí-la por origin/main. Informe CRM_LOCAL_REVIEW_REF explicitamente ou pare o runtime após registrar a revisão ativa."
+        }
         Write-Host "[crm-local] Reiniciando ${Persona}: $($decision.Reason)."
         Stop-CrmPersonaRuntime -Persona $Persona
     }
