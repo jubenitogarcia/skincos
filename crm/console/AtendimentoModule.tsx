@@ -518,19 +518,21 @@ function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
 function MetricTooltip({
   label,
   info,
+  description,
   children,
   contentClassName,
 }: {
   label: string
   info?: MetricTooltipSpec
+  description?: React.ReactNode
   children: React.ReactNode
   contentClassName?: string
 }) {
-  if (!info) return <>{children}</>
+  if (!info && !description) return <>{children}</>
   return (
     <TooltipLabel
       label={label}
-      description={<MetricTooltipContent info={info} />}
+      description={description || (info ? <MetricTooltipContent info={info} /> : null)}
       contentClassName={contentClassName || 'max-w-[22rem]'}
     >
       {children}
@@ -595,12 +597,11 @@ function ConversionMultiplierDetails({
     </div>
   )
   return (
-    <section
-      className="min-w-0 rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"
+    <div
+      className="min-w-0 space-y-3"
       data-testid="atendimento-multiplier-details"
       aria-label="Detalhes do multiplicador por homogeneidade"
     >
-      <div className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="inline-flex items-center gap-1 text-sm font-semibold text-white">
@@ -716,17 +717,20 @@ function ConversionMultiplierDetails({
               })}
             </div>
           </div>
-      </div>
-    </section>
+    </div>
   )
 }
 
 function MetricGroupContent({
   rows,
   hierarchy,
+  multiplierOptimization,
+  horizontal = false,
 }: {
   rows: AtendimentoMetricGroupRow[]
   hierarchy?: AtendimentoMetricHierarchyNode[]
+  multiplierOptimization?: ConversionRankingSection['optimization']
+  horizontal?: boolean
 }) {
   const rowsByKey = new Map(rows.map((row) => [row.key, row]))
   const hierarchyKeys = new Set<string>()
@@ -764,6 +768,14 @@ function MetricGroupContent({
         isProfessional: component.key.includes(':doctor:'),
       })),
     } : undefined
+    const multiplierDescription = row.key === 'interval' && componentTooltip && multiplierOptimization ? (
+      <div className="space-y-3">
+        <MetricTooltipContent info={componentTooltip} />
+        <div className="border-t border-slate-700/80 pt-3">
+          <ConversionMultiplierDetails optimization={multiplierOptimization} />
+        </div>
+      </div>
+    ) : undefined
     const rowContent = (
       <div className={`flex min-w-0 items-center gap-2 ${isChild ? 'py-0.5' : ''}`}>
         {row.avatarUrl ? (
@@ -796,7 +808,12 @@ function MetricGroupContent({
         {row.calculation ? (
           <div className="ml-7 mt-0.5 min-w-0 text-[9px] leading-snug text-slate-500">
             {componentTooltip ? (
-              <MetricTooltip label={`Componentes de ${row.label}`} info={componentTooltip} contentClassName={detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'max-w-[22rem]'}>
+              <MetricTooltip
+                label={`Componentes de ${row.label}`}
+                info={componentTooltip}
+                description={multiplierDescription}
+                contentClassName={multiplierDescription ? 'w-[min(42rem,calc(100vw-2rem))] max-w-none' : detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'max-w-[22rem]'}
+              >
                 <div className="inline-flex max-w-full cursor-help rounded-sm px-0.5 transition hover:bg-slate-800/70 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60">
                   {row.calculation.split('=')[0].trim()}
                 </div>
@@ -822,7 +839,7 @@ function MetricGroupContent({
     )
   }
 
-  return <div className="grid gap-1.5 pt-0.5">{nodes.map((node) => renderNode(node))}</div>
+  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'grid-cols-2 md:grid-cols-4 xl:grid-cols-7' : 'gap-1.5'}`}>{nodes.map((node) => renderNode(node))}</div>
 }
 
 function MetricTile({
@@ -1230,6 +1247,16 @@ function formatConversionMetricValue(key: ConversionMetricKey, value: number) {
   return formatCurrencyBRL(numeric)
 }
 
+function formatCompactCurrencyBRL(value: number) {
+  const numeric = Number(value || 0)
+  if (Math.abs(numeric) < 1000) return formatCurrencyBRL(numeric)
+  const compactValue = new Intl.NumberFormat('pt-BR', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  }).format(numeric / 1000)
+  return `R$ ${compactValue}k`
+}
+
 function PodiumBadge({ rank }: { rank: number }) {
   const normalizedRank = Number(rank || 0)
   const podium = normalizedRank === 1
@@ -1539,7 +1566,7 @@ function ConversionDoctorBandsContent({
   const chartMarginLeft = 6
   const chartMarginBottom = 8
   const doctorCount = Math.max(chartDoctors.length, 1)
-  const yAxisWidth = isAggregate ? 46 : 76
+  const yAxisWidth = isAggregate ? 46 : 112
   const availablePlotWidth = Math.max(160, (chartWidth || 960) - yAxisWidth - chartMarginLeft - chartMarginRight)
   const doctorSlotWidth = availablePlotWidth / doctorCount
   const doctorAvatarRadius = Math.max(7, Math.min(36, doctorSlotWidth * 0.27))
@@ -1684,7 +1711,10 @@ function ConversionDoctorBandsContent({
 
     const badgeWidth = 20
     const badgeHeight = 18
-    const badgeX = x2 - badgeWidth - 8
+    // Reserve the left axis gutter for the metric icon, then keep the shortened
+    // Y-axis value to its left. This makes each icon share the exact vertical
+    // reference of its number without covering the plot.
+    const badgeX = x1 - badgeWidth - 6
     const badgeY = badge.verticalPosition === 'above'
       ? y - badgeHeight - 5
       : badge.verticalPosition === 'below'
@@ -1899,8 +1929,9 @@ function ConversionDoctorBandsContent({
                   width={yAxisWidth}
                   tickLine={false}
                   axisLine={false}
+                  tickMargin={isAggregate ? 8 : 30}
                   tick={{ fill: '#94a3b8', fontSize: 10 }}
-                  tickFormatter={(value: number) => isAggregate ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0))}
+                  tickFormatter={(value: number) => isAggregate ? formatNumberBR(Number(value || 0)) : formatCompactCurrencyBRL(Number(value || 0))}
                   domain={[0, yMax]}
                 />
                 {hasBands ? (
@@ -2048,9 +2079,9 @@ function ConversionDoctorBandsContent({
             , document.body) : null}
           </div>
       </div>
-      <div className="grid gap-2 lg:grid-cols-[minmax(20rem,0.9fr)_minmax(0,1.7fr)]">
+      <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
         {detailGroups.map((group) => (
-          <div key={group.key} className="min-w-0 rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+          <div key={group.key} className="min-w-0">
             <div className="mb-2">
               <MetricTooltip label={group.label} info={group.tooltip}>
                 <button
@@ -2063,10 +2094,14 @@ function ConversionDoctorBandsContent({
                 </button>
               </MetricTooltip>
             </div>
-            <MetricGroupContent rows={group.rows} hierarchy={group.hierarchy} />
+            <MetricGroupContent
+              rows={group.rows}
+              hierarchy={group.hierarchy}
+              multiplierOptimization={optimization}
+              horizontal
+            />
           </div>
         ))}
-        {optimization ? <ConversionMultiplierDetails optimization={optimization} /> : null}
       </div>
     </div>
   )
