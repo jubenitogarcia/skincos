@@ -186,6 +186,7 @@ type AtendimentoMetricTileConfig = {
   badge?: React.ReactNode
   progress?: number
   content?: React.ReactNode
+  hideContentHeader?: boolean
   wrapperClassName?: string
 }
 type AtendimentoMetricGroupRow = {
@@ -777,7 +778,7 @@ function MetricGroupContent({
       </div>
     ) : undefined
     const rowContent = (
-      <div className={`flex min-w-0 items-center gap-2 ${isChild ? 'py-0.5' : ''}`}>
+      <div className={`flex min-w-0 items-center gap-2 ${horizontal ? 'justify-center' : ''} ${isChild ? 'py-0.5' : ''}`}>
         {row.avatarUrl ? (
           <img
             src={row.avatarUrl}
@@ -793,7 +794,7 @@ function MetricGroupContent({
             <RowIcon className={isDetail ? 'h-2.5 w-2.5' : 'h-3 w-3'} />
           </span>
         )}
-        <div className="min-w-0 flex-1">
+        <div className={`min-w-0 ${horizontal ? 'flex-none' : 'flex-1'}`}>
           <span className={`inline-flex max-w-full items-center gap-1 truncate ${isDetail ? 'text-[10px] font-medium text-slate-500' : `text-[11px] ${isChild ? 'font-medium text-slate-400' : 'font-semibold text-slate-200'}`} leading-tight`}>
             <span className="truncate">{row.label}</span>
             {row.tooltip ? <Info className="h-2.5 w-2.5 shrink-0 text-slate-500" /> : null}
@@ -806,7 +807,7 @@ function MetricGroupContent({
       <div key={row.key} className="min-w-0">
         <div className="min-w-0">{row.tooltip ? <MetricTooltip label={row.label} info={row.tooltip}>{rowContent}</MetricTooltip> : rowContent}</div>
         {row.calculation ? (
-          <div className="ml-7 mt-0.5 min-w-0 text-[9px] leading-snug text-slate-500">
+          <div className={`${horizontal ? 'mt-0.5 text-center' : 'ml-7 mt-0.5'} min-w-0 text-[9px] leading-snug text-slate-500`}>
             {componentTooltip ? (
               <MetricTooltip
                 label={`Componentes de ${row.label}`}
@@ -839,7 +840,7 @@ function MetricGroupContent({
     )
   }
 
-  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'grid-cols-2 md:grid-cols-4' : 'gap-1.5'}`}>{nodes.map((node) => renderNode(node))}</div>
+  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'mx-auto w-full max-w-5xl grid-cols-2 md:grid-cols-4' : 'gap-1.5'}`}>{nodes.map((node) => renderNode(node))}</div>
 }
 
 function MetricTile({
@@ -854,6 +855,7 @@ function MetricTile({
   badge,
   progress,
   content,
+  hideContentHeader = false,
   dragHandleProps,
   onHide,
   isDragging,
@@ -869,6 +871,7 @@ function MetricTile({
   badge?: React.ReactNode
   progress?: number
   content?: React.ReactNode
+  hideContentHeader?: boolean
   dragHandleProps?: DraggableProvidedDragHandleProps | null
   onHide?: () => void
   isDragging?: boolean
@@ -887,7 +890,11 @@ function MetricTile({
     </div>
   )
   return (
-    <Card className={`group relative overflow-hidden rounded-xl ${panelClass} transition hover:-translate-y-0.5 hover:border-sky-400/25 hover:bg-slate-900/70 ${isDragging ? 'border-sky-300/50 shadow-[0_24px_90px_rgba(14,165,233,0.22)]' : ''}`} data-testid={`atendimento-kpi-${label.toLowerCase().replace(/\s+/g, '-')}`}>
+    <Card className={hideContentHeader
+      ? `group relative min-w-0 gap-0 !border-0 !bg-transparent !p-0 !shadow-none !backdrop-blur-none hover:!translate-y-0 hover:!bg-transparent hover:!shadow-none ${isDragging ? 'z-30' : ''}`
+      : `group relative overflow-hidden rounded-xl ${panelClass} transition hover:-translate-y-0.5 hover:border-sky-400/25 hover:bg-slate-900/70 ${isDragging ? 'border-sky-300/50 shadow-[0_24px_90px_rgba(14,165,233,0.22)]' : ''}`}
+      data-testid={`atendimento-kpi-${label.toLowerCase().replace(/\s+/g, '-')}`}
+    >
       {loading ? <LoadingOverlay label="Atualizando" /> : null}
       <div className="absolute right-2 top-2 z-20 flex items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
         <button
@@ -909,9 +916,9 @@ function MetricTile({
           </button>
         ) : null}
       </div>
-      <CardContent className={`${content ? 'min-h-[7.1rem]' : 'min-h-[5.05rem]'} p-2.5`}>
+      <CardContent className={hideContentHeader ? 'p-0' : `${content ? 'min-h-[7.1rem]' : 'min-h-[5.05rem]'} p-2.5`}>
         <div className="flex h-full min-w-0 flex-col justify-between gap-1.5">
-          <div className="flex min-w-0 items-center gap-2">
+          {!hideContentHeader ? <div className="flex min-w-0 items-center gap-2">
             {description ? (
               <TooltipLabel label={label} description={description}>
                 {iconNode}
@@ -926,7 +933,7 @@ function MetricTile({
               {subtitle ? <div className={`truncate leading-tight text-slate-500 ${content ? 'mt-0.5 text-[11px]' : 'text-[10px]'}`}>{subtitle}</div> : null}
             </div>
             {badge ? <div className="ml-auto flex shrink-0 items-center gap-1">{badge}</div> : null}
-          </div>
+          </div> : null}
           {content ? content : (
             <>
               <div className="truncate text-[1rem] font-semibold leading-tight text-white">{value}</div>
@@ -1430,6 +1437,7 @@ function ConversionDoctorBandsContent({
   optimization,
   detailGroups,
   isAggregate = false,
+  subtitle,
 }: {
   unitName: string
   doctors: ConversionDoctorMetric[]
@@ -1438,6 +1446,7 @@ function ConversionDoctorBandsContent({
   optimization?: ConversionRankingSection['optimization']
   detailGroups: Array<{ key: string; label: string; tooltip: MetricTooltipSpec; rows: AtendimentoMetricGroupRow[]; hierarchy?: AtendimentoMetricHierarchyNode[] }>
   isAggregate?: boolean
+  subtitle: string
 }) {
   const cutLine = Number(metrics.cutLine?.weekValue || 0)
   const interval = Number(metrics.interval?.weekValue || 0)
@@ -1831,6 +1840,13 @@ function ConversionDoctorBandsContent({
   return (
     <div className="space-y-3 pt-0.5" data-testid="atendimento-conversion-distribution">
       <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-3">
+          <div className="mb-3 flex flex-col items-center justify-center text-center">
+            <span className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border ${metricToneClass('violet')}`} aria-hidden="true">
+              <Gauge className="h-4 w-4" />
+            </span>
+            <div className="mt-1 text-sm font-semibold leading-tight text-white">Desempenho por doutor</div>
+            <div className="mt-0.5 text-[11px] leading-tight text-slate-400">{subtitle}</div>
+          </div>
           {detailGroups.map((group) => (
             <div key={group.key} className="min-w-0">
               <MetricGroupContent
@@ -2632,6 +2648,7 @@ export function AtendimentoModule() {
         detail: conversionPeriodDetail,
         icon: Gauge,
         tone: 'violet',
+        hideContentHeader: true,
         description: filters.unit === 'all'
           ? 'Cada coluna mostra a soma dos pontos que o doutor obteve na comparação da própria unidade. Produção bruta não determina a posição entre unidades.'
           : 'Cada coluna mostra o total do período por doutor. As faixas horizontais mantêm os níveis 0 a 3 na mesma escala para facilitar a leitura do corte e do ranking.',
@@ -2645,6 +2662,7 @@ export function AtendimentoModule() {
             optimization={conversionSection.optimization}
             detailGroups={distributionGroups}
             isAggregate={conversionSection.isAggregate || conversionSection.comparisonMetric === 'unit-score'}
+            subtitle={filters.unit === 'all' ? 'Ranking por pontos obtidos em cada unidade.' : 'Ranking, totais e faixas do período.'}
           />
         ),
       })
@@ -3002,10 +3020,10 @@ export function AtendimentoModule() {
     <div className="atendimento-surface flex min-h-full flex-col gap-5 px-3 pb-6 pt-3 text-white sm:px-6">
       {error ? <ErrorBanner message={error} /> : null}
 
-      <section className="rounded-2xl border border-slate-800/80 bg-slate-950/35 p-2 shadow-[0_16px_48px_rgba(2,6,23,0.16)]" data-testid="atendimento-analysis">
+      <section className="space-y-2" data-testid="atendimento-analysis">
         <button
           type="button"
-          className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-900/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70"
+          className="flex w-full items-center justify-between gap-3 px-1 py-1 text-left transition hover:text-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70"
           aria-expanded={analysisExpanded}
           aria-controls="atendimento-analysis-content"
           data-testid="atendimento-analysis-toggle"
@@ -3021,7 +3039,7 @@ export function AtendimentoModule() {
           </span>
         </button>
         {analysisExpanded ? (
-      <div id="atendimento-analysis-content" className="space-y-2 pt-2" data-testid="atendimento-kpis">
+      <div id="atendimento-analysis-content" className="space-y-2" data-testid="atendimento-kpis">
         {analysisLoading ? (
           <div className="rounded-xl border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs text-sky-100" role="status" data-testid="atendimento-analysis-loading">
             Carregando análise do período…
@@ -3086,6 +3104,7 @@ export function AtendimentoModule() {
                           badge={tile.badge}
                           progress={tile.progress}
                           content={tile.content}
+                          hideContentHeader={tile.hideContentHeader}
                           dragHandleProps={dragProvided.dragHandleProps}
                           onHide={() => updateMetricTile(tile.key, { visible: false })}
                           isDragging={snapshot.isDragging}
