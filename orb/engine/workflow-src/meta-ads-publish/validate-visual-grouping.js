@@ -75,7 +75,7 @@ if (!manifest.length) throw new Error('Validate Visual Grouping nao encontrou o 
 
 const result = unwrapAgent($input.first()?.json || {});
 const groups = list(result.groups);
-const assignments = list(result.assignments);
+let assignments = list(result.assignments);
 if (!groups.length || !assignments.length) throw new Error(`Agente visual retornou estrutura vazia: ${JSON.stringify(result).slice(0, 1000)}`);
 
 const groupByKey = new Map();
@@ -114,6 +114,28 @@ for (const rawGroup of groups) {
 }
 
 const manifestByRef = new Map(manifest.map((entry) => [text(entry.media_ref || entry.image_ref), entry]));
+// Some multimodal adapters serialize only the first assignment despite having
+// produced one high-confidence, explicitly sequential carousel group. This is
+// a response-shape defect, not permission to guess membership: recover only
+// when the model itself states carousel/sequence, every item is an image, and
+// the group is the sole, high-confidence explanation of the entire batch.
+const soleGroup = groupByKey.size === 1 ? [...groupByKey.values()][0] : null;
+const carouselNarrative = /carrossel|sequ[êe]ncia/i.test(`${soleGroup?.visual_concept || ''} ${(soleGroup?.evidence || []).join(' ')}`);
+const partialCarouselAssignmentFallback = version === '3' && assignments.length < manifest.length &&
+  soleGroup && soleGroup.confidence >= 0.9 && carouselNarrative &&
+  manifest.length >= 2 && manifest.length <= 10 && manifest.every((entry) => text(entry.media_type || 'image') === 'image') &&
+  assignments.every((entry) => text(object(entry).group_key).toUpperCase() === soleGroup.group_key);
+if (partialCarouselAssignmentFallback) {
+  assignments = manifest
+    .slice()
+    .sort((left, right) => Number(left.ordinal || 0) - Number(right.ordinal || 0))
+    .map((entry, index) => ({
+      media_ref: text(entry.media_ref || entry.image_ref), media_type: 'image', group_key: soleGroup.group_key,
+      role: 'carousel_card', ratio: text(entry.ratio || '4x5'), carousel_card_index: index + 1,
+      confidence: soleGroup.confidence, evidence: soleGroup.evidence,
+    }));
+  soleGroup.media_mode = 'carousel';
+}
 const assignmentByRef = new Map();
 const supportedRatios = new Set(['1x1', '2x1', '3x4', '4x5', '9x16']);
 const legacyRole = (ratio) => ratio === '2x1' ? 'banner' : ratio === '9x16' ? 'stories' : 'feed';
