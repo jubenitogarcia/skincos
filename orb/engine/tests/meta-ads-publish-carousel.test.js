@@ -104,6 +104,29 @@ test('infers carousel card roles only after visual membership when v3 mode is om
   assert(output.every((item) => item.json.visual_grouping.carousel_card_order_source === 'intake_sequence_fallback_after_visual_membership'));
 });
 
+test('collapses only verbatim duplicated visual-group responses', () => {
+  const media = Array.from({ length: 2 }, (_, index) => ({
+    media_ref: `IMG_${String(index + 1).padStart(3, '0')}`,
+    media_type: 'image', source_item_index: index, source_file_id: `drive-${index + 1}`, ordinal: index + 1,
+  }));
+  const group = {
+    group_key: 'VISUAL_GROUP_01', confidence: 0.95, visual_concept: 'Sequencia',
+    evidence: ['mesma narrativa'], offer_fingerprint: offerFingerprint(),
+  };
+  const output = runCode('validate-visual-grouping.js', [{ json: { output: JSON.stringify({
+    groups: [group, JSON.parse(JSON.stringify(group))],
+    assignments: media.map((entry) => ({
+      media_ref: entry.media_ref, media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '4x5',
+      role: 'feed_image', confidence: 0.95, evidence: ['mesma sequencia'],
+    })),
+  }) } }], {
+    'Prepare Visual Grouping Batch': [{ json: { visual_grouping_batch_version: '3', media } }],
+    'Prepare Media Inventory': media.map((entry) => ({ json: { id: entry.source_file_id }, binary: { data: { mimeType: 'image/jpeg' } } })),
+  });
+  assert.equal(output.length, 2);
+  assert(output.every((item) => item.json.visual_grouping.media_mode === 'carousel'));
+});
+
 test('carousel upload plan requires every ordered image for every destination account', () => {
   const output = runCode('prepare-media-upload-plan.js', [{
     json: {

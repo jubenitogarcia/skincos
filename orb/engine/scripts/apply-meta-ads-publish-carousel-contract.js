@@ -28,10 +28,18 @@ do contrato v2. Um carousel não pode conter vídeo, nem cards duplicados, e
 precisa de 2 a 10 imagens. Ambiguidade ou confiança abaixo de 0,75 deve
 bloquear o lote.`;
 
+function applyCarouselPrompt(value) {
+  // A workflow may be exported and reconciled repeatedly. Remove any earlier
+  // v3 insertion before adding the single canonical contract so the model is
+  // never given an amplified/conflicting instruction.
+  const base = String(value || '').replace(/\n+Contrato adicional v3[\s\S]*$/i, '').trim();
+  return `${base}${carouselPrompt}`;
+}
+
 agent.parameters = agent.parameters || {};
-agent.parameters.text = `${String(agent.parameters.text || '').trim()}${carouselPrompt}`;
+agent.parameters.text = applyCarouselPrompt(agent.parameters.text);
 agent.parameters.options = agent.parameters.options || {};
-agent.parameters.options.systemMessage = `${String(agent.parameters.options.systemMessage || '').trim()}${carouselPrompt}`;
+agent.parameters.options.systemMessage = applyCarouselPrompt(agent.parameters.options.systemMessage);
 
 workflow.meta = { ...(workflow.meta || {}), meta_ads_publish_contract: 'carousel_v1' };
 fs.writeFileSync(workflowPath, `${JSON.stringify(workflow, null, 2)}\n`);

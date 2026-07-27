@@ -84,7 +84,6 @@ for (const rawGroup of groups) {
   const key = text(group.group_key).toUpperCase();
   const confidence = Number(group.confidence);
   if (!/^VISUAL_GROUP_[0-9]{2,}$/.test(key)) throw new Error(`Chave de grupo visual invalida: ${text(group.group_key)}.`);
-  if (groupByKey.has(key)) throw new Error(`Grupo visual duplicado: ${key}.`);
   if (!Number.isFinite(confidence) || confidence < 0.75 || confidence > 1) throw new Error(`Confianca de grupo insuficiente em ${key}: ${group.confidence}.`);
   const offerFingerprint = normalizeOfferFingerprint(group.offer_fingerprint);
   if (!object(group.offer_fingerprint) || !Array.isArray(group.offer_fingerprint.procedures)) {
@@ -94,14 +93,24 @@ for (const rawGroup of groups) {
   if (version === '3' && mediaMode && !['static_only', 'carousel', 'mixed', 'video_only'].includes(mediaMode)) {
     throw new Error(`media_mode visual invalido em ${key}: ${text(group.media_mode)}.`);
   }
-  groupByKey.set(key, {
+  const normalizedGroup = {
     group_key: key,
     visual_concept: text(group.visual_concept),
     confidence,
     evidence: list(group.evidence).map(text).filter(Boolean),
     offer_fingerprint: offerFingerprint,
     media_mode: version === '3' ? mediaMode : '',
-  });
+  };
+  if (groupByKey.has(key)) {
+    // The Responses adapter can repeat a complete group verbatim. It carries
+    // no new classification information, so collapse only an exact normalized
+    // duplicate; any material disagreement stays fail-closed.
+    if (JSON.stringify(groupByKey.get(key)) !== JSON.stringify(normalizedGroup)) {
+      throw new Error(`Grupo visual conflitante: ${key}.`);
+    }
+    continue;
+  }
+  groupByKey.set(key, normalizedGroup);
 }
 
 const manifestByRef = new Map(manifest.map((entry) => [text(entry.media_ref || entry.image_ref), entry]));
