@@ -125,6 +125,8 @@ test('Build Jobs rehydrates carousel card ordinals from a gateway receipt filena
   assert.match(source, /function isCurrentCarouselResumeContract\(row\)/);
   assert.match(source, /formats\[0\] !== 'CAROUSEL'/);
   assert.match(source, /const ctaTypes = safeArray\(feed\.call_to_action_types\)/);
+  assert.match(source, /\['video_only', 'carousel'\]\.includes\(mediaMode\)/);
+  assert.match(source, /\[TEST-CAROUSEL\]/);
 });
 
 test('accepts one five-card flexible carousel creative', () => {
@@ -136,7 +138,7 @@ test('accepts one five-card flexible carousel creative', () => {
   });
   const output = runCode('validate-meta-creative-payload.js', [{
     json: {
-      run_id: 'run-1', batch_fingerprint: 'batch-1', workflow_contract_revision: 'meta_destination_contract_v10_carousel',
+      run_id: 'run-1', batch_fingerprint: 'batch-1', workflow_contract_revision: 'meta_destination_contract_v11_carousel',
       token_id: 'opaque', api_version: 'v25.0', account_id: '123', page_id: '456', action: 'create_new',
       media_variant: 'carousel', destination_contract: { kind: 'website' }, allowed_link_hosts: [],
       landing_page_url: link, scheduling_landing_page_url: link,

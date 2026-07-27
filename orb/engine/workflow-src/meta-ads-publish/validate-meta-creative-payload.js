@@ -26,7 +26,7 @@ const REQUIRED_HORIZONTAL_PLATFORMS = ['facebook'];
 const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
 const REQUIRED_CTA = 'LEARN_MORE';
 const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v10_carousel';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v11_carousel';
 const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'add_text_overlay',
   'image_touchups',

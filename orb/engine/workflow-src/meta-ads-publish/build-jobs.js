@@ -1,10 +1,10 @@
 const DEFAULT_AD_STATUS = 'ACTIVE';
 const CALIBRATION_AD_STATUS = 'PAUSED';
-const CALIBRATION_FILE_PREFIX = '[TEST-VIDEO-ONLY]';
+const CALIBRATION_FILE_PREFIXES = ['[TEST-VIDEO-ONLY]', '[TEST-CAROUSEL]'];
 // Build Jobs and the downstream quality gate must advance together. This
 // prevents a stale n8n node definition from quietly accepting a payload whose
 // destination contract was added by a newer workflow revision.
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v10_carousel';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v11_carousel';
 // Website Lead ad sets with dynamic creative reject BOOK_NOW. A replacement
 // must, however, preserve the destination contract of its source ad: message
 // campaigns require WHATSAPP_MESSAGE and the WhatsApp URL.
@@ -33,23 +33,25 @@ function safeString(value) {
   return String(value ?? '').trim();
 }
 
-function isVideoOnlyCalibrationJob(job) {
+function calibrationMarkerForJob(job) {
   const assets = [
     ...safeArray(job && job.media_inventory),
     ...safeArray(job && job.videos),
     ...safeArray(job && job.imagens),
     ...safeArray(job && job.arquivos),
   ];
-  return assets.some((asset) => {
+  return assets.reduce((marker, asset) => {
+    if (marker) return marker;
     const name = safeString(asset && (asset.original_name || asset.name || asset.file_name));
-    return name.toUpperCase().startsWith(CALIBRATION_FILE_PREFIX);
-  });
+    return CALIBRATION_FILE_PREFIXES.find((prefix) => name.toUpperCase().startsWith(prefix)) || '';
+  }, '');
 }
 
-function calibrationAdName(value) {
+function calibrationAdName(value, marker) {
   const name = safeString(value);
-  if (name.toUpperCase().startsWith(CALIBRATION_FILE_PREFIX)) return name.slice(0, 255);
-  return `${CALIBRATION_FILE_PREFIX} ${name || 'Video calibration'}`.slice(0, 255);
+  const prefix = safeString(marker) || CALIBRATION_FILE_PREFIXES[0];
+  if (name.toUpperCase().startsWith(prefix)) return name.slice(0, 255);
+  return `${prefix} ${name || 'Media calibration'}`.slice(0, 255);
 }
 
 function toHttps(url) {
@@ -1689,7 +1691,10 @@ for (const entry of jobEntries) {
     }
     const claimedReplacementAdIds = claimedReplacementAdIdsByDestination.get(destinationClaimKey);
     const mediaMode = normalizeMediaMode(job.media_mode, job);
-    const calibrationMode = isVideoOnlyCalibrationJob(job) && mediaMode === 'video_only';
+    const calibrationMarker = calibrationMarkerForJob(job);
+    // Calibration is deliberately limited to the two media contracts that
+    // need Ads Manager preview evidence. It never substitutes an ad.
+    const calibrationMode = Boolean(calibrationMarker) && ['video_only', 'carousel'].includes(mediaMode);
     const requestedReplaceExistingRaw =
       safeString(job.action) === 'replace_existing' || Boolean(job.should_replace_existing);
     const requestedReplaceExisting = requestedReplaceExistingRaw && !calibrationMode;
@@ -2065,7 +2070,7 @@ for (const entry of jobEntries) {
       'Duplicated Ad'
     );
     const canonicalAdName = buildCanonicalAdName(sourceAdName, destinationMeta.destination_group, offerFingerprintTag);
-    const finalAdName = calibrationMode ? calibrationAdName(canonicalAdName) : canonicalAdName;
+    const finalAdName = calibrationMode ? calibrationAdName(canonicalAdName, calibrationMarker) : canonicalAdName;
 
     const normalizedBodies = aiBodies;
     const normalizedTitles = aiTitles;
@@ -2593,7 +2598,7 @@ for (const entry of jobEntries) {
         landing_page_configured_key: landingPage.configured_key,
         desired_final_status: desiredAdStatus,
         calibration_mode: calibrationMode,
-        calibration_marker: calibrationMode ? CALIBRATION_FILE_PREFIX : '',
+        calibration_marker: calibrationMode ? calibrationMarker : '',
 
         creativePayload: variant.creativePayload,
         advantage_plus_request: {
