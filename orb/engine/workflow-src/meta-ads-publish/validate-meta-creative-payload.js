@@ -414,6 +414,30 @@ function validateCarouselFeed(feed, story, source, hosts, destinationKind) {
   return { primaryLink, card_count: cards.length };
 }
 
+function validateLegacyCarousel(story, source, hosts, destinationKind) {
+  const linkData = asObject(story.link_data);
+  const cards = safeArray(linkData.child_attachments);
+  assert(cards.length >= 2 && cards.length <= 10, 'carousel_card_count_invalid', { actual: cards.length });
+  assert(linkData.multi_share_optimized === false, 'carousel_multi_share_optimized_must_be_false', {});
+  assert(linkData.multi_share_end_card === false, 'carousel_multi_share_end_card_must_be_false', {});
+  assert(safeString(linkData.message), 'carousel_message_missing', {});
+  const primaryLink = validateUrl(linkData.link, hosts, 'carousel_primary_link');
+  const expectedCta = destinationKind === 'whatsapp' ? WHATSAPP_CTA : REQUIRED_CTA;
+  const cta = asObject(linkData.call_to_action);
+  assert(safeString(cta.type).toUpperCase() === expectedCta, 'carousel_cta_invalid', { value: cta.type });
+  assert(validateUrl(asObject(cta.value).link, hosts, 'carousel_cta_link') === primaryLink, 'carousel_cta_link_mismatch', {});
+  for (const [index, card] of cards.entries()) {
+    const child = asObject(card);
+    assert(safeString(child.image_hash), 'carousel_card_image_hash_missing', { index });
+    assert(safeString(child.name), 'carousel_card_title_missing', { index });
+    assert(safeString(child.description), 'carousel_card_description_missing', { index });
+    assert(validateUrl(child.link, hosts, `carousel_card_${index}_link`) === primaryLink, 'carousel_card_link_mismatch', { index });
+  }
+  const expectedCards = Object.keys(asObject(source.asset_ids)).filter((key) => /^carousel_card_\d+$/.test(safeString(key))).length;
+  assert(!expectedCards || expectedCards === cards.length, 'carousel_card_asset_count_mismatch', { expected: expectedCards, actual: cards.length });
+  return { primaryLink, card_count: cards.length, render_contract: 'legacy_link_data' };
+}
+
 return $input.all().map((item) => {
   const source = sanitize(clone(item.json || {}));
   const restored = restoredRunContext();
@@ -438,17 +462,20 @@ return $input.all().map((item) => {
   const isVideoOnly = safeString(source.media_variant) === 'video_single';
   const isMixedFlexible = safeString(source.media_variant) === 'mixed_flexible';
   const isCarousel = safeString(source.media_variant) === 'carousel';
+  const legacyCarousel = isCarousel && Object.keys(asObject(story.link_data)).length > 0;
   const hosts = allowedHosts(source);
   const destinationKind = destinationContractKind(source);
   assert(safeString(payload.name), 'creative_name_missing', {});
   assert(safeString(story.page_id) === safeString(source.page_id), 'creative_page_id_mismatch', {});
-  assert(Object.keys(feed).length > 0, 'asset_feed_spec_required', {});
+  assert(legacyCarousel || Object.keys(feed).length > 0, 'asset_feed_spec_required', {});
+  if (legacyCarousel) assert(Object.keys(feed).length === 0, 'carousel_legacy_asset_feed_forbidden', {});
   if (isMixedFlexible || isVideoOnly) {
     assert(Object.keys(asObject(story.video_data)).length === 0, 'asset_feed_video_object_story_spec_forbidden', {});
   }
 
   const images = safeArray(feed.images);
-  if (isCarousel) assert(images.length >= 2 && images.length <= 10, 'carousel_asset_feed_images_invalid', { actual: images.length });
+  if (legacyCarousel) assert(images.length === 0, 'carousel_legacy_images_forbidden', { actual: images.length });
+  else if (isCarousel) assert(images.length >= 2 && images.length <= 10, 'carousel_asset_feed_images_invalid', { actual: images.length });
   else if (isVideoOnly) assert(images.length === 0, 'video_only_images_forbidden', { actual: images.length });
   else assert(images.length >= MIN_IMAGES, 'image_count_invalid', { minimum: MIN_IMAGES, actual: images.length });
   for (const [index, image] of images.entries()) {
@@ -484,9 +511,11 @@ return $input.all().map((item) => {
     textAssets(feed.descriptions, DESCRIPTION_COUNT, MAX_DESCRIPTION_LENGTH, 'descriptions');
   }
 
-  const ctas = safeArray(feed.call_to_action_types);
+  const ctas = legacyCarousel ? [asObject(story.link_data.call_to_action).type] : safeArray(feed.call_to_action_types);
   const linkUrls = safeArray(feed.link_urls);
-  const carouselValidation = isCarousel ? validateCarouselFeed(feed, story, source, hosts, destinationKind) : null;
+  const carouselValidation = isCarousel ? (legacyCarousel
+    ? validateLegacyCarousel(story, source, hosts, destinationKind)
+    : validateCarouselFeed(feed, story, source, hosts, destinationKind)) : null;
   if (!isCarousel) assert(linkUrls.length === 1, 'link_url_count_invalid', { actual: linkUrls.length });
   const primaryLink = isCarousel ? carouselValidation.primaryLink : validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
   const whatsappDestination = destinationKind === 'whatsapp';
@@ -562,7 +591,7 @@ return $input.all().map((item) => {
         fallback_policy: 'disabled',
         creative_error_policy: 'fail_fast_before_ad_mutation',
         ad_mutation_requires_all_creatives: true,
-        image_count: images.length,
+        image_count: legacyCarousel ? carouselValidation.card_count : images.length,
         video_count: videos.length,
         video_status: safeString(source.video_status),
         video_delivery_aspect_ratio: expectsAssetFeedVideo ? '9x16' : '',
@@ -584,6 +613,7 @@ return $input.all().map((item) => {
         title_count: isCarousel ? carouselValidation.card_count : TITLE_COUNT,
         description_count: isCarousel ? carouselValidation.card_count : DESCRIPTION_COUNT,
         carousel_card_count: isCarousel ? carouselValidation.card_count : 0,
+        carousel_render_contract: isCarousel ? carouselValidation.render_contract || 'asset_feed' : '',
         ad_status: adStatus,
         calibration_mode: isPausedCalibration,
         site_links_count: safeArray(asObject(payload.creative_sourcing_spec).site_links_spec).length,

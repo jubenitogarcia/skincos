@@ -160,6 +160,24 @@ function verifyVideoOnlyCreativeReadback(source, creative, placementItems) {
 }
 function verifyCarouselCreativeReadback(source, creative) {
   if (text(source.media_variant) !== 'carousel') return { status: 'not_applicable' };
+  const story = object(creative.object_story_spec);
+  const legacy = object(story.link_data);
+  const expectedCards = Object.keys(object(source.asset_ids)).filter((key) => /^carousel_card_\d+$/.test(text(key))).length;
+  const expectedCta = text(object(source.destination_contract).kind).toLowerCase() === 'whatsapp' ? 'WHATSAPP_MESSAGE' : 'LEARN_MORE';
+  if (Object.keys(legacy).length) {
+    const cards = list(legacy.child_attachments);
+    const failures = [];
+    if (!expectedCards || cards.length !== expectedCards || cards.length < 2 || cards.length > 10) failures.push('carousel_readback_card_count_invalid');
+    if (legacy.multi_share_optimized !== false || legacy.multi_share_end_card !== false) failures.push('carousel_readback_container_invalid');
+    if (text(object(legacy.call_to_action).type).toUpperCase() !== expectedCta) failures.push('carousel_readback_cta_invalid');
+    const links = new Set(cards.map((card) => text(card && card.link)).filter(Boolean));
+    if (links.size !== 1 || text(legacy.link) !== [...links][0]) failures.push('carousel_readback_link_consistency_invalid');
+    for (const card of cards) {
+      if (!text(card && card.image_hash) || !text(card && card.name) || !text(card && card.description)) failures.push('carousel_readback_card_content_invalid');
+    }
+    if (failures.length) throw new Error(`Carousel creative readback divergiu do contrato renderizavel: ${JSON.stringify({ creative_id: text(creative.id || source.creative_id), failures })}`);
+    return { status: 'verified', image_count: cards.length, card_count: cards.length, title_count: cards.length, description_count: cards.length, CTA: expectedCta, render_contract: 'legacy_link_data' };
+  }
   const feed = object(creative.asset_feed_spec);
   const images = list(feed.images);
   const bodies = list(feed.bodies);
@@ -169,13 +187,11 @@ function verifyCarouselCreativeReadback(source, creative) {
   const carousel = object(list(feed.carousels)[0]);
   const cards = list(carousel.child_attachments);
   const formats = list(feed.ad_formats).map((value) => text(value).toUpperCase()).filter(Boolean);
-  const expectedCards = Object.keys(object(source.asset_ids)).filter((key) => /^carousel_card_\d+$/.test(text(key))).length;
   const imageLabels = labels(images);
   const bodyLabels = labels(bodies);
   const titleLabels = labels(titles);
   const descriptionLabels = labels(descriptions);
   const linkLabels = labels(links);
-  const expectedCta = text(object(source.destination_contract).kind).toLowerCase() === 'whatsapp' ? 'WHATSAPP_MESSAGE' : 'LEARN_MORE';
   const ctaTypes = list(feed.call_to_action_types).map((value) => text(value).toUpperCase()).filter(Boolean);
   const primaryLinks = new Set(links.map((entry) => text(entry && entry.website_url)).filter(Boolean));
   const failures = [];
@@ -203,6 +219,7 @@ function verifyCarouselCreativeReadback(source, creative) {
     description_count: descriptions.length,
     CTA: ctaTypes[0],
     child_cta_labels: 'absent_by_contract',
+    render_contract: 'asset_feed',
   };
 }
 function updateFeatureGroup(groups, reportedOptIn, removedOrIneligible, notReported) {

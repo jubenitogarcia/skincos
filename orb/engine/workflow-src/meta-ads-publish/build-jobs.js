@@ -2330,17 +2330,31 @@ for (const entry of jobEntries) {
           ...creativeRootExtras,
         });
 
-    // A carousel is a single physical flexible creative. The target campaign
-    // rejects the legacy link_data path with flexible_creative_required, so
-    // Graph's asset-feed carousel representation is used instead. Ordering is
-    // explicitly held by carousels[0].child_attachments.
+    // The production contract remains the accepted flexible asset feed. A
+    // paused [TEST-CAROUSEL] run is intentionally rendered through the native
+    // carousel story contract so Ads Manager can prove the actual card UI
+    // before this format is promoted to commercial traffic.
+    const carouselUsesLegacyLinkData = mediaMode === 'carousel' && calibrationMode;
     const carouselCreativePayload = mediaMode === 'carousel' ? removeEmptyFields({
       name: finalAdName || sourceAdName,
       object_story_spec: {
         page_id: String(resolvedPageId),
         instagram_user_id: resolvedInstagramUserId ? String(resolvedInstagramUserId) : undefined,
+        link_data: carouselUsesLegacyLinkData ? {
+          link: primaryLinkUrl,
+          message: safeString(normalizedBodies[0] && normalizedBodies[0].text),
+          call_to_action: { type: ctaTypes[0] || DEFAULT_CTA_TYPE, value: { link: primaryLinkUrl } },
+          multi_share_optimized: false,
+          multi_share_end_card: false,
+          child_attachments: orderedAssets.map((asset, index) => removeEmptyFields({
+            link: primaryLinkUrl,
+            image_hash: safeString(asset.hash),
+            name: safeString(normalizedTitles[index % normalizedTitles.length] && normalizedTitles[index % normalizedTitles.length].text).slice(0, 80),
+            description: safeString(normalizedDescriptions[index % normalizedDescriptions.length] && normalizedDescriptions[index % normalizedDescriptions.length].text),
+          })),
+        } : undefined,
       },
-      asset_feed_spec: {
+      asset_feed_spec: carouselUsesLegacyLinkData ? undefined : {
         ad_formats: ['CAROUSEL'],
         optimization_type: 'PLACEMENT',
         images: orderedAssets.map((asset, index) => removeEmptyFields({
@@ -2452,6 +2466,7 @@ for (const entry of jobEntries) {
         media_variant: 'carousel',
         name_suffix: '',
         creativePayload: carouselCreativePayload,
+        carousel_render_contract: carouselUsesLegacyLinkData ? 'legacy_link_data' : 'asset_feed',
         assetIds: Object.fromEntries(carouselCards.map((card) => [`carousel_card_${card.carousel_card_index}`, safeString(card.id)])),
         assetNames: Object.fromEntries(carouselCards.map((card) => [`carousel_card_${card.carousel_card_index}`, safeString(card.original_name || card.name)])),
         assetHashes: Object.fromEntries(orderedAssets.map((asset, index) => [`carousel_card_${index + 1}`, safeString(asset.hash)])),
@@ -2599,6 +2614,7 @@ for (const entry of jobEntries) {
         desired_final_status: desiredAdStatus,
         calibration_mode: calibrationMode,
         calibration_marker: calibrationMode ? calibrationMarker : '',
+        carousel_render_contract: safeString(variant.carousel_render_contract),
 
         creativePayload: variant.creativePayload,
         advantage_plus_request: {
