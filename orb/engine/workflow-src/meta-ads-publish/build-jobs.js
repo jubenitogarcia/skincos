@@ -1551,6 +1551,8 @@ function isCurrentCarouselResumeContract(row) {
   const descriptionLabels = labelsFrom(feed.descriptions);
   const linkLabels = labelsFrom(feed.link_urls);
   const ctaLabels = labelsFrom(feed.call_to_actions);
+  const ctaTypes = safeArray(feed.call_to_action_types).map((value) => safeString(value).toUpperCase()).filter(Boolean);
+  if (ctaTypes.length !== 1 || !ctaTypes[0]) return false;
   return cards.every((card) => {
     const child = asObject(card);
     return imageLabels.has(safeString(asObject(child.image_label).name)) &&
