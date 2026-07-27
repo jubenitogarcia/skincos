@@ -152,6 +152,7 @@ test('accepts one five-card flexible carousel creative', () => {
           titles: Array.from({ length: 5 }, (_, index) => ({ text: `Titulo ${index + 1}`, adlabels: [label('title', index + 1)] })),
           descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `Descricao ${index + 1}`, adlabels: [label('description', index + 1)] })),
           link_urls: Array.from({ length: 5 }, (_, index) => ({ website_url: link, adlabels: [label('link', index + 1)] })),
+          call_to_action_types: ['LEARN_MORE'],
           call_to_actions: [{ type: 'LEARN_MORE', value: { link }, adlabels: [label('cta', 1)] }],
           carousels: [{ multi_share_optimized: false, adlabels: [label('carousel', 1)], child_attachments: Array.from({ length: 5 }, (_, index) => card(index + 1)) }],
         },

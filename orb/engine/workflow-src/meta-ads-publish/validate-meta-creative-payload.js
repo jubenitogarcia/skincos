@@ -396,6 +396,8 @@ function validateCarouselFeed(feed, story, source, hosts, destinationKind) {
   assert(callToActions.length === 1, 'carousel_cta_count_invalid', { actual: callToActions.length });
   const ctaLabels = labelNames(callToActions);
   const expectedCta = destinationKind === 'whatsapp' ? WHATSAPP_CTA : REQUIRED_CTA;
+  const ctaTypes = safeArray(feed.call_to_action_types).map((value) => safeString(value).toUpperCase()).filter(Boolean);
+  assert(ctaTypes.length === 1 && ctaTypes[0] === expectedCta, 'carousel_cta_types_invalid', { values: ctaTypes });
   const parentCta = asObject(callToActions[0]);
   assert(safeString(parentCta.type).toUpperCase() === expectedCta, 'carousel_parent_cta_invalid', { value: parentCta.type });
   const primaryLink = validateUrl(asObject(parentCta.value).link, hosts, 'carousel_parent_cta_link');

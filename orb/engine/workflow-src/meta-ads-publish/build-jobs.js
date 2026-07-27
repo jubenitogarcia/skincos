@@ -2356,6 +2356,10 @@ for (const entry of jobEntries) {
           adlabels: [carouselDescriptionLabels[index]],
         })),
         link_urls: orderedAssets.map((asset, index) => ({ website_url: primaryLinkUrl, adlabels: [carouselLinkLabels[index]] })),
+        // The Meta gateway's CTA guard reads call_to_action_types, while the
+        // labelled carousel children require call_to_actions. Send the same
+        // single CTA in both supported asset-feed representations.
+        call_to_action_types: ctaTypes,
         call_to_actions: [{
           type: ctaTypes[0] || DEFAULT_CTA_TYPE,
           value: { link: primaryLinkUrl },
