@@ -1140,10 +1140,11 @@ function formatGoalPlanSegments(goalPlan?: ConversionGoalPlan) {
 
 function buildGoalPlanTooltip(
   definition: typeof CONVERSION_METRIC_DEFINITIONS[number],
+  formula: string,
   goalPlan?: ConversionGoalPlan
 ) {
   const segmentSummary = formatGoalPlanSegments(goalPlan)
-  return buildMetricTooltip(definition, definition.calculation, {
+  return buildMetricTooltip(definition, formula, {
     usage: `${definition.usage} ${segmentSummary ? `Base atual: ${segmentSummary}. ` : ''}Todas as métricas visíveis deste bloco consideram somente o período filtrado; os dias do mês ficam apenas como insumo técnico da proporcionalização.`,
   })
 }
@@ -2287,14 +2288,45 @@ export function AtendimentoModule() {
           return `${formatConversionMetricValue(key, value)} no período selecionado`
       }
     }
+    const currentMetricSubtitle = (key: ConversionMetricKey) => {
+      switch (key) {
+        case 'periodAttendanceTotal':
+          return 'Atendimentos do período'
+        case 'rankedDoctorTotal':
+          return 'Produção dos doutores elegíveis'
+        case 'dailyGoal':
+          return 'Meta do período ÷ Dias período'
+        case 'periodGoal':
+          return 'Meta diária × Dias período'
+        case 'periodOperationalDays':
+          return 'Dias operacionais do filtro'
+        case 'average':
+          return 'Total produzido ÷ Doutores elegíveis'
+        case 'median':
+          return 'Produção dos doutores elegíveis'
+        case 'standardDeviation':
+          return 'Produção dos doutores elegíveis'
+        case 'upperLimit':
+          return 'Linha Corte + Intervalo'
+        case 'cutLine':
+          return 'Média + Mediana + Meta diária'
+        case 'interval':
+          return 'Desvio Padrão × Multiplicador'
+        case 'lowerLimit':
+          return 'Linha Corte − Intervalo'
+        default:
+          return CONVERSION_METRIC_DEFINITIONS.find((definition) => definition.key === key)?.calculation || ''
+      }
+    }
     const buildConversionRows = (metricKeys: ConversionMetricKey[]) => metricKeys
       .flatMap((key): AtendimentoMetricGroupRow[] => {
         const metric = conversionMetrics[key]
         const definition = conversionDefinitions.get(key)
         if (!metric || !definition) return []
+        const exactCalculation = currentMetricCalculation(key, Number(metric.weekValue || 0))
         const tooltip = key === 'dailyGoal' || key === 'periodGoal' || key === 'periodOperationalDays'
-          ? buildGoalPlanTooltip(definition, goalPlan)
-          : buildMetricTooltip(definition, definition.calculation, {
+          ? buildGoalPlanTooltip(definition, exactCalculation, goalPlan)
+          : buildMetricTooltip(definition, exactCalculation, {
             usage: `${definition.usage} Todas as métricas exibidas aqui usam o período filtrado.`,
           })
         return [{
@@ -2306,7 +2338,7 @@ export function AtendimentoModule() {
             ? `${formatNumberBR(Number(metric.weekValue || 0))} · ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(Number(metric.proportion || 0))}`
             : formatConversionMetricValue(key, Number(metric.weekValue || 0)),
           detail: metric.position || '',
-          calculation: currentMetricCalculation(key, Number(metric.weekValue || 0)),
+          calculation: currentMetricSubtitle(key),
           tooltip,
           icon: CONVERSION_METRIC_ICON_BY_KEY[key],
           tone: CONVERSION_METRIC_TONE_BY_KEY[key],
