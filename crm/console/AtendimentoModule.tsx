@@ -839,7 +839,7 @@ function MetricGroupContent({
     )
   }
 
-  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'grid-cols-2 md:grid-cols-4 xl:grid-cols-7' : 'gap-1.5'}`}>{nodes.map((node) => renderNode(node))}</div>
+  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'grid-cols-2 md:grid-cols-4' : 'gap-1.5'}`}>{nodes.map((node) => renderNode(node))}</div>
 }
 
 function MetricTile({
@@ -1566,7 +1566,7 @@ function ConversionDoctorBandsContent({
   const chartMarginLeft = 6
   const chartMarginBottom = 8
   const doctorCount = Math.max(chartDoctors.length, 1)
-  const yAxisWidth = isAggregate ? 46 : 112
+  const yAxisWidth = isAggregate ? 46 : 76
   const availablePlotWidth = Math.max(160, (chartWidth || 960) - yAxisWidth - chartMarginLeft - chartMarginRight)
   const doctorSlotWidth = availablePlotWidth / doctorCount
   const doctorAvatarRadius = Math.max(7, Math.min(36, doctorSlotWidth * 0.27))
@@ -1711,10 +1711,7 @@ function ConversionDoctorBandsContent({
 
     const badgeWidth = 20
     const badgeHeight = 18
-    // Reserve the left axis gutter for the metric icon, then keep the shortened
-    // Y-axis value to its left. This makes each icon share the exact vertical
-    // reference of its number without covering the plot.
-    const badgeX = x1 - badgeWidth - 6
+    const badgeX = x1 + 8
     const badgeY = badge.verticalPosition === 'above'
       ? y - badgeHeight - 5
       : badge.verticalPosition === 'below'
@@ -1777,7 +1774,7 @@ function ConversionDoctorBandsContent({
     if (![x2, y].every(Number.isFinite)) return <g />
 
     const badgeSize = 18
-    const badgeX = x2 - (badgeSize * 2) - 14
+    const badgeX = x2 - badgeSize - 8
     const badgeY = y - (badgeSize / 2)
     const BadgeIcon = badge.icon
     const activateGroupBadge = (event: React.SyntheticEvent<SVGGElement>) => {
@@ -1834,6 +1831,17 @@ function ConversionDoctorBandsContent({
   return (
     <div className="space-y-3 pt-0.5" data-testid="atendimento-conversion-distribution">
       <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-3">
+          {detailGroups.map((group) => (
+            <div key={group.key} className="min-w-0">
+              <MetricGroupContent
+                rows={group.rows}
+                hierarchy={group.hierarchy}
+                multiplierOptimization={optimization}
+                horizontal
+              />
+            </div>
+          ))}
+          <div className="my-3 border-t border-slate-800/80" />
           <div
             ref={chartHoverRef}
             className="relative"
@@ -1929,7 +1937,7 @@ function ConversionDoctorBandsContent({
                   width={yAxisWidth}
                   tickLine={false}
                   axisLine={false}
-                  tickMargin={isAggregate ? 8 : 30}
+                  tickMargin={8}
                   tick={{ fill: '#94a3b8', fontSize: 10 }}
                   tickFormatter={(value: number) => isAggregate ? formatNumberBR(Number(value || 0)) : formatCompactCurrencyBRL(Number(value || 0))}
                   domain={[0, yMax]}
@@ -2078,30 +2086,6 @@ function ConversionDoctorBandsContent({
               </div>
             , document.body) : null}
           </div>
-      </div>
-      <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-        {detailGroups.map((group) => (
-          <div key={group.key} className="min-w-0">
-            <div className="mb-2">
-              <MetricTooltip label={group.label} info={group.tooltip}>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 transition hover:text-slate-200 focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
-                  aria-label={`Detalhes de ${group.label}`}
-                >
-                  {group.label}
-                  <Info className="h-3 w-3 text-slate-500" />
-                </button>
-              </MetricTooltip>
-            </div>
-            <MetricGroupContent
-              rows={group.rows}
-              hierarchy={group.hierarchy}
-              multiplierOptimization={optimization}
-              horizontal
-            />
-          </div>
-        ))}
       </div>
     </div>
   )
@@ -2619,10 +2603,10 @@ export function AtendimentoModule() {
       { key: 'upperLimit' },
       { key: 'lowerLimit' },
       { key: 'cutLine' },
+      { key: 'interval', children: [{ key: 'standardDeviation' }, { key: 'intervalMultiplier' }] },
       { key: 'dailyGoal', children: [{ key: 'periodGoal' }, { key: 'periodOperationalDays' }, ...goalSegmentRows.map((row) => ({ key: row.key }))] },
       { key: 'average', children: [...averageDoctorRows.map((row) => ({ key: row.key })), { key: 'rankedDoctorTotal' }] },
       { key: 'median', children: medianDoctorRows.map((row) => ({ key: row.key })) },
-      { key: 'interval', children: [{ key: 'standardDeviation' }, { key: 'intervalMultiplier' }] },
     ]
     const distributionGroups = CONVERSION_DISTRIBUTION_DETAIL_GROUPS
       .map((group) => {
