@@ -2384,14 +2384,10 @@ export function AtendimentoModule() {
     const buildStatsHierarchy = (averageDoctorRows: AtendimentoMetricGroupRow[], medianDoctorRows: AtendimentoMetricGroupRow[], goalSegmentRows: AtendimentoMetricGroupRow[]): AtendimentoMetricHierarchyNode[] => [
       { key: 'upperLimit' },
       { key: 'lowerLimit' },
-      {
-        key: 'cutLine',
-        children: [
-          { key: 'dailyGoal', children: [{ key: 'periodGoal' }, { key: 'periodOperationalDays' }, ...goalSegmentRows.map((row) => ({ key: row.key }))] },
-          { key: 'average', children: [...averageDoctorRows.map((row) => ({ key: row.key })), { key: 'rankedDoctorTotal' }] },
-          { key: 'median', children: medianDoctorRows.map((row) => ({ key: row.key })) },
-        ],
-      },
+      { key: 'cutLine' },
+      { key: 'dailyGoal', children: [{ key: 'periodGoal' }, { key: 'periodOperationalDays' }, ...goalSegmentRows.map((row) => ({ key: row.key }))] },
+      { key: 'average', children: [...averageDoctorRows.map((row) => ({ key: row.key })), { key: 'rankedDoctorTotal' }] },
+      { key: 'median', children: medianDoctorRows.map((row) => ({ key: row.key })) },
       { key: 'interval', children: [{ key: 'standardDeviation' }, { key: 'intervalMultiplier' }] },
     ]
     const distributionGroups = CONVERSION_DISTRIBUTION_DETAIL_GROUPS
