@@ -122,6 +122,8 @@ test('Build Jobs rehydrates carousel card ordinals from a gateway receipt filena
   assert.match(source, /const mappedRef = fileToJob\.get\(normalizedFilename\)/);
   assert.match(source, /upload_key: safeString\(media\.role\) === 'carousel_card'/);
   assert.match(source, /target\[targetKey\] = \{/);
+  assert.match(source, /function isCurrentCarouselResumeContract\(row\)/);
+  assert.match(source, /formats\[0\] !== 'CAROUSEL'/);
 });
 
 test('accepts one five-card flexible carousel creative', () => {

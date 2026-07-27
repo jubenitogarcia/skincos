@@ -1531,6 +1531,37 @@ function isCurrentVideoOnlyResumeContract(row) {
     safeString(mainRule.description_label && mainRule.description_label.name) !== safeString(rewardedRule.description_label && rewardedRule.description_label.name));
 }
 
+function isCurrentCarouselResumeContract(row) {
+  const mediaMode = normalizeMediaMode(row && row.media_mode, row || {});
+  if (mediaMode !== 'carousel') return true;
+  const payload = asObject(row && row.creativePayload);
+  const story = asObject(payload.object_story_spec);
+  const feed = asObject(payload.asset_feed_spec);
+  const formats = safeArray(feed.ad_formats).map((value) => safeString(value).toUpperCase()).filter(Boolean);
+  const images = safeArray(feed.images);
+  const carousels = safeArray(feed.carousels);
+  const cards = safeArray(asObject(carousels[0]).child_attachments);
+  if (Object.keys(asObject(story.link_data)).length || formats.length !== 1 || formats[0] !== 'CAROUSEL' ||
+      images.length < 2 || images.length > 10 || carousels.length !== 1 || cards.length !== images.length ||
+      asObject(carousels[0]).multi_share_optimized !== false) return false;
+  const labelsFrom = (assets) => new Set(safeArray(assets).flatMap((asset) => safeArray(asset && asset.adlabels).map((label) => safeString(label && label.name))).filter(Boolean));
+  const imageLabels = labelsFrom(images);
+  const bodyLabels = labelsFrom(feed.bodies);
+  const titleLabels = labelsFrom(feed.titles);
+  const descriptionLabels = labelsFrom(feed.descriptions);
+  const linkLabels = labelsFrom(feed.link_urls);
+  const ctaLabels = labelsFrom(feed.call_to_actions);
+  return cards.every((card) => {
+    const child = asObject(card);
+    return imageLabels.has(safeString(asObject(child.image_label).name)) &&
+      bodyLabels.has(safeString(asObject(child.body_label).name)) &&
+      titleLabels.has(safeString(asObject(child.title_label).name)) &&
+      descriptionLabels.has(safeString(asObject(child.description_label).name)) &&
+      linkLabels.has(safeString(asObject(child.link_url_label).name)) &&
+      ctaLabels.has(safeString(asObject(child.call_to_action_type_label).name));
+  });
+}
+
 function persistedResumeJobs() {
   let restored = [];
   try { restored = $items('Restore Publish Groups') || []; } catch (error) { restored = []; }
@@ -1553,7 +1584,8 @@ const resumeJobs = persistedJobs.filter((job) => {
     (kind === 'website' || kind === 'whatsapp') &&
     Boolean(linkUrl) &&
     (kind !== 'whatsapp' || isWhatsAppHostname(linkUrl)) &&
-    isCurrentVideoOnlyResumeContract(row);
+    isCurrentVideoOnlyResumeContract(row) &&
+    isCurrentCarouselResumeContract(row);
 });
 if (persistedJobs.length && !resumeJobs.length && !assembledInputItems.length) {
   throw new Error('Build Jobs recusou resume_jobs incompativeis com o contrato de midia atual sem entradas suficientes para reconstruir com seguranca.');
