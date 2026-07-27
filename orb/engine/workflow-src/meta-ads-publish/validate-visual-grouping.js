@@ -155,7 +155,6 @@ if (missing.length || assignmentByRef.size !== manifestByRef.size) {
 const groupMediaModes = new Map();
 for (const groupKey of groupByKey.keys()) {
   const groupAssignments = [...assignmentByRef.values()].filter((entry) => entry.group_key === groupKey);
-  const roles = groupAssignments.map((entry) => entry.role);
   const declaredMode = groupByKey.get(groupKey)?.media_mode;
   const inferCarousel = version === '3' && !declaredMode &&
     groupAssignments.length >= 2 && groupAssignments.length <= 10 &&
@@ -166,8 +165,12 @@ for (const groupKey of groupByKey.keys()) {
     // omit the new v3 field; retain the intake sequence rather than falling
     // back to filename parsing or silently treating five cards as placements.
     groupAssignments.sort((left, right) => Number(manifestByRef.get(left.media_ref)?.ordinal || 0) - Number(manifestByRef.get(right.media_ref)?.ordinal || 0))
-      .forEach((entry, index) => { entry.carousel_card_index = index + 1; });
+      .forEach((entry, index) => {
+        entry.role = 'carousel_card';
+        entry.carousel_card_index = index + 1;
+      });
   }
+  const roles = groupAssignments.map((entry) => entry.role);
   const requiredRoles = carouselMode
     ? ['carousel_card']
     : version === '3' && declaredMode === 'mixed'

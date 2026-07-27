@@ -79,6 +79,31 @@ test('validates five ordered static images as one carousel group', () => {
   assert(output.every((item) => item.json.visual_grouping.media_mode === 'carousel'));
 });
 
+test('infers carousel card roles only after visual membership when v3 mode is omitted', () => {
+  const media = Array.from({ length: 5 }, (_, index) => ({
+    media_ref: `IMG_${String(index + 1).padStart(3, '0')}`,
+    media_type: 'image', source_item_index: index, source_file_id: `drive-${index + 1}`, ordinal: index + 1,
+  }));
+  const original = media.map((entry, index) => ({
+    json: { id: entry.source_file_id }, binary: { data: { mimeType: 'image/jpeg' } },
+  }));
+  const output = runCode('validate-visual-grouping.js', [{
+    json: { output: JSON.stringify({
+      groups: [{ group_key: 'VISUAL_GROUP_01', confidence: 0.95, visual_concept: 'Sequencia', evidence: ['mesma narrativa'], offer_fingerprint: offerFingerprint() }],
+      assignments: media.map((entry) => ({
+        media_ref: entry.media_ref, media_type: 'image', group_key: 'VISUAL_GROUP_01', ratio: '4x5', role: 'feed_image',
+        confidence: 0.95, evidence: ['mesma oferta e sequencia'],
+      })),
+    }) },
+  }], {
+    'Prepare Visual Grouping Batch': [{ json: { visual_grouping_batch_version: '3', media } }],
+    'Prepare Media Inventory': original,
+  });
+  assert.deepEqual(Array.from(output, (item) => item.json.visual_grouping.role), Array(5).fill('carousel_card'));
+  assert.deepEqual(Array.from(output, (item) => item.json.visual_grouping.carousel_card_index), [1, 2, 3, 4, 5]);
+  assert(output.every((item) => item.json.visual_grouping.carousel_card_order_source === 'intake_sequence_fallback_after_visual_membership'));
+});
+
 test('carousel upload plan requires every ordered image for every destination account', () => {
   const output = runCode('prepare-media-upload-plan.js', [{
     json: {
