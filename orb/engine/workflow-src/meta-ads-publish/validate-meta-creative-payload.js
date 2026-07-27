@@ -508,11 +508,16 @@ return $input.all().map((item) => {
   const adPayload = asObject(source.adPayload);
   assert(safeString(adPayload.name), 'ad_name_missing', {});
   const adStatus = safeString(adPayload.status).toUpperCase();
+  const calibrationMarker = safeString(source.calibration_marker).toUpperCase();
+  const expectedCalibrationMarker = isCarousel
+    ? '[TEST-CAROUSEL]'
+    : (isVideoOnly ? '[TEST-VIDEO-ONLY]' : '');
   const isPausedCalibration =
     source.calibration_mode === true &&
-    isVideoOnly &&
+    Boolean(expectedCalibrationMarker) &&
     safeString(source.action) === 'create_new' &&
-    safeString(adPayload.name).toUpperCase().startsWith('[TEST-VIDEO-ONLY]') &&
+    calibrationMarker === expectedCalibrationMarker &&
+    safeString(adPayload.name).toUpperCase().startsWith(expectedCalibrationMarker) &&
     safeString(source.desired_final_status).toUpperCase() === 'PAUSED' &&
     adStatus === 'PAUSED';
   assert(

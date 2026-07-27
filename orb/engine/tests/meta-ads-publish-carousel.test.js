@@ -129,7 +129,7 @@ test('Build Jobs rehydrates carousel card ordinals from a gateway receipt filena
   assert.match(source, /\[TEST-CAROUSEL\]/);
 });
 
-test('accepts one five-card flexible carousel creative', () => {
+test('accepts one five-card flexible carousel calibration as PAUSED', () => {
   const link = 'https://espacofacial.com/agendamento?unit=barrashoppingsul';
   const label = (kind, index) => ({ name: `${kind}_${index}` });
   const card = (index) => ({
@@ -144,9 +144,10 @@ test('accepts one five-card flexible carousel creative', () => {
       landing_page_url: link, scheduling_landing_page_url: link,
       offer_fingerprint: { replacement_eligible: false, status: 'unverified', tag: '' },
       offer_replacement_guard: { reason: 'offer_fingerprint_unverified' },
+      calibration_mode: true, calibration_marker: '[TEST-CAROUSEL]', desired_final_status: 'PAUSED',
       asset_ids: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`carousel_card_${index + 1}`, `drive-${index + 1}`])),
       creativePayload: {
-        name: 'Carousel test',
+        name: '[TEST-CAROUSEL] Carousel test',
         object_story_spec: { page_id: '456' },
         asset_feed_spec: {
           ad_formats: ['CAROUSEL'], optimization_type: 'PLACEMENT',
@@ -160,7 +161,7 @@ test('accepts one five-card flexible carousel creative', () => {
         },
         degrees_of_freedom_spec: { creative_features_spec: { image_touchups: { enroll_status: 'OPT_IN' } } },
       },
-      adPayload: { name: 'Carousel test', status: 'ACTIVE', adset_id: '789' },
+      adPayload: { name: '[TEST-CAROUSEL] Carousel test', status: 'PAUSED', adset_id: '789' },
       advantage_plus_requested_features: [],
     },
   }], { 'Restore Publish Groups': [] });
