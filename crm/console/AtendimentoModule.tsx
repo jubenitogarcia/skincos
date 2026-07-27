@@ -826,7 +826,7 @@ function MetricGroupContent({
     )
   }
 
-  const renderNode = (node: AtendimentoMetricHierarchyNode, depth = 0): React.ReactNode => {
+  const renderNode = (node: AtendimentoMetricHierarchyNode, depth = 0, index = 0): React.ReactNode => {
     const row = rowsByKey.get(node.key)
     if (!row) return null
     const children = (node.children || []).filter((child) => rowsByKey.has(child.key))
@@ -834,13 +834,13 @@ function MetricGroupContent({
       .map((child) => rowsByKey.get(child.key))
       .filter((child): child is AtendimentoMetricGroupRow => Boolean(child))
     return (
-      <div key={node.key} className="min-w-0">
+      <div key={node.key} className={`min-w-0 ${horizontal && nodes.length % 4 === 3 && index === nodes.length - 3 ? 'md:col-start-2' : ''}`}>
         {renderRow(row, depth > 0, componentRows)}
       </div>
     )
   }
 
-  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'mx-auto w-full max-w-5xl grid-cols-2 md:grid-cols-4' : 'gap-1.5'}`}>{nodes.map((node) => renderNode(node))}</div>
+  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'mx-auto w-full max-w-5xl grid-cols-2 md:grid-cols-4' : 'gap-1.5'}`}>{nodes.map((node, index) => renderNode(node, 0, index))}</div>
 }
 
 function MetricTile({
