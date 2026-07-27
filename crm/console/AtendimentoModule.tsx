@@ -834,13 +834,13 @@ function MetricGroupContent({
       .map((child) => rowsByKey.get(child.key))
       .filter((child): child is AtendimentoMetricGroupRow => Boolean(child))
     return (
-      <div key={node.key} className={`min-w-0 ${horizontal && nodes.length % 4 === 3 && index === nodes.length - 3 ? 'md:col-start-2' : ''}`}>
+      <div key={node.key} className={`min-w-0 ${horizontal && nodes.length === 7 ? (index < 4 ? 'md:col-span-3' : 'md:col-span-4') : ''}`}>
         {renderRow(row, depth > 0, componentRows)}
       </div>
     )
   }
 
-  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'mx-auto w-full max-w-5xl grid-cols-2 md:grid-cols-4' : 'gap-1.5'}`}>{nodes.map((node, index) => renderNode(node, 0, index))}</div>
+  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'mx-auto w-full max-w-5xl grid-cols-2 md:grid-cols-12' : 'gap-1.5'}`}>{nodes.map((node, index) => renderNode(node, 0, index))}</div>
 }
 
 function MetricTile({
