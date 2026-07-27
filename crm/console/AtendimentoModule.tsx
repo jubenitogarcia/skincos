@@ -216,6 +216,7 @@ type MetricTooltipSpec = {
     calculation?: string
     usage?: string
     avatarUrl?: string | null
+    isProfessional?: boolean
   }>
 }
 type ConversionGoalPlan = NonNullable<NonNullable<AtendimentoManagementConversionReport['doctorRanking']>['sections'][number]['goalPlan']>
@@ -476,7 +477,7 @@ function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
             <div key={`${detail.label}:${detail.value}`} className="rounded border border-slate-700/70 bg-slate-900/50 px-2 py-1.5">
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
-                  {presentation === 'doctors' ? (
+                  {presentation === 'doctors' && detail.isProfessional ? (
                     detail.avatarUrl ? (
                       <img
                         src={detail.avatarUrl}
@@ -760,6 +761,7 @@ function MetricGroupContent({
         calculation: component.tooltip?.calculation || component.calculation,
         usage: component.tooltip?.usage,
         avatarUrl: component.avatarUrl,
+        isProfessional: component.key.includes(':doctor:'),
       })),
     } : undefined
     const rowContent = (
