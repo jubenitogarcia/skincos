@@ -367,23 +367,49 @@ function validateAdvantagePlus(payload, source, hosts) {
   assert(Boolean(siteLinks.length) === Boolean(safeString(siteExtensions.enroll_status)), 'site_extensions_site_links_mismatch', {});
 }
 
-function validateCarouselStory(story, source, hosts, destinationKind) {
-  const linkData = asObject(story.link_data);
-  const cards = safeArray(linkData.child_attachments);
+function validateCarouselFeed(feed, story, source, hosts, destinationKind) {
+  assert(Object.keys(asObject(story.link_data)).length === 0, 'carousel_legacy_link_data_forbidden', {});
+  const formats = safeArray(feed.ad_formats).map((value) => safeString(value).toUpperCase()).filter(Boolean);
+  assert(formats.length === 1 && formats[0] === 'CAROUSEL', 'carousel_ad_format_invalid', { formats });
+  const carousels = safeArray(feed.carousels);
+  assert(carousels.length === 1, 'carousel_feed_count_invalid', { actual: carousels.length });
+  const carousel = asObject(carousels[0]);
+  const cards = safeArray(carousel.child_attachments);
   assert(cards.length >= 2 && cards.length <= 10, 'carousel_card_count_invalid', { actual: cards.length });
-  assert(linkData.multi_share_optimized === false, 'carousel_multi_share_optimized_must_be_false', {});
-  const primaryLink = validateUrl(linkData.link, hosts, 'carousel_primary_link');
-  const parentCta = asObject(linkData.call_to_action);
+  assert(carousel.multi_share_optimized === false, 'carousel_multi_share_optimized_must_be_false', {});
+  const images = safeArray(feed.images);
+  const bodies = safeArray(feed.bodies);
+  const titles = safeArray(feed.titles);
+  const descriptions = safeArray(feed.descriptions);
+  const links = safeArray(feed.link_urls);
+  assert(images.length === cards.length, 'carousel_image_count_invalid', { expected: cards.length, actual: images.length });
+  assert(bodies.length === cards.length, 'carousel_body_count_invalid', { expected: cards.length, actual: bodies.length });
+  assert(titles.length === cards.length, 'carousel_title_count_invalid', { expected: cards.length, actual: titles.length });
+  assert(descriptions.length === cards.length, 'carousel_description_count_invalid', { expected: cards.length, actual: descriptions.length });
+  assert(links.length === cards.length, 'carousel_link_count_invalid', { expected: cards.length, actual: links.length });
+  const imageLabels = labelNames(images);
+  const bodyLabels = labelNames(bodies);
+  const titleLabels = labelNames(titles);
+  const descriptionLabels = labelNames(descriptions);
+  const linkLabels = labelNames(links);
+  const callToActions = safeArray(feed.call_to_actions);
+  assert(callToActions.length === 1, 'carousel_cta_count_invalid', { actual: callToActions.length });
+  const ctaLabels = labelNames(callToActions);
   const expectedCta = destinationKind === 'whatsapp' ? WHATSAPP_CTA : REQUIRED_CTA;
+  const parentCta = asObject(callToActions[0]);
   assert(safeString(parentCta.type).toUpperCase() === expectedCta, 'carousel_parent_cta_invalid', { value: parentCta.type });
-  assert(validateUrl(asObject(parentCta.value).link, hosts, 'carousel_parent_cta_link') === primaryLink, 'carousel_parent_cta_link_mismatch', {});
+  const primaryLink = validateUrl(asObject(parentCta.value).link, hosts, 'carousel_parent_cta_link');
   for (const [index, card] of cards.entries()) {
-    assert(Boolean(safeString(card && card.image_hash) || safeString(card && card.picture)), 'carousel_card_image_missing', { index });
-    assert(validateUrl(card && card.link, hosts, `carousel_card_${index}_link`) === primaryLink, 'carousel_card_link_mismatch', { index });
-    assert(safeString(card && card.name), 'carousel_card_name_missing', { index });
-    const cta = asObject(card && card.call_to_action);
-    assert(safeString(cta.type).toUpperCase() === expectedCta, 'carousel_card_cta_invalid', { index, value: cta.type });
-    assert(validateUrl(asObject(cta.value).link, hosts, `carousel_card_${index}_cta_link`) === primaryLink, 'carousel_card_cta_link_mismatch', { index });
+    const child = asObject(card);
+    assert(imageLabels.has(safeString(asObject(child.image_label).name)), 'carousel_card_image_label_invalid', { index });
+    assert(bodyLabels.has(safeString(asObject(child.body_label).name)), 'carousel_card_body_label_invalid', { index });
+    assert(titleLabels.has(safeString(asObject(child.title_label).name)), 'carousel_card_title_label_invalid', { index });
+    assert(descriptionLabels.has(safeString(asObject(child.description_label).name)), 'carousel_card_description_label_invalid', { index });
+    const linkLabel = safeString(asObject(child.link_url_label).name);
+    assert(linkLabels.has(linkLabel), 'carousel_card_link_label_invalid', { index });
+    const linked = links.find((entry) => safeArray(entry && entry.adlabels).some((label) => safeString(label && label.name) === linkLabel));
+    assert(validateUrl(linked && linked.website_url, hosts, `carousel_card_${index}_link`) === primaryLink, 'carousel_card_link_mismatch', { index });
+    assert(ctaLabels.has(safeString(asObject(child.call_to_action_type_label).name)), 'carousel_card_cta_label_invalid', { index });
   }
   const expectedCards = Object.keys(asObject(source.asset_ids)).filter((key) => /^carousel_card_\d+$/.test(safeString(key))).length;
   assert(!expectedCards || expectedCards === cards.length, 'carousel_card_asset_count_mismatch', { expected: expectedCards, actual: cards.length });
@@ -418,13 +444,13 @@ return $input.all().map((item) => {
   const destinationKind = destinationContractKind(source);
   assert(safeString(payload.name), 'creative_name_missing', {});
   assert(safeString(story.page_id) === safeString(source.page_id), 'creative_page_id_mismatch', {});
-  assert(isCarousel ? Object.keys(feed).length === 0 : Object.keys(feed).length > 0, isCarousel ? 'carousel_asset_feed_spec_forbidden' : 'asset_feed_spec_required', {});
+  assert(Object.keys(feed).length > 0, 'asset_feed_spec_required', {});
   if (isMixedFlexible || isVideoOnly) {
     assert(Object.keys(asObject(story.video_data)).length === 0, 'asset_feed_video_object_story_spec_forbidden', {});
   }
 
   const images = safeArray(feed.images);
-  if (isCarousel) assert(images.length === 0, 'carousel_asset_feed_images_forbidden', { actual: images.length });
+  if (isCarousel) assert(images.length >= 2 && images.length <= 10, 'carousel_asset_feed_images_invalid', { actual: images.length });
   else if (isVideoOnly) assert(images.length === 0, 'video_only_images_forbidden', { actual: images.length });
   else assert(images.length >= MIN_IMAGES, 'image_count_invalid', { minimum: MIN_IMAGES, actual: images.length });
   for (const [index, image] of images.entries()) {
@@ -462,7 +488,7 @@ return $input.all().map((item) => {
 
   const ctas = safeArray(feed.call_to_action_types);
   const linkUrls = safeArray(feed.link_urls);
-  const carouselValidation = isCarousel ? validateCarouselStory(story, source, hosts, destinationKind) : null;
+  const carouselValidation = isCarousel ? validateCarouselFeed(feed, story, source, hosts, destinationKind) : null;
   if (!isCarousel) assert(linkUrls.length === 1, 'link_url_count_invalid', { actual: linkUrls.length });
   const primaryLink = isCarousel ? carouselValidation.primaryLink : validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
   const whatsappDestination = destinationKind === 'whatsapp';

@@ -2073,6 +2073,16 @@ for (const entry of jobEntries) {
 
     const imageLabels = orderedAssets.map((asset) => ({ name: asset.ratio === '2x1' ? 'banner_image' : asset.ratio === '9x16' ? 'vertical_image' : 'feed_image' }));
     const videoLabel = { name: 'vertical_video' };
+    // The destination campaign requires a flexible creative envelope. Carousel
+    // cards therefore live in asset_feed_spec.carousels (rather than a legacy
+    // object_story_spec.link_data payload), where each ordered card receives
+    // its own labels even if every image has the same aspect ratio.
+    const carouselImageLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName, 'carousel_image', index + 1));
+    const carouselBodyLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName, 'carousel_body', index + 1));
+    const carouselTitleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName, 'carousel_title', index + 1));
+    const carouselDescriptionLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName, 'carousel_description', index + 1));
+    const carouselLinkLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName, 'carousel_link', index + 1));
+    const carouselCtaLabel = createLabel(sourceAdName, 'carousel_cta', 1);
   const bodyRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'body_rule', index + 1));
   const titleRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'title_rule', index + 1));
   const descriptionRuleLabels = normalizedDescriptions.map((asset, index) => createLabel(sourceAdName, 'description_rule', index + 1));
@@ -2283,37 +2293,54 @@ for (const entry of jobEntries) {
           ...creativeRootExtras,
         });
 
-    // A carousel is a single physical creative. Unlike flexible placement
-    // assets, Graph models its ordered cards in link_data.child_attachments;
-    // preserving this order is what keeps five narrative images from becoming
-    // five single-image ads.
+    // A carousel is a single physical flexible creative. The target campaign
+    // rejects the legacy link_data path with flexible_creative_required, so
+    // Graph's asset-feed carousel representation is used instead. Ordering is
+    // explicitly held by carousels[0].child_attachments.
     const carouselCreativePayload = mediaMode === 'carousel' ? removeEmptyFields({
       name: finalAdName || sourceAdName,
       object_story_spec: {
         page_id: String(resolvedPageId),
         instagram_user_id: resolvedInstagramUserId ? String(resolvedInstagramUserId) : undefined,
-        link_data: {
-          link: primaryLinkUrl,
-          message: safeString(normalizedBodies[0] && normalizedBodies[0].text),
-          name: safeString(normalizedTitles[0] && normalizedTitles[0].text).slice(0, 80),
-          description: safeString(normalizedDescriptions[0] && normalizedDescriptions[0].text),
+      },
+      asset_feed_spec: {
+        ad_formats: ['CAROUSEL'],
+        optimization_type: 'PLACEMENT',
+        images: orderedAssets.map((asset, index) => removeEmptyFields({
+          hash: safeString(asset.hash) || undefined,
+          url: safeString(asset.hash) ? undefined : toHttps(asset.url),
+          adlabels: [carouselImageLabels[index]],
+        })),
+        bodies: orderedAssets.map((asset, index) => ({
+          text: safeString(normalizedBodies[index % normalizedBodies.length] && normalizedBodies[index % normalizedBodies.length].text),
+          adlabels: [carouselBodyLabels[index]],
+        })),
+        titles: orderedAssets.map((asset, index) => ({
+          text: safeString(normalizedTitles[index % normalizedTitles.length] && normalizedTitles[index % normalizedTitles.length].text).slice(0, 80),
+          adlabels: [carouselTitleLabels[index]],
+        })),
+        descriptions: orderedAssets.map((asset, index) => ({
+          text: safeString(normalizedDescriptions[index % normalizedDescriptions.length] && normalizedDescriptions[index % normalizedDescriptions.length].text),
+          adlabels: [carouselDescriptionLabels[index]],
+        })),
+        link_urls: orderedAssets.map((asset, index) => ({ website_url: primaryLinkUrl, adlabels: [carouselLinkLabels[index]] })),
+        call_to_actions: [{
+          type: ctaTypes[0] || DEFAULT_CTA_TYPE,
+          value: { link: primaryLinkUrl },
+          adlabels: [carouselCtaLabel],
+        }],
+        carousels: [{
+          adlabels: [createLabel(sourceAdName, 'carousel', 1)],
           multi_share_optimized: false,
-          call_to_action: {
-            type: ctaTypes[0] || DEFAULT_CTA_TYPE,
-            value: { link: primaryLinkUrl },
-          },
-          child_attachments: orderedAssets.map((asset, index) => removeEmptyFields({
-            link: primaryLinkUrl,
-            image_hash: safeString(asset.hash) || undefined,
-            picture: safeString(asset.hash) ? undefined : toHttps(asset.url),
-            name: safeString(normalizedTitles[index % normalizedTitles.length] && normalizedTitles[index % normalizedTitles.length].text).slice(0, 80),
-            description: safeString(normalizedDescriptions[index % normalizedDescriptions.length] && normalizedDescriptions[index % normalizedDescriptions.length].text),
-            call_to_action: {
-              type: ctaTypes[0] || DEFAULT_CTA_TYPE,
-              value: { link: primaryLinkUrl },
-            },
+          child_attachments: orderedAssets.map((asset, index) => ({
+            image_label: carouselImageLabels[index],
+            body_label: carouselBodyLabels[index],
+            title_label: carouselTitleLabels[index],
+            description_label: carouselDescriptionLabels[index],
+            link_url_label: carouselLinkLabels[index],
+            call_to_action_type_label: carouselCtaLabel,
           })),
-        },
+        }],
       },
       ...creativeRootExtras,
     }) : null;
@@ -2628,7 +2655,7 @@ for (const entry of jobEntries) {
             ? 'mixed_flexible_payload_prepared'
             : (useFlexibleCreative ? 'flexible_payload_prepared' : 'single_image_payload_prepared'))),
         creative_quality_requirements: {
-          require_asset_feed_spec: variant.media_variant === 'video_single' || (variant.media_variant !== 'carousel' && (action === 'replace_existing' || useFlexibleCreative)),
+          require_asset_feed_spec: variant.media_variant === 'carousel' || variant.media_variant === 'video_single' || (variant.media_variant !== 'carousel' && (action === 'replace_existing' || useFlexibleCreative)),
           min_images: variant.media_variant === 'carousel' ? carouselCards.length : (variant.media_variant === 'video_single' ? 0 : (action === 'replace_existing' || useFlexibleCreative ? 3 : 1)),
           min_videos: variant.media_variant === 'mixed_flexible' ? 1 : (variant.media_variant === 'video_single' ? 1 : 0),
           min_bodies: variant.media_variant === 'video_single' ? 5 : (action === 'replace_existing' || useFlexibleCreative ? 5 : 1),

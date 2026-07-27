@@ -124,11 +124,12 @@ test('Build Jobs rehydrates carousel card ordinals from a gateway receipt filena
   assert.match(source, /target\[targetKey\] = \{/);
 });
 
-test('accepts one five-card carousel creative and forbids an asset feed', () => {
+test('accepts one five-card flexible carousel creative', () => {
   const link = 'https://espacofacial.com/agendamento?unit=barrashoppingsul';
+  const label = (kind, index) => ({ name: `${kind}_${index}` });
   const card = (index) => ({
-    link, image_hash: `hash-${index}`, name: `Titulo ${index}`, description: `Descricao ${index}`,
-    call_to_action: { type: 'LEARN_MORE', value: { link } },
+    image_label: label('image', index), body_label: label('body', index), title_label: label('title', index),
+    description_label: label('description', index), link_url_label: label('link', index), call_to_action_type_label: label('cta', 1),
   });
   const output = runCode('validate-meta-creative-payload.js', [{
     json: {
@@ -141,13 +142,16 @@ test('accepts one five-card carousel creative and forbids an asset feed', () => 
       asset_ids: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`carousel_card_${index + 1}`, `drive-${index + 1}`])),
       creativePayload: {
         name: 'Carousel test',
-        object_story_spec: {
-          page_id: '456',
-          link_data: {
-            link, message: 'Mensagem', name: 'Titulo', description: 'Descricao', multi_share_optimized: false,
-            call_to_action: { type: 'LEARN_MORE', value: { link } },
-            child_attachments: Array.from({ length: 5 }, (_, index) => card(index + 1)),
-          },
+        object_story_spec: { page_id: '456' },
+        asset_feed_spec: {
+          ad_formats: ['CAROUSEL'], optimization_type: 'PLACEMENT',
+          images: Array.from({ length: 5 }, (_, index) => ({ hash: `hash-${index + 1}`, adlabels: [label('image', index + 1)] })),
+          bodies: Array.from({ length: 5 }, (_, index) => ({ text: `Mensagem ${index + 1}`, adlabels: [label('body', index + 1)] })),
+          titles: Array.from({ length: 5 }, (_, index) => ({ text: `Titulo ${index + 1}`, adlabels: [label('title', index + 1)] })),
+          descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `Descricao ${index + 1}`, adlabels: [label('description', index + 1)] })),
+          link_urls: Array.from({ length: 5 }, (_, index) => ({ website_url: link, adlabels: [label('link', index + 1)] })),
+          call_to_actions: [{ type: 'LEARN_MORE', value: { link }, adlabels: [label('cta', 1)] }],
+          carousels: [{ multi_share_optimized: false, adlabels: [label('carousel', 1)], child_attachments: Array.from({ length: 5 }, (_, index) => card(index + 1)) }],
         },
         degrees_of_freedom_spec: { creative_features_spec: { image_touchups: { enroll_status: 'OPT_IN' } } },
       },
