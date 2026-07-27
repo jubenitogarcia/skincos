@@ -2,6 +2,10 @@
 Description=Skincos Orb runtime
 After=network-online.target postgresql.service postgresql@16-main.service
 Wants=network-online.target postgresql.service postgresql@16-main.service
+# Direct `systemctl restart orb.service` is unsafe while an n8n publication is
+# serializing a provider result.  Use scripts/runtime/orb-safe-restart.sh,
+# which drains Livia first and performs the stop indirectly through a fence.
+RefuseManualStop=yes
 
 [Service]
 Type=simple

@@ -1,0 +1,12 @@
+[Unit]
+Description=Temporary fence for a controlled Skincos Orb restart
+# Starting this one-shot unit stops Orb indirectly.  That is intentional: the
+# production unit refuses direct manual stops so an accidental `systemctl
+# restart orb.service` cannot cut a publication in flight.
+Conflicts=orb.service
+Before=orb.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/true
