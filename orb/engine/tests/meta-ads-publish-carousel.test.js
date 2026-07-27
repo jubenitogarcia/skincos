@@ -132,7 +132,7 @@ test('accepts one five-card flexible carousel creative', () => {
   const label = (kind, index) => ({ name: `${kind}_${index}` });
   const card = (index) => ({
     image_label: label('image', index), body_label: label('body', index), title_label: label('title', index),
-    description_label: label('description', index), link_url_label: label('link', index), call_to_action_type_label: label('cta', 1),
+    description_label: label('description', index), link_url_label: label('link', index),
   });
   const output = runCode('validate-meta-creative-payload.js', [{
     json: {
@@ -154,7 +154,6 @@ test('accepts one five-card flexible carousel creative', () => {
           descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `Descricao ${index + 1}`, adlabels: [label('description', index + 1)] })),
           link_urls: Array.from({ length: 5 }, (_, index) => ({ website_url: link, adlabels: [label('link', index + 1)] })),
           call_to_action_types: ['LEARN_MORE'],
-          call_to_actions: [{ type: 'LEARN_MORE', value: { link }, adlabels: [label('cta', 1)] }],
           carousels: [{ multi_share_optimized: false, adlabels: [label('carousel', 1)], child_attachments: Array.from({ length: 5 }, (_, index) => card(index + 1)) }],
         },
         degrees_of_freedom_spec: { creative_features_spec: { image_touchups: { enroll_status: 'OPT_IN' } } },
@@ -165,4 +164,33 @@ test('accepts one five-card flexible carousel creative', () => {
   }], { 'Restore Publish Groups': [] });
   assert.equal(output[0].json.meta_creative_validation.carousel_card_count, 5);
   assert.equal(output[0].json.meta_creative_validation.media_variant, 'carousel');
+});
+
+test('rejects a Graph carousel readback with a dangling child CTA label', () => {
+  const label = (kind, index) => ({ name: `${kind}_${index}` });
+  const link = 'https://espacofacial.com/agendamento?unit=barrashoppingsul';
+  const feed = {
+    ad_formats: ['CAROUSEL'],
+    images: Array.from({ length: 5 }, (_, index) => ({ hash: `hash-${index + 1}`, adlabels: [label('image', index + 1)] })),
+    bodies: Array.from({ length: 5 }, (_, index) => ({ text: `Mensagem ${index + 1}`, adlabels: [label('body', index + 1)] })),
+    titles: Array.from({ length: 5 }, (_, index) => ({ text: `Titulo ${index + 1}`, adlabels: [label('title', index + 1)] })),
+    descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `Descricao ${index + 1}`, adlabels: [label('description', index + 1)] })),
+    link_urls: Array.from({ length: 5 }, (_, index) => ({ website_url: link, adlabels: [label('link', index + 1)] })),
+    call_to_action_types: ['LEARN_MORE'],
+    carousels: [{ multi_share_optimized: false, child_attachments: Array.from({ length: 5 }, (_, index) => ({
+      image_label: label('image', index + 1), body_label: label('body', index + 1), title_label: label('title', index + 1),
+      description_label: label('description', index + 1), link_url_label: label('link', index + 1),
+    })) }],
+  };
+  const source = { media_variant: 'carousel', creative_id: '123', destination_contract: { kind: 'website' },
+    asset_ids: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`carousel_card_${index + 1}`, `drive-${index + 1}`])),
+    advantage_plus_requested_features: [], advantage_plus_feature_groups: {}, advantage_plus_skipped_features: [], advantage_plus_site_links: [] };
+  const input = [{ json: { ok: true, operation: { status: 'completed', result: { id: '123', asset_feed_spec: feed, degrees_of_freedom_spec: { creative_features_spec: {} }, creative_sourcing_spec: {} } } } }];
+  const items = { 'Attach Creative Result': [{ json: source }], 'Validate Meta Placement Eligibility': [] };
+  const output = runCode('attach-advantage-plus-verification.js', input, items);
+  assert.equal(output[0].json.carousel_media_readback.status, 'verified');
+  const broken = JSON.parse(JSON.stringify(feed));
+  broken.carousels[0].child_attachments[0].call_to_action_type_label = label('cta', 1);
+  const brokenInput = [{ json: { ok: true, operation: { status: 'completed', result: { id: '123', asset_feed_spec: broken, degrees_of_freedom_spec: { creative_features_spec: {} }, creative_sourcing_spec: {} } } } }];
+  assert.throws(() => runCode('attach-advantage-plus-verification.js', brokenInput, items), /carousel_readback_card_labels_invalid/);
 });

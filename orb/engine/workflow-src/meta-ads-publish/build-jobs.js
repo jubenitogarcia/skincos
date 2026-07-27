@@ -1550,9 +1550,8 @@ function isCurrentCarouselResumeContract(row) {
   const titleLabels = labelsFrom(feed.titles);
   const descriptionLabels = labelsFrom(feed.descriptions);
   const linkLabels = labelsFrom(feed.link_urls);
-  const ctaLabels = labelsFrom(feed.call_to_actions);
   const ctaTypes = safeArray(feed.call_to_action_types).map((value) => safeString(value).toUpperCase()).filter(Boolean);
-  if (ctaTypes.length !== 1 || !ctaTypes[0]) return false;
+  if (ctaTypes.length !== 1 || !ctaTypes[0] || safeArray(feed.call_to_actions).length) return false;
   return cards.every((card) => {
     const child = asObject(card);
     return imageLabels.has(safeString(asObject(child.image_label).name)) &&
@@ -1560,7 +1559,7 @@ function isCurrentCarouselResumeContract(row) {
       titleLabels.has(safeString(asObject(child.title_label).name)) &&
       descriptionLabels.has(safeString(asObject(child.description_label).name)) &&
       linkLabels.has(safeString(asObject(child.link_url_label).name)) &&
-      ctaLabels.has(safeString(asObject(child.call_to_action_type_label).name));
+      !safeString(asObject(child.call_to_action_type_label).name);
   });
 }
 
@@ -2116,7 +2115,6 @@ for (const entry of jobEntries) {
     const carouselTitleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName, 'carousel_title', index + 1));
     const carouselDescriptionLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName, 'carousel_description', index + 1));
     const carouselLinkLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName, 'carousel_link', index + 1));
-    const carouselCtaLabel = createLabel(sourceAdName, 'carousel_cta', 1);
   const bodyRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'body_rule', index + 1));
   const titleRuleLabels = orderedAssets.map((asset, index) => createLabel(sourceAdName + '_' + asset.ratio, 'title_rule', index + 1));
   const descriptionRuleLabels = normalizedDescriptions.map((asset, index) => createLabel(sourceAdName, 'description_rule', index + 1));
@@ -2358,15 +2356,11 @@ for (const entry of jobEntries) {
           adlabels: [carouselDescriptionLabels[index]],
         })),
         link_urls: orderedAssets.map((asset, index) => ({ website_url: primaryLinkUrl, adlabels: [carouselLinkLabels[index]] })),
-        // The Meta gateway's CTA guard reads call_to_action_types, while the
-        // labelled carousel children require call_to_actions. Send the same
-        // single CTA in both supported asset-feed representations.
+        // CAROUSEL cards inherit the feed's single CTA type. Meta accepts the
+        // labelled content assets below but normalizes/removes call_to_actions
+        // on this endpoint; never leave a child CTA-label pointing to that
+        // removed asset or Ads Manager's preview cannot render the carousel.
         call_to_action_types: ctaTypes,
-        call_to_actions: [{
-          type: ctaTypes[0] || DEFAULT_CTA_TYPE,
-          value: { link: primaryLinkUrl },
-          adlabels: [carouselCtaLabel],
-        }],
         carousels: [{
           adlabels: [createLabel(sourceAdName, 'carousel', 1)],
           multi_share_optimized: false,
@@ -2376,7 +2370,6 @@ for (const entry of jobEntries) {
             title_label: carouselTitleLabels[index],
             description_label: carouselDescriptionLabels[index],
             link_url_label: carouselLinkLabels[index],
-            call_to_action_type_label: carouselCtaLabel,
           })),
         }],
       },
@@ -2681,7 +2674,7 @@ for (const entry of jobEntries) {
         creative_mode: variant.media_variant === 'video_single'
           ? 'video_single_asset_feed'
           : (variant.media_variant === 'carousel'
-            ? 'carousel_link_data'
+            ? 'carousel_asset_feed'
           : (variant.media_variant === 'mixed_flexible'
             ? 'mixed_flexible'
             : (action === 'replace_existing' || useFlexibleCreative ? 'flexible_required' : 'single_image'))),

@@ -158,6 +158,53 @@ function verifyVideoOnlyCreativeReadback(source, creative, placementItems) {
     aspect_ratio_semantics: 'single_uploaded_source_verified_9x16_no_video_crop_field_in_graph_schema',
   };
 }
+function verifyCarouselCreativeReadback(source, creative) {
+  if (text(source.media_variant) !== 'carousel') return { status: 'not_applicable' };
+  const feed = object(creative.asset_feed_spec);
+  const images = list(feed.images);
+  const bodies = list(feed.bodies);
+  const titles = list(feed.titles);
+  const descriptions = list(feed.descriptions);
+  const links = list(feed.link_urls);
+  const carousel = object(list(feed.carousels)[0]);
+  const cards = list(carousel.child_attachments);
+  const formats = list(feed.ad_formats).map((value) => text(value).toUpperCase()).filter(Boolean);
+  const expectedCards = Object.keys(object(source.asset_ids)).filter((key) => /^carousel_card_\d+$/.test(text(key))).length;
+  const imageLabels = labels(images);
+  const bodyLabels = labels(bodies);
+  const titleLabels = labels(titles);
+  const descriptionLabels = labels(descriptions);
+  const linkLabels = labels(links);
+  const expectedCta = text(object(source.destination_contract).kind).toLowerCase() === 'whatsapp' ? 'WHATSAPP_MESSAGE' : 'LEARN_MORE';
+  const ctaTypes = list(feed.call_to_action_types).map((value) => text(value).toUpperCase()).filter(Boolean);
+  const primaryLinks = new Set(links.map((entry) => text(entry && entry.website_url)).filter(Boolean));
+  const failures = [];
+  if (formats.length !== 1 || formats[0] !== 'CAROUSEL') failures.push('carousel_readback_ad_format_invalid');
+  if (list(feed.carousels).length !== 1 || carousel.multi_share_optimized !== false) failures.push('carousel_readback_container_invalid');
+  if (!expectedCards || cards.length !== expectedCards || cards.length < 2 || cards.length > 10) failures.push('carousel_readback_card_count_invalid');
+  if ([images, bodies, titles, descriptions, links].some((assets) => assets.length !== cards.length)) failures.push('carousel_readback_asset_count_invalid');
+  if (ctaTypes.length !== 1 || ctaTypes[0] !== expectedCta || list(feed.call_to_actions).length) failures.push('carousel_readback_cta_invalid');
+  if (primaryLinks.size !== 1) failures.push('carousel_readback_link_consistency_invalid');
+  for (const card of cards) {
+    const child = object(card);
+    if (!imageLabels.has(text(object(child.image_label).name)) ||
+      !bodyLabels.has(text(object(child.body_label).name)) ||
+      !titleLabels.has(text(object(child.title_label).name)) ||
+      !descriptionLabels.has(text(object(child.description_label).name)) ||
+      !linkLabels.has(text(object(child.link_url_label).name)) ||
+      text(object(child.call_to_action_type_label).name)) failures.push('carousel_readback_card_labels_invalid');
+  }
+  if (failures.length) throw new Error(`Carousel creative readback divergiu do contrato renderizavel: ${JSON.stringify({ creative_id: text(creative.id || source.creative_id), failures })}`);
+  return {
+    status: 'verified',
+    image_count: images.length,
+    card_count: cards.length,
+    title_count: titles.length,
+    description_count: descriptions.length,
+    CTA: ctaTypes[0],
+    child_cta_labels: 'absent_by_contract',
+  };
+}
 function updateFeatureGroup(groups, reportedOptIn, removedOrIneligible, notReported) {
   return list(groups).map((entry) => {
     const feature = text(entry && entry.api_key);
@@ -232,6 +279,7 @@ return $input.all().map((item, index) => {
   const creative = object(response.operation.result);
   const mixedMediaReadback = verifyMixedCreativeReadback(source, creative, placementItems);
   const videoOnlyMediaReadback = verifyVideoOnlyCreativeReadback(source, creative, placementItems);
+  const carouselMediaReadback = verifyCarouselCreativeReadback(source, creative);
   const features = object(object(creative.degrees_of_freedom_spec).creative_features_spec);
   const reported = Object.keys(features);
   const reportedOptIn = Object.entries(features)
@@ -250,6 +298,7 @@ return $input.all().map((item, index) => {
       creative_id: text(source.creative_id || creative.id),
       mixed_media_readback: mixedMediaReadback,
       video_only_media_readback: videoOnlyMediaReadback,
+      carousel_media_readback: carouselMediaReadback,
       advantage_plus_effective_report: buildEffectiveReport(
         source,
         reportedOptIn,

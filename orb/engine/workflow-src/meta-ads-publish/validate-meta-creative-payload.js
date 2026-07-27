@@ -392,15 +392,11 @@ function validateCarouselFeed(feed, story, source, hosts, destinationKind) {
   const titleLabels = labelNames(titles);
   const descriptionLabels = labelNames(descriptions);
   const linkLabels = labelNames(links);
-  const callToActions = safeArray(feed.call_to_actions);
-  assert(callToActions.length === 1, 'carousel_cta_count_invalid', { actual: callToActions.length });
-  const ctaLabels = labelNames(callToActions);
   const expectedCta = destinationKind === 'whatsapp' ? WHATSAPP_CTA : REQUIRED_CTA;
   const ctaTypes = safeArray(feed.call_to_action_types).map((value) => safeString(value).toUpperCase()).filter(Boolean);
   assert(ctaTypes.length === 1 && ctaTypes[0] === expectedCta, 'carousel_cta_types_invalid', { values: ctaTypes });
-  const parentCta = asObject(callToActions[0]);
-  assert(safeString(parentCta.type).toUpperCase() === expectedCta, 'carousel_parent_cta_invalid', { value: parentCta.type });
-  const primaryLink = validateUrl(asObject(parentCta.value).link, hosts, 'carousel_parent_cta_link');
+  assert(safeArray(feed.call_to_actions).length === 0, 'carousel_call_to_actions_forbidden', { actual: safeArray(feed.call_to_actions).length });
+  const primaryLink = validateUrl(links[0] && links[0].website_url, hosts, 'carousel_primary_link');
   for (const [index, card] of cards.entries()) {
     const child = asObject(card);
     assert(imageLabels.has(safeString(asObject(child.image_label).name)), 'carousel_card_image_label_invalid', { index });
@@ -411,7 +407,7 @@ function validateCarouselFeed(feed, story, source, hosts, destinationKind) {
     assert(linkLabels.has(linkLabel), 'carousel_card_link_label_invalid', { index });
     const linked = links.find((entry) => safeArray(entry && entry.adlabels).some((label) => safeString(label && label.name) === linkLabel));
     assert(validateUrl(linked && linked.website_url, hosts, `carousel_card_${index}_link`) === primaryLink, 'carousel_card_link_mismatch', { index });
-    assert(ctaLabels.has(safeString(asObject(child.call_to_action_type_label).name)), 'carousel_card_cta_label_invalid', { index });
+    assert(!safeString(asObject(child.call_to_action_type_label).name), 'carousel_card_cta_label_forbidden', { index });
   }
   const expectedCards = Object.keys(asObject(source.asset_ids)).filter((key) => /^carousel_card_\d+$/.test(safeString(key))).length;
   assert(!expectedCards || expectedCards === cards.length, 'carousel_card_asset_count_mismatch', { expected: expectedCards, actual: cards.length });
