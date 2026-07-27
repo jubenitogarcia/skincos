@@ -91,7 +91,7 @@ for (const rawGroup of groups) {
     throw new Error(`offer_fingerprint ausente ou invalido em ${key}.`);
   }
   const mediaMode = text(group.media_mode).toLowerCase();
-  if (version === '3' && !['static_only', 'carousel'].includes(mediaMode)) {
+  if (version === '3' && !['static_only', 'carousel', 'mixed', 'video_only'].includes(mediaMode)) {
     throw new Error(`media_mode visual invalido em ${key}: ${text(group.media_mode)}.`);
   }
   groupByKey.set(key, {
@@ -157,8 +157,13 @@ for (const groupKey of groupByKey.keys()) {
   const groupAssignments = [...assignmentByRef.values()].filter((entry) => entry.group_key === groupKey);
   const roles = groupAssignments.map((entry) => entry.role);
   const carouselMode = version === '3' && groupByKey.get(groupKey)?.media_mode === 'carousel';
+  const declaredMode = groupByKey.get(groupKey)?.media_mode;
   const requiredRoles = carouselMode
     ? ['carousel_card']
+    : version === '3' && declaredMode === 'mixed'
+      ? ['feed_image', 'banner_image', 'vertical_image', 'vertical_video']
+    : version === '3' && declaredMode === 'video_only'
+      ? ['vertical_video']
     : version === '2'
     ? (roles.length === 1 && roles[0] === 'vertical_video'
       ? ['vertical_video']
@@ -173,6 +178,10 @@ for (const groupKey of groupByKey.keys()) {
   }
   groupMediaModes.set(groupKey, carouselMode
     ? 'carousel'
+    : version === '3' && declaredMode === 'mixed'
+      ? 'mixed_group'
+    : version === '3' && declaredMode === 'video_only'
+      ? 'video_only'
     : version !== '2'
     ? 'static_group'
     : requiredRoles.length === 1 ? 'video_only' : 'mixed_group');

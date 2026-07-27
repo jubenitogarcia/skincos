@@ -25,10 +25,34 @@ function dimensionsOf(source, binaryData) {
   };
 }
 
-const inputItems = $input.all();
-if (!inputItems.length) throw new Error('Prepare Visual Grouping Batch recebeu zero midias.');
+const rawInputItems = $input.all();
+if (!rawInputItems.length) throw new Error('Prepare Visual Grouping Batch recebeu zero midias.');
 
-const anyVideo = inputItems.some((item) => {
+// A folder is a queue, not a batch forever. Keep an older unpublished asset
+// out of a newly delivered set when a clear temporal gap proves it belongs to
+// a previous intake. Deferred files stay untouched in Drive for their own
+// future batch; nothing is silently marked published or discarded.
+const COHORT_MAX_GAP_MS = 2 * 60 * 60 * 1000;
+const dated = rawInputItems.map((item, original_index) => ({
+  item,
+  original_index,
+  modified_ms: Date.parse(text(item?.json?.modifiedTime || item?.json?.modified_time || '')),
+}));
+const datedSorted = dated.slice().sort((left, right) => (Number.isFinite(right.modified_ms) ? right.modified_ms : -Infinity) - (Number.isFinite(left.modified_ms) ? left.modified_ms : -Infinity));
+const selectedEntries = [];
+let previousModified = null;
+for (const entry of datedSorted) {
+  if (!Number.isFinite(entry.modified_ms)) { selectedEntries.push(entry); continue; }
+  if (previousModified !== null && previousModified - entry.modified_ms > COHORT_MAX_GAP_MS) break;
+  selectedEntries.push(entry);
+  previousModified = entry.modified_ms;
+}
+const selectedIndexes = new Set(selectedEntries.map((entry) => entry.original_index));
+const inputEntries = dated.filter((entry) => selectedIndexes.has(entry.original_index));
+const deferredEntries = dated.filter((entry) => !selectedIndexes.has(entry.original_index));
+if (!inputEntries.length) throw new Error('Prepare Visual Grouping Batch nao encontrou midias no coorte atual.');
+
+const anyVideo = inputEntries.some(({ item }) => {
   const source = item?.json || {};
   return mediaTypeOf(source, item?.binary?.data) === 'video';
 });
@@ -36,12 +60,14 @@ const anyVideo = inputItems.some((item) => {
 // they are placement variants or an ordered story. Version 3 makes that
 // decision explicit; the old three-image and mixed-media contracts remain
 // unchanged.
-const version = anyVideo ? '2' : inputItems.length >= 4 ? '3' : '1';
+const version = inputEntries.length >= 4 ? '3' : anyVideo ? '2' : '1';
 const media = [];
 const binary = {};
 const seenDriveIds = new Set();
 
-for (const [itemIndex, item] of inputItems.entries()) {
+for (const [batchIndex, entryWithIndex] of inputEntries.entries()) {
+  const item = entryWithIndex.item;
+  const itemIndex = entryWithIndex.original_index;
   const source = item?.json || {};
   const driveId = text(source.id || source.drive_id);
   const data = item?.binary?.data;
@@ -62,7 +88,7 @@ for (const [itemIndex, item] of inputItems.entries()) {
   }
 
   seenDriveIds.add(driveId);
-  const ordinal = media.length + 1;
+  const ordinal = batchIndex + 1;
   const mediaRef = version === '2'
     ? `MEDIA_${String(ordinal).padStart(3, '0')}`
     : `IMG_${String(ordinal).padStart(3, '0')}`;
@@ -98,11 +124,13 @@ return [{
         ? 'static_placement_or_carousel'
         : 'legacy_three_images',
     input_count: media.length,
+    deferred_media_count: deferredEntries.length,
+    deferred_media_reason: deferredEntries.length ? 'outside_current_drive_intake_cohort' : '',
     contains_video: anyVideo,
     required_roles: version === '2'
       ? ['feed_image', 'banner_image', 'vertical_image', 'vertical_video']
       : version === '3'
-        ? ['feed_image', 'banner_image', 'vertical_image', 'carousel_card']
+        ? ['feed_image', 'banner_image', 'vertical_image', 'vertical_video', 'carousel_card']
         : ['feed', 'banner', 'stories'],
     media,
     images: version === '1' ? media : undefined,

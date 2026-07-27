@@ -14,16 +14,19 @@ if (!agent) throw new Error('Visual Grouping Agent not found.');
 
 const carouselPrompt = `
 
-Contrato adicional v3 para lote estático: quando duas a dez imagens contam a
+Contrato adicional v3: quando duas a dez imagens contam a
 mesma narrativa em sequência (por exemplo, cards de uma oferta), defina o
 grupo como media_mode="carousel" e atribua todas como role="carousel_card".
 Informe carousel_card_index inteiro e contínuo de 1 até N na ordem narrativa
 que aparece visualmente. Não use nomes, IDs ou ordem do Drive. Não classifique
 como carousel se forem as três variações de posicionamento da mesma arte; nesse
 caso use media_mode="static_only" e os papéis feed/banner/stories. Em v3 cada
-grupo deve devolver media_mode. Um carousel não pode conter vídeo, nem cards
-duplicados, e precisa de 2 a 10 imagens. Ambiguidade ou confiança abaixo de
-0,75 deve bloquear o lote.`;
+grupo deve obrigatoriamente devolver media_mode: "carousel", "static_only",
+"mixed" ou "video_only". Para carousel, carousel_card_index é obrigatório em
+cada assignment; para mixed/video_only, preserve os papéis de mídia vertical
+do contrato v2. Um carousel não pode conter vídeo, nem cards duplicados, e
+precisa de 2 a 10 imagens. Ambiguidade ou confiança abaixo de 0,75 deve
+bloquear o lote.`;
 
 agent.parameters = agent.parameters || {};
 agent.parameters.text = `${String(agent.parameters.text || '').trim()}${carouselPrompt}`;
