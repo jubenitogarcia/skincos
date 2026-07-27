@@ -591,7 +591,7 @@ function ConversionMultiplierDetails({
                     <div className="space-y-1.5">
                       <p>k regula a largura simétrica das faixas em torno da linha de corte: limite inferior = corte − desvio padrão × k; limite superior = corte + desvio padrão × k.</p>
                       <p>A curva avalia cada intervalo que muda a classificação dos doutores e escolhe o platô com a distribuição mais homogênea entre quatro níveis. O desempate preserva o k anterior quando ele ainda pertence ao platô ótimo.</p>
-                      <p className="text-slate-400">Faixa configurada para esta análise: k de {formatK(optimization.intervalMultiplierMin, 2)} a {formatK(optimization.intervalMultiplierMax, 2)}. O limite é uma política versionada do backend; alterar a faixa requer validação da regra, não uma edição visual.</p>
+                      <p className="text-slate-400">Faixa avaliada nesta análise: k de {formatK(optimization.intervalMultiplierMin, 2)} a {formatK(optimization.intervalMultiplierMax, 2)}. O teto é calculado no backend por linha de corte ÷ desvio padrão, garantindo que desvio padrão × k nunca ultrapasse a linha de corte.</p>
                       {calculationBasis}
                     </div>
                   )}
@@ -671,17 +671,23 @@ function ConversionMultiplierDetails({
                 const proportion = selectedTotal > 0 ? group.count / selectedTotal : 0
                 const GroupIcon = group.icon
                 return (
-                  <TooltipLabel key={group.key} label={group.label} description={`${group.levels.map((level) => conversionLevelVisual(level).label).join(' + ')}: ${formatNumberBR(group.count)} de ${formatNumberBR(selectedTotal)} doutores (${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(proportion)}).`}>
+                  <TooltipLabel key={group.key} label={group.label} description={`${group.label}: ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(proportion)}. ${group.levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(selectedCounts[`level${level}` as keyof typeof selectedCounts])}/${formatNumberBR(selectedTotal)}`).join(' · ')}.`}>
                     <span className="cursor-help rounded-lg border border-slate-800 bg-slate-900/45 px-2 py-1.5">
-                      <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500"><GroupIcon className="h-3 w-3" aria-hidden="true" />{group.label}</span>
-                      <span className={`flex items-center gap-1.5 ${group.tone}`} data-testid={`atendimento-multiplier-group-${group.key}-levels`} aria-label={`${group.levels.map((level) => conversionLevelVisual(level).label).join(' e ')} · ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}`}>
-                        <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-                          {group.levels.map((level) => {
-                            const LevelIcon = CONVERSION_METRIC_ICON_BY_KEY[`level${level}` as ConversionMetricKey]
-                            return <span key={level} className="inline-flex h-4 w-4 items-center justify-center rounded-md border border-current/30 bg-slate-950/35"><LevelIcon className="h-2.5 w-2.5" /></span>
-                          })}
-                        </span>
-                        <span className="text-[11px] font-semibold tabular-nums">{formatNumberBR(group.count)}/{formatNumberBR(selectedTotal)} · {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}</span>
+                      <span className={`flex items-center gap-1 ${group.tone} text-[11px] font-semibold`}>
+                        <GroupIcon className="h-3 w-3" aria-hidden="true" />
+                        <span>{group.label}: {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}</span>
+                      </span>
+                      <span className="mt-1 grid gap-0.5" data-testid={`atendimento-multiplier-group-${group.key}-levels`} aria-label={`${group.label}: ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}; ${group.levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(selectedCounts[`level${level}` as keyof typeof selectedCounts])}/${formatNumberBR(selectedTotal)}`).join('; ')}`}>
+                        {group.levels.map((level) => {
+                          const LevelIcon = CONVERSION_METRIC_ICON_BY_KEY[`level${level}` as ConversionMetricKey]
+                          const levelCount = selectedCounts[`level${level}` as keyof typeof selectedCounts]
+                          return (
+                            <span key={level} className={`flex items-center gap-1 ${group.tone} text-[10px] tabular-nums`}>
+                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-md border border-current/30 bg-slate-950/35"><LevelIcon className="h-2.5 w-2.5" /></span>
+                              <span>{conversionLevelVisual(level).label}: {formatNumberBR(levelCount)}/{formatNumberBR(selectedTotal)}</span>
+                            </span>
+                          )
+                        })}
                       </span>
                     </span>
                   </TooltipLabel>
