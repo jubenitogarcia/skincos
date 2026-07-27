@@ -208,12 +208,14 @@ type MetricTooltipSpec = {
   what: string
   calculation: string
   usage: string
+  detailPresentation?: 'compact' | 'doctors' | 'interval'
   details?: Array<{
     label: string
     value: string
     what?: string
     calculation?: string
     usage?: string
+    avatarUrl?: string | null
   }>
 }
 type ConversionGoalPlan = NonNullable<NonNullable<AtendimentoManagementConversionReport['doctorRanking']>['sections'][number]['goalPlan']>
@@ -465,30 +467,48 @@ function metricProgressClass(tone: AtendimentoMetricTone) {
 }
 
 function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
+  if (info.details?.length) {
+    const presentation = info.detailPresentation || 'compact'
+    return (
+      <div className="space-y-2 text-left">
+        <div className="max-h-[22rem] space-y-1.5 overflow-y-auto pr-1">
+          {info.details.map((detail) => (
+            <div key={`${detail.label}:${detail.value}`} className="rounded border border-slate-700/70 bg-slate-900/50 px-2 py-1.5">
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  {presentation === 'doctors' ? (
+                    detail.avatarUrl ? (
+                      <img
+                        src={detail.avatarUrl}
+                        alt=""
+                        className="h-6 w-6 shrink-0 rounded-full border border-slate-600/90 object-cover"
+                        onError={(event) => { event.currentTarget.style.display = 'none' }}
+                      />
+                    ) : (
+                      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-600/90 bg-slate-800 text-[9px] font-semibold text-slate-200">
+                        {detail.label.slice(0, 1)}
+                      </span>
+                    )
+                  ) : null}
+                  <span className="min-w-0 truncate text-slate-300">{detail.label}</span>
+                </div>
+                <span className="shrink-0 font-semibold tabular-nums text-slate-100">{detail.value}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        {presentation === 'interval' ? (
+          <p className="border-t border-slate-700/80 pt-2 text-[10px] leading-snug text-slate-400">
+            Juntos, esses componentes definem a largura das faixas: desvio padrão × multiplicador. O multiplicador é escolhido pela homogeneidade do período.
+          </p>
+        ) : null}
+      </div>
+    )
+  }
   return (
     <div className="space-y-1 text-left">
       <div><span className="font-semibold text-slate-100">O que é:</span> {info.what}</div>
-      {info.details?.length ? (
-        <div>
-          <div><span className="font-semibold text-slate-100">Cálculo da métrica:</span> {info.calculation}</div>
-          <span className="font-semibold text-slate-100">Componentes:</span>
-          <div className="mt-1 max-h-[22rem] space-y-2 overflow-y-auto pr-1">
-            {info.details.map((detail) => (
-              <div key={`${detail.label}:${detail.value}`} className="rounded border border-slate-700/70 bg-slate-900/50 px-2 py-1.5">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-slate-300">{detail.label}</span>
-                  <span className="shrink-0 font-semibold tabular-nums text-slate-100">{detail.value}</span>
-                </div>
-                {detail.what ? <div className="mt-1 text-[10px] leading-snug text-slate-400"><span className="font-semibold text-slate-300">O que é:</span> {detail.what}</div> : null}
-                {detail.calculation ? <div className="mt-1 text-[10px] leading-snug text-slate-500"><span className="font-semibold text-slate-300">Cálculo:</span> {detail.calculation}</div> : null}
-                {detail.usage ? <div className="mt-1 text-[10px] leading-snug text-slate-500"><span className="font-semibold text-slate-300">Uso:</span> {detail.usage}</div> : null}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div><span className="font-semibold text-slate-100">Cálculo:</span> {info.calculation}</div>
-      )}
+      <div><span className="font-semibold text-slate-100">Cálculo:</span> {info.calculation}</div>
       <div><span className="font-semibold text-slate-100">Uso:</span> {info.usage}</div>
     </div>
   )
@@ -723,16 +743,23 @@ function MetricGroupContent({
   const renderRow = (row: AtendimentoMetricGroupRow, isChild = false, componentRows: AtendimentoMetricGroupRow[] = []) => {
     const RowIcon = row.icon
     const isDetail = row.presentation === 'detail'
+    const detailPresentation = row.key === 'average' || row.key === 'median'
+      ? 'doctors'
+      : row.key === 'interval'
+        ? 'interval'
+        : 'compact'
     const componentTooltip: MetricTooltipSpec | undefined = componentRows.length ? {
       what: `Componentes usados para calcular ${row.label}.`,
       calculation: row.tooltip?.calculation || row.calculation || 'Confira os valores atuais de cada insumo abaixo.',
       usage: 'Clique no subtítulo novamente para manter esta conferência aberta.',
+      detailPresentation,
       details: componentRows.map((component) => ({
         label: component.label,
         value: component.value,
         what: component.tooltip?.what,
         calculation: component.tooltip?.calculation || component.calculation,
         usage: component.tooltip?.usage,
+        avatarUrl: component.avatarUrl,
       })),
     } : undefined
     const rowContent = (
@@ -767,7 +794,7 @@ function MetricGroupContent({
         {row.calculation ? (
           <div className="ml-7 mt-0.5 min-w-0 text-[9px] leading-snug text-slate-500">
             {componentTooltip ? (
-              <MetricTooltip label={`Componentes de ${row.label}`} info={componentTooltip} contentClassName="max-w-[30rem]">
+              <MetricTooltip label={`Componentes de ${row.label}`} info={componentTooltip} contentClassName={detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'max-w-[22rem]'}>
                 <div className="inline-flex max-w-full cursor-help rounded-sm px-0.5 transition hover:bg-slate-800/70 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60">
                   {row.calculation.split('=')[0].trim()}
                 </div>
