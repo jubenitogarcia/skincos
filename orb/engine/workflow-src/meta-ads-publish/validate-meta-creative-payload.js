@@ -396,6 +396,12 @@ function validateCarouselFeed(feed, story, source, hosts, destinationKind) {
   const ctaTypes = safeArray(feed.call_to_action_types).map((value) => safeString(value).toUpperCase()).filter(Boolean);
   assert(ctaTypes.length === 1 && ctaTypes[0] === expectedCta, 'carousel_cta_types_invalid', { values: ctaTypes });
   assert(safeArray(feed.call_to_actions).length === 0, 'carousel_call_to_actions_forbidden', { actual: safeArray(feed.call_to_actions).length });
+  const additionalData = asObject(feed.additional_data);
+  assert(additionalData.multi_share_end_card === false, 'carousel_multi_share_end_card_must_be_false', {});
+  assert(additionalData.is_click_to_message === (destinationKind === 'whatsapp'), 'carousel_click_to_message_flag_invalid', {
+    destination_kind: destinationKind,
+    actual: additionalData.is_click_to_message,
+  });
   const primaryLink = validateUrl(links[0] && links[0].website_url, hosts, 'carousel_primary_link');
   for (const [index, card] of cards.entries()) {
     const child = asObject(card);

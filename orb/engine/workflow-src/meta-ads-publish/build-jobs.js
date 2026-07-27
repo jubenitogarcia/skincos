@@ -2038,6 +2038,27 @@ for (const entry of jobEntries) {
       continue;
     }
     const usesWhatsAppDestination = destinationContract.kind === 'whatsapp';
+    const carouselNativeAdsetId = safeString(destinationMeta.carousel_native_adset_id || gatewayConfig && gatewayConfig.carousel_native_adset_id);
+    const carouselNativeVerified = destinationMeta.carousel_native_adset_verified === true || gatewayConfig && gatewayConfig.carousel_native_adset_verified === true;
+    if (mediaMode === 'carousel' && (!carouselNativeAdsetId || !carouselNativeVerified)) {
+      outputs.push({
+        json: {
+          error: 'O conjunto de anuncios atual exige criativo flexivel e nao renderiza o contrato de carrossel no Ads Manager; lote bloqueado antes de qualquer mutacao Meta.',
+          upstream_node: 'Build Jobs',
+          upstream_error: 'carousel_requires_verified_native_adset',
+          debug: {
+            job_key: safeString(job.job_key),
+            destination_group: safeString(destinationMeta.destination_group),
+            current_destination_adset_id: safeString(destinationMeta.destination_adset_id),
+            carousel_native_adset_id_present: Boolean(carouselNativeAdsetId),
+            carousel_native_adset_verified: carouselNativeVerified,
+            required_configuration: ['carousel_native_adset_id', 'carousel_native_adset_verified=true'],
+            observed_graph_errors: ['flexible_creative_required', '100/1443048'],
+          },
+        },
+      });
+      continue;
+    }
     const ctaTypes = [usesWhatsAppDestination ? WHATSAPP_CTA_TYPE : DEFAULT_CTA_TYPE];
     const requestedRawSiteLinks = safeArray(overrides.site_links || overrides.siteLinks || ai.site_links || ai.siteLinks);
     const allowedLinkHosts = safeArray(destinationMeta.allowed_link_hosts || gatewayConfig && gatewayConfig.allowed_link_hosts);
@@ -2330,33 +2351,25 @@ for (const entry of jobEntries) {
           ...creativeRootExtras,
         });
 
-    // The production contract remains the accepted flexible asset feed. A
-    // paused [TEST-CAROUSEL] run is intentionally rendered through the native
-    // carousel story contract so Ads Manager can prove the actual card UI
-    // before this format is promoted to commercial traffic.
-    const carouselUsesLegacyLinkData = mediaMode === 'carousel' && calibrationMode;
+    // The destination sets currently require FLEXIBLE creatives. A native
+    // `object_story_spec.link_data` carousel is rejected with
+    // `flexible_creative_required`, and a hybrid native+asset-feed probe is
+    // rejected with Graph 100/1443048. Production therefore stays on the
+    // flexible feed only; Build Jobs blocks it earlier unless the Token Vault
+    // names a separately verified native-carousel ad set for the destination.
     const carouselCreativePayload = mediaMode === 'carousel' ? removeEmptyFields({
       name: finalAdName || sourceAdName,
       object_story_spec: {
         page_id: String(resolvedPageId),
         instagram_user_id: resolvedInstagramUserId ? String(resolvedInstagramUserId) : undefined,
-        link_data: carouselUsesLegacyLinkData ? {
-          link: primaryLinkUrl,
-          message: safeString(normalizedBodies[0] && normalizedBodies[0].text),
-          call_to_action: { type: ctaTypes[0] || DEFAULT_CTA_TYPE, value: { link: primaryLinkUrl } },
-          multi_share_optimized: false,
-          multi_share_end_card: false,
-          child_attachments: orderedAssets.map((asset, index) => removeEmptyFields({
-            link: primaryLinkUrl,
-            image_hash: safeString(asset.hash),
-            name: safeString(normalizedTitles[index % normalizedTitles.length] && normalizedTitles[index % normalizedTitles.length].text).slice(0, 80),
-            description: safeString(normalizedDescriptions[index % normalizedDescriptions.length] && normalizedDescriptions[index % normalizedDescriptions.length].text),
-          })),
-        } : undefined,
       },
-      asset_feed_spec: carouselUsesLegacyLinkData ? undefined : {
+      asset_feed_spec: {
         ad_formats: ['CAROUSEL'],
         optimization_type: 'PLACEMENT',
+        additional_data: {
+          multi_share_end_card: false,
+          is_click_to_message: usesWhatsAppDestination,
+        },
         images: orderedAssets.map((asset, index) => removeEmptyFields({
           hash: safeString(asset.hash) || undefined,
           url: safeString(asset.hash) ? undefined : toHttps(asset.url),
@@ -2466,7 +2479,7 @@ for (const entry of jobEntries) {
         media_variant: 'carousel',
         name_suffix: '',
         creativePayload: carouselCreativePayload,
-        carousel_render_contract: carouselUsesLegacyLinkData ? 'legacy_link_data' : 'asset_feed',
+        carousel_render_contract: 'asset_feed',
         assetIds: Object.fromEntries(carouselCards.map((card) => [`carousel_card_${card.carousel_card_index}`, safeString(card.id)])),
         assetNames: Object.fromEntries(carouselCards.map((card) => [`carousel_card_${card.carousel_card_index}`, safeString(card.original_name || card.name)])),
         assetHashes: Object.fromEntries(orderedAssets.map((asset, index) => [`carousel_card_${index + 1}`, safeString(asset.hash)])),

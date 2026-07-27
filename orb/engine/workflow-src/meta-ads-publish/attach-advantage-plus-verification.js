@@ -194,12 +194,16 @@ function verifyCarouselCreativeReadback(source, creative) {
   const linkLabels = labels(links);
   const ctaTypes = list(feed.call_to_action_types).map((value) => text(value).toUpperCase()).filter(Boolean);
   const primaryLinks = new Set(links.map((entry) => text(entry && entry.website_url)).filter(Boolean));
+  const additionalData = object(feed.additional_data);
   const failures = [];
   if (formats.length !== 1 || formats[0] !== 'CAROUSEL') failures.push('carousel_readback_ad_format_invalid');
   if (list(feed.carousels).length !== 1 || carousel.multi_share_optimized !== false) failures.push('carousel_readback_container_invalid');
   if (!expectedCards || cards.length !== expectedCards || cards.length < 2 || cards.length > 10) failures.push('carousel_readback_card_count_invalid');
   if ([images, bodies, titles, descriptions, links].some((assets) => assets.length !== cards.length)) failures.push('carousel_readback_asset_count_invalid');
   if (ctaTypes.length !== 1 || ctaTypes[0] !== expectedCta || list(feed.call_to_actions).length) failures.push('carousel_readback_cta_invalid');
+  if (additionalData.multi_share_end_card !== false || additionalData.is_click_to_message !== (expectedCta === 'WHATSAPP_MESSAGE')) {
+    failures.push('carousel_readback_click_to_message_invalid');
+  }
   if (primaryLinks.size !== 1) failures.push('carousel_readback_link_consistency_invalid');
   for (const card of cards) {
     const child = object(card);

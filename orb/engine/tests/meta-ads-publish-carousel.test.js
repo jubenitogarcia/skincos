@@ -150,6 +150,8 @@ test('Build Jobs rehydrates carousel card ordinals from a gateway receipt filena
   assert.match(source, /const ctaTypes = safeArray\(feed\.call_to_action_types\)/);
   assert.match(source, /\['video_only', 'carousel'\]\.includes\(mediaMode\)/);
   assert.match(source, /\[TEST-CAROUSEL\]/);
+  assert.match(source, /carousel_requires_verified_native_adset/);
+  assert.match(source, /carousel_native_adset_verified/);
 });
 
 test('accepts one five-card flexible carousel calibration as PAUSED', () => {
@@ -173,7 +175,7 @@ test('accepts one five-card flexible carousel calibration as PAUSED', () => {
         name: '[TEST-CAROUSEL] Carousel test',
         object_story_spec: { page_id: '456' },
         asset_feed_spec: {
-          ad_formats: ['CAROUSEL'], optimization_type: 'PLACEMENT',
+          ad_formats: ['CAROUSEL'], optimization_type: 'PLACEMENT', additional_data: { multi_share_end_card: false, is_click_to_message: false },
           images: Array.from({ length: 5 }, (_, index) => ({ hash: `hash-${index + 1}`, adlabels: [label('image', index + 1)] })),
           bodies: Array.from({ length: 5 }, (_, index) => ({ text: `Mensagem ${index + 1}`, adlabels: [label('body', index + 1)] })),
           titles: Array.from({ length: 5 }, (_, index) => ({ text: `Titulo ${index + 1}`, adlabels: [label('title', index + 1)] })),
@@ -219,6 +221,7 @@ test('rejects a Graph carousel readback with a dangling child CTA label', () => 
   const link = 'https://espacofacial.com/agendamento?unit=barrashoppingsul';
   const feed = {
     ad_formats: ['CAROUSEL'],
+    additional_data: { multi_share_end_card: false, is_click_to_message: false },
     images: Array.from({ length: 5 }, (_, index) => ({ hash: `hash-${index + 1}`, adlabels: [label('image', index + 1)] })),
     bodies: Array.from({ length: 5 }, (_, index) => ({ text: `Mensagem ${index + 1}`, adlabels: [label('body', index + 1)] })),
     titles: Array.from({ length: 5 }, (_, index) => ({ text: `Titulo ${index + 1}`, adlabels: [label('title', index + 1)] })),
