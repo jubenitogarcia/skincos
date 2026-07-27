@@ -49,6 +49,10 @@ function configRow(id, unit, rowNumber) {
         adset_id: String(323456780 + rowNumber),
         page_id: String(423456780 + rowNumber),
         instagram_user_id: String(523456780 + rowNumber),
+        carousel_native_campaign_id: '723456789',
+        carousel_native_adset_id: String(823456780 + rowNumber),
+        carousel_native_adset_verified: true,
+        carousel_native_route_active: true,
         allowed_link_hosts: ['espacofacial.com'],
         landing_pages_by_creative_group: {
           BOTOX_35UI_PRICE_DOSE_AVISTA_ANIVERSARIO_7_ANOS: 'https://espacofacial.com/campanhas/aniversario-7-anos/botox',
@@ -79,6 +83,8 @@ test('config exposes metadata and opaque token ids without token material', asyn
   assert.equal(JSON.stringify(body).includes('access_token'), false);
   assert.equal(JSON.stringify(body).includes('token_ciphertext'), false);
   assert.equal(body.destinations[0].landing_page_validation.ok, true);
+  assert.equal(body.destinations[0].carousel_native_adset_verified, true);
+  assert.equal(body.destinations[0].carousel_native_route_active, true);
   assert.equal(body.destinations[0].landing_pages_by_creative_group.BOTOX_35UI_PRICE_DOSE_AVISTA_ANIVERSARIO_7_ANOS, 'https://espacofacial.com/campanhas/aniversario-7-anos/botox');
   assert.match(body.config_revision, /^[a-f0-9]{64}$/);
 });
@@ -110,6 +116,38 @@ test('flexible creative quality gate requires 3 images, 5 bodies, 5 titles and 1
     () => __test.validateCreativePayload({ ...payload, asset_feed_spec: { ...payload.asset_feed_spec, titles: [{ text: 'one' }] } }, 'creative:bad'),
     /creative_quality_gate_failed/,
   );
+});
+
+test('native carousel contract accepts labeled card attachments and rejects flexible-only fields', () => {
+  const payload = {
+    name: '[TEST-CAROUSEL-NATIVE] Restylane',
+    object_story_spec: {
+      page_id: '123456789',
+      instagram_actor_id: '987654321',
+      link_data: {
+        link: 'https://espacofacial.com/agendamento?unit=barrashoppingsul',
+        message: 'Conheça as etapas do procedimento.',
+        call_to_action: { type: 'BOOK_NOW', value: { link: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' } },
+        child_attachments: [
+          { image_hash: 'image-one', name: 'Etapa 1', link: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' },
+          { image_hash: 'image-two', name: 'Etapa 2', link: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' },
+        ],
+      },
+    },
+    creative_sourcing_spec: { source_url: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' },
+  };
+  const validated = __test.validateCreativePayload(payload, 'creative:native:unit');
+  assert.match(validated.name, /\[sk:creativenati\]/);
+  assert.throws(
+    () => __test.validateCreativePayload({ ...payload, degrees_of_freedom_spec: { creative_features_spec: {} } }, 'creative:native:bad'),
+    /native_carousel_advantage_plus_unsupported/,
+  );
+  const whatsapp = structuredClone(payload);
+  whatsapp.object_story_spec.link_data.link = 'https://api.whatsapp.com/send';
+  whatsapp.object_story_spec.link_data.call_to_action = { type: 'WHATSAPP_MESSAGE', value: { link: 'https://api.whatsapp.com/send' } };
+  whatsapp.object_story_spec.link_data.child_attachments.forEach((card) => { card.link = 'https://api.whatsapp.com/send'; });
+  delete whatsapp.creative_sourcing_spec;
+  assert.doesNotThrow(() => __test.validateCreativePayload(whatsapp, 'creative:native:whatsapp'));
 });
 
 test('landing page validation rejects redirects to WhatsApp before any Meta operation', async () => {
@@ -161,6 +199,59 @@ test('adset placement readback requests effective WhatsApp and vertical placemen
   assert.match(__test.adsetPlacementFields, /effective_facebook_positions/);
   assert.match(__test.adsetPlacementFields, /effective_instagram_positions/);
   assert.match(__test.adsetPlacementFields, /effective_audience_network_positions/);
+});
+
+test('native-carousel calibration ad sets are constrained to paused, explicit delivery payloads', () => {
+  const payload = {
+    name: '[TEST-CAROUSEL-NATIVE] BSS',
+    campaign_id: '123456789',
+    status: 'PAUSED',
+    billing_event: 'IMPRESSIONS',
+    optimization_goal: 'CONVERSATIONS',
+    targeting: { publisher_platforms: ['facebook', 'instagram'] },
+  };
+  assert.equal(__test.validatePausedAdsetPayload(payload).status, 'PAUSED');
+  assert.throws(() => __test.validatePausedAdsetPayload({ ...payload, status: 'ACTIVE' }), /adset_must_be_paused/);
+  assert.throws(() => __test.validatePausedAdsetPayload({ ...payload, account_id: 'forbidden' }), /adset_field_forbidden:account_id/);
+  assert.match(__test.adsetReadFields, /promoted_object/);
+  assert.match(__test.adsetReadFields, /destination_type/);
+});
+
+test('native-carousel calibration campaigns are limited to paused supported objectives', () => {
+  const payload = {
+    name: '[TEST-CAROUSEL-NATIVE] BSS',
+    objective: 'OUTCOME_ENGAGEMENT',
+    buying_type: 'AUCTION',
+    special_ad_categories: [],
+    status: 'PAUSED',
+  };
+  assert.equal(__test.validatePausedCampaignPayload(payload).objective, 'OUTCOME_ENGAGEMENT');
+  assert.equal(__test.validatePausedCampaignPayload({ ...payload, objective: 'OUTCOME_LEADS' }).objective, 'OUTCOME_LEADS');
+  assert.throws(() => __test.validatePausedCampaignPayload({ ...payload, objective: 'OUTCOME_SALES' }), /campaign_payload_invalid/);
+  assert.throws(() => __test.validatePausedCampaignPayload({ ...payload, status: 'ACTIVE' }), /campaign_must_be_paused/);
+});
+
+test('campaign calibration readback requests the delivery contract fields', () => {
+  assert.match(__test.campaignReadFields, /objective/);
+  assert.match(__test.campaignReadFields, /is_adset_budget_sharing_enabled/);
+});
+
+test('native carousel promotion can only activate explicitly named routes', () => {
+  const payload = {
+    campaign_id: '123456789',
+    campaign_name: '[NATIVE-CAROUSEL] WhatsApp',
+    adsets: [{ id: '223456789', name: '[NATIVE-CAROUSEL] BSS' }],
+    test_ad_ids: ['323456789'],
+  };
+  assert.equal(__test.validateNativeCarouselRoutePromotion(payload).adsets.length, 1);
+  assert.throws(
+    () => __test.validateNativeCarouselRoutePromotion({ ...payload, campaign_name: 'Campaign' }),
+    /native_carousel_campaign_name_required/,
+  );
+  assert.throws(
+    () => __test.validateNativeCarouselRoutePromotion({ ...payload, test_ad_ids: [] }),
+    /native_carousel_test_ad_count_invalid/,
+  );
 });
 
 test('batch validation rejects duplicate replacement targets', () => {

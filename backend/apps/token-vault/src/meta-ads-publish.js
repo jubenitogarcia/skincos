@@ -20,9 +20,36 @@ const ADSET_PLACEMENT_FIELDS = [
   'id',
   'targeting{publisher_platforms,facebook_positions,instagram_positions,audience_network_positions,whatsapp_positions,effective_publisher_platforms,effective_facebook_positions,effective_instagram_positions,effective_audience_network_positions,effective_whatsapp_positions}',
 ].join(',');
+const ADSET_READ_FIELDS = [
+  'id',
+  'name',
+  'campaign_id',
+  'status',
+  'billing_event',
+  'optimization_goal',
+  'destination_type',
+  'bid_strategy',
+  'daily_budget',
+  'lifetime_budget',
+  'start_time',
+  'end_time',
+  'attribution_spec',
+  'promoted_object',
+  'targeting',
+].join(',');
+const CAMPAIGN_READ_FIELDS = [
+  'id',
+  'name',
+  'objective',
+  'buying_type',
+  'special_ad_categories',
+  'is_adset_budget_sharing_enabled',
+  'status',
+].join(',');
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_BATCH_JOBS = 50;
 const MAX_LANDING_REDIRECTS = 5;
+const PAUSED_CALIBRATION_CAMPAIGN_OBJECTIVES = new Set(['OUTCOME_ENGAGEMENT', 'OUTCOME_LEADS']);
 const WHATSAPP_HOSTS = new Set(['wa.me', 'api.whatsapp.com']);
 const ALLOWED_CREATIVE_FEATURES = new Set([
   'add_text_overlay',
@@ -60,6 +87,9 @@ const TERMINAL_RUN_STATES = new Set(['completed', 'rolled_back']);
 const MUTATING_ACTIONS = new Set([
   'upload_image',
   'create_creative',
+  'create_campaign',
+  'create_adset',
+  'promote_native_carousel_route',
   'stage_batch',
   'activate_batch',
   'rollback_batch',
@@ -70,6 +100,11 @@ const ALLOWED_ACTIONS = new Set([
   'create_creative',
   'get_creative',
   'get_ad',
+  'get_adset',
+  'get_campaign',
+  'create_campaign',
+  'create_adset',
+  'promote_native_carousel_route',
   'stage_batch',
   'activate_batch',
   'rollback_batch',
@@ -259,6 +294,10 @@ async function getConfig(env, requestId) {
         results: landingPageValidation.results,
       },
       freshness_window_days: clampInteger(config.freshness_window_days, 7, 1, 90),
+      carousel_native_campaign_id: clean(config.carousel_native_campaign_id),
+      carousel_native_adset_id: clean(config.carousel_native_adset_id),
+      carousel_native_adset_verified: config.carousel_native_adset_verified === true,
+      carousel_native_route_active: config.carousel_native_route_active === true,
     });
   }
 
@@ -574,6 +613,11 @@ async function performOperation(action, body, context) {
   if (action === 'create_creative') return createCreative(body, context);
   if (action === 'get_creative') return getCreative(body, context);
   if (action === 'get_ad') return getAd(body, context);
+  if (action === 'get_adset') return getAdset(body, context);
+  if (action === 'get_campaign') return getCampaign(body, context);
+  if (action === 'create_campaign') return createCampaign(body, context);
+  if (action === 'create_adset') return createAdset(body, context);
+  if (action === 'promote_native_carousel_route') return promoteNativeCarouselRoute(body, context);
   if (action === 'stage_batch') return stageBatch(body, context);
   if (action === 'activate_batch') return activateBatch(body, context);
   if (action === 'rollback_batch') return rollbackBatch(body, context);
@@ -658,6 +702,95 @@ async function getAd(body, context) {
   const auth = await resolveGraphAuth(body, context);
   const adId = normalizeNumericId(body.object_id, 'object_id');
   return readAd(auth, adId, context);
+}
+
+async function getAdset(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const adsetId = normalizeNumericId(body.object_id, 'object_id');
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, adsetId, { fields: ADSET_READ_FIELDS }),
+    { method: 'GET' },
+    auth,
+    context,
+  );
+  return sanitizeGraphValue(result.body);
+}
+
+async function getCampaign(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const campaignId = normalizeNumericId(body.object_id, 'object_id');
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, campaignId, { fields: CAMPAIGN_READ_FIELDS }),
+    { method: 'GET' },
+    auth,
+    context,
+  );
+  return sanitizeGraphValue(result.body);
+}
+
+async function createCampaign(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const payload = validatePausedCampaignPayload(body.payload);
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, `act_${auth.accountId}/campaigns`),
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) },
+    auth,
+    context,
+  );
+  return sanitizeGraphValue(result.body);
+}
+
+async function createAdset(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const payload = validatePausedAdsetPayload(body.payload);
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, `act_${auth.accountId}/adsets`),
+    jsonRequest('POST', payload),
+    auth,
+    context,
+  );
+  return sanitizeGraphValue(result.body);
+}
+
+async function promoteNativeCarouselRoute(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const payload = validateNativeCarouselRoutePromotion(body.payload);
+  const campaign = await graphRequest(
+    graphUrl(auth.apiVersion, payload.campaign_id, { fields: 'id,name,status' }),
+    { method: 'GET' }, auth, context,
+  );
+  if (!isNativeCarouselRouteName(campaign.body && campaign.body.name)) {
+    throw failure('native_carousel_campaign_name_invalid', { classification: 'permanent', http_status: 400 });
+  }
+  for (const adId of payload.test_ad_ids) {
+    const ad = await readAd(auth, adId, context);
+    if (!clean(ad.name).startsWith('[TEST-CAROUSEL-NATIVE]')) {
+      throw failure('native_carousel_test_ad_name_invalid', { classification: 'permanent', http_status: 400 });
+    }
+    await graphRequest(graphUrl(auth.apiVersion, adId), jsonRequest('POST', { status: 'ARCHIVED' }), auth, context);
+  }
+  for (const adset of payload.adsets) {
+    const current = await graphRequest(
+      graphUrl(auth.apiVersion, adset.id, { fields: 'id,name,status' }),
+      { method: 'GET' }, auth, context,
+    );
+    if (!isNativeCarouselRouteName(current.body && current.body.name)) {
+      throw failure('native_carousel_adset_name_invalid', { classification: 'permanent', http_status: 400 });
+    }
+    await graphRequest(graphUrl(auth.apiVersion, adset.id), jsonRequest('POST', { name: adset.name, status: 'ACTIVE' }), auth, context);
+  }
+  await graphRequest(
+    graphUrl(auth.apiVersion, payload.campaign_id),
+    jsonRequest('POST', { name: payload.campaign_name, status: 'ACTIVE' }),
+    auth,
+    context,
+  );
+  return {
+    campaign_id: payload.campaign_id,
+    campaign_status: 'ACTIVE',
+    adsets: payload.adsets.map((adset) => ({ id: adset.id, name: adset.name, status: 'ACTIVE' })),
+    archived_test_ad_ids: payload.test_ad_ids,
+  };
 }
 
 async function stageBatch(body, context) {
@@ -913,9 +1046,16 @@ async function findAdByPayload(auth, payload, context) {
 
 function validateCreativePayload(value, operationKey) {
   const payload = sanitizeGraphValue(asObject(value));
-  if (!payload.object_story_spec || !payload.asset_feed_spec) {
+  const hasStory = Object.keys(asObject(payload.object_story_spec)).length > 0;
+  const hasFeed = Object.keys(asObject(payload.asset_feed_spec)).length > 0;
+  if (!hasStory) {
     throw failure('flexible_creative_required', { classification: 'permanent', http_status: 400 });
   }
+  if (hasFeed) return validateFlexibleCreativePayload(payload, operationKey);
+  return validateNativeCarouselCreativePayload(payload, operationKey);
+}
+
+function validateFlexibleCreativePayload(payload, operationKey) {
   const feed = asObject(payload.asset_feed_spec);
   if (safeArray(feed.images).length < 3 || safeArray(feed.bodies).length !== 5 || safeArray(feed.titles).length !== 5) {
     throw failure('creative_quality_gate_failed', { classification: 'permanent', http_status: 400 });
@@ -961,6 +1101,127 @@ function validateCreativePayload(value, operationKey) {
   payload.name = name.includes(marker) ? name : `${name} ${marker}`.slice(0, 255);
   delete payload.access_token;
   return payload;
+}
+
+function validateNativeCarouselCreativePayload(payload, operationKey) {
+  const story = asObject(payload.object_story_spec);
+  const linkData = asObject(story.link_data);
+  const cards = safeArray(linkData.child_attachments);
+  if (!clean(story.page_id) || cards.length < 2 || cards.length > 10) {
+    throw failure('native_carousel_contract_invalid', { classification: 'permanent', http_status: 400 });
+  }
+  const sourceUrl = clean(asObject(payload.creative_sourcing_spec).source_url);
+  const rootLink = clean(linkData.link);
+  let parsed;
+  try { parsed = new URL(rootLink); } catch { parsed = null; }
+  const rootCta = asObject(linkData.call_to_action);
+  const ctaType = clean(rootCta.type).toUpperCase();
+  const isWhatsApp = Boolean(parsed && isWhatsAppHostname(parsed.hostname));
+  const isWebsiteBooking = Boolean(parsed && parsed.protocol === 'https:' && !isWhatsApp && rootLink === sourceUrl);
+  if (!parsed || !(ctaType === 'WHATSAPP_MESSAGE' && isWhatsApp) && !(ctaType === 'BOOK_NOW' && isWebsiteBooking)) {
+    throw failure('native_carousel_landing_page_invalid', { classification: 'permanent', http_status: 400 });
+  }
+  if (!['BOOK_NOW', 'WHATSAPP_MESSAGE'].includes(ctaType)) {
+    throw failure('native_carousel_cta_invalid', { classification: 'permanent', http_status: 400 });
+  }
+  for (const [index, rawCard] of cards.entries()) {
+    const card = asObject(rawCard);
+    const cardLink = clean(card.link || rootLink);
+    if (!clean(card.image_hash) || !clean(card.name) || cardLink !== rootLink) {
+      throw failure(`native_carousel_card_${index + 1}_invalid`, { classification: 'permanent', http_status: 400 });
+    }
+    const cardCta = asObject(card.call_to_action);
+    if (Object.keys(cardCta).length && clean(cardCta.type).toUpperCase() !== ctaType) {
+      throw failure(`native_carousel_card_${index + 1}_cta_invalid`, { classification: 'permanent', http_status: 400 });
+    }
+  }
+  if (Object.keys(asObject(payload.degrees_of_freedom_spec)).length) {
+    throw failure('native_carousel_advantage_plus_unsupported', { classification: 'permanent', http_status: 400 });
+  }
+  const marker = `[sk:${shortKey(operationKey)}]`;
+  const name = clean(payload.name) || 'Meta Ads Publish Native Carousel';
+  payload.name = name.includes(marker) ? name : `${name} ${marker}`.slice(0, 255);
+  delete payload.access_token;
+  return payload;
+}
+
+function validatePausedAdsetPayload(value) {
+  const source = asObject(value);
+  const allowed = new Set([
+    'name', 'campaign_id', 'billing_event', 'optimization_goal', 'destination_type', 'bid_strategy',
+    'daily_budget', 'lifetime_budget', 'start_time', 'end_time', 'attribution_spec',
+    'promoted_object', 'targeting', 'status',
+  ]);
+  for (const key of Object.keys(source)) {
+    if (!allowed.has(key)) throw failure(`adset_field_forbidden:${key}`, { classification: 'permanent', http_status: 400 });
+  }
+  const payload = sanitizeGraphValue(source);
+  if (!clean(payload.name) || !clean(payload.campaign_id) || !Object.keys(asObject(payload.targeting)).length) {
+    throw failure('adset_payload_incomplete', { classification: 'permanent', http_status: 400 });
+  }
+  if (clean(payload.status).toUpperCase() !== 'PAUSED') {
+    throw failure('adset_must_be_paused', { classification: 'permanent', http_status: 400 });
+  }
+  if (!clean(payload.billing_event) || !clean(payload.optimization_goal)) {
+    throw failure('adset_delivery_contract_missing', { classification: 'permanent', http_status: 400 });
+  }
+  delete payload.access_token;
+  return payload;
+}
+
+function validatePausedCampaignPayload(value) {
+  const source = asObject(value);
+  const allowed = new Set(['name', 'objective', 'buying_type', 'special_ad_categories', 'is_adset_budget_sharing_enabled', 'status']);
+  for (const key of Object.keys(source)) {
+    if (!allowed.has(key)) throw failure(`campaign_field_forbidden:${key}`, { classification: 'permanent', http_status: 400 });
+  }
+  const payload = sanitizeGraphValue(source);
+  if (!clean(payload.name) || !PAUSED_CALIBRATION_CAMPAIGN_OBJECTIVES.has(clean(payload.objective))) {
+    throw failure('campaign_payload_invalid', { classification: 'permanent', http_status: 400 });
+  }
+  if (clean(payload.status).toUpperCase() !== 'PAUSED') {
+    throw failure('campaign_must_be_paused', { classification: 'permanent', http_status: 400 });
+  }
+  payload.buying_type = clean(payload.buying_type) || 'AUCTION';
+  payload.special_ad_categories = safeArray(payload.special_ad_categories);
+  payload.is_adset_budget_sharing_enabled = Boolean(payload.is_adset_budget_sharing_enabled);
+  delete payload.access_token;
+  return payload;
+}
+
+function isNativeCarouselRouteName(value) {
+  const name = clean(value);
+  return name.startsWith('[TEST-CAROUSEL-NATIVE]') || name.startsWith('[NATIVE-CAROUSEL]');
+}
+
+function validateNativeCarouselRoutePromotion(value) {
+  const source = asObject(value);
+  const allowed = new Set(['campaign_id', 'campaign_name', 'adsets', 'test_ad_ids']);
+  for (const key of Object.keys(source)) {
+    if (!allowed.has(key)) throw failure(`native_carousel_route_field_forbidden:${key}`, { classification: 'permanent', http_status: 400 });
+  }
+  const campaignId = normalizeNumericId(source.campaign_id, 'campaign_id');
+  const campaignName = clean(source.campaign_name);
+  if (!campaignName.startsWith('[NATIVE-CAROUSEL]')) {
+    throw failure('native_carousel_campaign_name_required', { classification: 'permanent', http_status: 400 });
+  }
+  const adsets = safeArray(source.adsets).map((entry, index) => {
+    const adset = asObject(entry);
+    const id = normalizeNumericId(adset.id, `adsets[${index}].id`);
+    const name = clean(adset.name);
+    if (!name.startsWith('[NATIVE-CAROUSEL]')) {
+      throw failure(`native_carousel_adset_name_required:${index}`, { classification: 'permanent', http_status: 400 });
+    }
+    return { id, name };
+  });
+  if (!adsets.length || adsets.length > 10) {
+    throw failure('native_carousel_adset_count_invalid', { classification: 'permanent', http_status: 400 });
+  }
+  const testAdIds = [...new Set(safeArray(source.test_ad_ids).map((id) => normalizeNumericId(id, 'test_ad_id')))];
+  if (!testAdIds.length || testAdIds.length > 20) {
+    throw failure('native_carousel_test_ad_count_invalid', { classification: 'permanent', http_status: 400 });
+  }
+  return { campaign_id: campaignId, campaign_name: campaignName, adsets, test_ad_ids: testAdIds };
 }
 
 function validateAdPayload(value, action) {
@@ -1134,6 +1395,8 @@ function deriveResourceKeys(action, body) {
   }
   if (['activate_batch', 'rollback_batch'].includes(action)) return [`run:${clean(body.stage_operation_key)}`];
   if (action === 'create_creative') return [`creative:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
+  if (action === 'create_campaign') return [`campaign:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
+  if (action === 'create_adset') return [`adset:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
   if (action === 'upload_image') return [`image:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
   return [];
 }
@@ -1682,7 +1945,9 @@ export const __test = Object.freeze({
   acquireLocks,
   createOrResumeRun,
   creativeReadFields: CREATIVE_READ_FIELDS,
+  campaignReadFields: CAMPAIGN_READ_FIELDS,
   adsetPlacementFields: ADSET_PLACEMENT_FIELDS,
+  adsetReadFields: ADSET_READ_FIELDS,
   graphRequest,
   maxRateUsage,
   normalizeApiVersion,
@@ -1696,6 +1961,9 @@ export const __test = Object.freeze({
   stageBatch,
   stableStringify,
   validateAdPayload,
+  validatePausedCampaignPayload,
+  validatePausedAdsetPayload,
+  validateNativeCarouselRoutePromotion,
   validateBatchJobs,
   validateCreativePayload,
   validateLandingPagesOnline,
