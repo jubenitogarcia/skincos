@@ -14,10 +14,15 @@ for (const item of $input.all()) {
       account_id: accountId,
       api_version: apiVersion,
       destination_groups: [],
+      adsets: [],
     });
   }
   const request = byAccount.get(key);
   request.destination_groups.push(text(row.destination_group));
+  request.adsets.push({
+    adset_id: text(row.adset_id),
+    destination_group: text(row.destination_group),
+  });
   request.alternate_token_ids = [
     ...new Set([...(request.alternate_token_ids || []), tokenId]),
   ];
@@ -28,5 +33,7 @@ return [...byAccount.values()].map((request) => ({
     ...request,
     destination_groups: [...new Set(request.destination_groups.filter(Boolean))],
     alternate_token_ids: [...new Set(request.alternate_token_ids || [])],
+    adsets: [...new Map(request.adsets.filter((entry) => entry.adset_id)
+      .map((entry) => [entry.adset_id, entry])).values()],
   },
 }));
