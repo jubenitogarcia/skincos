@@ -211,7 +211,9 @@ type MetricTooltipSpec = {
   details?: Array<{
     label: string
     value: string
+    what?: string
     calculation?: string
+    usage?: string
   }>
 }
 type ConversionGoalPlan = NonNullable<NonNullable<AtendimentoManagementConversionReport['doctorRanking']>['sections'][number]['goalPlan']>
@@ -468,15 +470,18 @@ function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
       <div><span className="font-semibold text-slate-100">O que é:</span> {info.what}</div>
       {info.details?.length ? (
         <div>
+          <div><span className="font-semibold text-slate-100">Cálculo da métrica:</span> {info.calculation}</div>
           <span className="font-semibold text-slate-100">Componentes:</span>
-          <div className="mt-1 space-y-1.5">
+          <div className="mt-1 max-h-[22rem] space-y-2 overflow-y-auto pr-1">
             {info.details.map((detail) => (
-              <div key={`${detail.label}:${detail.value}`} className="rounded border border-slate-700/70 bg-slate-900/50 px-2 py-1">
+              <div key={`${detail.label}:${detail.value}`} className="rounded border border-slate-700/70 bg-slate-900/50 px-2 py-1.5">
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="text-slate-300">{detail.label}</span>
                   <span className="shrink-0 font-semibold tabular-nums text-slate-100">{detail.value}</span>
                 </div>
-                {detail.calculation ? <div className="mt-0.5 text-[10px] text-slate-500">{detail.calculation}</div> : null}
+                {detail.what ? <div className="mt-1 text-[10px] leading-snug text-slate-400"><span className="font-semibold text-slate-300">O que é:</span> {detail.what}</div> : null}
+                {detail.calculation ? <div className="mt-1 text-[10px] leading-snug text-slate-500"><span className="font-semibold text-slate-300">Cálculo:</span> {detail.calculation}</div> : null}
+                {detail.usage ? <div className="mt-1 text-[10px] leading-snug text-slate-500"><span className="font-semibold text-slate-300">Uso:</span> {detail.usage}</div> : null}
               </div>
             ))}
           </div>
@@ -493,17 +498,19 @@ function MetricTooltip({
   label,
   info,
   children,
+  contentClassName,
 }: {
   label: string
   info?: MetricTooltipSpec
   children: React.ReactNode
+  contentClassName?: string
 }) {
   if (!info) return <>{children}</>
   return (
     <TooltipLabel
       label={label}
       description={<MetricTooltipContent info={info} />}
-      contentClassName="max-w-[22rem]"
+      contentClassName={contentClassName || 'max-w-[22rem]'}
     >
       {children}
     </TooltipLabel>
@@ -712,12 +719,14 @@ function MetricGroupContent({
     const isDetail = row.presentation === 'detail'
     const componentTooltip: MetricTooltipSpec | undefined = componentRows.length ? {
       what: `Componentes usados para calcular ${row.label}.`,
-      calculation: 'Confira os valores atuais de cada insumo abaixo.',
+      calculation: row.tooltip?.calculation || row.calculation || 'Confira os valores atuais de cada insumo abaixo.',
       usage: 'Clique no subtítulo novamente para manter esta conferência aberta.',
       details: componentRows.map((component) => ({
         label: component.label,
         value: component.value,
-        calculation: component.calculation,
+        what: component.tooltip?.what,
+        calculation: component.tooltip?.calculation || component.calculation,
+        usage: component.tooltip?.usage,
       })),
     } : undefined
     const rowContent = (
@@ -752,7 +761,7 @@ function MetricGroupContent({
         {row.calculation ? (
           <div className="ml-7 mt-0.5 min-w-0 text-[9px] leading-snug text-slate-500">
             {componentTooltip ? (
-              <MetricTooltip label={`Componentes de ${row.label}`} info={componentTooltip}>
+              <MetricTooltip label={`Componentes de ${row.label}`} info={componentTooltip} contentClassName="max-w-[30rem]">
                 <div className="inline-flex max-w-full cursor-help rounded-sm px-0.5 transition hover:bg-slate-800/70 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60">
                   {row.calculation.split('=')[0].trim()}
                 </div>
