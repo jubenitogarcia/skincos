@@ -117,6 +117,13 @@ test('carousel upload plan requires every ordered image for every destination ac
   assert.equal(output[0].json.media_upload_plan.expected.videos, 0);
 });
 
+test('Build Jobs rehydrates carousel card ordinals from a gateway receipt filename', () => {
+  const source = fs.readFileSync(path.join(sourceRoot, 'build-jobs.js'), 'utf8');
+  assert.match(source, /const mappedRef = fileToJob\.get\(normalizedFilename\)/);
+  assert.match(source, /upload_key: safeString\(media\.role\) === 'carousel_card'/);
+  assert.match(source, /target\[targetKey\] = \{/);
+});
+
 test('accepts one five-card carousel creative and forbids an asset feed', () => {
   const link = 'https://espacofacial.com/agendamento?unit=barrashoppingsul';
   const card = (index) => ({

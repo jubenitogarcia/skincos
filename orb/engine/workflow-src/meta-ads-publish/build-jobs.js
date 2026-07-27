@@ -960,9 +960,28 @@ function buildUploadedByJob(inputItems, fileToJob) {
     }
     for (const [filename, meta] of Object.entries(item.images || {})) {
       const normalizedFilename = normalizeKey(filename);
-      const fileRef = safeString(item.job_key)
-        ? { job_key: safeString(item.job_key), ratio: safeString(item.ratio), role: safeString(item.role), media_type: item.upload_kind === 'video_thumbnail' ? 'video_thumbnail' : 'image', source_file_id: safeString(item.source_file_id), source_file_name: safeString(item.source_file_name) }
-        : fileToJob.get(normalizedFilename);
+      // Gateway receipts retain their parent job_key, but do not retain the
+      // carousel card ordinal. Rehydrate the original media contract by the
+      // returned filename before choosing a target key. Otherwise every card
+      // collapses under its aspect ratio (for example, five 4:5 cards) and
+      // the strict carousel completeness guard correctly rejects the batch.
+      const mappedRef = fileToJob.get(normalizedFilename);
+      if (safeString(item.job_key) && mappedRef && safeString(mappedRef.job_key) !== safeString(item.job_key)) {
+        throw new Error(`Upload gateway retornou arquivo correlacionado a outro job: ${safeString(item.job_key)}.`);
+      }
+      const fileRef = mappedRef
+        ? {
+          ...mappedRef,
+          job_key: safeString(item.job_key) || safeString(mappedRef.job_key),
+          ratio: safeString(item.ratio) || safeString(mappedRef.ratio),
+          role: safeString(item.role) || safeString(mappedRef.role),
+          media_type: item.upload_kind === 'video_thumbnail' ? 'video_thumbnail' : safeString(mappedRef.media_type || 'image'),
+          source_file_id: safeString(item.source_file_id) || safeString(mappedRef.source_file_id),
+          source_file_name: safeString(item.source_file_name) || safeString(mappedRef.source_file_name),
+        }
+        : safeString(item.job_key)
+          ? { job_key: safeString(item.job_key), ratio: safeString(item.ratio), role: safeString(item.role), media_type: item.upload_kind === 'video_thumbnail' ? 'video_thumbnail' : 'image', source_file_id: safeString(item.source_file_id), source_file_name: safeString(item.source_file_name) }
+          : null;
       if (!fileRef || !fileRef.job_key) continue;
 
       const accountId = safeString(item._gateway_account_id || item.account_id);
