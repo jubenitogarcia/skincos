@@ -208,6 +208,11 @@ type MetricTooltipSpec = {
   what: string
   calculation: string
   usage: string
+  details?: Array<{
+    label: string
+    value: string
+    calculation?: string
+  }>
 }
 type ConversionGoalPlan = NonNullable<NonNullable<AtendimentoManagementConversionReport['doctorRanking']>['sections'][number]['goalPlan']>
 type ConversionRankingSection = NonNullable<AtendimentoManagementConversionReport['doctorRanking']>['sections'][number]
@@ -461,7 +466,24 @@ function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
   return (
     <div className="space-y-1 text-left">
       <div><span className="font-semibold text-slate-100">O que é:</span> {info.what}</div>
-      <div><span className="font-semibold text-slate-100">Cálculo:</span> {info.calculation}</div>
+      {info.details?.length ? (
+        <div>
+          <span className="font-semibold text-slate-100">Componentes:</span>
+          <div className="mt-1 space-y-1.5">
+            {info.details.map((detail) => (
+              <div key={`${detail.label}:${detail.value}`} className="rounded border border-slate-700/70 bg-slate-900/50 px-2 py-1">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-slate-300">{detail.label}</span>
+                  <span className="shrink-0 font-semibold tabular-nums text-slate-100">{detail.value}</span>
+                </div>
+                {detail.calculation ? <div className="mt-0.5 text-[10px] text-slate-500">{detail.calculation}</div> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div><span className="font-semibold text-slate-100">Cálculo:</span> {info.calculation}</div>
+      )}
       <div><span className="font-semibold text-slate-100">Uso:</span> {info.usage}</div>
     </div>
   )
@@ -672,7 +694,6 @@ function MetricGroupContent({
   rows: AtendimentoMetricGroupRow[]
   hierarchy?: AtendimentoMetricHierarchyNode[]
 }) {
-  const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({})
   const rowsByKey = new Map(rows.map((row) => [row.key, row]))
   const hierarchyKeys = new Set<string>()
   const registerHierarchyKeys = (nodesToRegister: AtendimentoMetricHierarchyNode[] = []) => {
@@ -686,9 +707,19 @@ function MetricGroupContent({
     ? [...hierarchy, ...rows.filter((row) => !hierarchyKeys.has(row.key)).map((row) => ({ key: row.key }))]
     : rows.map((row) => ({ key: row.key }))
 
-  const renderRow = (row: AtendimentoMetricGroupRow, isChild = false, toggle?: React.ReactNode) => {
+  const renderRow = (row: AtendimentoMetricGroupRow, isChild = false, componentRows: AtendimentoMetricGroupRow[] = []) => {
     const RowIcon = row.icon
     const isDetail = row.presentation === 'detail'
+    const componentTooltip: MetricTooltipSpec | undefined = componentRows.length ? {
+      what: `Componentes usados para calcular ${row.label}.`,
+      calculation: 'Confira os valores atuais de cada insumo abaixo.',
+      usage: 'Clique no subtítulo novamente para manter esta conferência aberta.',
+      details: componentRows.map((component) => ({
+        label: component.label,
+        value: component.value,
+        calculation: component.calculation,
+      })),
+    } : undefined
     const rowContent = (
       <div className={`flex min-w-0 items-center gap-2 ${isChild ? 'py-0.5' : ''}`}>
         {row.avatarUrl ? (
@@ -717,11 +748,18 @@ function MetricGroupContent({
     )
     return (
       <div key={row.key} className="min-w-0">
-        <div className="flex min-w-0 items-center gap-1">
-          <div className="min-w-0 flex-1">{row.tooltip ? <MetricTooltip label={row.label} info={row.tooltip}>{rowContent}</MetricTooltip> : rowContent}</div>
-          {toggle}
-        </div>
-        {row.calculation ? <div className="ml-7 mt-0.5 text-[9px] leading-snug text-slate-500">{row.calculation.split('=')[0].trim()}</div> : null}
+        <div className="min-w-0">{row.tooltip ? <MetricTooltip label={row.label} info={row.tooltip}>{rowContent}</MetricTooltip> : rowContent}</div>
+        {row.calculation ? (
+          <div className="ml-7 mt-0.5 min-w-0 text-[9px] leading-snug text-slate-500">
+            {componentTooltip ? (
+              <MetricTooltip label={`Componentes de ${row.label}`} info={componentTooltip}>
+                <div className="inline-flex max-w-full cursor-help rounded-sm px-0.5 transition hover:bg-slate-800/70 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60">
+                  {row.calculation.split('=')[0].trim()}
+                </div>
+              </MetricTooltip>
+            ) : row.calculation.split('=')[0].trim()}
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -730,27 +768,12 @@ function MetricGroupContent({
     const row = rowsByKey.get(node.key)
     if (!row) return null
     const children = (node.children || []).filter((child) => rowsByKey.has(child.key))
-    const isCollapsed = Boolean(collapsedNodes[node.key])
-    const toggle = children.length ? (
-      <button
-        type="button"
-        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-slate-800 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60"
-        aria-label={`${isCollapsed ? 'Expandir' : 'Recolher'} componentes de ${row.label}`}
-        aria-expanded={!isCollapsed}
-        onClick={() => setCollapsedNodes((current) => ({ ...current, [node.key]: !current[node.key] }))}
-      >
-        {isCollapsed ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
-      </button>
-    ) : null
+    const componentRows = children
+      .map((child) => rowsByKey.get(child.key))
+      .filter((child): child is AtendimentoMetricGroupRow => Boolean(child))
     return (
-      <div key={node.key} className={children.length ? 'rounded-lg border border-slate-800/75 bg-slate-900/20 px-2 py-1.5' : ''}>
-        {renderRow(row, depth > 0, toggle)}
-        {children.length && !isCollapsed ? (
-          <div className="mt-1.5 ml-2 border-l border-slate-700/75 pl-2.5">
-            <div className="mb-1 text-[8px] font-semibold uppercase tracking-[0.12em] text-slate-600">Componentes do cálculo</div>
-            <div className="grid gap-1">{children.map((child) => renderNode(child, depth + 1))}</div>
-          </div>
-        ) : null}
+      <div key={node.key} className="min-w-0">
+        {renderRow(row, depth > 0, componentRows)}
       </div>
     )
   }
