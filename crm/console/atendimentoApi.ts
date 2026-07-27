@@ -409,6 +409,8 @@ export type AtendimentoManagementConversionReport = {
         calendarHash?: string
       }
       doctors: Array<{ name: string; unitName?: string; unitSlug?: string; weekValue: number; totalValue: number; score: number; position?: string; rank: number; classification?: string; level?: number; modifiedZ?: number; distanceToCutOff?: number; distanceToLowerLimit?: number; distanceToUpperLimit?: number }>
+      isAggregate?: boolean
+      comparisonMetric?: 'production' | 'unit-score'
     }>
     topDoctors: Array<{ name: string; unitName: string; unitSlug: string; weekValue: number; totalValue: number; score: number; position?: string; rank: number; classification?: string; level?: number }>
   }

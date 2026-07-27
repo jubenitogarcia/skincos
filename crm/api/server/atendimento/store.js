@@ -1603,25 +1603,42 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
             scheduleSource: escalaCoverage.source || 'crm',
             goalSegments: aggregateGoalPlan.segments || [],
         }).replace(/^fnv1a-/, 'calendar-fnv1a-')
-        const aggregateDoctors = aggregateStats.ranking.map((doctor) => ({
-            id: doctor.id,
-            name: doctor.name,
-            unitName: 'Todas unidades',
-            unitSlug: 'all',
-            weekValue: moneyMetric(doctor.weekValue).weekValue,
-            totalValue: moneyMetric(doctor.totalValue).totalValue,
-            score: doctor.score,
-            level: doctor.level,
-            classification: doctor.classification,
-            modifiedZ: doctor.modifiedZ,
-            distanceToCutOff: doctor.distanceToCutOff,
-            distanceToLowerLimit: doctor.distanceToLowerLimit,
-            distanceToUpperLimit: doctor.distanceToUpperLimit,
-            rank: doctor.rank,
-            position: '',
-        }))
+        const aggregateDoctorsByIdentity = new Map()
+        for (const doctor of allDoctors) {
+            const identity = String(doctor.id || normalizeText(doctor.name) || '').trim()
+            if (!identity) continue
+            const existing = aggregateDoctorsByIdentity.get(identity)
+            if (existing) {
+                existing.weekValue += Number(doctor.weekValue || 0)
+                existing.totalValue += Number(doctor.totalValue || 0)
+                existing.score += Number(doctor.score || 0)
+                if (!existing.sourceUnits.includes(doctor.unitName)) existing.sourceUnits.push(doctor.unitName)
+                continue
+            }
+            aggregateDoctorsByIdentity.set(identity, {
+                ...doctor,
+                weekValue: Number(doctor.weekValue || 0),
+                totalValue: Number(doctor.totalValue || 0),
+                score: Number(doctor.score || 0),
+                sourceUnits: [doctor.unitName],
+            })
+        }
+        const aggregateDoctors = [...aggregateDoctorsByIdentity.values()]
+            // Each unit awards points against its own goal and distribution. The
+            // cross-unit view must compare those normalized points, never the
+            // raw procedure totals from different units.
+            .sort((left, right) => Number(right.score || 0) - Number(left.score || 0)
+                || Number(right.weekValue || 0) - Number(left.weekValue || 0)
+                || left.name.localeCompare(right.name, 'pt-BR'))
+            .map((doctor, index) => ({
+                ...doctor,
+                unitName: 'Todas unidades',
+                unitSlug: 'all',
+                rank: index + 1,
+                position: '',
+            }))
         // The aggregate has summed capacity, never a fictional shared calendar.
-        // Its doctor list is also the canonical, cross-unit consolidation used
+        // Its doctor list is also the canonical, cross-unit point ranking used
         // by the global top-doctor summary.
         topDoctors = aggregateDoctors.slice(0, 8)
         sections.unshift({
@@ -1640,6 +1657,7 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
             },
             doctors: aggregateDoctors,
             isAggregate: true,
+            comparisonMetric: 'unit-score',
             calendarMode: 'per-unit-capacity-sum',
             calendarCompatible: false,
             period: bounds,

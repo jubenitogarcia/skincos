@@ -1334,6 +1334,7 @@ function ConversionDoctorBandsContent({
   metrics,
   optimization,
   detailGroups,
+  isAggregate = false,
 }: {
   unitName: string
   doctors: ConversionDoctorMetric[]
@@ -1341,6 +1342,7 @@ function ConversionDoctorBandsContent({
   metrics: ConversionRankingSection['metrics']
   optimization?: ConversionRankingSection['optimization']
   detailGroups: Array<{ key: string; label: string; tooltip: MetricTooltipSpec; rows: AtendimentoMetricGroupRow[]; hierarchy?: AtendimentoMetricHierarchyNode[] }>
+  isAggregate?: boolean
 }) {
   const cutLine = Number(metrics.cutLine?.weekValue || 0)
   const interval = Number(metrics.interval?.weekValue || 0)
@@ -1352,18 +1354,22 @@ function ConversionDoctorBandsContent({
       name: string
       unitName: string
       value: number
+      productionValue: number
       score: number
       sourceNames: string[]
     }>()
     for (const doctor of doctors) {
       if (!isRenderableConversionDoctor(doctor.name)) continue
-      const value = Number(doctor.weekValue || 0)
+      const productionValue = Number(doctor.weekValue || 0)
+      const score = Number(doctor.score || 0)
+      const value = isAggregate ? score : productionValue
       const name = getCanonicalDoctorName(doctor.name)
       const identityKey = getDoctorIdentityKey(doctor.name)
       const existing = byIdentity.get(identityKey)
       if (existing) {
         existing.value += value
-        existing.score += Number(doctor.score || 0)
+        existing.productionValue += productionValue
+        existing.score += score
         if (!existing.sourceNames.includes(String(doctor.name || '').trim())) existing.sourceNames.push(String(doctor.name || '').trim())
         continue
       }
@@ -1372,22 +1378,25 @@ function ConversionDoctorBandsContent({
         name,
         unitName: doctor.unitName || unitName,
         value,
-        score: Number(doctor.score || 0),
+        productionValue,
+        score,
         sourceNames: [String(doctor.name || '').trim()].filter(Boolean),
       })
     }
     return [...byIdentity.values()]
       .sort((left, right) => Number(right.value || 0) - Number(left.value || 0)
-        || Number(right.score || 0) - Number(left.score || 0)
+        || Number(right.productionValue || 0) - Number(left.productionValue || 0)
         || left.name.localeCompare(right.name, 'pt-BR', { sensitivity: 'base' }))
       .map((doctor, index) => {
-      const level = resolveDoctorLevel(doctor.value, undefined, lowerLimit, cutLine, upperLimit)
+      const level = isAggregate
+        ? Math.max(0, Math.min(3, Math.round(doctor.score || 0)))
+        : resolveDoctorLevel(doctor.value, undefined, lowerLimit, cutLine, upperLimit)
       const visual = conversionLevelVisual(level)
       return {
         ...doctor,
         rank: index + 1,
         level,
-        levelLabel: visual.label,
+        levelLabel: isAggregate ? `${formatNumberBR(doctor.value)} pontos` : visual.label,
         fill: atendimentoProfessionalColor(doctor.name, professionals),
         badgeClassName: visual.badgeClassName,
         ringClassName: visual.ringClassName,
@@ -1397,9 +1406,9 @@ function ConversionDoctorBandsContent({
     })
   })()
   const yValues = chartDoctors.map((doctor) => doctor.value)
-  const maxValue = Math.max(cutLine, upperLimit, ...yValues, 0)
+  const maxValue = Math.max(isAggregate ? 0 : cutLine, isAggregate ? 0 : upperLimit, ...yValues, 0)
   const yMax = maxValue > 0 ? maxValue * 1.12 : 100
-  const hasBands = Number.isFinite(lowerLimit) && Number.isFinite(cutLine) && Number.isFinite(upperLimit) && upperLimit >= lowerLimit
+  const hasBands = !isAggregate && Number.isFinite(lowerLimit) && Number.isFinite(cutLine) && Number.isFinite(upperLimit) && upperLimit >= lowerLimit
   const [activeBandLevel, setActiveBandLevel] = useState<number | null>(null)
   const [activeBandTooltipPosition, setActiveBandTooltipPosition] = useState<{ x: number; y: number } | null>(null)
   const bandDetails = [
@@ -1419,6 +1428,17 @@ function ConversionDoctorBandsContent({
     position: { x: number; y: number }
   } | null>(null)
   const chartHoverRef = useRef<HTMLDivElement>(null)
+  const [chartWidth, setChartWidth] = useState(0)
+
+  useEffect(() => {
+    const chart = chartHoverRef.current
+    if (!chart || typeof ResizeObserver === 'undefined') return undefined
+    const updateWidth = () => setChartWidth(Math.round(chart.getBoundingClientRect().width))
+    updateWidth()
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(chart)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     const hasPointerTooltip = Boolean(activeBandTooltipPosition || activeDoctorTooltipPosition || activeReferenceTooltip)
@@ -1448,11 +1468,18 @@ function ConversionDoctorBandsContent({
   const chartMarginRight = 12
   const chartMarginLeft = 6
   const chartMarginBottom = 8
-  const chartXAxisHeight = 124
-  const yAxisWidth = 88
-  const plotInsetLeft = yAxisWidth + chartMarginLeft
-  const plotInsetRight = chartMarginRight
-  const chartMinWidthPx = plotInsetLeft + plotInsetRight + Math.max(chartDoctors.length, 1) * 172
+  const doctorCount = Math.max(chartDoctors.length, 1)
+  const yAxisWidth = isAggregate ? 46 : 76
+  const availablePlotWidth = Math.max(160, (chartWidth || 960) - yAxisWidth - chartMarginLeft - chartMarginRight)
+  const doctorSlotWidth = availablePlotWidth / doctorCount
+  const doctorAvatarRadius = Math.max(7, Math.min(36, doctorSlotWidth * 0.27))
+  const doctorAvatarSize = Math.max(10, (doctorAvatarRadius * 2) - 8)
+  const doctorAvatarOffset = -(doctorAvatarSize / 2)
+  const doctorLabelFontSize = Math.max(7, Math.min(11.5, doctorSlotWidth * 0.1))
+  const doctorLabelOffset = Math.max(30, doctorAvatarRadius + 25)
+  const showDoctorNames = doctorSlotWidth >= 34
+  const chartXAxisHeight = Math.max(60, Math.round((doctorAvatarRadius * 2) + 30))
+  const maxBarSize = Math.max(8, Math.min(52, doctorSlotWidth * 0.54))
   const activateDoctorTooltip = useCallback((doctorId: string, event: React.SyntheticEvent<SVGGElement>) => {
     const targetBounds = event.currentTarget.getBoundingClientRect()
     setActiveBandLevel(null)
@@ -1478,7 +1505,7 @@ function ConversionDoctorBandsContent({
     setActiveDoctorId(null)
     setActiveDoctorTooltipPosition(null)
   }, [])
-  const lineBadges = [
+  const lineBadges = isAggregate ? [] : [
     {
       key: 'upper',
       value: upperLimit,
@@ -1584,11 +1611,10 @@ function ConversionDoctorBandsContent({
   return (
     <div className="space-y-3 pt-0.5" data-testid="atendimento-conversion-distribution">
       <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-3">
-        <div className="overflow-x-auto pb-1">
           <div
             ref={chartHoverRef}
             className="relative"
-            style={{ minWidth: `${chartMinWidthPx}px`, height: `${chartHeightPx}px` }}
+            style={{ height: `${chartHeightPx}px` }}
             onMouseMove={(event) => {
               const target = event.target as Element
               if (target.closest('[data-testid^="atendimento-doctor-"], [data-testid^="atendimento-reference-badge-"]')) return
@@ -1597,6 +1623,13 @@ function ConversionDoctorBandsContent({
               const plotTop = chartMarginTop
               const plotBottom = chartHeightPx - chartMarginBottom - chartXAxisHeight
               if (relativeY < plotTop || relativeY > plotBottom || plotBottom <= plotTop) {
+                clearDoctorTooltip()
+                setActiveReferenceTooltip(null)
+                setActiveBandLevel(null)
+                setActiveBandTooltipPosition(null)
+                return
+              }
+              if (isAggregate) {
                 clearDoctorTooltip()
                 setActiveReferenceTooltip(null)
                 setActiveBandLevel(null)
@@ -1636,7 +1669,7 @@ function ConversionDoctorBandsContent({
                         transform={`translate(${tickProps.x},${tickProps.y})`}
                         data-testid={`atendimento-doctor-label-target-${doctor.id}`}
                         tabIndex={0}
-                        aria-label={`Detalhes do perfil de ${doctor.name}: ${formatCurrencyBRL(doctor.value)}, ${doctor.levelLabel}, posição ${doctor.rank}.`}
+                        aria-label={`Detalhes do perfil de ${doctor.name}: ${isAggregate ? `${formatNumberBR(doctor.value)} pontos` : formatCurrencyBRL(doctor.value)}, ${doctor.levelLabel}, posição ${doctor.rank}.`}
                         onMouseEnter={(event) => activateDoctorTooltip(doctor.id, event)}
                         onMouseMove={(event) => activateDoctorTooltip(doctor.id, event)}
                         onMouseLeave={clearDoctorTooltip}
@@ -1645,34 +1678,32 @@ function ConversionDoctorBandsContent({
                         opacity={isDoctorDimmed ? 0.48 : 1}
                         className="transition-opacity duration-150"
                       >
-                        <circle cx="0" cy="40" r="36" fill="#0f172a" stroke={isDoctorActive ? doctor.fill : 'rgba(148,163,184,0.72)'} strokeWidth={isDoctorActive ? 2.8 : 1.5} />
+                        <circle cx="0" cy={doctorAvatarRadius + 4} r={doctorAvatarRadius} fill="#0f172a" stroke={isDoctorActive ? doctor.fill : 'rgba(148,163,184,0.72)'} strokeWidth={isDoctorActive ? 2.8 : 1.5} />
                         {doctor.avatarUrl ? (
                           <image
                             data-testid={`atendimento-doctor-avatar-${doctor.id}`}
                             href={doctor.avatarUrl}
-                            x="-32"
-                            y="8"
-                            width="64"
-                            height="64"
+                            x={doctorAvatarOffset}
+                            y={4 + doctorAvatarRadius + doctorAvatarOffset}
+                            width={doctorAvatarSize}
+                            height={doctorAvatarSize}
                             preserveAspectRatio="xMidYMid slice"
-                            clipPath={`circle(32px at 32px 32px)`}
+                            clipPath={`circle(${doctorAvatarSize / 2}px at ${doctorAvatarSize / 2}px ${doctorAvatarSize / 2}px)`}
                           />
                         ) : (
-                          <text x="0" y="47" textAnchor="middle" fill="#cbd5e1" fontSize="16" fontWeight="700">{doctor.chartName.slice(0, 1)}</text>
+                          <text x="0" y={doctorAvatarRadius + 9} textAnchor="middle" fill="#cbd5e1" fontSize={Math.max(7, doctorAvatarRadius * 0.48)} fontWeight="700">{doctor.chartName.slice(0, 1)}</text>
                         )}
-                        <text textAnchor="middle" fill="#cbd5e1" fontSize="11.5" fontWeight="600">
-                          <tspan x="0" dy="96">{doctor.chartName}</tspan>
-                        </text>
+                        {showDoctorNames ? <text textAnchor="middle" fill="#cbd5e1" fontSize={doctorLabelFontSize} fontWeight="600"><tspan x="0" dy={doctorLabelOffset + doctorAvatarRadius}>{doctor.chartName}</tspan></text> : null}
                       </g>
                     )
                   }}
                 />
                 <YAxis
-                  width={88}
+                  width={yAxisWidth}
                   tickLine={false}
                   axisLine={false}
                   tick={{ fill: '#94a3b8', fontSize: 10 }}
-                  tickFormatter={(value: number) => formatCurrencyBRL(Number(value || 0))}
+                  tickFormatter={(value: number) => isAggregate ? formatNumberBR(Number(value || 0)) : formatCurrencyBRL(Number(value || 0))}
                   domain={[0, yMax]}
                 />
                 {hasBands ? (
@@ -1709,7 +1740,7 @@ function ConversionDoctorBandsContent({
                 <Bar
                   dataKey="value"
                   radius={[8, 8, 0, 0]}
-                  maxBarSize={52}
+                  maxBarSize={maxBarSize}
                   shape={(shapeProps: any) => {
                     const { x, y, width, height, fill, payload } = shapeProps
                     const hasPodium = podiumDoctors.has(payload.id)
@@ -1721,7 +1752,7 @@ function ConversionDoctorBandsContent({
                       <g
                         data-testid={`atendimento-doctor-bar-target-${payload.id}`}
                         tabIndex={0}
-                        aria-label={`Detalhes da coluna de ${payload.name}: ${formatCurrencyBRL(payload.value)}, ${payload.levelLabel}, posição ${payload.rank}.`}
+                        aria-label={`Detalhes da coluna de ${payload.name}: ${isAggregate ? `${formatNumberBR(payload.value)} pontos` : formatCurrencyBRL(payload.value)}, ${payload.levelLabel}, posição ${payload.rank}.`}
                         onMouseEnter={(event) => activateDoctorTooltip(payload.id, event)}
                         onMouseMove={(event) => activateDoctorTooltip(payload.id, event)}
                         onMouseLeave={clearDoctorTooltip}
@@ -1787,8 +1818,8 @@ function ConversionDoctorBandsContent({
                 </div>
                 {activeDoctor.sourceNames.length > 1 ? <div className="mt-1 text-[10px] text-slate-400">Cadastros equivalentes consolidados.</div> : null}
                 <div className="mt-2 space-y-1">
-                  <div className="flex items-center justify-between gap-3"><span>Realizado</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.value)}</span></div>
-                  <div className="flex items-center justify-between gap-3"><span>Nível</span><span className="font-semibold text-white">{activeDoctor.levelLabel}</span></div>
+                  <div className="flex items-center justify-between gap-3"><span>{isAggregate ? 'Pontos nas unidades' : 'Realizado'}</span><span className="font-semibold text-white">{isAggregate ? formatNumberBR(activeDoctor.value) : formatCurrencyBRL(activeDoctor.value)}</span></div>
+                  {isAggregate ? <div className="flex items-center justify-between gap-3"><span>Produção</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.productionValue)}</span></div> : <div className="flex items-center justify-between gap-3"><span>Nível</span><span className="font-semibold text-white">{activeDoctor.levelLabel}</span></div>}
                   <div className="flex items-center justify-between gap-3"><span>Ranking</span><span className="font-semibold text-white">{activeDoctor.rank ? `${activeDoctor.rank}º` : '-'}</span></div>
                 </div>
               </div>
@@ -1816,7 +1847,6 @@ function ConversionDoctorBandsContent({
               </div>
             , document.body) : null}
           </div>
-        </div>
       </div>
       <div className="grid gap-2 lg:grid-cols-[minmax(20rem,0.9fr)_minmax(0,1.7fr)]">
         {detailGroups.map((group) => (
@@ -2351,12 +2381,14 @@ export function AtendimentoModule() {
       tiles.push({
         key: 'conversion:distribution',
         label: 'Desempenho por doutor',
-        subtitle: 'Ranking, totais e faixas do período.',
+        subtitle: filters.unit === 'all' ? 'Ranking por pontos obtidos em cada unidade.' : 'Ranking, totais e faixas do período.',
         value: `${formatNumberBR(conversionSection.doctors.length)} doutores`,
         detail: conversionPeriodDetail,
         icon: Gauge,
         tone: 'violet',
-        description: 'Cada coluna mostra o total do período por doutor. As faixas horizontais mantêm os níveis 0 a 3 na mesma escala para facilitar a leitura do corte e do ranking.',
+        description: filters.unit === 'all'
+          ? 'Cada coluna mostra a soma dos pontos que o doutor obteve na comparação da própria unidade. Produção bruta não determina a posição entre unidades.'
+          : 'Cada coluna mostra o total do período por doutor. As faixas horizontais mantêm os níveis 0 a 3 na mesma escala para facilitar a leitura do corte e do ranking.',
         wrapperClassName: 'col-span-full',
         content: (
           <ConversionDoctorBandsContent
@@ -2366,6 +2398,7 @@ export function AtendimentoModule() {
             metrics={conversionMetrics}
             optimization={conversionSection.optimization}
             detailGroups={distributionGroups}
+            isAggregate={conversionSection.isAggregate || conversionSection.comparisonMetric === 'unit-score'}
           />
         ),
       })
