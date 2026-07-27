@@ -9,10 +9,12 @@ describe('module availability', () => {
       expect(unlocked.has(key)).toBe(false)
     }
     expect(unlocked.has('atendimento')).toBe(true)
+    expect(unlocked.has('clientes')).toBe(true)
   })
 
   it('keeps the modules available for local development validation', () => {
     const unlocked = unlockedModuleKeys('insumos', false)
+    expect(unlocked.has('clientes')).toBe(true)
     expect(unlocked.has('caixa')).toBe(true)
     expect(unlocked.has('meta-ads')).toBe(true)
   })

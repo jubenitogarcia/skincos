@@ -13,6 +13,7 @@ export const DEFAULT_UNLOCKED_MODULE_KEYS = [
   'insumos',
   'conversa',
   'atendimento',
+  'clientes',
   'caixa',
   'faturamento',
   'procedimentos',
