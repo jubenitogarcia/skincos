@@ -4,7 +4,7 @@ const CALIBRATION_FILE_PREFIXES = ['[TEST-VIDEO-ONLY]', '[TEST-CAROUSEL]'];
 // Build Jobs and the downstream quality gate must advance together. This
 // prevents a stale n8n node definition from quietly accepting a payload whose
 // destination contract was added by a newer workflow revision.
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v11_carousel';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v12_native_carousel_route';
 // Website Lead ad sets with dynamic creative reject BOOK_NOW. A replacement
 // must, however, preserve the destination contract of its source ad: message
 // campaigns require WHATSAPP_MESSAGE and the WhatsApp URL.
@@ -1678,6 +1678,10 @@ for (const entry of jobEntries) {
     optimization_goal: safeString(destination.optimization_goal),
     destination_type: safeString(destination.destination_type).toUpperCase(),
     whatsapp_destination_url: toHttps(destination.whatsapp_destination_url),
+    carousel_native_campaign_id: safeString(destination.carousel_native_campaign_id),
+    carousel_native_adset_id: safeString(destination.carousel_native_adset_id),
+    carousel_native_adset_verified: destination.carousel_native_adset_verified === true,
+    carousel_native_route_active: destination.carousel_native_route_active === true,
     config_revision: safeString(destination.config_revision || job.config_revision),
     destination_id_source: safeString(destination.destination_id_source || 'build_payload'),
     suffix_hint: safeString(destination.suffix_hint || job.suffix_hint),
@@ -1837,9 +1841,21 @@ for (const entry of jobEntries) {
     const replacementFallsBackToNewAd = requestedReplaceExisting && !chosenAd;
     const temporalGuardRequiresNewAd = replacementFallsBackToNewAd && freshCandidates.length > 0;
 
-    const action = shouldReplaceExisting && !replacementFallsBackToNewAd
+    const carouselNativeAdsetId = safeString(destinationMeta.carousel_native_adset_id || metaConfigForDestination(destinationMeta) && metaConfigForDestination(destinationMeta).carousel_native_adset_id);
+    const carouselNativeCampaignId = safeString(destinationMeta.carousel_native_campaign_id || metaConfigForDestination(destinationMeta) && metaConfigForDestination(destinationMeta).carousel_native_campaign_id);
+    const carouselNativeVerified = destinationMeta.carousel_native_adset_verified === true || metaConfigForDestination(destinationMeta) && metaConfigForDestination(destinationMeta).carousel_native_adset_verified === true;
+    const carouselNativeRouteActive = destinationMeta.carousel_native_route_active === true || metaConfigForDestination(destinationMeta) && metaConfigForDestination(destinationMeta).carousel_native_route_active === true;
+    const carouselCandidateUsesNativeRoute = safeString(chosenAd && chosenAd.adset_id) === carouselNativeAdsetId;
+    let action = shouldReplaceExisting && !replacementFallsBackToNewAd
       ? 'replace_existing'
       : 'create_new';
+
+    // A legacy flexible ad set cannot be rewritten into a native carousel.
+    // Until a native-route ad itself becomes an eligible replacement target,
+    // publish a separate active ad in the verified native route instead.
+    if (mediaMode === 'carousel' && action === 'replace_existing' && !carouselCandidateUsesNativeRoute) {
+      action = 'create_new';
+    }
 
     const offerReplacementGuard = {
       required: true,
@@ -1891,7 +1907,7 @@ for (const entry of jobEntries) {
     const chosenReasons = chosenEntry ? chosenEntry.reasons : [];
 
     const warnings = [];
-    const resolvedAdsetId = safeString(destinationMeta.destination_adset_id);
+    let resolvedAdsetId = safeString(destinationMeta.destination_adset_id);
     const resolvedSourceAdId = action === 'replace_existing'
       ? safeString(chosenAd && chosenAd.id)
       : '';
@@ -1899,7 +1915,7 @@ for (const entry of jobEntries) {
     const resolvedAccountId = safeString(destinationMeta.destination_ad_account_id);
     const resolvedPageId = safeString(destinationMeta.destination_page_id);
     const resolvedInstagramUserId = safeString(destinationMeta.destination_instagram_user_id);
-    const resolvedCampaignId = safeString(destinationMeta.destination_campaign_id);
+    let resolvedCampaignId = safeString(destinationMeta.destination_campaign_id);
     const gatewayConfig = metaConfigForDestination(destinationMeta);
     const resolvedTokenId = safeString(destinationMeta.token_id || gatewayConfig && gatewayConfig.token_id);
     const uploaded = uploadedByAccount.get(resolvedAccountId) || {};
@@ -2038,9 +2054,7 @@ for (const entry of jobEntries) {
       continue;
     }
     const usesWhatsAppDestination = destinationContract.kind === 'whatsapp';
-    const carouselNativeAdsetId = safeString(destinationMeta.carousel_native_adset_id || gatewayConfig && gatewayConfig.carousel_native_adset_id);
-    const carouselNativeVerified = destinationMeta.carousel_native_adset_verified === true || gatewayConfig && gatewayConfig.carousel_native_adset_verified === true;
-    if (mediaMode === 'carousel' && (!carouselNativeAdsetId || !carouselNativeVerified)) {
+    if (mediaMode === 'carousel' && (!carouselNativeAdsetId || !carouselNativeVerified || !carouselNativeRouteActive)) {
       outputs.push({
         json: {
           error: 'O conjunto de anuncios atual exige criativo flexivel e nao renderiza o contrato de carrossel no Ads Manager; lote bloqueado antes de qualquer mutacao Meta.',
@@ -2052,12 +2066,17 @@ for (const entry of jobEntries) {
             current_destination_adset_id: safeString(destinationMeta.destination_adset_id),
             carousel_native_adset_id_present: Boolean(carouselNativeAdsetId),
             carousel_native_adset_verified: carouselNativeVerified,
-            required_configuration: ['carousel_native_adset_id', 'carousel_native_adset_verified=true'],
+            carousel_native_route_active: carouselNativeRouteActive,
+            required_configuration: ['carousel_native_adset_id', 'carousel_native_adset_verified=true', 'carousel_native_route_active=true'],
             observed_graph_errors: ['flexible_creative_required', '100/1443048'],
           },
         },
       });
       continue;
+    }
+    if (mediaMode === 'carousel') {
+      resolvedAdsetId = carouselNativeAdsetId;
+      if (carouselNativeCampaignId) resolvedCampaignId = carouselNativeCampaignId;
     }
     const ctaTypes = [usesWhatsAppDestination ? WHATSAPP_CTA_TYPE : DEFAULT_CTA_TYPE];
     const requestedRawSiteLinks = safeArray(overrides.site_links || overrides.siteLinks || ai.site_links || ai.siteLinks);
@@ -2351,61 +2370,33 @@ for (const entry of jobEntries) {
           ...creativeRootExtras,
         });
 
-    // The destination sets currently require FLEXIBLE creatives. A native
-    // `object_story_spec.link_data` carousel is rejected with
-    // `flexible_creative_required`, and a hybrid native+asset-feed probe is
-    // rejected with Graph 100/1443048. Production therefore stays on the
-    // flexible feed only; Build Jobs blocks it earlier unless the Token Vault
-    // names a separately verified native-carousel ad set for the destination.
+    // Native carousel is deliberately isolated in a verified manual-placement
+    // ad set. Do not add asset_feed_spec or Advantage+ root extras here: Meta
+    // accepts the native link-data contract, while the flexible and hybrid
+    // envelopes either fail validation or render a broken carousel preview.
     const carouselCreativePayload = mediaMode === 'carousel' ? removeEmptyFields({
       name: finalAdName || sourceAdName,
       object_story_spec: {
         page_id: String(resolvedPageId),
         instagram_user_id: resolvedInstagramUserId ? String(resolvedInstagramUserId) : undefined,
-      },
-      asset_feed_spec: {
-        ad_formats: ['CAROUSEL'],
-        optimization_type: 'PLACEMENT',
-        additional_data: {
-          multi_share_end_card: false,
-          is_click_to_message: usesWhatsAppDestination,
-        },
-        images: orderedAssets.map((asset, index) => removeEmptyFields({
-          hash: safeString(asset.hash) || undefined,
-          url: safeString(asset.hash) ? undefined : toHttps(asset.url),
-          adlabels: [carouselImageLabels[index]],
-        })),
-        bodies: orderedAssets.map((asset, index) => ({
-          text: safeString(normalizedBodies[index % normalizedBodies.length] && normalizedBodies[index % normalizedBodies.length].text),
-          adlabels: [carouselBodyLabels[index]],
-        })),
-        titles: orderedAssets.map((asset, index) => ({
-          text: safeString(normalizedTitles[index % normalizedTitles.length] && normalizedTitles[index % normalizedTitles.length].text).slice(0, 80),
-          adlabels: [carouselTitleLabels[index]],
-        })),
-        descriptions: orderedAssets.map((asset, index) => ({
-          text: safeString(normalizedDescriptions[index % normalizedDescriptions.length] && normalizedDescriptions[index % normalizedDescriptions.length].text),
-          adlabels: [carouselDescriptionLabels[index]],
-        })),
-        link_urls: orderedAssets.map((asset, index) => ({ website_url: primaryLinkUrl, adlabels: [carouselLinkLabels[index]] })),
-        // CAROUSEL cards inherit the feed's single CTA type. Meta accepts the
-        // labelled content assets below but normalizes/removes call_to_actions
-        // on this endpoint; never leave a child CTA-label pointing to that
-        // removed asset or Ads Manager's preview cannot render the carousel.
-        call_to_action_types: ctaTypes,
-        carousels: [{
-          adlabels: [createLabel(sourceAdName, 'carousel', 1)],
-          multi_share_optimized: false,
-          child_attachments: orderedAssets.map((asset, index) => ({
-            image_label: carouselImageLabels[index],
-            body_label: carouselBodyLabels[index],
-            title_label: carouselTitleLabels[index],
-            description_label: carouselDescriptionLabels[index],
-            link_url_label: carouselLinkLabels[index],
+        link_data: {
+          link: primaryLinkUrl,
+          message: safeString(normalizedBodies[0] && normalizedBodies[0].text),
+          call_to_action: {
+            type: ctaTypes[0] || DEFAULT_CTA_TYPE,
+            value: { link: primaryLinkUrl },
+          },
+          child_attachments: orderedAssets.map((asset, index) => removeEmptyFields({
+            link: primaryLinkUrl,
+            image_hash: safeString(asset.hash) || undefined,
+            picture: safeString(asset.hash) ? undefined : toHttps(asset.url),
+            name: safeString(normalizedTitles[index % normalizedTitles.length] && normalizedTitles[index % normalizedTitles.length].text).slice(0, 80),
+            description: safeString(normalizedDescriptions[index % normalizedDescriptions.length] && normalizedDescriptions[index % normalizedDescriptions.length].text),
           })),
-        }],
+          multi_share_end_card: false,
+          multi_share_optimized: false,
+        },
       },
-      ...creativeRootExtras,
     }) : null;
 
     const mixedCreativePayload = mediaMode === 'mixed' ? removeEmptyFields({
@@ -2479,14 +2470,14 @@ for (const entry of jobEntries) {
         media_variant: 'carousel',
         name_suffix: '',
         creativePayload: carouselCreativePayload,
-        carousel_render_contract: 'asset_feed',
+        carousel_render_contract: 'native_link_data',
         assetIds: Object.fromEntries(carouselCards.map((card) => [`carousel_card_${card.carousel_card_index}`, safeString(card.id)])),
         assetNames: Object.fromEntries(carouselCards.map((card) => [`carousel_card_${card.carousel_card_index}`, safeString(card.original_name || card.name)])),
         assetHashes: Object.fromEntries(orderedAssets.map((asset, index) => [`carousel_card_${index + 1}`, safeString(asset.hash)])),
         assetUrls: Object.fromEntries(orderedAssets.map((asset, index) => [`carousel_card_${index + 1}`, toHttps(asset.url)])),
         orderedRatios: orderedAssets.map((asset) => safeString(asset.ratio)),
         requiredMediaRoles: ['carousel_card'],
-        advantagePlusEnabled: true,
+        advantagePlusEnabled: false,
       }] : []),
       ...(mediaMode === 'mixed' ? [{
         media_variant: 'mixed_flexible',
@@ -2708,19 +2699,19 @@ for (const entry of jobEntries) {
         creative_mode: variant.media_variant === 'video_single'
           ? 'video_single_asset_feed'
           : (variant.media_variant === 'carousel'
-            ? 'carousel_asset_feed'
+            ? 'native_carousel_link_data'
           : (variant.media_variant === 'mixed_flexible'
             ? 'mixed_flexible'
             : (action === 'replace_existing' || useFlexibleCreative ? 'flexible_required' : 'single_image'))),
         creative_quality_status: variant.media_variant === 'video_single'
           ? 'video_single_asset_feed_payload_prepared'
           : (variant.media_variant === 'carousel'
-            ? 'carousel_payload_prepared'
+            ? 'native_carousel_payload_prepared'
           : (variant.media_variant === 'mixed_flexible'
             ? 'mixed_flexible_payload_prepared'
             : (useFlexibleCreative ? 'flexible_payload_prepared' : 'single_image_payload_prepared'))),
         creative_quality_requirements: {
-          require_asset_feed_spec: variant.media_variant === 'carousel' || variant.media_variant === 'video_single' || (variant.media_variant !== 'carousel' && (action === 'replace_existing' || useFlexibleCreative)),
+          require_asset_feed_spec: variant.media_variant === 'video_single' || (variant.media_variant !== 'carousel' && (action === 'replace_existing' || useFlexibleCreative)),
           min_images: variant.media_variant === 'carousel' ? carouselCards.length : (variant.media_variant === 'video_single' ? 0 : (action === 'replace_existing' || useFlexibleCreative ? 3 : 1)),
           min_videos: variant.media_variant === 'mixed_flexible' ? 1 : (variant.media_variant === 'video_single' ? 1 : 0),
           min_bodies: variant.media_variant === 'video_single' ? 5 : (action === 'replace_existing' || useFlexibleCreative ? 5 : 1),

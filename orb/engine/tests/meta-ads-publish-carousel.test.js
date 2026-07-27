@@ -152,6 +152,9 @@ test('Build Jobs rehydrates carousel card ordinals from a gateway receipt filena
   assert.match(source, /\[TEST-CAROUSEL\]/);
   assert.match(source, /carousel_requires_verified_native_adset/);
   assert.match(source, /carousel_native_adset_verified/);
+  assert.match(source, /carousel_native_route_active/);
+  assert.match(source, /native_carousel_link_data/);
+  assert.match(source, /child_attachments: orderedAssets\.map/);
 });
 
 test('accepts one five-card flexible carousel calibration as PAUSED', () => {
@@ -163,7 +166,7 @@ test('accepts one five-card flexible carousel calibration as PAUSED', () => {
   });
   const output = runCode('validate-meta-creative-payload.js', [{
     json: {
-      run_id: 'run-1', batch_fingerprint: 'batch-1', workflow_contract_revision: 'meta_destination_contract_v11_carousel',
+      run_id: 'run-1', batch_fingerprint: 'batch-1', workflow_contract_revision: 'meta_destination_contract_v12_native_carousel_route',
       token_id: 'opaque', api_version: 'v25.0', account_id: '123', page_id: '456', action: 'create_new',
       media_variant: 'carousel', destination_contract: { kind: 'website' }, allowed_link_hosts: [],
       landing_page_url: link, scheduling_landing_page_url: link,
@@ -200,19 +203,20 @@ test('accepts a paused native carousel with one title and description per card',
     link, image_hash: `hash-${index + 1}`, name: `Titulo ${index + 1}`, description: `Descricao ${index + 1}`,
   }));
   const output = runCode('validate-meta-creative-payload.js', [{ json: {
-    run_id: 'run-legacy', batch_fingerprint: 'batch-legacy', workflow_contract_revision: 'meta_destination_contract_v11_carousel',
+    run_id: 'run-legacy', batch_fingerprint: 'batch-legacy', workflow_contract_revision: 'meta_destination_contract_v12_native_carousel_route',
     token_id: 'opaque', api_version: 'v25.0', account_id: '123', page_id: '456', action: 'create_new', media_variant: 'carousel',
     destination_contract: { kind: 'whatsapp' }, allowed_link_hosts: [], landing_page_url: link, scheduling_landing_page_url: 'https://espacofacial.com/agendamento',
     offer_fingerprint: { replacement_eligible: false, status: 'unverified', tag: '' }, offer_replacement_guard: { reason: 'calibration_forces_create_new_paused' },
     calibration_mode: true, calibration_marker: '[TEST-CAROUSEL]', desired_final_status: 'PAUSED',
+    carousel_render_contract: 'native_link_data',
     asset_ids: Object.fromEntries(cards.map((_, index) => [`carousel_card_${index + 1}`, `drive-${index + 1}`])),
     creativePayload: { name: '[TEST-CAROUSEL] Native', object_story_spec: { page_id: '456', link_data: {
       link, message: 'Mensagem do carrossel', call_to_action: { type: 'WHATSAPP_MESSAGE', value: { link } },
       multi_share_optimized: false, multi_share_end_card: false, child_attachments: cards,
-    } }, degrees_of_freedom_spec: { creative_features_spec: { image_touchups: { enroll_status: 'OPT_IN' } } } },
+    } } },
     adPayload: { name: '[TEST-CAROUSEL] Native', status: 'PAUSED', adset_id: '789' }, advantage_plus_requested_features: [],
   } }], { 'Restore Publish Groups': [] });
-  assert.equal(output[0].json.meta_creative_validation.carousel_render_contract, 'legacy_link_data');
+  assert.equal(output[0].json.meta_creative_validation.carousel_render_contract, 'native_link_data');
   assert.equal(output[0].json.meta_creative_validation.carousel_card_count, 5);
 });
 

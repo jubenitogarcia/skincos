@@ -26,7 +26,7 @@ const REQUIRED_HORIZONTAL_PLATFORMS = ['facebook'];
 const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
 const REQUIRED_CTA = 'LEARN_MORE';
 const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v11_carousel';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v12_native_carousel_route';
 const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'add_text_overlay',
   'image_touchups',
@@ -335,6 +335,13 @@ function validateAdvantagePlus(payload, source, hosts) {
   const freedom = asObject(payload.degrees_of_freedom_spec);
   assert(!Object.prototype.hasOwnProperty.call(freedom, legacyBundleKey), 'legacy_enhancement_bundle_forbidden', {});
   const features = asObject(freedom.creative_features_spec);
+  const nativeCarousel = safeString(source.media_variant) === 'carousel' &&
+    safeString(source.carousel_render_contract) === 'native_link_data';
+  if (nativeCarousel) {
+    assert(Object.keys(freedom).length === 0, 'native_carousel_advantage_plus_forbidden', {});
+    assert(Object.keys(asObject(payload.creative_sourcing_spec)).length === 0, 'native_carousel_sourcing_spec_forbidden', {});
+    return;
+  }
   const requested = safeArray(source.advantage_plus_requested_features);
   assert(Object.keys(features).length > 0, 'advantage_plus_features_missing', {});
   for (const [feature, config] of Object.entries(features)) {
@@ -420,7 +427,7 @@ function validateCarouselFeed(feed, story, source, hosts, destinationKind) {
   return { primaryLink, card_count: cards.length };
 }
 
-function validateLegacyCarousel(story, source, hosts, destinationKind) {
+function validateNativeCarousel(story, source, hosts, destinationKind) {
   const linkData = asObject(story.link_data);
   const cards = safeArray(linkData.child_attachments);
   assert(cards.length >= 2 && cards.length <= 10, 'carousel_card_count_invalid', { actual: cards.length });
@@ -441,7 +448,7 @@ function validateLegacyCarousel(story, source, hosts, destinationKind) {
   }
   const expectedCards = Object.keys(asObject(source.asset_ids)).filter((key) => /^carousel_card_\d+$/.test(safeString(key))).length;
   assert(!expectedCards || expectedCards === cards.length, 'carousel_card_asset_count_mismatch', { expected: expectedCards, actual: cards.length });
-  return { primaryLink, card_count: cards.length, render_contract: 'legacy_link_data' };
+  return { primaryLink, card_count: cards.length, render_contract: 'native_link_data' };
 }
 
 return $input.all().map((item) => {
@@ -520,7 +527,7 @@ return $input.all().map((item) => {
   const ctas = legacyCarousel ? [asObject(story.link_data.call_to_action).type] : safeArray(feed.call_to_action_types);
   const linkUrls = safeArray(feed.link_urls);
   const carouselValidation = isCarousel ? (legacyCarousel
-    ? validateLegacyCarousel(story, source, hosts, destinationKind)
+    ? validateNativeCarousel(story, source, hosts, destinationKind)
     : validateCarouselFeed(feed, story, source, hosts, destinationKind)) : null;
   if (!isCarousel) assert(linkUrls.length === 1, 'link_url_count_invalid', { actual: linkUrls.length });
   const primaryLink = isCarousel ? carouselValidation.primaryLink : validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
