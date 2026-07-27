@@ -1478,6 +1478,7 @@ function ConversionDoctorBandsContent({
   const yMax = maxValue > 0 ? maxValue * 1.12 : 100
   const hasBands = !isAggregate && Number.isFinite(lowerLimit) && Number.isFinite(cutLine) && Number.isFinite(upperLimit) && upperLimit >= lowerLimit
   const [activeBandLevel, setActiveBandLevel] = useState<number | null>(null)
+  const [activeBandGroupLevels, setActiveBandGroupLevels] = useState<number[] | null>(null)
   const [activeBandTooltipPosition, setActiveBandTooltipPosition] = useState<{ x: number; y: number } | null>(null)
   const bandDetails = [
     { level: 0, y1: 0, y2: lowerLimit, reason: 'Abaixo do limite inferior.', proportion: Number(metrics.level0?.proportion || 0) },
@@ -1518,6 +1519,7 @@ function ConversionDoctorBandsContent({
       if (chart && target instanceof Node && chart.contains(target)) return
 
       setActiveBandLevel(null)
+      setActiveBandGroupLevels(null)
       setActiveBandTooltipPosition(null)
       setActiveDoctorId(null)
       setActiveDoctorTooltipPosition(null)
@@ -1551,6 +1553,7 @@ function ConversionDoctorBandsContent({
   const activateDoctorTooltip = useCallback((doctorId: string, event: React.SyntheticEvent<SVGGElement>) => {
     const targetBounds = event.currentTarget.getBoundingClientRect()
     setActiveBandLevel(null)
+    setActiveBandGroupLevels(null)
     setActiveBandTooltipPosition(null)
     setActiveReferenceTooltip(null)
     setActiveDoctorId(doctorId)
@@ -1611,6 +1614,68 @@ function ConversionDoctorBandsContent({
       description: `Menor limite operacional: ${formatCurrencyBRL(lowerLimit)}. Mostra o piso usado para separar níveis inferiores.`,
     },
   ]
+  const levelCount = (level: number) => Math.max(0, Number(metrics[`level${level}`]?.weekValue || 0))
+  const levelGroupSummary = (levels: number[]) => {
+    const total = Math.max(chartDoctors.length, 1)
+    const count = levels.reduce((sum, level) => sum + levelCount(level), 0)
+    const percentage = new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(count / total)
+    return {
+      subtitle: `${formatNumberBR(count)}/${formatNumberBR(total)} · ${percentage}`,
+      description: levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(levelCount(level))}/${formatNumberBR(total)}`).join(' · '),
+    }
+  }
+  const bandGroupBadges = isAggregate ? [] : [
+    {
+      key: 'outer-high',
+      value: (upperLimit + yMax) / 2,
+      label: 'Faixas externas',
+      levels: [0, 3],
+      icon: CONVERSION_METRIC_ICON_BY_KEY.extremesShare,
+      stroke: '#c4b5fd',
+      fill: '#2e1065',
+      text: '#ede9fe',
+    },
+    {
+      key: 'upper-side',
+      value: (cutLine + upperLimit) / 2,
+      label: 'Lado superior',
+      levels: [2, 3],
+      icon: CONVERSION_METRIC_ICON_BY_KEY.upperSide,
+      stroke: '#6ee7b7',
+      fill: '#064e3b',
+      text: '#d1fae5',
+    },
+    {
+      key: 'center',
+      value: cutLine,
+      label: 'Faixas centrais',
+      levels: [1, 2],
+      icon: CONVERSION_METRIC_ICON_BY_KEY.centerShare,
+      stroke: '#7dd3fc',
+      fill: '#0c4a6e',
+      text: '#e0f2fe',
+    },
+    {
+      key: 'lower-side',
+      value: (lowerLimit + cutLine) / 2,
+      label: 'Lado inferior',
+      levels: [0, 1],
+      icon: CONVERSION_METRIC_ICON_BY_KEY.lowerSide,
+      stroke: '#fcd34d',
+      fill: '#78350f',
+      text: '#fef3c7',
+    },
+    {
+      key: 'outer-low',
+      value: lowerLimit / 2,
+      label: 'Faixas externas',
+      levels: [0, 3],
+      icon: CONVERSION_METRIC_ICON_BY_KEY.extremesShare,
+      stroke: '#c4b5fd',
+      fill: '#2e1065',
+      text: '#ede9fe',
+    },
+  ].map((badge) => ({ ...badge, ...levelGroupSummary(badge.levels) }))
   const renderReferenceLine = (badge: (typeof lineBadges)[number]) => (shapeProps: any) => {
     const x1 = Number(shapeProps.x1)
     const x2 = Number(shapeProps.x2)
@@ -1630,6 +1695,7 @@ function ConversionDoctorBandsContent({
     const activateReferenceTooltip = (event: React.SyntheticEvent<SVGGElement>) => {
       const targetBounds = event.currentTarget.getBoundingClientRect()
       setActiveBandLevel(null)
+      setActiveBandGroupLevels(null)
       setActiveBandTooltipPosition(null)
       clearDoctorTooltip()
 
@@ -1675,6 +1741,65 @@ function ConversionDoctorBandsContent({
       </g>
     )
   }
+  const renderBandGroupBadge = (badge: (typeof bandGroupBadges)[number]) => (shapeProps: any) => {
+    const x2 = Number(shapeProps.x2)
+    const y = Number(shapeProps.y1)
+    if (![x2, y].every(Number.isFinite)) return <g />
+
+    const badgeSize = 18
+    const badgeX = x2 - (badgeSize * 2) - 14
+    const badgeY = y - (badgeSize / 2)
+    const BadgeIcon = badge.icon
+    const activateGroupBadge = (event: React.SyntheticEvent<SVGGElement>) => {
+      const targetBounds = event.currentTarget.getBoundingClientRect()
+      const mouseEvent = event as React.MouseEvent<SVGGElement>
+      const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
+      const viewportHeight = typeof window === 'undefined' ? 720 : window.innerHeight
+      const x = Number.isFinite(mouseEvent.clientX) && mouseEvent.clientX > 0
+        ? mouseEvent.clientX
+        : targetBounds.left + (targetBounds.width / 2)
+      const tooltipY = Number.isFinite(mouseEvent.clientY) && mouseEvent.clientY > 0
+        ? mouseEvent.clientY - 14
+        : targetBounds.top - 8
+
+      clearDoctorTooltip()
+      setActiveBandLevel(null)
+      setActiveBandTooltipPosition(null)
+      setActiveBandGroupLevels(badge.levels)
+      setActiveReferenceTooltip({
+        key: badge.key,
+        label: badge.label,
+        subtitle: badge.subtitle,
+        description: badge.description,
+        position: {
+          x: Math.min(Math.max(x, 132), Math.max(132, viewportWidth - 132)),
+          y: Math.min(Math.max(tooltipY, 72), Math.max(72, viewportHeight - 20)),
+        },
+      })
+    }
+    const clearGroupBadge = () => {
+      setActiveBandGroupLevels(null)
+      setActiveReferenceTooltip(null)
+    }
+
+    return (
+      <g
+        transform={`translate(${badgeX}, ${badgeY})`}
+        role="img"
+        tabIndex={0}
+        data-testid={`atendimento-band-group-badge-${badge.key}`}
+        aria-label={`${badge.label}: ${badge.subtitle}. ${badge.description}`}
+        onMouseEnter={activateGroupBadge}
+        onMouseMove={activateGroupBadge}
+        onMouseLeave={clearGroupBadge}
+        onFocus={activateGroupBadge}
+        onBlur={clearGroupBadge}
+      >
+        <rect width={badgeSize} height={badgeSize} rx="6" fill={badge.fill} fillOpacity="0.98" stroke={badge.stroke} strokeOpacity="0.72" />
+        <BadgeIcon x={3} y={3} width={12} height={12} color={badge.text} strokeWidth={1.8} aria-hidden="true" />
+      </g>
+    )
+  }
 
   return (
     <div className="space-y-3 pt-0.5" data-testid="atendimento-conversion-distribution">
@@ -1685,7 +1810,7 @@ function ConversionDoctorBandsContent({
             style={{ height: `${chartHeightPx}px` }}
             onMouseMove={(event) => {
               const target = event.target as Element
-              if (target.closest('[data-testid^="atendimento-doctor-"], [data-testid^="atendimento-reference-badge-"]')) return
+              if (target.closest('[data-testid^="atendimento-doctor-"], [data-testid^="atendimento-reference-badge-"], [data-testid^="atendimento-band-group-badge-"]')) return
               const bounds = event.currentTarget.getBoundingClientRect()
               const relativeY = event.clientY - bounds.top
               const plotTop = chartMarginTop
@@ -1694,6 +1819,7 @@ function ConversionDoctorBandsContent({
                 clearDoctorTooltip()
                 setActiveReferenceTooltip(null)
                 setActiveBandLevel(null)
+                setActiveBandGroupLevels(null)
                 setActiveBandTooltipPosition(null)
                 return
               }
@@ -1701,6 +1827,7 @@ function ConversionDoctorBandsContent({
                 clearDoctorTooltip()
                 setActiveReferenceTooltip(null)
                 setActiveBandLevel(null)
+                setActiveBandGroupLevels(null)
                 setActiveBandTooltipPosition(null)
                 return
               }
@@ -1708,6 +1835,7 @@ function ConversionDoctorBandsContent({
               const band = bandDetails.find((item) => value >= item.y1 && (item.level === 3 ? value <= item.y2 : value < item.y2))
               clearDoctorTooltip()
               setActiveReferenceTooltip(null)
+              setActiveBandGroupLevels(null)
               setActiveBandLevel(band?.level ?? null)
               setActiveBandTooltipPosition(band ? { x: event.clientX, y: event.clientY - 14 } : null)
             }}
@@ -1715,6 +1843,7 @@ function ConversionDoctorBandsContent({
               clearDoctorTooltip()
               setActiveReferenceTooltip(null)
               setActiveBandLevel(null)
+              setActiveBandGroupLevels(null)
               setActiveBandTooltipPosition(null)
             }}
           >
@@ -1789,7 +1918,7 @@ function ConversionDoctorBandsContent({
                             width={shapeProps.width}
                             height={shapeProps.height}
                             fill={band.visual.fill}
-                            fillOpacity={activeBandLevel === band.level ? 0.3 : 0.08}
+                            fillOpacity={activeBandLevel === band.level || activeBandGroupLevels?.includes(band.level) ? 0.3 : 0.08}
                             className="pointer-events-none transition-opacity"
                             aria-label={`${band.visual.label}. ${band.reason} Razão da faixa: ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(band.proportion)}.`}
                             data-testid={`atendimento-conversion-band-${band.level}`}
@@ -1804,6 +1933,9 @@ function ConversionDoctorBandsContent({
                 ) : null}
                 {lineBadges.map((badge) => (
                   <ReferenceLine key={badge.key} y={badge.value} ifOverflow="extendDomain" shape={renderReferenceLine(badge)} />
+                ))}
+                {bandGroupBadges.map((badge) => (
+                  <ReferenceLine key={badge.key} y={badge.value} ifOverflow="extendDomain" shape={renderBandGroupBadge(badge)} />
                 ))}
                 <Bar
                   dataKey="value"
