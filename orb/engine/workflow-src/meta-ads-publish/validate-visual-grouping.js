@@ -91,7 +91,7 @@ for (const rawGroup of groups) {
     throw new Error(`offer_fingerprint ausente ou invalido em ${key}.`);
   }
   const mediaMode = text(group.media_mode).toLowerCase();
-  if (version === '3' && !['static_only', 'carousel', 'mixed', 'video_only'].includes(mediaMode)) {
+  if (version === '3' && mediaMode && !['static_only', 'carousel', 'mixed', 'video_only'].includes(mediaMode)) {
     throw new Error(`media_mode visual invalido em ${key}: ${text(group.media_mode)}.`);
   }
   groupByKey.set(key, {
@@ -156,8 +156,18 @@ const groupMediaModes = new Map();
 for (const groupKey of groupByKey.keys()) {
   const groupAssignments = [...assignmentByRef.values()].filter((entry) => entry.group_key === groupKey);
   const roles = groupAssignments.map((entry) => entry.role);
-  const carouselMode = version === '3' && groupByKey.get(groupKey)?.media_mode === 'carousel';
   const declaredMode = groupByKey.get(groupKey)?.media_mode;
+  const inferCarousel = version === '3' && !declaredMode &&
+    groupAssignments.length >= 2 && groupAssignments.length <= 10 &&
+    groupAssignments.every((entry) => entry.media_type === 'image');
+  const carouselMode = version === '3' && (declaredMode === 'carousel' || inferCarousel);
+  if (inferCarousel) {
+    // The model already proved membership visually. Older model responses may
+    // omit the new v3 field; retain the intake sequence rather than falling
+    // back to filename parsing or silently treating five cards as placements.
+    groupAssignments.sort((left, right) => Number(manifestByRef.get(left.media_ref)?.ordinal || 0) - Number(manifestByRef.get(right.media_ref)?.ordinal || 0))
+      .forEach((entry, index) => { entry.carousel_card_index = index + 1; });
+  }
   const requiredRoles = carouselMode
     ? ['carousel_card']
     : version === '3' && declaredMode === 'mixed'
@@ -219,6 +229,9 @@ for (const entry of manifest) {
         group_evidence: group.evidence,
         offer_fingerprint: clone(group.offer_fingerprint),
         carousel_card_index: assignment.carousel_card_index || undefined,
+        carousel_card_order_source: version === '3' && !text(group.media_mode)
+          ? 'intake_sequence_fallback_after_visual_membership'
+          : (assignment.carousel_card_index ? 'visual_agent' : undefined),
       },
     },
     binary,
