@@ -133,7 +133,29 @@ function errorPayload(error) {
     }
 }
 
+function redactLocalDiagnostic(value) {
+    return String(value || '')
+        .replace(/postgres(?:ql)?:\/\/[^\s@/]+@[^\s/]+/gi, 'postgresql://[redacted]@…')
+        .replace(/(password|token|secret|key)=([^\s&]+)/gi, '$1=[redacted]')
+        .slice(0, 2000)
+}
+
+function logLocalRuntimeDiagnostic(error) {
+    if (String(process.env.CRM_LOCAL_RUNTIME_DIAGNOSTICS || '').trim() !== '1') return
+    console.error(JSON.stringify({
+        level: 'error',
+        component: 'crm-local-atendimento',
+        event: 'request-failed',
+        name: String(error?.name || 'Error'),
+        code: error?.code ? String(error.code) : undefined,
+        status: Number(error?.statusCode || error?.status || 500),
+        message: redactLocalDiagnostic(error?.message || error || 'ERROR'),
+        stack: redactLocalDiagnostic(error?.stack || '') || undefined,
+    }))
+}
+
 function errorResponse(res, error) {
+    logLocalRuntimeDiagnostic(error)
     const response = errorPayload(error)
     return json(res, response.status, response.body)
 }
@@ -589,6 +611,7 @@ export function createAtendimentoRouter(options = {}) {
 export const __testables = {
     errorPayload,
     isLocalRequest,
+    redactLocalDiagnostic,
     safeEqual,
     verifyMetaAdsOfferContextToken,
     verifySignedActor,

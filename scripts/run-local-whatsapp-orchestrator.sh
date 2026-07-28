@@ -13,6 +13,7 @@ RUN_AS_USER="${CRM_LOCAL_WA_RUN_AS_USER:-admin}"
 RUNTIME_HOME="${CRM_LOCAL_WA_RUNTIME_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/skincos/crm-local-adapter}"
 SOURCE_HOME="${CRM_LOCAL_WA_SOURCE_HOME:-$RUNTIME_HOME/source}"
 DATABASE_URL="${CRM_LOCAL_WA_DATABASE_URL:-postgresql:///skincos_crm_local?host=/var/run/postgresql}"
+TARGET_COMMIT="${CRM_LOCAL_TARGET_COMMIT:-unknown}"
 
 if ! sudo -n test -f "$ENV_FILE"; then
   echo "[whatsapp-local] Configuração nativa ausente: CRM_LOCAL_WA_NATIVE_ENV_FILE" >&2
@@ -31,6 +32,7 @@ export LOCAL_WA_ADAPTER_RUNTIME_HOME="$RUNTIME_HOME"
 export LOCAL_WA_ADAPTER_SOURCE_HOME="$SOURCE_HOME"
 export LOCAL_WA_ADAPTER_RUN_AS_USER="$RUN_AS_USER"
 export LOCAL_WA_ADAPTER_DATABASE_URL="$DATABASE_URL"
+export LOCAL_WA_ADAPTER_TARGET_COMMIT="$TARGET_COMMIT"
 export LOCAL_WA_ADAPTER_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}"
 export LOCAL_WA_ADAPTER_ROLE="${LOCAL_AUTH_ROLE:-GESTOR}"
 
@@ -42,6 +44,7 @@ exec sudo -n /usr/bin/env \
   LOCAL_WA_ADAPTER_SOURCE_HOME="$LOCAL_WA_ADAPTER_SOURCE_HOME" \
   LOCAL_WA_ADAPTER_RUN_AS_USER="$LOCAL_WA_ADAPTER_RUN_AS_USER" \
   LOCAL_WA_ADAPTER_DATABASE_URL="$LOCAL_WA_ADAPTER_DATABASE_URL" \
+  LOCAL_WA_ADAPTER_TARGET_COMMIT="$LOCAL_WA_ADAPTER_TARGET_COMMIT" \
   LOCAL_WA_ADAPTER_EMAIL="$LOCAL_WA_ADAPTER_EMAIL" \
   LOCAL_WA_ADAPTER_ROLE="$LOCAL_WA_ADAPTER_ROLE" \
   /bin/bash -c '
@@ -87,12 +90,21 @@ exec sudo -n /usr/bin/env \
   export WA_ORCHESTRATOR_PROVIDER=evolution
   export CRM_RUNTIME_HOME="$LOCAL_WA_ADAPTER_RUNTIME_HOME"
   export VAR_DIR="$LOCAL_WA_ADAPTER_RUNTIME_HOME/var"
+  # Stack diagnostics stay in the private local runtime; native services never
+  # enable this flag and Pages never receives the details.
+  export CRM_LOCAL_RUNTIME_DIAGNOSTICS=1
+  export CRM_LOCAL_TARGET_COMMIT="$LOCAL_WA_ADAPTER_TARGET_COMMIT"
   export CRM_API_PORT="$LOCAL_WA_ADAPTER_PORT"
   export CRM_API_HOST=127.0.0.1
   export PORT="$LOCAL_WA_ADAPTER_PORT"
   export DEV_AUTH_EMAIL="$LOCAL_WA_ADAPTER_EMAIL"
   export DEV_AUTH_ROLE="$LOCAL_WA_ADAPTER_ROLE"
   export EVOLUTION_INSTANCE_PREFIX="${EVOLUTION_INSTANCE_PREFIX:-crm-channel-}"
+
+  # Bootstrap the exact staged source, OS identity and local database socket
+  # before opening the listener. This removes first-request migration races.
+  runuser -u "$LOCAL_WA_ADAPTER_RUN_AS_USER" --preserve-environment -- \
+    /usr/bin/node "$LOCAL_WA_ADAPTER_SOURCE_HOME/scripts/validate-local-atendimento-runtime.mjs"
 
   # Keep the native credential in the inherited process environment. Do not put
   # it in a command argument, which would expose it through process inspection.

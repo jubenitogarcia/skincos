@@ -521,6 +521,7 @@ start_whatsapp_orchestrator_local() {
   echo "[crm-local] Iniciando adaptador local do WhatsApp em :$CRM_WA_ORCHESTRATOR_PORT"
   (
     CRM_LOCAL_WA_ORCHESTRATOR_PORT="$CRM_WA_ORCHESTRATOR_PORT" \
+      CRM_LOCAL_TARGET_COMMIT="$CRM_TARGET_COMMIT" \
       LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}" \
       LOCAL_AUTH_ROLE="${LOCAL_AUTH_ROLE:-GESTOR}" \
       "$WHATSAPP_ORCHESTRATOR_HELPER"
