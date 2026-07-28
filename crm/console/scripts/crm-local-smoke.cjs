@@ -29,6 +29,7 @@ const SMOKE_MODULE_KEYS = new Set(
     .map((value) => value.trim())
     .filter(Boolean),
 )
+const ALLOW_EMPTY_MODULE_SET = process.env.CRM_SMOKE_ALLOW_EMPTY_MODULES === '1'
 
 function nowStamp() {
   const d = new Date()
@@ -232,7 +233,7 @@ async function main() {
     modules = modules.filter((item) => item.key && item.label)
     if (SMOKE_MODULE_KEYS.size > 0) {
       modules = modules.filter((item) => SMOKE_MODULE_KEYS.has(item.key))
-      if (modules.length === 0) {
+      if (modules.length === 0 && !ALLOW_EMPTY_MODULE_SET) {
         throw new Error(`Nenhum módulo configurado para o smoke local está disponível: ${[...SMOKE_MODULE_KEYS].join(', ')}.`)
       }
     }
