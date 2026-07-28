@@ -1070,7 +1070,7 @@ export default function AppFunctionalNeatlab() {
 	                            ) : null}
 	                            {filteredModules.map((m, index) => (
 	                                (() => {
-	                                    const isLocked = !UNLOCKED_MODULE_KEYS.has(m.key)
+	                                    const isLocked = !moduleAvailability(m, moduleAccessContext).available
 	                                    const isActive = active === m.key
 	                                    return (
                                         <TooltipLabel key={m.key} label={m.label} description={isLocked ? 'Módulo em breve.' : undefined}>

@@ -332,6 +332,61 @@ test('calculates a consolidated all-units conversion view from summed unit capac
     assert.equal(report.doctorRanking.topDoctors[0].name, 'Dra. A')
 })
 
+test('ranks all-units doctors by the points earned in each unit instead of raw production', async () => {
+    const fakePool = createFakePool([
+        (sql) => sql.includes('from crm_atendimento.professionals') && {
+            rows: [
+                { id: 'doctor-points', name: 'Dra. Pontos', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Injetor'] },
+                { id: 'doctor-support', name: 'Dra. Apoio', role: 'Injetor', status: 'Ativo', units: ['Novo Hamburgo'], roles: ['Injetor'] },
+                { id: 'doctor-raw', name: 'Dra. Bruta', role: 'Injetor', status: 'Ativo', units: ['BarraShoppingSul'], roles: ['Injetor'] },
+                { id: 'doctor-base', name: 'Dra. Base', role: 'Injetor', status: 'Ativo', units: ['BarraShoppingSul'], roles: ['Injetor'] },
+            ], rowCount: 4,
+        },
+        (sql) => sql.includes('coalesce(sum(a.value), 0)::numeric as total') && sql.includes('group by u.slug') && !sql.includes('inj.id') && {
+            rows: [
+                { unit_slug: 'novo-hamburgo', total: 15 },
+                { unit_slug: 'barra-shopping-sul', total: 170 },
+            ], rowCount: 2,
+        },
+        (sql) => sql.includes('as doctor_id') && {
+            rows: [
+                { unit_slug: 'novo-hamburgo', doctor_id: 'doctor-points', doctor_name: 'Dra. Pontos', total: 14 },
+                { unit_slug: 'novo-hamburgo', doctor_id: 'doctor-support', doctor_name: 'Dra. Apoio', total: 1 },
+                { unit_slug: 'barra-shopping-sul', doctor_id: 'doctor-raw', doctor_name: 'Dra. Bruta', total: 90 },
+                { unit_slug: 'barra-shopping-sul', doctor_id: 'doctor-base', doctor_name: 'Dra. Base', total: 80 },
+            ], rowCount: 4,
+        },
+        (sql) => sql.includes('from crm_atendimento.schedule_days') && {
+            rows: [
+                { unit_slug: 'novo-hamburgo', service_date: '2026-06-08', doctor_name: 'Dra. Pontos' },
+                { unit_slug: 'barra-shopping-sul', service_date: '2026-06-08', doctor_name: 'Dra. Bruta' },
+            ], rowCount: 2,
+        },
+        (sql) => sql.includes('from crm_atendimento.monthly_unit_goals') && {
+            rows: [
+                { unit_slug: 'novo-hamburgo', goal_month: '2026-06-01', value: 0 },
+                { unit_slug: 'barra-shopping-sul', goal_month: '2026-06-01', value: 500 },
+            ], rowCount: 2,
+        },
+        (sql) => sql.includes('from crm_atendimento.monthly_unit_goal_levels') && {
+            rows: [
+                { unit_slug: 'novo-hamburgo', goal_month: '2026-06-01', level_key: 'first', value: 0 },
+                { unit_slug: 'barra-shopping-sul', goal_month: '2026-06-01', level_key: 'first', value: 500 },
+            ], rowCount: 2,
+        },
+        ...buildConversionPoolHandlers(),
+    ])
+
+    const report = await createAtendimentoStore({ pool: fakePool }).managementConversionReport({ unit: 'all', date: '2026-06-16' }, { role: 'GESTOR' })
+    const section = report.doctorRanking.sections[0]
+
+    assert.equal(section.comparisonMetric, 'unit-score')
+    assert.equal(section.doctors[0].name, 'Dra. Pontos')
+    assert.ok(section.doctors[0].score > section.doctors.find((doctor) => doctor.name === 'Dra. Bruta').score)
+    assert.ok(section.doctors.find((doctor) => doctor.name === 'Dra. Bruta').weekValue > section.doctors[0].weekValue)
+    assert.equal(report.doctorRanking.topDoctors[0].name, 'Dra. Pontos')
+})
+
 test('exposes period goal and hides monthly goal in unit conversion metrics', async () => {
     const fakePool = createFakePool(buildConversionPoolHandlers())
 
