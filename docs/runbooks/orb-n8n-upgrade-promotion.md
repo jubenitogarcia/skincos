@@ -23,9 +23,11 @@ senha ou dump pertence a este repositório.
 | 7 | backup de `/etc/skincos`, volumes e units pelo runbook lifecycle | cópias privadas e ACLs corretas | restauração verificável | cancelar | inventário/hash |
 | 8 | confirmar drain/parada de triggers: `sudo systemctl stop orb.service` após registrar estado | nenhum novo trigger/workflow inicia | owner confirma janela sem execução | `rollback.sh` | timestamp, status e contagem |
 | 9 | `sudo systemctl stop orb-proxy.service orb.service` | parada ordenada, sem processos órfãos | somente serviços Orb afetados | repor serviços anteriores | journal/status |
-| 10 | `N8N_ARTIFACT_PATH=<tarball privado> .../upgrade.sh` | tarball íntegro e instalação em caminho imutável | SHA/integridade conferidos | repor install root anterior | `sha256sum`, npm log sanitizado |
-| 11 | `N8N_BIN=<binário 2.32.5> .../migrate.sh` | migrations 143→227 sem erro/lock | backup verificado + aprovação | restaurar DB, nunca `db:revert` | contagem/migration log |
-| 12 | `sudo systemctl start orb.service orb-proxy.service` | startup limpo, loopback, health 200 | health/local listener | parar e rollback | journal + health |
+| 10 | `N8N_ARTIFACT_PATH=<tarball privado> .../upgrade.sh` | tarball íntegro em `/opt/skincos/releases/<SHA>/n8n` imutável | SHA/integridade conferidos | manter `/usr/local/bin/n8n` 2.8.3 intacto | `sha256sum`, npm log sanitizado |
+| 11 | `.../configure-community-packages.sh` | inventário dos 10 packages com SHA-512 em EnvironmentFile restrito | colisão Evolution original recusada | restaurar checkpoint de config | hash/contagem, sem segredo |
+| 12 | `.../activate-versioned-runtime.sh` | drop-in aponta apenas o Orb ao binário 2.32.5 versionado | `N8N_APPROVED_SHA` exato | restaurar drop-in 2.8.3 do checkpoint | `systemd-analyze verify` |
+| 13 | `N8N_BIN=<binário 2.32.5> .../migrate.sh` | migrations 143→227 sem erro/lock | backup verificado + aprovação | restaurar DB, nunca `db:revert` | contagem/migration log |
+| 14 | `systemctl daemon-reload` e promoção canônica de source, seguida por `orb-safe-restart.sh` | startup limpo, loopback, health 200 | health/local listener | fence + restore de source/config/DB | journal + health |
 | 13 | `.../smoke.sh` | Orb, CRM, Booking, WhatsApp, quatro serviços e MCP público 404 | todos os gates verdes | rollback imediato | JSON/TSV sanitizado |
 | 14 | `N8N_UPGRADE_ENV=staging .../validate-oauth.sh` em fixture sintética equivalente | consentimento repetido deixa uma linha; tokens/revoke/restart | somente fixture sem PII | rollback staging | contagens sem valores |
 | 15 | `N8N_MCP_BEARER_FILE=<privado> .../validate-mcp.sh` | auth, 9 tools readonly, sem `execute_workflow`, sanitização, limites | gateway loopback | bloquear/rollback | resposta sanitizada |

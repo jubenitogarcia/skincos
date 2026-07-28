@@ -7,7 +7,7 @@ export N8N_EXPECTED_ENV=staging
 export N8N_STAGING_MARKER=orb-n8n-staging
 export N8N_DRY_RUN=1
 
-for script in preflight checkpoint backup verify-backup upgrade migrate configure-community-packages status smoke validate-oauth validate-mcp rollback evidence-collection; do
+for script in preflight checkpoint backup verify-backup upgrade migrate configure-community-packages activate-versioned-runtime status smoke validate-oauth validate-mcp rollback evidence-collection; do
   bash -n "$ROOT/$script.sh"
   output=$(bash "$ROOT/$script.sh" --dry-run)
   printf '%s\n' "$output" | grep -q 'DRY-RUN\|INFO:'
