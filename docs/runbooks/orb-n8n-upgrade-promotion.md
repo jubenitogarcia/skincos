@@ -1,7 +1,7 @@
 # Runbook de promoção controlada Orb/n8n 2.8.3 → 2.32.5
 
 Status deste documento: **proposta revisável; não executado**. A qualificação de
-staging disponível permanece `BLOQUEADO`, portanto este runbook não autoriza
+staging está em andamento, portanto este runbook ainda não autoriza
 promoção. Toda execução futura exige janela aprovada, operador identificado e
 `N8N_UPGRADE_ENV` confirmado.
 
@@ -30,7 +30,7 @@ senha ou dump pertence a este repositório.
 | 14 | `N8N_UPGRADE_ENV=staging .../validate-oauth.sh` em fixture sintética equivalente | consentimento repetido deixa uma linha; tokens/revoke/restart | somente fixture sem PII | rollback staging | contagens sem valores |
 | 15 | `N8N_MCP_BEARER_FILE=<privado> .../validate-mcp.sh` | auth, 9 tools readonly, sem `execute_workflow`, sanitização, limites | gateway loopback | bloquear/rollback | resposta sanitizada |
 | 16 | smoke sintético aprovado para Orb/CRM/Booking/WhatsApp | jornadas e negativas esperadas | owners de cada domínio | rollback | IDs de fixture, sem payloads |
-| 17 | `systemctl show orb orb-proxy messaging-whatsapp crm booking` | quatro serviços exigidos ativos/habilitados | operador confirma exatamente os quatro | rollback | status |
+| 17 | `.../status.sh` | exatamente `orb.service`, `orb-proxy.service`, `cloudflare-orb.service` e `skincos-orb-mcp-readonly.service` ativos/habilitados | operador confirma exatamente os quatro | rollback | status |
 | 18 | `curl -i https://orb.skincos.com.br/mcp-server` e `/mcp-server/http` | ambos 404 | segurança/perímetro | rollback e bloqueio | códigos HTTP |
 | 19 | `.../status.sh` + observação inicial | errors OAuth/MCP/workflows/CPU/memória/disco dentro do baseline existente | owner aceita baseline | rollback em qualquer gate | janela de observação |
 | 20 | decisão formal manter/reverter | todos os gates verdes, sem drift | aprovação humana final | `rollback.sh` | decisão + checkpoint |

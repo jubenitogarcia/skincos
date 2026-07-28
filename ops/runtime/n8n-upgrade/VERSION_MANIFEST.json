@@ -44,16 +44,16 @@
     "public_paths_must_return": 404
   },
   "additional_packages": [
-    ["@cloudconvert/n8n-nodes-cloudconvert", "1.0.2"],
-    ["n8n-nodes-browserless", "1.1.3"],
-    ["n8n-nodes-cloudinary", "0.2.1"],
-    ["n8n-nodes-evolution-api-en", "1.0.2"],
-    ["n8n-nodes-evolution-tools", "0.1.10"],
-    ["n8n-nodes-mcp", "0.1.37"],
-    ["n8n-nodes-meta-publisher", "0.15.1"],
-    ["n8n-nodes-python", "0.1.4"],
-    ["n8n-nodes-run-node-with-credentials-x", "0.4.1"],
-    ["n8n-nodes-websocket", "1.0.1"]
+    {"name":"@cloudconvert/n8n-nodes-cloudconvert","version":"1.0.2","integrity":"sha512-6rlBu8qjVWkKMjcgTyAmbpP+0hSPvUbjSwBUI9ssfiNGtSGP8TdSqpfqNufQCRseZqlgaQ4fZF9KzdR87W52cQ=="},
+    {"name":"n8n-nodes-browserless","version":"1.1.3","integrity":"sha512-VY7J+KfytCZs4Txl6lFucSvkEowv5tP+uALtCfcj8XisTUkbG58n5D5seSBiQGcqy/ugXSfdrqM0+JGr7tnjGw=="},
+    {"name":"n8n-nodes-cloudinary","version":"0.2.1","integrity":"sha512-47KeOgPnVTn37EEceX+rRWSaqLO5XiMaL1sc19QnfWGIFU4JidoCTLFsSpLicXHD3XvpyEoSl+I/ih+jmw0whw=="},
+    {"name":"n8n-nodes-evolution-api-en","version":"1.0.2","integrity":"sha512-4l02OXv9a6oF/EPZSufn0aaZNCwxAOJ8JfXcoRv6c3pbF2QXqI+Orjnr+yRrp92+JVxqzznxhnjdPgijCdJA6A=="},
+    {"name":"n8n-nodes-evolution-tools","version":"0.1.10","integrity":"sha512-kES2yrD3GhDTHQEhhZGAwcOEKQiB67VgTzl78HlVZhBmucOx3S9GsQ9o9a36PPC04kRLXgOAqtggKYIZkfNScQ=="},
+    {"name":"n8n-nodes-mcp","version":"0.1.37","integrity":"sha512-gAWGu1ufNRLabmwwcWkARy1qbxdCSUJMeT1eLrPkPpBblbjD4fl+Kz2uWmyuv2sywyZilKyux6PRpu9TbQdgjQ=="},
+    {"name":"n8n-nodes-meta-publisher","version":"0.15.1","integrity":"sha512-DObs6E2Mj0fpAGX0SFyEV/Ph6W+IyDOWHJlnRVYplrADXvYE6yIiuVKmK+JL5o5nfW2hbMl7CxrVf1XB9mCGhA=="},
+    {"name":"n8n-nodes-python","version":"0.1.4","integrity":"sha512-ltRF8Jo8Z2xy6RS1nuGYfzjkr57vuR9sPpa5aeA1zedOeEfAsKU2jyb6JYtngxb3L3MAs2kC9HRTixBYpifHNw=="},
+    {"name":"n8n-nodes-run-node-with-credentials-x","version":"0.4.1","integrity":"sha512-Pli6qzTJ1HXqNoxaFylkSoLBn4Uhw30cGC4XkT1vtH0mxyu24sTTraMRC5lxINFRFUO64cdlwke/pwsxuyWsJQ=="},
+    {"name":"n8n-nodes-websocket","version":"1.0.1","integrity":"sha512-aii37odDIuYl16Ct4pPsJ0e9JjiRLLpEnd99cx3HDPXLhMJ9uTMRe8zedKlwu3Rvq27BRDtfCOF19JyD1RvUJA=="}
   ],
   "package_impact": "o conjunto-alvo mantém os 10 packages com tipos presentes nos workflows; n8n-nodes-evolution-api@1.0.4 foi retirado por colisão com o -en e ausência de referência nos 43 workflows sanitizados. n8n-nodes-mcp@0.1.37 foi carregado canonicamente no staging.",
   "official_sources": [

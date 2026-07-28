@@ -34,9 +34,10 @@ CPU/memória/disco/fila excedida pelos alertas já existentes.
    zero alteração de credenciais e contagem de execuções sem duplicação.
 9. Validar gateway MCP: loopback-only, 9 tools readonly, ausência de
    `execute_workflow`, sanitização, rate-limit/timeout e rotas públicas 404.
-10. Validar `orb`, `orb-proxy`, `messaging-whatsapp`, `crm`, `booking`,
-    `cloudflare-orb` e `cloudflare-runtime` conforme o catálogo; não reiniciar
-    unidades não afetadas sem autorização.
+10. Validar exatamente `orb.service`, `orb-proxy.service`,
+    `cloudflare-orb.service` e `skincos-orb-mcp-readonly.service` como
+    `active` e `enabled`; CRM, Booking e WhatsApp são validados pelos smokes
+    próprios e não justificam reiniciar unidades não afetadas.
 11. Reexecutar smokes de Orb/CRM/Booking/WhatsApp e regressão OAuth sintética em
     staging/fixture. Não executar workflow real para “confirmar” o rollback.
 12. Se todos os gates estiverem verdes, manter 2.8.3 e registrar `ROLLBACK_APLICADO`;
