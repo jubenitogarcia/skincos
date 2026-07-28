@@ -215,12 +215,10 @@ function validateStructure() {
     assert(connectionExists('Hydrate Publish Context', 'BQ - Normalize Hydrated Envelope'), 'Hydrate Publish Context must feed BQ - Normalize Hydrated Envelope');
     assert(connectionExists('BQ - Normalize Hydrated Envelope', 'BQ - Validate Bootstrap Inputs'), 'BQ - Normalize Hydrated Envelope must feed BQ - Validate Bootstrap Inputs');
     assert(connectionExists('BQ - Validate Bootstrap Inputs', 'BQ - Build Publish Context'), 'BQ - Validate Bootstrap Inputs must feed BQ - Build Publish Context');
-    const publicationWindowGuard = names.has('Assert Livia Publication Window');
+    assert(names.has('Assert Livia Publication Window'), 'Missing node: Assert Livia Publication Window');
     assert(
-      publicationWindowGuard
-        ? connectionExists('BQ - Build Publish Context', 'Assert Livia Publication Window') &&
-            connectionExists('Assert Livia Publication Window', 'BQ - Build Platform Job Graph')
-        : connectionExists('BQ - Build Publish Context', 'BQ - Build Platform Job Graph'),
+      connectionExists('BQ - Build Publish Context', 'Assert Livia Publication Window') &&
+        connectionExists('Assert Livia Publication Window', 'BQ - Build Platform Job Graph'),
       'BQ publication context must pass the publication-window guard before platform job generation',
     );
     assert(connectionExists('BQ - Build Platform Job Graph', 'BQ - Validate Job Graph'), 'BQ - Build Platform Job Graph must feed BQ - Validate Job Graph');
@@ -336,6 +334,7 @@ function validateContracts() {
     assert(bqBuildPlatformJobGraphCommand.includes('build-platform-job-graph.js'), 'BQ - Build Platform Job Graph must delegate to scripts/livia/build-platform-job-graph.js');
     assert(bqBuildPlatformJobGraphCommand.includes('--payload'), 'BQ - Build Platform Job Graph command must pass the input payload to the external script');
     assert(!/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/.test(bqBuildPlatformJobGraphCommand), 'BQ - Build Platform Job Graph must use an immutable workflow runtime root.');
+    assert(/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine/.test(bqBuildPlatformJobGraphCommand), 'BQ - Build Platform Job Graph must use a pinned immutable release root.');
     assert(bqBuildPlatformJobGraphCommand.length < 2500, `BQ - Build Platform Job Graph command must stay small enough for stable expression parsing (${bqBuildPlatformJobGraphCommand.length} chars)`);
     assert(bqBuildPlatformJobGraph.length < 1000, `BQ - Build Platform Job Graph must not be a large Code node anymore (${bqBuildPlatformJobGraph.length} chars)`);
     assert(!bqBuildPlatformJobGraph.includes('...payload,\n    jobs: builtJobs'), 'BQ - Build Platform Job Graph must not spread the full bootstrap payload into output');

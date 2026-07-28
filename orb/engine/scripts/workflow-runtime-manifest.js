@@ -29,7 +29,7 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''));
 }
 function immutableReleaseId(releaseRoot) {
-  const resolved = path.resolve(releaseRoot);
+  const resolved = path.resolve(releaseRoot); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- validated against RELEASE_ROOT_RE below.
   const match = resolved.match(RELEASE_ROOT_RE);
   if (!match) fail(`Workflow runtime root must be an immutable Orb release, got ${releaseRoot}.`);
   return { releaseRoot: resolved, releaseId: match[1] };
@@ -63,7 +63,7 @@ function manifestPathFor(runtimeHome, workflowId, workflowVersion) {
   if (!WORKFLOW_VERSION_RE.test(workflowVersion)) fail('Workflow version is invalid for a manifest path.');
   const resolvedHome = path.resolve(runtimeHome);
   if (resolvedHome !== DEFAULT_RUNTIME_HOME) fail(`Manifest runtime home must be ${DEFAULT_RUNTIME_HOME}.`);
-  const manifestPath = path.resolve(resolvedHome, 'workflow-runtime-manifests', workflowId, `${workflowVersion}.json`);
+  const manifestPath = path.resolve(resolvedHome, 'workflow-runtime-manifests', workflowId, `${workflowVersion}.json`); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- validated ID/version and containment above.
   const basePath = path.resolve(resolvedHome, 'workflow-runtime-manifests') + path.sep;
   if (!manifestPath.startsWith(basePath)) fail('Manifest path escapes the runtime manifest directory.');
   return manifestPath;

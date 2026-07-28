@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-[[ "$RELEASE_ID" =~ ^[0-9a-f]{7,64}$ ]] || { echo 'SKINCOS_RELEASE_ID must be a reviewed hexadecimal commit SHA.' >&2; exit 1; }
+[[ "$RELEASE_ID" =~ ^[0-9a-f]{40}$ ]] || { echo 'SKINCOS_RELEASE_ID must be a full 40-character reviewed commit SHA.' >&2; exit 1; }
 [[ -n "$RELEASE_ARCHIVE" && -f "$RELEASE_ARCHIVE" ]] || { echo '--archive must name an existing native source archive.' >&2; exit 1; }
 [[ "$RELEASE_ARCHIVE" != /mnt/* ]] || { echo '--archive must already be on native Linux storage, not /mnt/c.' >&2; exit 1; }
 [[ "$RELEASE_ARCHIVE_SHA256" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo '--sha256 must be a SHA-256 hexadecimal digest.' >&2; exit 1; }

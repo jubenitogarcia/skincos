@@ -1,11 +1,11 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidatePattern('^[0-9a-f]{7,64}$')]
+  [ValidatePattern('^[0-9a-f]{40}$')]
   [string]$ReleaseId,
 
   [Parameter(Mandatory = $true)]
-  [ValidatePattern('^[0-9a-f]{7,64}$')]
+  [ValidatePattern('^[0-9a-f]{40}$')]
   [string]$ParentReleaseId,
 
   [Parameter(Mandatory = $true)]

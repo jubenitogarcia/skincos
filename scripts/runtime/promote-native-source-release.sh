@@ -39,8 +39,8 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
-[[ "$release_id" =~ ^[0-9a-f]{7,64}$ ]] || { echo 'Invalid --release-id.' >&2; exit 2; }
-[[ "$expected_current" =~ ^[0-9a-f]{7,64}$ ]] || { echo 'Invalid --expected-current-release.' >&2; exit 2; }
+[[ "$release_id" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid --release-id: full 40-character SHA required.' >&2; exit 2; }
+[[ "$expected_current" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid --expected-current-release: full 40-character SHA required.' >&2; exit 2; }
 [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]] && (( timeout_seconds <= 3600 )) || { echo 'Invalid --timeout-seconds.' >&2; exit 2; }
 
 target="$RELEASE_BASE/$release_id/source"
@@ -137,6 +137,12 @@ for sidecar in "${SOURCE_SERVICES[@]}"; do
     crm.service) expected_root="$target/crm/api" ;;
     booking.service) expected_root="$target/integration/ef" ;;
   esac
+  sidecar_deadline=$(( $(date +%s) + 30 ))
+  while [[ "$sidecar_root" != "$expected_root" && $(date +%s) -lt $sidecar_deadline ]]; do
+    sleep 1
+    sidecar_pid="$(systemctl show "$sidecar" -p MainPID --value)"
+    sidecar_root="$(readlink -f "/proc/$sidecar_pid/cwd")"
+  done
   [[ "$sidecar_root" = "$expected_root" ]] || { echo "$sidecar restarted from unexpected root: $sidecar_root" >&2; exit 1; }
 done
 sidecars_started=1

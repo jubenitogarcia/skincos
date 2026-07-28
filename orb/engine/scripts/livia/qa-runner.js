@@ -428,6 +428,9 @@ function validateWorkflow() {
     if (/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/.test(commandValue)) {
       errors.push(`${name} must use an immutable workflow runtime root.`);
     }
+    if (!/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine/.test(commandValue)) {
+      errors.push(`${name} must use a pinned immutable release root.`);
+    }
   }
   if (!command.includes('process-media-asset.js')) {
     errors.push('Process Media Asset must call scripts/livia/process-media-asset.js.');
