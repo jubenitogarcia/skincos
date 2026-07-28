@@ -6,6 +6,7 @@ const path = require('path');
 const {
   manualExecutionAuditState,
 } = require('./lib/meta-ads-publish-execution-semantics');
+const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const CODE_SOURCES = Object.freeze({
@@ -53,7 +54,7 @@ function structuralContractDrift(nodes, connections) {
     drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_tool_missing' });
   } else {
     if (crm.type !== '@n8n/n8n-nodes-langchain.toolHttpRequest') drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_wrong_type' });
-    if (crm.parameters?.method !== 'GET' || crm.parameters?.url !== CRM_OFFER_CONTEXT_URL) drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_request_mismatch' });
+    if ((crm.parameters?.method && crm.parameters.method !== 'GET') || crm.parameters?.url !== CRM_OFFER_CONTEXT_URL) drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_request_mismatch' });
     if (crm.parameters?.authentication !== 'genericCredentialType' || crm.parameters?.genericAuthType !== 'httpBearerAuth' || !crm.credentials?.httpBearerAuth?.id) {
       drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_credential_missing' });
     }
@@ -77,6 +78,15 @@ function structuralContractDrift(nodes, connections) {
     drift.push({ contract: 'commercial_offer_source', reason: 'livia_schema_invalid' });
   }
   return drift;
+}
+
+function videoUploadContractDrift(workflow) {
+  try {
+    validateVideoUploadReplay(workflow);
+    return [];
+  } catch (error) {
+    return [{ contract: 'video_upload_replay', reason: String(error.message || error) }];
+  }
 }
 
 async function main() {
@@ -113,6 +123,7 @@ async function main() {
     }
     const settings = parseJson(workflow.settings, {});
     const structuralDrift = structuralContractDrift(nodes, connections);
+    const videoUploadDrift = videoUploadContractDrift({ ...workflow, nodes, connections });
     const report = {
       workflow_id: WORKFLOW_ID,
       mode: 'read_only',
@@ -124,6 +135,8 @@ async function main() {
       code_source_drift: drift,
       crm_catalog_contract_synchronized: structuralDrift.length === 0,
       crm_catalog_contract_drift: structuralDrift,
+      video_upload_contract_synchronized: videoUploadDrift.length === 0,
+      video_upload_contract_drift: videoUploadDrift,
       manual_execution_audit: manualExecutionAuditState(settings),
       manual_execution_note: settings.saveManualExecutions === true
         ? 'Manual executions are retained for later inspection.'
@@ -132,7 +145,7 @@ async function main() {
       service_restarts_performed: false,
     };
     console.log(JSON.stringify(report, null, 2));
-    if (drift.length || structuralDrift.length) process.exitCode = 1;
+    if (drift.length || structuralDrift.length || videoUploadDrift.length) process.exitCode = 1;
   } finally {
     await client.end();
   }

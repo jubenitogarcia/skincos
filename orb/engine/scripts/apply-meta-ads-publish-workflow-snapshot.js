@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
+const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
 const args = new Set(process.argv.slice(2));
 const sourcePath = [...args].find((value) => value.endsWith('.json'));
 const expectedVersion = [...args].find((value) => value.startsWith('--expected-version='))?.slice('--expected-version='.length);
@@ -50,6 +51,7 @@ function assertCandidate(candidate) {
   }
   const target = candidate.connections?.['CRM Offer Context']?.ai_tool?.[0]?.[0];
   if (target?.node !== 'Livia' || target?.type !== 'ai_tool') throw new Error('Candidate CRM Offer Context is not connected to Livia.');
+  validateVideoUploadReplay(candidate);
 }
 
 async function main() {
