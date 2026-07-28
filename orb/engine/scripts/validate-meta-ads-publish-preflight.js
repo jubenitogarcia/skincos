@@ -91,7 +91,7 @@ async function main() {
   await client.connect();
   try {
     const result = await client.query(
-      `SELECT active, nodes, settings, "versionId", "activeVersionId", "versionCounter"
+      `SELECT active, nodes, connections, settings, "versionId", "activeVersionId", "versionCounter"
          FROM n8n_runtime.workflow_entity WHERE id = $1`,
       [WORKFLOW_ID],
     );

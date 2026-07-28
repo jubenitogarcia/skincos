@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 const {
   effectiveResponsesApiEnabled,
@@ -63,4 +65,12 @@ test('replaces the legacy Sheets tool with the authenticated CRM offer-context t
   const updatedSchema = JSON.parse(candidate.nodes.find((node) => node.name === 'OpenAI Chat Model (Agent)').parameters.options.textFormat.textOptions.schema);
   assert.equal(updatedSchema.properties.analysis.properties.spreadsheetPricing, undefined);
   assert.deepEqual(updatedSchema.properties.analysis.properties.crmPricing.properties.source.enum, ['crm', 'none']);
+});
+
+test('preflight loads workflow connections before validating the CRM tool edge', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'validate-meta-ads-publish-preflight.js'),
+    'utf8',
+  );
+  assert.match(source, /SELECT active, nodes, connections, settings,/);
 });
