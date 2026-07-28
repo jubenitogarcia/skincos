@@ -36,6 +36,7 @@ produção, não reinicia serviços, não aplica migration e não promove binár
 - teste de dry-run/sintaxe/manifesto;
 - runbooks de promoção, rollback e observação;
 - evidência sanitizada de resiliência isolada;
+- evidência de descoberta MCP/OAuth do candidato;
 - nenhum backup, dump, credencial, token, cookie, PII, dado clínico ou log bruto.
 
 ## Gates executados neste pacote
