@@ -780,12 +780,21 @@ export function optimizeDoctorConversionInterval({
 } = {}) {
     const values = finiteNumbers(realized)
     const total = values.length
-    const minK = boundedNumber(intervalMultiplierMin, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MIN, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MIN, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MAX)
-    const maxK = boundedNumber(intervalMultiplierMax, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MAX, minK, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MAX)
+    const configuredMinK = boundedNumber(intervalMultiplierMin, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MIN, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MIN, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MAX)
+    const configuredMaxK = boundedNumber(intervalMultiplierMax, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MAX, configuredMinK, DEFAULT_CONVERSION_INTERVAL_MULTIPLIER_MAX)
+    const stdev = Math.max(0, Number(stdevSample || 0))
+    const safeCutOff = Math.max(0, Number(cutOff || 0))
+    // A positive multiplier cannot make the lower limit negative. The curve therefore
+    // ends exactly where standard deviation × k reaches the cut line. For the
+    // synthetic/zero cut-line cases, retain the configured range.
+    const safetyMaximumK = safeCutOff > 0 && stdev > 0
+        ? safeCutOff / stdev
+        : configuredMaxK
+    const maxK = Math.max(0, safetyMaximumK)
+    const minK = Math.min(configuredMinK, maxK)
     const previousK = previousIntervalMultiplier != null && Number.isFinite(Number(previousIntervalMultiplier))
         ? boundedNumber(previousIntervalMultiplier, minK, minK, maxK)
         : null
-    const stdev = Math.max(0, Number(stdevSample || 0))
     if (!total) {
         const counts = emptyLevelCounts()
         return {
@@ -926,6 +935,8 @@ export function optimizeDoctorConversionInterval({
     }
     return {
         ...selected,
+        intervalMultiplierMin: minK,
+        intervalMultiplierMax: maxK,
         tieBreakPolicy,
         legacyDefaultIntervalMultiplier: defaultIntervalMultiplier,
         statusCode: selected.allBandsPopulated
@@ -1064,9 +1075,14 @@ export function calculateDoctorConversionRanking({
     else if (distributionDiagnostics.outlierHeavy) statusCode = 'OUTLIER_HEAVY'
     else if (unstableJump) statusCode = 'UNSTABLE_JUMP'
     const configHash = stableConfigHash({
-        formula: { averageWeight: 0.3, medianWeight: 0.2, dailyGoalWeight: 0.5 },
-        intervalMultiplierMin: optimizationConfig.intervalMultiplierMin,
-        intervalMultiplierMax: optimizationConfig.intervalMultiplierMax,
+        formula: {
+            averageWeight: 0.3,
+            medianWeight: 0.2,
+            dailyGoalWeight: 0.5,
+            intervalMultiplierSafetyCeiling: 'cutLine / standardDeviation',
+        },
+        intervalMultiplierMin: optimized.intervalMultiplierMin ?? optimizationConfig.intervalMultiplierMin,
+        intervalMultiplierMax: optimized.intervalMultiplierMax ?? optimizationConfig.intervalMultiplierMax,
         objectiveName: optimizationConfig.objectiveName,
         requireAllBandsIfPossible: optimizationConfig.requireAllBandsIfPossible,
         requireExtremesIfPossible: optimizationConfig.requireExtremesIfPossible,
@@ -1103,8 +1119,8 @@ export function calculateDoctorConversionRanking({
         selectedMultiplier: effectiveIntervalMultiplier,
         defaultIntervalMultiplier: optimizationConfig.defaultIntervalMultiplier,
         previousIntervalMultiplier: optimizationConfig.previousIntervalMultiplier,
-        intervalMultiplierMin: optimizationConfig.intervalMultiplierMin,
-        intervalMultiplierMax: optimizationConfig.intervalMultiplierMax,
+        intervalMultiplierMin: optimized.intervalMultiplierMin ?? optimizationConfig.intervalMultiplierMin,
+        intervalMultiplierMax: optimized.intervalMultiplierMax ?? optimizationConfig.intervalMultiplierMax,
         objectiveName: optimizationConfig.objectiveName,
         tieBreakPolicy: optimizationConfig.tieBreakPolicy,
         selectionReason: optimized.selectionReason,

@@ -32,3 +32,16 @@ test('redacts untrusted internal failures before returning them to a browser', (
     assert.equal(response.status, 500)
     assert.deepEqual(response.body, { ok: false, error: 'INTERNAL_ERROR', hint: undefined })
 })
+
+test('redacts credentials from local-only diagnostic output', () => {
+    const diagnostic = __testables.redactLocalDiagnostic('postgresql://user:password@db.local/skincos?token=value')
+    assert.match(diagnostic, /^postgresql:\/\/\[redacted\]@…\/skincos\?token=\[redacted\]$/)
+    assert.doesNotMatch(diagnostic, /user|password|value/)
+})
+
+test('accepts only the dedicated bearer token for the Meta Ads offer context', () => {
+    assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer offer-context-secret' } }, 'offer-context-secret'), true)
+    assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer wrong' } }, 'offer-context-secret'), false)
+    assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Basic offer-context-secret' } }, 'offer-context-secret'), false)
+    assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer offer-context-secret' } }, ''), false)
+})

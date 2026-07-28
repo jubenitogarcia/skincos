@@ -31,6 +31,12 @@ function safeEqual(left, right) {
     }
 }
 
+function verifyMetaAdsOfferContextToken(req, expectedToken) {
+    const authorization = String(req?.headers?.authorization || '')
+    const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
+    return !!expectedToken && safeEqual(token, expectedToken)
+}
+
 function normalizeRole(value) {
     const raw = String(value || '').trim().toUpperCase()
     if (raw === 'ADMIN') return 'GESTOR'
@@ -127,7 +133,29 @@ function errorPayload(error) {
     }
 }
 
+function redactLocalDiagnostic(value) {
+    return String(value || '')
+        .replace(/postgres(?:ql)?:\/\/[^\s@/]+@[^\s/]+/gi, 'postgresql://[redacted]@…')
+        .replace(/(password|token|secret|key)=([^\s&]+)/gi, '$1=[redacted]')
+        .slice(0, 2000)
+}
+
+function logLocalRuntimeDiagnostic(error) {
+    if (String(process.env.CRM_LOCAL_RUNTIME_DIAGNOSTICS || '').trim() !== '1') return
+    console.error(JSON.stringify({
+        level: 'error',
+        component: 'crm-local-atendimento',
+        event: 'request-failed',
+        name: String(error?.name || 'Error'),
+        code: error?.code ? String(error.code) : undefined,
+        status: Number(error?.statusCode || error?.status || 500),
+        message: redactLocalDiagnostic(error?.message || error || 'ERROR'),
+        stack: redactLocalDiagnostic(error?.stack || '') || undefined,
+    }))
+}
+
 function errorResponse(res, error) {
+    logLocalRuntimeDiagnostic(error)
     const response = errorPayload(error)
     return json(res, response.status, response.body)
 }
@@ -141,11 +169,23 @@ export function createAtendimentoRouter(options = {}) {
         process.env.CRM_ESCALA_HMAC_KEY ||
         '',
     ).trim()
+    const metaAdsOfferContextToken = String(
+        options.metaAdsOfferContextToken || process.env.META_ADS_OFFER_CONTEXT_TOKEN || '',
+    ).trim()
     const getDevSession = options.getDevSession || null
     const expressRouter = options.routerFactory ? options.routerFactory() : express.Router()
 
     expressRouter.use(async (req, res, next) => {
         try {
+            if (req.path === '/internal/meta-ads/offer-context') {
+                if (!metaAdsOfferContextToken) {
+                    return json(res, 503, { ok: false, error: 'META_ADS_OFFER_CONTEXT_TOKEN_NOT_CONFIGURED' })
+                }
+                if (!verifyMetaAdsOfferContextToken(req, metaAdsOfferContextToken)) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
+                req.atendimentoActor = { id: 'meta-ads-publish', role: 'SERVICE' }
+                req.metaAdsOfferContext = true
+                return next()
+            }
             if (!actorKey && String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
                 return json(res, 503, { ok: false, error: 'ACTOR_KEY_NOT_CONFIGURED' })
             }
@@ -365,6 +405,32 @@ export function createAtendimentoRouter(options = {}) {
         }
     })
 
+    expressRouter.get('/offers', async (req, res) => {
+        try {
+            return json(res, 200, { ok: true, ...(await store.commercialOffers(req.query || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.put('/offers', async (req, res) => {
+        try {
+            if (!isAdmin(req.atendimentoActor)) return json(res, 403, { ok: false, error: 'FORBIDDEN' })
+            return json(res, 200, { ok: true, ...(await store.upsertCommercialOffer(req.body || {}, req.atendimentoActor)) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
+    expressRouter.get('/internal/meta-ads/offer-context', async (req, res) => {
+        try {
+            if (!req.metaAdsOfferContext) return json(res, 401, { ok: false, error: 'UNAUTHORIZED' })
+            return json(res, 200, { ok: true, ...(await store.metaAdsOfferContext(req.query || {})) })
+        } catch (error) {
+            return errorResponse(res, error)
+        }
+    })
+
     expressRouter.get('/management/commercial', async (req, res) => {
         try {
             return json(res, 200, { ok: true, ...(await store.managementCommercial(req.query || {}, req.atendimentoActor)) })
@@ -545,5 +611,8 @@ export function createAtendimentoRouter(options = {}) {
 export const __testables = {
     errorPayload,
     isLocalRequest,
+    redactLocalDiagnostic,
+    safeEqual,
+    verifyMetaAdsOfferContextToken,
     verifySignedActor,
 }
