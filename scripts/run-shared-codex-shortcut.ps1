@@ -146,7 +146,8 @@ function Invoke-ShortcutWsl {
         [switch]$SkipNodeCheck,
         [switch]$SkipNpmCheck,
         [switch]$SkipGitCheck,
-        [switch]$SkipRepoCheck
+        [switch]$SkipRepoCheck,
+        [int[]]$AcceptedExitCode = @(0)
     )
 
     & $wslInvoker `
@@ -159,7 +160,7 @@ function Invoke-ShortcutWsl {
         -SkipGitCheck:$SkipGitCheck `
         -SkipRepoCheck:$SkipRepoCheck
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($AcceptedExitCode -notcontains $LASTEXITCODE) {
         throw "The WSL command failed with exit code $LASTEXITCODE."
     }
 }
@@ -417,11 +418,19 @@ function Wait-CrmPersonaCurrent {
 }
 
 function Assert-GestorSharedServices {
+    $manifest = Get-CrmPersonaManifest -Persona Gestor
+    if ($null -eq $manifest) {
+        throw "O CRM Local (Gestor) não possui manifesto ativo. Reinicie a ação CRM – Local (Gestor) antes do Consultor."
+    }
+    $pagesPort = if ([int]$manifest.ports.pages -gt 0) { [int]$manifest.ports.pages } else { 8791 }
+    $insumosPort = if ([int]$manifest.ports.insumos -gt 0) { [int]$manifest.ports.insumos } else { 8787 }
+    $timekeepingPort = if ([int]$manifest.ports.timekeeping -gt 0) { [int]$manifest.ports.timekeeping } else { 8801 }
+    $whatsAppPort = if ([int]$manifest.ports.whatsapp -gt 0) { [int]$manifest.ports.whatsapp } else { 8110 }
     $checks = @(
-        @{ Name = "autenticação do Gestor"; Url = "http://127.0.0.1:8791/api/auth/me"; Role = "GESTOR" },
-        @{ Name = "Insumos"; Url = "http://127.0.0.1:8787/insumos/health" },
-        @{ Name = "Timekeeping"; Url = "http://127.0.0.1:8801/api/ponto/readiness" },
-        @{ Name = "WhatsApp"; Url = "http://127.0.0.1:8110/health" }
+        @{ Name = "autenticação do Gestor"; Url = "http://127.0.0.1:${pagesPort}/api/auth/me"; Role = "GESTOR" },
+        @{ Name = "Insumos"; Url = "http://127.0.0.1:${insumosPort}/insumos/health" },
+        @{ Name = "Timekeeping"; Url = "http://127.0.0.1:${timekeepingPort}/api/ponto/readiness" },
+        @{ Name = "WhatsApp"; Url = "http://127.0.0.1:${whatsAppPort}/health" }
     )
     foreach ($check in $checks) {
         try {
@@ -588,12 +597,18 @@ function Stop-CrmPersonaRuntime {
             (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
             (Convert-ToBashLiteral -Value $crmGestorLogWsl)
     } else {
-        $command = "CRM_PERSONA=CONSULTOR CRM_RUNTIME_ROOT={0} CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
+        $vitePort = if ([int]$manifest.ports.vite -gt 0) { [int]$manifest.ports.vite } else { 5174 }
+        $pagesPort = if ([int]$manifest.ports.pages -gt 0) { [int]$manifest.ports.pages } else { 8792 }
+        $command = "CRM_PERSONA=CONSULTOR CRM_RUNTIME_ROOT={0} CRM_VITE_PORT={1} CRM_PAGES_PORT={2} CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE={3} CRM_LOG_FILE={4} bash ./scripts/run-local-crm.sh --stop" -f `
             (Convert-ToBashLiteral -Value $runtimeRootWsl), `
+            $vitePort, `
+            $pagesPort, `
             (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
             (Convert-ToBashLiteral -Value $crmConsultorLogWsl)
     }
-    Invoke-ShortcutWsl -WorkingProjectRoot $resolvedSource -SkipBootstrapCheck -Command $command
+    # `run-local-crm.sh --stop` forwards SIGTERM to the old detached process.
+    # On WSL this is reported as 143 even when the shutdown completed normally.
+    Invoke-ShortcutWsl -WorkingProjectRoot $resolvedSource -SkipBootstrapCheck -AcceptedExitCode @(0, 143) -Command $command
 }
 
 function Start-CrmPersonaRuntime {
