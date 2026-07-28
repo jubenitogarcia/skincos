@@ -6,6 +6,7 @@ const path = require('path');
 const {
   manualExecutionAuditState,
 } = require('./lib/meta-ads-publish-execution-semantics');
+const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const CODE_SOURCES = Object.freeze({
@@ -28,6 +29,8 @@ const CODE_SOURCES = Object.freeze({
   'Verify Drive Finalization': 'verify-drive-finalization.js',
 });
 
+const CRM_OFFER_CONTEXT_URL = 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit={unit}';
+
 function loadPgClient() {
   try { return require('/usr/local/lib/node_modules/n8n/node_modules/pg').Client; }
   catch { return require('pg').Client; }
@@ -42,6 +45,50 @@ function normalizedCode(value) {
   return String(value || '').replace(/\s+$/, '');
 }
 
+function structuralContractDrift(nodes, connections) {
+  const drift = [];
+  const sheets = nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheetsTool');
+  if (sheets.length) drift.push({ contract: 'commercial_offer_source', reason: 'google_sheets_tool_present', nodes: sheets.map((node) => node.name) });
+  const crm = nodes.find((node) => node.name === 'CRM Offer Context');
+  if (!crm) {
+    drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_tool_missing' });
+  } else {
+    if (crm.type !== '@n8n/n8n-nodes-langchain.toolHttpRequest') drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_wrong_type' });
+    if ((crm.parameters?.method && crm.parameters.method !== 'GET') || crm.parameters?.url !== CRM_OFFER_CONTEXT_URL) drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_request_mismatch' });
+    if (crm.parameters?.authentication !== 'genericCredentialType' || crm.parameters?.genericAuthType !== 'httpBearerAuth' || !crm.credentials?.httpBearerAuth?.id) {
+      drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_credential_missing' });
+    }
+    const target = connections?.['CRM Offer Context']?.ai_tool?.[0]?.[0];
+    if (target?.node !== 'Livia' || target?.type !== 'ai_tool') drift.push({ contract: 'commercial_offer_source', reason: 'crm_offer_context_not_connected_to_livia' });
+  }
+  const livia = nodes.find((node) => node.name === 'Livia');
+  const systemMessage = String(livia?.parameters?.options?.systemMessage || '');
+  const prompt = String(livia?.parameters?.text || '');
+  if (!livia || !systemMessage.includes('CRM Offer Context') || !prompt.includes('crmPricing') || /Knowledge|planilha|spreadsheetPricing/i.test(`${systemMessage}\n${prompt}`)) {
+    drift.push({ contract: 'commercial_offer_source', reason: 'livia_crm_prompt_contract_missing' });
+  }
+  const model = nodes.find((node) => node.name === 'OpenAI Chat Model (Agent)');
+  try {
+    const schema = JSON.parse(String(model?.parameters?.options?.textFormat?.textOptions?.schema || '{}'));
+    const analysis = schema?.properties?.analysis;
+    if (!analysis?.properties?.crmPricing || analysis?.properties?.spreadsheetPricing || !Array.isArray(analysis?.required) || !analysis.required.includes('crmPricing')) {
+      drift.push({ contract: 'commercial_offer_source', reason: 'livia_crm_schema_missing' });
+    }
+  } catch {
+    drift.push({ contract: 'commercial_offer_source', reason: 'livia_schema_invalid' });
+  }
+  return drift;
+}
+
+function videoUploadContractDrift(workflow) {
+  try {
+    validateVideoUploadReplay(workflow);
+    return [];
+  } catch (error) {
+    return [{ contract: 'video_upload_replay', reason: String(error.message || error) }];
+  }
+}
+
 async function main() {
   const moduleRoot = path.resolve(__dirname, '..');
   const sourceRoot = path.join(moduleRoot, 'workflow-src', 'meta-ads-publish');
@@ -54,13 +101,14 @@ async function main() {
   await client.connect();
   try {
     const result = await client.query(
-      `SELECT active, nodes, settings, "versionId", "activeVersionId", "versionCounter"
+      `SELECT active, nodes, connections, settings, "versionId", "activeVersionId", "versionCounter"
          FROM n8n_runtime.workflow_entity WHERE id = $1`,
       [WORKFLOW_ID],
     );
     const workflow = result.rows[0];
     if (!workflow) throw new Error('Meta Ads Publish workflow not found.');
     const nodes = parseJson(workflow.nodes, []);
+    const connections = parseJson(workflow.connections, {});
     const drift = [];
     for (const [nodeName, fileName] of Object.entries(CODE_SOURCES)) {
       const sourcePath = path.join(sourceRoot, fileName);
@@ -74,6 +122,8 @@ async function main() {
       }
     }
     const settings = parseJson(workflow.settings, {});
+    const structuralDrift = structuralContractDrift(nodes, connections);
+    const videoUploadDrift = videoUploadContractDrift({ ...workflow, id: WORKFLOW_ID, nodes, connections });
     const report = {
       workflow_id: WORKFLOW_ID,
       mode: 'read_only',
@@ -83,6 +133,10 @@ async function main() {
       version_counter: Number(workflow.versionCounter),
       code_sources_synchronized: drift.length === 0,
       code_source_drift: drift,
+      crm_catalog_contract_synchronized: structuralDrift.length === 0,
+      crm_catalog_contract_drift: structuralDrift,
+      video_upload_contract_synchronized: videoUploadDrift.length === 0,
+      video_upload_contract_drift: videoUploadDrift,
       manual_execution_audit: manualExecutionAuditState(settings),
       manual_execution_note: settings.saveManualExecutions === true
         ? 'Manual executions are retained for later inspection.'
@@ -91,7 +145,7 @@ async function main() {
       service_restarts_performed: false,
     };
     console.log(JSON.stringify(report, null, 2));
-    if (drift.length) process.exitCode = 1;
+    if (drift.length || structuralDrift.length || videoUploadDrift.length) process.exitCode = 1;
   } finally {
     await client.end();
   }

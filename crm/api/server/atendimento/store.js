@@ -132,9 +132,11 @@ export function atendimentoMigrationStatements() {
         `create table if not exists crm_atendimento.procedures (
             id uuid primary key default gen_random_uuid(),
             name text unique not null,
+            aliases text[] not null default '{}'::text[],
             created_at timestamptz not null default now(),
             updated_at timestamptz not null default now()
         );`,
+        `alter table crm_atendimento.procedures add column if not exists aliases text[] not null default '{}'::text[];`,
         `create table if not exists crm_atendimento.procedure_price_codes (
             id uuid primary key default gen_random_uuid(),
             procedure_id uuid not null references crm_atendimento.procedures(id) on delete cascade,
@@ -143,6 +145,41 @@ export function atendimentoMigrationStatements() {
             created_at timestamptz not null default now(),
             updated_at timestamptz not null default now(),
             unique(procedure_id, code)
+        );`,
+        `create table if not exists crm_atendimento.commercial_offers (
+            id uuid primary key default gen_random_uuid(),
+            unit_id uuid not null references crm_atendimento.units(id) on delete restrict,
+            offer_key text not null,
+            title text not null,
+            description text not null default '',
+            status text not null default 'draft' check (status in ('draft','approved','active','expired','archived')),
+            price_cents integer,
+            currency text not null default 'BRL',
+            price_qualifier text not null default 'exact' check (price_qualifier in ('exact','from','on_request')),
+            installment_count integer,
+            installment_value_cents integer,
+            discount_percent numeric(7,3),
+            conditions text not null default '',
+            validity_start date,
+            validity_end date,
+            revision integer not null default 1,
+            approved_by text,
+            approved_at timestamptz,
+            created_by text,
+            updated_by text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique(unit_id, offer_key)
+        );`,
+        `create index if not exists crm_atendimento_commercial_offers_lookup_idx
+            on crm_atendimento.commercial_offers(unit_id, status, validity_start, validity_end, updated_at desc);`,
+        `create table if not exists crm_atendimento.commercial_offer_procedures (
+            offer_id uuid not null references crm_atendimento.commercial_offers(id) on delete cascade,
+            procedure_id uuid not null references crm_atendimento.procedures(id) on delete restrict,
+            quantity numeric(12,3) not null default 1 check (quantity > 0),
+            quantity_unit text not null default 'unidade',
+            display_order integer not null default 0,
+            primary key (offer_id, procedure_id)
         );`,
         `create table if not exists crm_atendimento.attendances (
             id uuid primary key default gen_random_uuid(),
@@ -553,7 +590,7 @@ export function canAccessAtendimento(actor, requestPath = '', requestMethod = 'G
     const path = String(requestPath || '')
     const method = String(requestMethod || 'GET').toUpperCase()
     if (method !== 'GET') return false
-    if ((path === '/references' || path.startsWith('/management/catalog')) && allowed.includes('procedimentos')) return true
+    if ((path === '/references' || path.startsWith('/management/catalog') || path.startsWith('/offers')) && allowed.includes('procedimentos')) return true
     if ((path.startsWith('/management/commercial') || path.startsWith('/management/finance')) && allowed.includes('faturamento')) return true
     if (path.startsWith('/management/feeds/insumos') && allowed.includes('insumos')) return true
     if (path.startsWith('/management/feeds/escala') && allowed.includes('escala-profissionais')) return true
@@ -1566,25 +1603,42 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
             scheduleSource: escalaCoverage.source || 'crm',
             goalSegments: aggregateGoalPlan.segments || [],
         }).replace(/^fnv1a-/, 'calendar-fnv1a-')
-        const aggregateDoctors = aggregateStats.ranking.map((doctor) => ({
-            id: doctor.id,
-            name: doctor.name,
-            unitName: 'Todas unidades',
-            unitSlug: 'all',
-            weekValue: moneyMetric(doctor.weekValue).weekValue,
-            totalValue: moneyMetric(doctor.totalValue).totalValue,
-            score: doctor.score,
-            level: doctor.level,
-            classification: doctor.classification,
-            modifiedZ: doctor.modifiedZ,
-            distanceToCutOff: doctor.distanceToCutOff,
-            distanceToLowerLimit: doctor.distanceToLowerLimit,
-            distanceToUpperLimit: doctor.distanceToUpperLimit,
-            rank: doctor.rank,
-            position: '',
-        }))
+        const aggregateDoctorsByIdentity = new Map()
+        for (const doctor of allDoctors) {
+            const identity = String(doctor.id || normalizeText(doctor.name) || '').trim()
+            if (!identity) continue
+            const existing = aggregateDoctorsByIdentity.get(identity)
+            if (existing) {
+                existing.weekValue += Number(doctor.weekValue || 0)
+                existing.totalValue += Number(doctor.totalValue || 0)
+                existing.score += Number(doctor.score || 0)
+                if (!existing.sourceUnits.includes(doctor.unitName)) existing.sourceUnits.push(doctor.unitName)
+                continue
+            }
+            aggregateDoctorsByIdentity.set(identity, {
+                ...doctor,
+                weekValue: Number(doctor.weekValue || 0),
+                totalValue: Number(doctor.totalValue || 0),
+                score: Number(doctor.score || 0),
+                sourceUnits: [doctor.unitName],
+            })
+        }
+        const aggregateDoctors = [...aggregateDoctorsByIdentity.values()]
+            // Each unit awards points against its own goal and distribution. The
+            // cross-unit view must compare those normalized points, never the
+            // raw procedure totals from different units.
+            .sort((left, right) => Number(right.score || 0) - Number(left.score || 0)
+                || Number(right.weekValue || 0) - Number(left.weekValue || 0)
+                || left.name.localeCompare(right.name, 'pt-BR'))
+            .map((doctor, index) => ({
+                ...doctor,
+                unitName: 'Todas unidades',
+                unitSlug: 'all',
+                rank: index + 1,
+                position: '',
+            }))
         // The aggregate has summed capacity, never a fictional shared calendar.
-        // Its doctor list is also the canonical, cross-unit consolidation used
+        // Its doctor list is also the canonical, cross-unit point ranking used
         // by the global top-doctor summary.
         topDoctors = aggregateDoctors.slice(0, 8)
         sections.unshift({
@@ -1603,6 +1657,7 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
             },
             doctors: aggregateDoctors,
             isAggregate: true,
+            comparisonMetric: 'unit-score',
             calendarMode: 'per-unit-capacity-sum',
             calendarCompatible: false,
             period: bounds,
@@ -2168,6 +2223,134 @@ function mapManagementItem(row) {
         payload: row.payload || {},
         importedAt: row.imported_at,
     }
+}
+
+const COMMERCIAL_OFFER_STATUSES = new Set(['draft', 'approved', 'active', 'expired', 'archived'])
+const COMMERCIAL_PRICE_QUALIFIERS = new Set(['exact', 'from', 'on_request'])
+
+function commercialOfferError(code, statusCode = 400) {
+    const error = new Error(code)
+    error.statusCode = statusCode
+    return error
+}
+
+function normalizeCommercialOfferKey(value) {
+    const key = normalizeText(value).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    if (!key || key.length > 96) throw commercialOfferError('INVALID_OFFER_KEY')
+    return key
+}
+
+function normalizeCommercialOfferPayload(payload = {}, { requireProcedures = true } = {}) {
+    const title = String(payload.title || '').trim()
+    if (!title || title.length > 180) throw commercialOfferError('INVALID_OFFER_TITLE')
+    const status = String(payload.status || 'draft').trim().toLowerCase()
+    if (!COMMERCIAL_OFFER_STATUSES.has(status)) throw commercialOfferError('INVALID_OFFER_STATUS')
+    const priceQualifier = String(payload.priceQualifier || 'exact').trim().toLowerCase()
+    if (!COMMERCIAL_PRICE_QUALIFIERS.has(priceQualifier)) throw commercialOfferError('INVALID_PRICE_QUALIFIER')
+    const priceCents = payload.priceCents == null || payload.priceCents === '' ? null : Number(payload.priceCents)
+    if (priceCents != null && (!Number.isInteger(priceCents) || priceCents < 0 || priceCents > 100000000)) {
+        throw commercialOfferError('INVALID_PRICE_CENTS')
+    }
+    if (priceQualifier !== 'on_request' && priceCents == null) throw commercialOfferError('PRICE_REQUIRED')
+    const installments = payload.installmentCount == null || payload.installmentCount === '' ? null : Number(payload.installmentCount)
+    const installmentValueCents = payload.installmentValueCents == null || payload.installmentValueCents === '' ? null : Number(payload.installmentValueCents)
+    if ((installments == null) !== (installmentValueCents == null)
+        || (installments != null && (!Number.isInteger(installments) || installments < 1 || installments > 60
+            || !Number.isInteger(installmentValueCents) || installmentValueCents < 0))) {
+        throw commercialOfferError('INVALID_INSTALLMENTS')
+    }
+    const discountPercent = payload.discountPercent == null || payload.discountPercent === '' ? null : Number(payload.discountPercent)
+    if (discountPercent != null && (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100)) {
+        throw commercialOfferError('INVALID_DISCOUNT_PERCENT')
+    }
+    const date = (value, code) => {
+        if (value == null || value === '') return null
+        const string = String(value).slice(0, 10)
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(string) || Number.isNaN(Date.parse(`${string}T12:00:00Z`))) throw commercialOfferError(code)
+        return string
+    }
+    const validityStart = date(payload.validityStart, 'INVALID_VALIDITY_START')
+    const validityEnd = date(payload.validityEnd, 'INVALID_VALIDITY_END')
+    if (validityStart && validityEnd && validityStart > validityEnd) throw commercialOfferError('INVALID_VALIDITY_RANGE')
+    const procedureIds = Array.isArray(payload.procedures) ? payload.procedures.map((item, index) => {
+        const procedureId = String(item?.procedureId || '').trim()
+        const quantity = Number(item?.quantity ?? 1)
+        const quantityUnit = String(item?.quantityUnit || 'unidade').trim()
+        if (!procedureId || !Number.isFinite(quantity) || quantity <= 0 || quantity > 100000 || !quantityUnit || quantityUnit.length > 48) {
+            throw commercialOfferError('INVALID_OFFER_PROCEDURE')
+        }
+        return { procedureId, quantity, quantityUnit, displayOrder: index }
+    }) : []
+    if (requireProcedures && !procedureIds.length) throw commercialOfferError('OFFER_PROCEDURE_REQUIRED')
+    if (new Set(procedureIds.map((item) => item.procedureId)).size !== procedureIds.length) throw commercialOfferError('DUPLICATE_OFFER_PROCEDURE')
+    return {
+        offerKey: normalizeCommercialOfferKey(payload.offerKey || title),
+        title,
+        description: String(payload.description || '').trim().slice(0, 2000),
+        status,
+        priceCents,
+        currency: 'BRL',
+        priceQualifier,
+        installmentCount: installments,
+        installmentValueCents,
+        discountPercent,
+        conditions: String(payload.conditions || '').trim().slice(0, 2000),
+        validityStart,
+        validityEnd,
+        procedures: procedureIds,
+    }
+}
+
+function mapCommercialOffer(row) {
+    const procedures = Array.isArray(row.procedures) ? row.procedures : []
+    const context = {
+        schemaVersion: 'crm-commercial-offer/v1',
+        offerId: row.id,
+        offerKey: row.offer_key,
+        revision: Number(row.revision || 1),
+        unitSlug: row.unit_slug,
+        title: row.title,
+        description: row.description || '',
+        priceCents: row.price_cents == null ? null : Number(row.price_cents),
+        currency: row.currency || 'BRL',
+        priceQualifier: row.price_qualifier,
+        installmentCount: row.installment_count == null ? null : Number(row.installment_count),
+        installmentValueCents: row.installment_value_cents == null ? null : Number(row.installment_value_cents),
+        discountPercent: row.discount_percent == null ? null : Number(row.discount_percent),
+        conditions: row.conditions || '',
+        validityStart: row.validity_start ? String(row.validity_start).slice(0, 10) : null,
+        validityEnd: row.validity_end ? String(row.validity_end).slice(0, 10) : null,
+        procedures: procedures.map((item) => ({
+            id: item.id,
+            name: item.name,
+            aliases: Array.isArray(item.aliases) ? item.aliases : [],
+            quantity: Number(item.quantity || 1),
+            quantityUnit: item.quantity_unit || 'unidade',
+        })),
+    }
+    return {
+        ...context,
+        status: row.status,
+        approvedBy: row.approved_by || null,
+        approvedAt: row.approved_at || null,
+        updatedAt: row.updated_at || null,
+        contextHash: stableConfigHash(context),
+    }
+}
+
+function commercialOfferSelect(whereSql = '') {
+    return `select o.*, u.slug as unit_slug,
+        coalesce(json_agg(json_build_object(
+            'id', p.id, 'name', p.name, 'aliases', p.aliases,
+            'quantity', op.quantity, 'quantity_unit', op.quantity_unit
+        ) order by op.display_order, p.name) filter (where p.id is not null), '[]'::json) as procedures
+        from crm_atendimento.commercial_offers o
+        join crm_atendimento.units u on u.id = o.unit_id
+        left join crm_atendimento.commercial_offer_procedures op on op.offer_id = o.id
+        left join crm_atendimento.procedures p on p.id = op.procedure_id
+        ${whereSql}
+        group by o.id, u.slug
+        order by o.updated_at desc`
 }
 
 function normalizeGoalMonth(value) {
@@ -2803,10 +2986,10 @@ export function createAtendimentoStore(options = {}) {
             const units = await pgPool.query(`select slug, name from crm_atendimento.units order by name`)
             const professionals = { rows: await readProfessionalIdentityRows(pgPool) }
             const procedures = await pgPool.query(
-                `select p.id, p.name, coalesce(json_agg(c.code order by c.code) filter (where c.code is not null), '[]'::json) as codes
+                `select p.id, p.name, p.aliases, coalesce(json_agg(c.code order by c.code) filter (where c.code is not null), '[]'::json) as codes
                  from crm_atendimento.procedures p
                  left join crm_atendimento.procedure_price_codes c on c.procedure_id = p.id and c.allowed = true
-                 group by p.id, p.name
+                 group by p.id, p.name, p.aliases
                  order by p.name`,
             )
             const visibleUnits = units.rows
@@ -2822,8 +3005,117 @@ export function createAtendimentoStore(options = {}) {
                 procedures: procedures.rows.map((row) => ({
                     id: row.id,
                     name: row.name,
+                    aliases: Array.isArray(row.aliases) ? row.aliases : [],
                     codes: Array.isArray(row.codes) ? row.codes : [],
                 })),
+            }
+        },
+
+        async commercialOffers(query, actor) {
+            await ensureReady()
+            const where = []
+            const params = []
+            applyActorUnitFilter(where, params, actor)
+            const unit = String(query?.unit || '').trim()
+            if (unit && unit !== 'all') {
+                params.push(normalizeUnit(unit).slug)
+                where.push(`u.slug = $${params.length}`)
+            }
+            const status = String(query?.status || '').trim().toLowerCase()
+            if (status && status !== 'all') {
+                if (!COMMERCIAL_OFFER_STATUSES.has(status)) throw commercialOfferError('INVALID_OFFER_STATUS')
+                params.push(status)
+                where.push(`o.status = $${params.length}`)
+            }
+            const sql = commercialOfferSelect(where.length ? `where ${where.join(' and ')}` : '')
+            const result = await pgPool.query(sql, params)
+            return { offers: result.rows.map(mapCommercialOffer) }
+        },
+
+        async upsertCommercialOffer(payload, actor) {
+            await ensureReady()
+            if (!roleCanManage(actor)) throw commercialOfferError('FORBIDDEN', 403)
+            const normalized = normalizeCommercialOfferPayload(payload)
+            const unitSlug = normalizeUnit(payload?.unitSlug || '').slug
+            if (!unitSlug) throw commercialOfferError('UNIT_REQUIRED')
+            return withPgTransaction(pgPool, async (client) => {
+                const unit = await client.query(
+                    `select id, slug from crm_atendimento.units where slug = $1 limit 1`,
+                    [unitSlug],
+                )
+                if (!unit.rows[0]) throw commercialOfferError('UNIT_NOT_FOUND', 404)
+                const approved = normalized.status === 'approved' || normalized.status === 'active'
+                const offer = await client.query(
+                    `insert into crm_atendimento.commercial_offers(
+                        unit_id, offer_key, title, description, status, price_cents, currency, price_qualifier,
+                        installment_count, installment_value_cents, discount_percent, conditions, validity_start, validity_end,
+                        approved_by, approved_at, created_by, updated_by
+                     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                        case when $15 then $16 else null end, case when $15 then now() else null end, $16, $16)
+                     on conflict(unit_id, offer_key) do update set
+                        title = excluded.title, description = excluded.description, status = excluded.status,
+                        price_cents = excluded.price_cents, currency = excluded.currency, price_qualifier = excluded.price_qualifier,
+                        installment_count = excluded.installment_count, installment_value_cents = excluded.installment_value_cents,
+                        discount_percent = excluded.discount_percent, conditions = excluded.conditions,
+                        validity_start = excluded.validity_start, validity_end = excluded.validity_end,
+                        revision = crm_atendimento.commercial_offers.revision + 1,
+                        approved_by = case when $15 then $16 else crm_atendimento.commercial_offers.approved_by end,
+                        approved_at = case when $15 then now() else crm_atendimento.commercial_offers.approved_at end,
+                        updated_by = $16, updated_at = now()
+                     returning id`,
+                    [
+                        unit.rows[0].id, normalized.offerKey, normalized.title, normalized.description, normalized.status,
+                        normalized.priceCents, normalized.currency, normalized.priceQualifier, normalized.installmentCount,
+                        normalized.installmentValueCents, normalized.discountPercent, normalized.conditions,
+                        normalized.validityStart, normalized.validityEnd, approved, actorLabel(actor),
+                    ],
+                )
+                const offerId = offer.rows[0].id
+                await client.query(`delete from crm_atendimento.commercial_offer_procedures where offer_id = $1`, [offerId])
+                for (const procedure of normalized.procedures) {
+                    const found = await client.query(`select id from crm_atendimento.procedures where id = $1 limit 1`, [procedure.procedureId])
+                    if (!found.rows[0]) throw commercialOfferError('OFFER_PROCEDURE_NOT_FOUND', 404)
+                    await client.query(
+                        `insert into crm_atendimento.commercial_offer_procedures(offer_id, procedure_id, quantity, quantity_unit, display_order)
+                         values ($1,$2,$3,$4,$5)`,
+                        [offerId, procedure.procedureId, procedure.quantity, procedure.quantityUnit, procedure.displayOrder],
+                    )
+                }
+                const result = await client.query(commercialOfferSelect('where o.id = $1'), [offerId])
+                const mapped = mapCommercialOffer(result.rows[0])
+                await audit(client, 'commercial-offer.upserted', actor, null, {
+                    offerId: mapped.offerId,
+                    offerKey: mapped.offerKey,
+                    unitSlug: mapped.unitSlug,
+                    status: mapped.status,
+                    revision: mapped.revision,
+                    contextHash: mapped.contextHash,
+                })
+                return { offer: mapped }
+            })
+        },
+
+        async metaAdsOfferContext(query) {
+            await ensureReady()
+            const unitSlug = normalizeUnit(query?.unit || '').slug
+            if (!unitSlug) throw commercialOfferError('UNIT_REQUIRED')
+            const offerKey = String(query?.offerKey || '').trim()
+            const params = [unitSlug]
+            const where = [
+                'u.slug = $1',
+                `o.status = 'active'`,
+                '(o.validity_start is null or o.validity_start <= current_date)',
+                '(o.validity_end is null or o.validity_end >= current_date)',
+            ]
+            if (offerKey) {
+                params.push(normalizeCommercialOfferKey(offerKey))
+                where.push(`o.offer_key = $${params.length}`)
+            }
+            const rows = await pgPool.query(commercialOfferSelect(`where ${where.join(' and ')}`), params)
+            return {
+                unitSlug,
+                asOf: new Date().toISOString().slice(0, 10),
+                offers: rows.rows.map(mapCommercialOffer),
             }
         },
 

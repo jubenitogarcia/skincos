@@ -1,21 +1,22 @@
-function pairedIndex(item, fallback) {
-  const paired = item && item.pairedItem;
-  if (Array.isArray(paired) && paired.length) return Number(paired[0].item ?? fallback);
-  if (paired && typeof paired === 'object') return Number(paired.item ?? fallback);
-  return Number(fallback);
-}
 function text(value) { return String(value ?? '').trim(); }
 function key(value) { return text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_.:-]+/g, '_').slice(0, 190); }
 
-const prepared = $items('Prepare Creative Operation') || [];
 return $input.all().map((item, index) => {
-  const sourceIndex = pairedIndex(item, index);
-  const source = (prepared[sourceIndex] || {}).json || {};
-  const response = item.json || {};
+  const merged = item.json || {};
+  const response = {
+    ok: merged.ok,
+    replayed: merged.replayed,
+    operation: merged.operation,
+    requestId: merged.requestId,
+    detail: merged.detail,
+    error: merged.error,
+  };
+  const source = { ...merged };
+  for (const field of ['ok', 'replayed', 'operation', 'requestId', 'detail', 'error']) delete source[field];
   const result = response.operation?.result || {};
   const creativeId = text(result.id);
   if (response.ok !== true || response.operation?.status !== 'completed' || !creativeId) {
-    throw new Error(`Create AdCreative gateway falhou em ${source.job_key || sourceIndex}: ${JSON.stringify(response.detail || response.error || response)}`);
+    throw new Error(`Create AdCreative gateway falhou em ${source.job_key || index}: ${JSON.stringify(response.detail || response.error || response)}`);
   }
   return {
     json: {
@@ -23,6 +24,7 @@ return $input.all().map((item, index) => {
       creative_id: creativeId,
       create_creative_operation_key: text(response.operation.operation_key),
       create_creative_replayed: response.replayed === true,
+      creative_fallback_attempts: Array.isArray(source.creative_fallback_attempts) ? source.creative_fallback_attempts : [],
       gateway_request: {
         action: 'get_creative',
         operation_key: key(`verify:${source.run_id}:${creativeId}`),
@@ -32,7 +34,7 @@ return $input.all().map((item, index) => {
         object_id: creativeId,
       },
     },
-    binary: (prepared[sourceIndex] || {}).binary || item.binary,
-    pairedItem: { item: sourceIndex },
+    binary: item.binary,
+    pairedItem: { item: index },
   };
 });

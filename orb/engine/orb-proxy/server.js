@@ -14,6 +14,7 @@ const HEALTH_PATH = `${BASE_PATH}/healthz`;
 const INSTAGRAM_BASE_PATH = '/instagram-review';
 const INSTAGRAM_LOGIN_PATH = `${INSTAGRAM_BASE_PATH}/login`;
 const INSTAGRAM_HEALTH_PATH = `${INSTAGRAM_BASE_PATH}/healthz`;
+const MCP_SERVER_BASE_PATH = '/mcp-server';
 const STORE_PATH = resolveStorePath();
 const SESSION_COOKIE = 'orb_review_session';
 const SESSION_TTL_SECONDS = Number(process.env.ORB_REVIEW_SESSION_TTL_SECONDS || 60 * 60 * 12);
@@ -324,6 +325,11 @@ function sendJson(res, status, body) {
     'x-content-type-options': 'nosniff',
   });
   res.end(JSON.stringify(body));
+}
+
+function isMcpServerRequest(requestUrl) {
+  const pathname = new URL(requestUrl || '/', 'http://orb.local').pathname;
+  return pathname === MCP_SERVER_BASE_PATH || pathname.startsWith(`${MCP_SERVER_BASE_PATH}/`);
 }
 
 function sendHtml(res, status, title, body) {
@@ -1753,6 +1759,12 @@ async function handleInstagramReview(req, res) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    // The native n8n MCP endpoint is intentionally local-only for the Codex gateway.
+    // cloudflared reaches this proxy, so never forward this path to the n8n upstream.
+    if (isMcpServerRequest(req.url)) {
+      sendJson(res, 404, { ok: false, error: 'not_found' });
+      return;
+    }
     if (String(req.url || '').startsWith(BASE_PATH)) {
       await handleMetaReview(req, res);
       return;
@@ -1768,7 +1780,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.on('upgrade', (req, socket, head) => {
-  if (String(req.url || '').startsWith(BASE_PATH) || String(req.url || '').startsWith(INSTAGRAM_BASE_PATH)) {
+  if (
+    isMcpServerRequest(req.url) ||
+    String(req.url || '').startsWith(BASE_PATH) ||
+    String(req.url || '').startsWith(INSTAGRAM_BASE_PATH)
+  ) {
     socket.destroy();
     return;
   }

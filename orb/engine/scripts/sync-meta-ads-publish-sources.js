@@ -5,7 +5,10 @@ const fs = require('fs');
 const path = require('path');
 
 const moduleRoot = path.resolve(__dirname, '..');
-const workflowPath = path.join(moduleRoot, 'workflows', 'meta-ads-publish.current.json');
+const workflowArg = process.argv.slice(2).find((value) => value.startsWith('--workflow='));
+const workflowPath = workflowArg
+  ? path.resolve(workflowArg.slice('--workflow='.length))
+  : path.join(moduleRoot, 'workflows', 'meta-ads-publish.current.json');
 const sourceRoot = path.join(moduleRoot, 'workflow-src', 'meta-ads-publish');
 
 const CODE_SOURCES = Object.freeze({
@@ -71,7 +74,7 @@ function inject({ write = true } = {}) {
 }
 
 function main() {
-  const command = process.argv[2] || 'check';
+  const command = process.argv.slice(2).find((value) => !value.startsWith('--')) || 'check';
   if (command === 'extract') {
     extract();
     console.log(`Extracted ${Object.keys(CODE_SOURCES).length} Code nodes.`);
