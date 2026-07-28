@@ -584,7 +584,7 @@ return $input.all().map((item) => {
     assert(safeString(offerReplacementGuard.selected_candidate_offer_match_status) === 'exact', 'replacement_candidate_offer_match_not_exact', {});
   }
   if (offerReplacementEligible) {
-    assert(new RegExp(`\\[${offerTag}\\]`, 'i').test(safeString(adPayload.name)), 'offer_fingerprint_tag_missing_from_ad_name', { offer_tag: offerTag });
+    assert(safeString(adPayload.name).toUpperCase().includes(`[${offerTag}]`), 'offer_fingerprint_tag_missing_from_ad_name', { offer_tag: offerTag });
   }
   if (safeString(source.action) === 'create_new') {
     assert(/^\d+$/.test(safeString(adPayload.adset_id)), 'adset_id_required_for_create', {});
