@@ -25,14 +25,14 @@ que o prefixo é preservado quando `PackageDirectoryLoader` é usado. Porém, a
 instalação de `n8n-nodes-evolution-api-en@1.0.2` falhou após
 `n8n-nodes-evolution-api@1.0.4`: ambos registram o tipo `Evolution API`, e a
 tabela `installed_nodes` recusou o segundo registro por chave primária
-duplicada. O mesmo ensaio também recusou `n8n-nodes-mcp@0.1.29` como package
-que não pôde ser carregado, reproduzindo o problema de dependência já visto.
+duplicada. `n8n-nodes-evolution-api@1.0.4` não aparece nos 43 workflows;
+`n8n-nodes-evolution-api-en@1.0.2` é o tipo efetivamente usado. O package
+redundante foi retirado do conjunto-alvo autorizado. `n8n-nodes-mcp@0.1.37`
+foi então carregado canonicamente com os demais 9 packages, totalizando 10.
 
 ## Gate
 
-`BLOQUEADO_POR_PACOTE`. O próximo ensaio deve usar o mecanismo canônico de
-instalação/registro de community packages do n8n (`PackageDirectoryLoader`),
-com a dependência `pkce-challenge` isolada e uma decisão de substituição ou
-consolidação do package Evolution sem perda de workflow, e repetir importação,
-catálogo e execução exclusivamente sintética. Este resultado não autoriza upgrade,
+O bloqueio de package foi resolvido no staging. O próximo ensaio deve repetir
+importação, catálogo e execução exclusivamente sintética contra os 10 packages
+canônicos. Este resultado ainda não autoriza upgrade,
 migration, restart ou outra alteração em produção.

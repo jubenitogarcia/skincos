@@ -47,16 +47,15 @@
     ["@cloudconvert/n8n-nodes-cloudconvert", "1.0.2"],
     ["n8n-nodes-browserless", "1.1.3"],
     ["n8n-nodes-cloudinary", "0.2.1"],
-    ["n8n-nodes-evolution-api", "1.0.4"],
     ["n8n-nodes-evolution-api-en", "1.0.2"],
     ["n8n-nodes-evolution-tools", "0.1.10"],
-    ["n8n-nodes-mcp", "0.1.29"],
+    ["n8n-nodes-mcp", "0.1.37"],
     ["n8n-nodes-meta-publisher", "0.15.1"],
     ["n8n-nodes-python", "0.1.4"],
     ["n8n-nodes-run-node-with-credentials-x", "0.4.1"],
     ["n8n-nodes-websocket", "1.0.1"]
   ],
-  "package_impact": "o ensaio canônico 2.32.5 reproduziu conflito de tipo entre n8n-nodes-evolution-api e n8n-nodes-evolution-api-en e falha de carregamento de n8n-nodes-mcp@0.1.29; não promover até consolidar ou substituir packages sem perda de workflow.",
+  "package_impact": "o conjunto-alvo mantém os 10 packages com tipos presentes nos workflows; n8n-nodes-evolution-api@1.0.4 foi retirado por colisão com o -en e ausência de referência nos 43 workflows sanitizados. n8n-nodes-mcp@0.1.37 foi carregado canonicamente no staging.",
   "official_sources": [
     "https://github.com/n8n-io/n8n/releases/tag/n8n@2.32.5",
     "https://github.com/n8n-io/n8n/commit/26ecadcf94",
