@@ -32,3 +32,10 @@ test('redacts untrusted internal failures before returning them to a browser', (
     assert.equal(response.status, 500)
     assert.deepEqual(response.body, { ok: false, error: 'INTERNAL_ERROR', hint: undefined })
 })
+
+test('accepts only the dedicated bearer token for the Meta Ads offer context', () => {
+    assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer offer-context-secret' } }, 'offer-context-secret'), true)
+    assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer wrong' } }, 'offer-context-secret'), false)
+    assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Basic offer-context-secret' } }, 'offer-context-secret'), false)
+    assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer offer-context-secret' } }, ''), false)
+})
