@@ -9,7 +9,7 @@ const path = require('path');
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const CRM_TOOL_NAME = 'CRM Offer Context';
 const CRM_TOOL_ID = 'meta-publish-crm-offer-context';
-const CRM_URL = 'https://crm.skincos.com.br/api/atendimento/internal/meta-ads/offer-context?unit={unit}';
+const CRM_URL = 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit={unit}';
 
 function parseArgs(argv) {
   const values = new Map();

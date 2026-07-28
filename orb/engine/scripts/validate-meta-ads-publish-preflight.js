@@ -28,7 +28,7 @@ const CODE_SOURCES = Object.freeze({
   'Verify Drive Finalization': 'verify-drive-finalization.js',
 });
 
-const CRM_OFFER_CONTEXT_URL = 'https://crm.skincos.com.br/api/atendimento/internal/meta-ads/offer-context?unit={unit}';
+const CRM_OFFER_CONTEXT_URL = 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit={unit}';
 
 function loadPgClient() {
   try { return require('/usr/local/lib/node_modules/n8n/node_modules/pg').Client; }

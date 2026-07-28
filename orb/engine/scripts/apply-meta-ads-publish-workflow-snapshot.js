@@ -45,7 +45,7 @@ function assertCandidate(candidate) {
     throw new Error('Candidate still contains a Google Sheets tool.');
   }
   const crm = candidate.nodes.find((node) => node.name === 'CRM Offer Context');
-  if (crm?.type !== '@n8n/n8n-nodes-langchain.toolHttpRequest' || crm?.parameters?.url !== 'https://crm.skincos.com.br/api/atendimento/internal/meta-ads/offer-context?unit={unit}') {
+  if (crm?.type !== '@n8n/n8n-nodes-langchain.toolHttpRequest' || crm?.parameters?.url !== 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit={unit}') {
     throw new Error('Candidate CRM Offer Context tool is incomplete.');
   }
   const target = candidate.connections?.['CRM Offer Context']?.ai_tool?.[0]?.[0];
