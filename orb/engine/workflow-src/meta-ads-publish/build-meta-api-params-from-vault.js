@@ -18,6 +18,27 @@ if (root.ok !== true || root.ready !== true) {
   throw new Error(`Meta Publish gateway nao esta pronto: ${JSON.stringify(root.invalid || root.error || {})}`);
 }
 
+// The workflow and the Token Vault must evolve as one contract. Verify the
+// complete resumable-video API before any batch work starts, even for a static
+// batch: a missing action is a deployment mismatch, not a media error.
+const requiredVideoActions = [
+  'start_video_upload',
+  'transfer_video_chunk',
+  'finish_video_upload',
+  'get_video_status',
+];
+const videoUpload = asObject(asObject(root.capabilities).video_upload);
+const supportedVideoActions = Array.isArray(videoUpload.supported_actions)
+  ? videoUpload.supported_actions.map(safeString).filter(Boolean)
+  : [];
+const missingVideoActions = requiredVideoActions.filter((action) => !supportedVideoActions.includes(action));
+if (missingVideoActions.length) {
+  throw new Error(`Meta Publish gateway sem contrato de upload de video: ${missingVideoActions.join(', ')}.`);
+}
+if (Number(videoUpload.max_file_bytes) < 90 * 1024 * 1024 || Number(videoUpload.max_chunk_bytes) < 16 * 1024 * 1024) {
+  throw new Error('Meta Publish gateway declarou limites insuficientes para upload de video.');
+}
+
 const destinations = Array.isArray(root.destinations) ? root.destinations : [];
 const required = [
   'token_id',
