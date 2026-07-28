@@ -62,6 +62,13 @@ exec sudo -n /usr/bin/env \
   # granted only the local PostgreSQL service role, so editable QA code never
   # runs as the native skincos service account.
   export DATABASE_URL="$LOCAL_WA_ADAPTER_DATABASE_URL"
+  # runuser preserves the root launcher environment so native WhatsApp
+  # credentials remain available. Explicitly reset the local database identity:
+  # libpq otherwise derives USER=root and peer authentication fails before the
+  # adapter can serve Atendimento.
+  export PGUSER="$LOCAL_WA_ADAPTER_RUN_AS_USER"
+  export USER="$LOCAL_WA_ADAPTER_RUN_AS_USER"
+  export LOGNAME="$LOCAL_WA_ADAPTER_RUN_AS_USER"
 
   # Pages deliberately sends an unsigned actor only to this loopback runtime.
   # Do not inherit production actor keys from the native CRM API environment.
