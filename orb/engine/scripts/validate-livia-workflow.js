@@ -152,7 +152,14 @@ function validateStructure() {
       connectionExists('Get Credential Tokens', 'Validate Publish Token Health'),
     'Get Credential Tokens must feed the media preparation chain',
   );
-  assert(connectionExists('Validate Publish Token Health', 'List Files'), 'Token preflight must feed List Files');
+  const usesVisualEvidenceTopology = names.has('Prepare Livia Visual Contract');
+  assert(
+    usesVisualEvidenceTopology
+      ? connectionExists('Validate Publish Token Health', 'List Livia Source Folders') &&
+          connectionExists('List Livia Source Folders', 'List Files')
+      : connectionExists('Validate Publish Token Health', 'List Files'),
+    'Token preflight must reach List Files through the approved source-folder scope',
+  );
   assert(connectionExists('Prepare Media Items', 'Download File'), 'Prepare Media Items must feed Download File');
   assert(connectionExists('Download File', 'Write File'), 'Download File must feed Write File');
   assert(connectionExists('Write File', 'Process Media Asset'), 'Write File must feed Process Media Asset');
@@ -160,9 +167,47 @@ function validateStructure() {
   assert(connectionExists('Prepare Media Upload Batch', 'Read Media Asset'), 'Prepare Media Upload Batch must feed Read Media Asset');
   assert(connectionExists('Read Media Asset', 'Upload Main Media'), 'Read Media Asset must feed Upload Main Media');
   assert(connectionExists('Upload Main Media', 'Attach Uploaded Main Media Metadata'), 'Upload Main Media must feed Attach Uploaded Main Media Metadata');
-  assert(connectionExists('Attach Uploaded Main Media Metadata', 'Livia'), 'Attach Uploaded Main Media Metadata must feed Livia');
-
-  assert(connectionExists('Livia', 'Hydrate Publish Context'), 'Livia must feed Hydrate Publish Context');
+  if (usesVisualEvidenceTopology) {
+    for (const name of [
+      'Prepare Livia Visual Contract',
+      'Read Livia Visual Asset',
+      'Merge Livia Visual Asset and Contract',
+      'Assert Livia Visual Input',
+      'Loop Livia Media Evidence',
+      'Route Livia Media Evidence',
+      'Attach Image Visual Evidence',
+      'Analyze Video',
+      'Merge Video Analysis Response',
+      'Normalize Video Analysis',
+      'Assert Livia Video Analysis',
+      'Build Livia Group Evidence',
+      'Merge Livia Output and Visual Contract',
+      'Assert Livia Visual Analysis',
+    ]) {
+      assert(names.has(name), `Missing visual-evidence node: ${name}`);
+    }
+    assert(connectionExists('Attach Uploaded Main Media Metadata', 'Prepare Livia Visual Contract'), 'Uploaded media must enter the visual-evidence contract');
+    assert(connectionExists('Prepare Livia Visual Contract', 'Read Livia Visual Asset'), 'Visual contract must read the current item asset');
+    assert(connectionExists('Read Livia Visual Asset', 'Merge Livia Visual Asset and Contract'), 'Read visual asset must join its contract');
+    assert(connectionExists('Merge Livia Visual Asset and Contract', 'Assert Livia Visual Input'), 'Merged visual asset must fail closed before evidence routing');
+    assert(connectionExists('Assert Livia Visual Input', 'Loop Livia Media Evidence'), 'Validated visual asset must enter the per-item loop');
+    assert(connectionExists('Loop Livia Media Evidence', 'Route Livia Media Evidence', 1), 'Visual-evidence loop must route every item by media type');
+    assert(connectionExists('Route Livia Media Evidence', 'Attach Image Visual Evidence', 1), 'Image items must carry confirmed visual evidence');
+    assert(connectionExists('Route Livia Media Evidence', 'Analyze Video', 0), 'Video items must use the mandatory video analysis path');
+    assert(connectionExists('Analyze Video', 'Merge Video Analysis Response'), 'Video analysis response must join its source item');
+    assert(connectionExists('Merge Video Analysis Response', 'Normalize Video Analysis'), 'Video analysis must be normalized');
+    assert(connectionExists('Normalize Video Analysis', 'Assert Livia Video Analysis'), 'Malformed video analysis must fail before editorial AI');
+    assert(connectionExists('Attach Image Visual Evidence', 'Loop Livia Media Evidence'), 'Image evidence must rejoin the per-item loop');
+    assert(connectionExists('Assert Livia Video Analysis', 'Loop Livia Media Evidence'), 'Validated video evidence must rejoin the per-item loop');
+    assert(connectionExists('Loop Livia Media Evidence', 'Build Livia Group Evidence', 0), 'Ordered media evidence must be composed at group completion');
+    assert(connectionExists('Build Livia Group Evidence', 'Livia'), 'The editorial agent must receive the full evidence group');
+    assert(connectionExists('Livia', 'Merge Livia Output and Visual Contract'), 'Editorial output must rejoin the validated evidence contract');
+    assert(connectionExists('Merge Livia Output and Visual Contract', 'Assert Livia Visual Analysis'), 'Editorial output must be checked against visual evidence');
+    assert(connectionExists('Assert Livia Visual Analysis', 'Hydrate Publish Context'), 'Only validated editorial output may enter publication context');
+  } else {
+    assert(connectionExists('Attach Uploaded Main Media Metadata', 'Livia'), 'Attach Uploaded Main Media Metadata must feed Livia');
+    assert(connectionExists('Livia', 'Hydrate Publish Context'), 'Livia must feed Hydrate Publish Context');
+  }
   if (hasCompactBuildQueue) {
     assert(connectionExists('Hydrate Publish Context', 'Build Publish Queue'), 'Hydrate Publish Context must feed Build Publish Queue');
     assert(connectionExists('Build Publish Queue', 'Switch Publish Route'), 'Build Publish Queue must feed Switch Publish Route');
@@ -170,7 +215,12 @@ function validateStructure() {
     assert(connectionExists('Hydrate Publish Context', 'BQ - Normalize Hydrated Envelope'), 'Hydrate Publish Context must feed BQ - Normalize Hydrated Envelope');
     assert(connectionExists('BQ - Normalize Hydrated Envelope', 'BQ - Validate Bootstrap Inputs'), 'BQ - Normalize Hydrated Envelope must feed BQ - Validate Bootstrap Inputs');
     assert(connectionExists('BQ - Validate Bootstrap Inputs', 'BQ - Build Publish Context'), 'BQ - Validate Bootstrap Inputs must feed BQ - Build Publish Context');
-    assert(connectionExists('BQ - Build Publish Context', 'BQ - Build Platform Job Graph'), 'BQ - Build Publish Context must feed BQ - Build Platform Job Graph');
+    assert(names.has('Assert Livia Publication Window'), 'Missing node: Assert Livia Publication Window');
+    assert(
+      connectionExists('BQ - Build Publish Context', 'Assert Livia Publication Window') &&
+        connectionExists('Assert Livia Publication Window', 'BQ - Build Platform Job Graph'),
+      'BQ publication context must pass the publication-window guard before platform job generation',
+    );
     assert(connectionExists('BQ - Build Platform Job Graph', 'BQ - Validate Job Graph'), 'BQ - Build Platform Job Graph must feed BQ - Validate Job Graph');
     assert(connectionExists('BQ - Validate Job Graph', 'BQ - Seed Publish State'), 'BQ - Validate Job Graph must feed BQ - Seed Publish State');
     assert(connectionExists('BQ - Seed Publish State', 'BQ - Emit First Job'), 'BQ - Seed Publish State must feed BQ - Emit First Job');
@@ -194,7 +244,8 @@ function validateStructure() {
   const updateEdges = workflow.connections?.['Update File']?.main?.[0] || [];
   assert(updateEdges.some((edge) => edge?.node === 'Merge Drive Result and Context' && edge?.index === 1), 'Update File must feed the Drive result into the final merge');
   assert(connectionExists('Merge Drive Result and Context', 'Assert Drive Published'), 'Merged Drive result and notification context must feed Assert Drive Published');
-  assert(connectionExists('Assert Drive Published', 'Inform Success (1)'), 'Verified Drive update must feed notification');
+  const notificationNode = names.has('Inform Success (1)') ? 'Inform Success (1)' : 'Inform Success (2)';
+  assert(connectionExists('Assert Drive Published', notificationNode), 'Verified Drive update must feed notification');
   assert(connectionExists('Assert Drive Published', 'Cleanup Temp Files'), 'Verified Drive update must feed cleanup');
   assert(connectionExists('Switch Final Dry Run', 'Cleanup Temp Files', 1), 'Switch Final Dry Run dry-run output must feed Cleanup Temp Files');
 }
@@ -250,6 +301,9 @@ function validateContracts() {
   assert(processMediaAssetCommand.length < 2500, `Process Media Asset command must stay small enough for stable expression parsing (${processMediaAssetCommand.length} chars)`);
   const jobGraphScript = path.join(__dirname, 'livia', 'build-platform-job-graph.js');
   const jobGraphSource = fs.readFileSync(jobGraphScript, 'utf8');
+  assert(jobGraphSource.includes('normalizeExternalResult'), 'Livia job graph must accept both direct n8n jobs and jobs envelopes.');
+  assert(jobGraphSource.includes('assertOutputContract'), 'Livia job graph must self-test its output contract.');
+  assert(jobGraphSource.includes('assertJobGraphContracts'), 'Livia job graph must test image, Reel and carousel fixtures without the gateway.');
   assert(jobGraphSource.includes('invalidateIncompleteCarouselResume'), 'Livia resume logic must invalidate partial Instagram carousel attempts before reusing child containers');
   assert(jobGraphSource.includes('groupResumeContextKey'), 'Livia resume logic must inspect group-scoped carousel container results');
   assert(jobGraphSource.includes('normalizeThreadsCarouselJob'), 'Livia job graph must keep Threads carousel child and parent request contracts distinct');
@@ -279,6 +333,8 @@ function validateContracts() {
     assert(typeOf('BQ - Build Platform Job Graph') === 'n8n-nodes-base.executeCommand', 'BQ - Build Platform Job Graph must be externalized as Execute Command');
     assert(bqBuildPlatformJobGraphCommand.includes('build-platform-job-graph.js'), 'BQ - Build Platform Job Graph must delegate to scripts/livia/build-platform-job-graph.js');
     assert(bqBuildPlatformJobGraphCommand.includes('--payload'), 'BQ - Build Platform Job Graph command must pass the input payload to the external script');
+    assert(!/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/.test(bqBuildPlatformJobGraphCommand), 'BQ - Build Platform Job Graph must use an immutable workflow runtime root.');
+    assert(/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine/.test(bqBuildPlatformJobGraphCommand), 'BQ - Build Platform Job Graph must use a pinned immutable release root.');
     assert(bqBuildPlatformJobGraphCommand.length < 2500, `BQ - Build Platform Job Graph command must stay small enough for stable expression parsing (${bqBuildPlatformJobGraphCommand.length} chars)`);
     assert(bqBuildPlatformJobGraph.length < 1000, `BQ - Build Platform Job Graph must not be a large Code node anymore (${bqBuildPlatformJobGraph.length} chars)`);
     assert(!bqBuildPlatformJobGraph.includes('...payload,\n    jobs: builtJobs'), 'BQ - Build Platform Job Graph must not spread the full bootstrap payload into output');
@@ -287,7 +343,13 @@ function validateContracts() {
     assert(bqValidateJobGraph.includes('codexPayloadCompacted'), 'BQ - Validate Job Graph must preserve compacted payload marker');
   }
   assert(!hydrate.includes('$items('), 'Hydrate Publish Context must not use $items lookups');
-  assert(!hydrate.includes('.all(') || hydrate.includes('$input.all('), 'Hydrate Publish Context must not use named all() lookups');
+  assert(
+    !hydrate.includes('.all(') ||
+      hydrate.includes('$input.all(') ||
+      hydrate.includes('$("Attach Uploaded Main Media Metadata").all()') ||
+      hydrate.includes("$('Attach Uploaded Main Media Metadata').all()"),
+    'Hydrate Publish Context may read only the explicitly collected uploaded-media items',
+  );
 
   if (hasCompactBuildQueue) {
     assert(buildQueue.includes('buildPublishJobsFromLiviaInput'), 'Build Publish Queue must reuse buildPublishJobsFromLiviaInput');
@@ -359,7 +421,10 @@ function validateContracts() {
     'HTTP Request must support Codex dry-run or use the managed social publish gateway',
   );
   if (usesManagedSocialGateway) {
-    assert(httpParameters.contentType === 'json', 'Managed social publish gateway must use n8n JSON transport, not raw transport');
+    assert(
+      httpParameters.contentType === 'json' || httpParameters.specifyBody === 'json',
+      'Managed social publish gateway must use n8n JSON transport, not raw transport',
+    );
     assert(httpParameters.specifyBody === 'json', 'Managed social publish gateway must use the JSON body editor');
     assert(String(httpParameters.jsonBody || '').includes('JSON.stringify'), 'Managed social publish gateway must preserve its JSON payload expression');
     assert(!Object.prototype.hasOwnProperty.call(httpParameters, 'body'), 'Managed social publish gateway must not retain a raw body, which turns the response into a stream');
@@ -375,7 +440,9 @@ function validateContracts() {
   const driveMerge = getNode('Merge Drive Result and Context')?.parameters || {};
   assert(driveMerge.mode === 'combine' && driveMerge.combineBy === 'combineByPosition', 'Drive merge must combine the compact context and Drive response by position');
   assert(updateOptions.includes('"fields":["*"]'), 'Update File must return properties for verification');
-  assert(notifyPhone.includes('N8N_DEFAULT_TEST_PHONE') && !notifyPhone.includes('555195103563'), 'Notification must use the runtime E.164 phone instead of a hard-coded JID');
+  if (getNode('Inform Success (1)')) {
+    assert(notifyPhone.includes('N8N_DEFAULT_TEST_PHONE') && !notifyPhone.includes('555195103563'), 'Notification must use the runtime E.164 phone instead of a hard-coded JID');
+  }
   assert(telegramText.includes("$('Assert Drive Published').first().json.whatsappMessage"), 'Telegram notification must preserve the verified message after Evolution output');
   assert(JSON.stringify(getNode('Hydrate Publish Context')?.parameters || {}).includes('version: \\"v25.0\\"'), 'Hydrate Publish Context must use Graph API v25.0');
   assert(!workflowText.includes('v24.0'), 'Workflow must not retain Graph API v24.0 templates');

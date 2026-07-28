@@ -1,0 +1,9 @@
+[Unit]
+Description=Temporary fence for a controlled Skincos Orb restart
+Conflicts=orb.service
+Before=orb.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/true
