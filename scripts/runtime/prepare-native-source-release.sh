@@ -148,12 +148,23 @@ sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$CURRENT_LINK")"
 # The versioned n8n writer authenticates locally as postgres. Permit only
 # traversal to its immutable scripts and only manifest-directory writes; no
 # workflow sidecar or source tree becomes generally readable or writable.
-for acl_dir in "$RELEASE_BASE/$RELEASE_ID" "$DESTINATION" "$DESTINATION/orb" "$DESTINATION/orb/engine" "$DESTINATION/orb/engine/scripts"; do
+for acl_dir in "$RELEASE_BASE/$RELEASE_ID" "$DESTINATION" "$DESTINATION/orb" "$DESTINATION/orb/engine" "$DESTINATION/orb/engine/scripts" "$DESTINATION/orb/engine/scripts/livia"; do
   sudo -n setfacl -m u:postgres:--x "$acl_dir"
 done
 sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/workflow-runtime-manifest.js" \
   "$DESTINATION/orb/engine/scripts/apply-livia-runtime-isolation.js"
+# The workflow-version writer runs as postgres.  It hashes the exact Livia
+# sidecar entrypoints before committing a workflow version, so it needs read
+# access to those files only (directory traversal is granted above).  Without
+# these ACLs a promotion aborts before the transaction can create its manifest.
+sudo -n setfacl -m u:postgres:r-- \
+  "$DESTINATION/orb/engine/compose2-current.js" \
+  "$DESTINATION/orb/engine/scripts/livia/process-media-asset.js" \
+  "$DESTINATION/orb/engine/scripts/livia/build-platform-job-graph.js" \
+  "$DESTINATION/orb/engine/scripts/livia/verify-published-artifacts.js" \
+  "$DESTINATION/orb/engine/scripts/livia/publish-progress-ledger.js" \
+  "$DESTINATION/orb/engine/scripts/livia/validate-publish-token-health.js"
 MANIFEST_DIR="${N8N_RUNTIME_HOME:-/var/lib/skincos-runtime/orb}/workflow-runtime-manifests/WGXr4vYkv9UoJ8zc"
 sudo -n install -d -o root -g root -m 0750 "$MANIFEST_DIR"
 sudo -n setfacl -m u:postgres:--x "$(dirname "$(dirname "$MANIFEST_DIR")")" "$(dirname "$MANIFEST_DIR")"
