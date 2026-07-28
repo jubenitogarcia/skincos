@@ -64,6 +64,8 @@ test('scopes atendimento router access by consuming module', () => {
     const procedimentosActor = { role: 'INJETOR', allowedModules: ['procedimentos'] }
     assert.equal(canAccessAtendimento(procedimentosActor, '/management/catalog', 'GET'), true)
     assert.equal(canAccessAtendimento(procedimentosActor, '/references', 'GET'), true)
+    assert.equal(canAccessAtendimento(procedimentosActor, '/offers', 'GET'), true)
+    assert.equal(canAccessAtendimento(procedimentosActor, '/offers', 'PUT'), false)
     assert.equal(canAccessAtendimento(procedimentosActor, '/clients', 'GET'), false)
     assert.equal(canAccessAtendimento(procedimentosActor, '/attendances', 'GET'), false)
     assert.equal(canAccessAtendimento(procedimentosActor, '/attendances', 'POST'), false)
@@ -72,6 +74,16 @@ test('scopes atendimento router access by consuming module', () => {
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/commercial', 'GET'), true)
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/finance', 'GET'), true)
     assert.equal(canAccessAtendimento(faturamentoActor, '/management/catalog', 'GET'), false)
+})
+
+test('contains the normalized commercial-offer schema and refuses to treat it as a sheet snapshot', () => {
+    const migration = atendimentoMigrationStatements().join('\n')
+    assert.match(migration, /commercial_offers/i)
+    assert.match(migration, /commercial_offer_procedures/i)
+    assert.match(migration, /offer_key text not null/i)
+    assert.match(migration, /price_cents integer/i)
+    assert.match(migration, /status text not null default 'draft'/i)
+    assert.match(migration, /aliases text\[\]/i)
 })
 
 test('initializes Atendimento schema once when concurrent reads arrive', async () => {

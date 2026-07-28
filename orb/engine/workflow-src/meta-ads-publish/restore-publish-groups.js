@@ -5,6 +5,7 @@ if (gateway.ok !== true || !gateway.run || !text(gateway.run.id)) {
   throw new Error(`Acquire Publish Run falhou: ${JSON.stringify(gateway.error || gateway)}`);
 }
 const run = gateway.run;
+const resumeJobs = Array.isArray(run.summary?.resume_jobs) ? run.summary.resume_jobs : [];
 if (run.status === 'reconciliation_required') {
   throw new Error(`Run ${run.id} exige reconciliacao manual antes de continuar.`);
 }
@@ -23,6 +24,10 @@ return groups.map((item) => ({
     batch_fingerprint: text(run.batch_fingerprint),
     config_revision: text(run.config_revision),
     resume_drive_only: false,
+    // Preserve the exact, already-validated mutation bodies on a retry. The
+    // copy agent is intentionally generative, so rebuilding it would change
+    // the request hash while this run must remain idempotent.
+    resume_jobs: resumeJobs,
   },
   binary: item.binary,
 }));
