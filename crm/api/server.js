@@ -777,11 +777,15 @@ try {
     console.warn('⚠️  Caixa routes failed to register:', e?.message || String(e))
 }
 
-try {
-    startHarmoniaWorker({ varDir: VAR_DIR })
-    console.log('✅ Harmonia worker initialized')
-} catch (e) {
-    console.warn('⚠️  Harmonia worker failed to start:', e?.message || String(e))
+if (normalizeBoolean(process.env.HARMONIA_WORKER_ENABLED, true)) {
+    try {
+        startHarmoniaWorker({ varDir: VAR_DIR })
+        console.log('✅ Harmonia worker initialized')
+    } catch (e) {
+        console.warn('⚠️  Harmonia worker failed to start:', e?.message || String(e))
+    }
+} else {
+    console.log('ℹ️  Harmonia worker disabled by HARMONIA_WORKER_ENABLED')
 }
 
 // -------------------------------------------------------------
@@ -6949,8 +6953,9 @@ app.use((req, res, next) => {
 
 // CRM Backend API configuration - default port 8099 (separate from frontend on 5000)
 const PORT = process.env.CRM_API_PORT || process.env.PORT || 8099
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 CRM Backend API running on http://0.0.0.0:${PORT}`)
+const HOST = process.env.CRM_API_HOST || '0.0.0.0'
+app.listen(PORT, HOST, () => {
+    console.log(`🚀 CRM Backend API running on http://${HOST}:${PORT}`)
     console.log(`📊 Health check: http://localhost:${PORT}/health`)
     console.log(`🎯 API endpoints: http://localhost:${PORT}/api/`)
     console.log(`⚙️  Mode: ${process.env.NODE_ENV || 'development'}`)

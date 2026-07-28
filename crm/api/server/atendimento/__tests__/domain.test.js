@@ -157,6 +157,20 @@ test('optimizes the interval over discrete breakpoints and reaches uniform bands
     assert.ok(result.breakpointCount > 0)
 })
 
+test('caps the homogeneity curve where the interval reaches the cut line', () => {
+    const result = calculateDoctorConversionRanking({
+        dailyGoal: 400,
+        doctors: [120, 180, 240, 300, 360, 420].map((realized, index) => ({ id: `s${index}`, name: `Doutor ${index}`, realized })),
+    })
+
+    assert.ok(result.standardDeviation > 0)
+    assertNear(result.intervalMultiplierMax, result.cutLine / result.standardDeviation, 1e-12)
+    assert.ok(result.intervalMultiplierMax > 2)
+    assert.ok(result.intervalMultiplier <= result.intervalMultiplierMax)
+    assert.ok((result.standardDeviation * result.intervalMultiplier) <= result.cutLine + 1e-9)
+    assertNear(result.homogeneityCurve.at(-1).end, result.intervalMultiplierMax, 1e-12)
+})
+
 test('keeps the previous multiplier only while it remains inside an optimal plateau', () => {
     const realized = [-4, -1, 1, 4]
     const baseline = optimizeDoctorConversionInterval({
@@ -280,7 +294,7 @@ test('keeps conversion distribution invariants for the optimized result', () => 
     assert.equal(result.levelCounts.level0 + result.levelCounts.level1, realized.filter((value) => value < result.cutLine).length)
     assert.equal(result.levelCounts.level2 + result.levelCounts.level3, realized.filter((value) => value >= result.cutLine).length)
     assert.ok(result.homogeneityScore >= 0 && result.homogeneityScore <= 1)
-    assert.ok(result.intervalMultiplier >= 0 && result.intervalMultiplier <= 2)
+    assert.ok(result.intervalMultiplier >= 0 && result.intervalMultiplier <= result.intervalMultiplierMax)
 })
 
 test('keeps the breakpoint optimizer bounded for a large deterministic cohort', () => {
@@ -301,7 +315,7 @@ test('keeps the breakpoint optimizer bounded for a large deterministic cohort', 
     assert.equal(classified, realized.length)
     assert.ok(Number.isFinite(result.loss))
     assert.ok(Number.isFinite(result.score))
-    assert.ok(result.selectedMultiplier >= 0 && result.selectedMultiplier <= 2)
+    assert.ok(result.selectedMultiplier >= 0 && result.selectedMultiplier <= (21000 / 7000))
     assert.ok(result.breakpointCount <= (realized.length * 2) + 2)
     assert.ok(result.candidatesEvaluated <= (realized.length * 4) + 5)
 })
