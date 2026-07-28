@@ -24,8 +24,10 @@ produção, não reinicia serviços, não aplica migration e não promove binár
 - migrations: baseline 143, candidato observado 227; nunca executar em produção
   sem backup restore-verified;
 - MCP/OAuth: Streamable HTTP e 9 ferramentas readonly; `execute_workflow` proibido;
-- packages: 11 pins, layout direto obrigatório; caminhos declarados presentes,
-  mas jornadas funcionais ainda são gate aberto.
+- packages: 11 pins; o ensaio de layout direto foi invalidado porque não
+  preserva os namespaces dos packages nos workflows. A qualificação deve usar
+  o instalador canônico/`PackageDirectoryLoader`; compatibilidade funcional
+  continua bloqueada.
 
 ## Conteúdo
 
@@ -37,6 +39,7 @@ produção, não reinicia serviços, não aplica migration e não promove binár
 - runbooks de promoção, rollback e observação;
 - evidência sanitizada de resiliência isolada;
 - evidência de descoberta MCP/OAuth do candidato;
+- evidência sanitizada de incompatibilidade do loader direto de community nodes;
 - nenhum backup, dump, credencial, token, cookie, PII, dado clínico ou log bruto.
 
 ## Gates executados neste pacote
@@ -46,7 +49,8 @@ executados ensaios isolados de morte/reinício, porta ocupada, indisponibilidade
 do banco no gateway e filesystem somente leitura. Não foi executado o script de
 upgrade, migration, parada, startup, backup live ou rollback live. Baixo espaço,
 matriz completa de recuperação, OAuth/MCP real, jornadas funcionais e
-persistência WSL permanecem gates pendentes e bloqueiam merge/promote.
+persistência WSL e o instalador canônico de community packages permanecem gates
+pendentes e bloqueiam merge/promote.
 
 ## Aprovações ainda necessárias
 
