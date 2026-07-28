@@ -10,6 +10,7 @@ const {
   manualExecutionAuditState,
 } = require('../scripts/lib/meta-ads-publish-execution-semantics');
 const { CRM_TOOL_NAME, CRM_URL, transform } = require('../scripts/prepare-meta-ads-publish-crm-catalog');
+const { transform: patchVideoUploadReplay } = require('../scripts/patch-meta-ads-video-transfer-replay');
 
 test('Responses API uses the n8n 1.3 default when the stored parameter is absent', () => {
   assert.equal(effectiveResponsesApiEnabled({ typeVersion: 1.3, parameters: {} }), true);
@@ -73,4 +74,30 @@ test('preflight loads workflow connections before validating the CRM tool edge',
     'utf8',
   );
   assert.match(source, /SELECT active, nodes, connections, settings,/);
+});
+
+test('video upload replay key includes normalized bytes and rejects the legacy v4 key', () => {
+  const workflow = {
+    id: 'eFJhFg79lyaycjlm',
+    active: false,
+    nodes: [{
+      name: 'Prepare Video Upload Starts',
+      type: 'n8n-nodes-base.code',
+      parameters: {
+        jsCode: [
+          "const normalizedFile = text(processing.normalized_file || video.normalized_file);",
+          "    if (!runId || !fileSize || !normalizedFile) throw new Error(`Video ${video.id} sem run_id, tamanho ou caminho normalizado.`);",
+          "checksum_sha256: text(processing.output_checksum_sha256 || video.output_checksum_sha256),",
+          "operation_key: `video-start:v4:${stableHash([runId, accountId, tokenId, apiVersion, video.id, sourceFingerprint, VIDEO_NORMALIZATION_CONTRACT_REVISION].map(text).join('|'))}`",
+          "file_checksum: text(processing.output_checksum_sha256 || video.output_checksum_sha256),",
+        ].join('\n'),
+      },
+    }],
+  };
+  const candidate = patchVideoUploadReplay(workflow);
+  const code = candidate.nodes[0].parameters.jsCode;
+  assert.match(code, /video-start:v5:/);
+  assert.match(code, /checksumSha256, fileSize/);
+  assert.match(code, /checksum SHA-256 valido/);
+  assert.doesNotMatch(code, /video-start:v4:/);
 });
