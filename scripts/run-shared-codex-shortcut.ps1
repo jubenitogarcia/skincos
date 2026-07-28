@@ -546,8 +546,12 @@ function Stop-CrmPersonaRuntime {
 
     $runtimeRootWsl = Convert-WindowsPathToWsl -Path (Get-CrmPersonaRuntimeRoot -Persona $Persona)
     if ($Persona -eq "Gestor") {
-        $command = "CRM_PERSONA=GESTOR CRM_RUNTIME_ROOT={0} CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
+        $vitePort = if ([int]$manifest.ports.vite -gt 0) { [int]$manifest.ports.vite } else { 5173 }
+        $pagesPort = if ([int]$manifest.ports.pages -gt 0) { [int]$manifest.ports.pages } else { 8791 }
+        $command = "CRM_PERSONA=GESTOR CRM_RUNTIME_ROOT={0} CRM_VITE_PORT={1} CRM_PAGES_PORT={2} CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_PID_FILE={3} CRM_LOG_FILE={4} bash ./scripts/run-local-crm.sh --stop" -f `
             (Convert-ToBashLiteral -Value $runtimeRootWsl), `
+            $vitePort, `
+            $pagesPort, `
             (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
             (Convert-ToBashLiteral -Value $crmGestorLogWsl)
     } else {
@@ -567,9 +571,16 @@ function Start-CrmPersonaRuntime {
     )
     $targetLiteral = Convert-ToBashLiteral -Value $TargetCommit
     if ($Persona -eq "Gestor") {
-        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' VITE_CRM_MAINTENANCE_MODULES=faturamento CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh" -f `
+        $vitePort = if ([string]::IsNullOrWhiteSpace($env:CRM_LOCAL_GESTOR_VITE_PORT)) { 5173 } else { [int]$env:CRM_LOCAL_GESTOR_VITE_PORT }
+        $pagesPort = if ([string]::IsNullOrWhiteSpace($env:CRM_LOCAL_GESTOR_PAGES_PORT)) { 8791 } else { [int]$env:CRM_LOCAL_GESTOR_PAGES_PORT }
+        if ($vitePort -lt 1 -or $vitePort -gt 65535 -or $pagesPort -lt 1 -or $pagesPort -gt 65535) {
+            throw "As portas locais do Gestor devem estar entre 1 e 65535."
+        }
+        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} CRM_VITE_PORT={2} CRM_PAGES_PORT={3} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' VITE_CRM_MAINTENANCE_MODULES=faturamento CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={4} CRM_LOG_FILE={5} bash ./scripts/run-local-crm.sh" -f `
             $targetLiteral, `
             (Convert-ToBashLiteral -Value $crmGestorRuntimeRootWsl), `
+            $vitePort, `
+            $pagesPort, `
             (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
             (Convert-ToBashLiteral -Value $crmGestorLogWsl)
     } else {
