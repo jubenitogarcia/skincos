@@ -20,7 +20,7 @@ O primário é o `SkincosObservabilityProbe`, uma tarefa agendada no Windows do 
 - Dashboard local: `dashboard.html`; dashboard Grafana importável: `ops/observability/dashboards/skincos-operations.json`.
 - Métricas: `metrics.prom`; o coletor/servidor Grafana/Prometheus é opcional e não muda o monitor primário.
 - O pipeline canônico de Core Workers injeta o SHA promovido em `APP_VERSION`; a resposta não usa um nome de branch como versão.
-- Alerta local obrigatório: Windows Application Event Log, source `SkincosObservability` (1001 alerta, 1002 recuperação). Webhook HTTPS é secundário e só pode ser configurado com credencial segregada fora do repositório.
+- Alerta local obrigatório: Windows Application Event Log, source `SkincosObservability` (1001 alerta, 1002 recuperação). O desktop recebe somente alertas confirmados, nunca a recuperação; o webhook HTTPS é secundário e só pode ser configurado com credencial segregada fora do repositório.
 - Probes de módulos ainda não implantados ficam `disabled` com motivo explícito; não geram falso verde.
 
 Instalação/reversão no host do operador:
@@ -29,6 +29,10 @@ Instalação/reversão no host do operador:
 powershell -ExecutionPolicy Bypass -File .\ops\observability\scripts\Install-SkincosObservability.ps1
 # rollback: Unregister-ScheduledTask -TaskName SkincosObservabilityProbe -Confirm:$false
 ```
+
+O catálogo exige duas leituras consecutivas fora do saudável antes de confirmar um alerta e duas leituras saudáveis antes de confirmá-lo como resolvido. Por unidade, a mensagem de desktop tem cooldown de 15 minutos e expira em 30 segundos. Oscilações de uma única sonda continuam no histórico/métricas, mas não interrompem o operador.
+
+O watchdog usa o mesmo limiar de duas observações stale, mantém estado próprio e serializa o monitor com mutex local. Assim, ele reinicia o dashboard quando necessário sem abrir mensagens repetidas nem perder uma transição confirmável durante invocações simultâneas.
 
 Uma jornada sintética autenticada exige ator exclusivo de staging, segredo fora do Git e passos sem escrita. Enquanto Identity/Finance não estiverem implantados em staging, o catálogo a mantém desabilitada em vez de reutilizar uma sessão humana.
 

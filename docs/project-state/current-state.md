@@ -1,5 +1,30 @@
 # Current state
 
+## Observability alert hardening — 2026-07-28T20:48Z
+
+The active Windows monitor is currently in `operator-run-key` mode and emits a
+desktop `msg.exe` window for every raw health transition. Its private history
+contains 479 such messages since 2026-07-24, primarily Finance staging
+oscillations. Read-only live probes at 20:48Z returned six consecutive 200
+responses for Finance health/readiness and the sampled production API and
+Escala health routes.
+
+An isolated branch based on `origin/main` contains the correction:
+two consecutive non-healthy probes are required before a confirmed alert, two
+healthy probes before resolution, desktop recovery notices are disabled, and
+desktop alerts have a 15-minute per-unit cooldown with a 30-second expiry. The
+Finance health binding deadline is raised to 3 seconds so the monitor can
+classify a slow successful probe as latency degradation rather than a synthetic
+503. Concurrent probes are serialized with a local mutex, and the watchdog now
+uses the same two-run confirmation and cooldown policy. Tests and catalog validation pass. At 20:51Z the reviewed monitor source
+was installed into the private operator runtime after the checkpoint
+`C:\CodexRuntime\operator\admin\skincos\checkpoints\observability-alert-hardening-20260728T2052Z`.
+The copied catalog/monitor/watchdog hashes match the branch, exactly one
+supervisor is active, and the subsequent 20:52Z probe completed with all six
+enabled units healthy and no transition. No Cloudflare deployment, D1 data or
+production service was changed; the gateway timeout correction is source-only
+until its normal integration and staging release path runs.
+
 ## Fresh runtime-config verification — 2026-07-25T05:05Z
 
 The fresh provider transfer of the encrypted runtime configuration was

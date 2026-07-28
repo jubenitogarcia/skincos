@@ -2,6 +2,17 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-28T20:48:44Z",
+      "surface": "windows-observability-and-public-health",
+      "scope": "Desktop alert flood investigation and local hardening candidate",
+      "state": "local-runtime-active-source-unintegrated",
+      "method": "Read-only inspection of active Windows Run-key supervisor, private monitor history and source; six repeated public health/readiness probes; deterministic local PowerShell policy drill with loopback HTTP endpoints, syntax parse, catalog validation, API gateway test and architecture validation",
+      "result": "The active monitor runs every 60 seconds through the operator Run key and sent 479 desktop messages since 2026-07-24: 411 Finance staging, 44 Orb production, 10 API production, 6 CRM Pages, 4 Escala and 4 controlled-drill transitions. Finance historically returned intermittent 503 responses at the 800 ms service-binding deadline, while production alerts also followed isolated latency spikes. The correction requires two consecutive non-healthy probes, two healthy probes for resolution, disables desktop resolution notices, applies a 900-second per-unit desktop cooldown and 30-second message expiry, serializes overlapping probes with a local mutex, and makes the watchdog obey the same confirmation and cooldown policy. The deterministic drill covered isolated failures, confirmed recovery without popup, cooldown, independent unit/environment state, corrupt persisted JSON, msg.exe failure, concurrent runs and watchdog deduplication. Finance probe responses run up to 3 seconds so a slow success is classified by latency; genuine upstream 503 remains degraded. The reviewed monitor files and catalog were installed into the private runtime at 20:51Z after checkpoint `observability-alert-hardening-20260728T2052Z`; their SHA-256 values match the branch, exactly one supervisor is active, and the 20:52Z run completed with every enabled unit healthy and no transition. The repeated live sample was healthy: six Finance health/readiness, API health and Escala health responses were HTTP 200.",
+      "limitation": "No Cloudflare Worker, D1 data or production service was changed. The gateway timeout correction remains source-only until its normal integration and staging release path runs; the active local monitor correction is not evidence that the branch is integrated on main.",
+      "branch": "codex/admin/observability-alert-hardening",
+      "base_sha": "f6fc637439618771e3cd3953859fa1875820a832"
+    },
+    {
       "observed_at": "2026-07-25T05:05:34Z",
       "surface": "google-drive-offsite-runtime-config",
       "scope": "Fresh runtime-config ciphertext and scratch decrypt",
