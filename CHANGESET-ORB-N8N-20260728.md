@@ -35,14 +35,17 @@ produção, não reinicia serviços, não aplica migration e não promove binár
 - fixture OAuth sintética transacional;
 - teste de dry-run/sintaxe/manifesto;
 - runbooks de promoção, rollback e observação;
+- evidência sanitizada de resiliência isolada;
 - nenhum backup, dump, credencial, token, cookie, PII, dado clínico ou log bruto.
 
 ## Gates executados neste pacote
 
-Os testes locais permitidos são `bash -n`, validação do manifesto e dry-run de
-todos os scripts. Não foi executado o script de upgrade, migration, parada,
-startup, backup live ou rollback live. Gates de staging que permanecem pendentes
-estão explicitados no runbook e devem bloquear merge/promote até nova evidência.
+Além de `bash -n`, validação do manifesto e dry-run de todos os scripts, foram
+executados ensaios isolados de morte/reinício, porta ocupada, indisponibilidade
+do banco no gateway e filesystem somente leitura. Não foi executado o script de
+upgrade, migration, parada, startup, backup live ou rollback live. Baixo espaço,
+matriz completa de recuperação, OAuth/MCP real, jornadas funcionais e
+persistência WSL permanecem gates pendentes e bloqueiam merge/promote.
 
 ## Aprovações ainda necessárias
 
