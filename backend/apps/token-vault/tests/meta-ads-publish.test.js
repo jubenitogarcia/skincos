@@ -87,6 +87,9 @@ test('config exposes metadata and opaque token ids without token material', asyn
   assert.equal(body.destinations[0].carousel_native_route_active, true);
   assert.equal(body.destinations[0].landing_pages_by_creative_group.BOTOX_35UI_PRICE_DOSE_AVISTA_ANIVERSARIO_7_ANOS, 'https://espacofacial.com/campanhas/aniversario-7-anos/botox');
   assert.match(body.config_revision, /^[a-f0-9]{64}$/);
+  assert.deepEqual(body.capabilities.video_upload.supported_actions, __test.videoUploadActions);
+  assert.equal(body.capabilities.video_upload.max_file_bytes, 90 * 1024 * 1024);
+  assert.equal(body.capabilities.video_upload.max_chunk_bytes, 16 * 1024 * 1024);
 });
 
 function flexibleStaticFeed() {
