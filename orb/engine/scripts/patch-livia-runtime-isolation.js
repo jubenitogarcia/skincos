@@ -15,6 +15,7 @@ const REQUIRED_NODES = new Set([
   'Validate Publish Token Health',
 ]);
 const RELEASE_ROOT_RE = /^\/opt\/skincos\/releases\/[0-9a-f]{7,64}\/source\/orb\/engine$/;
+const PINNED_ROOT_RE = /\/opt\/skincos\/releases\/[0-9a-f]{7,64}\/source\/orb\/engine/g;
 
 function fail(message) { throw new Error(message); }
 function arg(prefix) { return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length) || ''; }
@@ -26,8 +27,13 @@ function validate(workflow, releaseRoot) {
     if (!REQUIRED_NODES.has(node?.name)) continue;
     if (node.type !== 'n8n-nodes-base.executeCommand') fail(`${node.name} must remain an Execute Command node.`);
     const command = String(node.parameters?.command || '');
-    if (!command.includes('/opt/skincos/current/source/orb/engine')) fail(`${node.name} no longer has the expected mutable source path.`);
-    node.parameters.command = command.replaceAll('/opt/skincos/current/source/orb/engine', releaseRoot);
+    const hasMutableRoot = command.includes('/opt/skincos/current/source/orb/engine');
+    const hasPinnedRoot = PINNED_ROOT_RE.test(command);
+    PINNED_ROOT_RE.lastIndex = 0;
+    if (!hasMutableRoot && !hasPinnedRoot) fail(`${node.name} has no recognized Orb runtime root.`);
+    node.parameters.command = hasMutableRoot
+      ? command.replaceAll('/opt/skincos/current/source/orb/engine', releaseRoot)
+      : command.replace(PINNED_ROOT_RE, releaseRoot);
     touched.push(node.name);
   }
   if (touched.length !== REQUIRED_NODES.size) fail(`Expected to pin ${REQUIRED_NODES.size} Livia sidecars, changed ${touched.length}.`);

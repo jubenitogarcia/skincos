@@ -11,6 +11,8 @@ const path = require('path');
 const DEFAULT_RUNTIME_HOME = '/var/lib/skincos-runtime/orb';
 const RELEASE_ROOT_RE = /^\/opt\/skincos\/releases\/([0-9a-f]{7,64})\/source\/orb\/engine$/;
 const MUTABLE_SOURCE_RE = /\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/;
+const WORKFLOW_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const WORKFLOW_VERSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -56,6 +58,16 @@ function comparableManifest(manifest) {
   const { createdAt, ...stable } = manifest || {};
   return stable;
 }
+function manifestPathFor(runtimeHome, workflowId, workflowVersion) {
+  if (!WORKFLOW_ID_RE.test(workflowId)) fail('Workflow ID is invalid for a manifest path.');
+  if (!WORKFLOW_VERSION_RE.test(workflowVersion)) fail('Workflow version is invalid for a manifest path.');
+  const resolvedHome = path.resolve(runtimeHome);
+  if (resolvedHome !== DEFAULT_RUNTIME_HOME) fail(`Manifest runtime home must be ${DEFAULT_RUNTIME_HOME}.`);
+  const manifestPath = path.resolve(resolvedHome, 'workflow-runtime-manifests', workflowId, `${workflowVersion}.json`);
+  const basePath = path.resolve(resolvedHome, 'workflow-runtime-manifests') + path.sep;
+  if (!manifestPath.startsWith(basePath)) fail('Manifest path escapes the runtime manifest directory.');
+  return manifestPath;
+}
 function defaultEntrypoints(releaseRoot) {
   return [
     'compose2-current.js',
@@ -96,7 +108,7 @@ function createManifest() {
     commands: liviaCommands.map(({ name, command }) => ({ name, sha256: crypto.createHash('sha256').update(command).digest('hex') })),
     entrypoints,
   };
-  const manifestPath = path.join(runtimeHome, 'workflow-runtime-manifests', workflowId, `${workflowVersion}.json`);
+  const manifestPath = manifestPathFor(runtimeHome, workflowId, workflowVersion);
   if (fs.existsSync(manifestPath)) {
     const existing = readJson(manifestPath);
     if (JSON.stringify(comparableManifest(existing)) !== JSON.stringify(comparableManifest(manifest))) {
@@ -113,7 +125,12 @@ function auditLive() {
   catch { Client = require('pg').Client; }
   const client = new Client({ user: process.env.PGUSER || 'postgres', host: process.env.PGHOST || '/var/run/postgresql', database: process.env.PGDATABASE || 'n8n_runtime' });
   client.connect().then(async () => {
-    const result = await client.query('SELECT id, name, "versionId", nodes FROM n8n_runtime.workflow_entity WHERE active=true AND "isArchived"=false ORDER BY name');
+    const result = await client.query(
+      `SELECT w.id, w.name, w."activeVersionId" AS "versionId", h.nodes
+         FROM n8n_runtime.workflow_entity w
+         JOIN n8n_runtime.workflow_history h ON h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
+        WHERE w.active=true AND w."isArchived"=false ORDER BY w.name`,
+    );
     const offenders = result.rows.flatMap((row) => {
       const workflow = { nodes: typeof row.nodes === 'string' ? JSON.parse(row.nodes) : row.nodes };
       return commandsFor(workflow).filter(({ command }) => MUTABLE_SOURCE_RE.test(command)).map(({ name }) => ({ workflowId: row.id, workflow: row.name, versionId: row.versionId, node: name }));

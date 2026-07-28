@@ -8,6 +8,7 @@ readonly RELEASE_BASE="${SKINCOS_RELEASE_BASE:-/opt/skincos/releases}"
 readonly CURRENT_LINK="${SKINCOS_SOURCE_CURRENT_LINK:-/opt/skincos/current/source}"
 readonly SERVICE='orb.service'
 readonly FENCE_SERVICE='orb-restart-fence.service'
+readonly SOURCE_SERVICES=('orb-proxy.service' 'crm.service' 'booking.service')
 readonly WORKFLOW_ID='WGXr4vYkv9UoJ8zc'
 readonly RUNTIME_HOME="${N8N_RUNTIME_HOME:-/var/lib/skincos-runtime/orb}"
 readonly STATE_DIR="$RUNTIME_HOME/state/livia-maintenance"
@@ -64,6 +65,13 @@ if [[ "$effective_root" != "$current_target/orb/engine" && "$recover_split" != 1
   exit 1
 fi
 
+fence_template="$target/ops/runtime/units/$FENCE_SERVICE"
+[[ -f "$fence_template" ]] || { echo "Staged release is missing $FENCE_SERVICE template." >&2; exit 1; }
+if ! systemctl cat "$FENCE_SERVICE" >/dev/null 2>&1; then
+  sudo -n install -m 0644 "$fence_template" "/etc/systemd/system/$FENCE_SERVICE"
+  sudo -n systemctl daemon-reload
+fi
+
 sudo -n -u skincos env LIVIA_BUILD_JOB_GRAPH_SOURCE="$target/orb/engine/compose2-current.js" \
   N8N_RUNTIME_HOME="$RUNTIME_HOME" node "$target/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-runtime-compatibility >/dev/null
 sudo -n -u skincos env LIVIA_BUILD_JOB_GRAPH_SOURCE="$target/orb/engine/compose2-current.js" \
@@ -80,8 +88,15 @@ if ! sudo -n -u skincos mkdir "$LOCK_DIR" 2>/dev/null; then
 fi
 promoted=0
 started=0
+sidecars_started=0
 cleanup() {
-  if (( promoted == 1 && started == 0 )); then sudo -n ln -sfn "$current_target" "$CURRENT_LINK" || true; fi
+  if (( promoted == 1 && (started == 0 || sidecars_started == 0) )); then
+    sudo -n systemctl start "$FENCE_SERVICE" || true
+    sudo -n ln -sfn "$current_target" "$CURRENT_LINK" || true
+    sudo -n systemctl stop "$FENCE_SERVICE" || true
+    sudo -n systemctl start "$SERVICE" || true
+    for sidecar in "${SOURCE_SERVICES[@]}"; do sudo -n systemctl restart "$sidecar" || true; done
+  fi
   sudo -n -u skincos rm -f "$LOCK_FILE" 2>/dev/null || true
   sudo -n -u skincos rmdir "$LOCK_DIR" 2>/dev/null || true
 }
@@ -112,4 +127,17 @@ new_pid="$(systemctl show "$SERVICE" -p MainPID --value)"
 new_root="$(readlink -f "/proc/$new_pid/cwd")"
 [[ "$new_root" = "$target/orb/engine" ]] || { echo "Orb restarted from unexpected root: $new_root" >&2; exit 1; }
 started=1
+for sidecar in "${SOURCE_SERVICES[@]}"; do
+  sudo -n systemctl restart "$sidecar"
+  sudo -n systemctl --quiet is-active "$sidecar"
+  sidecar_pid="$(systemctl show "$sidecar" -p MainPID --value)"
+  sidecar_root="$(readlink -f "/proc/$sidecar_pid/cwd")"
+  case "$sidecar" in
+    orb-proxy.service) expected_root="$target/orb/engine" ;;
+    crm.service) expected_root="$target/crm/api" ;;
+    booking.service) expected_root="$target/integration/ef" ;;
+  esac
+  [[ "$sidecar_root" = "$expected_root" ]] || { echo "$sidecar restarted from unexpected root: $sidecar_root" >&2; exit 1; }
+done
+sidecars_started=1
 printf 'Native source release promoted safely: %s\n' "$release_id"

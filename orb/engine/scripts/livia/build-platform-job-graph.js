@@ -377,6 +377,9 @@ function normalizeFacebookReelsChecks(jobs) {
     if (Array.isArray(job.attachedMediaFromPublishRunIndexes)) {
       job.attachedMediaFromPublishRunIndexes = job.attachedMediaFromPublishRunIndexes.map((value) => remap.has(Number(value)) ? remap.get(Number(value)) : value);
     }
+    if (Array.isArray(job.childrenPublishRunIndexes)) {
+      job.childrenPublishRunIndexes = job.childrenPublishRunIndexes.map((value) => remap.has(Number(value)) ? remap.get(Number(value)) : value);
+    }
     delete job.__sourceRunIndex;
   }
   return expanded;

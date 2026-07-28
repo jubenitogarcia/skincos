@@ -28,6 +28,18 @@ function loadPgClient() {
 }
 function parseJson(value, fallback) { return value === null || value === undefined || value === '' ? fallback : (typeof value === 'string' ? JSON.parse(value) : value); }
 function stableHash(value) { return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+function assertPrecreatedManifest(manifestPath, candidate) {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8').replace(/^\uFEFF/, ''));
+  if (manifest.workflowId !== WORKFLOW_ID || manifest.workflowVersion !== nextVersion || manifest.releaseRoot !== releaseRoot) {
+    fail('Precreated workflow runtime manifest does not match the requested workflow version or release root.');
+  }
+  if (manifest.workflowSha256 !== stableHash({ nodes: candidate.nodes, connections: candidate.connections })) {
+    fail('Precreated workflow runtime manifest does not match the candidate workflow hash.');
+  }
+  if (!Array.isArray(manifest.entrypoints) || manifest.entrypoints.length !== 6 || manifest.entrypoints.some((entry) => !/^[a-f0-9]{64}$/.test(String(entry?.sha256 || '')))) {
+    fail('Precreated workflow runtime manifest has an invalid entrypoint hash contract.');
+  }
+}
 function assertCandidate(candidate) {
   if (candidate?.id !== WORKFLOW_ID || candidate?.active !== true) fail('Candidate is not the active Livia workflow.');
   const nodes = new Map((candidate.nodes || []).map((node) => [node.name, node]));
@@ -44,6 +56,7 @@ function createManifest() {
   const manifestPath = path.join(runtimeHome, 'workflow-runtime-manifests', WORKFLOW_ID, `${nextVersion}.json`);
   if (manifestPrecreated) {
     if (!fs.existsSync(manifestPath)) fail(`Precreated workflow runtime manifest is missing: ${manifestPath}.`);
+    assertPrecreatedManifest(manifestPath, JSON.parse(fs.readFileSync(path.resolve(sourcePath), 'utf8')));
     return { manifestPath };
   }
   const result = spawnSync(process.execPath, [manifestScript, 'create', '--workflow', sourcePath, '--workflow-id', WORKFLOW_ID, '--workflow-version', nextVersion, '--release-root', releaseRoot, '--runtime-home', runtimeHome], { encoding: 'utf8' });
