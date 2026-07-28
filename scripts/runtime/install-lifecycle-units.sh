@@ -83,6 +83,7 @@ units=(
   cloudflare-orb.service
   cloudflare-runtime.service
   orb-backup.service
+  orb-restart-fence.service
 )
 
 render_dir="$(mktemp -d)"

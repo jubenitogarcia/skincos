@@ -422,6 +422,16 @@ function validateWorkflow() {
   const buildGraphScript = fs.existsSync(BUILD_GRAPH_SCRIPT)
     ? fs.readFileSync(BUILD_GRAPH_SCRIPT, 'utf8')
     : '';
+  const pinnedSidecars = ['Process Media Asset', 'BQ - Build Platform Job Graph', 'Verify Published Artifacts', 'Record Publish Progress', 'Validate Publish Token Health'];
+  for (const name of pinnedSidecars) {
+    const commandValue = String(nodeByName.get(name)?.parameters?.command || '');
+    if (/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/.test(commandValue)) {
+      errors.push(`${name} must use an immutable workflow runtime root.`);
+    }
+    if (!/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine/.test(commandValue)) {
+      errors.push(`${name} must use a pinned immutable release root.`);
+    }
+  }
   if (!command.includes('process-media-asset.js')) {
     errors.push('Process Media Asset must call scripts/livia/process-media-asset.js.');
   }
@@ -450,6 +460,11 @@ function validateWorkflow() {
   for (const required of ['cloudinaryVideoCoverUrl', 'normalizeGraphApiVersion', 'cover_url', 'applyPlatformAccessibilityContract', 'alt_text_omitted_for_video', 'body.title = text.title']) {
     if (!buildGraphScript.includes(required)) {
       errors.push(`build-platform-job-graph.js must enforce the publication delivery contract (${required}).`);
+    }
+  }
+  for (const required of ['normalizeExternalResult', 'assertOutputContract', 'assertJobGraphContracts']) {
+    if (!buildGraphScript.includes(required)) {
+      errors.push(`build-platform-job-graph.js must enforce the runtime output contract (${required}).`);
     }
   }
   for (const required of ['fs.statSync', 'sourceBytes', 'outputBytes', 'uploadEligible', 'SAFE_UPLOAD_BYTES', 'video_h264_720p_fallback']) {
