@@ -1,5 +1,18 @@
 # DECISIONS
 
+## 2026-07-28 - Reivindicar superfícies antes de mudanças concorrentes
+
+- Decisão: cada tarefa que possa escrever uma superfície compartilhada registra
+  previamente seu ownership, base, rollback e contrato entre superfícies no
+  registry privado do operador. Um claim de escrita é exclusivo até handoff ou
+  encerramento, e o registry é validado por script antes de mutações externas.
+- Por quê: branches e worktrees isolam arquivos locais, mas não impedem que duas
+  tarefas salvem versões incompatíveis do mesmo workflow, Worker, banco,
+  credencial ou deployment. Isso causava regressões por sobrescrita silenciosa.
+- Impacto: a coordenação é verificável e preserva histórico privado sem levar
+  segredos ao Git. Checkpoints e evidência de ambiente continuam obrigatórios;
+  o claim não substitui preflight nem validação de produção.
+
 ## 2026-07-15 - Keep the Windows WSL anchor on a native Linux working directory
 
 - Decision: launch the single WSL keepalive client with `--cd /` and only reuse

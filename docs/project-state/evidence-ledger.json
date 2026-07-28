@@ -2,6 +2,16 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-28T11:39:32Z",
+      "surface": "local-change-coordination",
+      "scope": "Versioned ownership protocol and private concurrent-change registry",
+      "state": "local-validated-not-integrated",
+      "method": "Isolated worktree from origin/main, private registry initialization/claim/assert/validation, Node contract validation and six unit tests in Ubuntu WSL",
+      "result": "The repository now defines exclusive write claims, live-surface baselines, rollback, contract bundles, atomic registry locking and handoff history. The private registry was initialized under the operator runtime and this change was claimed before final validation.",
+      "limitation": "This is source and local-runtime evidence only. No workflow, Worker, database, credential, deployment or production state was mutated; integration, CI and any later environment validation remain separate steps.",
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\change-coordination\\active-changes.json"
+    },
+    {
       "observed_at": "2026-07-25T05:05:34Z",
       "surface": "google-drive-offsite-runtime-config",
       "scope": "Fresh runtime-config ciphertext and scratch decrypt",

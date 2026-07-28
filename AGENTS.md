@@ -50,6 +50,24 @@
 - If a CSV, worker route map, database row, or dashboard is the editable source
   of truth for a behavior, identify it explicitly before changing code.
 
+## Coordenação entre worktrees e tarefas
+
+- Antes da primeira mutação, siga o
+  [protocolo de coordenação](docs/coordination/change-coordination-protocol.md):
+  use um worktree isolado e reivindique cada superfície compartilhada que será
+  escrita no registry privado do operador.
+- Uma reivindicação de escrita é exclusiva. Não rebase, reset, salve workflow,
+  publique Worker, execute migration, altere credencial ou faça deploy sobre
+  uma superfície reivindicada por outra tarefa; faça handoff ou espere a
+  liberação explícita.
+- Para qualquer contrato entre superfícies (por exemplo n8n + Token Vault
+  Worker), declare um `contract_bundle`, capture baselines de todos os lados e
+  valide compatibilidade antes de publicar um deles.
+- Rode `npm run coordination:registry:validate` antes de mutações externas e
+  `npm run coordination:contract:validate` em mudanças do protocolo. Divergência
+  de baseline, registry inválido ou worktree inesperadamente sujo é condição de
+  parada, não convite para sobrescrever.
+
 ## Production and Deploys
 
 - **Operational change contract:** before planning or applying any change,

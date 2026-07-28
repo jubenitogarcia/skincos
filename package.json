@@ -1,5 +1,9 @@
 {
   "scripts": {
+    "coordination:contract:validate": "node ./scripts/coordination/change-registry.mjs validate --registry ./docs/coordination/active-changes.example.json",
+    "coordination:registry:init": "node ./scripts/coordination/change-registry.mjs init",
+    "coordination:registry:validate": "node ./scripts/coordination/change-registry.mjs validate",
+    "coordination:test": "node --test ./scripts/coordination/change-registry.test.mjs",
     "observability:validate": "node scripts/observability/validate-catalog.mjs",
     "architecture:validate": "node ./.github/scripts/validate-architecture.mjs && node ./.github/scripts/validate-module-catalog.mjs && node ./.github/scripts/validate-domain-boundaries.mjs",
     "module-catalog:validate": "node ./.github/scripts/validate-module-catalog.mjs",

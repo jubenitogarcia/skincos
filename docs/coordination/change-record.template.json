@@ -1,0 +1,23 @@
+{
+  "id": "lowercase-change-id",
+  "owner": "thread-or-operator-identifier",
+  "status": "planned",
+  "objective": "One observable operational objective.",
+  "branch": "codex/admin/example-task",
+  "worktree": "C:\\CodexShared\\Worktrees\\skincos\\admin\\example-task",
+  "baseline": {
+    "git_ref": "replace-with-current-commit",
+    "recorded_at": "2026-07-28T00:00:00Z"
+  },
+  "surfaces": [
+    {
+      "kind": "source",
+      "id": "relative/path/or/module",
+      "access": "write"
+    }
+  ],
+  "contract_bundles": [],
+  "rollback": {
+    "summary": "Revert the isolated change or restore the recorded live checkpoint before a production mutation."
+  }
+}

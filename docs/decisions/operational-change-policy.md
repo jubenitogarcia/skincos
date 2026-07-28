@@ -94,6 +94,19 @@ No plano de trabalho, declara objetivo único, superfícies, risco, flag/coorte,
 
 Antes de concluir, informa o que foi validado, o que não foi validado e por quê. Não alega produção pronta com base apenas em testes locais, merge ou healthcheck.
 
+## 8.1 Coordenação de mudanças concorrentes
+
+Antes de uma mutação, a tarefa declara ownership de cada superfície compartilhada
+no registry privado e segue o
+[protocolo de coordenação](../coordination/change-coordination-protocol.md).
+Uma reivindicação de escrita é exclusiva; uma divergência de baseline ou um
+claim concorrente bloqueia a mutação até sincronização ou handoff documentado.
+
+Quando uma entrega depende de duas superfícies (como workflow, gateway e
+deployment), o registro precisa declarar o contrato, checkpoints dos dois lados
+e um comando de compatibilidade. Atualizar apenas um lado não é uma entrega
+válida.
+
 ## 9. Evidência mínima
 
 A evidência fica no PR, workflow, release ou diretório privado do operador; nunca inclui segredos.
@@ -104,4 +117,3 @@ A evidência fica no PR, workflow, release ou diretório privado do operador; nu
 - Flag/coorte: nome, default, escopo e quantidade agregada de grants quando sensível.
 - Rollback: versão de retorno, gatilho e smoke.
 - Produção: smoke final e riscos remanescentes.
-
