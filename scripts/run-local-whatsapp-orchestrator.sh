@@ -9,8 +9,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${CRM_LOCAL_WA_ORCHESTRATOR_PORT:-8110}"
 ENV_FILE="${CRM_LOCAL_WA_NATIVE_ENV_FILE:-/etc/skincos/crm-whatsapp.env}"
 CRM_API_ENV_FILE="${CRM_LOCAL_API_NATIVE_ENV_FILE:-/etc/skincos/crm.env}"
-RUN_AS_USER="${CRM_LOCAL_WA_RUN_AS_USER:-skincos}"
-RUNTIME_HOME="${CRM_LOCAL_WA_RUNTIME_HOME:-/var/lib/skincos-runtime/crm-local-adapter}"
+RUN_AS_USER="${CRM_LOCAL_WA_RUN_AS_USER:-admin}"
+# This is an operator-owned QA adapter, never a native service runtime.
+RUNTIME_HOME="${CRM_LOCAL_WA_RUNTIME_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/skincos/crm-local-adapter}"
 SOURCE_HOME="${CRM_LOCAL_WA_SOURCE_HOME:-$RUNTIME_HOME/source}"
 
 if ! sudo -n test -f "$ENV_FILE"; then
@@ -82,6 +83,9 @@ exec sudo -n /usr/bin/env \
   export NODE_ENV=development
   export NO_AUTH=true
   export CRM_LOCAL_NO_AUTH=true
+  # This adapter may read the native database only for local CRM QA. It must
+  # not claim or process native Harmonia work.
+  export HARMONIA_WORKER_ENABLED=false
   export WA_CHANNEL_OWNER_ENFORCED=false
   export WA_ORCHESTRATOR_PROVIDER=evolution
   export CRM_RUNTIME_HOME="$LOCAL_WA_ADAPTER_RUNTIME_HOME"
