@@ -123,7 +123,7 @@ async function main() {
     }
     const settings = parseJson(workflow.settings, {});
     const structuralDrift = structuralContractDrift(nodes, connections);
-    const videoUploadDrift = videoUploadContractDrift({ ...workflow, nodes, connections });
+    const videoUploadDrift = videoUploadContractDrift({ ...workflow, id: WORKFLOW_ID, nodes, connections });
     const report = {
       workflow_id: WORKFLOW_ID,
       mode: 'read_only',
