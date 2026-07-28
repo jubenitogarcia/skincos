@@ -89,25 +89,44 @@ test('config exposes metadata and opaque token ids without token material', asyn
   assert.match(body.config_revision, /^[a-f0-9]{64}$/);
 });
 
-test('flexible creative quality gate requires 3 images, 5 bodies, 5 titles and 1 description', () => {
+function flexibleStaticFeed() {
+  const label = (prefix, index) => ({ name: `${prefix}_${index}` });
+  return {
+    ad_formats: ['SINGLE_IMAGE'],
+    images: [
+      { hash: 'a', adlabels: [{ name: 'feed_image' }] },
+      { hash: 'b', adlabels: [{ name: 'banner_image' }] },
+      { hash: 'c', adlabels: [{ name: 'vertical_image' }] },
+    ],
+    bodies: Array.from({ length: 5 }, (_, index) => ({ text: `body-${index}`, adlabels: [label('body', index)] })),
+    titles: Array.from({ length: 5 }, (_, index) => ({ text: `title-${index}`, adlabels: [label('title', index)] })),
+    descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `description-${index}`, adlabels: [label('description', index)] })),
+    link_urls: [{ website_url: 'https://espacofacial.com/campanhas/botox' }],
+    call_to_action_types: ['BOOK_NOW'],
+    asset_customization_rules: [
+      { image_label: { name: 'feed_image' }, body_label: label('body', 0), title_label: label('title', 0), description_label: label('description', 0), customization_spec: { publisher_platforms: ['facebook'], facebook_positions: ['feed'] } },
+      { image_label: { name: 'banner_image' }, body_label: label('body', 1), title_label: label('title', 1), description_label: label('description', 1), customization_spec: { publisher_platforms: ['facebook'], facebook_positions: ['search'] } },
+      { image_label: { name: 'vertical_image' }, body_label: label('body', 2), title_label: label('title', 2), description_label: label('description', 2), customization_spec: { publisher_platforms: ['instagram'], instagram_positions: ['story'] } },
+    ],
+  };
+}
+
+function requiredCreativeFeatures() {
+  return Object.fromEntries([
+    'add_text_overlay', 'image_touchups', 'text_optimizations', 'inline_comment',
+    'enhance_cta', 'image_brightness_and_contrast', 'reveal_details_over_time',
+    'show_destination_blurbs', 'image_animation', 'music_generation', 'pac_relaxation',
+  ].map((feature) => [feature, { enroll_status: 'OPT_IN' }]));
+}
+
+test('flexible creative quality gate requires 3 images, 5 bodies, 5 titles and 5 descriptions', () => {
   const payload = {
     name: 'Botox',
     object_story_spec: { page_id: '123456789' },
-    asset_feed_spec: {
-      images: [{ hash: 'a' }, { hash: 'b' }, { hash: 'c' }],
-      bodies: Array.from({ length: 5 }, (_, index) => ({ text: `body-${index}` })),
-      titles: Array.from({ length: 5 }, (_, index) => ({ text: `title-${index}` })),
-      descriptions: [{ text: 'description' }],
-      link_urls: [{ website_url: 'https://espacofacial.com/campanhas/botox' }],
-      call_to_action_types: ['BOOK_NOW'],
-    },
+    asset_feed_spec: flexibleStaticFeed(),
     creative_sourcing_spec: { source_url: 'https://espacofacial.com/campanhas/botox' },
     degrees_of_freedom_spec: {
-      creative_features_spec: Object.fromEntries([
-        'add_text_overlay', 'image_touchups', 'text_optimizations', 'inline_comment',
-        'enhance_cta', 'image_brightness_and_contrast', 'reveal_details_over_time',
-        'show_destination_blurbs', 'image_animation', 'music_generation', 'pac_relaxation',
-      ].map((feature) => [feature, { enroll_status: 'OPT_IN' }])),
+      creative_features_spec: requiredCreativeFeatures(),
     },
   };
   const validated = __test.validateCreativePayload(payload, 'creative:group:unit');
@@ -116,6 +135,31 @@ test('flexible creative quality gate requires 3 images, 5 bodies, 5 titles and 1
     () => __test.validateCreativePayload({ ...payload, asset_feed_spec: { ...payload.asset_feed_spec, titles: [{ text: 'one' }] } }, 'creative:bad'),
     /creative_quality_gate_failed/,
   );
+});
+
+test('video-only flexible creative accepts the labeled 9:16 contract', () => {
+  const label = (prefix, index) => ({ name: `${prefix}_${index}` });
+  const payload = {
+    name: 'Video vertical',
+    object_story_spec: { page_id: '123456789' },
+    asset_feed_spec: {
+      ad_formats: ['SINGLE_VIDEO'],
+      optimization_type: 'PLACEMENT',
+      videos: [{ video_id: '123456789', thumbnail_hash: 'thumbhash0123456789', adlabels: [{ name: 'vertical_video' }] }],
+      bodies: Array.from({ length: 5 }, (_, index) => ({ text: `body-${index}`, adlabels: [label('body', index)] })),
+      titles: Array.from({ length: 5 }, (_, index) => ({ text: `title-${index}`, adlabels: [label('title', index)] })),
+      descriptions: Array.from({ length: 5 }, (_, index) => ({ text: `description-${index}`, adlabels: [label('description', index)] })),
+      link_urls: [{ website_url: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' }],
+      call_to_action_types: ['BOOK_NOW'],
+      asset_customization_rules: [
+        { video_label: { name: 'vertical_video' }, body_label: label('body', 0), title_label: label('title', 0), description_label: label('description', 0), customization_spec: { publisher_platforms: ['facebook'], facebook_positions: ['feed'] } },
+        { video_label: { name: 'vertical_video' }, body_label: label('body', 1), title_label: label('title', 1), description_label: label('description', 1), customization_spec: { publisher_platforms: ['audience_network'], audience_network_positions: ['rewarded_video'] } },
+      ],
+    },
+    creative_sourcing_spec: { source_url: 'https://espacofacial.com/agendamento?unit=barrashoppingsul' },
+    degrees_of_freedom_spec: { creative_features_spec: requiredCreativeFeatures() },
+  };
+  assert.doesNotThrow(() => __test.validateCreativePayload(payload, 'creative:video:unit'));
 });
 
 test('native carousel contract accepts labeled card attachments and rejects flexible-only fields', () => {
@@ -169,14 +213,7 @@ test('creative gateway rejects legacy or catalog-only enhancement keys', () => {
   const payload = {
     name: 'Botox',
     object_story_spec: { page_id: '123456789' },
-    asset_feed_spec: {
-      images: [{ hash: 'a' }, { hash: 'b' }, { hash: 'c' }],
-      bodies: Array.from({ length: 5 }, (_, index) => ({ text: `body-${index}` })),
-      titles: Array.from({ length: 5 }, (_, index) => ({ text: `title-${index}` })),
-      descriptions: [{ text: 'description' }],
-      link_urls: [{ website_url: 'https://espacofacial.com/campanhas/botox' }],
-      call_to_action_types: ['BOOK_NOW'],
-    },
+    asset_feed_spec: flexibleStaticFeed(),
     creative_sourcing_spec: { source_url: 'https://espacofacial.com/campanhas/botox' },
     degrees_of_freedom_spec: {
       creative_features_spec: {
@@ -192,6 +229,37 @@ test('creative readback requests only fields supported by the Graph creative obj
   assert.equal(__test.creativeReadFields.includes('updated_time'), false);
   assert.equal(__test.creativeReadFields.includes('asset_feed_spec'), true);
   assert.equal(__test.creativeReadFields.includes('degrees_of_freedom_spec'), true);
+});
+
+test('video upload gateway uses Graph Video phases and enforces the chunk contract', async () => {
+  const calls = [];
+  const { context } = gatewayContext(async (url, init) => {
+    const parsed = new URL(url);
+    const form = init.body;
+    calls.push({ host: parsed.host, path: parsed.pathname, phase: form.get('upload_phase'), startOffset: form.get('start_offset') });
+    if (form.get('upload_phase') === 'start') return jsonResponse({ upload_session_id: '123456', video_id: '987654321', start_offset: '0', end_offset: '1024' });
+    if (form.get('upload_phase') === 'transfer') return jsonResponse({ start_offset: '0', end_offset: '1024' });
+    return jsonResponse({ success: true });
+  });
+  context.action = 'start_video_upload';
+  const start = await __test.startVideoUpload({ token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', file_size: 1024 }, context);
+  assert.equal(start.video_id, '987654321');
+  context.action = 'transfer_video_chunk';
+  context.file = new Blob([new Uint8Array(1024)], { type: 'video/mp4' });
+  await __test.transferVideoChunk({ token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', upload_session_id: '123456', start_offset: 0, file_name: 'creative.mp4' }, context);
+  context.action = 'finish_video_upload';
+  await __test.finishVideoUpload({ token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', upload_session_id: '123456' }, context);
+  assert.deepEqual(calls.map((call) => call.phase), ['start', 'transfer', 'finish']);
+  assert.ok(calls.every((call) => call.host === 'graph-video.facebook.com' && call.path === '/v25.0/act_123456789/advideos'));
+  assert.throws(() => __test.normalizeVideoFileSize(91 * 1024 * 1024), /video_size_invalid/);
+  await assert.rejects(
+    () => __test.transferVideoChunk({ token_id: 'facebook_barra', account_id: '123456789', api_version: 'v25.0', upload_session_id: '123456', start_offset: 0 }, { ...context, file: new Blob([new Uint8Array(16 * 1024 * 1024 + 1)]) }),
+    /video_chunk_size_invalid/,
+  );
+});
+
+test('video upload actions stay part of the gateway capability contract', () => {
+  assert.deepEqual(__test.videoUploadActions, ['start_video_upload', 'transfer_video_chunk', 'finish_video_upload', 'get_video_status']);
 });
 
 test('adset placement readback requests effective WhatsApp and vertical placement fields', () => {

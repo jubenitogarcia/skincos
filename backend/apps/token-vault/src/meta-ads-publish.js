@@ -1,5 +1,6 @@
 const PREFIX = '/v1/meta-ads-publish';
 const GRAPH_ORIGIN = 'https://graph.facebook.com';
+const GRAPH_VIDEO_ORIGIN = 'https://graph-video.facebook.com';
 const LOCK_TTL_MS = 30 * 60 * 1000;
 const GRAPH_TIMEOUT_MS = 60 * 1000;
 const MAX_RETRY_WINDOW_MS = 5 * 60 * 1000;
@@ -47,6 +48,9 @@ const CAMPAIGN_READ_FIELDS = [
   'status',
 ].join(',');
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 90 * 1024 * 1024;
+const MAX_VIDEO_CHUNK_BYTES = 16 * 1024 * 1024;
+const MAX_MULTIPART_REQUEST_BYTES = MAX_VIDEO_CHUNK_BYTES + 1024 * 1024;
 const MAX_BATCH_JOBS = 50;
 const MAX_LANDING_REDIRECTS = 5;
 const PAUSED_CALIBRATION_CAMPAIGN_OBJECTIVES = new Set(['OUTCOME_ENGAGEMENT', 'OUTCOME_LEADS']);
@@ -84,8 +88,17 @@ const REQUIRED_CREATIVE_FEATURES = Object.freeze([
   'image_animation',
 ]);
 const TERMINAL_RUN_STATES = new Set(['completed', 'rolled_back']);
+const VIDEO_UPLOAD_ACTIONS = Object.freeze([
+  'start_video_upload',
+  'transfer_video_chunk',
+  'finish_video_upload',
+  'get_video_status',
+]);
 const MUTATING_ACTIONS = new Set([
   'upload_image',
+  'start_video_upload',
+  'transfer_video_chunk',
+  'finish_video_upload',
   'create_creative',
   'create_campaign',
   'create_adset',
@@ -97,6 +110,7 @@ const MUTATING_ACTIONS = new Set([
 const ALLOWED_ACTIONS = new Set([
   'list_ads',
   'upload_image',
+  ...VIDEO_UPLOAD_ACTIONS,
   'create_creative',
   'get_creative',
   'get_ad',
@@ -321,6 +335,13 @@ async function getConfig(env, requestId) {
     config_revision: configRevision,
     destinations,
     invalid,
+    capabilities: {
+      video_upload: {
+        supported_actions: VIDEO_UPLOAD_ACTIONS,
+        max_file_bytes: MAX_VIDEO_BYTES,
+        max_chunk_bytes: MAX_VIDEO_CHUNK_BYTES,
+      },
+    },
     secrets_exposed: false,
     requestId,
   }, invalid.length || destinations.length < 2 ? 409 : 200);
@@ -610,6 +631,10 @@ async function executeOperation(context) {
 async function performOperation(action, body, context) {
   if (action === 'list_ads') return listAds(body, context);
   if (action === 'upload_image') return uploadImage(body, context);
+  if (action === 'start_video_upload') return startVideoUpload(body, context);
+  if (action === 'transfer_video_chunk') return transferVideoChunk(body, context);
+  if (action === 'finish_video_upload') return finishVideoUpload(body, context);
+  if (action === 'get_video_status') return getVideoStatus(body, context);
   if (action === 'create_creative') return createCreative(body, context);
   if (action === 'get_creative') return getCreative(body, context);
   if (action === 'get_ad') return getAd(body, context);
@@ -669,6 +694,85 @@ async function uploadImage(body, context) {
     context,
   );
   return sanitizeGraphValue(result.body);
+}
+
+// Video uploads use Meta's resumable protocol. Keeping it inside the Token
+// Vault preserves the existing token boundary and makes each phase journaled
+// and idempotent by the normal operation-key mechanism.
+async function startVideoUpload(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const fileSize = normalizeVideoFileSize(body.file_size);
+  const form = new FormData();
+  form.append('upload_phase', 'start');
+  form.append('file_size', String(fileSize));
+  const result = await graphRequest(
+    graphVideoUrl(auth.apiVersion, `act_${auth.accountId}/advideos`),
+    { method: 'POST', body: form },
+    auth,
+    context,
+  );
+  return normalizeVideoUploadResponse(result.body, 'start');
+}
+
+async function transferVideoChunk(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  if (!(context.file instanceof Blob)) throw failure('video_chunk_required', { classification: 'permanent', http_status: 400 });
+  if (context.file.size <= 0 || context.file.size > MAX_VIDEO_CHUNK_BYTES) {
+    throw failure('video_chunk_size_invalid', { classification: 'permanent', http_status: 413 });
+  }
+  const uploadSessionId = normalizeUploadSessionId(body.upload_session_id);
+  const startOffset = normalizeVideoOffset(body.start_offset, 'start_offset');
+  const expectedEndOffset = startOffset + context.file.size;
+  if (expectedEndOffset > MAX_VIDEO_BYTES) throw failure('video_offset_invalid', { classification: 'permanent', http_status: 400 });
+  const form = new FormData();
+  form.append('upload_phase', 'transfer');
+  form.append('upload_session_id', uploadSessionId);
+  form.append('start_offset', String(startOffset));
+  form.append('video_file_chunk', context.file, clean(body.file_name) || `video-${startOffset}.part`);
+  const result = await graphRequest(
+    graphVideoUrl(auth.apiVersion, `act_${auth.accountId}/advideos`),
+    { method: 'POST', body: form },
+    auth,
+    context,
+  );
+  const normalized = normalizeVideoUploadResponse(result.body, 'transfer');
+  const returnedStart = normalizeVideoOffset(normalized.start_offset, 'returned_start_offset');
+  const returnedEnd = normalizeVideoOffset(normalized.end_offset, 'returned_end_offset');
+  if (returnedStart < startOffset || returnedStart > expectedEndOffset || returnedEnd < returnedStart || returnedEnd > MAX_VIDEO_BYTES) {
+    throw failure('video_offsets_invalid', { classification: 'permanent', http_status: 502 });
+  }
+  return normalized;
+}
+
+async function finishVideoUpload(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const uploadSessionId = normalizeUploadSessionId(body.upload_session_id);
+  const form = new FormData();
+  form.append('upload_phase', 'finish');
+  form.append('upload_session_id', uploadSessionId);
+  const title = clean(body.title);
+  if (title) form.append('title', title.slice(0, 255));
+  const result = await graphRequest(
+    graphVideoUrl(auth.apiVersion, `act_${auth.accountId}/advideos`),
+    { method: 'POST', body: form },
+    auth,
+    context,
+  );
+  return normalizeVideoUploadResponse(result.body, 'finish');
+}
+
+async function getVideoStatus(body, context) {
+  const auth = await resolveGraphAuth(body, context);
+  const videoId = normalizeNumericId(body.object_id || body.video_id, 'video_id');
+  const result = await graphRequest(
+    graphUrl(auth.apiVersion, videoId, { fields: 'id,status,thumbnails' }),
+    { method: 'GET' },
+    auth,
+    context,
+  );
+  const value = sanitizeGraphValue(result.body);
+  const videoStatus = clean(value?.status?.video_status || value?.status?.status || value?.video_status).toLowerCase();
+  return { ...value, video_status: videoStatus, ready: videoStatus === 'ready' };
 }
 
 async function createCreative(body, context) {
@@ -1057,12 +1161,70 @@ function validateCreativePayload(value, operationKey) {
 
 function validateFlexibleCreativePayload(payload, operationKey) {
   const feed = asObject(payload.asset_feed_spec);
-  if (safeArray(feed.images).length < 3 || safeArray(feed.bodies).length !== 5 || safeArray(feed.titles).length !== 5) {
+  const images = safeArray(feed.images);
+  const videos = safeArray(feed.videos);
+  const videoOnly = images.length === 0 && videos.length === 1;
+  const mixed = images.length >= 3 && videos.length === 1;
+  const staticOnly = images.length >= 3 && videos.length === 0;
+  if ((!videoOnly && !mixed && !staticOnly) || safeArray(feed.bodies).length !== 5 || safeArray(feed.titles).length !== 5) {
     throw failure('creative_quality_gate_failed', { classification: 'permanent', http_status: 400 });
   }
-  if (safeArray(feed.descriptions).length !== 1) {
+  if (safeArray(feed.descriptions).length !== 5) {
     throw failure('creative_description_count_invalid', { classification: 'permanent', http_status: 400 });
   }
+  const formats = safeArray(feed.ad_formats).map((entry) => clean(entry)).filter(Boolean);
+  const requiredFormat = videoOnly ? 'SINGLE_VIDEO' : mixed ? 'AUTOMATIC_FORMAT' : 'SINGLE_IMAGE';
+  if (formats.length !== 1 || formats[0] !== requiredFormat) {
+    throw failure(videoOnly ? 'video_only_feed_requires_single_video_format' : mixed ? 'mixed_video_feed_requires_automatic_format' : 'static_feed_requires_single_image_format');
+  }
+  if (videos.length > 1) throw failure('creative_video_count_invalid', { classification: 'permanent', http_status: 400 });
+  if (videos.length === 1) {
+    const video = asObject(videos[0]);
+    normalizeNumericId(video.video_id, 'video_id');
+    if (!/^[A-Za-z0-9_-]{16,200}$/.test(clean(video.thumbnail_hash))) throw failure('video_thumbnail_hash_invalid');
+    const labels = safeArray(video.adlabels).map((label) => clean(label?.name)).filter(Boolean);
+    if (labels.length !== 1 || labels[0] !== 'vertical_video') throw failure('video_label_invalid');
+  }
+  if (payload.video_id || asObject(payload.object_story_spec).video_id) throw failure('root_video_id_forbidden');
+
+  const mediaLabels = new Set(images.flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
+  const videoLabels = new Set(videos.flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
+  const bodyLabels = new Set(safeArray(feed.bodies).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
+  const titleLabels = new Set(safeArray(feed.titles).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
+  const descriptionLabels = new Set(safeArray(feed.descriptions).flatMap((asset) => safeArray(asset?.adlabels).map((label) => clean(label?.name))).filter(Boolean));
+  const rules = safeArray(feed.asset_customization_rules);
+  if (!rules.length) throw failure('creative_customization_rules_required');
+  const claimedPlacements = new Set();
+  let videoRuleCount = 0;
+  for (const [index, rule] of rules.entries()) {
+    const imageLabel = clean(rule?.image_label?.name);
+    const videoLabel = clean(rule?.video_label?.name);
+    const bodyLabel = clean(rule?.body_label?.name);
+    const titleLabel = clean(rule?.title_label?.name);
+    const descriptionLabel = clean(rule?.description_label?.name);
+    if (!imageLabel && !videoLabel) throw failure(`creative_rule_media_label_missing:${index}`);
+    if (imageLabel && !mediaLabels.has(imageLabel)) throw failure(`creative_rule_image_label_invalid:${index}`);
+    if (videoLabel && !videoLabels.has(videoLabel)) throw failure(`creative_rule_video_label_invalid:${index}`);
+    if (imageLabel && videoLabel) throw failure(`creative_rule_multiple_media_labels:${index}`);
+    if (!bodyLabels.has(bodyLabel) || !titleLabels.has(titleLabel) || !descriptionLabels.has(descriptionLabel)) {
+      throw failure(`creative_rule_text_label_invalid:${index}`);
+    }
+    if (videoLabel) videoRuleCount += 1;
+    const spec = asObject(rule?.customization_spec);
+    for (const publisher of safeArray(spec.publisher_platforms).map(clean).filter(Boolean)) {
+      const positions = publisher === 'facebook' ? safeArray(spec.facebook_positions)
+        : publisher === 'instagram' ? safeArray(spec.instagram_positions)
+          : publisher === 'audience_network' ? safeArray(spec.audience_network_positions)
+            : publisher === 'whatsapp' ? safeArray(spec.whatsapp_positions) : [];
+      for (const position of positions) {
+        const claim = `${publisher}:${clean(position)}`;
+        if (claimedPlacements.has(claim)) throw failure(`creative_rule_overlap:${index}`);
+        claimedPlacements.add(claim);
+      }
+    }
+  }
+  if (videoOnly && videoRuleCount !== 2) throw failure('creative_video_only_rule_invalid');
+  if (mixed && videoRuleCount !== 1) throw failure('creative_mixed_video_rule_invalid');
   const ctas = safeArray(feed.call_to_action_types).map((entry) => clean(entry).toUpperCase());
   if (ctas.length !== 1 || ctas[0] !== 'BOOK_NOW') {
     throw failure('creative_cta_must_be_book_now', { classification: 'permanent', http_status: 400 });
@@ -1398,6 +1560,10 @@ function deriveResourceKeys(action, body) {
   if (action === 'create_campaign') return [`campaign:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
   if (action === 'create_adset') return [`adset:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
   if (action === 'upload_image') return [`image:${clean(body.account_id)}:${shortKey(body.operation_key)}`];
+  if (VIDEO_UPLOAD_ACTIONS.includes(action)) {
+    const videoKey = clean(body.video_id || body.object_id || body.upload_session_id || body.source_file_id || body.operation_key);
+    return [`video:${clean(body.account_id)}:${shortKey(videoKey)}`];
+  }
   return [];
 }
 
@@ -1519,6 +1685,13 @@ function graphUrl(apiVersion, path, query = {}) {
   return url.toString();
 }
 
+function graphVideoUrl(apiVersion, path) {
+  const version = normalizeApiVersion(apiVersion);
+  const cleanPath = clean(path).replace(/^\/+/, '');
+  if (!cleanPath || /[^A-Za-z0-9_/-]/.test(cleanPath)) throw failure('invalid_graph_video_path');
+  return `${GRAPH_VIDEO_ORIGIN}/${version}/${cleanPath}`;
+}
+
 function validatePagingUrl(value, apiVersion) {
   const raw = clean(value);
   if (!raw) return '';
@@ -1561,6 +1734,42 @@ function normalizeNumericId(value, label) {
   const id = clean(value).replace(/^act_/, '');
   if (!/^\d{5,30}$/.test(id)) throw failure(`${label}_invalid`);
   return id;
+}
+
+function normalizeVideoFileSize(value) {
+  const size = Number(value);
+  if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_VIDEO_BYTES) {
+    throw failure('video_size_invalid', { classification: 'permanent', http_status: 413 });
+  }
+  return size;
+}
+
+function normalizeUploadSessionId(value) {
+  const id = clean(value);
+  if (!/^\d{5,100}$/.test(id)) throw failure('upload_session_id_invalid');
+  return id;
+}
+
+function normalizeVideoOffset(value, label) {
+  const offset = Number(value);
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > MAX_VIDEO_BYTES) throw failure(`${label}_invalid`);
+  return offset;
+}
+
+function normalizeVideoUploadResponse(value, phase) {
+  const result = sanitizeGraphValue(asObject(value));
+  if (phase === 'start') {
+    normalizeUploadSessionId(result.upload_session_id);
+    normalizeNumericId(result.video_id, 'video_id');
+    normalizeVideoOffset(result.start_offset, 'start_offset');
+    normalizeVideoOffset(result.end_offset, 'end_offset');
+  } else if (phase === 'transfer') {
+    normalizeVideoOffset(result.start_offset, 'start_offset');
+    normalizeVideoOffset(result.end_offset, 'end_offset');
+  } else if (result.success !== true && clean(result.success) !== 'true') {
+    throw failure('video_finish_not_confirmed', { classification: 'permanent', http_status: 502 });
+  }
+  return result;
 }
 
 function normalizeHosts(value) {
@@ -1693,7 +1902,7 @@ function normalizeFiles(value) {
 
 async function readOperationRequest(request) {
   const contentLength = Number(request.headers.get('content-length') || 0);
-  if (contentLength > MAX_UPLOAD_BYTES + 1024 * 1024) return { error: 'request_too_large', status: 413 };
+  if (contentLength > MAX_MULTIPART_REQUEST_BYTES) return { error: 'request_too_large', status: 413 };
   const contentType = clean(request.headers.get('content-type')).toLowerCase();
   if (contentType.includes('multipart/form-data')) {
     try {
@@ -1711,6 +1920,16 @@ async function readOperationRequest(request) {
 function operationHashInput(body, file) {
   const copy = sanitizeGraphValue({ ...body });
   delete copy.request_hash;
+  if (clean(copy.action) === 'start_video_upload') {
+    // The source fingerprint and normalization contract identify a semantic
+    // replay. Encoder metadata may change the normalized byte count.
+    delete copy.file_size;
+    delete copy.file_checksum;
+    delete copy.resume_video_id;
+  }
+  if (['transfer_video_chunk', 'finish_video_upload'].includes(clean(copy.action))) {
+    delete copy.semantic_replay_video_id;
+  }
   return {
     ...copy,
     file: file instanceof Blob ? { size: file.size, type: file.type, name: file.name || '' } : null,
@@ -1949,12 +2168,22 @@ export const __test = Object.freeze({
   adsetPlacementFields: ADSET_PLACEMENT_FIELDS,
   adsetReadFields: ADSET_READ_FIELDS,
   graphRequest,
+  graphVideoUrl,
+  getVideoStatus,
   maxRateUsage,
   normalizeApiVersion,
+  normalizeUploadSessionId,
+  normalizeVideoFileSize,
+  normalizeVideoOffset,
+  normalizeVideoUploadResponse,
   normalizeMetaError,
   retryDelayMs,
   normalizeLandingPageMap,
   operationHashInput,
+  startVideoUpload,
+  transferVideoChunk,
+  finishVideoUpload,
+  videoUploadActions: VIDEO_UPLOAD_ACTIONS,
   parseLandingUrl,
   previousStatePayload,
   sanitizeGraphValue,
