@@ -619,9 +619,20 @@ function Start-CrmPersonaRuntime {
             (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
             (Convert-ToBashLiteral -Value $crmGestorLogWsl)
     } else {
-        $command = "CRM_PERSONA=CONSULTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:8801 PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787 LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh --module ponto" -f `
+        $gestorManifest = Get-CrmPersonaManifest -Persona Gestor
+        $vitePort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_CONSULTOR_VITE_PORT -Candidates @(5174, 5175, 5176) -Label 'Vite do Consultor'
+        $pagesPort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_CONSULTOR_PAGES_PORT -Candidates @(8792, 8794, 8795) -Label 'Pages do Consultor'
+        $timekeepingPort = if ($null -ne $gestorManifest -and [int]$gestorManifest.ports.timekeeping -gt 0) { [int]$gestorManifest.ports.timekeeping } else { 8801 }
+        $insumosPort = if ($null -ne $gestorManifest -and [int]$gestorManifest.ports.insumos -gt 0) { [int]$gestorManifest.ports.insumos } else { 8787 }
+        $whatsappPort = if ($null -ne $gestorManifest -and [int]$gestorManifest.ports.whatsapp -gt 0) { [int]$gestorManifest.ports.whatsapp } else { 8110 }
+        $command = "CRM_PERSONA=CONSULTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT={2} CRM_PAGES_PORT={3} CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:{4} PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:{5} LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:{6} CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={7} CRM_LOG_FILE={8} bash ./scripts/run-local-crm.sh --module ponto" -f `
             $targetLiteral, `
             (Convert-ToBashLiteral -Value $crmConsultorRuntimeRootWsl), `
+            $vitePort, `
+            $pagesPort, `
+            $timekeepingPort, `
+            $insumosPort, `
+            $whatsappPort, `
             (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
             (Convert-ToBashLiteral -Value $crmConsultorLogWsl)
     }
