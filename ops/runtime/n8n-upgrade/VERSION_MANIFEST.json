@@ -16,6 +16,12 @@
     "staging_binary_sha256": "26d8cc11e206ce8f94fee4bced4b3669a3c9bbdb2c135a8097dead429a70acf4",
     "staging_binary_sha256_scope": "wrapper n8n/bin/n8n observado no ensaio; não substitui a integridade do tarball"
   },
+  "runtime_lock": {
+    "package_json": "ops/runtime/n8n-upgrade/runtime-lock/package.json",
+    "package_lock": "ops/runtime/n8n-upgrade/runtime-lock/package-lock.json",
+    "sha256": "a1b39f309959ba5f517589f7a3938e2450c5cac5bff4970f07e6234f51d74356",
+    "artifact_reference": "file:../artifacts/n8n-2.32.5.tgz"
+  },
   "requirements": {
     "node": ">=22.22",
     "node_observed": "22.23.1",

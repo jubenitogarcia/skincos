@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "n8n": "file:../artifacts/n8n-2.32.5.tgz"
+  }
+}

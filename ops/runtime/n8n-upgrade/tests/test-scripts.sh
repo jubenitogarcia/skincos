@@ -26,6 +26,7 @@ import fs from 'node:fs';
 const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 if (m.environment_policy.target_version !== '2.32.5') throw new Error('target drift');
 if (!/^sha512-/.test(m.artifact.integrity)) throw new Error('integrity missing');
+if (!/^[a-f0-9]{64}$/.test(m.runtime_lock?.sha256 || '')) throw new Error('runtime lock checksum missing');
 if (m.additional_packages.length !== 10) throw new Error('package inventory drift');
 const packages = new Map(m.additional_packages.map((item) => [item.name, item]));
 if (packages.has('n8n-nodes-evolution-api')) throw new Error('redundant Evolution package present');
@@ -43,4 +44,11 @@ const walk = (value) => {
 walk(m);
 console.log('manifest_validation=pass');
 NODE
+expected_lock=$(node --input-type=module - "$ROOT/VERSION_MANIFEST.json" <<'NODE'
+import fs from 'node:fs';
+console.log(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).runtime_lock.sha256);
+NODE
+)
+actual_lock=$(sha256sum "$ROOT/runtime-lock/package-lock.json" | awk '{print $1}')
+[[ "$actual_lock" == "$expected_lock" ]] || { echo 'runtime lock checksum drift' >&2; exit 1; }
 printf 'script_dry_runs=pass\n'
