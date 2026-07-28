@@ -81,6 +81,9 @@ fi
 if [[ -n "${LOCAL_WA_ORCHESTRATOR_API_TARGET:-}" ]]; then
   PAGES_BINDING_ARGS+=(--binding "WA_ORCHESTRATOR_API_TARGET=${LOCAL_WA_ORCHESTRATOR_API_TARGET}")
 fi
+if [[ -n "${LOCAL_ATENDIMENTO_API_TARGET:-}" ]]; then
+  PAGES_BINDING_ARGS+=(--binding "ATENDIMENTO_API_TARGET=${LOCAL_ATENDIMENTO_API_TARGET}")
+fi
 
 # Evita rota API quebrada por _routes.json desatualizado em dist/
 if [[ -f "$ROOT_DIR/public/_routes.json" ]]; then

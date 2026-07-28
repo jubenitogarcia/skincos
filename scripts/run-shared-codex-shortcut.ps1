@@ -170,6 +170,33 @@ function Get-CrmLocalReviewRef {
     return $env:CRM_LOCAL_REVIEW_REF.Trim()
 }
 
+function Test-CrmLocalReviewRefExplicit {
+    return -not [string]::IsNullOrWhiteSpace($env:CRM_LOCAL_REVIEW_REF)
+}
+
+function Assert-CrmLocalRevisionReplacementIsExplicit {
+    param(
+        [ValidateSet("Gestor", "Consultor")][string]$Persona,
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        $Manifest
+    )
+
+    if ($Persona -ne 'Gestor' -or (Test-CrmLocalReviewRefExplicit) -or $null -eq $Manifest) {
+        return
+    }
+
+    # A failed or incomplete launch at the requested commit is safe to recover.
+    # Block only the destructive case: an actually running Gestor at a distinct
+    # revision would otherwise be replaced by the implicit origin/main target.
+    if (-not (Test-CrmWslPid -PidValue $Manifest.pids.launcher)) {
+        return
+    }
+    $activeCommit = ([string]$Manifest.targetCommit).Trim().ToLowerInvariant()
+    if ($activeCommit -match '^[0-9a-f]{40}$' -and $activeCommit -ne $TargetCommit.ToLowerInvariant()) {
+        throw "CRM – Local (Gestor) já está ativo na revisão $activeCommit. Para proteger alterações locais compartilhadas, a ação padrão não irá substituí-la por origin/main. Informe CRM_LOCAL_REVIEW_REF explicitamente ou pare o runtime após registrar a revisão ativa."
+    }
+}
+
 function Get-CrmLocalTargetCommit {
     $reviewRef = Get-CrmLocalReviewRef
     & git -C $ProjectRoot fetch origin --prune --quiet
@@ -540,7 +567,7 @@ function Start-CrmPersonaRuntime {
     )
     $targetLiteral = Convert-ToBashLiteral -Value $TargetCommit
     if ($Persona -eq "Gestor") {
-        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_GATE_STRICT=0 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh" -f `
+        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' VITE_CRM_MAINTENANCE_MODULES=faturamento CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh" -f `
             $targetLiteral, `
             (Convert-ToBashLiteral -Value $crmGestorRuntimeRootWsl), `
             (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
@@ -574,6 +601,7 @@ function Invoke-CrmPersonaAction {
         }
     }
     if ($decision.Action -eq 'restart') {
+        Assert-CrmLocalRevisionReplacementIsExplicit -Persona $Persona -TargetCommit $TargetCommit -Manifest $decision.Manifest
         Write-Host "[crm-local] Reiniciando ${Persona}: $($decision.Reason)."
         Stop-CrmPersonaRuntime -Persona $Persona
     }
@@ -608,7 +636,10 @@ function Ensure-CrmGestorForConsultor {
         $decision = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit
         if ($decision.Action -eq 'reuse') { return }
     }
-    if ($decision.Action -eq 'restart') { Stop-CrmPersonaRuntime -Persona Gestor }
+    if ($decision.Action -eq 'restart') {
+        Assert-CrmLocalRevisionReplacementIsExplicit -Persona Gestor -TargetCommit $TargetCommit -Manifest $decision.Manifest
+        Stop-CrmPersonaRuntime -Persona Gestor
+    }
     Start-CrmGestorBackgroundUpdate -TargetCommit $TargetCommit
     $ready = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit -TimeoutSeconds 600
     if ($ready.Action -ne 'reuse') {
