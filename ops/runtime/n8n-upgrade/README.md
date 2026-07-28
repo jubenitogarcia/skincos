@@ -29,3 +29,16 @@ O script `upgrade.sh` nunca usa tag flutuante: requer tarball local e confere a
 integridade SHA-512 do manifesto. `migrate.sh` exige binário que reporte 2.32.5.
 `rollback.sh` não implementa downgrade de schema; exige restore-verified e para
 com falha fechada se isso não estiver explicitamente comprovado.
+
+## Comparação de dependências
+
+`audit-dependency-baseline.sh` gera um fixture privado, sintético e não
+executável, com `npm install --package-lock-only` seguido de `npm ci`, sempre
+com Node 22.23.1, npm 10.9.8, Linux/x64, `--ignore-scripts` e `--omit=optional`.
+Ele fixa no relatório a árvore e cada advisory high/critical com a cadeia de
+introdução e o URL primário. A opção `N8N_AUDIT_INCLUDE_LEGACY_EVOLUTION=1`
+audita adicionalmente a baseline exata de produção, que ainda contém o pacote
+Evolution redundante; a comparação principal usa os mesmos 9 packages alvo em
+todas as versões. Os relatórios ficam somente no diretório privado definido em
+`N8N_AUDIT_ROOT`; `compare-dependency-baselines.mjs` não oculta advisories e
+apenas produz a matriz para classificação humana.

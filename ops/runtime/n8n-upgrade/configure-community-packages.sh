@@ -30,7 +30,7 @@ package_json=$(node --input-type=module - "$N8N_MANIFEST" <<'NODE'
 import fs from 'node:fs';
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const packages = manifest.additional_packages;
-if (!Array.isArray(packages) || packages.length !== 10) throw new Error('inventário de community packages inválido');
+if (!Array.isArray(packages) || packages.length !== 9) throw new Error('inventário de community packages inválido');
 const names = new Set();
 for (const item of packages) {
   if (!item || typeof item.name !== 'string' || typeof item.version !== 'string' || !/^sha512-/.test(item.integrity || '')) throw new Error('package sem nome, versão ou integridade SHA-512');
