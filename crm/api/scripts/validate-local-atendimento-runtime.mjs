@@ -1,4 +1,5 @@
 import pg from 'pg'
+import { pathToFileURL } from 'node:url'
 import { createAtendimentoStore } from '../server/atendimento/store.js'
 
 function fail(message) {
@@ -30,16 +31,23 @@ export function assertLocalMirrorDatabaseUrl(value) {
     return raw
 }
 
+export function localMirrorPoolOptions(databaseUrl, role = process.env.CRM_LOCAL_PG_ROLE) {
+    if (role !== 'admin') throw new Error('CRM_LOCAL_DATABASE_ROLE_MUST_BE_ADMIN')
+    return { connectionString: databaseUrl, user: role, max: 1 }
+}
+
 async function main() {
     const databaseUrl = assertLocalMirrorDatabaseUrl(process.env.DATABASE_URL)
-    const probe = new pg.Pool({ connectionString: databaseUrl, max: 1 })
+    const probe = new pg.Pool(localMirrorPoolOptions(databaseUrl))
     try {
         const identity = await probe.query('select current_user as role, current_database() as database')
         const row = identity.rows[0] || {}
         if (row.role !== 'admin' || row.database !== 'skincos_crm_local') {
             throw new Error('CRM_LOCAL_DATABASE_IDENTITY_MISMATCH')
         }
-        const store = createAtendimentoStore({ databaseUrl })
+        // Reuse the identity that was just verified. A separate implicit pool
+        // could fall back to the root launcher environment during migration.
+        const store = createAtendimentoStore({ pool: probe })
         await store.migrate()
         console.log(JSON.stringify({
             level: 'info',
@@ -56,4 +64,6 @@ async function main() {
     }
 }
 
-main().catch((error) => fail(String(error?.message || error || 'ERROR')))
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    main().catch((error) => fail(String(error?.message || error || 'ERROR')))
+}

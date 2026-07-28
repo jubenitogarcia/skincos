@@ -69,6 +69,7 @@ exec sudo -n /usr/bin/env \
   export PGUSER="$LOCAL_WA_ADAPTER_RUN_AS_USER"
   export USER="$LOCAL_WA_ADAPTER_RUN_AS_USER"
   export LOGNAME="$LOCAL_WA_ADAPTER_RUN_AS_USER"
+  export CRM_LOCAL_PG_ROLE="$LOCAL_WA_ADAPTER_RUN_AS_USER"
 
   # Pages deliberately sends an unsigned actor only to this loopback runtime.
   # Do not inherit production actor keys from the native CRM API environment.
@@ -111,10 +112,20 @@ exec sudo -n /usr/bin/env \
   # Bootstrap the exact staged source, OS identity and local database socket
   # before opening the listener. This removes first-request migration races.
   runuser -u "$LOCAL_WA_ADAPTER_RUN_AS_USER" --preserve-environment -- \
-    /usr/bin/node "$LOCAL_WA_ADAPTER_SOURCE_HOME/scripts/validate-local-atendimento-runtime.mjs"
+    /usr/bin/env \
+      PGUSER="$LOCAL_WA_ADAPTER_RUN_AS_USER" \
+      USER="$LOCAL_WA_ADAPTER_RUN_AS_USER" \
+      LOGNAME="$LOCAL_WA_ADAPTER_RUN_AS_USER" \
+      CRM_LOCAL_PG_ROLE="$LOCAL_WA_ADAPTER_RUN_AS_USER" \
+      /usr/bin/node "$LOCAL_WA_ADAPTER_SOURCE_HOME/scripts/validate-local-atendimento-runtime.mjs"
 
   # Keep the native credential in the inherited process environment. Do not put
   # it in a command argument, which would expose it through process inspection.
   exec runuser -u "$LOCAL_WA_ADAPTER_RUN_AS_USER" --preserve-environment -- \
-    /usr/bin/node "$LOCAL_WA_ADAPTER_SOURCE_HOME/server.js"
+    /usr/bin/env \
+      PGUSER="$LOCAL_WA_ADAPTER_RUN_AS_USER" \
+      USER="$LOCAL_WA_ADAPTER_RUN_AS_USER" \
+      LOGNAME="$LOCAL_WA_ADAPTER_RUN_AS_USER" \
+      CRM_LOCAL_PG_ROLE="$LOCAL_WA_ADAPTER_RUN_AS_USER" \
+      /usr/bin/node "$LOCAL_WA_ADAPTER_SOURCE_HOME/server.js"
 '
