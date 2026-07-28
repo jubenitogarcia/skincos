@@ -26,7 +26,11 @@ import fs from 'node:fs';
 const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 if (m.environment_policy.target_version !== '2.32.5') throw new Error('target drift');
 if (!/^sha512-/.test(m.artifact.integrity)) throw new Error('integrity missing');
-if (m.additional_packages.length !== 11) throw new Error('package inventory drift');
+if (m.additional_packages.length !== 10) throw new Error('package inventory drift');
+const packages = new Map(m.additional_packages);
+if (packages.has('n8n-nodes-evolution-api')) throw new Error('redundant Evolution package present');
+if (packages.get('n8n-nodes-evolution-api-en') !== '1.0.2') throw new Error('referenced Evolution package drift');
+if (packages.get('n8n-nodes-mcp') !== '0.1.37') throw new Error('MCP package drift');
 const secretKey = (key) => /password|secret|cookie|bearer/i.test(key);
 const walk = (value) => {
   if (!value || typeof value !== 'object') return;
