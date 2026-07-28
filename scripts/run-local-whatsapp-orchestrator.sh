@@ -72,9 +72,10 @@ exec sudo -n /usr/bin/env \
   # remains the versioned worktree; this cache avoids Windows/WSL file latency.
   runuser -u "$LOCAL_WA_ADAPTER_RUN_AS_USER" -- rsync -a --delete --exclude node_modules \
     "$LOCAL_WA_ADAPTER_ROOT/crm/api/" "$LOCAL_WA_ADAPTER_SOURCE_HOME/"
-  if [[ ! -d "$LOCAL_WA_ADAPTER_SOURCE_HOME/node_modules/express" ]]; then
-    runuser -u "$LOCAL_WA_ADAPTER_RUN_AS_USER" -- /usr/bin/npm --prefix "$LOCAL_WA_ADAPTER_SOURCE_HOME" ci --omit=dev --no-audit --no-fund
-  fi
+  # Partial node_modules caches can satisfy Express while omitting pg, causing
+  # every Atendimento request to fail only after the shell is already open.
+  # Recreate production dependencies from the versioned lockfile on each start.
+  runuser -u "$LOCAL_WA_ADAPTER_RUN_AS_USER" -- /usr/bin/npm --prefix "$LOCAL_WA_ADAPTER_SOURCE_HOME" ci --omit=dev --no-audit --no-fund
 
   export NODE_ENV=development
   export NO_AUTH=true
