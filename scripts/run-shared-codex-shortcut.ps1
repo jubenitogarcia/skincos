@@ -60,7 +60,8 @@ param(
         "OrbImportClinicWorkflowsLive"
     )]
     [string]$Action,
-    [string]$ProjectRoot
+    [string]$ProjectRoot,
+    [switch]$Background
 )
 
 $ErrorActionPreference = "Stop"
@@ -168,6 +169,30 @@ function Get-CrmLocalReviewRef {
         return "origin/main"
     }
     return $env:CRM_LOCAL_REVIEW_REF.Trim()
+}
+
+function Test-CrmLocalPortFree {
+    param([int]$Port)
+    return $null -eq (Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
+function Resolve-CrmLocalPort {
+    param(
+        [string]$RequestedValue,
+        [int[]]$Candidates,
+        [string]$Label
+    )
+    if (-not [string]::IsNullOrWhiteSpace($RequestedValue)) {
+        $requestedPort = [int]$RequestedValue
+        if ($requestedPort -lt 1 -or $requestedPort -gt 65535) {
+            throw "A porta local de $Label deve estar entre 1 e 65535."
+        }
+        return $requestedPort
+    }
+    foreach ($candidate in $Candidates) {
+        if (Test-CrmLocalPortFree -Port $candidate) { return $candidate }
+    }
+    throw "Nenhuma porta local livre foi encontrada para $Label."
 }
 
 function Test-CrmLocalReviewRefExplicit {
@@ -324,14 +349,19 @@ function Test-CrmHttpEndpoint {
 
 function Test-CrmPersonaHealth {
     param([ValidateSet("Gestor", "Consultor")][string]$Persona)
+    $manifest = Get-CrmPersonaManifest -Persona $Persona
+    $pagesPort = if ($null -ne $manifest -and [int]$manifest.ports.pages -gt 0) { [int]$manifest.ports.pages } elseif ($Persona -eq "Gestor") { 8791 } else { 8792 }
     if ($Persona -eq "Gestor") {
-        return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8791/api/auth/me" -Role "GESTOR") -and
-            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8787/insumos/health") -and
-            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8801/api/ponto/readiness") -and
-            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8110/health")
+        $insumosPort = if ($null -ne $manifest -and [int]$manifest.ports.insumos -gt 0) { [int]$manifest.ports.insumos } else { 8787 }
+        $timekeepingPort = if ($null -ne $manifest -and [int]$manifest.ports.timekeeping -gt 0) { [int]$manifest.ports.timekeeping } else { 8801 }
+        $whatsappPort = if ($null -ne $manifest -and [int]$manifest.ports.whatsapp -gt 0) { [int]$manifest.ports.whatsapp } else { 8110 }
+        return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/api/auth/me" -Role "GESTOR") -and
+            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$insumosPort/insumos/health") -and
+            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$timekeepingPort/api/ponto/readiness") -and
+            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$whatsappPort/health")
     }
-    return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8792/api/auth/me" -Role "CONSULTOR") -and
-        (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8792/api/ponto/readiness")
+    return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/api/auth/me" -Role "CONSULTOR") -and
+        (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/api/ponto/readiness")
 }
 
 function Get-CrmPersonaDecision {
@@ -362,7 +392,8 @@ function Open-CrmPersonaUrl {
     $fallback = if ($Persona -eq "Gestor") { "http://localhost:8791/" } else { "http://localhost:8792/?module=ponto" }
     $url = if ($null -ne $Manifest -and -not [string]::IsNullOrWhiteSpace([string]$Manifest.url)) { [string]$Manifest.url } else { $fallback }
     $uri = [Uri]$url
-    if ($uri.Scheme -ne 'http' -or $uri.Host -notin @('localhost', '127.0.0.1') -or $uri.Port -notin @(8791, 8792)) {
+    $expectedPort = if ($null -ne $Manifest -and [int]$Manifest.ports.pages -gt 0) { [int]$Manifest.ports.pages } elseif ($Persona -eq 'Gestor') { 8791 } else { 8792 }
+    if ($uri.Scheme -ne 'http' -or $uri.Host -notin @('localhost', '127.0.0.1') -or $uri.Port -ne $expectedPort) {
         throw "URL local inválida no manifesto de ${Persona}: '$url'."
     }
     Start-Process $url | Out-Null
@@ -573,9 +604,9 @@ function Start-CrmPersonaRuntime {
     )
     $targetLiteral = Convert-ToBashLiteral -Value $TargetCommit
     if ($Persona -eq "Gestor") {
-        $vitePort = if ([string]::IsNullOrWhiteSpace($env:CRM_LOCAL_GESTOR_VITE_PORT)) { 5173 } else { [int]$env:CRM_LOCAL_GESTOR_VITE_PORT }
-        $pagesPort = if ([string]::IsNullOrWhiteSpace($env:CRM_LOCAL_GESTOR_PAGES_PORT)) { 8791 } else { [int]$env:CRM_LOCAL_GESTOR_PAGES_PORT }
-        $timekeepingPort = if ([string]::IsNullOrWhiteSpace($env:CRM_LOCAL_GESTOR_TIMEKEEPING_PORT)) { 8801 } else { [int]$env:CRM_LOCAL_GESTOR_TIMEKEEPING_PORT }
+        $vitePort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_GESTOR_VITE_PORT -Candidates @(5173, 5174, 5175) -Label 'Vite do Gestor'
+        $pagesPort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_GESTOR_PAGES_PORT -Candidates @(8791, 8793, 8794) -Label 'Pages do Gestor'
+        $timekeepingPort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_GESTOR_TIMEKEEPING_PORT -Candidates @(8801, 8802, 8803) -Label 'Ponto do Gestor'
         if ($vitePort -lt 1 -or $vitePort -gt 65535 -or $pagesPort -lt 1 -or $pagesPort -gt 65535 -or $timekeepingPort -lt 1 -or $timekeepingPort -gt 65535) {
             throw "As portas locais do Gestor devem estar entre 1 e 65535."
         }
@@ -630,7 +661,7 @@ function Start-CrmGestorBackgroundUpdate {
     $errLog = Join-Path $logRoot "crm-local-gestor-action.err.log"
     $arguments = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath,
-        '-Action', 'CrmLocal', '-ProjectRoot', $ProjectRoot
+        '-Action', 'CrmLocal', '-ProjectRoot', $ProjectRoot, '-Background'
     )
     $previousReviewRef = $env:CRM_LOCAL_REVIEW_REF
     try {
@@ -747,7 +778,18 @@ function Invoke-ShortcutActionInternal {
         "CrmLocal" {
             Stop-LegacyCrmRuntimeIfNeeded
             $targetCommit = Get-CrmLocalTargetCommit
-            Invoke-CrmPersonaAction -Persona Gestor -TargetCommit $targetCommit
+            if ($Background) {
+                Invoke-CrmPersonaAction -Persona Gestor -TargetCommit $targetCommit
+            } else {
+                $decision = Get-CrmPersonaDecision -Persona Gestor -TargetCommit $targetCommit
+                if ($decision.Action -eq 'reuse') {
+                    Open-CrmPersonaUrl -Persona Gestor -Manifest $decision.Manifest
+                } elseif ($decision.Action -eq 'wait') {
+                    Write-Host "[crm-local] A inicialização do Gestor para o commit atual já está em andamento."
+                } else {
+                    Start-CrmGestorBackgroundUpdate -TargetCommit $targetCommit
+                }
+            }
         }
         "CrmConsultor" {
             $targetCommit = Get-CrmLocalTargetCommit
