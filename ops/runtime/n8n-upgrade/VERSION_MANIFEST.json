@@ -23,7 +23,7 @@
     "postgresql_policy": "manter PostgreSQL 16.x; confirmar faixa oficial do candidato no preflight; nenhuma alteração automática de banco",
     "database_schema": "n8n_runtime",
     "execution_mode": "regular",
-    "custom_node_layout": "cada package pinado em diretório direto; não usar uma raiz recursiva que exponha dependências como nodes"
+    "custom_node_layout": "usar somente o instalador e PackageDirectoryLoader canônicos do n8n; N8N_CUSTOM_EXTENSIONS direto altera namespaces e não qualifica compatibilidade"
   },
   "migrations": {
     "baseline_applied": 143,
@@ -56,7 +56,7 @@
     ["n8n-nodes-run-node-with-credentials-x", "0.4.1"],
     ["n8n-nodes-websocket", "1.0.1"]
   ],
-  "package_impact": "11 manifests e caminhos declarados foram encontrados no layout direto em staging; execução funcional dos nodes e jornadas de Booking/CRM/WhatsApp/Meta/content ainda é gate aberto.",
+  "package_impact": "o ensaio canônico 2.32.5 reproduziu conflito de tipo entre n8n-nodes-evolution-api e n8n-nodes-evolution-api-en e falha de carregamento de n8n-nodes-mcp@0.1.29; não promover até consolidar ou substituir packages sem perda de workflow.",
   "official_sources": [
     "https://github.com/n8n-io/n8n/releases/tag/n8n@2.32.5",
     "https://github.com/n8n-io/n8n/commit/26ecadcf94",
