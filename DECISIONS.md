@@ -438,3 +438,19 @@
   retained as references. A run is not considered closed merely because n8n is
   green: Drive, journal, locks, readback and notification delivery each need
   explicit evidence.
+
+## 2026-07-29 - Keep Meta Ads notifications local and reconcile journal evidence-first
+
+- Decision: replace the Meta Ads success WhatsApp community-node call with a
+  direct HTTP request to the local Evolution API, using private, Meta-specific
+  instance and recipient configuration. Preserve Telegram as a separate
+  parallel notification branch. Record historical journal closure through an
+  immutable event before updating a provable terminal state.
+- Why: a CRLF-contaminated environment value and an external public endpoint
+  caused an avoidable connection failure. Historical rows cannot be treated as
+  completed merely because their locks expired.
+- Impact: the notification has bounded timeout/retries and can be tested with
+  a synthetic message without invoking the commercial workflow or Meta. Runs
+  without staging are closed only when operations prove no activation; staged
+  runs remain `reconciliation_required` until a read-only Graph lookup is
+  recorded.
