@@ -11,6 +11,7 @@ const {
   driveAuditForExecution,
   notificationForExecution,
   verifierEnvironment,
+  buildGraphReplayEnvironment,
 } = require('../scripts/livia/qa-runner');
 
 test('QA accessibility markers follow the current cross-media contract', () => {
@@ -42,6 +43,17 @@ test('qa audit passes only the selected Token Vault values to the independent ve
   } finally {
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   }
+});
+
+test('qa replay pins the active bundle compose source instead of inheriting a mutable override', () => {
+  const env = buildGraphReplayEnvironment({
+    LIVIA_BUILD_JOB_GRAPH_SOURCE: '/opt/skincos/current/source/orb/engine/compose2-current.js',
+    OTHER_VALUE: 'preserved',
+  });
+
+  assert.equal(env.LIVIA_BUILD_JOB_GRAPH_SOURCE, path.join(__dirname, '..', 'compose2-current.js'));
+  assert.equal(env.OTHER_VALUE, 'preserved');
+  assert.ok(!env.LIVIA_BUILD_JOB_GRAPH_SOURCE.includes('/opt/skincos/current'));
 });
 
 test('qa audit reads the notification node that actually executed', () => {
