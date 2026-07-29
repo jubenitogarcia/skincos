@@ -62,7 +62,12 @@ function runAndCapture(command, args, env) {
         resolve({ stdout, stderr });
         return;
       }
-      reject(new Error(`${command} ${args.join(" ")} failed with code ${code ?? "null"}`));
+      const diagnosticOutput = [stdout, stderr].filter(Boolean).join("\n");
+      reject(
+        new Error(
+          `${command} ${args.join(" ")} failed with code ${code ?? "null"}${diagnosticOutput ? `\n${diagnosticOutput}` : ""}`,
+        ),
+      );
     });
   });
 }
@@ -97,10 +102,19 @@ function getWranglerEnvironmentArgs(environmentName) {
   return ["--env", environmentName];
 }
 
-async function getCurrentVersionId(configPath, env, wranglerEnvironmentArgs) {
-  const { stdout } = await runAndCapture("npx", ["wrangler", "deployments", "list", "-c", configPath, ...wranglerEnvironmentArgs], env);
-  const match = stdout.match(/\(100%\)\s+([0-9a-f-]{36})/i);
-  return match?.[1] ?? null;
+async function getCurrentVersionId(configPath, env, wranglerEnvironmentArgs, allowMissingWorker = false) {
+  try {
+    const { stdout } = await runAndCapture("npx", ["wrangler", "deployments", "list", "-c", configPath, ...wranglerEnvironmentArgs], env);
+    const match = stdout.match(/\(100%\)\s+([0-9a-f-]{36})/i);
+    return match?.[1] ?? null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (allowMissingWorker && message.includes("This Worker does not exist on your account")) {
+      console.log("No prior staging Worker deployment found; proceeding without a rollback target.");
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function runPostDeploySmoke({ env, siteUrl, retries, delayMs }) {
@@ -141,7 +155,12 @@ const env = {
 };
 
 const siteUrl = process.env.DEPLOY_SITE_URL?.trim() || readSiteUrlFromConfig(configPath);
-const previousVersionId = await getCurrentVersionId(configPath, env, wranglerEnvironmentArgs);
+const previousVersionId = await getCurrentVersionId(
+  configPath,
+  env,
+  wranglerEnvironmentArgs,
+  wranglerEnvironment === "staging",
+);
 
 await run("node", ["scripts/assert-production-snapshot.mjs"], env);
 await run("npx", ["opennextjs-cloudflare", "build"], env);
