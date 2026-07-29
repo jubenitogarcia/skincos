@@ -40,6 +40,14 @@ completa, e nunca faz merge, deploy, restart, migration ou acesso a caminhos de
 produção. Um candidato sem críticos apenas fica marcado para a qualificação
 isolada completa já controlada pelo PR de upgrade draft.
 
+O workflow agendado `.github/workflows/orb-n8n-stable-release-watch.yml` roda
+diariamente em runner efêmero, sem secrets e com permissão `contents: read`.
+Ele usa o mesmo marcador de staging sintético, Node.js `22.23.1`, npm `10.9.8`
+e o registry npm oficial. Seu diretório de auditoria é `/tmp` do runner, não um
+caminho de runtime da SKINCOS. Ele publica somente o relatório sanitizado e lockfiles
+de auditoria como artefato temporário; não altera a política, não abre ou faz
+merge de PR, não promove nem acessa o runtime de produção.
+
 ## Gate de promoção
 
 Uma promoção futura requer, além deste inventário: release estável oficial, checksum fixado, staging completo, backup/restauração comprovados, migrations reversíveis por restauração, regressão OAuth, MCP somente leitura, quatro serviços e bloqueio público de MCP. Qualquer vulnerabilidade crítica com caminho alcançável ou não descartado bloqueia a promoção.
