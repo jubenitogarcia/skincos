@@ -105,6 +105,16 @@ test('Workforce never presents pending or invited onboarding as operational', ()
   assert.equal(invited.status, 'LEAVE')
 })
 
+test('onboarding access state remains authoritative for operational timekeeping', () => {
+  assert.equal(__testables.isOperationalEmployee({ status: 'ACTIVE', access_state: 'PENDING_ACCESS' }), false)
+  assert.equal(__testables.isOperationalEmployee({ status: 'ACTIVE', access_state: 'INVITED' }), false)
+  assert.equal(__testables.isOperationalEmployee({ status: 'ACTIVE', access_state: 'SUSPENDED' }), false)
+  assert.equal(__testables.isOperationalEmployee({ status: 'ACTIVE', access_state: 'ACTIVE' }), true)
+  assert.equal(__testables.isOperationalEmployee({ status: 'ACTIVE' }), true)
+  assert.equal(__testables.identityOnboardingId({ metadata_json: JSON.stringify({ identityOnboardingId: 'onb-1' }) }), 'onb-1')
+  assert.equal(__testables.identityOnboardingId({ metadata_json: '{invalid' }), '')
+})
+
 test('CSV cells neutralize formulas and follow CSV quote escaping', () => {
   assert.equal(__testables.csvCell('=HYPERLINK("https://invalid.example")'), '"\'=HYPERLINK(""https://invalid.example"")"')
   assert.equal(__testables.csvCell('Pessoa "Teste"'), '"Pessoa ""Teste"""')
