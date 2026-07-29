@@ -116,6 +116,7 @@ jobs:
         run: node finance/scripts/staging-import-smoke.mjs --fixture finance/test/fixtures/staging-smoke-import.csv --commit --undo --report "$RUNNER_TEMP/import-report.json"
       - name: Install browser dependencies for isolated shell smoke
         if: steps.canary_open.outcome == 'success'
+        timeout-minutes: 20
         run: |
           npm --prefix crm/console ci
           npm --prefix crm/console exec -- playwright install --with-deps chromium
