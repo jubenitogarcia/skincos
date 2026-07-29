@@ -454,3 +454,20 @@
   without staging are closed only when operations prove no activation; staged
   runs remain `reconciliation_required` until a read-only Graph lookup is
   recorded.
+
+## 2026-07-29 - Promote native Orb source only through a lineage-checked release
+
+- Decision: promote the native Orb source from immutable archives only with
+  `prepare-native-source-release.sh` followed by
+  `promote-native-source-release.sh`; require the expected prior release SHA,
+  private checkpoint and a no-active-publication drain before switching the
+  `/opt/skincos/current/source` pointer.
+- Why: this keeps the live process, proxy and application sidecars on one
+  auditable source release and makes a pointer rollback independent from the
+  shared Windows checkout.
+- Impact: the 2026-07-29 promotion advanced
+  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a` to
+  `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89` (including PRs #840/#844).
+  The preparer grants `postgres` read/traverse access only to the immutable
+  Meta Ads preflight surface, so the peer-authenticated audit can validate all
+  49 Code nodes without exposing writable source or credentials.

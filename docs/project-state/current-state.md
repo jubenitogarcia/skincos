@@ -812,3 +812,33 @@ dos bundles referenciados por manifestos. A evidência de publicação real
 continua histórica (execuções 336 e 339); uma publicação posterior só pode ser
 considerada prova da versão ativa se o seu `workflowVersionId` for
 `9f7beced-c075-46d1-be78-0e26968e135e` ou um descendente publicado.
+
+## Orb — promoção do source release canônico 2026-07-29
+
+O source release nativo do Orb foi promovido de
+`71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a` para o `origin/main`
+`0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89`, cuja linhagem confirmada inclui
+as PRs #840 e #844. A promoção usou o promotor nativo com pré-condição do SHA
+anterior, drenagem sem execuções Livia ativas e troca atômica de
+`/opt/skincos/current/source`. O checkpoint privado completo está em
+`C:\CodexRuntime\operator\admin\skincos\native-promotions\` e o rollback é
+reexecutar o promotor com o ponteiro anterior enquanto se preserva o mesmo
+estado mutável.
+
+Após a troca, Orb, orb-proxy, CRM e Booking apontaram para o mesmo release e
+os probes local/público retornaram HTTP 200. O `Meta Ads – Publish`
+(`eFJhFg79lyaycjlm`) continuou inativo/manual, na versão 830; o preflight
+somente leitura confirmou as 49 fontes sincronizadas, contratos CRM/vídeo/
+creative válidos e zero mutações Meta. O Token Vault respondeu health
+autenticado 200 com D1, chave de cifragem e token configurados. Nenhuma
+execução do Meta Ads Publish foi criada após a execução 333 e não havia locks
+ativos.
+
+O preflight inicialmente expôs uma lacuna de ACL: os scripts de manifest já
+podiam rodar como `postgres`, mas os arquivos usados pelo auditor dos 49 Code
+nodes não. A ACL mínima foi aplicada à release promovida e a regra equivalente
+foi adicionada ao preparador versionado com teste de regressão. O auditor global
+de persistência ainda registra duas condições preexistentes, fora desta
+promoção: 12 workflows têm política de persistência divergente e o último
+backup restore-verified é de 2026-07-27; elas não devem ser tratadas como prova
+de regressão desta release e requerem acompanhamento operacional separado.

@@ -148,7 +148,7 @@ sudo -n install -d -o root -g skincos -m 0750 "$(dirname "$CURRENT_LINK")"
 # The versioned n8n writer authenticates locally as postgres. Permit only
 # traversal to its immutable scripts and only manifest-directory writes; no
 # workflow sidecar or source tree becomes generally readable or writable.
-for acl_dir in "$RELEASE_BASE/$RELEASE_ID" "$DESTINATION" "$DESTINATION/orb" "$DESTINATION/orb/engine" "$DESTINATION/orb/engine/scripts" "$DESTINATION/orb/engine/scripts/livia"; do
+for acl_dir in "$RELEASE_BASE/$RELEASE_ID" "$DESTINATION" "$DESTINATION/orb" "$DESTINATION/orb/engine" "$DESTINATION/orb/engine/scripts" "$DESTINATION/orb/engine/scripts/livia" "$DESTINATION/orb/engine/scripts/lib" "$DESTINATION/orb/engine/workflow-src" "$DESTINATION/orb/engine/workflow-src/meta-ads-publish" "$DESTINATION/orb/engine/workflows" "$CURRENT_LINK"; do
   sudo -n setfacl -m u:postgres:--x "$acl_dir"
 done
 sudo -n setfacl -m u:postgres:r-- \
@@ -165,6 +165,19 @@ sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/livia/verify-published-artifacts.js" \
   "$DESTINATION/orb/engine/scripts/livia/publish-progress-ledger.js" \
   "$DESTINATION/orb/engine/scripts/livia/validate-publish-token-health.js"
+# The Meta Ads Publish preflight also runs as postgres for peer authentication.
+# Its source comparison reads the immutable workflow export and all 49 Code-node
+# sources. Grant only read/traverse access to that audit surface; it contains no
+# runtime credentials and remains non-writable to postgres.
+sudo -n setfacl -m u:postgres:r-- \
+  "$DESTINATION/orb/engine/scripts/inspect-meta-ads-publish-version-alignment.js" \
+  "$DESTINATION/orb/engine/scripts/validate-meta-ads-publish-preflight.js" \
+  "$DESTINATION/orb/engine/scripts/patch-meta-ads-video-transfer-replay.js" \
+  "$DESTINATION/orb/engine/scripts/patch-meta-ads-crm-context-prefetch.js" \
+  "$DESTINATION/orb/engine/scripts/lib/meta-ads-publish-execution-semantics.js" \
+  "$DESTINATION/orb/engine/scripts/lib/meta-ads-publish-code-sources.js" \
+  "$DESTINATION/orb/engine/workflows/meta-ads-publish.current.json"
+sudo -n setfacl -Rm u:postgres:rX "$DESTINATION/orb/engine/workflow-src/meta-ads-publish"
 MANIFEST_DIR="${N8N_RUNTIME_HOME:-/var/lib/skincos-runtime/orb}/workflow-runtime-manifests/WGXr4vYkv9UoJ8zc"
 sudo -n install -d -o root -g root -m 0750 "$MANIFEST_DIR"
 sudo -n setfacl -m u:postgres:--x "$(dirname "$(dirname "$MANIFEST_DIR")")" "$(dirname "$MANIFEST_DIR")"
