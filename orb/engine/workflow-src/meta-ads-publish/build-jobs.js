@@ -4,11 +4,15 @@ const CALIBRATION_FILE_PREFIXES = ['[TEST-VIDEO-ONLY]', '[TEST-CAROUSEL]'];
 // Build Jobs and the downstream quality gate must advance together. This
 // prevents a stale n8n node definition from quietly accepting a payload whose
 // destination contract was added by a newer workflow revision.
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v12_native_carousel_route';
-// Website Lead ad sets with dynamic creative reject BOOK_NOW. A replacement
-// must, however, preserve the destination contract of its source ad: message
-// campaigns require WHATSAPP_MESSAGE and the WhatsApp URL.
-const DEFAULT_CTA_TYPE = 'LEARN_MORE';
+// Increment this whenever a persisted creative body becomes incompatible. The
+// resume path deliberately reuses an existing mutation body, so the revision
+// is a hard boundary rather than merely descriptive metadata.
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
+// The CTA is selected from the live campaign objective. Meta rejects BOOK_NOW
+// on dynamic OUTCOME_LEADS ad sets, while the other website contracts retain
+// the booking CTA. WhatsApp remains a URL destination, not a CTA policy.
+const DEFAULT_CTA_TYPE = 'BOOK_NOW';
+const OUTCOME_LEADS_CTA_TYPE = 'LEARN_MORE';
 const WHATSAPP_CTA_TYPE = 'WHATSAPP_MESSAGE';
 const RATIO_PRIORITY = ['4x5', '3x4', '2x1', '9x16'];
 const TEMPORAL_GUARD_FRESH_DAYS = 7;
@@ -170,7 +174,14 @@ function configuredDestinationKind(destinationMeta) {
   return '';
 }
 
-function resolveDestinationContract(job, destinationMeta) {
+function ctaTypeForDestination(destinationMeta, usesWhatsAppDestination) {
+  if (usesWhatsAppDestination) return WHATSAPP_CTA_TYPE;
+  return safeString(destinationMeta && destinationMeta.campaign_objective).toUpperCase() === 'OUTCOME_LEADS'
+    ? OUTCOME_LEADS_CTA_TYPE
+    : DEFAULT_CTA_TYPE;
+}
+
+function resolveDestinationContract(job, destinationMeta, verifiedWebsiteUrl = '') {
   const configuredKind = configuredDestinationKind(destinationMeta);
   const configuredWhatsAppUrl = toHttps(destinationMeta && destinationMeta.whatsapp_destination_url);
   const scopedContracts = safeArray(job && job.source_ads)
@@ -183,6 +194,21 @@ function resolveDestinationContract(job, destinationMeta) {
     return { ok: false, error: 'destination_contract_conflict', configured_kind: configuredKind, observed_kinds: observedKinds };
   }
   const kind = configuredKind || (observedKinds.length === 1 ? observedKinds[0] : '');
+  // A unit-specific landing-page mapping is an explicit Token Vault
+  // destination configuration. It is sufficient evidence for a website
+  // destination when legacy rows omit destination_type and no source creative
+  // is available in the ad inventory response.
+  const websiteUrl = toHttps(verifiedWebsiteUrl);
+  if (!kind && websiteUrl && !isWhatsAppHostname(websiteUrl)) {
+    return {
+      ok: true,
+      kind: 'website',
+      link_url: websiteUrl,
+      source: 'token_vault_landing_page_mapping',
+      configured_kind: configuredKind,
+      observed_source_ad_count: scopedContracts.length,
+    };
+  }
   if (!kind) {
     return {
       ok: false,
@@ -587,26 +613,6 @@ const ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES = Object.freeze({
   image_animation: 'Animacao de imagem',
   site_extensions: 'Extensoes do site',
 });
-const VIDEO_ADVANTAGE_PLUS_MAIN_FEATURES = Object.freeze({
-  add_text_overlay: 'Adicionar sobreposicoes',
-  music_generation: 'Adicionar musica',
-  pac_relaxation: 'Midia flexivel',
-  adapt_to_placement: 'Adaptar layout ao posicionamento',
-  video_filtering: 'Retoques e efeitos de video',
-  text_optimizations: 'Melhorias no texto',
-});
-const VIDEO_ADVANTAGE_PLUS_ESSENTIAL_FEATURES = Object.freeze({
-  inline_comment: 'Comentarios relevantes',
-  enhance_cta: 'Aprimorar CTA',
-});
-const VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES = Object.freeze({
-  reveal_details_over_time: 'Revelar detalhes ao longo do tempo',
-  show_destination_blurbs: 'Mostrar detalhes do destino',
-  video_highlights: 'Destaques automaticos de video',
-  site_extensions: 'Extensoes do site',
-  video_auto_crop: 'Recorte automatico de video',
-  video_uncrop: 'Expansao automatica de video',
-});
 const ADVANTAGE_PLUS_BASELINE_FEATURES = [
   'add_text_overlay',
   'image_touchups',
@@ -619,18 +625,15 @@ const ADVANTAGE_PLUS_BASELINE_FEATURES = [
   'image_animation',
 ];
 const ADVANTAGE_PLUS_CONDITIONAL_FEATURES = ['music_generation', 'pac_relaxation', 'site_extensions'];
-const VIDEO_ADVANTAGE_PLUS_BASELINE_FEATURES = [
-  'add_text_overlay',
-  'adapt_to_placement',
-  'video_filtering',
-  'text_optimizations',
-  'inline_comment',
-  'enhance_cta',
-  'reveal_details_over_time',
-  'show_destination_blurbs',
-  'video_highlights',
-];
-const VIDEO_ADVANTAGE_PLUS_CONDITIONAL_FEATURES = ['music_generation', 'pac_relaxation', 'site_extensions', 'video_auto_crop', 'video_uncrop'];
+// Token Vault is the canonical Graph boundary. Video-only creatives must use
+// the same allowlisted feature keys it validates for every creative; prior
+// video-specific keys (adapt_to_placement/video_filtering/etc.) were rejected
+// before reaching Graph and cannot be treated as a publish fallback.
+const VIDEO_ADVANTAGE_PLUS_MAIN_FEATURES = ADVANTAGE_PLUS_MAIN_FEATURES;
+const VIDEO_ADVANTAGE_PLUS_ESSENTIAL_FEATURES = ADVANTAGE_PLUS_ESSENTIAL_FEATURES;
+const VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES = ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES;
+const VIDEO_ADVANTAGE_PLUS_BASELINE_FEATURES = ADVANTAGE_PLUS_BASELINE_FEATURES;
+const VIDEO_ADVANTAGE_PLUS_CONDITIONAL_FEATURES = ADVANTAGE_PLUS_CONDITIONAL_FEATURES;
 
 function parseApiVersionMajor(version) {
   const match = safeString(version).match(/^v?(\d+)/i);
@@ -662,7 +665,7 @@ function normalizeSiteLinks(list) {
   return out;
 }
 
-function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEligible, mediaMode }) {
+function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEligible, mediaMode, sourceUrl }) {
   if (parseApiVersionMajor(apiVersion) < 25) {
     throw new Error(`Advantage+ Creative completo exige Marketing API v25.0; recebido ${safeString(apiVersion) || 'vazio'}.`);
   }
@@ -673,16 +676,10 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
   const essentialFeatures = videoOnly ? VIDEO_ADVANTAGE_PLUS_ESSENTIAL_FEATURES : ADVANTAGE_PLUS_ESSENTIAL_FEATURES;
   const supplementalFeatures = videoOnly
     ? VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES
-    : (hasVideo
-        ? { ...ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES, video_auto_crop: VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES.video_auto_crop, video_uncrop: VIDEO_ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES.video_uncrop }
-        : ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES);
+    : ADVANTAGE_PLUS_SUPPLEMENTAL_FEATURES;
   const desiredFeatures = videoOnly
     ? [...VIDEO_ADVANTAGE_PLUS_BASELINE_FEATURES, ...VIDEO_ADVANTAGE_PLUS_CONDITIONAL_FEATURES]
-    : [
-        ...ADVANTAGE_PLUS_BASELINE_FEATURES,
-        ...ADVANTAGE_PLUS_CONDITIONAL_FEATURES,
-        ...(hasVideo ? ['video_auto_crop', 'video_uncrop'] : []),
-      ];
+    : [...ADVANTAGE_PLUS_BASELINE_FEATURES, ...ADVANTAGE_PLUS_CONDITIONAL_FEATURES];
   const creativeFeaturesSpec = {};
   const eligibleFeatures = [...baselineFeatures];
   const skippedFeatures = [];
@@ -765,12 +762,15 @@ function buildAdvantagePlusRequest({ apiVersion, siteLinks, musicEligible, pacEl
       })),
     },
     creativeFeaturesSpec,
-    creativeSourcingSpec: siteLinksEligible
-      ? { site_links_spec: siteLinks.map((link) => ({
+    creativeSourcingSpec: removeEmptyFields({
+      source_url: toHttps(sourceUrl),
+      ...(siteLinksEligible
+        ? { site_links_spec: siteLinks.map((link) => ({
             site_link_title: safeString(link.site_link_title || link.title),
             site_link_url: toHttps(link.site_link_url || link.url),
           })) }
-      : {},
+        : {}),
+    }),
   };
 }
 
@@ -877,12 +877,23 @@ function safeWarnings(jobWarnings, extraWarnings) {
 }
 
 function getBuildPayloadEntries() {
-  let items = [];
-  try { items = $items('Restore Publish Groups') || []; } catch (error) { items = []; }
-  if (!items.some((item) => safeString(item && item.json && item.json.job_key))) {
-    items = $('Build Payload').all();
-  }
-  return items
+  // A restored run contains a historical snapshot. It is a valid fallback
+  // only when there is no current Build Payload. Prefer the current graph so
+  // live placement/campaign facts (including the CTA policy) cannot be
+  // silently replaced by a stale resume record.
+  let currentItems = [];
+  try { currentItems = $('Build Payload').all(); } catch (error) { currentItems = []; }
+  const currentEntries = currentItems
+    .map((item) => ({
+      json: item.json || {},
+      binary: item.binary || {},
+    }))
+    .filter((entry) => entry.json && safeString(entry.json.job_key));
+  if (currentEntries.length) return currentEntries;
+
+  let restoredItems = [];
+  try { restoredItems = $items('Restore Publish Groups') || []; } catch (error) { restoredItems = []; }
+  return restoredItems
     .map((item) => ({
       json: item.json || {},
       binary: item.binary || {},
@@ -1577,6 +1588,18 @@ function persistedResumeJobs() {
   return [...unique.values()];
 }
 
+function isCurrentCtaResumeContract(row) {
+  const feed = asObject(asObject(row).creativePayload && asObject(row).creativePayload.asset_feed_spec);
+  const ctaTypes = safeArray(feed.call_to_action_types)
+    .map((value) => safeString(value).toUpperCase())
+    .filter(Boolean);
+  const destination = asObject(row.destination_meta);
+  const expected = safeString(destination.campaign_objective).toUpperCase() === 'OUTCOME_LEADS'
+    ? OUTCOME_LEADS_CTA_TYPE
+    : DEFAULT_CTA_TYPE;
+  return ctaTypes.length === 1 && ctaTypes[0] === expected;
+}
+
 const persistedJobs = persistedResumeJobs();
 const resumeJobs = persistedJobs.filter((job) => {
   const row = asObject(job);
@@ -1587,6 +1610,7 @@ const resumeJobs = persistedJobs.filter((job) => {
     (kind === 'website' || kind === 'whatsapp') &&
     Boolean(linkUrl) &&
     (kind !== 'whatsapp' || isWhatsAppHostname(linkUrl)) &&
+    isCurrentCtaResumeContract(row) &&
     isCurrentVideoOnlyResumeContract(row) &&
     isCurrentCarouselResumeContract(row);
 });
@@ -2035,7 +2059,28 @@ for (const entry of jobEntries) {
       continue;
     }
 
-    const destinationContract = resolveDestinationContract(job, destinationMeta);
+    const allowedLinkHosts = safeArray(destinationMeta.allowed_link_hosts || gatewayConfig && gatewayConfig.allowed_link_hosts);
+    const creativeGroupKey = safeString(job.creative_group_key || job.group_key);
+    const landingPage = resolveLandingPage(destinationMeta, gatewayConfig, creativeGroupKey, allowedLinkHosts);
+    if (!landingPage.ok) {
+      outputs.push({
+        json: {
+          error: 'A landing page especifica da campanha nao esta pronta no Token Vault.',
+          upstream_node: 'Build Jobs',
+          upstream_error: landingPage.error,
+          debug: {
+            job_key: safeString(job.job_key),
+            creative_group_key: creativeGroupKey,
+            destination_group: safeString(destinationMeta.destination_group),
+            configured_keys: landingPage.configured_keys || [],
+            rejected_hostname: landingPage.rejected_hostname || '',
+          },
+        },
+      });
+      continue;
+    }
+
+    const destinationContract = resolveDestinationContract(job, destinationMeta, landingPage.url);
     if (!destinationContract.ok) {
       outputs.push({
         json: {
@@ -2054,6 +2099,21 @@ for (const entry of jobEntries) {
       continue;
     }
     const usesWhatsAppDestination = destinationContract.kind === 'whatsapp';
+    if (!usesWhatsAppDestination && mediaMode !== 'carousel' && !safeString(destinationMeta.campaign_objective)) {
+      outputs.push({
+        json: {
+          error: 'O objetivo efetivo da campanha nao foi retornado pelo inventario Meta; lote bloqueado antes de criar o criativo.',
+          upstream_node: 'Build Jobs',
+          upstream_error: 'campaign_objective_missing',
+          debug: {
+            job_key: safeString(job.job_key),
+            destination_group: safeString(destinationMeta.destination_group),
+            destination_adset_id_present: Boolean(safeString(destinationMeta.destination_adset_id)),
+          },
+        },
+      });
+      continue;
+    }
     if (mediaMode === 'carousel' && (!carouselNativeAdsetId || !carouselNativeVerified || !carouselNativeRouteActive)) {
       outputs.push({
         json: {
@@ -2078,9 +2138,8 @@ for (const entry of jobEntries) {
       resolvedAdsetId = carouselNativeAdsetId;
       if (carouselNativeCampaignId) resolvedCampaignId = carouselNativeCampaignId;
     }
-    const ctaTypes = [usesWhatsAppDestination ? WHATSAPP_CTA_TYPE : DEFAULT_CTA_TYPE];
+    const ctaTypes = [ctaTypeForDestination(destinationMeta, usesWhatsAppDestination)];
     const requestedRawSiteLinks = safeArray(overrides.site_links || overrides.siteLinks || ai.site_links || ai.siteLinks);
-    const allowedLinkHosts = safeArray(destinationMeta.allowed_link_hosts || gatewayConfig && gatewayConfig.allowed_link_hosts);
     const siteLinks = normalizeSiteLinks(requestedRawSiteLinks);
     const rejectedSiteLinks = siteLinks.filter((link) => !isAllowedLinkUrl(link.url, allowedLinkHosts));
     if (rejectedSiteLinks.length) {
@@ -2115,26 +2174,6 @@ for (const entry of jobEntries) {
     const normalizedBodies = aiBodies;
     const normalizedTitles = aiTitles;
     const normalizedDescriptions = aiDescriptions;
-
-    const creativeGroupKey = safeString(job.creative_group_key || job.group_key);
-    const landingPage = resolveLandingPage(destinationMeta, gatewayConfig, creativeGroupKey, allowedLinkHosts);
-    if (!landingPage.ok) {
-      outputs.push({
-        json: {
-          error: 'A landing page especifica da campanha nao esta pronta no Token Vault.',
-          upstream_node: 'Build Jobs',
-          upstream_error: landingPage.error,
-          debug: {
-            job_key: safeString(job.job_key),
-            creative_group_key: creativeGroupKey,
-            destination_group: safeString(destinationMeta.destination_group),
-            configured_keys: landingPage.configured_keys || [],
-            rejected_hostname: landingPage.rejected_hostname || '',
-          },
-        },
-      });
-      continue;
-    }
 
     const schedulingLandingPageUrl = landingPage.url;
     const primaryLinkUrl = usesWhatsAppDestination ? destinationContract.link_url : schedulingLandingPageUrl;
@@ -2318,6 +2357,7 @@ for (const entry of jobEntries) {
       // that Meta preserves the full labelled placement contract.
       pacEligible: mediaMode !== 'carousel' && orderedAssets.length > 1 && mixedPlacementRules.length > 1,
       mediaMode,
+      sourceUrl: primaryLinkUrl,
     });
 
     const creativeRootExtras = removeEmptyFields({

@@ -65,3 +65,5 @@ workflows/*.current*.json
 workflows/*.live*.json
 # Snapshots are temporary; only the four tracked clinic workflow baselines are versioned.
 workflows/*.json
+# The inactive Meta Ads Publish definition is the reviewed control-plane source.
+!workflows/meta-ads-publish.current.json
