@@ -2,6 +2,21 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T03:00:00Z",
+      "surface": "meta-ads-publish-live-n8n-token-vault-github",
+      "scope": "Final closure audit of Meta Ads – Publish",
+      "state": "production-partially-closed-journal-reconciliation-open",
+      "method": "Read-only Orb workflow/execution/health inspection; PostgreSQL execution 333 node-result audit; remote Token Vault D1 SELECTs; Worker version metadata; GitHub PR #840 and origin/main ancestry; targeted worktree/temp inventory",
+      "result": "Workflow eFJhFg79lyaycjlm is inactive/manual at live version 825 (4ec178e3-bc9d-4ed6-b481-eb9015777b2e). Manual execution 333 is persisted success and completed run map_f6a59341d6dace99d70f5533 after resuming it idempotently. Two active journal jobs were created once: BarraShoppingSul ad 120247386191180157 / creative 1011986138341232 and Novo Hamburgo ad 120247386191560157 / creative 1400344355311942. Stage, activate, creative readback, Drive verification and run completion are completed; final-run locks and all unexpired locks are absent. Contract readback records OUTCOME_LEADS, WhatsApp destination, WHATSAPP_MESSAGE and api.whatsapp.com/send. PR #840 merged as 11417df9e362f82337882a4b57e87c98b1a21547 with required checks green; active Token Vault Worker version is 64.",
+      "limitation": "The execution's Telegram notification succeeded, but its WhatsApp notification node returned an error. The journal also retains historical nonterminal acquired/processing/staged records. The native Orb source release remains 71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a, before PR #840; the live preflight therefore proved n8n-definition synchronization from canonical source, not full runtime-release parity with main. No journal rows, locks, ads, creatives or notifications were mutated during this audit; those records and the release promotion require separately evidenced gates before a global archive claim.",
+      "workflow_id": "eFJhFg79lyaycjlm",
+      "execution_id": 333,
+      "run_id": "map_f6a59341d6dace99d70f5533",
+      "pr": 840,
+      "merge_commit": "11417df9e362f82337882a4b57e87c98b1a21547",
+      "token_vault_worker_version": 64
+    },
+    {
       "observed_at": "2026-07-28T20:48:44Z",
       "surface": "windows-observability-and-public-health",
       "scope": "Desktop alert flood investigation and local hardening candidate",

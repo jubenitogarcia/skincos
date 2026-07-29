@@ -1,5 +1,38 @@
 # Current state
 
+## Meta Ads Publish closure audit — 2026-07-29T03:00Z
+
+PR #840 merged the canonical workflow and Token Vault contract as
+`11417df9e362f82337882a4b57e87c98b1a21547`; its required checks were green.
+The live workflow `eFJhFg79lyaycjlm` is inactive/manual at version `825`
+(`4ec178e3-bc9d-4ed6-b481-eb9015777b2e`) and the Token Vault production Worker
+is deployment `beba53d9-67f3-495b-a002-5dc579463c29`. The live preflight is
+green and confirms synchronized sources/contracts without a Meta mutation.
+
+The native Orb service source release still resolves to
+`71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, an ancestor that predates PR #840.
+The preflight was intentionally run read-only from the canonical source against
+the live n8n database, so it proves workflow-definition synchronization but not
+that the runtime release itself is at `main`. Native promotion is a separately
+tracked, explicitly authorized production gate.
+
+Manual execution `333` is persisted as `success` (2026-07-28T13:33:57-03:00
+to 13:38:07-03:00). It resumed and completed journal run
+`map_f6a59341d6dace99d70f5533`: visual grouping, video upload, creative
+validation/readback, staging, activation, Drive finalization and completion all
+recorded success. The resulting active ads are BarraShoppingSul
+`120247386191180157` (creative `1011986138341232`) and Novo Hamburgo
+`120247386191560157` (creative `1400344355311942`). The persisted contract is
+WhatsApp / `WHATSAPP_MESSAGE` with `https://api.whatsapp.com/send`; booking
+URLs are retained as unit references and not used as a conflicting destination.
+
+This is not a global journal closure: final-run locks are released and no
+active lock exists, but the production journal still has historical nonterminal
+`acquired`, `processing` and `staged` rows. Telegram notification delivery was
+recorded; the WhatsApp notification node returned an error. Both are tracked as
+P1 in `TASKS.md` and must be reconciled with idempotent readback before this
+workstream can be archived.
+
 ## Observability alert hardening — 2026-07-29T02:23Z
 
 The desktop-alert correction is integrated on `main`: PR #833 merged as

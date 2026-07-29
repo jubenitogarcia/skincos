@@ -83,3 +83,32 @@ versiona o journal, operações e locks idempotentes já usados pelo gateway.
 Uma correção está pronta somente quando há: causa baseada em execução/runtime,
 teste que reproduz o cenário, fontes sincronizadas com o live, preflight verde
 e uma declaração clara sobre o que não foi validado em produção.
+
+## Evidência de encerramento — 2026-07-29
+
+- A última execução comercial bem-sucedida é a manual `333`, concluída em
+  2026-07-28T16:38:07Z. Ela concluiu o run idempotente
+  `map_f6a59341d6dace99d70f5533`, iniciado na execução `331` e retomado pela
+  `333` sem recriar recursos.
+- O lote criou e ativou um anúncio por unidade: BarraShoppingSul
+  `120247386191180157` / criativo `1011986138341232` e Novo Hamburgo
+  `120247386191560157` / criativo `1400344355311942`. O readback da execução
+  confirmou o contrato `OUTCOME_LEADS` + `WHATSAPP_MESSAGE` e o handoff
+  `https://api.whatsapp.com/send`; as URLs de agendamento permanecem apenas
+  como referência por unidade.
+- A definição atualmente viva é a versão `825`
+  (`4ec178e3-bc9d-4ed6-b481-eb9015777b2e`), inativa/manual. Ela foi aplicada a
+  partir da fonte integrada na PR #840 (`11417df9e362f82337882a4b57e87c98b1a21547`).
+  O Token Vault ativo é o deployment
+  `beba53d9-67f3-495b-a002-5dc579463c29`; o checkpoint privado anterior é o
+  rollback operacional.
+- O source release nativo do Orb ainda é
+  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, anterior à PR #840. O preflight
+  canônico pode validar a definição viva sem mutação, mas não substitui a
+  promoção versionada desse release; trate-a como um gate operacional separado.
+- O run final tem Drive verificado, stage/activate completos, nenhum lock e
+  nenhum estado `reconciliation_required`. Contudo, a notificação Telegram foi
+  confirmada e a notificação WhatsApp retornou erro; além disso, existem runs
+  históricos não terminais no journal. Eles são uma pendência operacional
+  separada e bloqueiam declarar o fechamento global do journal até a
+  reconciliação idempotente documentada em `TASKS.md`.
