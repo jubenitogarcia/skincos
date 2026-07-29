@@ -175,8 +175,14 @@ try {
       const undo = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/undo`)}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:undo`), body: JSON.stringify({ reason: 'Controlled staging smoke reversal' }) });
       const undoBody = await json(undo);
       loaded = await loadBatch();
-      if (loaded.batch?.status !== 'undone') throw new Error('import undo did not reach the compensated state');
-      result.undo = { status: undo.status, undone: Number(undoBody.undone || 0), replayed: Boolean(undoBody.replayed), batchStatus: loaded.batch.status, movementsCompensated: (loaded.rows || []).filter((row) => row.movement_id).length };
+      const movementIds = (loaded.rows || []).map((row) => String(row.movement_id || '')).filter(Boolean);
+      const reversed = await Promise.all(movementIds.map(async (movementId) => {
+        const response = await request(`${financePath(`/movements/${encodeURIComponent(movementId)}`)}?scopeId=${encodeURIComponent(scopeId)}`, { headers: authHeaders() });
+        const body = await json(response);
+        return { status: response.status, operationalStatus: body.movement?.operational_status, reversedAt: body.movement?.reversed_at };
+      }));
+      if (!loaded.batch?.undone_at || Number(undoBody.undone || 0) !== movementIds.length || reversed.some((movement) => movement.status !== 200 || movement.operationalStatus !== 'cancelled' || !movement.reversedAt)) throw new Error('import undo did not reach the compensated state');
+      result.undo = { status: undo.status, undone: Number(undoBody.undone || 0), replayed: Boolean(undoBody.replayed), batchStatus: loaded.batch.status, compensatedAt: loaded.batch.undone_at, movementsCompensated: reversed.length };
     }
   }
   result.ok = true;
