@@ -6,7 +6,7 @@ try{
   while($true){
     if($null -eq $dashboard -or $dashboard.HasExited){$dashboard=Start-Process -FilePath powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$serve`" -StateDirectory `"$StateDirectory`" -Port $DashboardPort" -WindowStyle Hidden -PassThru}
     try{& $invoke -CatalogPath $CatalogPath -StateDirectory $StateDirectory | Out-Null}catch{[System.IO.File]::WriteAllText((Join-Path $StateDirectory 'supervisor-error.txt'),"$([DateTime]::UtcNow.ToString('o')) $($_.Exception.Message)")}
-    try{& $watch -StateDirectory $StateDirectory -DashboardTaskName ''|Out-Null}catch{}
+    try{& $watch -StateDirectory $StateDirectory -CatalogPath $CatalogPath -DashboardTaskName ''|Out-Null}catch{}
     Start-Sleep -Seconds 60
   }
 }finally{$mutex.ReleaseMutex();$mutex.Dispose()}

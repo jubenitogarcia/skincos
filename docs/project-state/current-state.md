@@ -41,24 +41,20 @@ Lighthouse or Chromium process remained. No production URL, deployment,
 credential, secret, account, business data, workflow save or configuration
 outside the repository was changed.
 
-PR #832 remains open at its earlier published head. Its prior `Central E2E
-Smoke` failure (14 unrelated functional mobile tests), `Escala UI E2E` failure
-and external Semgrep warning are not yet rerun remotely because these local
-corrections are deliberately uncommitted; the scope remains **audit-complete,
-remediation-local, PR-not-updated**. GitHub and Figma MCP
-OAuth remain manual/unproven exactly as documented; no manual authentication
-was claimed or performed.
+PR #832 is local-only evidence until its remote checks and review complete.
+GitHub and Figma MCP OAuth remain manual/unproven exactly as documented; no
+manual authentication was claimed or performed.
 
 ## UX/UI audit infrastructure — draft PR #832 — 2026-07-29T01:34Z
 
 The infrastructure-only UX/UI foundation is committed on
-`codex/admin/ux-ui-infrastructure` and published as draft PR #832
-(`chore(ux): add local audit infrastructure`). Its original base was
-`c70c85bbdce7d7724cf9e29ac80d167e9c86980e`; it was merged non-destructively
-with the then-current `origin/main` `b1afd84b9191841d1f4bc28497f70b3755375d70`
-before push. The PR contains synthetic local Playwright/axe/visual/Lighthouse
-and LHCI baselines, Storybook a11y/MCP support, a non-blocking path-filtered
-workflow, ignored artifacts, and operator documentation.
+`codex/admin/ux-ui-infrastructure` and published as draft PR #832. Its
+original base was `c70c85bbdce7d7724cf9e29ac80d167e9c86980e`; it was merged
+non-destructively with the then-current `origin/main`
+`b1afd84b9191841d1f4bc28497f70b3755375d70` before push. The PR contains
+synthetic local Playwright/axe/visual/Lighthouse and LHCI baselines, Storybook
+a11y/MCP support, a non-blocking path-filtered workflow, ignored artifacts,
+and operator documentation.
 
 In a clean native WSL checkout, `npm run tools:doctor`,
 `npm run audit:ui:full`, `npm --prefix crm/console run storybook:build`,
@@ -67,8 +63,148 @@ audit covers one Testing Library component test plus four desktop/tablet/mobile
 projects each for the synthetic pilot, axe results and visual snapshots; no
 production endpoint, account, secret, database, workflow, deployment or
 business data was changed. This is **local-only plus PR-open** evidence, not
-integration, staging or production evidence. The initial PR checks are queued
-or in progress; review/CI completion is the next action.
+integration, staging or production evidence.
+
+## Observability independent audit — 2026-07-29T03:30Z
+
+A fresh read-only audit confirms that PR #833 remains integrated in `main`, the local monitor matches clean integrated descendant `62ff7875…`, and the operator runtime has one Run-key supervisor, one dashboard child, and a healthy loopback dashboard. The monitor-policy suite and catalog validation passed again: alert after two failures, recovery after two healthy runs without a popup, 900-second cooldown, 30-second desktop expiry, retention, probe mutex, and watchdog deduplication/cooldown are covered. The real controlled drill still records a delivered alert and a no-popup recovery; no later notification was emitted.
+
+Fresh staging reads keep API health/readiness and gateway Finance health/readiness at HTTP 200. The API reports release `2ba1e0a74eea8a88a5cdb609ba426c8df2c94261`; Finance reports live/current, healthy D1/module control, and no artificial 503 in three rounds. Preview `30417971117`, staging `30418027776`, and attempted production run `30418523054` were all dispatched with that release SHA; production is not a deployment of it. The production API health read is HTTP 200, while production readiness is 404 and Finance safe reads are 401 from the pre-existing API. Those authorization responses prove no unauthenticated Finance data exposure, but do not prove a functional Finance production journey.
+
+The production workflow is terminal, not pending: it failed before version publication or smoke because `FINANCE` references absent Worker `skincos-finance` (Cloudflare 10143). This cannot be corrected by retrying the API-only flow: the governed Finance production path may create a D1 checkpoint and apply migrations, actions excluded from this release authorization. Keep the private reinstall checkpoint and promotion artifacts. Do not declare the release fully promoted or the thread archive-ready until that prerequisite is explicitly authorized and a new immutable production promotion succeeds.
+
+## Meta Ads Publish closure audit — 2026-07-29T03:00Z
+
+PR #840 merged the canonical workflow and Token Vault contract as
+`11417df9e362f82337882a4b57e87c98b1a21547`; its required checks were green.
+The live workflow `eFJhFg79lyaycjlm` is inactive/manual at version `825`
+(`4ec178e3-bc9d-4ed6-b481-eb9015777b2e`) and the Token Vault production Worker
+is deployment `beba53d9-67f3-495b-a002-5dc579463c29`. The live preflight is
+green and confirms synchronized sources/contracts without a Meta mutation.
+
+The native Orb service source release still resolves to
+`71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, an ancestor that predates PR #840.
+The preflight was intentionally run read-only from the canonical source against
+the live n8n database, so it proves workflow-definition synchronization but not
+that the runtime release itself is at `main`. Native promotion is a separately
+tracked, explicitly authorized production gate.
+
+Manual execution `333` is persisted as `success` (2026-07-28T13:33:57-03:00
+to 13:38:07-03:00). It resumed and completed journal run
+`map_f6a59341d6dace99d70f5533`: visual grouping, video upload, creative
+validation/readback, staging, activation, Drive finalization and completion all
+recorded success. The resulting active ads are BarraShoppingSul
+`120247386191180157` (creative `1011986138341232`) and Novo Hamburgo
+`120247386191560157` (creative `1400344355311942`). The persisted contract is
+WhatsApp / `WHATSAPP_MESSAGE` with `https://api.whatsapp.com/send`; booking
+URLs are retained as unit references and not used as a conflicting destination.
+
+This is not a global journal closure: final-run locks are released and no
+active lock exists, but the production journal still has historical nonterminal
+`acquired`, `processing` and `staged` rows. Telegram notification delivery was
+recorded; the WhatsApp notification node returned an error. Both are tracked as
+P1 in `TASKS.md` and must be reconciled with idempotent readback before this
+workstream can be archived.
+
+## Observability alert hardening operational closeout — 2026-07-29T03:06Z
+
+PR [#833](https://github.com/jubenitogarcia/skincos/pull/833) is the source
+change for the Windows alert correction and merged to `main` as
+`2ba1e0a74eea8a88a5cdb609ba426c8df2c94261`.  The later installer guard
+repair is integrated on `main` as `62ff787554f67a0d1ea2f40a40543b52b2054263`;
+the local monitor therefore runs the descendant that contains the requested
+release and its self-supervision fix.
+
+The canonical Core API promotion was immutable: preview
+`30417971117` and staging `30418027776` both used release SHA
+`2ba1e0a74eea8a88a5cdb609ba426c8df2c94261` and source tree
+`6beae5048890803e0fa8b3894eb69cb5eee0f9de`.  Their sanitized promotion
+artifacts are retained privately at
+`C:\CodexRuntime\operator\admin\skincos\evidence\observability-api-promotion\preview-30417971117\promotion-evidence.json`
+and
+`C:\CodexRuntime\operator\admin\skincos\evidence\observability-api-promotion\staging-30418027776\promotion-evidence-core-api\promotion-evidence.json`.
+Staging API `/health` and `/readiness` returned HTTP 200 with the requested
+SHA; the gateway Finance `/health` and `/readiness` also returned HTTP 200,
+with dependency `live`, module `active`, sync `current`, and healthy D1/module
+control.  Two later four-endpoint rounds remained HTTP 200 (0.174–0.615 s).
+The local observer recorded the same staging Finance health/readiness as
+healthy, with no post-promotion notification spam.
+
+Production run `30418523054` used that exact release SHA, `unit=api`,
+`staging_run_id=30418027776`, and `bootstrap_finance_context=false`.  The
+promotion gate passed, but Cloudflare rejected the API upload before a Worker
+version, artifact, or automatic smoke existed: error `10143` says the
+`FINANCE` service binding references missing Worker `skincos-finance`.  The
+release is therefore **not deployed to production**.  Existing production
+API `/health` remained HTTP 200, but its old Finance path returned 401 and is
+not evidence of this release.  No D1 migration, inventory/all deployment,
+binding, secret, or business-data change was made.  Resolving the external
+prerequisite requires the separately governed Finance production path, which
+would create a D1 checkpoint and may run Finance migrations; it must not be
+started without explicit authorization.
+
+Validation included the merged PR's required CI/security checks, catalog
+validation, 16 API gateway tests, deterministic monitor policy tests, the
+staging HTTP/latency reads above, and a real controlled desktop drill.  The
+final drill persisted an alert after two failed probes with
+`human_notification_delivery=windows-message-delivered`, then a two-probe
+recovery with `human_notification_delivery=not-applicable`; it produced no
+recovery popup.  Windows Event Log registration remains unavailable in the
+non-elevated `operator-run-key` session, so that secondary delivery channel
+reports failure without affecting the delivered desktop alert.
+
+The local runtime is healthy in `operator-run-key` mode: its scripts match the
+clean `62ff7875…` source, exactly one supervisor owns one dashboard child, and
+loopback dashboard `/health` is HTTP 200.  Baseline Finance staging reads are
+healthy.  Preserve
+`C:\CodexRuntime\operator\admin\skincos\checkpoints\observability-reinstall-20260728T234648Z`
+and the earlier hardening checkpoint.  For a local-monitor rollback, restore
+the preserved private runtime checkpoint and restart the Run-key supervisor,
+then verify loopback `/health`.  No production API rollback is needed because
+no new production version was published; any future source rollback must be a
+reviewed revert PR followed by the same immutable preview/staging/production
+promotion chain.
+
+## Observability alert hardening — 2026-07-29T02:23Z
+
+The desktop-alert correction is integrated on `main`: PR #833 merged as
+`2ba1e0a74eea8a88a5cdb609ba426c8df2c94261`, and the installer fallback repair
+in PR #836 merged as `34c9baff3978df71402b917449b6971a914b1110`. The final
+installer self-process guard and evidence update merged in PR #839 as
+`62ff787554f67a0d1ea2f40a40543b52b2054263`. All applicable CI, test and
+security checks were green. The operator runtime was reinstalled from a clean
+worktree matching that final integrated SHA in `operator-run-key` mode at
+02:23Z. `installation.json`, the Run key, one
+supervisor plus one dashboard child, and loopback `/health` prove the active
+local runtime; the preserved rollback checkpoint is
+`C:\CodexRuntime\operator\admin\skincos\checkpoints\observability-alert-hardening-20260728T2052Z`.
+
+The policy requires two consecutive non-healthy probes before an alert and two
+healthy probes before resolution. Desktop recovery notices are disabled,
+desktop alerts have a 15-minute per-unit/environment cooldown, and `msg.exe`
+expires after 30 seconds. The integrated controlled drill produced one desktop
+delivery on its second failure, a persisted recovery with
+`human_notification_delivery=not-applicable`, and a cooldown-suppressed second
+incident. The watchdog/probe mutex and deterministic tests cover concurrent
+invocations and watchdog deduplication. Finance probe requests now have a
+three-second service-binding deadline so a valid slow response is classified as
+latency degradation; genuine Finance 503 responses remain degraded.
+
+Canonical API promotion used preview run `30414699651` and staging run
+`30414749763`, both for immutable SHA `2ba1e0a7…`. Production run `30414808715`
+stopped before upload or smoke: Cloudflare rejected API binding `FINANCE`
+because production Worker `skincos-finance` does not exist (error 10143). Thus
+the API timeout fix is deployed to staging but **not** production; production
+API health remains reachable, but is not proof of this release. No D1 data,
+secrets, bindings, Finance Worker or business data were changed. The remaining
+action needs an explicit production Finance resource/binding decision; do not
+retry the same API promotion until that prerequisite is satisfied.
+
+Direct post-promotion reads prove staging API `/health` is HTTP 200 at
+`2ba1e0a7…`, and staging `/finance/health` is HTTP 200 with D1/module-control
+healthy. Production API `/health` is HTTP 200, while its existing
+`/finance/health` path returns 401; neither result proves the blocked API
+release or a production Finance journey.
 
 ## Fresh runtime-config verification — 2026-07-25T05:05Z
 

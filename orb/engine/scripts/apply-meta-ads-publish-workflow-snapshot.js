@@ -9,6 +9,7 @@ const path = require('path');
 
 const WORKFLOW_ID = 'eFJhFg79lyaycjlm';
 const { validate: validateVideoUploadReplay } = require('./patch-meta-ads-video-transfer-replay');
+const { validate: validateCrmContextPrefetch } = require('./patch-meta-ads-crm-context-prefetch');
 const args = new Set(process.argv.slice(2));
 const sourcePath = [...args].find((value) => value.endsWith('.json'));
 const expectedVersion = [...args].find((value) => value.startsWith('--expected-version='))?.slice('--expected-version='.length);
@@ -45,12 +46,18 @@ function assertCandidate(candidate) {
   if (!Array.isArray(candidate.nodes) || candidate.nodes.some((node) => node.type === 'n8n-nodes-base.googleSheetsTool')) {
     throw new Error('Candidate still contains a Google Sheets tool.');
   }
-  const crm = candidate.nodes.find((node) => node.name === 'CRM Offer Context');
-  if (crm?.type !== '@n8n/n8n-nodes-langchain.toolHttpRequest' || crm?.parameters?.url !== 'http://127.0.0.1:8099/api/atendimento/internal/meta-ads/offer-context?unit={unit}') {
-    throw new Error('Candidate CRM Offer Context tool is incomplete.');
+  validateCrmContextPrefetch(candidate);
+  const codeByName = (name) => String(candidate.nodes.find((node) => node.name === name)?.parameters?.jsCode || '');
+  const revision = (code) => /const\s+WORKFLOW_CONTRACT_REVISION\s*=\s*'([^']+)'/.exec(code)?.[1] || '';
+  const buildRevision = revision(codeByName('Build Jobs'));
+  const validatorRevision = revision(codeByName('Validate Meta Creative Payload'));
+  const gatewayRevision = revision(codeByName('Build Meta API Params From Vault'));
+  if (!buildRevision || buildRevision !== validatorRevision || buildRevision !== gatewayRevision) {
+    throw new Error('Candidate Meta Ads Publish workflow contract revisions are inconsistent.');
   }
-  const target = candidate.connections?.['CRM Offer Context']?.ai_tool?.[0]?.[0];
-  if (target?.node !== 'Livia' || target?.type !== 'ai_tool') throw new Error('Candidate CRM Offer Context is not connected to Livia.');
+  if (!/gatewayContractRevision !== WORKFLOW_CONTRACT_REVISION/.test(codeByName('Build Meta API Params From Vault'))) {
+    throw new Error('Candidate does not fail closed on Token Vault workflow contract revision drift.');
+  }
   validateVideoUploadReplay(candidate);
 }
 

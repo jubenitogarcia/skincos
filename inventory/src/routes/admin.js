@@ -7,7 +7,7 @@ import { normalizeInviteEmail, normalizeInviteScope, validateInviteDelegation } 
 import { normalizeAllowedUnits as normalizeCanonicalAllowedUnits, unknownUnitScopes } from '../../../shared/identity-contract/index.js';
 import { canCreateEmployee, displayJobTitle, publicOnboarding, validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
 import { syncIdentityWorkforceOnboarding, syncIdentityWorkforceStatus } from '../../../shared/identity-runtime/workforce-onboarding.js';
-import { shouldIssueInvite } from '../../../shared/identity-runtime/onboarding-state.js';
+import { isValidAccountTransition, normalizeAccountState, shouldIssueInvite } from '../../../shared/identity-runtime/onboarding-state.js';
 
 const ROLE_ADMIN = ['ADMIN', 'GESTOR', 'GERENTE', 'SUPERVISOR'];
 const ROLE_INVITES = ['GESTOR'];
@@ -412,6 +412,61 @@ export async function handleAdminRoutes({
     } catch (error) {
       const message = String(error?.message || 'ONBOARDING_ACTIVATION_FAILED');
       return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_ACTIVATION_PENDING', code: message }), { status: 503 }, appOrigin);
+    }
+  }
+
+  // Account-state changes are a second Identity -> Workforce saga boundary.
+  // Do not use the legacy user editor for onboarding accounts: it only knows
+  // `ativo`, while Workforce must keep the authoritative access_state aligned.
+  const statusMatch = url.pathname.match(/^\/admin\/onboarding\/([^/]+)\/status$/);
+  if (statusMatch && request.method === 'POST') {
+    try {
+      if (!onboardingHasSaga) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_MIGRATION_REQUIRED' }), { status: 503 }, appOrigin);
+      const onboardingId = decodeURIComponent(statusMatch[1] || '').trim();
+      const body = await request.json().catch(() => ({}));
+      const nextStatus = normalizeAccountState(body.accountStatus);
+      // Activation is deliberately handled only by the invite/registration
+      // boundary above. This endpoint is deprovisioning-only, so a transient
+      // Workforce failure never re-enables a user as "compensation".
+      if (!onboardingId || !['SUSPENDED', 'TERMINATED'].includes(nextStatus)) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_STATUS_INVALID' }), { status: 400 }, appOrigin);
+      const onboarding = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (!onboarding?.workforce_employee_id) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_STATUS_NOT_READY' }), { status: 409 }, appOrigin);
+      const currentStatus = normalizeAccountState(onboarding.account_status);
+      const denied = canCreateEmployee({ actorRole: auth?.user?.role, actorAllowedUnits: auth?.user?.allowedUnits, targetProfile: onboarding.profile, units: normalizeAllowedUnits(onboarding.units_json) });
+      if (denied) return withCORS(JSON.stringify({ success: false, error: 'Sem permissão para alterar este vínculo', code: denied }), { status: 403 }, appOrigin);
+      if (!isValidAccountTransition(currentStatus, nextStatus)) return withCORS(JSON.stringify({ success: false, error: 'ONBOARDING_STATUS_TRANSITION_DENIED' }), { status: 409 }, appOrigin);
+
+      const requestId = String(request.headers.get('x-request-id') || `identity-status-${onboardingId}`).slice(0, 180);
+      const at = new Date().toISOString();
+      const revokeInvite = ['SUSPENDED', 'TERMINATED'].includes(nextStatus) ? 1 : 0;
+      if (currentStatus !== nextStatus) {
+        try {
+          await env.DB.batch([
+            env.DB.prepare("UPDATE crm_employee_onboarding SET account_status=?, provisioning_state='COMPLETED', compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=NULL, updated_at=? WHERE id=? AND account_status=?").bind(nextStatus, at, onboardingId, currentStatus),
+            env.DB.prepare(`UPDATE ${usersTable} SET ativo=0, session_version=COALESCE(session_version, 0)+1, updated_at=? WHERE LOWER(email)=LOWER(?)`).bind(at, onboarding.corporate_email),
+            ...(revokeInvite && onboarding.invite_id ? [env.DB.prepare(`UPDATE ${invitesTable} SET revoked=1 WHERE id=? AND uses_count=0`).bind(onboarding.invite_id)] : []),
+          ]);
+        } catch {
+          return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: 'IDENTITY_STATUS_UPDATE_FAILED' }), { status: 503 }, appOrigin);
+        }
+      }
+
+      const pending = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      if (normalizeAccountState(pending?.account_status) !== nextStatus) return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: 'IDENTITY_STATUS_CONFLICT' }), { status: 409 }, appOrigin);
+      try {
+        await syncIdentityWorkforceStatus(env, { onboardingId, employeeId: onboarding.workforce_employee_id, accountStatus: nextStatus }, requestId);
+      } catch (error) {
+        await env.DB.prepare("UPDATE crm_employee_onboarding SET compensation_state='WORKFORCE_STATUS_PENDING', last_error_code=?, updated_at=? WHERE id=?").bind(String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120), new Date().toISOString(), onboardingId).run().catch(() => {});
+        await Promise.resolve(appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_SYNC_FAILED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { requestedStatus: nextStatus, requestId, failClosed: true } })).catch(() => {});
+        return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: String(error?.message || 'WORKFORCE_STATUS_SYNC_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
+      }
+
+      await env.DB.prepare('UPDATE crm_employee_onboarding SET compensation_state=NULL, last_error_code=NULL, updated_at=? WHERE id=?').bind(new Date().toISOString(), onboardingId).run();
+      const updated = await env.DB.prepare('SELECT * FROM crm_employee_onboarding WHERE id=? LIMIT 1').bind(onboardingId).first();
+      await appendAuditLog?.({ env, actor: auth.user.username, role: auth.user.role, ip, userAgent, action: 'EMPLOYEE_ONBOARDING_STATUS_CHANGED', entity: 'EMPLOYEE_ONBOARDING', entityId: onboardingId, unidade: normalizeAllowedUnits(onboarding.units_json).join(','), before: { accountStatus: currentStatus }, after: { accountStatus: nextStatus, inviteRevoked: Boolean(revokeInvite && onboarding.invite_id), sessionVersionIncremented: currentStatus !== nextStatus, requestId } });
+      return withCORS(JSON.stringify({ success: true, data: publicOnboarding(updated), replayed: currentStatus === nextStatus }), { status: 200 }, appOrigin);
+    } catch (error) {
+      return withCORS(JSON.stringify({ success: false, error: 'ACCOUNT_STATUS_PENDING', code: String(error?.message || 'ONBOARDING_STATUS_FAILED').slice(0, 120) }), { status: 503 }, appOrigin);
     }
   }
 
@@ -906,7 +961,7 @@ export async function handleAdminRoutes({
       if (!target) return withCORS(JSON.stringify({ success: false, error: 'USERNAME_REQUIRED' }), { status: 400 }, appOrigin);
       const body = await request.json().catch(() => ({}));
 
-      const exists = await env.DB.prepare(`SELECT username FROM ${usersTable} WHERE LOWER(username) = LOWER(?) LIMIT 1`).bind(target).first();
+      const exists = await env.DB.prepare(`SELECT username, email FROM ${usersTable} WHERE LOWER(username) = LOWER(?) LIMIT 1`).bind(target).first();
       if (!exists?.username) return withCORS(JSON.stringify({ success: false, error: 'USER_NOT_FOUND' }), { status: 404 }, appOrigin);
 
       const email = body.email !== undefined ? String(body.email || '').trim() : null;
@@ -922,6 +977,12 @@ export async function handleAdminRoutes({
       const allowedUnits = body.allowedUnits !== undefined ? JSON.stringify(normalizeAllowedUnits(body.allowedUnits)) : null;
       const allowedModules = body.allowedModules !== undefined ? JSON.stringify(normalizeAllowedModules(body.allowedModules)) : null;
       const ativo = body.ativo === undefined ? null : (body.ativo ? 1 : 0);
+      if (onboardingHasSaga && [body.role, body.allowedUnits, body.allowedModules, body.ativo].some((value) => value !== undefined)) {
+        const onboarding = await env.DB.prepare('SELECT id FROM crm_employee_onboarding WHERE LOWER(corporate_email)=LOWER(?) LIMIT 1').bind(exists.email || '').first();
+        if (onboarding?.id) {
+          return withCORS(JSON.stringify({ success: false, error: 'Vínculo de onboarding é gerenciado pelo contrato hierárquico', code: 'IDENTITY_ONBOARDING_MANAGED' }), { status: 409 }, appOrigin);
+        }
+      }
       const now = new Date().toISOString();
 
       const updateSql = usersHasModules
