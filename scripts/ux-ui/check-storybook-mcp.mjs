@@ -25,8 +25,7 @@ async function postMcp(payload, sessionId) {
     'MCP-Protocol-Version': '2025-03-26',
   }
   if (sessionId) headers['Mcp-Session-Id'] = sessionId
-  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- fixed loopback endpoint for the local Storybook process above.
-  return fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) })
+  return fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) }) // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- fixed loopback endpoint for the local Storybook process above.
 }
 
 function stopServer() {
