@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'd=\"$PWD\"; while [ \"$d\" != / ] && [ ! -f \"$d/.codex/hooks/invoke-skincos-supervisor.sh\" ]; do d=\"$(dirname \"$d\")\"; done; if [ -f \"$d/.codex/hooks/invoke-skincos-supervisor.sh\" ]; then exec \"$d/.codex/hooks/invoke-skincos-supervisor.sh\"; else printf \"%s\\n\" \"{\\\"continue\\\":true,\\\"stopReason\\\":\\\"SKINCOS supervisor: project hook runner not found\\\"}\"; fi'",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$d=(Get-Location).Path; while ($d -and -not (Test-Path -LiteralPath (Join-Path $d '.codex\\hooks\\invoke-skincos-supervisor.ps1'))) { $p=Split-Path -Parent $d; if ($p -eq $d) { $d=$null } else { $d=$p } }; if ($d) { & (Join-Path $d '.codex\\hooks\\invoke-skincos-supervisor.ps1') } else { [Console]::Out.WriteLine('{\\\"continue\\\":true,\\\"stopReason\\\":\\\"SKINCOS supervisor: project hook runner not found\\\"}') }\"",
+            "timeout": 30,
+            "statusMessage": "SKINCOS supervised continuity"
+          }
+        ]
+      }
+    ]
+  }
+}

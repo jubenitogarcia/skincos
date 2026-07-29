@@ -482,3 +482,22 @@
 - Impact: the journal now has no active/reconciliation state, while the full
   audit trail remains available. A current isolated WhatsApp delivery test must
   reach provider `DELIVERY_ACK`; HTTP acceptance alone is not closure evidence.
+
+## 2026-07-29 - Keep supervised Codex continuity project-local and fail-safe
+
+- Decision: implement same-thread continuity with the reviewed project `Stop`
+  hook, a deterministic gate and the existing
+  `skincos-project-orchestrator supervisor-cycle`. Version only hook
+  registration, implementation, configuration and tests; keep runtime state
+  ignored and coordinate sibling worktrees through the Git common directory.
+- Why: the native Stop contract already supports a new same-thread turn, so an
+  external daemon or App Server would add lifecycle, authentication and
+  exposure risk without solving a current requirement. Structured status,
+  idempotency, locks, leases, cooldown and a bounded cycle budget make the
+  smaller path observable and recoverable.
+- Impact: only a valid structured `continue` contract can generate another
+  turn. Missing/invalid state, unavailable or mismatched Skill, blockers,
+  production authorization, budget exhaustion and internal errors terminate
+  safely. The existing global hook remains untouched, project-hook trust stays
+  a human platform control, and production authorization never propagates
+  through an automatic continuation.

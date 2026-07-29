@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "max_cycles": 8,
+  "cooldown_seconds": 2,
+  "session_lock_ttl_seconds": 180,
+  "orphan_grace_seconds": 5,
+  "target_lease_ttl_seconds": 3600
+}

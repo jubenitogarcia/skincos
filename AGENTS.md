@@ -19,9 +19,11 @@
 - Register the shared repo as Git `safe.directory` for the WSL `admin` operator.
 - Never store `.env`, `.dev.vars`, `.cloudflared` credentials, `.codex`,
   cookies, or API keys inside `C:\CodexShared`.
-- Exception: `.codex/environments/environment.toml` may be committed so Codex
-  App project actions are shared across the common clone and per-user
-  worktrees. No other `.codex` content should live in `C:\CodexShared`.
+- Exceptions: `.codex/environments/environment.toml`, the reviewed project
+  `.codex/hooks.json`, `.codex/supervisor.json`, and versioned hook
+  implementation/tests under `.codex/hooks/` may be committed. Runtime state,
+  locks, transcripts, trust records and all other `.codex` content remain
+  prohibited in `C:\CodexShared`; `.codex/runtime/` must stay ignored.
 - If local execution needs secrets, use a private overlay or a private clone
   outside the shared area and document only variable names here.
 
@@ -40,6 +42,11 @@
   orquestrador” mean `resume-execute`; only `status`, “somente audite”, or
   “somente analise” mean read-only. Continue authorized work through PR/CI and
   staging evidence instead of stopping at a report.
+- In `supervisor-cycle`, keep orchestration intelligence in the Skill and use
+  the project `Stop` hook only as a deterministic structured-state gate. A
+  continued cycle never expands authorization: production, secrets, real
+  users, grants, migrations and production feature flags still require a new,
+  explicit and specific user authorization.
 
 ## Source of Truth
 
