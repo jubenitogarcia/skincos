@@ -1,5 +1,7 @@
 {
   "schema": 1,
+  "authoritative_at": "2026-07-29T14:02:00Z",
+  "source_main_sha": "6963ba0495870e8f9b15a0b1e81477dd5f7f3f8b",
   "items": [
     {
       "id": "p0-insumos-unit-access",
@@ -8,124 +10,151 @@
       "state": "resolved",
       "dependencies": [],
       "blockers": [],
-      "environment": "staging",
+      "environment": "production",
       "permitted_actions": [
-        "read-only runtime verification and actor correlation",
-        "record production versions and rollback metadata without publishing",
-        "preserve rollback artifacts",
-        "preserve rollback artifacts and monitor the promoted release"
+        "read-only regression observation",
+        "preserve immutable rollback and sanitized evidence"
+      ],
+      "prohibited_actions": [
+        "reopen the incident without a new observed symptom",
+        "use this resolved incident to authorize Finance activation"
       ],
       "required_evidence": [
-        "PR #763 and functional PR #776 integrated on current main",
-        "current-main candidate manifest and checksum",
-        "Inventory and CRM Pages preview/staging all attest the same current SHA",
-        "positive and negative unit-scope access validation",
-        "synthetic environment journey proving access per authorized unit",
-        "read-only identification of the current CRM actor before production consideration",
-        "production current-version and rollback checkpoint"
+        "PR #763/#776 source lineage",
+        "canonical production runs 30420719000 and 30420793906",
+        "synthetic positive and negative unit-scope journey"
       ],
-      "done_definition": "The unit-access regression is corrected, CI remains green, current-main staging and production prove authorized access for the canonical units, and denied cross-unit/no-unit behavior is covered without business-data mutation.",
-      "next_item": null,
-      "last_verified": "2026-07-29T04:36:09Z",
-      "sha": "f30f66e70e0dc949adde5120378509a1c95fe557",
-      "pr": 763,
+      "done_definition": "Resolved; retained only for audit and regression observation.",
+      "next_item": "finance-current-main-staging-evidence",
+      "last_verified": "2026-07-29T14:02:00Z",
       "evidence": {
-        "historical_inventory_preview_run": 30125747962,
-        "historical_crm_pages_preview_run": 30125749745,
-        "historical_inventory_staging_run": 30125805545,
-        "historical_crm_pages_staging_run": 30125807334,
-        "historical_authenticated_journey_run": 30129792473,
-        "historical_release_sha": "f276919ce6a63b337bd02bd0c3799dbf38f13b97",
-        "missing_functional_merge": "7ba0c11d8a98ff87262b13e268892191120c8544",
-        "historical_fixtures_torn_down": true,
-        "candidate_run": 30135641022,
-        "candidate_source_tree": "b22e897c8a4699f1424b3ee83656016be488ad67",
-        "candidate_source_archive_sha256": "22b9cf2a6845cc2e6348f0e797f69f6c5f89d7b42665bd27460ca8e131d60155",
-        "current_inventory_preview_run": 30135763050,
-        "current_crm_pages_preview_run": 30135762996,
-        "current_inventory_staging_run": 30135788180,
-        "current_crm_pages_staging_run": 30135788135,
-        "current_authenticated_journey_run": 30135863885,
-        "current_pages_url": "https://ca2b2a39.skincos-staging.pages.dev",
-        "current_fixtures_torn_down": true,
-        "production_inventory_run": 30137182608,
-        "production_pages_run": 30137826907,
-        "production_inventory_deployment": "2a71e616-64fc-40ff-8480-5c24fad4497e",
-        "production_inventory_version": "6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef",
-        "production_pages_deployment": "e65832a0-5925-4212-b252-2ff20cd08362",
-        "production_release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
-        "production_authenticated_smoke": "controlled synthetic onboarding and authenticated UI smokes passed; all synthetic identities were torn down",
-        "production_inventory_run": 30420719000,
-        "production_pages_run": 30420793906,
-        "production_checkpoint_artifact": 8711811875,
-        "production_rbac_scope_smoke": "403/RBAC_UNIT_DENIED for a canonical unit outside the synthetic actor scope"
+        "release_sha": "f30f66e70e0dc949adde5120378509a1c95fe557",
+        "inventory_run": 30420719000,
+        "crm_pages_run": 30420793906,
+        "checkpoint_artifact": 8711811875
       }
     },
     {
-      "id": "finance-staging-gate",
-      "objective": "Close Finance staging gates without enabling production or real users.",
+      "id": "finance-current-main-staging-evidence",
+      "objective": "Create one immutable Finance staging release from current main and prove its synthetic authenticated import/UI journey.",
       "priority": 100,
-      "state": "partially-validated",
+      "state": "ready-for-authorized-staging-operation",
       "dependencies": [],
       "blockers": [
-        "authenticated import and UI smoke",
-        "external monitor and human alert",
-        "fresh offsite PostgreSQL and runtime-config download",
-        "isolated restore drill for the current-main Finance artifact bundle",
-        "named human approval"
+        "current staging Finance Worker/UI attest 32bf3ebb rather than source_main_sha",
+        "no synthetic authenticated import/UI journey attested for a current-main single-SHA artifact"
       ],
       "environment": "staging",
       "permitted_actions": [
-        "staging-only rollback and kill-switch drills",
-        "staging-only scratch restore with synthetic data",
-        "read-only evidence capture"
+        "build a candidate from an explicit current main SHA",
+        "canonical Finance Worker/UI preview and staging promotion",
+        "synthetic authenticated import/UI smoke, canary observation and sanitized evidence capture",
+        "staging-only rollback or kill-switch drill"
+      ],
+      "prohibited_actions": [
+        "production deployment",
+        "module_enabled activation for real users",
+        "production grants, users, flags, secrets, data or resources"
       ],
       "required_evidence": [
-        "authenticated import and UI smoke",
-        "external monitor and human alert",
-        "encrypted offsite D1 backup",
-        "isolated restore drill",
-        "CI",
-        "staging journey",
-        "rollback"
+        "same SHA in Finance Worker and Finance UI preview/staging promotion evidence",
+        "staging migration journal and health/readiness/version evidence",
+        "synthetic authenticated import state-machine and UI journey",
+        "canary thresholds and rollback availability for that candidate"
       ],
-      "done_definition": "All required staging evidence is current; production remains disabled.",
-      "next_item": "finance-pilot-approval",
-      "last_verified": "2026-07-25T03:26:00Z",
-      "sha": "8af1d5fe9551891a05a104363043bf3d36fb4ef4",
-      "pr": 762,
+      "done_definition": "A single immutable current-main Finance artifact lineage is healthy in staging and has passed the controlled synthetic authenticated journey; Finance remains experimental and disabled.",
+      "next_item": "finance-offsite-postgresql-recovery",
+      "last_verified": "2026-07-29T14:02:00Z",
       "evidence": {
-        "candidate_run": 30139535704,
-        "preview_run": 30139561027,
-        "staging_deploy_run": 30139576133,
-        "staging_release_sha": "8af1d5fe9551891a05a104363043bf3d36fb4ef4",
-        "staging_worker_version": "97c7a7da-6a78-44a8-b980-2cc2810df7a0",
-        "rollback_run": 30139701809,
-        "rollback_sha": "67ee53843a9a52ad495ab6d67b8cd2b4fac053f9",
-        "rollback_worker_version": "c57fdafc-6045-4eb5-8b38-07ae98d7c256",
-        "canary_abort_drill": 30139247054,
-        "scratch_restore": "validated; resources destroyed after sanitized evidence"
+        "current_staging_sha": "32bf3ebb296ca95e3273bb4fed664480eb5642e5",
+        "worker_preview_run": 30168426616,
+        "worker_staging_run": 30168445270,
+        "ui_preview_run": 30168426575,
+        "ui_staging_run": 30168445288,
+        "worker_version": "51bd6fa4-d775-43e4-96c3-6fbe0cec8513",
+        "module_enabled": false,
+        "migration_journal": "0001 through 0012"
+      }
+    },
+    {
+      "id": "finance-offsite-postgresql-recovery",
+      "objective": "Prove fresh provider-separated PostgreSQL retrieval and isolated scratch restoration for the Finance recovery gate.",
+      "priority": 99,
+      "state": "blocked-external-provider-access",
+      "dependencies": ["finance-current-main-staging-evidence"],
+      "blockers": [
+        "large PostgreSQL object exceeds the current connector IPC frame limit",
+        "alternate provider path is not authorized"
+      ],
+      "environment": "isolated-scratch",
+      "permitted_actions": [
+        "read-only provider metadata and authorization checks",
+        "authorized streaming download, integrity verification and scratch restore after access is supplied"
+      ],
+      "prohibited_actions": [
+        "treat local manifest-matched ciphertext as a new offsite restore",
+        "production restore or Finance pilot activation"
+      ],
+      "required_evidence": [
+        "fresh offsite PostgreSQL ciphertext retrieval",
+        "integrity verification",
+        "isolated PostgreSQL scratch restore with sanitized count/checksum and functional evidence",
+        "scratch teardown"
+      ],
+      "done_definition": "The provider-separated PostgreSQL object is freshly retrieved, verified and restored in isolation; D1 and runtime-config evidence are retained separately.",
+      "next_item": "finance-pilot-approval",
+      "last_verified": "2026-07-29T14:02:00Z",
+      "evidence": {
+        "d1_offsite_restore": "proven",
+        "runtime_config_fresh_retrieval": "proven",
+        "postgresql_fresh_retrieval": "unproven",
+        "last_retry": "2026-07-25T04:55:00Z"
       }
     },
     {
       "id": "finance-pilot-approval",
-      "objective": "Prepare, not activate, Finance pilot.",
+      "objective": "Prepare, not activate, the Finance pilot package after all staging and recovery gates are current.",
       "priority": 90,
       "state": "blocked",
-      "dependencies": ["finance-staging-gate"],
+      "dependencies": ["finance-current-main-staging-evidence", "finance-offsite-postgresql-recovery"],
       "blockers": [
-        "P0 Insumos production gate",
-        "finance staging gate evidence",
+        "current-main staging journey evidence",
+        "fresh PostgreSQL offsite restore evidence",
         "named human approval"
       ],
       "environment": "production",
-      "permitted_actions": ["none until P0, the Finance staging gate and named approval are complete"],
-      "required_evidence": ["approved package"],
-      "done_definition": "Approval recorded.",
+      "permitted_actions": ["read-only package review and evidence reconciliation"],
+      "prohibited_actions": ["module activation", "grant changes", "cohort activation", "global release"],
+      "required_evidence": ["approved nominal pilot package", "all staging/recovery gates"],
+      "done_definition": "Named approval is recorded; production activation remains a separate explicit command.",
+      "next_item": "finance-production-provision",
+      "last_verified": "2026-07-29T14:02:00Z"
+    },
+    {
+      "id": "finance-production-provision",
+      "objective": "Provision isolated Finance production resources through the canonical guarded workflow path.",
+      "priority": 80,
+      "state": "blocked-requires-production-authorization",
+      "dependencies": ["finance-pilot-approval"],
+      "blockers": [
+        "explicit production authorization",
+        "production Finance Worker, D1, control KV and UI Pages project do not exist",
+        "production Finance environment configuration names are absent"
+      ],
+      "environment": "production",
+      "permitted_actions": ["read-only preflight and provisioning-plan review"],
+      "prohibited_actions": ["unapproved resource creation", "migration", "deploy", "flag/grant/user/data mutation"],
+      "required_evidence": [
+        "isolated production resource inventory",
+        "environment variable/secret names only",
+        "immutable staging lineage",
+        "checkpoint and rollback plan",
+        "explicit production authorization"
+      ],
+      "done_definition": "Resources are separately provisioned and attested before any production promotion; this is not pilot activation.",
       "next_item": null,
-      "last_verified": "2026-07-24T22:20:00Z",
-      "sha": "1a1a586feaf99ed542f386b245b8b748a03bac4b",
-      "pr": 762
+      "last_verified": "2026-07-29T14:02:00Z",
+      "evidence": {"missing_worker": "skincos-finance", "failed_core_api_run": 30418523054}
     }
   ]
 }
