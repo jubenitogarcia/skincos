@@ -28,6 +28,10 @@
 
 ## External/product follow-up
 
+- [ ] When an unpublished, approved Livia source item is available, run one
+  controlled production journey on workflow `WGXr4vYkv9UoJ8zc` version
+  `8316de5d-c047-473a-bd6a-662b513b73b5` and verify all destinations externally.
+  Do not reuse executions 336/339 media or create synthetic social content.
 - [ ] Review draft PR #832 (`codex/admin/ux-ui-infrastructure`) after required
   checks finish; its UX/UI audit infrastructure is local/synthetic only and
   must not be treated as a production UI audit or deployment authorization.
