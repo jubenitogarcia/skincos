@@ -89,6 +89,6 @@
     "website:deploy": "npm run module:site-public:website:deploy"
   },
   "devDependencies": {
-    "semver": "^7.7.3"
+    "semver": "^7.7.4"
   }
 }
