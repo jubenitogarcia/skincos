@@ -14,7 +14,7 @@
 
 - `maintenance`: responde 503 somente para Financeiro, com `x-skincos-module-state=maintenance`.
 - `disabled`: responde 423 somente para Financeiro; CRM, Inventory, Ponto e navegação continuam disponíveis.
-- `canary`: exige simultaneamente allowlist, unidade, bucket percentual determinístico e SHA promovido; qualquer campo ausente falha fechado com 403/503. A política atual permite somente `finance-staging-monitor` em `novo-hamburgo` no staging.
+- `canary`: exige simultaneamente allowlist, unidade, bucket percentual determinístico e SHA promovido; qualquer campo ausente falha fechado com 403/503. A política atual permite somente `finance-staging-smoke` em `novo-hamburgo` no staging; a identidade `viewer` do monitor não participa da jornada.
 
 ## Canary sintético e limites automáticos
 
