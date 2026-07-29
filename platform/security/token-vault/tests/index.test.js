@@ -4,6 +4,7 @@ import { handleRequest } from '../src/index.js';
 
 const encoder = new TextEncoder();
 const TEST_API_TOKEN = ['unit', 'auth', 'token'].join('-');
+const TEST_OPERATIONAL_TOKEN = ['unit', 'operational', 'token'].join('-');
 const TEST_ENCRYPTION_KEY = ['unit', 'encryption', 'key', 'with', 'enough', 'length'].join('-');
 const THREADS_TOKEN = ['threads', 'fixture', 'token'].join('-');
 const FACEBOOK_TOKEN = ['facebook', 'fixture', 'token'].join('-');
@@ -73,6 +74,7 @@ function env(db) {
   return {
     TOKEN_VAULT_DB: db,
     TOKEN_VAULT_API_TOKEN: TEST_API_TOKEN,
+    TOKEN_VAULT_N8N_API_TOKEN: TEST_OPERATIONAL_TOKEN,
     TOKEN_VAULT_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
     REQUIRE_AUTH: 'true',
     WORKER_AUTH_HEADER_NAME: 'Authorization',
@@ -82,6 +84,10 @@ function env(db) {
 
 function authHeaders() {
   return { Authorization: `Bearer ${TEST_API_TOKEN}` };
+}
+
+function operationalAuthHeaders() {
+  return { Authorization: `Bearer ${TEST_OPERATIONAL_TOKEN}` };
 }
 
 async function encryptForSeed(token, secret) {
@@ -111,6 +117,56 @@ test('health validates configured bindings and secrets', async () => {
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.checks.d1, true);
+});
+
+test('routes social publication requests to the fail-closed gateway', async () => {
+  const db = new FakeDb();
+  const response = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/social-publish/operations', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        platform: 'unsupported',
+        unit: 'bss',
+        operation: 'preflight_contract_probe',
+        method: 'GET',
+        url: 'https://graph.instagram.com/v25.0/1',
+      }),
+    }),
+    env(db),
+  );
+  const body = await response.json();
+  assert.equal(response.status, 400);
+  assert.equal(body.error, 'invalid_platform');
+});
+
+test('operational credential can call the social gateway but not list token material', async () => {
+  const db = new FakeDb();
+  const socialResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/social-publish/operations', {
+      method: 'POST',
+      headers: { ...operationalAuthHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        platform: 'unsupported',
+        unit: 'bss',
+        operation: 'preflight_contract_probe',
+        method: 'GET',
+        url: 'https://graph.instagram.com/v25.0/1',
+      }),
+    }),
+    env(db),
+  );
+  assert.equal(socialResponse.status, 400);
+  assert.equal((await socialResponse.json()).error, 'invalid_platform');
+
+  const tokensResponse = await handleRequest(
+    new Request('https://api.skincos.com.br/internal/token-vault/v1/tokens?active=true', {
+      headers: operationalAuthHeaders(),
+    }),
+    env(db),
+  );
+  assert.equal(tokensResponse.status, 403);
+  assert.equal((await tokensResponse.json()).error, 'admin_credential_required');
 });
 
 test('lists decrypted provider tokens with compatibility fields', async () => {

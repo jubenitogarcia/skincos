@@ -16,6 +16,7 @@ import { doctorSlugFromTeamMember, doctorSlugMatchesQuery, normalizeDoctorSlug }
 import { trackBookingFunnelStep, trackBookingRequestSubmitted } from "@/lib/leadTracking";
 import { setStoredUnitSlug } from "@/lib/unitSelection";
 import { buildTrackingContextFromBrowser, persistAttributionSnapshot } from "@/lib/campaign";
+import { META_SCHEDULE_CONTENT_TYPE } from "@/lib/metaEventContracts";
 import { createMetaEventId, trackMetaStandardEvent } from "@/lib/metaBrowser";
 import TurnstileWidget from "@/components/TurnstileWidget";
 import SmoothAnchorLink from "@/components/SmoothAnchorLink";
@@ -1045,7 +1046,7 @@ export default function BookingFlow() {
             trackMetaStandardEvent(
                 "Schedule",
                 {
-                    content_type: "booking",
+                    content_type: META_SCHEDULE_CONTENT_TYPE,
                     booking_id: json.id,
                     unit_slug: unitSlug,
                     doctor_slug: effectiveDoctor.slug,

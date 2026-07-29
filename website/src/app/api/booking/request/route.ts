@@ -7,8 +7,10 @@ import { sendBookingNotifications, type PatientGender } from "@/lib/bookingNotif
 import { doctorSlugMatchesQuery } from "@/lib/doctorSlug";
 import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
 import { issueBookingStatusToken } from "@/lib/bookingSecurity";
+import { META_SCHEDULE_CONTENT_TYPE } from "@/lib/metaEventContracts";
 import { sendMetaServerEvent } from "@/lib/metaConversionsApi";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
+import { isAuthorizedSyntheticBookingTest, SYNTHETIC_BOOKING_TEST_TOKEN_HEADER } from "@/lib/syntheticBookingTest";
 
 export const dynamic = "force-dynamic";
 
@@ -494,8 +496,16 @@ export async function POST(request: Request) {
         }
     }
 
+    const syntheticBookingTest = isAuthorizedSyntheticBookingTest({
+        expectedToken: await getRuntimeSecret("BOOKING_SYNTHETIC_TEST_TOKEN"),
+        providedToken: request.headers.get(SYNTHETIC_BOOKING_TEST_TOKEN_HEADER) ?? "",
+        patientName,
+        email,
+        whatsapp,
+    });
+
     const notifications =
-        status === "confirmed"
+        status === "confirmed" && !syntheticBookingTest
             ? await sendBookingNotifications({
                 id,
                 unitSlug,
@@ -512,9 +522,9 @@ export async function POST(request: Request) {
                 statusToken,
             })
             : {
-                email: { ok: false, status: "skipped", error: "not_confirmed" },
-                whatsapp: { ok: false, status: "skipped", error: "not_confirmed" },
-                unitEmail: { ok: false, status: "skipped", error: "not_confirmed" },
+                email: { ok: false, status: "skipped", error: syntheticBookingTest ? "synthetic_test" : "not_confirmed" },
+                whatsapp: { ok: false, status: "skipped", error: syntheticBookingTest ? "synthetic_test" : "not_confirmed" },
+                unitEmail: { ok: false, status: "skipped", error: syntheticBookingTest ? "synthetic_test" : "not_confirmed" },
             };
 
     if (status === "confirmed") {
@@ -559,6 +569,7 @@ export async function POST(request: Request) {
                     fbc: trackingContextResolved?.fbc ?? null,
                 },
                 customData: {
+                    content_type: META_SCHEDULE_CONTENT_TYPE,
                     booking_id: id,
                     unit_slug: unitSlug,
                     doctor_slug: effectiveDoctorSlug,
@@ -587,35 +598,38 @@ export async function POST(request: Request) {
         );
     }
 
-    // Optional: notify external automation via webhook (WhatsApp integration etc.)
-    await tryPostWebhook({
-        event: "booking.created",
-        booking: {
-            id,
-            status,
-            unitSlug,
-            doctorSlug: effectiveDoctorSlug,
-            doctorName: safeDoctorName,
-            durationMinutes,
-            includes: body.includes ?? null,
-            service: { id: service.id, name: service.name },
-            selectedServices: selectedProcedures.map((item) => ({ id: item.id, name: item.name })),
-            startAtMs,
-            endAtMs,
-            confirmByMs,
-            patientName,
-            patientGender,
-            email,
-            whatsapp,
-            cpf,
-            address,
-            customerId,
-            notes,
-            metaEventId,
-            trackingContext: trackingContextResolved,
-        },
-        decisionLinks,
-    });
+    // Synthetic CAPI verification must never reach downstream email, WhatsApp,
+    // or automation channels. The authorization is intentionally short-lived.
+    if (!syntheticBookingTest) {
+        await tryPostWebhook({
+            event: "booking.created",
+            booking: {
+                id,
+                status,
+                unitSlug,
+                doctorSlug: effectiveDoctorSlug,
+                doctorName: safeDoctorName,
+                durationMinutes,
+                includes: body.includes ?? null,
+                service: { id: service.id, name: service.name },
+                selectedServices: selectedProcedures.map((item) => ({ id: item.id, name: item.name })),
+                startAtMs,
+                endAtMs,
+                confirmByMs,
+                patientName,
+                patientGender,
+                email,
+                whatsapp,
+                cpf,
+                address,
+                customerId,
+                notes,
+                metaEventId,
+                trackingContext: trackingContextResolved,
+            },
+            decisionLinks,
+        });
+    }
 
     return json(
         {

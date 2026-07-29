@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rhythm candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_id",
+    "bpm",
+    "meter",
+    "groove",
+    "preview_uri"
+  ],
+  "properties": {
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bpm": {
+      "type": "number",
+      "minimum": 1
+    },
+    "meter": {
+      "type": "string",
+      "minLength": 1
+    },
+    "groove": {
+      "type": "string",
+      "minLength": 1
+    },
+    "preview_uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "midi_uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "swing": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "examples": [
+    {
+      "candidate_id": "GRV-1",
+      "bpm": 100,
+      "meter": "4/4",
+      "groove": "steady",
+      "preview_uri": "storage://r.wav",
+      "midi_uri": "storage://r.mid",
+      "swing": 0
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "candidate_id": "GRV-1",
+      "bpm": 0,
+      "meter": "4/4",
+      "groove": "x",
+      "preview_uri": "x"
+    }
+  ]
+}

@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Music production report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "production_id",
+    "status",
+    "jobs",
+    "costs",
+    "warnings"
+  ],
+  "properties": {
+    "production_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "composition_id",
+          "module",
+          "component_id",
+          "revision",
+          "input_hash",
+          "status",
+          "job_key"
+        ],
+        "properties": {
+          "composition_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "module": {
+            "type": "string",
+            "minLength": 1
+          },
+          "component_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "input_hash": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "lineage": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          },
+          "job_key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cost": {
+            "type": "number",
+            "minimum": 0
+          },
+          "fallback": {
+            "type": "boolean"
+          },
+          "provider_request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          },
+          "output_hash": {
+            "type": "string",
+            "minLength": 1
+          },
+          "error_code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "error_message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "invalidation_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "created_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "updated_at": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "costs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "currency",
+        "events"
+      ],
+      "properties": {
+        "total": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "production_id",
+              "provider",
+              "amount",
+              "currency",
+              "job_key",
+              "event_id",
+              "created_at"
+            ],
+            "properties": {
+              "production_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "amount": {
+                "type": "number",
+                "minimum": 0
+              },
+              "currency": {
+                "type": "string",
+                "minLength": 1
+              },
+              "job_key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "event_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "created_at": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "retry_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_attempts",
+        "duplicate_callbacks_prevented"
+      ],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "duplicate_callbacks_prevented": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "production_id": "MSC-1",
+      "status": "READY",
+      "jobs": [],
+      "costs": {
+        "total": 0,
+        "currency": "USD",
+        "events": []
+      },
+      "warnings": [],
+      "retry_summary": {
+        "max_attempts": 1,
+        "duplicate_callbacks_prevented": true
+      }
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "MSC-1",
+      "status": "READY",
+      "jobs": [],
+      "costs": {}
+    }
+  ]
+}
