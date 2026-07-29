@@ -106,7 +106,8 @@ function validateStructure() {
     'Verify Published Artifacts',
     'Attach Verified Publish Artifacts',
     'Switch Final Dry Run',
-    'Merge Drive Result and Context',
+    'Prepare Drive Publication Marks',
+    'Collect Drive Publication Marks',
     'Assert Drive Published',
   ]) {
     assert(names.has(name), `Missing node: ${name}`);
@@ -239,11 +240,12 @@ function validateStructure() {
   assert(!connectionExists('Collect Publish Results', 'Inform Success (1)'), 'Collect Publish Results must not directly feed Inform Success (1)');
   assert(!connectionExists('Collect Publish Results', 'Update File'), 'Collect Publish Results must not directly feed Update File');
   assert(!connectionExists('Collect Publish Results', 'Cleanup Temp Files'), 'Collect Publish Results must not directly feed Cleanup Temp Files');
-  assert(connectionExists('Switch Final Dry Run', 'Update File', 0), 'Switch Final Dry Run normal output must feed Update File');
-  assert(connectionExists('Switch Final Dry Run', 'Merge Drive Result and Context', 0), 'Switch Final Dry Run must preserve the notification context for Drive verification');
+  assert(!names.has('Merge Drive Result and Context'), 'Drive publication must not use a positional merge that can discard carousel source files');
+  assert(connectionExists('Switch Final Dry Run', 'Prepare Drive Publication Marks', 0), 'Switch Final Dry Run normal output must fan out verified Drive source files');
+  assert(connectionExists('Prepare Drive Publication Marks', 'Update File'), 'Every verified Drive source file must be sent to Update File');
   const updateEdges = workflow.connections?.['Update File']?.main?.[0] || [];
-  assert(updateEdges.some((edge) => edge?.node === 'Merge Drive Result and Context' && edge?.index === 1), 'Update File must feed the Drive result into the final merge');
-  assert(connectionExists('Merge Drive Result and Context', 'Assert Drive Published'), 'Merged Drive result and notification context must feed Assert Drive Published');
+  assert(updateEdges.some((edge) => edge?.node === 'Collect Drive Publication Marks'), 'Update File must feed every API readback into the Drive publication collector');
+  assert(connectionExists('Collect Drive Publication Marks', 'Assert Drive Published'), 'Collected Drive readbacks must feed Assert Drive Published');
   const notificationNode = names.has('Inform Success (1)') ? 'Inform Success (1)' : 'Inform Success (2)';
   assert(connectionExists('Assert Drive Published', notificationNode), 'Verified Drive update must feed notification');
   assert(connectionExists('Assert Drive Published', 'Cleanup Temp Files'), 'Verified Drive update must feed cleanup');
@@ -281,6 +283,8 @@ function validateContracts() {
   const tokenHealthCommand = commandOf('Validate Publish Token Health');
   const verifyCommand = commandOf('Verify Published Artifacts');
   const attachVerified = codeOf('Attach Verified Publish Artifacts');
+  const prepareDriveMarks = codeOf('Prepare Drive Publication Marks');
+  const collectDriveMarks = codeOf('Collect Drive Publication Marks');
   const assertDrive = codeOf('Assert Drive Published');
   const attach = codeOf('Attach Uploaded Main Media Metadata');
   const waitAmount = String(getNode('Wait')?.parameters?.amount || '');
@@ -448,11 +452,12 @@ function validateContracts() {
   assert(!/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b|\/mnt\/c\/|livia-verify-provider-copy-drift-wrapper|--verifier\b/.test(verifyCommand), 'Verifier must not use a mutable root or compatibility wrapper');
   assert(!verifyCommand.includes('Get Credential Tokens') && !verifyCommand.includes('tokenRoot'), 'Verifier must not expose token-vault data in its command line');
   assert(attachVerified.includes('result.ok !== true'), 'Verifier failures must stop final effects');
-  assert(assertDrive.includes('appProperties.published'), 'Drive verification must assert published=true');
+  assert(prepareDriveMarks.includes('driveExpectedFileIds') && prepareDriveMarks.includes('fileIds'), 'Drive fan-out must use the verified source fileIds contract');
+  assert(collectDriveMarks.includes("$items('Prepare Drive Publication Marks')"), 'Drive collector must correlate readbacks to the semantic fan-out contract');
+  assert(collectDriveMarks.includes('properties.published') && collectDriveMarks.includes('count mismatch'), 'Drive collector must reject missing or unmarked source files');
+  assert(assertDrive.includes('expectedFileIds') && assertDrive.includes('verifiedFileIds'), 'Drive verification must assert every source file was marked published=true');
   assert(assertDrive.includes('const finalContext ='), 'Drive verification must project a bounded final context');
   assert(!assertDrive.includes('...original') && !assertDrive.includes('$('), 'Drive verification must not resolve or spread an upstream publish envelope');
-  const driveMerge = getNode('Merge Drive Result and Context')?.parameters || {};
-  assert(driveMerge.mode === 'combine' && driveMerge.combineBy === 'combineByPosition', 'Drive merge must combine the compact context and Drive response by position');
   assert(updateOptions.includes('"fields":["*"]'), 'Update File must return properties for verification');
   if (getNode('Inform Success (1)')) {
     assert(notifyPhone.includes('N8N_DEFAULT_TEST_PHONE') && !notifyPhone.includes('555195103563'), 'Notification must use the runtime E.164 phone instead of a hard-coded JID');
@@ -598,11 +603,41 @@ function validateManualDryRunFixture() {
   assert(mismatched?.[0]?.json?.firstJob?.semanticJobKey === semanticJobKey, 'Mismatched semantic progress must not suppress a current provider job');
 }
 
+function validateDrivePublicationMarkFixture() {
+  const prepare = codeOf('Prepare Drive Publication Marks');
+  const collect = codeOf('Collect Drive Publication Marks');
+  const assertDrive = codeOf('Assert Drive Published');
+  const source = {
+    json: {
+      id: 'drive-a',
+      fileIds: ['drive-a', 'drive-b', 'drive-c'],
+      groupKey: 'dt:fixture',
+      whatsappMessage: 'fixture',
+      shouldNotify: true,
+      codexDryRun: false,
+    },
+  };
+  const prepared = runCode(prepare, {
+    $input: { all: () => [source], first: () => source },
+  });
+  assert(Array.isArray(prepared) && prepared.length === 3, 'Drive mark fan-out fixture must emit one update item per source file');
+  const updates = prepared.map((item) => ({ json: { id: item.json.id, properties: { published: 'true' } } }));
+  const collected = runCode(collect, {
+    $input: { all: () => updates, first: () => updates[0] },
+    $items: (name) => name === 'Prepare Drive Publication Marks' ? prepared : [],
+  });
+  const verified = runCode(assertDrive, {
+    $input: { all: () => collected, first: () => collected[0] },
+  });
+  assert(verified?.[0]?.json?.driveAudit?.verifiedFileCount === 3, 'Drive mark fixture must retain all verified source file IDs');
+}
+
 validateStructure();
 validateSyntax();
 validateContracts();
 validateFixtures();
 validateManualDryRunFixture();
+validateDrivePublicationMarkFixture();
 
 if (errors.length) {
   console.error(`Validation failed for ${workflowPath}`);

@@ -206,6 +206,57 @@ function notificationForExecution(runData) {
   return { nodeName: '', notification: {} };
 }
 
+function uniqueNonEmpty(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of Array.isArray(values) ? values : []) {
+    const id = String(value || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
+
+function driveAuditForExecution(runData) {
+  const attached = executionItems(runData, 'Attach Verified Publish Artifacts')[0]?.json || {};
+  const prepared = executionItems(runData, 'Prepare Drive Publication Marks').map((item) => item.json || {});
+  const updates = executionItems(runData, 'Update File').map((item) => item.json || {});
+  const asserted = executionItems(runData, 'Assert Drive Published')[0]?.json || {};
+  const expectedFileIds = uniqueNonEmpty(prepared.length
+    ? prepared.map((item) => item.id)
+    : (Array.isArray(attached.fileIds) ? attached.fileIds : [attached.id]));
+  const returnedFileIds = uniqueNonEmpty(updates.map((item) => item.id));
+  const publishedFileIds = uniqueNonEmpty(updates
+    .filter((item) => String(item?.properties?.published || item?.appProperties?.published || '').toLowerCase() === 'true')
+    .map((item) => item.id));
+  const assertedAudit = asserted.driveAudit && typeof asserted.driveAudit === 'object' ? asserted.driveAudit : {};
+  const assertedFileIds = uniqueNonEmpty(assertedAudit.verifiedFileIds);
+  const missingFileIds = expectedFileIds.filter((id) => !publishedFileIds.includes(id));
+  const unexpectedFileIds = returnedFileIds.filter((id) => !expectedFileIds.includes(id));
+  const collectorMismatch = prepared.length > 0 && (
+    assertedAudit.state !== 'verified' ||
+    assertedAudit.published !== true ||
+    assertedFileIds.length !== expectedFileIds.length ||
+    expectedFileIds.some((id) => !assertedFileIds.includes(id))
+  );
+  const state = expectedFileIds.length && !missingFileIds.length && !unexpectedFileIds.length && !collectorMismatch
+    ? 'verified'
+    : expectedFileIds.length ? 'incomplete' : 'unconfirmed';
+  return {
+    contract: prepared.length > 0 ? 'group-fanout-readback' : 'legacy-single-mark',
+    state,
+    expectedFileIds,
+    returnedFileIds,
+    publishedFileIds,
+    expectedFileCount: expectedFileIds.length,
+    verifiedFileCount: publishedFileIds.length,
+    missingFileIds,
+    unexpectedFileIds,
+    collectorMismatch,
+  };
+}
+
 function auditExecution(executionId) {
   const summary = summarizeExecution(executionId);
   const execution = loadExecutionEntity(executionId);
@@ -230,7 +281,7 @@ function auditExecution(executionId) {
 
   const processMedia = parseProcessMediaOutput((runData['Process Media Asset'] || [])[0]);
   const final = executionItems(runData, 'Collect Publish Results')[0]?.json || {};
-  const drive = executionItems(runData, 'Update File')[0]?.json || {};
+  const drive = driveAuditForExecution(runData);
   const { nodeName: notificationNode, notification } = notificationForExecution(runData);
   const runtimePhone = readRuntimePhone();
   const destination = String(notification?.data?.key?.remoteJid || '').replace(/\D/g, '');
@@ -293,11 +344,7 @@ function auditExecution(executionId) {
       uploadEligible: processMedia.uploadEligible,
     },
     delivery: verificationResult.deliveryAudit || { state: 'unavailable' },
-    drive: {
-      updateReturned: Boolean(drive.id),
-      publishedPropertyConfirmed: String(drive.appProperties?.published || drive.properties?.published || '').toLowerCase() === 'true',
-      state: String(drive.appProperties?.published || drive.properties?.published || '').toLowerCase() === 'true' ? 'verified' : 'unconfirmed',
-    },
+    drive,
     notification: {
       node: notificationNode || 'unavailable',
       state: telegramDelivered ? 'delivered' : legacyState,
@@ -307,6 +354,7 @@ function auditExecution(executionId) {
     findings: {
       graphApiDeprecationWarnings: [...new Set(deprecations)],
       contentDeliveryGaps: contentFailures,
+      drivePublicationGaps: drive.missingFileIds,
       linksInHistoricalCollector: final.whatsapp?.instagram?.permalinks || {},
     },
   }, null, 2));
@@ -639,50 +687,70 @@ function validateWorkflow() {
   for (const required of ['livia-publish-ledger', 'codexDryRun === true', 'semanticJobKey', "'__group__'"]) {
     if (!progressScript.includes(required)) errors.push(`publish-progress-ledger.js must preserve safe resume semantics (${required}).`);
   }
-  for (const name of ['Verify Published Artifacts', 'Attach Verified Publish Artifacts', 'Switch Final Dry Run', 'Merge Drive Result and Context', 'Assert Drive Published', 'Cleanup Temp Files']) {
+  for (const name of ['Verify Published Artifacts', 'Attach Verified Publish Artifacts', 'Switch Final Dry Run', 'Prepare Drive Publication Marks', 'Update File', 'Collect Drive Publication Marks', 'Assert Drive Published', 'Cleanup Temp Files']) {
     if (!nodeByName.has(name)) errors.push(`Missing node: ${name}`);
   }
+  if (nodeByName.has('Merge Drive Result and Context')) {
+    errors.push('Legacy positional Drive merge must not remain in the active workflow.');
+  }
+  const prepareDriveCode = String(nodeByName.get('Prepare Drive Publication Marks')?.parameters?.jsCode || '');
+  const collectDriveCode = String(nodeByName.get('Collect Drive Publication Marks')?.parameters?.jsCode || '');
   const assertDriveCode = String(nodeByName.get('Assert Drive Published')?.parameters?.jsCode || '');
-  if (!assertDriveCode.includes('appProperties.published')) {
-    errors.push('Assert Drive Published must verify appProperties.published=true.');
+  if (!prepareDriveCode.includes('driveExpectedFileIds') || !prepareDriveCode.includes('fileIds')) {
+    errors.push('Prepare Drive Publication Marks must fan out the verified fileIds contract.');
+  }
+  if (!collectDriveCode.includes("$items('Prepare Drive Publication Marks')") || !collectDriveCode.includes('properties.published')) {
+    errors.push('Collect Drive Publication Marks must correlate and verify every Drive update response.');
+  }
+  if (!assertDriveCode.includes('expectedFileIds') || !assertDriveCode.includes('verifiedFileIds')) {
+    errors.push('Assert Drive Published must verify every source file was marked published=true.');
   }
   if (!assertDriveCode.includes('const finalContext =') || assertDriveCode.includes('$(') || assertDriveCode.includes('...original')) {
     errors.push('Assert Drive Published must project a bounded context without resolving an upstream node.');
   }
-  if (assertDriveCode) {
+  if (prepareDriveCode && collectDriveCode && assertDriveCode) {
     try {
-      const executeAssertDrive = new Function('$json', assertDriveCode);
-      const mergedContext = {
-        id: 'drive-file-fixture',
-        name: 'fixture.png',
-        groupKey: 'dt:fixture',
-        whatsappMessage: 'fixture message',
-        shouldNotify: true,
-        codexDryRun: false,
-        oversizedPublishEnvelope: 'x'.repeat(1024 * 1024),
-        modifiedTime: '2026-07-10T00:00:00.000Z',
-        appProperties: { published: 'true' },
+      const executePrepare = new Function('$input', `"use strict";\n${prepareDriveCode}`);
+      const executeCollect = new Function('$input', '$items', `"use strict";\n${collectDriveCode}`);
+      const executeAssertDrive = new Function('$input', `"use strict";\n${assertDriveCode}`);
+      const source = {
+        json: {
+          id: 'drive-file-fixture-a',
+          fileIds: ['drive-file-fixture-a', 'drive-file-fixture-b'],
+          groupKey: 'dt:fixture',
+          whatsappMessage: 'fixture message',
+          shouldNotify: true,
+          codexDryRun: false,
+          oversizedPublishEnvelope: 'x'.repeat(1024 * 1024),
+        },
       };
-      const result = executeAssertDrive(mergedContext);
+      const prepared = executePrepare({ all: () => [source] });
+      const collected = executeCollect(
+        { all: () => prepared.map((item) => ({ json: { id: item.json.id, properties: { published: 'true' } } })) },
+        (name) => name === 'Prepare Drive Publication Marks' ? prepared : [],
+      );
+      const result = executeAssertDrive({ first: () => collected[0], all: () => collected });
       const projected = result?.[0]?.json || {};
       if (
-        projected.groupKey !== mergedContext.groupKey ||
-        projected.whatsappMessage !== mergedContext.whatsappMessage ||
+        projected.groupKey !== source.json.groupKey ||
+        projected.whatsappMessage !== source.json.whatsappMessage ||
         projected.driveAudit?.state !== 'verified' ||
+        projected.driveAudit?.verifiedFileCount !== 2 ||
         Object.prototype.hasOwnProperty.call(projected, 'oversizedPublishEnvelope')
       ) {
         errors.push('Assert Drive Published bounded-context replay returned an invalid projection.');
       }
-      let rejectedUnpublished = false;
+      let rejectedIncomplete = false;
       try {
-        executeAssertDrive(
-          { id: 'drive-file-fixture', appProperties: { published: 'false' } },
+        executeCollect(
+          { all: () => [{ json: { id: 'drive-file-fixture-a', properties: { published: 'true' } } }] },
+          (name) => name === 'Prepare Drive Publication Marks' ? prepared : [],
         );
       } catch {
-        rejectedUnpublished = true;
+        rejectedIncomplete = true;
       }
-      if (!rejectedUnpublished) {
-        errors.push('Assert Drive Published replay must reject published=false.');
+      if (!rejectedIncomplete) {
+        errors.push('Drive publication collector replay must reject an incomplete carousel readback.');
       }
     } catch (error) {
       errors.push(`Assert Drive Published bounded-context replay failed: ${error.message}`);
@@ -698,7 +766,7 @@ function validateWorkflow() {
   const finalSwitchTargets = workflow.connections['Switch Final Dry Run']?.main || [];
   const normalTargets = (finalSwitchTargets[0] || []).map((edge) => edge.node).sort();
   const dryTargets = (finalSwitchTargets[1] || []).map((edge) => edge.node).sort();
-  for (const required of ['Update File']) {
+  for (const required of ['Prepare Drive Publication Marks']) {
     if (!normalTargets.includes(required)) errors.push(`Switch Final Dry Run normal output must feed ${required}.`);
   }
   const verifyTargets = (workflow.connections['Verify Published Artifacts']?.main?.[0] || []).map((edge) => edge.node);
@@ -709,17 +777,17 @@ function validateWorkflow() {
   if (!attachedTargets.includes('Switch Final Dry Run')) {
     errors.push('Attach Verified Publish Artifacts must feed Switch Final Dry Run.');
   }
+  const prepareDriveTargets = (workflow.connections['Prepare Drive Publication Marks']?.main?.[0] || []).map((edge) => edge.node);
+  if (!prepareDriveTargets.includes('Update File')) {
+    errors.push('Prepare Drive Publication Marks must feed Update File.');
+  }
   const updateTargets = (workflow.connections['Update File']?.main?.[0] || []).map((edge) => edge.node);
-  if (!updateTargets.includes('Merge Drive Result and Context')) {
-    errors.push('Update File must feed Merge Drive Result and Context.');
+  if (!updateTargets.includes('Collect Drive Publication Marks')) {
+    errors.push('Update File must feed Collect Drive Publication Marks.');
   }
-  const mergeTargets = (workflow.connections['Merge Drive Result and Context']?.main?.[0] || []).map((edge) => edge.node);
-  if (!mergeTargets.includes('Assert Drive Published')) {
-    errors.push('Merge Drive Result and Context must feed Assert Drive Published.');
-  }
-  const mergeParameters = nodeByName.get('Merge Drive Result and Context')?.parameters || {};
-  if (mergeParameters.mode !== 'combine' || mergeParameters.combineBy !== 'combineByPosition') {
-    errors.push('Merge Drive Result and Context must combine Drive output and notification context by position.');
+  const collectDriveTargets = (workflow.connections['Collect Drive Publication Marks']?.main?.[0] || []).map((edge) => edge.node);
+  if (!collectDriveTargets.includes('Assert Drive Published')) {
+    errors.push('Collect Drive Publication Marks must feed Assert Drive Published.');
   }
   const notificationNode = nodeByName.has('Inform Success (2)') ? 'Inform Success (2)' : 'Inform Success (1)';
   const driveTargets = (workflow.connections['Assert Drive Published']?.main?.[0] || []).map((edge) => edge.node);
@@ -944,6 +1012,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  driveAuditForExecution,
   notificationForExecution,
   readSelectedEnvironmentFile,
   verifierEnvironment,
