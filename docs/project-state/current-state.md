@@ -797,14 +797,14 @@ anteriores e migrations aditivas já aplicadas.
 ## Livia — promoção de bundle isolado 2026-07-29
 
 O workflow Livia (`WGXr4vYkv9UoJ8zc`) está ativo na versão histórica
-`a1983ff1-4b58-4753-860e-c25dda057f3f`, com os cinco sidecars principais
-fixados no bundle imutável `c525f5e1d68829fe4c93197f65d85429a2e0385c`,
-produzido do merge da PR #851. O manifesto ativo tem SHA-256
-`a7ced345b16a3538fac5f7dc24135332ac2c2de81bf810744e51352c2989730f`.
+`8316de5d-c047-473a-bd6a-662b513b73b5`, com os cinco sidecars principais
+fixados no bundle imutável `1dee4fc24d786d794cd73f30e442ceea329e8563`,
+produzido do merge da PR #853. O manifesto ativo tem SHA-256
+`3ca96e4038529680e019b35f13b5c306a57beaa4c71426a9a191a28621038a21`.
 O schedule diário foi preservado explicitamente como `field: days` às 13:26.
 Checkpoint pós-promoção:
-`livia-postpromote-c525f5e1-20260729T085430-0300`, índice SHA-256
-`e4eabf9e76bb96c30794a231102466a685d8ce971208dee432fb4b959ac4d60d`.
+`livia-postpromote-1dee4fc2-20260729T093100-0300`, índice SHA-256
+`a2a03f4223167bda6f6a4753b7b0073b7d014ca74100980d1cb99be1c996f5a9`.
 
 Uma auditoria posterior encontrou que `Verify Published Artifacts` ainda
 invocava um wrapper externo em `C:\CodexRuntime`, que ignorava seu argumento
