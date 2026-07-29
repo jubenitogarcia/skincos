@@ -74,6 +74,7 @@ inactive. No visual workflow or runtime state was changed by this work.
 | One operational workflow | Pass | Package length 1; one top-level unified JSON |
 | Predecessors outside operational package | Pass | 11 descriptors in `archived-workflows`, no nested operational archive |
 | Valid/importable JSON | Pass | JSON parse, graph validation and isolated n8n 2.8.3 import/export |
+| Static security findings | Pass | Schema patterns fail closed; artifact kinds, filenames and temporary roots are constrained; traversal/unsafe-pattern tests pass |
 | Closed schemas and fixtures | Pass | 23 closed roots, declared nested policies/cardinality and targeted boundary tests |
 | Migration works | Pass | Fresh temporary PostgreSQL, idempotent second apply and rollback test |
 | FAST dry-run | Pass | READY, three DNA/animatics, one arrangement/mix |

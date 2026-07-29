@@ -8,7 +8,9 @@ with separate logical/rendered duration, all three tiers, tier cardinality,
 animatic-before-stems ordering, similarity rejection, voice-consent blocking,
 executable selective reprocessing with preserved URI checks, bounded
 compatibility scoring across all required dimensions, final package validation
-and workflow inventory.
+and workflow inventory. Security regression cases reject schema-supplied
+regular expressions, unsafe artifact kinds and fixture roots outside the
+operating-system temporary directory.
 
 `workflow:music:validate` parses every generated Code node, validates graph
 reachability and cycles, checks error-output routing to MSC-99, rejects

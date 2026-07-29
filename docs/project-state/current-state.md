@@ -929,7 +929,7 @@ checksum, lineage e rollback permanecem privados em
 
 ## Music Composition Studio — candidato unificado 2026-07-29
 
-O candidato local `a381f42dd79f795438aa23f0e64f93d820a1de23` na branch
+O candidato local `925fec6d61201ef96079b47f634314f99e045ae1` na branch
 `codex/admin/music-composition-studio` gera exatamente um workflow operacional
 inativo, `Music Composition Studio (Unified)`. MSC-10 a MSC-90 executam inline,
 os outputs de erro convergem no MSC-99 inline e não há nodes Execute Workflow.
@@ -939,8 +939,10 @@ Os 11 predecessores estão arquivados fora do pacote de importação em
 A validação local passou em FAST, STANDARD e PREMIUM com provider mock e custo
 zero; também comprovou cache sem nova submissão, callback/artifact dedupe,
 polling limitado, rate limit, budget, fallback e reprocessamento seletivo
-executável com preservação de URIs não afetadas. O builder foi regenerado duas
-vezes com hashes idênticos. A migration
+executável com preservação de URIs não afetadas. Achados Semgrep da revisão
+foram tratados com schema patterns fail-closed e paths/nomes de fixtures
+restritos, incluindo testes de regressão. O builder foi regenerado duas vezes
+com hashes idênticos. A migration
 PostgreSQL foi aplicada duas vezes em um banco temporário, produziu 16 tabelas,
 aceitou inserts com FK e preservou zero linhas após rollback. O pacote foi
 importado/exportado pelo n8n 2.8.3 em perfil SQLite temporário como exatamente
