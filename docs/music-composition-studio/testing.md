@@ -1,10 +1,14 @@
 # Testing
 
-`workflow:music:test` covers closed schemas, canonical hashes, job/artifact and
-callback idempotency, mock and controlled HTTP provider contracts, cost limits,
-PCM WAV integrity, all three tiers, tier cardinality, animatic-before-stems
-ordering, similarity rejection, voice-consent blocking, selective invalidation,
-bounded DNA selection, final package validation and workflow inventory.
+`workflow:music:test` covers recursively declared schema boundaries, canonical
+hashes, job/artifact/callback idempotency, provider cache-hit submission
+suppression, mock and controlled HTTP provider contracts, timeout, rate limit,
+retry/fallback and accumulated cost limits. It also covers PCM WAV integrity
+with separate logical/rendered duration, all three tiers, tier cardinality,
+animatic-before-stems ordering, similarity rejection, voice-consent blocking,
+executable selective reprocessing with preserved URI checks, bounded
+compatibility scoring across all required dimensions, final package validation
+and workflow inventory.
 
 `workflow:music:validate` parses every generated Code node, validates graph
 reachability and cycles, checks error-output routing to MSC-99, rejects

@@ -62,6 +62,10 @@ npm run workflow:music:validate
 npm run workflow:music:test
 npm run workflow:music:dry-run
 npm run lint
+npm run workflow:music:migration-test
+npm run workflow:music:n8n-import-test
+# or the complete matrix:
+npm run workflow:music:verify
 ```
 
 ## Risks and controls
@@ -93,6 +97,10 @@ npm run lint
   removed the database.
 - n8n 2.8.3 validation imported/exported exactly one inactive workflow in a
   fresh temporary SQLite profile, then removed the profile.
+- The behavioral suite proves provider cache hits skip submission, callback and
+  artifact dedupe, accumulated cost enforcement, bounded polling, rate limit,
+  retry/fallback, dependency-led invalidation and executable metadata,
+  bass/chorus and loudness reprocessing.
 - Live Orb is healthy but contains no Music Composition Studio workflow.
   Production import, activation, database migration and provider configuration
   are intentionally deferred to a separately authorized staged rollout.

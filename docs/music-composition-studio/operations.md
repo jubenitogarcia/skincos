@@ -9,8 +9,8 @@ npm run workflow:music:build
 npm run workflow:music:validate
 npm run workflow:music:test
 npm run workflow:music:dry-run
-bash scripts/validate-music-composition-studio-migration.sh
-bash scripts/validate-music-composition-studio-n8n-import.sh
+npm run workflow:music:migration-test
+npm run workflow:music:n8n-import-test
 ```
 
 The import validator creates a temporary n8n SQLite profile, imports the

@@ -47,6 +47,11 @@
 
 ## External/product follow-up
 
+- [ ] Quando houver um staging Orb isolado e autorização específica, aplicar a
+  migration do Music Composition Studio nesse staging, importar o pacote
+  unificado ainda inativo e executar jornadas sintéticas. Não usar esta
+  pendência opcional como autorização para import, activation, provider pago
+  ou migration no `n8n_runtime` de produção.
 - [ ] When an unpublished, approved Livia source item is available, run one
   controlled production journey on workflow `WGXr4vYkv9UoJ8zc` version
   `8316de5d-c047-473a-bd6a-662b513b73b5` and verify all destinations externally.

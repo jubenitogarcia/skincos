@@ -19,8 +19,10 @@ npm run workflow:music:validate
 npm run workflow:music:test
 npm run workflow:music:dry-run
 npm run lint
-bash scripts/validate-music-composition-studio-migration.sh
-bash scripts/validate-music-composition-studio-n8n-import.sh
+npm run workflow:music:migration-test
+npm run workflow:music:n8n-import-test
+# complete gate:
+npm run workflow:music:verify
 ```
 
 The default is deliberately inactive and mock-only. It never publishes,

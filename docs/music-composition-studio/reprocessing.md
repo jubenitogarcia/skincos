@@ -23,11 +23,13 @@ flowchart LR
 | Loudness | master, package | composition, stems, arrangement, mix |
 | Constitution | candidates through package | prior revision and lineage |
 
-`lib/invalidation.js` is the dependency policy. Call
-`selectiveReprocess(change, constitution)` with a supported change key. The
-result lists invalidated components. A Constitution change increments revision;
-the caller must rebuild and persist a new lock hash before downstream work.
-Never mutate a locked Constitution in place.
+`lib/invalidation.js` is the dependency policy. `selectiveReprocess()` returns
+the precise invalidation plan and creates a newly hashed Constitution revision
+when that source changes. `executeSelectiveReprocess()` applies the local
+dry-run plan: metadata changes only the package; loudness creates a new master;
+bass timbre replaces only bass stems and descendants; and chorus changes
+replace only stems in chorus sections and descendants. Tests compare preserved
+URIs and invalidated ledger jobs. Never mutate a locked Constitution in place.
 
 Resume a failed provider job with the same normalized inputs and input hash.
 The ledger reuses an approved/completed result and deduplicates callback and

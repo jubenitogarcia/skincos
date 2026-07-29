@@ -603,14 +603,15 @@
       "rollback_checkpoint_sha256": "a2a03f4223167bda6f6a4753b7b0073b7d014ca74100980d1cb99be1c996f5a9"
     },
     {
-      "observed_at": "2026-07-29T17:28:50.8226576Z",
+      "observed_at": "2026-07-29T17:33:33.2721074Z",
       "surface": "isolated-worktree-local-postgresql-isolated-n8n-and-production-readonly",
       "scope": "Music Composition Studio unified source candidate",
       "state": "source-candidate-validated-live-not-imported",
       "method": "Deterministic builder regeneration; strict workflow/schema/unit/dry-run/lint suite; temporary PostgreSQL migration applied twice with FK and rollback assertions; temporary n8n 2.8.3 SQLite import/export; read-only Orb health and workflow inventory",
-      "result": "Candidate fc252406 contains exactly one inactive operational workflow with MSC-10 through MSC-90 inline, errors routed to inline MSC-99, zero Execute Workflow nodes, and 11 predecessor descriptors archived outside the import package. FAST, STANDARD and PREMIUM returned READY using mock provider at USD 0. PostgreSQL produced 16 tables and rolled back to zero rows; n8n imported/exported exactly one inactive workflow. Live Orb is healthy but contains no Music Composition Studio workflow.",
+      "result": "Candidate a381f42dd79f795438aa23f0e64f93d820a1de23 contains exactly one inactive operational workflow with MSC-10 through MSC-90 inline, errors routed to inline MSC-99, zero Execute Workflow nodes, and 11 predecessor descriptors archived outside the import package. FAST, STANDARD and PREMIUM returned READY using mock provider at USD 0; cache, callback/artifact dedupe, bounded polling, rate limit, budget, fallback and executable selective reprocessing passed. PostgreSQL produced 16 tables and rolled back to zero rows; n8n imported/exported exactly one inactive workflow. Live Orb has no Music Composition Studio workflow and production n8n_runtime has zero music_studio tables.",
       "limitation": "No production import, activation, n8n_runtime migration, provider credential, paid call or provider-quality audio acceptance was performed. A later live rollout requires explicit authorization, staging, backup/rollback evidence and private provider configuration.",
-      "sha": "fc252406"
+      "sha": "a381f42dd79f795438aa23f0e64f93d820a1de23",
+      "pr": 870
     }
   ]
 }

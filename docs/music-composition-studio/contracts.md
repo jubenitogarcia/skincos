@@ -1,8 +1,12 @@
 # Contracts and schemas
 
 Closed schemas live in `orb/engine/music-composition-studio/schemas`. Every
-root uses `additionalProperties: false` with valid and invalid examples.
-`lib/contracts.js` applies the same strict validation during dry-runs.
+root and bounded nested object declares an `additionalProperties` policy, with
+valid and invalid examples. Provider payloads, lineage, annotations and usage
+maps are explicit controlled extension points rather than accidental open
+objects. Cardinality is enforced for required candidate, section, matrix,
+stem, MIDI and QA collections. `lib/contracts.js` applies the same strict
+validation during dry-runs.
 
 | Area | Schemas |
 | --- | --- |

@@ -36,7 +36,13 @@ npm run workflow:music:test
   -> Music Composition Studio tests: OK
 
 npm run workflow:music:dry-run
-  -> FAST, STANDARD and PREMIUM READY; mock cost USD 0
+  -> FAST READY: 3 DNA/matrix entries/animatics, 15 stem jobs,
+     1 arrangement/mix, no vocals
+  -> STANDARD READY: 4 DNA/matrix entries/animatics, 32 stem jobs,
+     2 arrangements/mixes, no vocals
+  -> PREMIUM READY: 5 DNA/matrix entries/animatics, 119 stem jobs,
+     3 arrangements/mixes, 4 vocal fixtures
+  -> all tiers: QA APPROVE, one mock submission, cost USD 0
 
 bash scripts/validate-music-composition-studio-migration.sh
   -> 16 PostgreSQL tables; migration applied twice; FK insert succeeded;
@@ -68,7 +74,7 @@ inactive. No visual workflow or runtime state was changed by this work.
 | One operational workflow | Pass | Package length 1; one top-level unified JSON |
 | Predecessors outside operational package | Pass | 11 descriptors in `archived-workflows`, no nested operational archive |
 | Valid/importable JSON | Pass | JSON parse, graph validation and isolated n8n 2.8.3 import/export |
-| Closed schemas and fixtures | Pass | 23 roots with `additionalProperties: false`, valid/invalid pairs |
+| Closed schemas and fixtures | Pass | 23 closed roots, declared nested policies/cardinality and targeted boundary tests |
 | Migration works | Pass | Fresh temporary PostgreSQL, idempotent second apply and rollback test |
 | FAST dry-run | Pass | READY, three DNA/animatics, one arrangement/mix |
 | STANDARD dry-run | Pass | READY, four DNA/animatics, two arrangements/mixes |
@@ -77,14 +83,14 @@ inactive. No visual workflow or runtime state was changed by this work.
 | Mock providers | Pass | Deterministic submit/status/result/cancel path |
 | Real-provider abstraction | Pass, disabled | HTTP submit/status/result/cancel, timeout/retry/rate hook/fallback/model; credential headers injected privately |
 | Callbacks and bounded polling | Pass | Callback dedupe and bounded polling tests |
-| Cache/idempotency/lineage | Pass | Reused job/artifact and stable input hash tests |
+| Cache/idempotency/lineage | Pass | Same-ledger rerun keeps one provider submission and stable artifact count; callbacks dedupe independent of payload variation |
 | Compatibility matrix and DNA | Pass | Hard filters, top-k and bounded beam; three to five DNA |
 | Animatic before final stems | Pass | State-order assertion |
 | Stems/arrangement/mix/master | Pass | URI-only fixtures and tier cardinality assertions |
 | Multilevel QA | Pass | Musical, rhythmic, vocal, technical, creative and similarity fields |
 | Similarity block | Pass | Derivative-purpose fixture returns FAILED |
 | Vocal consent | Pass | Denied consent fails before provider work |
-| Selective reprocessing | Pass | Metadata, bass, chorus, loudness and Constitution paths asserted |
+| Selective reprocessing | Pass | Metadata/master/stem URI preservation plus bass, chorus, loudness, Constitution revision and invalidated-ledger assertions |
 | Final package schema | Pass | Strict runtime validation |
 | Cost registration | Pass | Cost event shape and zero-cost dry-run |
 | MSC-99 | Pass | Error routing, classification and redaction |
