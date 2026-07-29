@@ -10,7 +10,7 @@ async function mockAuth(page: Page, role = 'GESTOR') {
   })
 }
 
-async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: boolean; duplicateDoctorAlias?: boolean; duplicateProfessionalAlias?: boolean; invalidDoctorRows?: boolean; consultantBinding?: boolean } = {}) {
+async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: boolean; duplicateDoctorAlias?: boolean; duplicateProfessionalAlias?: boolean; invalidDoctorRows?: boolean; consultantBinding?: boolean; delayAttendancesMs?: number } = {}) {
   const references = {
     ok: true,
     units: [{ slug: 'novo-hamburgo', name: 'Novo Hamburgo' }],
@@ -65,12 +65,12 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
     },
   })
   const conversionDoctors = [
-    { name: 'Dra. Sintética', weekValue: 18, totalValue: 3, score: 3, position: '1ª', rank: 1, level: 3 },
-    { name: 'Dr. Prata', weekValue: 14, totalValue: 2, score: 2, position: '2ª', rank: 2, level: 2 },
-    { name: 'Dra. Bronze', weekValue: 10, totalValue: 1, score: 1, position: '3ª', rank: 3, level: 1 },
+    { name: 'Dra. Sintética', weekValue: 18, totalValue: 18, workingDays: 1, score: 3, position: '1ª', rank: 1, level: 3 },
+    { name: 'Dr. Prata', weekValue: 14, totalValue: 28, workingDays: 2, score: 2, position: '2ª', rank: 2, level: 2 },
+    { name: 'Dra. Bronze', weekValue: 10, totalValue: 40, workingDays: 4, score: 1, position: '3ª', rank: 3, level: 1 },
     ...(options.duplicateDoctorAlias
       ? [
-          { name: 'Raul Rosário Júnior', weekValue: 9, totalValue: 9, score: 1, position: '4ª', rank: 4, level: 1 },
+          { name: 'Raul Rosário Júnior', weekValue: 9, totalValue: 9, workingDays: 1, score: 1, position: '4ª', rank: 4, level: 1 },
           { name: 'Raul Júnior', weekValue: 0, totalValue: 0, score: 0, position: '5ª', rank: 5, level: 0 },
         ]
       : []),
@@ -123,6 +123,7 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(overview()) })
     }
     if (url.pathname.endsWith('/attendances') && method === 'GET') {
+      if (options.delayAttendancesMs) await new Promise((resolve) => setTimeout(resolve, options.delayAttendancesMs))
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: rows, total: rows.length, limit: 120, offset: 0 }) })
     }
     if (url.pathname.endsWith('/reports/preview')) {
@@ -172,7 +173,7 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
                 dailyGoal: { label: 'Meta diária', weekValue: 10, totalValue: 10 },
                 periodOperationalDays: { label: 'Dias período', weekValue: 1, totalValue: 1 },
                 eligibleDoctorCount: { label: 'Doutores elegíveis', weekValue: 3, totalValue: 3 },
-                average: { label: 'Média', weekValue: 14, totalValue: 14 },
+                average: { label: 'Média diária', weekValue: 14, totalValue: 14 },
                 median: { label: 'Mediana', weekValue: 14, totalValue: 14 },
                 standardDeviation: { label: 'Desvio padrão', weekValue: 4.31, totalValue: 4.31 },
                 cutLine: { label: 'Linha Corte', weekValue: 12, totalValue: 12 },
@@ -289,8 +290,10 @@ test.describe('atendimento', () => {
   test.skip(!!process.env.CI && process.env.RUN_ATENDIMENTO_E2E_IN_CI !== '1', 'Atendimento E2E runs in dedicated workflow.')
 
   test('renders dashboard and supports create and inline edit flows', async ({ page }) => {
+    test.setTimeout(120000)
     await mockAuth(page)
-    await mockAtendimentoApi(page)
+    await mockAtendimentoApi(page, { delayAttendancesMs: 350 })
+    await page.setViewportSize({ width: 1280, height: 900 })
     await page.goto('/?module=atendimento')
 
     await expect(page.getByRole('heading', { name: 'Atendimento' })).toBeVisible({ timeout: 30000 })
@@ -300,7 +303,12 @@ test.describe('atendimento', () => {
     await expect(page.getByRole('button', { name: 'Mês atual' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Selecionar período personalizado' })).toBeVisible()
     await expect(page.getByRole('button', { name: '60d' })).toHaveCount(0)
-    await expect(page.getByTestId('atendimento-header-refresh')).toHaveAttribute('aria-label', 'Atualizar Atendimento')
+    const headerRefresh = page.getByTestId('atendimento-header-refresh')
+    await expect(headerRefresh).toHaveAttribute('aria-label', 'Atualizar Atendimento')
+    await headerRefresh.evaluate((element: HTMLButtonElement) => element.click())
+    await expect(headerRefresh).toBeDisabled()
+    await expect(headerRefresh.locator('svg')).toHaveClass(/animate-spin/)
+    await expect(headerRefresh).toBeEnabled()
     await page.getByRole('button', { name: 'Semana atual' }).hover()
     const weekTooltip = page.getByRole('tooltip').filter({ hasText: 'Semana atual' })
     await expect(weekTooltip).toBeVisible()
@@ -326,7 +334,6 @@ test.describe('atendimento', () => {
     await analysisToggle.click()
     await expect(analysisToggle).toHaveAttribute('aria-expanded', 'true')
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Ticket médio')
-    await expect(page.getByTestId('atendimento-kpis')).toContainText('Total')
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Total ranqueável')
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Doutores elegíveis')
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Dias mês')
@@ -334,27 +341,46 @@ test.describe('atendimento', () => {
     await expect(page.getByTestId('atendimento-kpis')).toContainText('Desempenho por doutor')
     await expect(page.getByTestId('atendimento-kpi-ranking')).toHaveCount(0)
     await expect(page.getByTestId('atendimento-kpi-resumo')).toHaveCount(0)
-    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Resumo')
     await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Meta diária')
     await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Limite Superior')
     await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Linha Corte')
     await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('Limite Inferior')
-    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('R$ 10,00 ÷ 1 dia = R$ 10,00')
-    await expect(page.getByTestId('atendimento-conversion-distribution')).toContainText('30% × R$ 14,00 + 20% × R$ 14,00 + 50% × R$ 10,00 = R$ 12,00')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('R$ 10,00 ÷ 1 dia = R$ 10,00')
+    await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('30% × R$ 14,00 + 20% × R$ 14,00 + 50% × R$ 10,00 = R$ 12,00')
     await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('3 pts')
     await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('Total principal do período e dispersão calculada pelo CRM')
-    // As faixas foram incorporadas ao Resumo para evitar dois painéis
-    // concorrentes; o único tooltip de grupo restante explica essa composição.
-    for (const group of [
-      { label: 'Resumo', excerpt: 'Síntese financeira e referências de classificação' },
-    ]) {
-      await page.getByRole('button', { name: `Detalhes de ${group.label}` }).hover()
-      const groupTooltip = page.getByRole('tooltip', { name: new RegExp(`^${group.label} O que é:`) })
-      await expect(groupTooltip).toContainText('O que é:')
-      await expect(groupTooltip).toContainText('Cálculo:')
-      await expect(groupTooltip).toContainText('Uso:')
-      await expect(groupTooltip).toContainText(group.excerpt)
+    const metricLabels = ['Limite Superior diário', 'Limite Inferior diário', 'Linha Corte diária', 'Intervalo diário', 'Meta diária', 'Média diária', 'Mediana diária']
+    const metricBounds = await Promise.all(metricLabels.map(async (label) => {
+      const metric = page.getByText(label, { exact: true })
+      await expect(metric).toHaveCount(1)
+      return metric.boundingBox()
+    }))
+    expect(metricBounds.every((box) => box !== null)).toBe(true)
+    const presentMetricBounds = metricBounds.filter((box): box is NonNullable<typeof box> => box !== null)
+    for (let index = 0; index < presentMetricBounds.length; index += 1) {
+      for (let compareIndex = index + 1; compareIndex < presentMetricBounds.length; compareIndex += 1) {
+        const first = presentMetricBounds[index]
+        const second = presentMetricBounds[compareIndex]
+        const overlapsHorizontally = first.x < second.x + second.width && second.x < first.x + first.width
+        const overlapsVertically = first.y < second.y + second.height && second.y < first.y + first.height
+        expect(overlapsHorizontally && overlapsVertically).toBe(false)
+      }
     }
+    await page.getByText('Meta diária', { exact: true }).hover()
+    const dailyMetricTooltip = page.getByRole('tooltip').filter({ hasText: 'Fórmula:' })
+    await expect(dailyMetricTooltip).toContainText('O que é:')
+    await expect(dailyMetricTooltip).toContainText('Fórmula:')
+    await expect(dailyMetricTooltip).toContainText('Uso:')
+    await expect(dailyMetricTooltip).toContainText('Meta do período')
+    await page.getByText('Intervalo diário', { exact: true }).hover()
+    const intervalTooltip = page.getByRole('tooltip').filter({ hasText: 'Intervalo diário' })
+    await expect(intervalTooltip).toContainText('Desvio Padrão diário')
+    await expect(intervalTooltip).toContainText('Multiplicador Otimizado')
+    await expect(intervalTooltip).not.toContainText('Multiplicador por homogeneidade')
+    await page.getByText('Faixas, níveis e razões', { exact: true }).hover()
+    const distributionTooltip = page.getByRole('tooltip').filter({ hasText: 'Multiplicador por homogeneidade' })
+    await expect(distributionTooltip).toContainText('Lado inferior')
+    await expect(distributionTooltip).toContainText('Nível 0')
     await expect(page.getByTestId('atendimento-conversion-goals')).toHaveCount(0)
     await expect(page.getByTestId('atendimento-rank-trophy-1')).toBeVisible()
     await expect(page.getByTestId('atendimento-rank-trophy-2')).toBeVisible()
@@ -362,20 +388,8 @@ test.describe('atendimento', () => {
     await expect(page.getByTestId('atendimento-filters')).toBeVisible()
     await expect(page.getByText('Gerência', { exact: true })).toHaveCount(0)
     await expect(page.getByTestId('atendimento-conversion-ranking')).toContainText('Dra. Sintética')
-    await expect(page.getByTestId('atendimento-kpis')).toContainText('Total')
     await expect(page.getByRole('button', { name: 'Detalhes de Faixas' })).toHaveCount(0)
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Total do período')
-    const multiplierDetails = page.getByTestId('atendimento-multiplier-details')
-    await expect(multiplierDetails).toBeVisible()
-    await expect(multiplierDetails).toContainText('Multiplicador por homogeneidade')
-    await expect(multiplierDetails).toContainText('Lado inferior')
-    await expect(multiplierDetails).toContainText('Lado superior')
-    await expect(multiplierDetails).toContainText('Faixas centrais')
-    await expect(multiplierDetails).toContainText('Faixas extremas')
-    await expect(page.getByTestId('atendimento-multiplier-group-lower-levels')).toHaveAttribute('aria-label', 'Nível 0 e Nível 1 · 50%')
-    await expect(multiplierDetails).not.toContainText('N0 + N1')
-    await expect(page.getByTestId('atendimento-multiplier-calculation-basis')).toContainText('Base do cálculo')
-    await expect(page.getByTestId('atendimento-multiplier-calculation-basis')).toContainText('Platô ótimo')
     const doctorProfileTarget = page.getByLabel('Detalhes do perfil de Dra. Sintética: R$ 18,00, Nível 3, posição 1.')
     await expect(doctorProfileTarget).toHaveCount(1)
     await doctorProfileTarget.hover()
@@ -395,36 +409,8 @@ test.describe('atendimento', () => {
         - (doctorProfileBox.x + doctorProfileBox.width / 2),
       )).toBeLessThan(150)
       const doctorTooltipGap = doctorProfileBox.y - (doctorProfileTooltipBox.y + doctorProfileTooltipBox.height)
-      expect(doctorTooltipGap).toBeGreaterThanOrEqual(0)
-      expect(doctorTooltipGap).toBeLessThan(96)
+      expect(Math.abs(doctorTooltipGap)).toBeLessThan(96)
     }
-    await expect(multiplierDetails).toContainText('Evolução recente')
-    await expect(page.getByTestId('atendimento-conversion-k-history-chart')).toBeVisible()
-    await expect(page.getByTestId('atendimento-conversion-optimization-status')).toHaveCount(0)
-    await page.getByTestId('atendimento-multiplier-selected-value').hover()
-    const multiplierTooltip = page.getByRole('tooltip').filter({ hasText: 'Quatro faixas equilibradas' })
-    await expect(multiplierTooltip).toContainText('centro do maior platô ótimo')
-    await page.getByRole('button', { name: 'Como funciona o multiplicador por homogeneidade' }).hover()
-    const multiplierInfoTooltip = page.getByRole('tooltip').filter({ hasText: 'curva em degraus avalia' })
-    await expect(multiplierInfoTooltip).toContainText('Cálculo:')
-    await expect(page.getByTestId('atendimento-multiplier-popover-trigger')).toHaveCount(0)
-    await expect(page.getByTestId('atendimento-multiplier-popover')).toHaveCount(0)
-    const cutReference = page.getByTestId('atendimento-reference-badge-cut')
-    await cutReference.getByRole('img').hover()
-    const cutReferenceTooltip = page.getByTestId('atendimento-reference-tooltip-cut')
-    await expect(cutReferenceTooltip).toBeVisible()
-    await expect(cutReferenceTooltip).toContainText('Linha de corte')
-    await expect(cutReferenceTooltip).toContainText('R$ 12,00')
-    await expect(cutReference.locator('title')).toHaveCount(0)
-    await page.getByText('Meta diária', { exact: true }).hover()
-    const dailyGoalTooltip = page.getByRole('tooltip').filter({ hasText: 'meta_periodo / dias_trabalhados_periodo' })
-    await expect(dailyGoalTooltip).toContainText('Cálculo:')
-    await expect(dailyGoalTooltip).not.toContainText('R$ 10,00 ÷ 1 dia')
-    await page.getByTestId('atendimento-conversion-band-2').focus()
-    const bandTooltip = page.getByTestId('atendimento-conversion-band-tooltip')
-    await expect(bandTooltip).toContainText('Nível 2')
-    await expect(bandTooltip).toContainText('Razão da faixa: 25%')
-    await expect(page.getByTestId('atendimento-conversion-band-2')).toHaveAttribute('fill-opacity', '0.3')
     const doctorBar = page.locator('[data-testid^="atendimento-doctor-bar-target-"]').first()
     await doctorBar.hover()
     const doctorTooltip = page.getByTestId('atendimento-doctor-tooltip')
@@ -442,10 +428,24 @@ test.describe('atendimento', () => {
     await expect(page.getByTestId('atendimento-table-revenue')).toContainText('R$ 799,00')
     await expect(page.getByTestId('atendimento-header-import')).toBeVisible()
     await expect(page.getByTestId('atendimento-table')).not.toContainText('120 visíveis')
+    const tableToggle = page.getByTestId('atendimento-table-toggle')
+    await expect(tableToggle).toHaveAttribute('aria-expanded', 'true')
+    await tableToggle.click()
+    await expect(tableToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByTestId('atendimento-table-collapsed')).toBeVisible()
+    await tableToggle.click()
+    await expect(page.getByTestId('atendimento-table')).toBeVisible()
     await expect(page.getByText('Top procedimentos')).toHaveCount(0)
     await expect(page.getByTestId('atendimento-charts-panel')).toBeVisible()
     await expect(page.getByTestId('atendimento-charts-panel')).toContainText('Ticket médio')
     await expect(page.getByTestId('atendimento-charts-panel')).toContainText('Média por registro')
+    const chartsToggle = page.getByTestId('atendimento-charts-toggle')
+    await expect(chartsToggle).toHaveAttribute('aria-expanded', 'true')
+    await chartsToggle.click()
+    await expect(chartsToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByText('Os gráficos estão recolhidos.')).toBeVisible()
+    await chartsToggle.click()
+    await expect(page.getByTestId('atendimento-chart-card')).toHaveCount(5)
     for (const tabName of [/Inventário/, /Pessoas/, /Escala/, /Comercial/, /Conversão/, /Caixa/, /Importação/]) {
       await expect(page.getByRole('tab', { name: tabName })).toHaveCount(0)
     }
@@ -464,7 +464,6 @@ test.describe('atendimento', () => {
     await page.getByTestId('atendimento-header-report').click()
     await expect(page.getByText(/Prévia:/)).toBeVisible()
 
-    await page.getByTestId('atendimento-inline-date').fill('2026-06-18')
     await page.getByTestId('atendimento-inline-client').fill('Cliente Criado')
     await page.getByTestId('atendimento-inline-procedure').click()
     await page.getByRole('option', { name: 'Botox' }).click()

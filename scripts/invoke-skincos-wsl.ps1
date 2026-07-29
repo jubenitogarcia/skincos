@@ -85,7 +85,19 @@ if (-not $SkipNpmCheck) {
 }
 if (-not $SkipBootstrapCheck) {
     $safeRepoLiteral = Convert-ToBashLiteral -Value $repoMountPath
-    $bashLines.Add("if ! git config --global --get-all safe.directory 2>/dev/null | grep -Fxq $safeRepoLiteral; then echo 'WSL bootstrap for this user is not ready. Run: bash $repoMountPath/orb/engine/scripts/bootstrap-imported-wsl-account.sh'; exit 1; fi")
+    $canonicalRepoMount = '/mnt/c/CodexShared/Projetos/skincos'
+    $privatePreviewMount = '/mnt/c/CodexRuntime/operator/admin/skincos/source/'
+    $trustedPreview = $repoMountPath -eq $canonicalRepoMount -or $repoMountPath.StartsWith($privatePreviewMount, [StringComparison]::OrdinalIgnoreCase)
+    if ($trustedPreview) {
+        # CRM snapshots are purposefully created in unique private worktrees.
+        # Requiring a manual bootstrap for every fingerprint makes a valid
+        # preview non-reproducible. Register only the canonical checkout and
+        # the operator-private preview root; arbitrary caller paths still fail
+        # closed below.
+        $bashLines.Add("if ! git config --global --get-all safe.directory 2>/dev/null | grep -Fxq $safeRepoLiteral; then git config --global --add safe.directory $safeRepoLiteral; fi")
+    } else {
+        $bashLines.Add("if ! git config --global --get-all safe.directory 2>/dev/null | grep -Fxq $safeRepoLiteral; then echo 'WSL bootstrap for this user is not ready. Run: bash $repoMountPath/orb/engine/scripts/bootstrap-imported-wsl-account.sh'; exit 1; fi")
+    }
 }
 
 foreach ($entry in $EnvVar) {

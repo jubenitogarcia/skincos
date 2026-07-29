@@ -932,8 +932,8 @@ function buildConversionMetricPayload(stats, unitName) {
     const levelCounts = stats.levelCounts || { level0: 0, level1: 0, level2: 0, level3: 0 }
     const proportions = stats.proportions || { p0: 0, p1: 0, p2: 0, p3: 0 }
     const balancedReasons = stats.balancedReasons || { lowerSide: 0, upperSide: 0, center: 0, extremes: 0 }
-    const cutLineFormula = `${stats.formulas?.cutLine || 'linha_corte = (media_periodo * 0.30) + (mediana_periodo * 0.20) + (meta_diaria * 0.50)'}; valores = (${Number(stats.average || 0).toFixed(2)} * 0.30) + (${Number(stats.median || 0).toFixed(2)} * 0.20) + (${Number(stats.dailyGoal || 0).toFixed(2)} * 0.50)`
-    const intervalFormula = `${stats.formulas?.interval || 'intervalo = desvio_padrao(realizado_doutores) * multiplicador_intervalo'}; valores = ${Number(stats.standardDeviation || 0).toFixed(2)} * ${Number(stats.intervalMultiplier || 0).toFixed(2)}`
+    const cutLineFormula = `${stats.formulas?.cutLine || 'linha_corte_diaria = (media_diaria_doutores * 0.30) + (mediana_diaria_doutores * 0.20) + (meta_diaria * 0.50)'}; valores = (${Number(stats.average || 0).toFixed(2)} * 0.30) + (${Number(stats.median || 0).toFixed(2)} * 0.20) + (${Number(stats.dailyGoal || 0).toFixed(2)} * 0.50)`
+    const intervalFormula = `${stats.formulas?.interval || 'intervalo_diario = desvio_padrao(realizado_diario_doutores) * multiplicador_intervalo'}; valores = ${Number(stats.standardDeviation || 0).toFixed(2)} * ${Number(stats.intervalMultiplier || 0).toFixed(2)}`
     const divisorFormula = `${stats.formulas?.ratioDivisor || 'divisor = (level0 * 0) + (level1 * 1) + (level2 * 2) + (level3 * 3)'}; valores = (${levelCounts.level0 || 0} * 0) + (${levelCounts.level1 || 0} * 1) + (${levelCounts.level2 || 0} * 2) + (${levelCounts.level3 || 0} * 3)`
     const homogeneityFormula = `${stats.formulas?.homogeneity || 'homogeneidade = 1 - (4 / 3) * soma((proporcao_nivel - 0.25) ^ 2)'}; proporcoes = ${Number(proportions.p0 || 0).toFixed(4)}, ${Number(proportions.p1 || 0).toFixed(4)}, ${Number(proportions.p2 || 0).toFixed(4)}, ${Number(proportions.p3 || 0).toFixed(4)}`
     return {
@@ -945,9 +945,9 @@ function buildConversionMetricPayload(stats, unitName) {
         dailyGoal: moneyMetric(stats.dailyGoal, unitName, 'Meta Diária', { formula: 'meta_diaria_media_periodo = meta_periodo / dias_trabalhados_periodo' }),
         monthOperationalDays: moneyMetric(stats.monthOperationalDays, unitName, 'Dias mês', { formula: 'dias_trabalhados_mes = dias operacionais do mês pela Escala CRM ou fallback' }),
         periodOperationalDays: moneyMetric(stats.periodOperationalDays, unitName, 'Dias período', { formula: 'dias_trabalhados_periodo = dias operacionais dentro do período selecionado' }),
-        average: moneyMetric(stats.average, unitName, 'Média'),
-        median: moneyMetric(stats.median, unitName, 'Mediana'),
-        standardDeviation: moneyMetric(stats.standardDeviation, unitName, 'Desvio Padrão'),
+        average: moneyMetric(stats.average, unitName, 'Média diária'),
+        median: moneyMetric(stats.median, unitName, 'Mediana diária'),
+        standardDeviation: moneyMetric(stats.standardDeviation, unitName, 'Desvio Padrão diário'),
         upperRatio: moneyMetric(stats.ratios.upperRatio, unitName, 'Razão Superior'),
         lowerRatio: moneyMetric(stats.ratios.lowerRatio, unitName, 'Razão Inferior'),
         innerRatio: moneyMetric(stats.ratios.innerRatio, unitName, 'Razão Interior'),
@@ -957,12 +957,12 @@ function buildConversionMetricPayload(stats, unitName) {
         centerShare: moneyMetric(balancedReasons.center, unitName, 'Faixas Centrais'),
         extremesShare: moneyMetric(balancedReasons.extremes, unitName, 'Faixas Extremas'),
         ratioDivisor: moneyMetric(stats.ratioDivisor, unitName, 'Divisor Razões', { formula: divisorFormula, levelCounts }),
-        cutLine: moneyMetric(stats.cutLine, unitName, 'Linha Corte', { formula: cutLineFormula }),
-        interval: moneyMetric(stats.interval, unitName, 'Intervalo', { formula: intervalFormula }),
+        cutLine: moneyMetric(stats.cutLine, unitName, 'Linha Corte diária', { formula: cutLineFormula }),
+        interval: moneyMetric(stats.interval, unitName, 'Intervalo diário', { formula: intervalFormula }),
         intervalMultiplier: moneyMetric(stats.intervalMultiplier, unitName, 'Multiplicador Otimizado'),
         homogeneityScore: moneyMetric(stats.homogeneityScore, unitName, 'Homogeneidade', { formula: homogeneityFormula }),
-        lowerLimit: moneyMetric(stats.lowerLimit, unitName, 'Limite Inferior'),
-        upperLimit: moneyMetric(stats.upperLimit, unitName, 'Limite Superior'),
+        lowerLimit: moneyMetric(stats.lowerLimit, unitName, 'Limite Inferior diário'),
+        upperLimit: moneyMetric(stats.upperLimit, unitName, 'Limite Superior diário'),
         level0: moneyMetric(levelCounts.level0 || 0, unitName, 'Nível 0', { formula: 'nivel_0 = realizado < limite_inferior', proportion: proportions.p0 }),
         level1: moneyMetric(levelCounts.level1 || 0, unitName, 'Nível 1', { formula: 'nivel_1 = limite_inferior <= realizado < linha_corte', proportion: proportions.p1 }),
         level2: moneyMetric(levelCounts.level2 || 0, unitName, 'Nível 2', { formula: 'nivel_2 = linha_corte <= realizado <= limite_superior', proportion: proportions.p2 }),
@@ -1371,7 +1371,8 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
         ),
         pgPool.query(
             `select u.slug as unit_slug, coalesce(inj.canonical_id, inj.id) as doctor_id,
-                    coalesce(inj_canonical.name, inj.name) as doctor_name, coalesce(sum(a.value), 0)::numeric as total
+                    coalesce(inj_canonical.name, inj.name) as doctor_name, coalesce(sum(a.value), 0)::numeric as total,
+                    count(distinct a.service_date)::int as attended_days
              from crm_atendimento.attendances a
              join crm_atendimento.units u on u.id = a.unit_id
              join crm_atendimento.professionals inj on inj.id = a.injector_id
@@ -1402,7 +1403,7 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
     ])
     const escalaCoverage = await readEscalaScheduleCoverage(pgPool, selectedUnits, scheduleStart, scheduleEnd, actor, { persistMissing: syncSchedule })
     const scheduleRows = await pgPool.query(
-        `select u.slug as unit_slug, s.service_date, s.doctor_name
+        `select u.slug as unit_slug, s.service_date, s.doctor_name, s.professional_id
          from crm_atendimento.schedule_days s
          join crm_atendimento.units u on u.id = s.unit_id
          where s.service_date >= $1::date
@@ -1415,16 +1416,26 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
     const doctorTotalByUnit = new Map()
     for (const row of doctorTotals.rows) {
         const unitMap = doctorTotalByUnit.get(row.unit_slug) || new Map()
-        unitMap.set(row.doctor_id, Number(row.total || 0))
-        unitMap.set(normalizeText(row.doctor_name), Number(row.total || 0))
+        const total = Number(row.total || 0)
+        const attendedDays = Math.max(0, Number(row.attended_days || 0))
+        const entry = { total, attendedDays }
+        unitMap.set(row.doctor_id, entry)
+        unitMap.set(normalizeText(row.doctor_name), entry)
         doctorTotalByUnit.set(row.unit_slug, unitMap)
     }
 
     const scheduleByUnit = new Map()
+    const doctorWorkingDaysByUnit = new Map()
     for (const row of scheduleRows.rows) {
         const unitMap = scheduleByUnit.get(row.unit_slug) || new Map()
-        unitMap.set(isoDateFromDb(row.service_date), row.doctor_name)
+        const serviceDate = isoDateFromDb(row.service_date)
+        unitMap.set(serviceDate, row.doctor_name)
         scheduleByUnit.set(row.unit_slug, unitMap)
+        if (serviceDate < bounds.metricStart || serviceDate > bounds.metricEnd) continue
+        const doctorDays = doctorWorkingDaysByUnit.get(row.unit_slug) || new Map()
+        const keys = [row.professional_id, normalizeText(row.doctor_name)].filter(Boolean)
+        for (const key of keys) doctorDays.set(key, Number(doctorDays.get(key) || 0) + 1)
+        doctorWorkingDaysByUnit.set(row.unit_slug, doctorDays)
     }
     const baseGoalByUnitMonth = new Map()
     for (const row of goals.rows) {
@@ -1452,14 +1463,24 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
 
     for (const unit of selectedUnits) {
         const totals = doctorTotalByUnit.get(unit.slug) || new Map()
+        const workingDays = doctorWorkingDaysByUnit.get(unit.slug) || new Map()
         const doctors = (professionalsByUnit.get(unit.slug) || [])
-            .map((doctor) => ({
-                id: doctor.id,
-                name: doctor.name,
-                unitSlug: unit.slug,
-                unitName: unit.name,
-                realized: Number(totals.get(doctor.id) ?? totals.get(normalizeText(doctor.name)) ?? 0),
-            }))
+            .map((doctor) => {
+                const total = totals.get(doctor.id) ?? totals.get(normalizeText(doctor.name)) ?? { total: 0, attendedDays: 0 }
+                const scheduledDays = Number(workingDays.get(doctor.id) ?? workingDays.get(normalizeText(doctor.name)) ?? 0)
+                // Escala is authoritative for a doctor's workday. Imported
+                // historical rows may lack it, so distinct service dates are a
+                // conservative fallback instead of silently dividing by zero.
+                const doctorWorkingDays = scheduledDays > 0 ? scheduledDays : Number(total.attendedDays || 0)
+                return {
+                    id: doctor.id,
+                    name: doctor.name,
+                    unitSlug: unit.slug,
+                    unitName: unit.name,
+                    realized: Number(total.total || 0),
+                    workingDays: doctorWorkingDays,
+                }
+            })
         const firstGoalMap = firstGoalByUnitMonth.get(unit.slug) || new Map()
         const baseGoalMap = baseGoalByUnitMonth.get(unit.slug) || new Map()
         const goalPlan = calculateConversionGoalPlan(monthSegments.map((segment) => ({
@@ -1522,6 +1543,7 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
                 unitSlug: unit.slug,
                 weekValue: moneyMetric(doctor.weekValue).weekValue,
                 totalValue: moneyMetric(doctor.totalValue).totalValue,
+                workingDays: Number(doctor.workingDays || 0),
                 score: doctor.score,
                 level: doctor.level,
                 classification: doctor.classification,
@@ -1577,7 +1599,8 @@ async function buildInternalConversionMetrics(pgPool, period, query, actor, { pe
             doctors: allDoctors.map((doctor) => ({
                 id: doctor.id,
                 name: doctor.name,
-                realized: Number(doctor.weekValue || 0),
+                realized: Number(doctor.totalValue || 0),
+                workingDays: Number(doctor.workingDays || 0),
             })),
             monthlyGoal: aggregateGoalPlan.monthlyGoal,
             periodAttendanceTotal: selectedUnits.reduce((total, unit) => total + Number(weeklyTotalByUnit.get(unit.slug) || 0), 0),

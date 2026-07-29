@@ -15,8 +15,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8')
 
 const launcher = read('scripts/run-shared-codex-shortcut.ps1')
+const runtimePolicy = read('scripts/crm-local-runtime-policy.mjs')
 const crmRunner = read('scripts/run-local-crm.sh')
+const atendimentoRunner = read('scripts/run-local-atendimento.sh')
 const runtime = read('scripts/crm-local-persona-runtime.sh')
+const wslInvoker = read('scripts/invoke-skincos-wsl.ps1')
+const pagesRunner = read('crm/console/scripts/dev_pages.sh')
+const whatsappRunner = read('scripts/run-local-whatsapp-orchestrator.sh')
 const environment = read('.codex/environments/environment.toml')
 const installer = read('scripts/install-shared-codex-shortcuts.ps1')
 
@@ -51,8 +56,70 @@ test('preflight validates role and each shared dependency', () => {
   ]) assert.ok(launcher.includes(url), `missing ${url}`)
 })
 
+test('local Pages routes Atendimento to the isolated CRM adapter', () => {
+  assert.match(pagesRunner, /ATENDIMENTO_API_TARGET=\$\{LOCAL_WA_ORCHESTRATOR_API_TARGET\}/)
+  assert.match(pagesRunner, /must not fall back to the[\s\S]*native service on :8099/)
+})
+
+test('local CRM adapter uses only the peer-authenticated Atendimento mirror', () => {
+  assert.match(whatsappRunner, /DEFAULT_DATABASE_URL="postgresql:\/\/\$\{RUN_AS_USER\}@\/skincos_crm_local\?host=\/var\/run\/postgresql"/)
+  assert.match(whatsappRunner, /CRM_LOCAL_WA_DATABASE_URL deve apontar somente para o socket local/)
+  assert.match(whatsappRunner, /export DATABASE_URL="\$LOCAL_WA_ADAPTER_DATABASE_URL"/)
+})
+
+test('Gestor warms Atendimento before the Pages gate can issue concurrent requests', () => {
+  assert.match(crmRunner, /warm_atendimento_api\(\)/)
+  assert.match(crmRunner, /x-crm-user: eyJpZCI6ImNybS1sb2NhbC1nYXRlIiwicm9sZSI6IkdFU1RPUiJ9/)
+  assert.match(crmRunner, /\/api\/atendimento\/local-mirror\/status/)
+  assert.match(crmRunner, /\/api\/atendimento\/management\/finance/)
+  assert.match(crmRunner, /start_whatsapp_orchestrator_local\n  warm_atendimento_api/)
+})
+
+test('Atendimento shortcut uses the canonical isolated Pages and adapter runtime', () => {
+  assert.match(atendimentoRunner, /run-local-crm\.sh/)
+  assert.match(atendimentoRunner, /--module atendimento/)
+  assert.match(atendimentoRunner, /CRM_WITH_WHATSAPP=1/)
+  assert.match(atendimentoRunner, /CRM_LOCAL_NATIVE_SOURCE_ROOT/)
+  assert.match(atendimentoRunner, /crm-local-preview-source/)
+  assert.match(atendimentoRunner, /rsync -a --delete/)
+  assert.doesNotMatch(atendimentoRunner, /node "\$CRM_API_DIR\/server\.js"/)
+  assert.match(launcher, /Start-CrmAtendimentoRuntime/)
+  assert.match(launcher, /Start-CrmAtendimentoBackgroundUpdate/)
+  assert.match(launcher, /CrmAtendimentoDetachedStart/)
+  assert.match(launcher, /Invoke-CrmAtendimentoAction/)
+  assert.match(launcher, /Get-CrmPersonaDecision -Persona Gestor/)
+  assert.match(launcher, /nativeAtendimentoSource/)
+})
+
+test('Atendimento startup proves the authenticated Pages proxy after warming the adapter', () => {
+  assert.match(crmRunner, /verify_atendimento_proxy\(\)/)
+  assert.match(crmRunner, /Verificando proxy autenticado de Atendimento/)
+  assert.match(crmRunner, /http:\/\/127\.0\.0\.1:\$\{CRM_PAGES_PORT\}\$\{endpoint\}/)
+  assert.match(crmRunner, /O proxy autenticado de Atendimento não ficou pronto/)
+})
+
+test('Atendimento reuse health follows the services declared by its manifest', () => {
+  assert.match(launcher, /\$Manifest\.ports\.insumos/)
+  assert.match(launcher, /\$Manifest\.ports\.timekeeping/)
+  assert.match(launcher, /\$Manifest\.ports\.whatsapp/)
+  assert.match(launcher, /Test-CrmPersonaHealth -Persona \$Persona -Manifest \$manifest/)
+})
+
+test('isolated preview installs frontend dependencies from the lockfile', () => {
+  assert.match(crmRunner, /npm --prefix "\$FRONTEND_DIR" ci --no-audit --no-fund/)
+  assert.doesNotMatch(crmRunner, /npm --prefix "\$FRONTEND_DIR" install/)
+})
+
+test('private CRM preview snapshots register only their trusted WSL worktree path', () => {
+  assert.match(wslInvoker, /CodexRuntime\/operator\/admin\/skincos\/source/)
+  assert.match(wslInvoker, /git config --global --add safe\.directory/)
+  assert.match(wslInvoker, /arbitrary caller paths still fail/)
+  assert.match(launcher, /Invoke-ShortcutWslNativePreview/)
+  assert.match(launcher, /crm-local-preview-source/)
+})
+
 test('persona runtime records isolated manifest, lock and build state', () => {
-  for (const contract of ['CRM_RUNTIME_MANIFEST', 'CRM_RUNTIME_LOCK_DIR', 'CRM_BUILD_STATE_FILE', 'CRM_TARGET_COMMIT']) {
+  for (const contract of ['CRM_RUNTIME_MANIFEST', 'CRM_RUNTIME_LOCK_DIR', 'CRM_BUILD_STATE_FILE', 'CRM_TARGET_COMMIT', 'CRM_SOURCE_FINGERPRINT']) {
     assert.ok(runtime.includes(contract), `missing ${contract}`)
   }
   assert.match(runtime, /targetCommit: process\.env\.CRM_RUNTIME_TARGET_COMMIT/)
@@ -61,23 +128,30 @@ test('persona runtime records isolated manifest, lock and build state', () => {
   assert.match(runtime, /timekeeping: enabled\(process\.env\.CRM_WITH_TIMEKEEPING\)/)
 })
 
-test('persona runtime exposes the loopback-aware port preflight used by the CRM launcher', () => {
-  assert.match(runtime, /crm_runtime_port_is_free\(\)/)
-  assert.match(runtime, /lsof -nP -iTCP:"\$port" -sTCP:LISTEN/)
-  assert.match(runtime, /curl -sS --connect-timeout 1 --max-time 1/)
-  assert.match(crmRunner, /if crm_runtime_port_is_free "\$port"; then/)
-})
-
 test('opening the browser never blocks the runtime manifest transition', () => {
   assert.match(crmRunner, /open \"\$DEFAULT_URL\" >\/dev\/null 2>&1 &/)
   assert.match(crmRunner, /xdg-open \"\$DEFAULT_URL\" >\/dev\/null 2>&1 &/)
 })
 
-test('runtime policy reuses only a healthy build from the target commit', () => {
+test('persona helper checks a free port before starting the CRM services', () => {
+  const helper = path.join(root, 'scripts', 'crm-local-persona-runtime.sh')
+  const result = spawnSync('bash', ['-lc', `source ${JSON.stringify(helper)}; crm_runtime_port_is_free 65530`], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+})
+
+test('generic CRM launcher only falls back from its default Vite port', () => {
+  assert.match(crmRunner, /CRM_VITE_PORT_EXPLICIT=1/)
+  assert.match(crmRunner, /select_available_vite_port/)
+  assert.match(crmRunner, /Porta Vite padrão \$preferred ocupada; usando \$candidate/)
+})
+
+test('runtime policy reuses only a healthy build from the exact source snapshot', () => {
   const target = 'a'.repeat(40)
+  const sourceFingerprint = `snapshot:${target}:${'b'.repeat(64)}`
+  const sourceOrigin = 'C:/CodexRuntime/operator/admin/skincos/source/selected__atendimento'
   const current = {
-    manifest: { persona: 'GESTOR', state: 'ready', targetCommit: target, buildCommit: target },
-    buildState: { commit: target }, targetCommit: target, persona: 'GESTOR', pidAlive: true, healthy: true,
+    manifest: { persona: 'GESTOR', state: 'ready', targetCommit: target, buildCommit: target, sourceFingerprint, sourceOrigin },
+    buildState: { commit: target, sourceFingerprint, sourceOrigin }, targetCommit: target, sourceFingerprint, sourceOrigin, persona: 'GESTOR', pidAlive: true, healthy: true,
   }
   assert.deepEqual(decideRuntimeAction(current), { action: 'reuse', reason: 'current_runtime_ready' })
   assert.deepEqual(decideRuntimeAction({ ...current, healthy: false }), { action: 'restart', reason: 'health_failed' })
@@ -85,6 +159,30 @@ test('runtime policy reuses only a healthy build from the target commit', () => 
   assert.deepEqual(decideRuntimeAction({ ...current, manifest: { ...current.manifest, buildCommit: 'b'.repeat(40) } }), {
     action: 'restart', reason: 'commit_outdated',
   })
+  assert.deepEqual(decideRuntimeAction({ ...current, sourceFingerprint: `snapshot:${target}:${'c'.repeat(64)}` }), {
+    action: 'restart', reason: 'source_outdated',
+  })
+  assert.deepEqual(decideRuntimeAction({ ...current, targetCommit: 'f'.repeat(40) }), {
+    action: 'restart', reason: 'commit_outdated',
+  })
+  assert.deepEqual(decideRuntimeAction({ ...current, sourceOrigin: `${sourceOrigin}-other-module` }), {
+    action: 'restart', reason: 'source_origin_outdated',
+  })
+  assert.deepEqual(decideRuntimeAction({ ...current, sourceOrigin: 'C:\\CODEXRUNTIME\\operator\\admin\\skincos\\source\\selected__atendimento' }), {
+    action: 'reuse', reason: 'current_runtime_ready',
+  })
+  assert.deepEqual(decideRuntimeAction({
+    ...current,
+    manifest: { ...current.manifest, sourceFingerprint: undefined },
+    buildState: { ...current.buildState, sourceFingerprint: undefined },
+    sourceFingerprint: `commit:${target}`,
+  }), { action: 'reuse', reason: 'current_runtime_ready' })
+  assert.deepEqual(decideRuntimeAction({
+    ...current,
+    manifest: { ...current.manifest, sourceFingerprint: undefined },
+    buildState: { ...current.buildState, sourceFingerprint: undefined },
+    sourceFingerprint: `snapshot:${target}:${'c'.repeat(64)}`,
+  }), { action: 'restart', reason: 'source_outdated' })
 })
 
 test('runtime policy starts missing state and waits for the same target build', () => {
@@ -98,13 +196,86 @@ test('runtime policy starts missing state and waits for the same target build', 
   }), { action: 'wait', reason: 'current_start_in_progress' })
 })
 
-test('launcher coordinates version checks before checkout and preserves dirty private worktrees', () => {
-  assert.match(launcher, /Get-CrmPersonaDecision -Persona \$Persona -TargetCommit \$TargetCommit/)
+test('launcher snapshots dirty worktrees and invalidates an outdated source fingerprint', () => {
+  assert.match(launcher, /Get-CrmLocalSourceSnapshot/)
+  assert.match(launcher, /Get-CrmLocalSnapshotUntrackedFiles/)
+  assert.match(launcher, /\[AllowEmptyCollection\(\)\]\[string\[\]\]\$Entries/)
+  assert.match(launcher, /Get-CrmLocalSnapshotRelativePath/)
+  assert.match(launcher, /diff --binary HEAD/)
+  assert.match(launcher, /StandardOutput\.BaseStream\.CopyTo/)
+  assert.match(launcher, /Ignorando checkout Git aninhado fora do snapshot do CRM Local/)
+  assert.match(launcher, /check-ignore --quiet/)
+  assert.match(launcher, /CRM_SOURCE_FINGERPRINT/)
+  assert.match(launcher, /Get-CrmPersonaDecision -Persona \$Persona -TargetCommit \$TargetCommit -SourceFingerprint \$snapshot\.Fingerprint/)
   assert.match(launcher, /Stop-CrmPersonaRuntime -Persona \$Persona/)
-  assert.match(launcher, /Sync-CrmLocalSourceRoot -Persona \$Persona -TargetCommit \$TargetCommit/)
+  assert.match(launcher, /Sync-CrmLocalSourceRoot -Persona \$Persona -TargetCommit \$TargetCommit -Snapshot \$snapshot/)
   assert.match(launcher, /Worktree privado com alterações preservado/)
   assert.match(launcher, /Ensure-CrmGestorForConsultor -TargetCommit \$targetCommit/)
   assert.match(launcher, /Start-CrmGestorBackgroundUpdate/)
+  assert.match(launcher, /snapshot:\$\{TargetCommit\}:\$\(Get-CrmLocalSnapshotHash/)
+})
+
+test('canonical CRM actions use origin/main only when no preview was explicitly selected', () => {
+  assert.match(launcher, /return "origin\/main"/)
+  assert.match(launcher, /git -C \$ProjectRoot fetch origin --prune --quiet/)
+  assert.match(launcher, /function Test-CrmLocalIncludeWorkingChanges/)
+  assert.match(launcher, /if \(-not \(Test-CrmLocalIncludeWorkingChanges\)\)/)
+  assert.match(launcher, /Fingerprint = "commit:\$\{TargetCommit\}"/)
+  assert.match(launcher, /A prévia ativa não deriva da revisão canônica solicitada/)
+})
+
+test('a named CRM preview is shared across actions but applied to the current canonical commit', () => {
+  assert.match(launcher, /CRM_LOCAL_PREVIEW_SOURCE_ROOT/)
+  assert.match(launcher, /active-source\.json/)
+  assert.match(launcher, /CRM_LOCAL_CLEAR_PREVIEW_SOURCE/)
+  assert.match(launcher, /if \(\$crmLocalPreviewSelected\) \{[\s\S]*return "HEAD"/)
+  assert.match(launcher, /merge-base --is-ancestor \$sourceCommit \$TargetCommit/)
+  assert.match(launcher, /A prévia ativa não deriva da revisão canônica solicitada/)
+})
+
+test('a selected preview persists its source and never silently substitutes local work with origin/main', () => {
+  assert.match(launcher, /crm-local\\active-source\.json/)
+  assert.match(launcher, /selectedBy = 'CRM_LOCAL_PREVIEW_SOURCE_ROOT'/)
+  assert.match(launcher, /\$ProjectRoot = \$previewSourceRoot/)
+  assert.match(launcher, /\$env:CRM_LOCAL_INCLUDE_WORKING_CHANGES = 'true'/)
+  assert.match(launcher, /if \(\$crmLocalPreviewSelected\)[\s\S]*return "HEAD"/)
+  assert.doesNotMatch(launcher, /git -C \$ProjectRoot reset --hard origin\/main/)
+})
+
+test('each CRM module materializes its own exact snapshot and cannot reuse a mismatched origin', () => {
+  assert.match(launcher, /Resolve-CrmLocalModuleSourceRoot/)
+  assert.match(launcher, /Sync-CrmLocalSourceRoot -Persona \$Persona -TargetCommit \$targetCommit -Snapshot \$snapshot/)
+  assert.match(launcher, /Get-CrmPersonaDecision -Persona Gestor -TargetCommit \$targetCommit -SourceFingerprint \$snapshot\.Fingerprint/)
+  assert.match(launcher, /-Module 'site-tracking'/)
+  assert.match(launcher, /-Module 'meta-ads'/)
+  assert.match(launcher, /-Module 'atendimento'/)
+  assert.match(launcher, /return "\{0\}__\{1\}" -f \$sourceRoot, \$Module\.Trim\(\)\.ToLowerInvariant\(\)/)
+  assert.match(runtimePolicy, /source_outdated/)
+  assert.match(runtimePolicy, /commit_outdated/)
+  assert.match(runtimePolicy, /source_origin_outdated/)
+})
+
+test('Atendimento runtime is detached from the invoking action but keeps the persisted source contract', () => {
+  assert.match(launcher, /function Start-CrmAtendimentoBackgroundUpdate/)
+  assert.match(launcher, /-CrmAtendimentoDetachedStart/)
+  assert.match(launcher, /-RedirectStandardOutput \$outLog -RedirectStandardError \$errLog/)
+  assert.match(launcher, /if \(-not \$CrmAtendimentoDetachedStart\)[\s\S]*Start-CrmAtendimentoBackgroundUpdate/)
+  assert.match(launcher, /\[int\[\]\]\$AcceptedExitCode = @\(0\)/)
+  assert.match(launcher, /CRM_OPEN_BROWSER=0/)
+  assert.match(launcher, /-AcceptedExitCode @\(0, 143\)/)
+  assert.match(launcher, /function Wait-CrmAtendimentoReady/)
+  assert.match(launcher, /Wait-CrmAtendimentoReady -TargetCommit \$targetCommit -SourceFingerprint \$snapshot\.Fingerprint -SourceOrigin \$sourceOrigin -TimeoutSeconds 600/)
+  assert.match(launcher, /previous manifest is intentionally retained/)
+  assert.match(launcher, /a 143 is only accepted here/)
+  assert.match(crmRunner, /wait "\$CRM_PID"/)
+  assert.match(launcher, /\$policyCommand = "node \{0\} --manifest \{1\} --build-state \{2\} --target \{3\} --source-fingerprint \{4\} --source-origin \{5\}/)
+  assert.match(launcher, /& wsl\.exe -d Ubuntu-24\.04 -- bash -lc \$policyCommand/)
+})
+
+test('all CRM module shortcuts select a current snapshot before launch', () => {
+  assert.match(launcher, /"CrmSiteEf"[\s\S]*Invoke-CrmPersonaAction -Persona Gestor -TargetCommit \$targetCommit/)
+  assert.match(launcher, /"CrmMetaAds"[\s\S]*Invoke-CrmPersonaAction -Persona Gestor -TargetCommit \$targetCommit/)
+  assert.match(launcher, /"CrmAtendimento"[\s\S]*Invoke-CrmAtendimentoAction/)
 })
 
 test('a concurrent launcher reports an active runtime with a reusable status', () => {
@@ -131,13 +302,15 @@ CRM_WITH_TIMEKEEPING=1 CRM_TIMEKEEPING_PORT=8801 CRM_WITH_WHATSAPP=1 CRM_WA_ORCH
 crm_persona_runtime_write_manifest ready`
   const result = spawnSync('bash', ['-c', body, 'bash', helper], {
     encoding: 'utf8',
-    env: { ...process.env, ROOT_DIR: root, CRM_RUNTIME_ROOT: temp, CRM_PERSONA: 'GESTOR', CRM_TARGET_COMMIT: target },
+    env: { ...process.env, ROOT_DIR: root, CRM_RUNTIME_ROOT: temp, CRM_PERSONA: 'GESTOR', CRM_TARGET_COMMIT: target, CRM_SOURCE_FINGERPRINT: `commit:${target}`, CRM_SOURCE_ORIGIN: 'test-origin__atendimento' },
   })
   assert.equal(result.status, 0, result.stderr || result.stdout)
   const manifest = JSON.parse(fs.readFileSync(path.join(temp, 'current.json'), 'utf8'))
   assert.equal(manifest.version, 2)
   assert.equal(manifest.targetCommit, target)
   assert.equal(manifest.buildCommit, built)
+  assert.equal(manifest.sourceFingerprint, `commit:${target}`)
+  assert.equal(manifest.sourceOrigin, 'test-origin__atendimento')
 })
 
 test('local smoke downgrades only the exact optional Google chart credential failure', () => {
