@@ -9,7 +9,7 @@
     "percentage": 100
   },
   "limits": {
-    "minimumSamples": 1,
+    "minimumSamples": 20,
     "errors": 0,
     "p95LatencyMs": 1000,
     "authenticationFailures": 0,

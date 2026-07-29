@@ -180,17 +180,29 @@ try {
     result.audit = { status: audit.status, events: Number(auditBody.total || 0) };
     result.afterCommit = stateSummary(loaded);
     if (undoRequested) {
+      const committedMovementIds = committedRows.map((row) => row.movement_id);
       const undo = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/undo`)}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:undo`), body: JSON.stringify({ reason: 'Controlled staging smoke reversal' }) });
       const undoBody = await json(undo);
       loaded = await loadBatch();
-      const movementIds = (loaded.rows || []).map((row) => String(row.movement_id || '')).filter(Boolean);
-      const reversed = await Promise.all(movementIds.map(async (movementId) => {
-        const response = await request(`${financePath(`/movements/${encodeURIComponent(movementId)}`)}?scopeId=${encodeURIComponent(scopeId)}`, { headers: authHeaders() });
-        const body = await json(response);
-        return { status: response.status, operationalStatus: body.movement?.operational_status, reversedAt: body.movement?.reversed_at };
-      }));
-      if (!loaded.batch?.undone_at || Number(undoBody.undone || 0) !== movementIds.length || reversed.some((movement) => movement.status !== 200 || movement.operationalStatus !== 'cancelled' || !movement.reversedAt)) throw new Error('import undo did not reach the compensated state');
-      result.undo = { status: undo.status, undone: Number(undoBody.undone || 0), replayed: Boolean(undoBody.replayed), batchStatus: loaded.batch.status, compensatedAt: loaded.batch.undone_at, movementsCompensated: reversed.length };
+      if (loaded.batch?.status !== 'committed' || !loaded.batch?.undone_at || !loaded.batch?.undone_by) throw new Error('import undo did not record the compensated state');
+      if (Number(undoBody.undone || 0) !== committedMovementIds.length) throw new Error('import undo count does not match committed movements');
+      const compensatedMovements = [];
+      for (const movementId of committedMovementIds) {
+        const movementBody = await json(await request(`${financePath(`/movements/${encodeURIComponent(movementId)}`)}?scopeId=${encodeURIComponent(scopeId)}`, { headers: authHeaders() }));
+        if (movementBody.movement?.operational_status !== 'cancelled' || !movementBody.movement?.reversed_at) {
+          throw new Error('import undo left a movement uncompensated');
+        }
+        compensatedMovements.push(movementId);
+      }
+      result.undo = {
+        status: undo.status,
+        undone: Number(undoBody.undone || 0),
+        replayed: Boolean(undoBody.replayed),
+        batchStatus: loaded.batch.status,
+        compensated: true,
+        compensatedAt: loaded.batch.undone_at,
+        movementsCompensated: compensatedMovements.length,
+      };
     }
   }
   result.ok = true;

@@ -4,6 +4,7 @@ import { ContextDebugger } from './ContextDebugger'
 import { ModuleHost } from '@/modules/ModuleHost'
 import { crmModuleByKey, crmModuleRegistry, moduleAvailability } from '@/modules/registry'
 import { NotificationProvider, useAuth, useNotifications } from '@/contexts'
+import { resolveFinanceBootstrapEnabled } from '@/financeBootstrap'
 import { isOnlineCrmRuntime, unlockedModuleKeys } from '@/moduleAvailability'
 import { LoadingScreen } from '@/LoadingPattern'
 import { AuthScreen } from '@/AuthScreen'
@@ -54,8 +55,6 @@ const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
 const INSUMOS_OVERVIEW_FROM_KEY = 'skincos.insumos.overview.from.v1'
 const INSUMOS_OVERVIEW_TO_KEY = 'skincos.insumos.overview.to.v1'
 const INSUMOS_ESTOQUE_THRESHOLDS_KEY = 'skincos.insumos.estoque.thresholds.v1'
-const FINANCE_BOOTSTRAP_MAX_ATTEMPTS = 3
-const FINANCE_BOOTSTRAP_RETRY_DELAY_MS = 750
 // Demo banners are not allowed. Keep the UI strictly real-data oriented.
 
 function fmtMoneyBRLCompact(value: number) {
@@ -327,35 +326,14 @@ export default function AppFunctionalNeatlab() {
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    React.useEffect(() => {
 	        if (!Array.isArray(user?.allowedModules) || !user.allowedModules.map(String).includes('finance')) { setFinanceEnabled(false); return }
-	        let cancelled = false
-	        let retryTimer: number | undefined
-	        const bootstrap = async (attempt: number): Promise<void> => {
-	            try {
-	                const response = await fetch(`${String(import.meta.env.VITE_FINANCE_API_ORIGIN || '/api').replace(/\/$/, '')}/finance/bootstrap`, { credentials: 'include' })
-	                if (!response.ok) {
-	                    if (response.status >= 500 && attempt + 1 < FINANCE_BOOTSTRAP_MAX_ATTEMPTS) {
-	                        retryTimer = window.setTimeout(() => { void bootstrap(attempt + 1) }, FINANCE_BOOTSTRAP_RETRY_DELAY_MS)
-	                        return
-	                    }
-	                    if (!cancelled) setFinanceEnabled(false)
-	                    return
-	                }
-	                const payload = await response.json()
-	                if (!cancelled) setFinanceEnabled(Boolean(payload?.moduleEnabled && payload?.canAccess))
-	            } catch {
-	                if (attempt + 1 < FINANCE_BOOTSTRAP_MAX_ATTEMPTS) {
-	                    retryTimer = window.setTimeout(() => { void bootstrap(attempt + 1) }, FINANCE_BOOTSTRAP_RETRY_DELAY_MS)
-	                    return
-	                }
-	                if (!cancelled) setFinanceEnabled(false)
-	            }
-	        }
-	        setFinanceEnabled(false)
-	        void bootstrap(0)
-	        return () => {
-	            cancelled = true
-	            if (retryTimer) window.clearTimeout(retryTimer)
-	        }
+	        const controller = new AbortController()
+	        void resolveFinanceBootstrapEnabled({
+	            apiOrigin: String(import.meta.env.VITE_FINANCE_API_ORIGIN || '/api'),
+	            signal: controller.signal,
+	        }).then((enabled) => {
+	            if (!controller.signal.aborted) setFinanceEnabled(enabled)
+	        })
+	        return () => controller.abort()
 	    }, [allowedModulesKey, user?.allowedModules])
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
