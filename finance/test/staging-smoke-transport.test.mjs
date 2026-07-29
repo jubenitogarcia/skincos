@@ -5,10 +5,11 @@ import test from 'node:test';
 const read = (file) => readFile(new URL(`../scripts/${file}`, import.meta.url), 'utf8');
 
 test('staging Finance API smokes use the authenticated Pages transport', async () => {
-  const [canary, importer, remoteFinanceModule] = await Promise.all([
+  const [canary, importer, remoteFinanceModule, financeViteConfig] = await Promise.all([
     read('staging-synthetic-canary.mjs'),
     read('staging-import-smoke.mjs'),
     readFile(new URL('../../crm/console/modules/RemoteFinanceModule.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../../crm/console/vite.finance.config.ts', import.meta.url), 'utf8'),
   ]);
 
   for (const source of [canary, importer]) {
@@ -26,6 +27,9 @@ test('staging Finance API smokes use the authenticated Pages transport', async (
   assert.match(importer, /String\(process\.env\[name\] \?\? ''\)/);
   assert.match(importer, /const analyzePayload = \{[\s\S]*mapping: loaded\.batch\?\.mapping \|\| stagedBody\.analysis\?\.mapping \|\| \{\}/);
   assert.match(importer, /body: JSON\.stringify\(analyzePayload\)/);
+  assert.match(importer, /analysisBody\?\.ok !== true/);
+  assert.doesNotMatch(importer, /analysisBody\.analysis\?\.rows/);
   assert.match(remoteFinanceModule, /data-finance-remote-error/);
   assert.match(remoteFinanceModule, /remoteFailureKind\(cause\)/);
+  assert.match(financeViteConfig, /'process\.env\.NODE_ENV': '\"production\"'/);
 });
