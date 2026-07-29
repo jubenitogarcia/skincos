@@ -51,7 +51,10 @@ const json = async (response) => {
 
 const login = await request('/api/auth/login', {
   method: 'POST', headers: { 'content-type': 'application/json', origin: baseUrl },
-  body: JSON.stringify({ username, password }),
+  // `/api/auth/login` uses `email` for either the e-mail address or the
+  // canonical username. Keep the environment variable name to make the
+  // synthetic-only actor policy explicit.
+  body: JSON.stringify({ email: username, password }),
 });
 const loginBody = await json(login);
 const setCookies = typeof login.headers.getSetCookie === 'function' ? login.headers.getSetCookie() : [login.headers.get('set-cookie') || ''];

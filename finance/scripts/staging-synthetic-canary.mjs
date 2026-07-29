@@ -43,7 +43,9 @@ try {
   // Authenticate through the same Pages proxy used by the browser shell. The
   // session cookie is host-scoped to the staging shell and is not portable to
   // a direct api-staging request.
-  const loginResponse = await request('login', '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', origin: baseUrl }, body: JSON.stringify({ username, password }) });
+  // The CRM authentication contract calls the credential identifier `email`
+  // even when the synthetic actor signs in with its canonical username.
+  const loginResponse = await request('login', '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', origin: baseUrl }, body: JSON.stringify({ email: username, password }) });
   const login = await loginResponse.json().catch(() => null);
   if (loginResponse.status !== 200) { report.authenticationFailures += 1; throw new Error(`login returned ${loginResponse.status}`); }
   const cookie = (typeof loginResponse.headers.getSetCookie === 'function' ? loginResponse.headers.getSetCookie() : [loginResponse.headers.get('set-cookie') || '']).map((item) => item.split(';', 1)[0]).filter(Boolean).join('; ');

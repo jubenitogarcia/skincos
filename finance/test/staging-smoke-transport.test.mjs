@@ -14,6 +14,8 @@ test('staging Finance API smokes use the authenticated Pages transport', async (
     assert.match(source, /https:\/\/skincos-staging\.pages\.dev/);
     assert.match(source, /\/api\/auth\/login/);
     assert.match(source, /\/api\/finance/);
+    assert.match(source, /JSON\.stringify\(\{ email: username, password \}\)/);
+    assert.doesNotMatch(source, /JSON\.stringify\(\{ username, password \}\)/);
     assert.doesNotMatch(source, /api-staging\.skincos\.com\.br/);
   }
 });
