@@ -255,7 +255,11 @@ test('each CRM module materializes its own exact snapshot and cannot reuse a mis
   assert.match(runtimePolicy, /source_origin_outdated/)
 })
 
-test('Atendimento runtime is detached from the invoking action but keeps the persisted source contract', () => {
+test('Gestor and Atendimento runtimes detach from the invoking action and keep the persisted source contract', () => {
+  assert.match(launcher, /\[switch\]\$CrmLocalDetachedStart/)
+  assert.match(launcher, /function Start-CrmGestorBackgroundUpdate/)
+  assert.match(launcher, /'-CrmLocalDetachedStart'/)
+  assert.match(launcher, /"CrmLocal"\s*\{[\s\S]*if \(-not \$CrmLocalDetachedStart\)[\s\S]*Start-CrmGestorBackgroundUpdate/)
   assert.match(launcher, /function Start-CrmAtendimentoBackgroundUpdate/)
   assert.match(launcher, /-CrmAtendimentoDetachedStart/)
   assert.match(launcher, /-RedirectStandardOutput \$outLog -RedirectStandardError \$errLog/)
