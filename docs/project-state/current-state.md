@@ -807,11 +807,17 @@ Checkpoint pós-promoção:
 `e4eabf9e76bb96c30794a231102466a685d8ce971208dee432fb4b959ac4d60d`.
 
 Uma auditoria posterior encontrou que `Verify Published Artifacts` ainda
-invoca um wrapper externo em `C:\CodexRuntime`, que ignora seu argumento
-versionado e chama `/opt/skincos/current/source`. Portanto, a versão c525 não
-é aceite de isolamento completo: a correção pendente deve reconstruir esse
-comando para chamar diretamente o verificador do bundle, recusar wrappers,
-`--verifier`, DrvFS e ponteiros mutáveis, e publicar uma nova versão histórica.
+invocava um wrapper externo em `C:\CodexRuntime`, que ignorava seu argumento
+versionado e chamava `/opt/skincos/current/source`. A PR #853 removeu esse
+caminho transitivo: em 2026-07-29T12:30:17Z foi publicada a versão histórica
+`8316de5d-c047-473a-bd6a-662b513b73b5`, ligada à release imutável
+`1dee4fc24d786d794cd73f30e442ceea329e8563`. O comando chama diretamente o
+verificador dessa release; `audit-live` retornou zero referências mutáveis e
+os seis hashes do manifesto `3ca96e4038529680e019b35f13b5c306a57beaa4c71426a9a191a28621038a21`
+conferiram. O ponteiro global permaneceu em `0c0a4fa0…` e não houve restart.
+O checkpoint pós-promoção `livia-postpromote-1dee4fc2-20260729T093100-0300`
+teve `SHA256SUMS` conferido, SHA-256
+`a2a03f4223167bda6f6a4753b7b0073b7d014ca74100980d1cb99be1c996f5a9`.
 O registro de autorização e o runbook versionado especificam a promoção
 `stage-only`, o rollback por nova versão histórica, os probes HTTP e a retenção
 dos bundles referenciados por manifestos. A evidência de publicação real
