@@ -736,6 +736,26 @@ function Wait-CrmPersonaCurrent {
     return [pscustomobject]@{ Action = 'restart'; Reason = 'startup_timeout'; Manifest = (Get-CrmPersonaManifest -Persona $Persona) }
 }
 
+function Test-CrmSourceOriginEquivalent {
+    param(
+        [AllowEmptyString()][string]$Left,
+        [AllowEmptyString()][string]$Right
+    )
+    # Match the runtime-policy contract exactly. Windows source roots are
+    # case-insensitive and may reach WSL with either slash separator, while
+    # the module suffix and native paths must remain exact to prevent a
+    # snapshot from Atendimento, Site or Meta Ads crossing the boundary.
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
+        return $false
+    }
+    $normalizedLeft = $Left.Trim() -replace '\\', '/'
+    $normalizedRight = $Right.Trim() -replace '\\', '/'
+    if ($normalizedLeft -match '^[A-Za-z]:/' -and $normalizedRight -match '^[A-Za-z]:/') {
+        return $normalizedLeft.ToLowerInvariant() -ceq $normalizedRight.ToLowerInvariant()
+    }
+    return $normalizedLeft -ceq $normalizedRight
+}
+
 function Wait-CrmAtendimentoReady {
     param(
         [Parameter(Mandatory = $true)][string]$TargetCommit,
