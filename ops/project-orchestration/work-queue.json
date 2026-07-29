@@ -4,6 +4,46 @@
   "source_main_sha": "6963ba0495870e8f9b15a0b1e81477dd5f7f3f8b",
   "items": [
     {
+      "id": "p0-workforce-timekeeping-current-main-release",
+      "objective": "Restore CONSULTOR/EMPLOYEE Ponto navigation and prove one immutable Workforce Timekeeping release through staging before any production pilot.",
+      "priority": 1100,
+      "state": "source-remediated-staging-blocked-by-secret",
+      "dependencies": [],
+      "blockers": [
+        "PONTO_PROFILE_DATA_KEY is absent from accessible staging and production secret-name metadata",
+        "no current-main same-SHA Timekeeping, Core API and CRM Pages staging lineage",
+        "module-control:timekeeping has no explicit active state or rollback drill evidence"
+      ],
+      "environment": "staging-then-production",
+      "permitted_actions": [
+        "green PR/CI and immutable staging promotion after approved secret provisioning",
+        "synthetic CONSULTOR-only authenticated journey with teardown and sanitised evidence",
+        "staging module-control maintenance to active rollback drill",
+        "production promotion only after matching staging evidence and named pilot scope"
+      ],
+      "prohibited_actions": [
+        "invent, generate, copy or disclose PONTO_PROFILE_DATA_KEY",
+        "treat health 200 or historical workflow runs as authenticated release proof",
+        "advance Finance or unrelated release work under this objective",
+        "archive the workstream before production evidence and post-release observation"
+      ],
+      "required_evidence": [
+        "same full SHA in Timekeeping, Core API and CRM Pages staging promotion artifacts",
+        "synthetic authenticated CONSULTOR journey including Ponto visibility, PIN, idempotency, unit denial, correction and administrative denial",
+        "sanitised teardown evidence preserving audit rows",
+        "explicit module-control active state and staging rollback drill",
+        "production checkpoint, deployment/version, health/readiness, authenticated pilot and post-release observation"
+      ],
+      "done_definition": "A single immutable release has complete staging evidence and then separately approved production/pilot evidence; no historical or health-only claim substitutes for that lineage.",
+      "next_item": "finance-current-main-staging-evidence",
+      "last_verified": "2026-07-29T20:45:00Z",
+      "evidence": {
+        "base_sha": "f202e29f4178bba8966edf71539c942618254de0",
+        "regression_commit": "4bfc56af0ac5b2bf0387a71dfa1825cb84ecdca0",
+        "secret_gate": "PONTO_PROFILE_DATA_KEY"
+      }
+    },
+    {
       "id": "p0-insumos-unit-access",
       "objective": "P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos",
       "priority": 1000,

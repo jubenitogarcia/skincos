@@ -1,4 +1,6 @@
-export const CONSULTOR_MODULE_KEYS = new Set(['atendimento'])
+// This is a navigation allowlist, not an authorization bypass.  The CRM
+// Function and Workforce Worker independently authorize every Ponto request.
+export const CONSULTOR_MODULE_KEYS = new Set(['atendimento', 'ponto'])
 
 function normalizedModules(value: unknown): string[] {
   return Array.isArray(value)
@@ -11,8 +13,10 @@ export function hasCrmModuleAccess(role: unknown, allowedModules: unknown, modul
   const key = String(moduleKey || '').trim()
   const roleKey = String(role || '').trim().toUpperCase()
   if (!key) return false
-  // Consultants only operate Atendimento. This must be evaluated before the
-  // generic self-service Ponto allowance below.
+  // Consultants and the legacy EMPLOYEE spelling can operate only Atendimento
+  // and their self-service Ponto area. This must be evaluated before the
+  // generic self-service Ponto allowance below so assigned module lists never
+  // broaden their navigation.
   if (roleKey === 'CONSULTOR' || roleKey === 'EMPLOYEE') return CONSULTOR_MODULE_KEYS.has(key)
   // Every authenticated CRM user can access the self-service timekeeping area.
   // Data and administrative operations remain authorized by the Ponto proxy and

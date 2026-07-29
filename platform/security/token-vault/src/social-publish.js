@@ -28,7 +28,7 @@ export async function handleSocialPublishOperation({ request, env, requestId, de
   } catch {
     return response({ ok: false, error: 'invalid_target_url', requestId }, 400);
   }
-  if (url.protocol !== 'https:' || !PLATFORM_HOSTS[platform].has(url.hostname.toLowerCase()) || !allowedPath(platform, url)) {
+  if (url.protocol !== 'https:' || !PLATFORM_HOSTS[platform].has(url.hostname.toLowerCase()) || !allowedPath(platform, url, method)) {
     return response({ ok: false, error: 'target_not_allowed', requestId }, 403);
   }
 
@@ -99,11 +99,16 @@ export async function handleSocialPublishOperation({ request, env, requestId, de
   }, upstream.ok ? 200 : upstream.status);
 }
 
-function allowedPath(platform, url) {
+function allowedPath(platform, url, method) {
   const path = url.pathname;
   if (url.hostname.toLowerCase() === 'rupload.facebook.com') return /^\/video-upload\//.test(path);
   if (platform === 'threads') return /^\/v1\.0\/(?:me|\d+)(?:\/(?:threads|threads_publish))?$/.test(path);
   if (platform === 'instagram') return /^\/v25\.0\/\d+(?:\/(?:media|media_publish))?$/.test(path);
+  // A Facebook Page feed post is identified as pageId_postId.  Allow this
+  // exact shape for a read only: the Livia verifier needs the post itself to
+  // prove every carousel attachment, while mutation endpoints remain numeric
+  // page IDs only.
+  if (['GET', 'HEAD'].includes(method) && /^\/v25\.0\/\d+_\d+$/.test(path)) return true;
   return /^\/v25\.0\/\d+(?:\/(?:feed|photos|videos|video_reels))?$/.test(path);
 }
 

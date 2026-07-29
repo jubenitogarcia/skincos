@@ -7,6 +7,9 @@ const reportFile = process.argv.includes('--report') ? process.argv[process.argv
 if (!reportFile) throw new Error('--report is required');
 const report = { ok: false, generatedAt: new Date().toISOString(), samples: [], errors: 0, authenticationFailures: 0, journeyFailures: 0, dataDivergences: 0, auditFailures: 0, dependencyFailures: 0 };
 const required = (name) => { const item = String(process.env[name] || '').trim(); if (!item) throw new Error(`${name} is required`); return item; };
+// Credentials are opaque values: trimming would silently change a valid
+// password while the browser uses it verbatim.
+const requiredSecret = (name) => { const item = String(process.env[name] ?? ''); if (!item) throw new Error(`${name} is required`); return item; };
 const finish = async (ok, cause) => {
   report.ok = ok;
   if (cause) report.failure = String(cause.message || cause).replace(/[\r\n]/g, ' ').slice(0, 180);
@@ -19,7 +22,7 @@ try {
   if (baseUrl !== 'https://skincos-staging.pages.dev') throw new Error('canary base URL must be the staging CRM shell');
   const username = required('FINANCE_CANARY_USERNAME');
   if (username !== 'finance-staging-smoke') throw new Error('only dedicated synthetic smoke actor may run canary');
-  const password = required('FINANCE_CANARY_PASSWORD');
+  const password = requiredSecret('FINANCE_CANARY_PASSWORD');
   const scopeId = required('FINANCE_CANARY_SCOPE_ID');
   if (scopeId !== 'finance-scope-novo-hamburgo') throw new Error('only synthetic Novo Hamburgo scope is allowed');
   const financePath = (path) => `/api/finance${path}`;
@@ -43,7 +46,9 @@ try {
   // Authenticate through the same Pages proxy used by the browser shell. The
   // session cookie is host-scoped to the staging shell and is not portable to
   // a direct api-staging request.
-  const loginResponse = await request('login', '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', origin: baseUrl }, body: JSON.stringify({ username, password }) });
+  // The CRM authentication contract calls the credential identifier `email`
+  // even when the synthetic actor signs in with its canonical username.
+  const loginResponse = await request('login', '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', origin: baseUrl }, body: JSON.stringify({ email: username, password }) });
   const login = await loginResponse.json().catch(() => null);
   if (loginResponse.status !== 200) { report.authenticationFailures += 1; throw new Error(`login returned ${loginResponse.status}`); }
   const cookie = (typeof loginResponse.headers.getSetCookie === 'function' ? loginResponse.headers.getSetCookie() : [loginResponse.headers.get('set-cookie') || '']).map((item) => item.split(';', 1)[0]).filter(Boolean).join('; ');
