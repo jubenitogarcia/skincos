@@ -814,13 +814,20 @@ caminho transitivo: em 2026-07-29T12:30:17Z foi publicada a versão histórica
 `1dee4fc24d786d794cd73f30e442ceea329e8563`. O comando chama diretamente o
 verificador dessa release; `audit-live` retornou zero referências mutáveis e
 os seis hashes do manifesto `3ca96e4038529680e019b35f13b5c306a57beaa4c71426a9a191a28621038a21`
-conferiram. O ponteiro global permaneceu em `0c0a4fa0…` e não houve restart.
+conferiram. No checkpoint da repin, o ponteiro global era `0c0a4fa0…`; a
+repin não o alterou nem fez restart. Posteriormente, a promoção independente
+da PR #854 moveu o ponteiro global para `a32cf1a9…`. O Livia continua isolado:
+seus comandos publicados apontam diretamente para `1dee4fc2…`, sem depender
+desse ponteiro global.
 O checkpoint pós-promoção `livia-postpromote-1dee4fc2-20260729T093100-0300`
 teve `SHA256SUMS` conferido, SHA-256
 `a2a03f4223167bda6f6a4753b7b0073b7d014ca74100980d1cb99be1c996f5a9`.
 O registro de autorização e o runbook versionado especificam a promoção
 `stage-only`, o rollback por nova versão histórica, os probes HTTP e a retenção
-dos bundles referenciados por manifestos. A evidência de publicação real
+dos bundles referenciados por manifestos. O export sanitizado e versionado da
+versão publicada está em `orb/engine/workflows/livia/livia.current.json`
+(SHA-256 `c60184e6a6df16a4df74b2bbfa702b029bc0f9de0bcfa77a3904a5c02b5deec0`).
+A evidência de publicação real
 continua histórica (execuções 336 e 339); uma publicação posterior só pode ser
 considerada prova da versão corrigida se registrar seu `workflowVersionId`
 publicado e o verificador direto do bundle.
