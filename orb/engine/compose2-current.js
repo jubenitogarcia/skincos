@@ -703,8 +703,12 @@ function extractFromLivia(liviaNorm, idx, warnings) {
 // --------------------------
 // BUILDERS DE REQUESTS
 // --------------------------
-const ALLOW_IG_ALT_TEXT_ON_CAROUSEL_ITEMS = false;
-const ALLOW_THREADS_ALT_TEXT_ON_CAROUSEL_ITEMS = false;
+// Accessibility is a per-media contract.  Instagram image containers and
+// Threads image/video containers (including carousel children) accept
+// alt_text.  Instagram video/Reel containers intentionally remain unsupported
+// and are normalized by the versioned job-graph guard before the gateway.
+const ALLOW_IG_ALT_TEXT_ON_CAROUSEL_ITEMS = true;
+const ALLOW_THREADS_ALT_TEXT_ON_CAROUSEL_ITEMS = true;
 
 function buildUploadBodyInstagram({ isVideo, isCarouselItem, url, media_type, caption, alt_text, bestFrameSeconds, selectedFrameUrl }) {
   const body = {};
@@ -874,6 +878,25 @@ function assertPlatformPhaseIntegrity(results) {
 
       if (platform === "facebook" && pub.facebookPublishMode === "feed" && !Array.isArray(pub.attachedMediaFromPublishRunIndexes)) {
         throw new Error(`Compose (2): publish facebook/feed sem attachedMediaFromPublishRunIndexes para groupKey=${groupKey}, unit=${unit}`);
+      }
+
+      if (platform === "facebook" && pub.facebookPublishMode === "feed") {
+        const sourceMediaIds = Array.isArray(pub.sourceMediaIds) ? pub.sourceMediaIds.map(value => str(value, "")).filter(Boolean) : [];
+        const expectedCount = Number(pub.sourceMediaCount || 0);
+        const attachmentRuns = pub.attachedMediaFromPublishRunIndexes || [];
+        if (!expectedCount || sourceMediaIds.length !== expectedCount || attachmentRuns.length !== expectedCount) {
+          throw new Error(`Compose (2): contrato Facebook/feed incompleto para groupKey=${groupKey}, unit=${unit}; expected=${expectedCount}, sources=${sourceMediaIds.length}, attachments=${attachmentRuns.length}`);
+        }
+        if (new Set(sourceMediaIds).size !== sourceMediaIds.length || new Set(attachmentRuns).size !== attachmentRuns.length) {
+          throw new Error(`Compose (2): contrato Facebook/feed duplicado para groupKey=${groupKey}, unit=${unit}.`);
+        }
+        const attachmentSourceIds = attachmentRuns.map(runIndex => {
+          const source = rows.find(row => Number(row.publishRunIndex) === Number(runIndex));
+          return str(source && source.media && source.media.id, "");
+        });
+        if (attachmentSourceIds.some(value => !value) || attachmentSourceIds.join("|") !== sourceMediaIds.join("|")) {
+          throw new Error(`Compose (2): Facebook/feed não preservou a identidade/ordem de cada mídia em groupKey=${groupKey}, unit=${unit}.`);
+        }
       }
 
       if (pub.checkStatusFromPublishRunIndex === undefined || pub.checkStatusFromPublishRunIndex === null) {
@@ -1063,11 +1086,13 @@ for (const group of groups) {
       const baseUrlAccount = `https://graph.${network}/${version}/${accountId}/`;
 
       const uploadRunIndexes = [];
+      // A Page Reel represents exactly one source video. A group with more
+      // than one source asset must remain on the unpublished-media + feed
+      // path, otherwise the first item can silently replace later children.
+      const facebookUseReels = platform === "facebook" && firstIsVideo && !isCarouselGroup;
 
-      if (platform === "facebook" && firstIsVideo) {
+      if (facebookUseReels) {
         facebookPublishMode = "reels";
-
-        if (isCarouselGroup) pushUnique(warnings, "facebook.reels: grupo com múltiplos arquivos; usando apenas o 1º vídeo");
 
         const firstIndex = groupItems[0].index;
         const c2 = groupItems[0].c2 || {};
@@ -1112,6 +1137,8 @@ for (const group of groups) {
               id: c2.id,
               name: c2.name,
               mimeType: c2.mimeType,
+              sourceMediaKind: "video",
+              groupOrder: Number(c2.groupOrder ?? 0),
               size: c2.size,
               webContentLink: c2.webContentLink || null,
               finalUrl,
@@ -1151,6 +1178,8 @@ for (const group of groups) {
               id: c2.id,
               name: c2.name,
               mimeType: c2.mimeType,
+              sourceMediaKind: "video",
+              groupOrder: Number(c2.groupOrder ?? 0),
               size: c2.size,
               webContentLink: c2.webContentLink || null,
               finalUrl,
@@ -1262,21 +1291,20 @@ for (const group of groups) {
           }
 
           if (platform === "facebook") {
-            if (isVideo) {
-              pushUnique(fileWarnings, "facebook: vídeo detectado em grupo não-reels; ignorado (use fluxo reels)");
-              continue;
-            }
-
             const endpoint1 = str(fbObj.endpoint_1st, "").trim();
             const edge = str(c2.edge, "").trim();
-            const chosen = endpoint1 || edge || "photos";
+            const chosen = isVideo ? "videos" : (endpoint1 || edge || "photos");
 
             url = baseUrlAccount + chosen;
 
             const fbCaptionPublish = str(capsHere.fbCaption, "") || str(globalCaptions.fbCaption, "");
 
-            // Upload da foto sem duplicar copy.
-            body = buildUploadBodyFacebookPhotos({ url: finalUrl, caption: "" });
+            // Carousel children remain unpublished until the one feed request
+            // attaches every returned media_fbid. This keeps a later child
+            // failure from becoming a partial public post.
+            body = isVideo
+              ? { ...buildUploadBodyFacebookVideos({ url: finalUrl, caption: "", selectedFrameUrl: selectedFrameUrlResolved }), published: false }
+              : buildUploadBodyFacebookPhotos({ url: finalUrl, caption: "" });
 
             textMeta = {
               caption: fbCaptionPublish,
@@ -1313,6 +1341,8 @@ for (const group of groups) {
                 id: c2.id,
                 name: c2.name,
                 mimeType: c2.mimeType,
+                sourceMediaKind: isVideo ? "video" : "image",
+                groupOrder: Number(c2.groupOrder ?? localIdx),
                 size: c2.size,
                 webContentLink: c2.webContentLink || null,
                 finalUrl,
@@ -1392,7 +1422,7 @@ for (const group of groups) {
           statusFromPublishRunIndex = isCarouselGroup ? containerRunIndex : lastUploadRun;
           checkFields = "status";
           checkKind = "th_creation";
-        } else if (isFb && firstIsVideo) {
+        } else if (isFb && facebookUseReels) {
           statusFromPublishRunIndex = uploadRunIndexes[0] ?? null;
           checkFields = "status";
           checkKind = "fb_reels_video";
@@ -1461,7 +1491,7 @@ for (const group of groups) {
         let dependency = null;
 
         if (isFb) {
-          if (firstIsVideo) {
+          if (facebookUseReels) {
             facebookPublishMode = "reels";
             url = baseUrlAccount + "video_reels";
             jsonRequest = {};
@@ -1502,7 +1532,7 @@ for (const group of groups) {
           unit: unitKey,
           platform,
           phase: "publish",
-          step: (isFb && firstIsVideo) ? "reels_finish" : "default_publish",
+          step: (isFb && facebookUseReels) ? "reels_finish" : "default_publish",
           index: 0,
           method: "POST",
           url,
@@ -1523,7 +1553,9 @@ for (const group of groups) {
           attachedMediaFromPublishRunIndexes: (isFb && facebookPublishMode !== "reels")
             ? uploadRunIndexes
             : undefined,
-          reelsStartFromPublishRunIndex: (isFb && firstIsVideo) ? uploadRunIndexes[0] : undefined,
+          sourceMediaIds: isFb ? groupItems.map(({ c2 }) => str(c2.id, "")).filter(Boolean) : undefined,
+          sourceMediaCount: isFb ? groupItems.length : undefined,
+          reelsStartFromPublishRunIndex: (isFb && facebookUseReels) ? uploadRunIndexes[0] : undefined,
           scheduleUnix: (isIg && schedule.shouldSchedule) ? schedule.unix : undefined,
           checkStatusFromPublishRunIndex: checkStatusRunIndex,
         };

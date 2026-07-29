@@ -208,6 +208,7 @@ test('social gateway accepts every Livia provider route, including the Facebook 
       ['facebook', 'POST', 'https://graph.facebook.com/v25.0/123/video_reels?upload_phase=start'],
       ['facebook', 'POST', 'https://rupload.facebook.com/video-upload/v25.0/987'],
       ['facebook', 'GET', 'https://graph.facebook.com/v25.0/987?fields=status'],
+      ['facebook', 'GET', 'https://graph.facebook.com/v25.0/123_456?fields=id,permalink_url,attachments'],
       ['instagram', 'POST', 'https://graph.instagram.com/v25.0/123/media'],
       ['instagram', 'POST', 'https://graph.instagram.com/v25.0/123/media_publish'],
       ['instagram', 'GET', 'https://graph.instagram.com/v25.0/987?fields=status'],
@@ -228,6 +229,48 @@ test('social gateway accepts every Livia provider route, including the Facebook 
     }
     assert.equal(calls.length, requests.length);
     assert.equal(calls[2].authorization, `OAuth ${SECRET_TOKEN}`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('social gateway permits a Facebook composite post only as a read-only verifier target', async () => {
+  const rows = [{ id: 'fb_bss', provider: 'facebook', unit: 'BarraShoppingSul', external_account_id: '123', token_type: 'long_lived_access_token', token_ciphertext: 'encrypted', metadata_json: '{}' }];
+  const ctx = context({ env: { TOKEN_VAULT_DB: { prepare() { return new Statement(rows); } } } });
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    return new Response(JSON.stringify({ id: '123_456' }), { status: 200 });
+  };
+  try {
+    const create = await handleSocialPublishOperation({
+      request: new Request('https://api.skincos.com.br/internal/token-vault/v1/social-publish/operations', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          platform: 'facebook', unit: 'bss', operation: 'livia_verify_post', method: 'POST',
+          url: 'https://graph.facebook.com/v25.0/123_456',
+        }),
+      }),
+      ...ctx,
+    });
+    assert.equal(create.status, 403);
+    assert.equal(fetches, 0);
+
+    const read = await handleSocialPublishOperation({
+      request: new Request('https://api.skincos.com.br/internal/token-vault/v1/social-publish/operations', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          platform: 'facebook', unit: 'bss', operation: 'livia_verify_post', method: 'GET',
+          url: 'https://graph.facebook.com/v25.0/123_456',
+        }),
+      }),
+      ...ctx,
+    });
+    assert.equal(read.status, 200);
+    assert.equal(fetches, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }

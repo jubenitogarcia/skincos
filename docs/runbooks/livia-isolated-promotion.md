@@ -30,7 +30,22 @@ scripts/runtime/prepare-native-source-release.sh \
 O comando valida o construtor, a matriz offline e os entrypoints antes de criar
 `/opt/skincos/releases/$SKINCOS_RELEASE_ID/source`; ele não muda
 `/opt/skincos/current/source`. Em seguida, gere o manifesto da versão
-candidata e publique exclusivamente pela transação versionada:
+candidata pelo construtor único e valide o grafo produzido. Não aplique patches
+isolados manualmente: o construtor inclui, como unidade atômica de candidato,
+as marcas Drive por fonte, o preflight do Token Vault, o contrato de alt text,
+o contrato de carrossel Facebook e o pin/runtime semanticamente idempotente.
+
+```bash
+sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/prepare-livia-production-candidate.js \
+  --input /var/tmp/livia-live-export.json \
+  --output /var/tmp/livia-candidate.json \
+  --release-root /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine
+sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/validate-livia-workflow.js \
+  /var/tmp/livia-candidate.json
+```
+
+Somente então gere o manifesto da versão candidata e publique exclusivamente
+pela transação versionada:
 
 ```bash
 sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/workflow-runtime-manifest.js \

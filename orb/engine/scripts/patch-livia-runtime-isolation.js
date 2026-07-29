@@ -157,4 +157,13 @@ function main() {
   process.stdout.write(JSON.stringify({ ok: true, workflowId: WORKFLOW_ID, releaseRoot, nodes: touched, semanticResumeNodes }) + '\n');
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  WORKFLOW_ID,
+  MUTABLE_RUNTIME_RE,
+  patchResumeIdentity,
+  validate,
+};
