@@ -28,26 +28,42 @@
 
 ## External/product follow-up
 
+- [ ] When an unpublished, approved Livia source item is available, run one
+  controlled production journey on workflow `WGXr4vYkv9UoJ8zc` version
+  `8316de5d-c047-473a-bd6a-662b513b73b5` and verify all destinations externally.
+  Do not reuse executions 336/339 media or create synthetic social content.
+- [ ] Review draft PR #832 (`codex/admin/ux-ui-infrastructure`) after required
+  checks finish; its UX/UI audit infrastructure is local/synthetic only and
+  must not be treated as a production UI audit or deployment authorization.
 - [ ] Confirm or reauthorize the `Google Calendar (Skincos)` credential for the exact scopes required by the inactive clinic Orb workflows.
 - [ ] Provide `GOOGLE_CALENDAR_ID`, approved test data and a non-production-safe validation window before enabling a workflow that can create a real calendar event or booking.
 - [x] Reconciliar e versionar o contrato do `Meta Ads – Publish` (workflow,
   fontes dos Code nodes, Token Vault, migrations, preflight e testes) pela PR
   #840; a execução manual 333 concluiu o lote comercial final.
-- [ ] **P1 — reconciliar os runs históricos não terminais do journal Meta Ads e
-  validar a entrega da notificação WhatsApp.** A auditoria de 2026-07-29 não
-  encontrou lock ativo nem pendência no run final `map_f6a59341d6dace99d70f5533`,
-  mas encontrou registros antigos em `acquired`/`processing`/`staged` e um
-  retorno de erro do nó WhatsApp na execução 333. Antes de alterar qualquer
-  registro, mapear os recursos Meta de cada run, decidir compensação ou
-  conclusão idempotente e registrar evidência de entrega; não reenviar
-  notificação nem apagar journal por suposição.
-- [ ] **P1 — promover o source release nativo do Orb até o `main` que contém a
-  PR #840.** O serviço ainda executa o release
-  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, anterior ao contrato canônico.
-  O workflow n8n e o Token Vault já estão sincronizados, mas a promoção do
-  release inclui superfícies além do Meta Ads e exige checkpoint, validação
-  pré-produção e autorização explícita de produção. Após a promoção, repetir o
-  preflight a partir do release ativo e registrar o SHA/rollback.
+- [x] **P1 — reconciliar as três pendências Meta Ads por lookup Graph somente
+  leitura.** Em 2026-07-29 os recursos dos runs
+  `map_9c175ce1ed571ccd158ef509`, `map_d4162ea2a7e9660512796dcb` e
+  `map_7464107b2ee04e0cab6a27cf` foram comprovadamente `ARCHIVED` e seus jobs
+  foram fechados como `rolled_back`, com evento imutável de readback. Não houve
+  mutação na Meta; o journal ficou com 110 runs terminais, zero locks ativos e
+  zero `reconciliation_required`. A entrega WhatsApp isolada atingiu
+  `DELIVERY_ACK`; Telegram permaneceu independente.
+- [x] **P1 — promover o source release nativo do Orb até o `main` que contém as
+  PRs #840 e #844.** Em 2026-07-29 o ponteiro foi promovido de
+  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a` para
+  `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89` por troca atômica controlada.
+  O checkpoint privado, a linhagem e o procedimento de rollback estão em
+  `C:\CodexRuntime\operator\admin\skincos\native-promotions\`; preflight do
+  Meta Ads Publish, smoke nativo e healths local/público foram aprovados sem
+  iniciar execução comercial. O workflow permaneceu inativo/manual na versão
+  830. A regra de ACL do preparador foi ampliada e testada para que o preflight
+  peer-authenticated consiga ler os 49 Code nodes em releases futuros.
+- [x] **P1 — realinhar a release nativa após a integração da PR #854.** O
+  release `a32cf1a9034ccd4872cfbde1ae089e56355300c4` foi promovido por troca
+  atômica a partir de `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89`, com archive,
+  lineage, preflight e rollback privados. Orb, proxy, CRM e Booking usam esse
+  mesmo SHA; healths local e públicos, audit-live e preflight Meta Ads passaram
+  sem iniciar execução comercial.
 - [ ] Decide whether draft PR #674 should graduate from the optional GitHub
   autonomy-broker experiment; it is isolated and not deployed.
 

@@ -11,6 +11,7 @@ const { spawnSync } = require('child_process');
 
 const WORKFLOW_ID = 'WGXr4vYkv9UoJ8zc';
 const REQUIRED_NODES = ['Process Media Asset', 'BQ - Build Platform Job Graph', 'Verify Published Artifacts', 'Record Publish Progress', 'Validate Publish Token Health'];
+const MUTABLE_RUNTIME_RE = /\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b|\/mnt\/c\/|livia-verify-provider-copy-drift-wrapper|--verifier\b/;
 const args = process.argv.slice(2);
 const sourcePath = args.find((value) => value.endsWith('.json'));
 const expectedVersion = args.find((value) => value.startsWith('--expected-version='))?.slice('--expected-version='.length);
@@ -47,8 +48,11 @@ function assertCandidate(candidate) {
     const node = nodes.get(name);
     const command = String(node?.parameters?.command || '');
     if (node?.type !== 'n8n-nodes-base.executeCommand') fail(`${name} is not an Execute Command node.`);
-    if (!command.includes(releaseRoot) || /\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/.test(command)) {
+    if (!command.includes(releaseRoot) || MUTABLE_RUNTIME_RE.test(command)) {
       fail(`${name} is not pinned exclusively to ${releaseRoot}.`);
+    }
+    if (name === 'Verify Published Artifacts' && !command.includes(`${releaseRoot}/scripts/livia/verify-published-artifacts.js`)) {
+      fail('Verify Published Artifacts must invoke the pinned verifier entrypoint directly.');
     }
   }
 }

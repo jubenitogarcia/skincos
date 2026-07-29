@@ -1,5 +1,159 @@
 # Current state
 
+## Finance production provision — blocked before workflow dispatch — 2026-07-29T11:21Z
+
+The versioned architecture is unambiguous: the production Finance Worker is
+`skincos-finance`, its production D1 database is `skincos-finance`, and the API
+production service binding targets that Worker. The current staging release
+`32bf3ebb296ca95e3273bb4fed664480eb5642e5` is an ancestor of `origin/main` and
+the canonical Finance preview (`30168426616`) and staging (`30168445270`) runs
+for that SHA succeeded. Fresh staging Finance health and readiness both returned
+HTTP 200 with `ready=true`.
+
+Production provisioning did not start. The GitHub `production` environment
+lacks `FINANCE_D1_PRODUCTION_ID`, `FINANCE_CONTROL_PRODUCTION_KV_ID`,
+`FINANCE_BACKUP_PASSPHRASE`, and `FINANCE_SERVICE_AUTH_SECRET`; the repository
+flag `ENABLE_FINANCE_PRODUCTION_DEPLOY` is also `false`. Therefore the canonical
+workflow would fail its required resource/secret guards before it can create the
+encrypted D1 checkpoint or apply a migration. No workflow was dispatched, no
+Cloudflare Worker/D1/KV/binding/secret was changed, no migration ran, and no
+Finance production artifact or version exists. Production API `/health` remains
+HTTP 200; protected Finance routes return 401, which is not Worker Finance
+health evidence.
+
+The 12 Finance migrations were reviewed. They contain no table/data deletion;
+`0008_finance_draft_revision.sql` replaces three guard triggers atomically, so
+it is a schema-guard replacement rather than data-destructive DDL. Before a
+future canonical production run, an authorized operator must provision and
+verify the isolated production D1/KV resources and the four GitHub environment
+configuration items through the approved platform path. A follow-up PR should
+add a read-only Finance production preflight that attests those resource IDs,
+secret presence, Worker existence, and the migration plan before dispatch.
+
+## UX/UI PR #832 — Semgrep hosted scanner alignment and isolated rerun passed — 2026-07-29T04:35Z
+
+The hosted `Semgrep OSS` scanner did not honor the preceding-line form of the
+scoped loopback rationale, although the local CLI did. The rationale now sits
+on the one `fetch` line it exempts; the endpoint and JSON-RPC assertions remain
+unchanged. The exact local Semgrep scan remains green. To avoid an unrelated
+CRM Local Vite process already bound to host port 5173, the final clean ext4
+WSL clone ran in an unprivileged private network namespace with its own
+loopback; no parallel process was stopped or used as a test target. The
+canonical `audit:ui:full` passed from 04:31:33Z to 04:34:35Z with components,
+four pilots, axe, four versioned visual comparisons and Lighthouse. Reports
+are local disposable evidence only; no process/listener from this validation,
+snapshot update, secret, production access or deployment remains. PR #832
+stays draft pending the hosted scanner and the remaining remote checks.
+
+## UX/UI PR #832 — Semgrep loopback finding remediated and rerun passed — 2026-07-29T04:15Z
+
+GitHub Advanced Security reported one `Semgrep OSS` error on the local
+Storybook MCP checker: a generic rule interpreted its fixed
+`http://127.0.0.1:6006/mcp` request as unencrypted external traffic. The
+endpoint is constrained to the locally spawned Storybook process; the existing
+documented `nosemgrep` rationale was moved to the exact `fetch` line instead
+of the indirect call site. A clean WSL Python virtual environment ran the
+same `semgrep scan --config auto --error` target with zero findings. A
+disposable ext4 WSL clone at `fdc520c8` then used clean sequential root, CRM
+and website lockfile installs plus Chromium only: the direct Lighthouse run
+produced HTML/JSON, and `audit:ui:full` passed from 04:12:19Z to 04:14:50Z
+for components, four synthetic pilot viewports, axe, the four visual baselines
+and Lighthouse. No snapshot update, tolerance change, production access,
+secret, account, deployment or product UI change occurred. The PR remains
+draft until GitHub reruns and completes remote checks on the corrected head.
+
+## UX/UI PR #832 — second main sync clean; remote checks restarted — 2026-07-29T03:53Z
+
+While the first remote-check run was in progress, `origin/main` advanced to
+`2f0bba6ab5df9c09bc3171e190189991a3891052`. It was merged into
+`codex/admin/ux-ui-infrastructure` as `1e30fc0df34151e6aa70007bc27c6f0ca523ee9a`;
+there were no conflicts and the merge contains only the upstream
+`deploy-core-workers.yml` addition. `git diff --check` passed and the
+three-dot PR diff remains limited to the UX/UI infrastructure, its versioned
+baselines and the related documentation. This branch does not activate or run
+that deployment workflow, and no deployment, production access, secret or
+product change occurred. The PR remains draft while GitHub recomputes the
+checks against this head.
+
+## UX/UI PR #832 — main sync resolved and local suite passed — 2026-07-29T03:48Z
+
+`origin/main` at `1a6650d9c0598d810dca97e778d7adf3e0bd25d7` was merged locally
+into `codex/admin/ux-ui-infrastructure` as `04e217fbc3fe5f9119a0cb86a291d9c04f920f98`.
+The only conflicts were the shared project-state documents; both the current
+main records and UX/UI evidence were retained, with JSON parsing and
+`git diff --check` passing. A clean disposable ext4 WSL checkout of the merge
+commit then passed `npm run audit:ui:full` from 03:45:33Z to 03:47:43Z:
+components, four synthetic pilot viewports, axe JSON, four visual-baseline
+comparisons and Lighthouse. No snapshot update, product change, deployment,
+secret or production access occurred. This is local validation of an
+unpublished merge resolution; PR #832 remains draft until remote checks and
+review state are observed again.
+
+## UX/UI infrastructure audit — reproducibility rerun passed — 2026-07-29T03:32Z
+
+After the LHCI Linux-profile and Storybook MCP protocol corrections, a second
+disposable ext4 WSL clone repeated the clean lockfile installs and Chromium-only
+browser install. The directly affected LHCI baseline and Storybook MCP
+Inspector checks passed first. The integrated `audit:ui:full` then passed from
+2026-07-29T03:26:33Z to 03:30:43Z: components, all four synthetic pilot
+viewports, all four axe JSON results, all four versioned visual-baseline
+comparisons and Lighthouse HTML/JSON. CRM typecheck passed; lint completed
+with 0 errors and 96 pre-existing warnings outside this infrastructure scope;
+Storybook build and `npm audit --omit=dev` (0 vulnerabilities) also passed.
+No visual tolerance, assertion, dependency, snapshot, product UI or external
+endpoint was changed. The native clone and its generated artifacts are
+disposable local evidence only; no validation-owned process remains.
+
+## UX/UI infrastructure audit — final WSL-native validation passed; local remediation pending commit — 2026-07-29T03:14Z
+
+The complete diff from `origin/main` merge base
+`b1afd84b9191841d1f4bc28497f70b3755375d70` to published PR head
+`5f1bbe75a6072c7da3b55643ab82e9363a0b4c8c` was reviewed before any new
+commit or PR action. Two confirmed local-only policy gaps were corrected only
+in this worktree: Playwright and Lighthouse now reject non-loopback targets,
+and UX request interception prevents network access outside the local harness.
+The four visual references were regenerated from that local synthetic state.
+The final validation used a disposable ext4 WSL clone at
+`/home/admin/skincos-ux-final.vewq2s`, copied only the reviewed source overlay
+(never `node_modules`), then ran clean sequential `npm ci` installs from the
+root, CRM and website versioned lockfiles. Node 22.23.1, npm 10.9.8,
+Playwright 1.58.0 (Chromium only), axe 4.12.1, Storybook 10.5.4, Lighthouse
+13.0.3, LHCI 0.15.1 and MCP Inspector 1.0.0 were used. JSON/config parsing,
+`git diff --check`, `tools:doctor`, CRM typecheck/lint, components,
+`audit:ui:full` (four pilot, four axe JSON and four visual comparisons),
+Lighthouse HTML/JSON, LHCI baseline, Storybook build, Storybook MCP
+initialize plus Inspector `tools/list`, and `npm audit --omit=dev` all passed.
+The LHCI WSL configuration now pins a temporary Linux Chrome profile so
+chrome-launcher does not select a Windows profile; it does not add score gates.
+No snapshot update command was run, and no local validation Vite, Storybook,
+Lighthouse or Chromium process remained. No production URL, deployment,
+credential, secret, account, business data, workflow save or configuration
+outside the repository was changed.
+
+PR #832 is local-only evidence until its remote checks and review complete.
+GitHub and Figma MCP OAuth remain manual/unproven exactly as documented; no
+manual authentication was claimed or performed.
+
+## UX/UI audit infrastructure — draft PR #832 — 2026-07-29T01:34Z
+
+The infrastructure-only UX/UI foundation is committed on
+`codex/admin/ux-ui-infrastructure` and published as draft PR #832. Its
+original base was `c70c85bbdce7d7724cf9e29ac80d167e9c86980e`; it was merged
+non-destructively with the then-current `origin/main`
+`b1afd84b9191841d1f4bc28497f70b3755375d70` before push. The PR contains
+synthetic local Playwright/axe/visual/Lighthouse and LHCI baselines, Storybook
+a11y/MCP support, a non-blocking path-filtered workflow, ignored artifacts,
+and operator documentation.
+
+In a clean native WSL checkout, `npm run tools:doctor`,
+`npm run audit:ui:full`, `npm --prefix crm/console run storybook:build`,
+`npm run storybook:mcp`, and `npm run audit:lighthouse:ci` passed. The full
+audit covers one Testing Library component test plus four desktop/tablet/mobile
+projects each for the synthetic pilot, axe results and visual snapshots; no
+production endpoint, account, secret, database, workflow, deployment or
+business data was changed. This is **local-only plus PR-open** evidence, not
+integration, staging or production evidence.
+
 ## Observability independent audit — 2026-07-29T03:30Z
 
 A fresh read-only audit confirms that PR #833 remains integrated in `main`, the local monitor matches clean integrated descendant `62ff7875…`, and the operator runtime has one Run-key supervisor, one dashboard child, and a healthy loopback dashboard. The monitor-policy suite and catalog validation passed again: alert after two failures, recovery after two healthy runs without a popup, 900-second cooldown, 30-second desktop expiry, retention, probe mutex, and watchdog deduplication/cooldown are covered. The real controlled drill still records a delivered alert and a no-popup recovery; no later notification was emitted.
@@ -40,6 +194,24 @@ active lock exists, but the production journal still has historical nonterminal
 recorded; the WhatsApp notification node returned an error. Both are tracked as
 P1 in `TASKS.md` and must be reconciled with idempotent readback before this
 workstream can be archived.
+
+## Meta Ads Publish operational closeout — 2026-07-29T11:45Z
+
+The live definition is version `830` (`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`)
+and remains inactive/manual. The success notification now sends through the
+local Evolution HTTP endpoint with private Meta-specific instance/destination
+settings; the previous CRLF contamination was removed. A synthetic isolated
+send was accepted and then persisted by the provider as `DELIVERY_ACK`.
+Telegram remains the independent parallel branch. No workflow execution,
+commercial file or Meta API mutation was used in this test.
+
+The D1 journal audit correlated all 49 prior nonterminal runs with jobs,
+operations, events and locks. It wrote a durable audit event per run, changed
+46 provably pre-stage failures/abandonments to `failed`, and classified the
+three staged runs as `reconciliation_required`. The current distribution is
+1 archived calibration, 52 completed, 54 failed and 3 reconciliation-required,
+with zero active locks. The three residual runs and required read-only Graph
+lookup are listed in `orb/engine/docs/meta-ads-publish-historical-run-audit-2026-07-29.md`.
 
 ## Observability alert hardening operational closeout — 2026-07-29T03:06Z
 
@@ -621,3 +793,74 @@ carregou referências, atendimentos, overview e catálogo em HTTP 200 sem
 vazio e dois de módulos vazios em legados; eles permaneceram sem acesso e não
 receberam concessão automática. Rollback permanece disponível pelas versões
 anteriores e migrations aditivas já aplicadas.
+
+## Livia — promoção de bundle isolado 2026-07-29
+
+O workflow Livia (`WGXr4vYkv9UoJ8zc`) está ativo na versão histórica
+`8316de5d-c047-473a-bd6a-662b513b73b5`, com os cinco sidecars principais
+fixados no bundle imutável `1dee4fc24d786d794cd73f30e442ceea329e8563`,
+produzido do merge da PR #853. O manifesto ativo tem SHA-256
+`3ca96e4038529680e019b35f13b5c306a57beaa4c71426a9a191a28621038a21`.
+O schedule diário foi preservado explicitamente como `field: days` às 13:26.
+Checkpoint pós-promoção:
+`livia-postpromote-1dee4fc2-20260729T093100-0300`, índice SHA-256
+`a2a03f4223167bda6f6a4753b7b0073b7d014ca74100980d1cb99be1c996f5a9`.
+
+Uma auditoria posterior encontrou que `Verify Published Artifacts` ainda
+invocava um wrapper externo em `C:\CodexRuntime`, que ignorava seu argumento
+versionado e chamava `/opt/skincos/current/source`. A PR #853 removeu esse
+caminho transitivo: em 2026-07-29T12:30:17Z foi publicada a versão histórica
+`8316de5d-c047-473a-bd6a-662b513b73b5`, ligada à release imutável
+`1dee4fc24d786d794cd73f30e442ceea329e8563`. O comando chama diretamente o
+verificador dessa release; `audit-live` retornou zero referências mutáveis e
+os seis hashes do manifesto `3ca96e4038529680e019b35f13b5c306a57beaa4c71426a9a191a28621038a21`
+conferiram. No checkpoint da repin, o ponteiro global era `0c0a4fa0…`; a
+repin não o alterou nem fez restart. Posteriormente, a promoção independente
+da PR #854 moveu o ponteiro global para `a32cf1a9…`. O Livia continua isolado:
+seus comandos publicados apontam diretamente para `1dee4fc2…`, sem depender
+desse ponteiro global.
+O checkpoint pós-promoção `livia-postpromote-1dee4fc2-20260729T093100-0300`
+teve `SHA256SUMS` conferido, SHA-256
+`a2a03f4223167bda6f6a4753b7b0073b7d014ca74100980d1cb99be1c996f5a9`.
+O registro de autorização e o runbook versionado especificam a promoção
+`stage-only`, o rollback por nova versão histórica, os probes HTTP e a retenção
+dos bundles referenciados por manifestos. O export sanitizado e versionado da
+versão publicada está em `orb/engine/workflows/livia/livia.current.json`
+(SHA-256 `1dcdef7df289311b553f2b5f44932f999f9a96f96fa32bc2d5d6a5b1192fe4cc`).
+O arquivo usa escapes JSON equivalentes somente para as menções editoriais a
+Facebook, evitando o falso positivo específico de OAuth sem retirar seus nós
+Code/Execute Command da análise SAST.
+A evidência de publicação real
+continua histórica (execuções 336 e 339); uma publicação posterior só pode ser
+considerada prova da versão corrigida se registrar seu `workflowVersionId`
+publicado e o verificador direto do bundle.
+
+## Meta Ads Publish — encerramento operacional 2026-07-29
+
+A execução manual comercial `333` terminou `success` e concluiu
+idempotentemente o run `map_f6a59341d6dace99d70f5533` (o registro preserva a
+origem física na execução `331`). Stage, ativação, Drive, readback, conclusão e
+notificação Telegram foram executados; o teste isolado posterior da Evolution
+foi persistido com `DELIVERY_ACK`. Os anúncios ativos confirmados no Ads Manager
+são `120247386191180157`/criativo `1011986138341232` (BarraShoppingSul) e
+`120247386191560157`/criativo `1400344355311942` (Novo Hamburgo). O contrato
+live conserva `WHATSAPP_MESSAGE` com `https://api.whatsapp.com/send`; os URLs
+de agendamento continuam referências por unidade.
+
+O workflow `eFJhFg79lyaycjlm` está inativo/manual, versão `830`, versão runtime
+`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`, schema SHA-256
+`87e82f8d7c89afbe97b6057d1a417013a37e7a2b6227ba14315c4e869e7ce62f`; o
+preflight somente leitura confirmou as 49 fontes sincronizadas e zero mutação
+Meta. O Token Vault está 100% no
+deployment `b24fc28a-ce09-4978-8fc0-ea40561bbb8c`, versão
+`beba53d9-67f3-495b-a002-5dc579463c29`, com D1, token e chave de cifragem
+saudáveis. O journal tem 52 `completed`, 54 `failed`, 3 `rolled_back` e 1
+`calibration_archived`, sem locks ativos, jobs não terminais ou
+`reconciliation_required`.
+
+O source nativo do Orb foi promovido por release descendente de
+`0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89` para
+`a32cf1a9034ccd4872cfbde1ae089e56355300c4` (merge PR #854). Orb, proxy, CRM
+e Booking usam esse SHA e os health checks local/público são 200. O archive,
+checksum, lineage e rollback permanecem privados em
+`C:\CodexRuntime\operator\admin\skincos\native-promotions\a32cf1a9034ccd4872cfbde1ae089e56355300c4`.
