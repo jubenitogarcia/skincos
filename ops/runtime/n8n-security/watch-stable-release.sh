@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
-POLICY=${N8N_RELEASE_WATCH_POLICY:-"$ROOT/release-watch-policy.json"}
+DEFAULT_POLICY="$ROOT/release-watch-policy.json"
+POLICY=${N8N_RELEASE_WATCH_POLICY:-"$DEFAULT_POLICY"}
 AUDITOR=${N8N_RELEASE_WATCH_AUDITOR:-"$ROOT/audit-release-baseline.sh"}
 NPM_BIN=${N8N_RELEASE_WATCH_NPM_BIN:-npm}
 OFFICIAL_REGISTRY=https://registry.npmjs.org/
@@ -33,6 +34,7 @@ audit_root=$(canonical_audit_root "${N8N_AUDIT_ROOT:-}")
 [[ -f "$AUDITOR" ]] || die 'release auditor is missing.'
 
 if [[ "${N8N_RELEASE_WATCH_TEST_MODE:-NO}" != YES ]]; then
+  [[ "$POLICY" == "$DEFAULT_POLICY" ]] || die 'release watch policy override is test-only.'
   [[ "$NPM_BIN" == npm ]] || die 'npm binary override is test-only.'
   [[ "$AUDITOR" == "$ROOT/audit-release-baseline.sh" ]] || die 'auditor override is test-only.'
 fi

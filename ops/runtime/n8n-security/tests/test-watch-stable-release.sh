@@ -20,6 +20,9 @@ summary_audit_error='{"n8n_version":"2.32.8","components":[{"component":"runtime
 if env N8N_UPGRADE_ENV=production N8N_EXPECTED_ENV=production N8N_STAGING_MARKER=orb-n8n-staging N8N_RELEASE_WATCH_APPLY=YES N8N_RELEASE_WATCH_TEST_MODE=YES N8N_RELEASE_WATCH_NPM_BIN="$fake_npm" N8N_RELEASE_WATCH_AUDITOR="$fake_auditor" N8N_RELEASE_WATCH_POLICY="$policy" N8N_AUDIT_ROOT="$tmp/production" "$ROOT/watch-stable-release.sh"; then
   echo 'expected production refusal' >&2; exit 1
 fi
+if env N8N_UPGRADE_ENV=staging N8N_EXPECTED_ENV=staging N8N_STAGING_MARKER=orb-n8n-staging N8N_RELEASE_WATCH_APPLY=YES N8N_RELEASE_WATCH_POLICY="$policy" N8N_AUDIT_ROOT="$tmp/policy-override" "$ROOT/watch-stable-release.sh"; then
+  echo 'expected non-test policy override refusal' >&2; exit 1
+fi
 if "${base[@]}" N8N_AUDIT_ROOT=/opt N8N_RELEASE_WATCH_TEST_TAGS='{"stable":"2.32.7"}' N8N_RELEASE_WATCH_TEST_SUMMARY="$summary_critical" "$ROOT/watch-stable-release.sh"; then
   echo 'expected exact runtime root refusal' >&2; exit 1
 fi
