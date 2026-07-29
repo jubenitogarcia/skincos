@@ -7,6 +7,7 @@ import { sendBookingNotifications, type PatientGender } from "@/lib/bookingNotif
 import { doctorSlugMatchesQuery } from "@/lib/doctorSlug";
 import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
 import { issueBookingStatusToken } from "@/lib/bookingSecurity";
+import { META_SCHEDULE_CONTENT_TYPE } from "@/lib/metaEventContracts";
 import { sendMetaServerEvent } from "@/lib/metaConversionsApi";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 
@@ -559,6 +560,7 @@ export async function POST(request: Request) {
                     fbc: trackingContextResolved?.fbc ?? null,
                 },
                 customData: {
+                    content_type: META_SCHEDULE_CONTENT_TYPE,
                     booking_id: id,
                     unit_slug: unitSlug,
                     doctor_slug: effectiveDoctorSlug,
