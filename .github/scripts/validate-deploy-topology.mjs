@@ -68,6 +68,8 @@ for (const required of [
   'Attest production authorization and remote resources before mutation',
   'Provision or attest Finance service secret before D1 checkpoint',
   'FINANCE_PRODUCTION_WORKER_URL',
+  'worker-release-smoke.mjs',
+  '--consecutive-successes 2',
 ]) {
   if (!financeWorkflow.includes(required)) fail(`Finance publisher is missing its production safety gate: ${required}`);
 }
