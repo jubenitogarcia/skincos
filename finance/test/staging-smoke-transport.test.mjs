@@ -18,4 +18,9 @@ test('staging Finance API smokes use the authenticated Pages transport', async (
     assert.doesNotMatch(source, /JSON\.stringify\(\{ username, password \}\)/);
     assert.doesNotMatch(source, /api-staging\.skincos\.com\.br/);
   }
+
+  assert.match(canary, /const password = requiredSecret\('FINANCE_CANARY_PASSWORD'\)/);
+  assert.match(importer, /const password = requiredSecret\('FINANCE_SMOKE_PASSWORD'\)/);
+  assert.match(canary, /String\(process\.env\[name\] \?\? ''\)/);
+  assert.match(importer, /String\(process\.env\[name\] \?\? ''\)/);
 });

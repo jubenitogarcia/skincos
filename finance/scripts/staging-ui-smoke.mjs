@@ -45,6 +45,8 @@ const page = await context.newPage()
 const consoleErrors = []
 const financeResponses = []
 const serverErrors = []
+const remoteResponses = []
+const remoteRequestFailures = []
 
 page.on('console', (message) => {
   if (message.type() === 'error') consoleErrors.push(message.text())
@@ -54,9 +56,22 @@ page.on('response', (response) => {
   const evidence = `${response.status()} ${target.pathname}`
   if (target.pathname.includes('/api/finance/')) financeResponses.push(evidence)
   if (response.status() >= 500) serverErrors.push(evidence)
+  if (target.hostname === 'skincos-finance-ui-staging.pages.dev' && target.pathname === '/finance-module.js') remoteResponses.push(evidence)
+})
+page.on('requestfailed', (request) => {
+  const target = new URL(request.url())
+  if (target.hostname === 'skincos-finance-ui-staging.pages.dev' && target.pathname === '/finance-module.js') {
+    remoteRequestFailures.push(String(request.failure()?.errorText || 'request failed').slice(0, 160))
+  }
 })
 
 let bootstrap = null
+let remoteState = null
+const readRemoteState = () => page.evaluate(() => ({
+  container: Boolean(document.querySelector('[data-finance-remote="true"]')),
+  module: Boolean(document.querySelector('[data-finance-module="true"]')),
+  unavailable: Boolean(document.querySelector('[data-testid="finance-remote-unavailable"]')),
+}))
 try {
   console.log('[finance-staging-ui] carregando CRM de staging')
   await page.goto(baseUrl.toString(), { waitUntil: 'domcontentloaded', timeout: 90_000 })
@@ -88,6 +103,11 @@ try {
   await financeNav.waitFor({ state: 'visible', timeout: 30_000 })
   await financeNav.click()
   await page.getByTestId('crm-header-layout').getByRole('heading', { name: 'Financeiro' }).waitFor({ state: 'visible', timeout: 30_000 })
+  await page.locator('[data-finance-remote="true"], [data-testid="finance-remote-unavailable"], [data-finance-module="true"]').waitFor({ state: 'visible', timeout: 30_000 })
+  remoteState = await readRemoteState()
+  if (remoteState.unavailable) fail('O bundle remoto do Financeiro não pôde ser carregado.')
+  await page.locator('[data-finance-module="true"]').waitFor({ state: 'visible', timeout: 30_000 })
+  remoteState = await readRemoteState()
   console.log('[finance-staging-ui] módulo Financeiro renderizado')
   await page.getByRole('tab', { name: 'Visão geral' }).waitFor({ state: 'visible', timeout: 30_000 })
   await page.getByRole('tab', { name: 'Visão geral' }).click()
@@ -115,11 +135,12 @@ try {
   await page.getByText('Contas financeiras').first().waitFor({ state: 'visible', timeout: 30_000 })
   await page.screenshot({ path: screenshot, fullPage: false })
   if (financeResponses.some((response) => /^5\d\d\b/.test(response))) fail(`Erro de serviço Financeiro: ${JSON.stringify(financeResponses)}`)
-  fs.writeFileSync(report, `${JSON.stringify({ ok: true, url: baseUrl.toString(), bootstrap, financeResponses, serverErrors, consoleErrors, screenshot }, null, 2)}\n`)
+  fs.writeFileSync(report, `${JSON.stringify({ ok: true, url: baseUrl.toString(), bootstrap, remoteState, financeResponses, remoteResponses, remoteRequestFailures, serverErrors, consoleErrors, screenshot }, null, 2)}\n`)
   console.log(JSON.stringify({ ok: true, url: baseUrl.toString(), grants: labels, financeResponses, serverErrors, screenshot }))
 } catch (error) {
+  remoteState = await readRemoteState().catch(() => remoteState)
   await page.screenshot({ path: screenshot, fullPage: false }).catch(() => {})
-  fs.writeFileSync(report, `${JSON.stringify({ ok: false, url: baseUrl.toString(), error: String(error?.message || error), bootstrap, consoleErrors, financeResponses, serverErrors, screenshot }, null, 2)}\n`)
+  fs.writeFileSync(report, `${JSON.stringify({ ok: false, url: baseUrl.toString(), error: String(error?.message || error), bootstrap, remoteState, consoleErrors, financeResponses, remoteResponses, remoteRequestFailures, serverErrors, screenshot }, null, 2)}\n`)
   throw error
 } finally {
   await context.close().catch(() => {})

@@ -9,6 +9,13 @@ const required = (name) => {
   if (!value) throw new Error(`${name} is required`);
   return value;
 };
+// Keep credentials byte-for-byte compatible with the CRM browser login.
+// Identifiers and URLs can be normalized; passwords cannot.
+const requiredSecret = (name) => {
+  const value = String(process.env[name] ?? '');
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+};
 const arg = (name, fallback = '') => {
   const index = process.argv.indexOf(name);
   return index >= 0 ? String(process.argv[index + 1] || '').trim() : fallback;
@@ -20,7 +27,7 @@ if (process.env.FINANCE_SMOKE_ACK !== '1') throw new Error('FINANCE_SMOKE_ACK=1 
 const baseUrl = required('FINANCE_SMOKE_BASE_URL').replace(/\/$/, '');
 if (baseUrl !== 'https://skincos-staging.pages.dev') throw new Error('FINANCE_SMOKE_BASE_URL must be the staging CRM shell');
 const username = required('FINANCE_SMOKE_USERNAME');
-const password = required('FINANCE_SMOKE_PASSWORD');
+const password = requiredSecret('FINANCE_SMOKE_PASSWORD');
 const scopeId = required('FINANCE_SMOKE_SCOPE_ID');
 const sourceType = arg('--source', 'generic');
 if (!['generic', 'moneywiz', 'ef-caixa'].includes(sourceType)) throw new Error('--source must be generic, moneywiz, or ef-caixa');
