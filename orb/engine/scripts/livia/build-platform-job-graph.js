@@ -219,6 +219,172 @@ function assertRuntimeCompatibility(jsCode) {
   };
 }
 
+// compose2-current.js returns one n8n item per job.  Older externalized
+// builders returned a single { jobs: [...] } envelope.  Both are intentional
+// runtime contracts and a release must never silently treat one as empty.
+function normalizeExternalResult(result) {
+  const jsonItems = asArray(result)
+    .map((entry) => asObject(asObject(entry).json))
+    .filter((entry) => Object.keys(entry).length);
+
+  if (jsonItems.length === 1 && Array.isArray(jsonItems[0].jobs)) return jsonItems[0];
+  if (jsonItems.some((entry) => Array.isArray(entry.jobs))) {
+    fail(`${NODE_NAME}: mixed or multiple job envelopes are not supported.`);
+  }
+
+  const directJobs = jsonItems.filter((entry) => (
+    String(entry.platform || '').trim() &&
+    String(entry.phase || '').trim() &&
+    String(entry.method || '').trim() &&
+    String(entry.url || '').trim()
+  ));
+  if (directJobs.length === jsonItems.length && directJobs.length) {
+    return { jobs: directJobs, warnings: ['external_source_direct_job_items'] };
+  }
+
+  fail(`${NODE_NAME}: unsupported external job contract; expected one jobs envelope or direct n8n job items.`);
+}
+
+function assertOutputContract() {
+  const job = { platform: 'instagram', phase: 'upload', method: 'POST', url: 'https://example.invalid/media' };
+  const direct = normalizeExternalResult([{ json: job }]);
+  const enveloped = normalizeExternalResult([{ json: { jobs: [job] } }]);
+  if (direct.jobs.length !== 1 || enveloped.jobs.length !== 1) {
+    fail(`${NODE_NAME}: external output-contract assertion failed.`);
+  }
+  return { directItems: direct.jobs.length, envelopedItems: enveloped.jobs.length };
+}
+
+function contractPlatformContext() {
+  return {
+    facebook: { network: 'facebook.com', version: 'v25.0', id_bss: '1001', id_nh: '1002', token_bss: '__fixture__', token_nh: '__fixture__', endpoint_2nd: 'feed' },
+    instagram: { network: 'instagram.com', version: 'v25.0', id_bss: '2001', id_nh: '2002', token_bss: '__fixture__', token_nh: '__fixture__', endpoint_1st: 'media', endpoint_2nd: 'media_publish' },
+    threads: { network: 'threads.net', version: 'v1.0', id_bss: '3001', id_nh: '3002', token_bss: '__fixture__', token_nh: '__fixture__', endpoint_1st: 'threads', endpoint_2nd: 'threads_publish', use_me: true },
+  };
+}
+
+function contractPayload(name, kinds) {
+  const platforms = contractPlatformContext();
+  const media = kinds.map((kind, index) => {
+    const video = kind === 'video';
+    const extension = video ? 'mp4' : 'jpg';
+    const finalUrl = `https://example.invalid/${name}-${index}.${extension}`;
+    return {
+      groupKey: `fixture:${name}`,
+      groupOrder: index,
+      id: `${name}-${index}`,
+      name: `${name}-${index}.${extension}`,
+      mimeType: video ? 'video/mp4' : 'image/jpeg',
+      mediaKind: kind,
+      sourceMediaKind: kind,
+      finalUrl,
+      secure_url: finalUrl,
+      url: finalUrl,
+      quantity: kinds.length,
+      edge: 'photos',
+      media_type_1st_requisition: kinds.length > 1 ? 'CAROUSEL' : (video ? 'REELS' : 'IMAGE'),
+      ...platforms,
+    };
+  });
+  return {
+    bootstrapItems: media.map((json) => ({ json })),
+    normalizedCombinedMediaItems: media.map((json) => ({ json })),
+    combinedMediaItems: media.map((json) => ({ json })),
+    normalizedLiviaOutput: [{
+      json: {
+        caption: {
+          instagram: { hook: 'Fixture', blocks: ['Fixture'], cta: 'Fixture' },
+          facebook: { hook: 'Fixture', blocks: ['Fixture'], cta: 'Fixture' },
+          threads: { hook: 'Fixture', blocks: ['Fixture'], closing: 'Fixture' },
+        },
+        items: media.map((item, index) => ({
+          index,
+          title: `Fixture ${index}`,
+          alt_text: `Fixture ${item.mediaKind} ${index}`,
+          mediaType: item.mediaKind,
+          bestFrame: item.mediaKind === 'video'
+            ? { applicable: true, bestTimestampSeconds: 1, selectedFrameUrl: `https://example.invalid/${name}-${index}-cover.jpg`, selectedFrameRank: 1, confidence: 1 }
+            : { applicable: false },
+        })),
+      },
+    }],
+  };
+}
+
+function assertJobGraphContracts(jsCode) {
+  const scenarios = [
+    ['single-image', ['image']],
+    ['single-video', ['video']],
+    ['carousel-images', ['image', 'image', 'image']],
+    ['carousel-mixed', ['image', 'video']],
+  ];
+  const results = [];
+  for (const [name, kinds] of scenarios) {
+    const output = normalizeExternalResult(executeSource(jsCode, contractPayload(name, kinds)));
+    const jobs = asArray(output.jobs);
+    if (!jobs.length) fail(`${NODE_NAME}: ${name} fixture produced no jobs.`);
+    if (!jobs.every((job) => String(job.groupKey || '') === `fixture:${name}` && String(job.method || '').trim() && String(job.url || '').trim())) {
+      fail(`${NODE_NAME}: ${name} fixture produced an incomplete job.`);
+    }
+    const platforms = new Set(jobs.map((job) => String(job.platform || '')));
+    for (const platform of ['instagram', 'facebook', 'threads']) {
+      if (!platforms.has(platform)) fail(`${NODE_NAME}: ${name} fixture omitted ${platform}.`);
+    }
+    results.push({ name, mediaKinds: kinds, jobCount: jobs.length });
+  }
+  return results;
+}
+
+// A Facebook Reel is not complete when its upload session is ready.  Preserve
+// the post-finish confirmation job when normalizing direct compose output.
+function normalizeFacebookReelsChecks(jobs) {
+  const expanded = [];
+  for (const job of jobs) {
+    const current = { ...job, __sourceRunIndex: Number(job.publishRunIndex) };
+    if (String(current.platform || '').toLowerCase() === 'facebook' &&
+        String(current.phase || '').toLowerCase() === 'checkstatus' &&
+        String(current.checkKind || '').toLowerCase() === 'fb_reels_video') {
+      current.checkKind = 'fb_reels_upload_ready';
+    }
+    expanded.push(current);
+    if (String(current.platform || '').toLowerCase() !== 'facebook' || String(current.step || '').toLowerCase() !== 'reels_finish') continue;
+    const uploadReady = [...expanded].reverse().find((candidate) =>
+      String(candidate.platform || '').toLowerCase() === 'facebook' &&
+      String(candidate.groupKey || '') === String(current.groupKey || '') &&
+      String(candidate.unit || '') === String(current.unit || '') &&
+      String(candidate.checkKind || '').toLowerCase() === 'fb_reels_upload_ready');
+    if (!uploadReady) fail(`${NODE_NAME}: Facebook Reel finish without an upload-ready check.`);
+    expanded.push({
+      ...uploadReady,
+      __sourceRunIndex: undefined,
+      checkKind: 'fb_reels_published',
+      checkFields: 'status',
+      statusFromPublishRunIndex: current.reelsStartFromPublishRunIndex ?? uploadReady.statusFromPublishRunIndex,
+      postPublishFromRunIndex: current.__sourceRunIndex,
+      warnings: [...asArray(uploadReady.warnings), 'fb_reels_post_publish_check'],
+    });
+  }
+  const remap = new Map();
+  expanded.forEach((job, index) => {
+    if (Number.isFinite(job.__sourceRunIndex)) remap.set(job.__sourceRunIndex, index);
+    job.publishRunIndex = index;
+  });
+  const refs = ['statusFromPublishRunIndex', 'postPublishFromRunIndex', 'checkStatusFromPublishRunIndex', 'creationIdFromPublishRunIndex', 'lastUploadFromPublishRunIndex', 'reelsStartFromPublishRunIndex'];
+  for (const job of expanded) {
+    for (const key of refs) {
+      if (Number.isFinite(Number(job[key])) && remap.has(Number(job[key]))) job[key] = remap.get(Number(job[key]));
+    }
+    if (Array.isArray(job.attachedMediaFromPublishRunIndexes)) {
+      job.attachedMediaFromPublishRunIndexes = job.attachedMediaFromPublishRunIndexes.map((value) => remap.has(Number(value)) ? remap.get(Number(value)) : value);
+    }
+    if (Array.isArray(job.childrenPublishRunIndexes)) {
+      job.childrenPublishRunIndexes = job.childrenPublishRunIndexes.map((value) => remap.has(Number(value)) ? remap.get(Number(value)) : value);
+    }
+    delete job.__sourceRunIndex;
+  }
+  return expanded;
+}
+
 function executeSource(jsCode, payload) {
   const inputItems = [{ json: payload }];
   const staticData = {};
@@ -409,6 +575,11 @@ function selectedTechnicalFrame(media) {
     selectedFrameSource: String(bestFrame.selectedFrameSource || selected.source || 'process_media_asset'),
     confidence: asNumber(bestFrame.confidence ?? selected.confidence, undefined),
     candidateCount: candidates.length,
+    candidates: candidates.map((candidate) => ({
+      url: String(candidate.url || candidate.thumbPath || '').trim(),
+      timestampSeconds: asNumber(candidate.timestampSeconds, undefined),
+      rank: asNumber(candidate.rank, undefined),
+    })),
   };
 }
 
@@ -418,14 +589,60 @@ function technicalFrameContext(payload) {
     ...asArray(payload.combinedMediaItems),
   ];
   const byGroup = {};
+  const byItem = {};
+  const groupRows = {};
   for (const media of entries) {
     const current = asObject(media);
     const groupKey = String(current.groupKey || current.id || '').trim();
-    if (!groupKey || byGroup[groupKey]) continue;
+    if (!groupKey) continue;
+    groupRows[groupKey] ||= { mediaCount: 0, frames: [] };
+    groupRows[groupKey].mediaCount += 1;
     const frame = selectedTechnicalFrame(current);
-    if (frame.selectedFrameUrl || frame.bestFrameSeconds !== undefined) byGroup[groupKey] = frame;
+    if (!frame.selectedFrameUrl && frame.bestFrameSeconds === undefined) continue;
+    const mediaId = String(current.id || current.mediaId || '').trim();
+    const groupOrder = asNumber(current.groupOrder, undefined);
+    if (mediaId) byItem[`id:${mediaId}`] = frame;
+    if (groupOrder !== undefined) byItem[`group:${groupKey}:${groupOrder}`] = frame;
+    groupRows[groupKey].frames.push(frame);
   }
-  return byGroup;
+  for (const [groupKey, group] of Object.entries(groupRows)) {
+    // A group fallback is safe only for a true single-media group.  A mixed
+    // carousel must never leak one video's frame into an image sibling.
+    if (group.mediaCount === 1 && group.frames.length === 1) byGroup[groupKey] = group.frames[0];
+  }
+  return { byGroup, byItem };
+}
+
+function sameFrameSeconds(left, right) {
+  const a = asNumber(left, undefined);
+  const b = asNumber(right, undefined);
+  return a !== undefined && b !== undefined && Math.abs(a - b) < 0.001;
+}
+
+function editorialFrameSelection(text, frame) {
+  const current = asObject(text);
+  const summary = asObject(current.frameAnalysisSummary);
+  const source = String(summary.selectedSource || '').trim().toLowerCase();
+  const selectedFrameUrl = String(current.selectedFrameUrl || '').trim();
+  const bestFrameSeconds = asNumber(current.bestFrameSeconds, undefined);
+  if (!selectedFrameUrl || bestFrameSeconds === undefined) return null;
+  // `candidates` is the structured-output representation emitted by Livia
+  // when it deliberately chooses one of the supplied candidate frames.
+  // Never infer an editorial decision from a technical extractor source.
+  if (!['candidates', 'editorial_verified'].includes(source)) return null;
+  const candidate = asArray(frame.candidates).find((entry) => (
+    String(entry?.url || '').trim() === selectedFrameUrl &&
+    sameFrameSeconds(entry?.timestampSeconds, bestFrameSeconds)
+  ));
+  if (!candidate) return null;
+  return {
+    selectedFrameUrl,
+    bestFrameSeconds,
+    selectedFrameRank: asNumber(candidate.rank, undefined),
+    selectedFrameSource: 'editorial_verified',
+    confidence: frame.confidence,
+    candidateCount: frame.candidateCount,
+  };
 }
 
 function dedupeHashtagArray(value) {
@@ -493,20 +710,29 @@ function applyCaptionHygiene(job) {
 
 function applyTechnicalFrame(job, framesByGroup) {
   const current = { ...job };
-  const frame = framesByGroup[String(current.groupKey || '').trim()];
+  const media = asObject(current.media);
+  const groupKey = String(current.groupKey || '').trim();
+  const groupOrder = asNumber(current.groupOrder, undefined);
+  const mediaId = String(media.id || media.mediaId || '').trim();
+  const frame =
+    (mediaId && framesByGroup.byItem[`id:${mediaId}`]) ||
+    (groupKey && groupOrder !== undefined && framesByGroup.byItem[`group:${groupKey}:${groupOrder}`]) ||
+    framesByGroup.byGroup[groupKey];
   if (!frame) return current;
 
   const warningSet = new Set(asArray(current.warnings).map((entry) => String(entry)).filter(Boolean));
   const text = { ...asObject(current.text) };
-  if (frame.selectedFrameUrl) text.selectedFrameUrl = frame.selectedFrameUrl;
-  if (frame.bestFrameSeconds !== undefined) text.bestFrameSeconds = frame.bestFrameSeconds;
+  const editorial = editorialFrameSelection(text, frame);
+  const effectiveFrame = editorial || frame;
+  if (effectiveFrame.selectedFrameUrl) text.selectedFrameUrl = effectiveFrame.selectedFrameUrl;
+  if (effectiveFrame.bestFrameSeconds !== undefined) text.bestFrameSeconds = effectiveFrame.bestFrameSeconds;
   text.frameAnalysisSummary = removeNulls({
     ...asObject(text.frameAnalysisSummary),
-    candidateCount: frame.candidateCount,
-    selectedSource: frame.selectedFrameSource,
-    confidence: frame.confidence,
-    technicalRank: frame.selectedFrameRank,
-    technicalTimestampSeconds: frame.bestFrameSeconds,
+    candidateCount: effectiveFrame.candidateCount,
+    selectedSource: effectiveFrame.selectedFrameSource,
+    confidence: effectiveFrame.confidence,
+    technicalRank: effectiveFrame.selectedFrameRank,
+    technicalTimestampSeconds: effectiveFrame.bestFrameSeconds,
   });
   current.text = removeNulls(text);
 
@@ -523,14 +749,14 @@ function applyTechnicalFrame(job, framesByGroup) {
     if (platform === 'instagram' && String(body.media_type || '').toUpperCase() === 'REELS') {
       const media = asObject(current.media);
       const mainVideoUrl = String(media.finalUrl || media.secure_url || media.url || '').trim();
-      const coverUrl = cloudinaryVideoCoverUrl(mainVideoUrl, frame.bestFrameSeconds);
+      const coverUrl = cloudinaryVideoCoverUrl(mainVideoUrl, effectiveFrame.bestFrameSeconds);
       if (coverUrl) {
         body.cover_url = coverUrl;
         delete body.thumb_offset;
         text.coverUrl = coverUrl;
         text.coverStatus = 'requested';
-      } else if (frame.bestFrameSeconds !== undefined) {
-        body.thumb_offset = Math.max(0, Math.round(frame.bestFrameSeconds * 1000));
+      } else if (effectiveFrame.bestFrameSeconds !== undefined) {
+        body.thumb_offset = Math.max(0, Math.round(effectiveFrame.bestFrameSeconds * 1000));
         text.coverStatus = 'requested_fallback';
       }
     }
@@ -549,6 +775,77 @@ function applyTechnicalFrame(job, framesByGroup) {
 
   current.warnings = [...warningSet];
   return current;
+}
+
+function assertFrameSelectionContracts() {
+  const media = [
+    {
+      id: 'fixture-image',
+      groupKey: 'fixture:mixed',
+      groupOrder: 0,
+      mediaKind: 'image',
+      finalUrl: 'https://example.invalid/image.jpg',
+    },
+    {
+      id: 'fixture-video',
+      groupKey: 'fixture:mixed',
+      groupOrder: 1,
+      mediaKind: 'video',
+      finalUrl: 'https://example.invalid/video.mp4',
+      bestFrame: {
+        selectedFrameUrl: 'https://example.invalid/frame-2.jpg',
+        bestTimestampSeconds: 2,
+        selectedFrameRank: 2,
+        selectedFrameSource: 'process_media_asset',
+        candidates: [
+          { rank: 1, url: 'https://example.invalid/frame-1.jpg', timestampSeconds: 1 },
+          { rank: 2, url: 'https://example.invalid/frame-2.jpg', timestampSeconds: 2 },
+        ],
+      },
+    },
+  ];
+  const frames = technicalFrameContext({ normalizedCombinedMediaItems: media });
+  const reel = {
+    groupKey: 'fixture:mixed',
+    groupOrder: 1,
+    platform: 'instagram',
+    media: { id: 'fixture-video', finalUrl: 'https://example.invalid/video.mp4' },
+    text: {
+      selectedFrameUrl: 'https://example.invalid/frame-2.jpg',
+      bestFrameSeconds: 2,
+      frameAnalysisSummary: { selectedSource: 'candidates' },
+    },
+    jsonRequest: { media_type: 'REELS' },
+  };
+  const accepted = applyTechnicalFrame(reel, frames);
+  if (accepted.text?.frameAnalysisSummary?.selectedSource !== 'editorial_verified' ||
+      accepted.text?.selectedFrameUrl !== 'https://example.invalid/frame-2.jpg' ||
+      accepted.text?.bestFrameSeconds !== 2) {
+    fail(`${NODE_NAME}: valid editorial Reel frame was not preserved.`);
+  }
+
+  const rejected = applyTechnicalFrame({
+    ...reel,
+    text: {
+      ...reel.text,
+      selectedFrameUrl: 'https://example.invalid/not-a-candidate.jpg',
+    },
+  }, frames);
+  if (rejected.text?.frameAnalysisSummary?.selectedSource === 'editorial_verified') {
+    fail(`${NODE_NAME}: unmatched Reel frame was silently promoted as editorial.`);
+  }
+
+  const image = applyTechnicalFrame({
+    groupKey: 'fixture:mixed',
+    groupOrder: 0,
+    media: { id: 'fixture-image', finalUrl: 'https://example.invalid/image.jpg' },
+    text: { caption: 'image fixture' },
+    jsonRequest: { image_url: 'https://example.invalid/image.jpg' },
+  }, frames);
+  if (image.text?.frameAnalysisSummary || image.text?.selectedFrameUrl || image.text?.bestFrameSeconds !== undefined) {
+    fail(`${NODE_NAME}: image sibling inherited a video frame in mixed carousel fixture.`);
+  }
+  return { validReel: 'editorial_verified', invalidReel: 'not_promoted', mixedImage: 'unchanged' };
 }
 
 function applyPlatformAccessibilityContract(job) {
@@ -775,11 +1072,11 @@ function loadResumeCompleted(jobs) {
 }
 
 function compactResult(result, payload, sourceFile) {
-  const firstJson = asObject(asArray(result)[0]?.json);
+  const firstJson = normalizeExternalResult(result);
   const facebookCredentials = facebookCredentialContext(payload);
   const credentialRefs = credentialReferences(payload);
   const frameContext = technicalFrameContext(payload);
-  const jobs = asArray(firstJson.jobs)
+  const jobs = normalizeFacebookReelsChecks(asArray(firstJson.jobs)
     .map((entry) => asObject(entry))
     .map((entry) => applyCaptionHygiene(entry))
     .map((entry) => applyTechnicalFrame(entry, frameContext))
@@ -788,7 +1085,7 @@ function compactResult(result, payload, sourceFile) {
     .map((entry) => normalizeFacebookJob(entry, facebookCredentials))
     .map((entry) => normalizeThreadsCarouselJob(entry))
     .map((entry) => applyCredentialReference(entry, credentialRefs))
-    .filter((entry) => Object.keys(entry).length);
+    .filter((entry) => Object.keys(entry).length));
   if (!jobs.length) fail(`${NODE_NAME}: external source did not produce jobs.`);
   const resume = loadResumeCompleted(jobs);
   const resumeCompleted = resume.completed;
@@ -831,6 +1128,18 @@ function main() {
       ok: true,
       sourceFile: source.filePath,
       compatibility: assertRuntimeCompatibility(source.jsCode),
+    }));
+    return;
+  }
+  if (process.argv.includes('--assert-output-contract')) {
+    process.stdout.write(JSON.stringify({ ok: true, outputContract: assertOutputContract() }));
+    return;
+  }
+  if (process.argv.includes('--assert-job-graph-contracts')) {
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      jobGraphContracts: assertJobGraphContracts(source.jsCode),
+      frameSelectionContracts: assertFrameSelectionContracts(),
     }));
     return;
   }

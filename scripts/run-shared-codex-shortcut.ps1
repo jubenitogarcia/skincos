@@ -60,7 +60,8 @@ param(
         "OrbImportClinicWorkflowsLive"
     )]
     [string]$Action,
-    [string]$ProjectRoot
+    [string]$ProjectRoot,
+    [switch]$Background
 )
 
 $ErrorActionPreference = "Stop"
@@ -145,7 +146,8 @@ function Invoke-ShortcutWsl {
         [switch]$SkipNodeCheck,
         [switch]$SkipNpmCheck,
         [switch]$SkipGitCheck,
-        [switch]$SkipRepoCheck
+        [switch]$SkipRepoCheck,
+        [int[]]$AcceptedExitCode = @(0)
     )
 
     & $wslInvoker `
@@ -158,7 +160,7 @@ function Invoke-ShortcutWsl {
         -SkipGitCheck:$SkipGitCheck `
         -SkipRepoCheck:$SkipRepoCheck
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($AcceptedExitCode -notcontains $LASTEXITCODE) {
         throw "The WSL command failed with exit code $LASTEXITCODE."
     }
 }
@@ -168,6 +170,57 @@ function Get-CrmLocalReviewRef {
         return "origin/main"
     }
     return $env:CRM_LOCAL_REVIEW_REF.Trim()
+}
+
+function Test-CrmLocalPortFree {
+    param([int]$Port)
+    return $null -eq (Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
+function Resolve-CrmLocalPort {
+    param(
+        [string]$RequestedValue,
+        [int[]]$Candidates,
+        [string]$Label
+    )
+    if (-not [string]::IsNullOrWhiteSpace($RequestedValue)) {
+        $requestedPort = [int]$RequestedValue
+        if ($requestedPort -lt 1 -or $requestedPort -gt 65535) {
+            throw "A porta local de $Label deve estar entre 1 e 65535."
+        }
+        return $requestedPort
+    }
+    foreach ($candidate in $Candidates) {
+        if (Test-CrmLocalPortFree -Port $candidate) { return $candidate }
+    }
+    throw "Nenhuma porta local livre foi encontrada para $Label."
+}
+
+function Test-CrmLocalReviewRefExplicit {
+    return -not [string]::IsNullOrWhiteSpace($env:CRM_LOCAL_REVIEW_REF)
+}
+
+function Assert-CrmLocalRevisionReplacementIsExplicit {
+    param(
+        [ValidateSet("Gestor", "Consultor")][string]$Persona,
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        $Manifest
+    )
+
+    if ($Persona -ne 'Gestor' -or (Test-CrmLocalReviewRefExplicit) -or $null -eq $Manifest) {
+        return
+    }
+
+    # A failed or incomplete launch at the requested commit is safe to recover.
+    # Block only the destructive case: an actually running Gestor at a distinct
+    # revision would otherwise be replaced by the implicit origin/main target.
+    if (-not (Test-CrmWslPid -PidValue $Manifest.pids.launcher)) {
+        return
+    }
+    $activeCommit = ([string]$Manifest.targetCommit).Trim().ToLowerInvariant()
+    if ($activeCommit -match '^[0-9a-f]{40}$' -and $activeCommit -ne $TargetCommit.ToLowerInvariant()) {
+        throw "CRM – Local (Gestor) já está ativo na revisão $activeCommit. Para proteger alterações locais compartilhadas, a ação padrão não irá substituí-la por origin/main. Informe CRM_LOCAL_REVIEW_REF explicitamente ou pare o runtime após registrar a revisão ativa."
+    }
 }
 
 function Get-CrmLocalTargetCommit {
@@ -297,14 +350,19 @@ function Test-CrmHttpEndpoint {
 
 function Test-CrmPersonaHealth {
     param([ValidateSet("Gestor", "Consultor")][string]$Persona)
+    $manifest = Get-CrmPersonaManifest -Persona $Persona
+    $pagesPort = if ($null -ne $manifest -and [int]$manifest.ports.pages -gt 0) { [int]$manifest.ports.pages } elseif ($Persona -eq "Gestor") { 8791 } else { 8792 }
     if ($Persona -eq "Gestor") {
-        return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8791/api/auth/me" -Role "GESTOR") -and
-            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8787/insumos/health") -and
-            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8801/api/ponto/readiness") -and
-            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8110/health")
+        $insumosPort = if ($null -ne $manifest -and [int]$manifest.ports.insumos -gt 0) { [int]$manifest.ports.insumos } else { 8787 }
+        $timekeepingPort = if ($null -ne $manifest -and [int]$manifest.ports.timekeeping -gt 0) { [int]$manifest.ports.timekeeping } else { 8801 }
+        $whatsappPort = if ($null -ne $manifest -and [int]$manifest.ports.whatsapp -gt 0) { [int]$manifest.ports.whatsapp } else { 8110 }
+        return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/api/auth/me" -Role "GESTOR") -and
+            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$insumosPort/insumos/health") -and
+            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$timekeepingPort/api/ponto/readiness") -and
+            (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$whatsappPort/health")
     }
-    return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8792/api/auth/me" -Role "CONSULTOR") -and
-        (Test-CrmHttpEndpoint -Url "http://127.0.0.1:8792/api/ponto/readiness")
+    return (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/api/auth/me" -Role "CONSULTOR") -and
+        (Test-CrmHttpEndpoint -Url "http://127.0.0.1:$pagesPort/api/ponto/readiness")
 }
 
 function Get-CrmPersonaDecision {
@@ -335,7 +393,8 @@ function Open-CrmPersonaUrl {
     $fallback = if ($Persona -eq "Gestor") { "http://localhost:8791/" } else { "http://localhost:8792/?module=ponto" }
     $url = if ($null -ne $Manifest -and -not [string]::IsNullOrWhiteSpace([string]$Manifest.url)) { [string]$Manifest.url } else { $fallback }
     $uri = [Uri]$url
-    if ($uri.Scheme -ne 'http' -or $uri.Host -notin @('localhost', '127.0.0.1') -or $uri.Port -notin @(8791, 8792)) {
+    $expectedPort = if ($null -ne $Manifest -and [int]$Manifest.ports.pages -gt 0) { [int]$Manifest.ports.pages } elseif ($Persona -eq 'Gestor') { 8791 } else { 8792 }
+    if ($uri.Scheme -ne 'http' -or $uri.Host -notin @('localhost', '127.0.0.1') -or $uri.Port -ne $expectedPort) {
         throw "URL local inválida no manifesto de ${Persona}: '$url'."
     }
     Start-Process $url | Out-Null
@@ -359,11 +418,19 @@ function Wait-CrmPersonaCurrent {
 }
 
 function Assert-GestorSharedServices {
+    $manifest = Get-CrmPersonaManifest -Persona Gestor
+    if ($null -eq $manifest) {
+        throw "O CRM Local (Gestor) não possui manifesto ativo. Reinicie a ação CRM – Local (Gestor) antes do Consultor."
+    }
+    $pagesPort = if ([int]$manifest.ports.pages -gt 0) { [int]$manifest.ports.pages } else { 8791 }
+    $insumosPort = if ([int]$manifest.ports.insumos -gt 0) { [int]$manifest.ports.insumos } else { 8787 }
+    $timekeepingPort = if ([int]$manifest.ports.timekeeping -gt 0) { [int]$manifest.ports.timekeeping } else { 8801 }
+    $whatsAppPort = if ([int]$manifest.ports.whatsapp -gt 0) { [int]$manifest.ports.whatsapp } else { 8110 }
     $checks = @(
-        @{ Name = "autenticação do Gestor"; Url = "http://127.0.0.1:8791/api/auth/me"; Role = "GESTOR" },
-        @{ Name = "Insumos"; Url = "http://127.0.0.1:8787/insumos/health" },
-        @{ Name = "Timekeeping"; Url = "http://127.0.0.1:8801/api/ponto/readiness" },
-        @{ Name = "WhatsApp"; Url = "http://127.0.0.1:8110/health" }
+        @{ Name = "autenticação do Gestor"; Url = "http://127.0.0.1:${pagesPort}/api/auth/me"; Role = "GESTOR" },
+        @{ Name = "Insumos"; Url = "http://127.0.0.1:${insumosPort}/insumos/health" },
+        @{ Name = "Timekeeping"; Url = "http://127.0.0.1:${timekeepingPort}/api/ponto/readiness" },
+        @{ Name = "WhatsApp"; Url = "http://127.0.0.1:${whatsAppPort}/health" }
     )
     foreach ($check in $checks) {
         try {
@@ -519,17 +586,29 @@ function Stop-CrmPersonaRuntime {
 
     $runtimeRootWsl = Convert-WindowsPathToWsl -Path (Get-CrmPersonaRuntimeRoot -Persona $Persona)
     if ($Persona -eq "Gestor") {
-        $command = "CRM_PERSONA=GESTOR CRM_RUNTIME_ROOT={0} CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
+        $vitePort = if ([int]$manifest.ports.vite -gt 0) { [int]$manifest.ports.vite } else { 5173 }
+        $pagesPort = if ([int]$manifest.ports.pages -gt 0) { [int]$manifest.ports.pages } else { 8791 }
+        $timekeepingPort = if ([int]$manifest.ports.timekeeping -gt 0) { [int]$manifest.ports.timekeeping } else { 8801 }
+        $command = "CRM_PERSONA=GESTOR CRM_RUNTIME_ROOT={0} CRM_VITE_PORT={1} CRM_PAGES_PORT={2} CRM_TIMEKEEPING_PORT={3} CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_PID_FILE={4} CRM_LOG_FILE={5} bash ./scripts/run-local-crm.sh --stop" -f `
             (Convert-ToBashLiteral -Value $runtimeRootWsl), `
+            $vitePort, `
+            $pagesPort, `
+            $timekeepingPort, `
             (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
             (Convert-ToBashLiteral -Value $crmGestorLogWsl)
     } else {
-        $command = "CRM_PERSONA=CONSULTOR CRM_RUNTIME_ROOT={0} CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE={1} CRM_LOG_FILE={2} bash ./scripts/run-local-crm.sh --stop" -f `
+        $vitePort = if ([int]$manifest.ports.vite -gt 0) { [int]$manifest.ports.vite } else { 5174 }
+        $pagesPort = if ([int]$manifest.ports.pages -gt 0) { [int]$manifest.ports.pages } else { 8792 }
+        $command = "CRM_PERSONA=CONSULTOR CRM_RUNTIME_ROOT={0} CRM_VITE_PORT={1} CRM_PAGES_PORT={2} CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE={3} CRM_LOG_FILE={4} bash ./scripts/run-local-crm.sh --stop" -f `
             (Convert-ToBashLiteral -Value $runtimeRootWsl), `
+            $vitePort, `
+            $pagesPort, `
             (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
             (Convert-ToBashLiteral -Value $crmConsultorLogWsl)
     }
-    Invoke-ShortcutWsl -WorkingProjectRoot $resolvedSource -SkipBootstrapCheck -Command $command
+    # `run-local-crm.sh --stop` forwards SIGTERM to the old detached process.
+    # On WSL this is reported as 143 even when the shutdown completed normally.
+    Invoke-ShortcutWsl -WorkingProjectRoot $resolvedSource -SkipBootstrapCheck -AcceptedExitCode @(0, 143) -Command $command
 }
 
 function Start-CrmPersonaRuntime {
@@ -540,15 +619,35 @@ function Start-CrmPersonaRuntime {
     )
     $targetLiteral = Convert-ToBashLiteral -Value $TargetCommit
     if ($Persona -eq "Gestor") {
-        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh" -f `
+        $vitePort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_GESTOR_VITE_PORT -Candidates @(5173, 5174, 5175) -Label 'Vite do Gestor'
+        $pagesPort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_GESTOR_PAGES_PORT -Candidates @(8791, 8793, 8794) -Label 'Pages do Gestor'
+        $timekeepingPort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_GESTOR_TIMEKEEPING_PORT -Candidates @(8801, 8802, 8803) -Label 'Ponto do Gestor'
+        if ($vitePort -lt 1 -or $vitePort -gt 65535 -or $pagesPort -lt 1 -or $pagesPort -gt 65535 -or $timekeepingPort -lt 1 -or $timekeepingPort -gt 65535) {
+            throw "As portas locais do Gestor devem estar entre 1 e 65535."
+        }
+        $command = "CRM_PERSONA=GESTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} CRM_VITE_PORT={2} CRM_PAGES_PORT={3} CRM_TIMEKEEPING_PORT={4} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=true LOCAL_AUTH_ROLE=GESTOR LOCAL_AUTH_EMAIL=dev@local.test LOCAL_AUTH_NAME='Gestor Local' VITE_CRM_MAINTENANCE_MODULES=faturamento CRM_WITH_INSUMOS=1 CRM_WITH_TIMEKEEPING=1 CRM_WITH_WHATSAPP=1 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={5} CRM_LOG_FILE={6} bash ./scripts/run-local-crm.sh" -f `
             $targetLiteral, `
             (Convert-ToBashLiteral -Value $crmGestorRuntimeRootWsl), `
+            $vitePort, `
+            $pagesPort, `
+            $timekeepingPort, `
             (Convert-ToBashLiteral -Value $crmGestorPidWsl), `
             (Convert-ToBashLiteral -Value $crmGestorLogWsl)
     } else {
-        $command = "CRM_PERSONA=CONSULTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_VITE_PORT=5174 CRM_PAGES_PORT=8792 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:8801 PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:8787 LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:8110 CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={2} CRM_LOG_FILE={3} bash ./scripts/run-local-crm.sh --module ponto" -f `
+        $gestorManifest = Get-CrmPersonaManifest -Persona Gestor
+        $vitePort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_CONSULTOR_VITE_PORT -Candidates @(5174, 5175, 5176) -Label 'Vite do Consultor'
+        $pagesPort = Resolve-CrmLocalPort -RequestedValue $env:CRM_LOCAL_CONSULTOR_PAGES_PORT -Candidates @(8792, 8794, 8795) -Label 'Pages do Consultor'
+        $timekeepingPort = if ($null -ne $gestorManifest -and [int]$gestorManifest.ports.timekeeping -gt 0) { [int]$gestorManifest.ports.timekeeping } else { 8801 }
+        $insumosPort = if ($null -ne $gestorManifest -and [int]$gestorManifest.ports.insumos -gt 0) { [int]$gestorManifest.ports.insumos } else { 8787 }
+        $whatsappPort = if ($null -ne $gestorManifest -and [int]$gestorManifest.ports.whatsapp -gt 0) { [int]$gestorManifest.ports.whatsapp } else { 8110 }
+        $command = "CRM_PERSONA=CONSULTOR CRM_TARGET_COMMIT={0} CRM_RUNTIME_ROOT={1} LOCAL_AUTH_BYPASS=true LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_ROLE=CONSULTOR LOCAL_AUTH_EMAIL=consultor.local@local.test LOCAL_AUTH_USERNAME=consultor-local LOCAL_AUTH_NAME='Consultor Local' LOCAL_AUTH_ALLOWED_MODULES=atendimento,ponto CRM_SMOKE_MODULES=ponto CRM_SMOKE_ALLOW_EMPTY_MODULES=1 CRM_VITE_PORT={2} CRM_PAGES_PORT={3} CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 PONTO_API_TARGET=http://127.0.0.1:{4} PONTO_ACTOR_HMAC_KEY=test-actor-key-not-secret LOCAL_INSUMOS_API_TARGET=http://127.0.0.1:{5} LOCAL_WA_ORCHESTRATOR_API_TARGET=http://127.0.0.1:{6} CRM_BUILD_BEFORE_START=1 CRM_OPEN_BROWSER=1 CRM_PID_FILE={7} CRM_LOG_FILE={8} bash ./scripts/run-local-crm.sh --module ponto" -f `
             $targetLiteral, `
             (Convert-ToBashLiteral -Value $crmConsultorRuntimeRootWsl), `
+            $vitePort, `
+            $pagesPort, `
+            $timekeepingPort, `
+            $insumosPort, `
+            $whatsappPort, `
             (Convert-ToBashLiteral -Value $crmConsultorPidWsl), `
             (Convert-ToBashLiteral -Value $crmConsultorLogWsl)
     }
@@ -574,6 +673,7 @@ function Invoke-CrmPersonaAction {
         }
     }
     if ($decision.Action -eq 'restart') {
+        Assert-CrmLocalRevisionReplacementIsExplicit -Persona $Persona -TargetCommit $TargetCommit -Manifest $decision.Manifest
         Write-Host "[crm-local] Reiniciando ${Persona}: $($decision.Reason)."
         Stop-CrmPersonaRuntime -Persona $Persona
     }
@@ -587,7 +687,7 @@ function Start-CrmGestorBackgroundUpdate {
     $errLog = Join-Path $logRoot "crm-local-gestor-action.err.log"
     $arguments = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath,
-        '-Action', 'CrmLocal', '-ProjectRoot', $ProjectRoot
+        '-Action', 'CrmLocal', '-ProjectRoot', $ProjectRoot, '-Background'
     )
     $previousReviewRef = $env:CRM_LOCAL_REVIEW_REF
     try {
@@ -608,7 +708,10 @@ function Ensure-CrmGestorForConsultor {
         $decision = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit
         if ($decision.Action -eq 'reuse') { return }
     }
-    if ($decision.Action -eq 'restart') { Stop-CrmPersonaRuntime -Persona Gestor }
+    if ($decision.Action -eq 'restart') {
+        Assert-CrmLocalRevisionReplacementIsExplicit -Persona Gestor -TargetCommit $TargetCommit -Manifest $decision.Manifest
+        Stop-CrmPersonaRuntime -Persona Gestor
+    }
     Start-CrmGestorBackgroundUpdate -TargetCommit $TargetCommit
     $ready = Wait-CrmPersonaCurrent -Persona Gestor -TargetCommit $TargetCommit -TimeoutSeconds 600
     if ($ready.Action -ne 'reuse') {
@@ -701,7 +804,18 @@ function Invoke-ShortcutActionInternal {
         "CrmLocal" {
             Stop-LegacyCrmRuntimeIfNeeded
             $targetCommit = Get-CrmLocalTargetCommit
-            Invoke-CrmPersonaAction -Persona Gestor -TargetCommit $targetCommit
+            if ($Background) {
+                Invoke-CrmPersonaAction -Persona Gestor -TargetCommit $targetCommit
+            } else {
+                $decision = Get-CrmPersonaDecision -Persona Gestor -TargetCommit $targetCommit
+                if ($decision.Action -eq 'reuse') {
+                    Open-CrmPersonaUrl -Persona Gestor -Manifest $decision.Manifest
+                } elseif ($decision.Action -eq 'wait') {
+                    Write-Host "[crm-local] A inicialização do Gestor para o commit atual já está em andamento."
+                } else {
+                    Start-CrmGestorBackgroundUpdate -TargetCommit $targetCommit
+                }
+            }
         }
         "CrmConsultor" {
             $targetCommit = Get-CrmLocalTargetCommit

@@ -23,6 +23,13 @@ const TIMEOUT_MS = Math.max(5_000, parseInt(String(process.env.TIMEOUT_MS || '')
 const MODULE_READY_TIMEOUT_MS = Math.max(10_000, Math.min(TIMEOUT_MS, parseInt(String(process.env.CRM_LOCAL_MODULE_READY_TIMEOUT_MS || ''), 10) || 30_000))
 const MODULE_SETTLE_MS = Math.max(900, parseInt(String(process.env.CRM_LOCAL_MODULE_SETTLE_MS || ''), 10) || 1_500)
 const MAX_REQUESTS_PER_ENDPOINT = Math.max(3, parseInt(String(process.env.CRM_SMOKE_MAX_REQUESTS_PER_ENDPOINT || ''), 10) || 12)
+const SMOKE_MODULE_KEYS = new Set(
+  String(process.env.CRM_SMOKE_MODULES || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+)
+const ALLOW_EMPTY_MODULE_SET = process.env.CRM_SMOKE_ALLOW_EMPTY_MODULES === '1'
 
 function nowStamp() {
   const d = new Date()
@@ -224,6 +231,12 @@ async function main() {
       })),
     )
     modules = modules.filter((item) => item.key && item.label)
+    if (SMOKE_MODULE_KEYS.size > 0) {
+      modules = modules.filter((item) => SMOKE_MODULE_KEYS.has(item.key))
+      if (modules.length === 0 && !ALLOW_EMPTY_MODULE_SET) {
+        throw new Error(`Nenhum módulo configurado para o smoke local está disponível: ${[...SMOKE_MODULE_KEYS].join(', ')}.`)
+      }
+    }
 
     const initialActive = await page.locator('[data-module-nav="true"][data-module-active="true"]').getAttribute('data-module-key').catch(() => null)
     if (initialActive) activeModule = initialActive
