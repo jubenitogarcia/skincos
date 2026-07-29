@@ -63,7 +63,20 @@ while IFS=$'\t' read -r key name component_version; do
     cd "$component"
     npm install --package-lock-only --ignore-scripts --omit=optional
     if [[ -d "$component/node_modules" ]]; then rm -rf -- "$component/node_modules"; fi
-    npm ci --ignore-scripts --omit=optional
+    ci_log=$(mktemp)
+    if ! npm ci --ignore-scripts --omit=optional >"$ci_log" 2>&1; then
+      if ! grep -q 'ENOTEMPTY' "$ci_log"; then
+        cat "$ci_log" >&2
+        rm -f "$ci_log"
+        exit 1
+      fi
+      # npm occasionally leaves an internally concurrent directory operation
+      # behind. Retry exactly once from an empty fixture tree; do not relax
+      # lock, peer, script, or optional-dependency flags.
+      rm -rf -- "$component/node_modules"
+      npm ci --ignore-scripts --omit=optional
+    fi
+    rm -f "$ci_log"
     npm audit --omit=optional --json > audit.json || audit_exit=$?
     : "${audit_exit:=0}"
     npm ls --all --json > dependency-tree.json || true
