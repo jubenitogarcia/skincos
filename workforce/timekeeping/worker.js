@@ -671,9 +671,12 @@ async function syncIdentityOnboarding(db, body, requestId) {
   }
   const actor = { id: 'identity-service', role: 'ADMIN', email: 'identity-service@internal', allowedUnits: units, name: 'Identity service' }
   statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_SYNC', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, canonicalEmployeeId, profile, accountStatus, departmentId: department.id, units, managerConfiguredByUnit: Object.fromEntries(Object.entries(managerByUnit).map(([unit, managerId]) => [unit, !!managerId])) } }))
-  if (unresolvedManagerUnits.length) statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_UNRESOLVED', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: unresolvedManagerUnits, resolution: 'MANUAL_REVIEW' } }))
-  if (ambiguousManagerUnits.length) statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_AMBIGUOUS', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: ambiguousManagerUnits, resolution: 'MANUAL_REVIEW' } }))
   await db.batch(statements)
+  // The audit table is hash-chained. Derive every follow-up event only after
+  // the primary onboarding audit has committed, otherwise two events share a
+  // predecessor hash and the D1 trigger correctly rejects the batch.
+  if (unresolvedManagerUnits.length) await (await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_UNRESOLVED', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: unresolvedManagerUnits, resolution: 'MANUAL_REVIEW' } })).run()
+  if (ambiguousManagerUnits.length) await (await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_AMBIGUOUS', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: ambiguousManagerUnits, resolution: 'MANUAL_REVIEW' } })).run()
   return { employeeId, canonicalEmployeeId, idempotent: false }
 }
 
