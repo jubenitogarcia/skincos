@@ -26,3 +26,29 @@ database_id = "9765b1fb-11a4-462c-9657-8a438c755725" # criado via: wrangler d1 c
 binding = "SKINCOS_ESCALA_DB"
 database_name = "skincos-escala"
 database_id = "594fef1b-5597-476e-86f9-59920f284215"
+
+[env.staging]
+name = "espacofacial-site-staging"
+workers_dev = true
+# Never attach the staging Worker to a production hostname.
+routes = []
+
+[env.staging.vars]
+NEXT_PUBLIC_SITE_URL = "https://espacofacial-site-staging.skincos.workers.dev"
+# Staging has no production Turnstile secret and must remain usable for
+# synthetic booking verification without weakening production enforcement.
+BOOKING_REQUIRE_TURNSTILE = "false"
+
+[env.staging.assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+[[env.staging.d1_databases]]
+binding = "BOOKING_DB"
+database_name = "espacofacial-booking-staging"
+database_id = "dea29efb-badd-41f3-962b-d991aa4ac321"
+
+[[env.staging.d1_databases]]
+binding = "SKINCOS_ESCALA_DB"
+database_name = "skincos-escala-staging"
+database_id = "3f59f0a3-2c27-4f15-9f84-a9234f86c2e5"
