@@ -11,6 +11,15 @@ const {
 } = require('../scripts/lib/meta-ads-publish-execution-semantics');
 const { CRM_TOOL_NAME, CRM_URL, transform } = require('../scripts/prepare-meta-ads-publish-crm-catalog');
 const { transform: patchVideoUploadReplay } = require('../scripts/patch-meta-ads-video-transfer-replay');
+const { CODE_SOURCES } = require('../scripts/lib/meta-ads-publish-code-sources');
+
+test('tracks every live Meta Ads Publish Code node in one shared source map', () => {
+  assert.equal(Object.keys(CODE_SOURCES).length, 49);
+  assert.equal(CODE_SOURCES['Build Jobs'], 'build-jobs.js');
+  assert.equal(CODE_SOURCES['Validate Visual Grouping'], 'validate-visual-grouping.js');
+  assert.equal(CODE_SOURCES['Prepare CRM Offer Context Requests'], 'prepare-crm-offer-context-requests.js');
+  assert.equal(CODE_SOURCES['Attach CRM Offer Context'], 'attach-crm-offer-context.js');
+});
 
 test('Responses API uses the n8n 1.3 default when the stored parameter is absent', () => {
   assert.equal(effectiveResponsesApiEnabled({ typeVersion: 1.3, parameters: {} }), true);
@@ -74,6 +83,16 @@ test('preflight loads workflow connections before validating the CRM tool edge',
     'utf8',
   );
   assert.match(source, /SELECT active, nodes, connections, settings,/);
+  assert.match(source, /gateway_contract_revision_gate_missing/);
+});
+
+test('gateway parameters reject a Token Vault contract revision mismatch before publication', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'workflow-src', 'meta-ads-publish', 'build-meta-api-params-from-vault.js'),
+    'utf8',
+  );
+  assert.match(source, /const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta'/);
+  assert.match(source, /gatewayContractRevision !== WORKFLOW_CONTRACT_REVISION/);
 });
 
 test('video upload replay key includes normalized bytes and rejects the legacy v4 key', () => {
