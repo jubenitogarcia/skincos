@@ -55,13 +55,14 @@ jobs:
           PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
           PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
           PONTO_TEMPLATES_KEY: ${{ secrets.PONTO_TEMPLATES_KEY }}
+          PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
           PONTO_NETWORK_CONTEXT_KEY: ${{ secrets.PONTO_NETWORK_CONTEXT_KEY }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
           IDENTITY_WORKFORCE_HMAC_KEY: ${{ secrets.IDENTITY_WORKFORCE_HMAC_KEY }}
           TIMEKEEPING_BACKUP_PASSPHRASE: ${{ secrets.TIMEKEEPING_BACKUP_PASSPHRASE }}
         run: |
           set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID MODULE_CONTROL_KV_ID PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY PONTO_NETWORK_CONTEXT_KEY ESCALA_ACTOR_HMAC_KEY IDENTITY_WORKFORCE_HMAC_KEY TIMEKEEPING_BACKUP_PASSPHRASE; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID MODULE_CONTROL_KV_ID PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY PONTO_PROFILE_DATA_KEY PONTO_NETWORK_CONTEXT_KEY ESCALA_ACTOR_HMAC_KEY IDENTITY_WORKFORCE_HMAC_KEY TIMEKEEPING_BACKUP_PASSPHRASE; do
             [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }
           done
           [[ "$D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "Invalid Timekeeping D1 id"; exit 1; }
@@ -157,13 +158,14 @@ jobs:
           PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
           PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
           PONTO_TEMPLATES_KEY: ${{ secrets.PONTO_TEMPLATES_KEY }}
+          PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
           PONTO_NETWORK_CONTEXT_KEY: ${{ secrets.PONTO_NETWORK_CONTEXT_KEY }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
           IDENTITY_WORKFORCE_HMAC_KEY: ${{ secrets.IDENTITY_WORKFORCE_HMAC_KEY }}
         run: |
           set -euo pipefail
           if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); else ENV_ARGS=(--env staging); fi
-          for name in PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY PONTO_NETWORK_CONTEXT_KEY ESCALA_ACTOR_HMAC_KEY IDENTITY_WORKFORCE_HMAC_KEY; do
+          for name in PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY PONTO_PROFILE_DATA_KEY PONTO_NETWORK_CONTEXT_KEY ESCALA_ACTOR_HMAC_KEY IDENTITY_WORKFORCE_HMAC_KEY; do
             printf '%s' "${!name}" | workforce/timekeeping/node_modules/.bin/wrangler secret put "$name" --config workforce/timekeeping/wrangler.toml "${ENV_ARGS[@]}" >/dev/null
           done
 
@@ -187,15 +189,17 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
           if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); else ENV_ARGS=(--env staging); fi
-          workforce/timekeeping/node_modules/.bin/wrangler deploy --config workforce/timekeeping/wrangler.toml --keep-vars "${ENV_ARGS[@]}"
+          workforce/timekeeping/node_modules/.bin/wrangler deploy --config workforce/timekeeping/wrangler.toml --keep-vars "${ENV_ARGS[@]}" --var "APP_VERSION:$RELEASE_SHA" --var "ENVIRONMENT:$TARGET"
 
       - name: Read-only endpoint smoke
         id: smoke
         env:
           TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
           if [[ "$TARGET" == "production" ]]; then BASE=https://api.skincos.com.br; else BASE=https://api-staging.skincos.com.br; fi
@@ -204,7 +208,7 @@ jobs:
             code="$(curl --silent --show-error --retry 5 --retry-delay 4 --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$BASE/api/ponto/$path")"
             [[ "$code" == "200" ]] || { echo "$path returned HTTP $code"; cat "$body"; exit 1; }
             grep -Eiq '^content-type: application/json' "$headers" || { echo "$path returned invalid content-type"; exit 1; }
-            node -e "const p=JSON.parse(require('fs').readFileSync(process.argv[1])); if(!p.ok) process.exit(1)" "$body"
+            node -e "const p=JSON.parse(require('fs').readFileSync(process.argv[1])); if(!p.ok) process.exit(1); if(process.argv[2]==='health' && (p.version!==process.env.RELEASE_SHA || p.environment!==process.env.TARGET || p.availability?.state!=='active')) process.exit(1)" "$body" "$path"
           done
 
       - name: Write staging promotion evidence

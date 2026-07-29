@@ -1,5 +1,34 @@
 # Current state
 
+## Workforce Timekeeping current-main release — source remediation, not yet staged — 2026-07-29T20:45Z
+
+The isolated candidate branch `codex/admin/workforce-timekeeping-production`
+starts from `origin/main` `f202e29f4178bba8966edf71539c942618254de0`. Source
+review identified a later navigation regression: commit
+`4bfc56af0ac5b2bf0387a71dfa1825cb84ecdca0` removed `ponto` from the
+CONSULTOR/EMPLOYEE allowlist after the original Workforce release. The candidate
+restores exactly `atendimento` and `ponto` for those roles; server-side Pages
+and Worker authorization remains the enforcement boundary.
+
+The candidate also makes face punches explicitly false in both Worker configs,
+adds the missing Ponto/profile secret to deploy and periodic-sync guards,
+attests SHA/environment in Worker health, and adds a private-fixture
+authenticated staging journey across CRM Pages, Core API and Timekeeping. The
+D1/KV identifiers configured for staging and production were read-only checked
+for presence and expected formats; direct health/readiness probes returned 200
+but the current Worker reports unproven release provenance (`environment`
+previously `unknown`). The remote module-control key was absent, so its current
+implicit-active behavior is not an explicit activation record.
+
+`PONTO_PROFILE_DATA_KEY` is absent from the repository and environment secret
+metadata. The new fail-closed guard therefore intentionally prevents either
+staging or production deployment until the key is provisioned through an
+approved secret-management path. No secret value was read, generated, copied or
+changed. No PR, CI run, D1 write, KV change, deployment, promotion, pilot or
+production modification has occurred for this candidate. Historical Ponto
+release records below remain historical only; they do not establish current-SHA
+staging or production readiness.
+
 ## Authoritative Finance reconciliation — 2026-07-29T14:02Z
 
 This entry is the authoritative Finance status for `origin/main`
