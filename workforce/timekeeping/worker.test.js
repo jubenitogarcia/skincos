@@ -115,6 +115,13 @@ test('onboarding access state remains authoritative for operational timekeeping'
   assert.equal(__testables.identityOnboardingId({ metadata_json: '{invalid' }), '')
 })
 
+test('onboarding manager routing leaves missing or ambiguous superiors empty for manual review', () => {
+  assert.deepEqual(__testables.resolveOnboardingManager([]), { managerId: null, reason: 'MISSING' })
+  assert.deepEqual(__testables.resolveOnboardingManager([{ manager_employee_id: 'manager-1', status: 'ACTIVE', access_state: 'ACTIVE' }]), { managerId: 'manager-1', reason: 'RESOLVED' })
+  assert.deepEqual(__testables.resolveOnboardingManager([{ manager_employee_id: 'manager-1', status: 'ACTIVE', access_state: 'ACTIVE' }, { manager_employee_id: 'manager-2', status: 'ACTIVE', access_state: 'ACTIVE' }]), { managerId: null, reason: 'AMBIGUOUS' })
+  assert.deepEqual(__testables.resolveOnboardingManager([{ manager_employee_id: 'manager-1', status: 'LEAVE', access_state: 'SUSPENDED' }]), { managerId: null, reason: 'MISSING' })
+})
+
 test('CSV cells neutralize formulas and follow CSV quote escaping', () => {
   assert.equal(__testables.csvCell('=HYPERLINK("https://invalid.example")'), '"\'=HYPERLINK(""https://invalid.example"")"')
   assert.equal(__testables.csvCell('Pessoa "Teste"'), '"Pessoa ""Teste"""')
