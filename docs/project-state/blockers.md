@@ -57,28 +57,27 @@ Pages run `30420793906`, checkpoint artifact `8711811875`, and sanitized
 synthetic positive/negative unit-scope smokes. Retain rollback evidence, but
 do not reopen this item without a new production symptom.
 
-## Finance — staging release evidence is incomplete
+## Finance — current-main staging gate closed; recovery gate remains
 
-The current Finance staging Worker and independent UI are healthy at
-`32bf3ebb…` (runs `30168445270` and `30168445288`). The last full Finance
-reconciliation compared them with `origin/main` `6963ba04…`; the repository
-has since advanced to the authoritative snapshot `66424871…`. The latest
-Finance-changing ancestor is `291d9359…`, including Finance PRs
-#891/#890/#895/#898; the later main commits do not change Finance, but the
-staging evidence is still not current-main. The API and general CRM Pages
-staging versions differ as well.
-The next Finance technical milestone remains a single immutable current-main
-candidate through canonical Finance Worker/UI preview and staging, followed by
-the synthetic authenticated import/UI journey. Until that happens, no staging
-release is eligible for a pilot decision.
+The immutable candidate, Finance Worker, independent Finance UI and CRM Pages
+all used `c277032db96ba96484522a19994a66cbb323a46d`: candidate `30500613099`,
+preview runs `30500694945`/`30500696857`/`30500698417` and staging runs
+`30500732310`/`30500734160`/`30500735957`. Synthetic canary `30500922386`
+passed the authenticated import, idempotent replay/conflict, audit,
+compensation and isolated-shell journeys. Its Finance p95 was 426 ms (limit
+1000 ms), with zero errors, authentication failures, journey failures,
+divergences, audit failures and dependency failures. It restored the
+non-enabled staging baseline and its temporary synthetic grant.
 
-Historical staging evidence remains valid only for the capabilities it tested:
-rollback `30143185583`, remote kill switch
-`30143674681`/`30143742671`, scratch restore and the controlled canary stop.
-The `audit returned 503` in canary `30168648150` was restored and is not a
-current outage: fresh Worker/gateway probes and the continuous monitor are
-healthy. External observability is complete as infrastructure, with a live
-Run-key monitor, dashboard, 30-day retention and recorded human-alert drill.
+The prior transient `domain_service_degraded`/503 during import analysis is
+superseded for this candidate: retry is bounded to transient 5xx on the
+idempotent analyze operation, and the full journey now passed. The historical
+`audit returned 503` remains an audit finding, not a current blocker.
+Historical rollback `30143185583`, remote kill switch
+`30143674681`/`30143742671`, scratch restore and the controlled abort remain
+valid for their tested capabilities. External observability remains complete as
+infrastructure, with its live Run-key monitor, dashboard, 30-day retention and
+recorded human-alert drill.
 
 ## Finance — offsite PostgreSQL recovery remains blocked
 
