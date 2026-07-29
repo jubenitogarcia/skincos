@@ -46,11 +46,13 @@
   the source of truth. The older `meta-ads-*` worktrees remain operator-owned
   historical worktrees and are not cleanup targets for unrelated tasks.
 - The production workflow is intentionally inactive/manual. Its current live
-  version is `825` (`4ec178e3-bc9d-4ed6-b481-eb9015777b2e`); the Token Vault
-  production deployment is `beba53d9-67f3-495b-a002-5dc579463c29`. A final
-  historical journal reconciliation and WhatsApp-notification delivery check
-  remain tracked in `TASKS.md`; do not treat execution success alone as their
-  proof.
+  version is `830` (`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`); the Token Vault
+  production deployment is `beba53d9-67f3-495b-a002-5dc579463c29`. WhatsApp
+  notification uses the private loopback Evolution configuration and a
+  synthetic isolated send reached `DELIVERY_ACK`; Telegram is unchanged.
+  Historical audit closed 46 evidenced pre-stage runs and leaves exactly three
+  staged runs in `reconciliation_required`, documented in
+  `orb/engine/docs/meta-ads-publish-historical-run-audit-2026-07-29.md`.
 - The native Orb source release currently resolves to
   `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, which predates PR #840. The
   n8n definition and Worker are reconciled, but the runtime source release is

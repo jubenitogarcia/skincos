@@ -96,9 +96,10 @@ e uma declaração clara sobre o que não foi validado em produção.
   confirmou o contrato `OUTCOME_LEADS` + `WHATSAPP_MESSAGE` e o handoff
   `https://api.whatsapp.com/send`; as URLs de agendamento permanecem apenas
   como referência por unidade.
-- A definição atualmente viva é a versão `825`
-  (`4ec178e3-bc9d-4ed6-b481-eb9015777b2e`), inativa/manual. Ela foi aplicada a
-  partir da fonte integrada na PR #840 (`11417df9e362f82337882a4b57e87c98b1a21547`).
+- A definição atualmente viva é a versão `830`
+  (`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`), inativa/manual. Ela foi aplicada
+  versionadamente a partir da exportação canônica; o checkpoint privado da
+  versão `825` permanece como rollback operacional.
   O Token Vault ativo é o deployment
   `beba53d9-67f3-495b-a002-5dc579463c29`; o checkpoint privado anterior é o
   rollback operacional.
@@ -106,9 +107,18 @@ e uma declaração clara sobre o que não foi validado em produção.
   `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, anterior à PR #840. O preflight
   canônico pode validar a definição viva sem mutação, mas não substitui a
   promoção versionada desse release; trate-a como um gate operacional separado.
-- O run final tem Drive verificado, stage/activate completos, nenhum lock e
-  nenhum estado `reconciliation_required`. Contudo, a notificação Telegram foi
-  confirmada e a notificação WhatsApp retornou erro; além disso, existem runs
-  históricos não terminais no journal. Eles são uma pendência operacional
-  separada e bloqueiam declarar o fechamento global do journal até a
-  reconciliação idempotente documentada em `TASKS.md`.
+- O run final tem Drive verificado, stage/activate completos e nenhum lock
+  ativo. Telegram foi preservado como ramo independente. A notificação
+  WhatsApp passou a usar HTTP direto para a Evolution no loopback, com instância
+  e destinatário específicos do Meta Ads em configuração privada. A correção
+  eliminou CRLF no ambiente, usa timeout e retentativas limitadas, e foi
+  validada sem executar o workflow nem chamar a Meta: o provedor persistiu a
+  mensagem sintética e devolveu `DELIVERY_ACK`. Isso comprova entrega pelo
+  provedor, não leitura humana.
+- A auditoria histórica está em
+  `docs/meta-ads-publish-historical-run-audit-2026-07-29.md`. Ela gravou um
+  evento imutável por run, encerrou 46 runs comprovadamente sem staging como
+  `failed` e deixou três runs staged em `reconciliation_required`. Não houve
+  ativação, rollback, exclusão ou consulta Graph nessa auditoria. Antes de
+  qualquer ação sobre esses três, o responsável Meta Ads deve fazer lookup
+  Graph somente leitura e registrar uma decisão explícita.

@@ -36,14 +36,15 @@
 - [x] Reconciliar e versionar o contrato do `Meta Ads – Publish` (workflow,
   fontes dos Code nodes, Token Vault, migrations, preflight e testes) pela PR
   #840; a execução manual 333 concluiu o lote comercial final.
-- [ ] **P1 — reconciliar os runs históricos não terminais do journal Meta Ads e
-  validar a entrega da notificação WhatsApp.** A auditoria de 2026-07-29 não
-  encontrou lock ativo nem pendência no run final `map_f6a59341d6dace99d70f5533`,
-  mas encontrou registros antigos em `acquired`/`processing`/`staged` e um
-  retorno de erro do nó WhatsApp na execução 333. Antes de alterar qualquer
-  registro, mapear os recursos Meta de cada run, decidir compensação ou
-  conclusão idempotente e registrar evidência de entrega; não reenviar
-  notificação nem apagar journal por suposição.
+- [ ] **P1 — concluir as três reconciliações Meta Ads restantes, somente após
+  lookup Graph em modo leitura.** Em 2026-07-29, 46 runs históricos foram
+  encerrados com evento de auditoria e os três que tinham job staged foram
+  corretamente marcados `reconciliation_required`: `map_9c175ce1ed571ccd158ef509`,
+  `map_d4162ea2a7e9660512796dcb` e `map_7464107b2ee04e0cab6a27cf`. O operador
+  Meta Ads deve identificar o recurso físico por operation/resource key e
+  registrar decisão de rollback ou ativação autorizada; não excluir nem mudar
+  recursos por suposição. A entrega WhatsApp foi comprovada isoladamente por
+  `DELIVERY_ACK`; Telegram permaneceu independente.
 - [ ] **P1 — promover o source release nativo do Orb até o `main` que contém a
   PR #840.** O serviço ainda executa o release
   `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, anterior ao contrato canônico.

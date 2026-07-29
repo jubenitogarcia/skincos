@@ -195,6 +195,24 @@ recorded; the WhatsApp notification node returned an error. Both are tracked as
 P1 in `TASKS.md` and must be reconciled with idempotent readback before this
 workstream can be archived.
 
+## Meta Ads Publish operational closeout — 2026-07-29T11:45Z
+
+The live definition is version `830` (`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`)
+and remains inactive/manual. The success notification now sends through the
+local Evolution HTTP endpoint with private Meta-specific instance/destination
+settings; the previous CRLF contamination was removed. A synthetic isolated
+send was accepted and then persisted by the provider as `DELIVERY_ACK`.
+Telegram remains the independent parallel branch. No workflow execution,
+commercial file or Meta API mutation was used in this test.
+
+The D1 journal audit correlated all 49 prior nonterminal runs with jobs,
+operations, events and locks. It wrote a durable audit event per run, changed
+46 provably pre-stage failures/abandonments to `failed`, and classified the
+three staged runs as `reconciliation_required`. The current distribution is
+1 archived calibration, 52 completed, 54 failed and 3 reconciliation-required,
+with zero active locks. The three residual runs and required read-only Graph
+lookup are listed in `orb/engine/docs/meta-ads-publish-historical-run-audit-2026-07-29.md`.
+
 ## Observability alert hardening operational closeout — 2026-07-29T03:06Z
 
 PR [#833](https://github.com/jubenitogarcia/skincos/pull/833) is the source
