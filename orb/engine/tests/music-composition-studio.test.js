@@ -246,6 +246,33 @@ async function testProviders() {
   assert.strictEqual(cachedProvider.submitCount, 1);
   assert.strictEqual(ledger.snapshot().costs.length, 1);
 
+  const fallbackRequest = baseRequest({
+    production_id: 'MSC-PROVIDER-FALLBACK',
+    provider_policy: { mode: 'mock', max_cost: 0, max_jobs: 10, allowed_providers: ['failing-mock', 'mock'] },
+  });
+  const fallbackLedger = new MusicLedger();
+  fallbackLedger.begin({ ...fallbackRequest, composition_id: 'CMP-FALLBACK' });
+  const failingProvider = {
+    name: 'failing-mock',
+    model: 'failure-fixture-v1',
+    mode: 'mock',
+    maxRetries: 0,
+    estimateCost: () => 0,
+    submit: async () => { throw new Error('PROVIDER_ERROR: injected failure'); },
+    status: async () => ({ status: 'FAILED' }),
+    result: async () => ({}),
+    cancel: async () => ({ status: 'CANCELLED' }),
+  };
+  const fallback = await executeProviderJob({
+    ledger: fallbackLedger,
+    provider: failingProvider,
+    fallbackProvider: new MockMusicProvider({ name: 'fallback-mock' }),
+    request: fallbackRequest,
+    job: { composition_id: 'CMP-FALLBACK', module: 'MSC-30', component_id: 'lab', revision: 1, input_hash: 'fallback', status: 'QUEUED' },
+  });
+  assert.strictEqual(fallback.fallback, true);
+  assert.strictEqual(fallback.provider, 'fallback-mock');
+
   const rateLimited = new MockMusicProvider({ rateLimit: 1 });
   await rateLimited.submit({ input_hash: 'one', module: 'MSC-10', component_id: 'one', dry_run: true, provider_policy: { mode: 'mock' } });
   await assert.rejects(
