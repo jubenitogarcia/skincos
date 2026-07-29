@@ -985,3 +985,64 @@ Composition Studio; o `n8n_runtime` também tem zero tabelas no schema
 `music_studio`. Nada foi importado, ativado ou migrado em produção e
 nenhuma credencial/provider pago foi configurado. Rollout live permanece uma
 ação separada que exige staging, backup/rollback e autorização explícita.
+
+## Meta CAPI — minimização de dados e fechamento de produção 2026-07-29
+
+A PR #887 foi integrada como `ebcbcba63324baa1f5ab5b2181da82784cb74f82`.
+Todos os checks obrigatórios e adicionais observados ficaram verdes. A cadeia
+governada promoveu o release imutável
+`5878279e21d7bcd84c18564663ed35f630737e60`, que contém esse merge, por
+preview `30492554875`, staging `30492612081` e produção `30492875522`.
+O deploy governado produziu a versão de código
+`556ea05f-d242-41ac-9b58-55ea51c9d2c8`. Depois da remoção dos dois secrets
+temporários de teste, o Worker `espacofacial-site` está 100% na versão
+`f351f770-58e2-4da9-94e0-1e6f46382fab`, ainda com o mesmo código: home,
+médicos e API de serviços responderam HTTP 200 com
+`x-app-build=5878279e…` e `x-app-build-time=30492875522`.
+
+No código desse release, `Schedule` envia ao Meta apenas
+`content_type=booking` e `currency=BRL` em `custom_data`; `Contact` não envia
+`custom_data` pelo servidor e usa objeto vazio no Pixel do navegador. Os
+parâmetros originais de `Contact` continuam disponíveis para Google Ads. O
+contrato preserva `event_id`, dados de correspondência com hash, IP/UA,
+`fbp`/`fbc`, persistência D1 e o bloqueio fail-closed sem consentimento de
+marketing. A suíte isolada passou com 86 testes, ESLint e TypeScript. Os testes
+de regressão fazem igualdade exata do `custom_data` de `Schedule`, confirmam
+ausência da propriedade em `Contact` CAPI e comprovam que os parâmetros
+originais de `Contact` continuam indo ao Google Ads enquanto o Pixel recebe
+objeto vazio.
+
+Uma jornada sintética indispensável foi executada no release já publicado, com
+consentimento de marketing, UTM e `fbclid`. Navegador e servidor usaram
+`schedule_capi_postdeploy_19faff74937`; o Events Manager marcou o Navegador
+como `Desduplicado` contra o evento processado do Servidor. O detalhe do
+Servidor mostrou somente `currency=BRL` e `content_type=booking`, além das
+chaves de matching esperadas. A lista de teste renderizou duas linhas idênticas
+do Servidor, porém o D1 comprova um único dispatch da aplicação: uma linha de
+auditoria, HTTP 200, `events_received=1` e nenhum erro. O booking preservou
+`meta_event_id`, os dois consentimentos, `fbp`, `fbc`, `fbclid` e a landing URL
+com UTM; booking e cliente fictícios foram removidos e somente a auditoria foi
+retida.
+
+A prova negativa anterior continua válida: o evento recusado por consentimento
+não chegou ao Events Manager e o D1 mantém
+`meta_capi_not_sent_without_marketing_consent`, sem tentativa Graph. O CRM
+Tracking confirma Meta Pixel/CAPI configurados: `capiScheduleOk` tem valor 7,
+`capiScheduleFailed` tem valor 0, `capiScheduleSkippedConsent` tem valor 1,
+`capiContactFailed` tem valor 0 e não há candidato retryable; o novo `event_id`
+não aparece em issues ou retries. O status agregado está `degraded` somente
+pelos alertas históricos de cobertura de tracking/identificadores dos bookings
+reais, não por falha da CAPI.
+
+A listagem de secrets do Worker contém apenas os três nomes Meta permanentes
+`META_ACCESS_TOKEN`, `META_PIXEL_ID` e `NEXT_PUBLIC_META_PIXEL_ID`.
+`META_CAPI_TEST_EVENT_CODE` e o guard de booking sintético estão ausentes; seus
+valores não foram persistidos no repositório nem nas evidências. O rollback
+seguro da alteração de bindings é a versão Worker pós-minimização
+`556ea05f-d242-41ac-9b58-55ea51c9d2c8`, do mesmo release
+`5878279e21d7bcd84c18564663ed35f630737e60`: criar um deployment 100% dessa
+versão e só aceitá-lo depois de confirmar ausência dos secrets temporários,
+HTTP 200 em `/`, `/doutores` e `/api/booking/services` e
+`x-app-build=5878279e…`. A versão pré-minimização
+`affdc496-a0f4-4177-93e8-79ffa19e04f4`/release `0d73eba1…` é explicitamente
+proibida como rollback, pois restauraria o vazamento de `custom_data`.
