@@ -106,7 +106,8 @@ function validateStructure() {
     'Verify Published Artifacts',
     'Attach Verified Publish Artifacts',
     'Switch Final Dry Run',
-    'Merge Drive Result and Context',
+    'Prepare Drive Publication Marks',
+    'Collect Drive Publication Marks',
     'Assert Drive Published',
   ]) {
     assert(names.has(name), `Missing node: ${name}`);
@@ -239,11 +240,12 @@ function validateStructure() {
   assert(!connectionExists('Collect Publish Results', 'Inform Success (1)'), 'Collect Publish Results must not directly feed Inform Success (1)');
   assert(!connectionExists('Collect Publish Results', 'Update File'), 'Collect Publish Results must not directly feed Update File');
   assert(!connectionExists('Collect Publish Results', 'Cleanup Temp Files'), 'Collect Publish Results must not directly feed Cleanup Temp Files');
-  assert(connectionExists('Switch Final Dry Run', 'Update File', 0), 'Switch Final Dry Run normal output must feed Update File');
-  assert(connectionExists('Switch Final Dry Run', 'Merge Drive Result and Context', 0), 'Switch Final Dry Run must preserve the notification context for Drive verification');
+  assert(!names.has('Merge Drive Result and Context'), 'Drive publication must not use a positional merge that can discard carousel source files');
+  assert(connectionExists('Switch Final Dry Run', 'Prepare Drive Publication Marks', 0), 'Switch Final Dry Run normal output must fan out verified Drive source files');
+  assert(connectionExists('Prepare Drive Publication Marks', 'Update File'), 'Every verified Drive source file must be sent to Update File');
   const updateEdges = workflow.connections?.['Update File']?.main?.[0] || [];
-  assert(updateEdges.some((edge) => edge?.node === 'Merge Drive Result and Context' && edge?.index === 1), 'Update File must feed the Drive result into the final merge');
-  assert(connectionExists('Merge Drive Result and Context', 'Assert Drive Published'), 'Merged Drive result and notification context must feed Assert Drive Published');
+  assert(updateEdges.some((edge) => edge?.node === 'Collect Drive Publication Marks'), 'Update File must feed every API readback into the Drive publication collector');
+  assert(connectionExists('Collect Drive Publication Marks', 'Assert Drive Published'), 'Collected Drive readbacks must feed Assert Drive Published');
   const notificationNode = names.has('Inform Success (1)') ? 'Inform Success (1)' : 'Inform Success (2)';
   assert(connectionExists('Assert Drive Published', notificationNode), 'Verified Drive update must feed notification');
   assert(connectionExists('Assert Drive Published', 'Cleanup Temp Files'), 'Verified Drive update must feed cleanup');
@@ -278,8 +280,11 @@ function validateContracts() {
   const prepareHttp = codeOf('Prepare HTTP Publish Request');
   const processHttp = codeOf('Process HTTP Publish Result');
   const collect = codeOf('Collect Publish Results');
+  const tokenHealthCommand = commandOf('Validate Publish Token Health');
   const verifyCommand = commandOf('Verify Published Artifacts');
   const attachVerified = codeOf('Attach Verified Publish Artifacts');
+  const prepareDriveMarks = codeOf('Prepare Drive Publication Marks');
+  const collectDriveMarks = codeOf('Collect Drive Publication Marks');
   const assertDrive = codeOf('Assert Drive Published');
   const attach = codeOf('Attach Uploaded Main Media Metadata');
   const waitAmount = String(getNode('Wait')?.parameters?.amount || '');
@@ -301,9 +306,12 @@ function validateContracts() {
   assert(processMediaAssetCommand.length < 2500, `Process Media Asset command must stay small enough for stable expression parsing (${processMediaAssetCommand.length} chars)`);
   const jobGraphScript = path.join(__dirname, 'livia', 'build-platform-job-graph.js');
   const jobGraphSource = fs.readFileSync(jobGraphScript, 'utf8');
+  const compose2Source = fs.readFileSync(path.join(__dirname, '..', 'compose2-current.js'), 'utf8');
+  const verifierSource = fs.readFileSync(path.join(__dirname, 'livia', 'verify-published-artifacts.js'), 'utf8');
   assert(jobGraphSource.includes('normalizeExternalResult'), 'Livia job graph must accept both direct n8n jobs and jobs envelopes.');
   assert(jobGraphSource.includes('assertOutputContract'), 'Livia job graph must self-test its output contract.');
   assert(jobGraphSource.includes('assertJobGraphContracts'), 'Livia job graph must test image, Reel and carousel fixtures without the gateway.');
+  assert(jobGraphSource.includes('assertFacebookCarouselRepresentation'), 'Livia job graph must reject Facebook carousel jobs that drop, duplicate, or reorder media.');
   assert(jobGraphSource.includes('semanticJobKey'), 'Livia job graph must derive a semantic durable resume identity.');
   assert(jobGraphSource.includes('assertResumeIdentityContracts'), 'Livia job graph must prove queue-index changes do not alter resume identity.');
   assert(jobGraphSource.includes('invalidateIncompleteCarouselResume'), 'Livia resume logic must invalidate partial Instagram carousel attempts before reusing child containers');
@@ -311,6 +319,10 @@ function validateContracts() {
   assert(jobGraphSource.includes('normalizeThreadsCarouselJob'), 'Livia job graph must keep Threads carousel child and parent request contracts distinct');
   assert(jobGraphSource.includes("request.media_type = 'IMAGE'"), 'Livia Threads carousel children must explicitly request media_type=IMAGE');
   assert(jobGraphSource.includes("request.media_type = 'CAROUSEL'"), 'Livia Threads carousel parent must explicitly request media_type=CAROUSEL');
+  assert(compose2Source.includes('facebookUseReels'), 'Livia must use Facebook Reels only for a single source video.');
+  assert(compose2Source.includes('sourceMediaIds') && compose2Source.includes('sourceMediaCount'), 'Livia must preserve Facebook attachment source identity/count before the gateway.');
+  assert(!compose2Source.includes('usando apenas o 1º vídeo'), 'Livia must not publish only the first video from a carousel.');
+  assert(!compose2Source.includes('vídeo detectado em grupo não-reels; ignorado'), 'Livia must not silently discard a video from a mixed carousel.');
   assert(prepareHttp.includes('JSON.stringify(ids)'), 'Prepare HTTP Publish Request must serialize Threads carousel children as a JSON array');
   assert(prepareBatch.includes('uploadEligible'), 'Prepare Media Upload Batch must preserve uploadEligible from the media processor');
   assert(prepareBatch.includes('blockReason'), 'Prepare Media Upload Batch must preserve the media block reason');
@@ -393,6 +405,8 @@ function validateContracts() {
   assert(processHttp.includes('state.completed.push(resultJson)'), 'Process HTTP Publish Result must accumulate completed jobs');
   assert(prepareHttp.includes('childrenPublishRunIndexes'), 'Prepare HTTP Publish Request must resolve carousel child container ids');
   assert(prepareHttp.includes('ids.join(",")'), 'Prepare HTTP Publish Request must serialize carousel children in the Meta format');
+  assert(prepareHttp.includes('sourceMediaCount') && prepareHttp.includes('sourceMediaIds'), 'Prepare HTTP Publish Request must validate the complete Facebook attachment contract before the gateway.');
+  assert(prepareHttp.includes('perdeu a ordem ou identidade semântica'), 'Prepare HTTP Publish Request must fail closed on Facebook attachment order/identity drift.');
   assert(processHttp.includes('resolvePrepareRequestContext'), 'Process HTTP Publish Result must recover the prepared request context after HTTP nodes replace the input payload');
   assert(processHttp.includes('resolvedStateKey'), 'Process HTTP Publish Result must resolve the matching inflight state deterministically during retries');
   assert(!processHttp.includes('$("Prepare HTTP Publish Request").item'), 'Process HTTP Publish Result must not use named-node lookups inside the task runner');
@@ -414,6 +428,7 @@ function validateContracts() {
   assert(collect.includes('publishMode'), 'Collect Publish Results must distinguish Reels from static posts');
   assert(collect.includes('providerMediaId'), 'Collect Publish Results must preserve the provider media id alongside the final post id');
   assert(collect.includes('firstSubmitted'), 'Collect Publish Results must aggregate submitted fields across upload and publish phases');
+  assert(collect.includes('mediaEvidenceContract') && collect.includes('providerMediaId'), 'Collect Publish Results must preserve ordered provider media evidence for every source asset.');
   assert(!collect.includes('platform === "facebook"\n        ? __prStr(startBody.video_id'), 'Collect Publish Results must not require a Reels video_id for every Facebook post');
   assert(collect.includes('codexDryRun'), 'Collect Publish Results must propagate codexDryRun');
   assert(collect.includes('shouldNotify: codexDryRun ? false'), 'Collect Publish Results must disable notifications during Codex dry-run');
@@ -435,17 +450,26 @@ function validateContracts() {
     assert(!Object.prototype.hasOwnProperty.call(httpParameters, 'body'), 'Managed social publish gateway must not retain a raw body, which turns the response into a stream');
   }
   assert(commandOf('Cleanup Temp Files').includes('isAllowedCleanupDir'), 'Cleanup Temp Files must delete per-execution asset directories safely');
+  assert(tokenHealthCommand.includes('validate-publish-token-health.js'), 'Validate Publish Token Health must invoke the versioned credential preflight');
+  assert(tokenHealthCommand.includes('. /etc/skincos/orb-business.env'), 'Token preflight must load the same protected bearer used by the verifier');
+  const tokenHealthScript = fs.readFileSync(path.join(__dirname, 'livia', 'validate-publish-token-health.js'), 'utf8');
+  for (const required of ['gatewayChecks', 'gateway_missing', 'checkThroughGateway']) {
+    assert(tokenHealthScript.includes(required), `Token preflight must fail closed on gateway authorization (${required})`);
+  }
   assert(verifyCommand.includes('verify-published-artifacts.js'), 'Verify Published Artifacts must call the external verifier');
   assert(verifyCommand.includes('--payload -') && verifyCommand.includes('printf %s'), 'Verifier must receive a bounded payload through stdin');
   assert(/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine\/scripts\/livia\/verify-published-artifacts\.js/.test(verifyCommand), 'Verifier must invoke the immutable release entrypoint directly');
   assert(!/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b|\/mnt\/c\/|livia-verify-provider-copy-drift-wrapper|--verifier\b/.test(verifyCommand), 'Verifier must not use a mutable root or compatibility wrapper');
   assert(!verifyCommand.includes('Get Credential Tokens') && !verifyCommand.includes('tokenRoot'), 'Verifier must not expose token-vault data in its command line');
+  assert(verifierSource.includes('assessMediaEvidence'), 'Published-artifact verification must reject a provider post that omits a source media attachment.');
+  assert(verifierSource.includes('facebook_composite_attachment_identity_missing'), 'Published-artifact verification must name missing Facebook carousel attachments causally.');
   assert(attachVerified.includes('result.ok !== true'), 'Verifier failures must stop final effects');
-  assert(assertDrive.includes('appProperties.published'), 'Drive verification must assert published=true');
+  assert(prepareDriveMarks.includes('driveExpectedFileIds') && prepareDriveMarks.includes('fileIds'), 'Drive fan-out must use the verified source fileIds contract');
+  assert(collectDriveMarks.includes("$items('Prepare Drive Publication Marks')"), 'Drive collector must correlate readbacks to the semantic fan-out contract');
+  assert(collectDriveMarks.includes('properties.published') && collectDriveMarks.includes('count mismatch'), 'Drive collector must reject missing or unmarked source files');
+  assert(assertDrive.includes('expectedFileIds') && assertDrive.includes('verifiedFileIds'), 'Drive verification must assert every source file was marked published=true');
   assert(assertDrive.includes('const finalContext ='), 'Drive verification must project a bounded final context');
   assert(!assertDrive.includes('...original') && !assertDrive.includes('$('), 'Drive verification must not resolve or spread an upstream publish envelope');
-  const driveMerge = getNode('Merge Drive Result and Context')?.parameters || {};
-  assert(driveMerge.mode === 'combine' && driveMerge.combineBy === 'combineByPosition', 'Drive merge must combine the compact context and Drive response by position');
   assert(updateOptions.includes('"fields":["*"]'), 'Update File must return properties for verification');
   if (getNode('Inform Success (1)')) {
     assert(notifyPhone.includes('N8N_DEFAULT_TEST_PHONE') && !notifyPhone.includes('555195103563'), 'Notification must use the runtime E.164 phone instead of a hard-coded JID');
@@ -591,11 +615,41 @@ function validateManualDryRunFixture() {
   assert(mismatched?.[0]?.json?.firstJob?.semanticJobKey === semanticJobKey, 'Mismatched semantic progress must not suppress a current provider job');
 }
 
+function validateDrivePublicationMarkFixture() {
+  const prepare = codeOf('Prepare Drive Publication Marks');
+  const collect = codeOf('Collect Drive Publication Marks');
+  const assertDrive = codeOf('Assert Drive Published');
+  const source = {
+    json: {
+      id: 'drive-a',
+      fileIds: ['drive-a', 'drive-b', 'drive-c'],
+      groupKey: 'dt:fixture',
+      whatsappMessage: 'fixture',
+      shouldNotify: true,
+      codexDryRun: false,
+    },
+  };
+  const prepared = runCode(prepare, {
+    $input: { all: () => [source], first: () => source },
+  });
+  assert(Array.isArray(prepared) && prepared.length === 3, 'Drive mark fan-out fixture must emit one update item per source file');
+  const updates = prepared.map((item) => ({ json: { id: item.json.id, properties: { published: 'true' } } }));
+  const collected = runCode(collect, {
+    $input: { all: () => updates, first: () => updates[0] },
+    $items: (name) => name === 'Prepare Drive Publication Marks' ? prepared : [],
+  });
+  const verified = runCode(assertDrive, {
+    $input: { all: () => collected, first: () => collected[0] },
+  });
+  assert(verified?.[0]?.json?.driveAudit?.verifiedFileCount === 3, 'Drive mark fixture must retain all verified source file IDs');
+}
+
 validateStructure();
 validateSyntax();
 validateContracts();
 validateFixtures();
 validateManualDryRunFixture();
+validateDrivePublicationMarkFixture();
 
 if (errors.length) {
   console.error(`Validation failed for ${workflowPath}`);

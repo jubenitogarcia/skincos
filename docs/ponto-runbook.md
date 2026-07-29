@@ -48,6 +48,12 @@ Mutações same-origin exigem o token CSRF da sessão. A Pages Function envia um
 - `PONTO_FACE_THRESHOLD`, `PONTO_PIN_ITERATIONS`, `PONTO_COOLDOWN_SECONDS`: ajustes operacionais no servidor;
 - `TIMEKEEPING_D1_STAGING_ID` e `TIMEKEEPING_D1_PRODUCTION_ID`: variables do GitHub, não secrets.
 
+O deploy e o sincronizador periódico falham fechados quando qualquer segredo
+obrigatório falta. Em particular, `PONTO_PROFILE_DATA_KEY` deve existir nos
+environments GitHub `staging` e `production` antes da promoção: não use um
+fallback para `PONTO_ACTOR_HMAC_KEY`, não copie o valor de staging e não gere
+uma chave ad hoc em CI.
+
 Nunca registrar PIN, token de dispositivo, cookie, template, vetor, foto, score ou chave. A UI nunca recebe template/score.
 
 ## Fechamento mensal
@@ -64,11 +70,20 @@ A trava `timekeeping_period_guards` é adquirida por data antes do cálculo e im
 
 ## Deploy e rollback
 
-Executar `.github/workflows/deploy-timekeeping.yml` primeiro em `staging`. O workflow exporta e cifra um checkpoint D1, aplica migrations, configura secrets, publica somente o Worker de Ponto e faz smoke read-only. O gateway/API é publicado exclusivamente pelo publisher canônico `.github/workflows/deploy-core-workers.yml`. Produção exige o `staging_run_id` numérico de uma execução verde para o mesmo SHA e o environment protegido `production`.
+Executar `.github/workflows/deploy-timekeeping.yml` primeiro em `staging`. O workflow exporta e cifra um checkpoint D1, aplica migrations, configura secrets, publica somente o Worker de Ponto e faz smoke read-only. O smoke exige `version` igual ao SHA promovido, `environment` igual ao target e `availability.state=active`. O gateway/API é publicado exclusivamente pelo publisher canônico `.github/workflows/deploy-core-workers.yml`. Produção exige o `staging_run_id` numérico de uma execução verde para o mesmo SHA e o environment protegido `production`.
+
+Para uma liberação de Workforce, promover **o mesmo SHA** por três superfícies
+de staging: Timekeeping, Core API (`unit=api`) e CRM Pages. Em seguida executar
+`.github/workflows/timekeeping-staging-journey.yml` com os três artefatos de
+promoção e o URL imutável `*.skincos-staging.pages.dev`. A jornada cria apenas
+um CONSULTOR sintético efêmero com os módulos `atendimento` e `ponto`, verifica
+navegação, vínculo, PIN inválido, batida/idempotência, escopo de unidade,
+correção própria e negação administrativa; ela remove apenas os registros
+sintéticos daquele run e nunca apaga a auditoria.
 
 Configure secrets e variables separadamente nos environments GitHub `staging` e `production`. O Pages environment `preview` usa `https://api-staging.skincos.com.br`; nunca compartilhe o upstream ou a chave HMAC de produção com preview. O smoke produtivo permanece somente leitura e não aceita opção para criar marcações.
 
-Rollback de aplicação: publicar a versão anterior do Worker de Ponto; se o gateway/API também exigir rollback, usar seu publisher canônico em execução separada. Migrations são expansivas; não remover colunas/tabelas em incidente. Rollback de importação segue `docs/ponto-migration.md`. Backups e evidências ficam em `C:\CodexRuntime\operator\admin\skincos\timekeeping`, nunca no repositório.
+Rollback de aplicação: publicar a versão anterior do Worker de Ponto; se o gateway/API também exigir rollback, usar seu publisher canônico em execução separada. Migrations são expansivas; não remover colunas/tabelas em incidente. Para interromper tráfego antes de rollback de artefato, executar `.github/workflows/module-availability.yml` com `module=timekeeping`, target correto e `state=maintenance` (ou `disabled`); validar health, corrigir/rollback e restaurar `active` pelo mesmo workflow. Registrar os dois run IDs e a versão anterior. Rollback de importação segue `docs/ponto-migration.md`. Backups e evidências ficam em `C:\CodexRuntime\operator\admin\skincos\timekeeping`, nunca no repositório.
 
 ## Incidentes
 
