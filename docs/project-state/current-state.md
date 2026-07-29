@@ -821,9 +821,11 @@ O source release nativo do Orb foi promovido de
 as PRs #840 e #844. A promoção usou o promotor nativo com pré-condição do SHA
 anterior, drenagem sem execuções Livia ativas e troca atômica de
 `/opt/skincos/current/source`. O checkpoint privado completo está em
-`C:\CodexRuntime\operator\admin\skincos\native-promotions\` e o rollback é
-reexecutar o promotor com o ponteiro anterior enquanto se preserva o mesmo
-estado mutável.
+`C:\CodexRuntime\operator\admin\skincos\native-promotions\`. O promotor é
+intencionalmente fail-closed e não aceita trocar diretamente para um ancestral:
+um rollback exige uma nova release descendente contendo o revert, validada em
+staging e promovida pelo mesmo procedimento. O release anterior e todos os
+manifests permanecem preservados como insumo verificável dessa reversão.
 
 Após a troca, Orb, orb-proxy, CRM e Booking apontaram para o mesmo release e
 os probes local/público retornaram HTTP 200. O `Meta Ads – Publish`
