@@ -1047,13 +1047,6 @@ export default function BookingFlow() {
                 "Schedule",
                 {
                     content_type: META_SCHEDULE_CONTENT_TYPE,
-                    booking_id: json.id,
-                    unit_slug: unitSlug,
-                    doctor_slug: effectiveDoctor.slug,
-                    service_id: primaryService.id,
-                    service_name: selectedServicesLabel || primaryService.name,
-                    date: dateKey,
-                    time: timeKey,
                     currency: "BRL",
                 },
                 {
