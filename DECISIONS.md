@@ -501,3 +501,8 @@
   safely. The existing global hook remains untouched, project-hook trust stays
   a human platform control, and production authorization never propagates
   through an automatic continuation.
+- Runner identity: the trusted registration derives its only eligible runner
+  from the physical Git common root and refuses redirected `.codex`, hook
+  directories or runner files. It never accepts the first homonymous wrapper
+  found while walking upward from the current directory. Failure to prove the
+  canonical root terminates safely and does not fall back to path search.

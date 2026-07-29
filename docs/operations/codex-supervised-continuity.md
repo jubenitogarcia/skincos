@@ -58,6 +58,15 @@ with `/hooks` or the Codex App hook settings. Do not bypass that review for
 normal App operation, and expect any future command hash change to require a
 new review.
 
+The registered host commands resolve the runner only from the physical parent
+of `git rev-parse --path-format=absolute --git-common-dir`. They require the
+common directory to be a real `.git` directory, use the exact
+`.codex/hooks/invoke-skincos-supervisor.*` path under that canonical root and
+refuse symlink or reparse-point redirection in the trusted path. They never
+search upward from `PWD`. If Git cannot establish that root or any path
+invariant fails, the hook returns a safe terminal diagnostic without executing
+a candidate runner.
+
 Codex resolves project hook declarations for a linked Git worktree from the
 root checkout's matching `.codex/` directory, not from a hook declaration that
 exists only in the linked worktree. Therefore, use worktrees for implementation
@@ -98,6 +107,12 @@ The tests use only temporary state and synthetic Stop payloads. A real proof
 must use a disposable checkout and a small reversible non-production objective,
 show one automatic generated turn, one real technical validation, a terminal
 contract and no manually submitted second prompt.
+
+The host-wrapper suites exercise the registered command from both the canonical
+root and nested directories. They plant homonymous intermediate wrappers and
+redirected `.codex` paths (Windows junctions and Linux symlinks), verify those
+candidates are never executed, verify a symlinked shell runner is refused, and
+check safe termination outside a Git repository.
 
 ## Operational rollback
 
