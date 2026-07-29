@@ -2,6 +2,15 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T04:35:00Z",
+      "surface": "github-advanced-security-and-isolated-wsl-ux-ui-validation",
+      "scope": "PR #832 hosted Semgrep OSS inline-suppression alignment",
+      "state": "inline-semgrep-rationale-isolated-integrated-suite-passed",
+      "method": "Read the second hosted Semgrep OSS annotation, moved only the existing rule-specific rationale from the preceding line to the annotated fetch line, reran the exact local Semgrep target, then used a fresh ext4 WSL clone with clean root/CRM/website installs and Chromium in an unprivileged private network namespace so localhost:5173 could not collide with unrelated CRM Local work",
+      "result": "The exact Semgrep scan reported 0 findings. The canonical audit:ui:full passed 2026-07-29T04:31:33.004Z–04:34:35.621Z with components, pilot, accessibility, visual and Lighthouse all passed. Lighthouse HTML, JSON and metadata were generated locally. No validation-owned process or listener on 5173/6006 remained; the independently running CRM Local Vite process was neither stopped nor used by the tests.",
+      "limitation": "The only source adjustment is placement of a scoped rationale for a fixed loopback request. Assertions, endpoints, snapshots, visual tolerances, dependencies, production access, credentials, accounts and deployment behavior remain unchanged. Remote checks must finish on the pushed head before the draft PR is assessed for readiness."
+    },
+    {
       "observed_at": "2026-07-29T04:15:00Z",
       "surface": "github-advanced-security-and-local-wsl-ux-ui-validation",
       "scope": "PR #832 Semgrep OSS false-positive remediation",

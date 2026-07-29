@@ -1,5 +1,20 @@
 # Current state
 
+## UX/UI PR #832 — Semgrep hosted scanner alignment and isolated rerun passed — 2026-07-29T04:35Z
+
+The hosted `Semgrep OSS` scanner did not honor the preceding-line form of the
+scoped loopback rationale, although the local CLI did. The rationale now sits
+on the one `fetch` line it exempts; the endpoint and JSON-RPC assertions remain
+unchanged. The exact local Semgrep scan remains green. To avoid an unrelated
+CRM Local Vite process already bound to host port 5173, the final clean ext4
+WSL clone ran in an unprivileged private network namespace with its own
+loopback; no parallel process was stopped or used as a test target. The
+canonical `audit:ui:full` passed from 04:31:33Z to 04:34:35Z with components,
+four pilots, axe, four versioned visual comparisons and Lighthouse. Reports
+are local disposable evidence only; no process/listener from this validation,
+snapshot update, secret, production access or deployment remains. PR #832
+stays draft pending the hosted scanner and the remaining remote checks.
+
 ## UX/UI PR #832 — Semgrep loopback finding remediated and rerun passed — 2026-07-29T04:15Z
 
 GitHub Advanced Security reported one `Semgrep OSS` error on the local
