@@ -97,16 +97,20 @@ e uma declaração clara sobre o que não foi validado em produção.
   `https://api.whatsapp.com/send`; as URLs de agendamento permanecem apenas
   como referência por unidade.
 - A definição atualmente viva é a versão `830`
-  (`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`), inativa/manual. Ela foi aplicada
+  (`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`; schema SHA-256
+  `87e82f8d7c89afbe97b6057d1a417013a37e7a2b6227ba14315c4e869e7ce62f`),
+  inativa/manual. Ela foi aplicada
   versionadamente a partir da exportação canônica; o checkpoint privado da
   versão `825` permanece como rollback operacional.
   O Token Vault ativo é o deployment
   `beba53d9-67f3-495b-a002-5dc579463c29`; o checkpoint privado anterior é o
   rollback operacional.
-- O source release nativo do Orb ainda é
-  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, anterior à PR #840. O preflight
-  canônico pode validar a definição viva sem mutação, mas não substitui a
-  promoção versionada desse release; trate-a como um gate operacional separado.
+- O source release nativo do Orb está em
+  `a32cf1a9034ccd4872cfbde1ae089e56355300c4` (merge da PR #854), descendente
+  do release `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89`. A promoção usou
+  archive verificável, lineage, drenagem e troca atômica; Orb, proxy, CRM e
+  Booking executam essa mesma release. Rollback permanece uma nova promoção
+  descendente/revertida a partir do checkpoint privado.
 - O run final tem Drive verificado, stage/activate completos e nenhum lock
   ativo. Telegram foi preservado como ramo independente. A notificação
   WhatsApp passou a usar HTTP direto para a Evolution no loopback, com instância
@@ -116,9 +120,9 @@ e uma declaração clara sobre o que não foi validado em produção.
   mensagem sintética e devolveu `DELIVERY_ACK`. Isso comprova entrega pelo
   provedor, não leitura humana.
 - A auditoria histórica está em
-  `docs/meta-ads-publish-historical-run-audit-2026-07-29.md`. Ela gravou um
-  evento imutável por run, encerrou 46 runs comprovadamente sem staging como
-  `failed` e deixou três runs staged em `reconciliation_required`. Não houve
-  ativação, rollback, exclusão ou consulta Graph nessa auditoria. Antes de
-  qualquer ação sobre esses três, o responsável Meta Ads deve fazer lookup
-  Graph somente leitura e registrar uma decisão explícita.
+  `docs/meta-ads-publish-historical-run-audit-2026-07-29.md`. Os três runs
+  anteriormente staged receberam lookup Graph somente leitura, com anúncios
+  comprovadamente `ARCHIVED`, e foram fechados como `rolled_back` com evento
+  imutável. O estado atual é 110 runs terminais, zero locks ativos, jobs não
+  terminais e `reconciliation_required`; nenhuma ação Meta foi feita na
+  reconciliação.

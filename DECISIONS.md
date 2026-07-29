@@ -452,8 +452,8 @@
 - Impact: the notification has bounded timeout/retries and can be tested with
   a synthetic message without invoking the commercial workflow or Meta. Runs
   without staging are closed only when operations prove no activation; staged
-  runs remain `reconciliation_required` until a read-only Graph lookup is
-  recorded.
+  runs are closed only after a recorded read-only Graph lookup establishes the
+  physical resource state.
 
 ## 2026-07-29 - Promote native Orb source only through a lineage-checked release
 
@@ -471,3 +471,14 @@
   The preparer grants `postgres` read/traverse access only to the immutable
   Meta Ads preflight surface, so the peer-authenticated audit can validate all
   49 Code nodes without exposing writable source or credentials.
+
+## 2026-07-29 - Close Meta Ads audit only from terminal external evidence
+
+- Decision: close the three historical staged runs only after their physical
+  ads were read from Graph and found `ARCHIVED`; retain the original journal
+  records, append a readback event and use `rolled_back` rather than deletion.
+- Why: a staged job alone is insufficient to infer whether an ad was active,
+  absent or safely recoverable.
+- Impact: the journal now has no active/reconciliation state, while the full
+  audit trail remains available. A current isolated WhatsApp delivery test must
+  reach provider `DELIVERY_ACK`; HTTP acceptance alone is not closure evidence.
