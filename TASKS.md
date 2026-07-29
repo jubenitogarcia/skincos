@@ -1,6 +1,6 @@
 # TASKS
 
-## P0 operacional — incidente de acesso a Insumos
+## Resolved P0 — incidente de acesso a Insumos
 
 - [x] **P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos.**
   O ciclo foi concluído em `f30f66e70e0dc949adde5120378509a1c95fe557` e
@@ -10,6 +10,25 @@
   fora do escopo preservada como `403/RBAC_UNIT_DENIED`. A regressão autenticada
   de Atendimento também foi aprovada. Débitos de outros módulos seguem
   independentes deste P0.
+
+## Finance — authoritative reconciliation follow-up (2026-07-29)
+
+- [x] Confirm continuous external observability, a controlled human-alert
+  recovery, historical Finance rollback/kill-switch/scratch-restore evidence,
+  and the merged PR #815 import state machine.
+- [ ] Create a candidate from the then-current `origin/main` and, in a
+  separately authorized staging operation, promote that exact SHA through the
+  canonical Finance Worker/UI preview and staging pipelines. Complete the
+  synthetic authenticated import/UI journey on the same artifact lineage.
+- [ ] Obtain an authorized streaming/provider path for fresh PostgreSQL
+  offsite retrieval, verify integrity, and perform the isolated scratch
+  restore. D1/runtime-config evidence does not close this PostgreSQL gate.
+- [ ] Keep Finance `experimental`; do not enable the module, change grants or
+  start a production pilot until the two preceding gates and named pilot
+  approval are recorded.
+- [ ] Treat production Finance provisioning as a separate approval: create and
+  attest only the isolated Worker, D1, KV, Pages project and environment
+  configuration through the canonical path; do not copy staging identifiers.
 
 ## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
 

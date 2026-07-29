@@ -18,7 +18,7 @@ try {
   const baseUrl = required('FINANCE_CANARY_BASE_URL').replace(/\/$/, '');
   if (baseUrl !== 'https://api-staging.skincos.com.br') throw new Error('canary base URL must be staging gateway');
   const username = required('FINANCE_CANARY_USERNAME');
-  if (username !== 'finance-staging-monitor') throw new Error('only registered synthetic actor may run canary');
+  if (username !== 'finance-staging-smoke') throw new Error('only dedicated synthetic smoke actor may run canary');
   const password = required('FINANCE_CANARY_PASSWORD');
   const scopeId = required('FINANCE_CANARY_SCOPE_ID');
   if (scopeId !== 'finance-scope-novo-hamburgo') throw new Error('only synthetic Novo Hamburgo scope is allowed');

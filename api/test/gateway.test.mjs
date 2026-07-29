@@ -158,6 +158,28 @@ test('Finance health probes still classify a genuine upstream failure as unavail
   assert.equal((await response.json()).error, 'domain_service_degraded');
 });
 
+test('Finance audit read preserves a slow successful binding response without widening write timeouts', async () => {
+  resetBoundServiceResilienceForTest();
+  const auditStartedAt = Date.now();
+  const audit = await forwardFinanceToService(new Request('https://api.skincos.com.br/audit?scopeId=finance-scope-novo-hamburgo', {
+    headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-audit-timeout' },
+  }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 1_050)); return new Response(JSON.stringify({ ok: true, total: 2 }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
+  assert.equal(audit.status, 200);
+  assert.ok(Date.now() - auditStartedAt >= 1_000);
+
+  resetBoundServiceResilienceForTest();
+  const write = await forwardFinanceToService(new Request('https://api.skincos.com.br/tags?scopeId=finance-scope-novo-hamburgo', {
+    method: 'POST', headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-write-timeout' },
+  }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 1_050)); return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
+  assert.equal(write.status, 503);
+});
+
 test('finance gateway passes only an authenticated, CSRF-valid request', async () => {
   let seenPath = null;
   const gateway = createApiGateway({

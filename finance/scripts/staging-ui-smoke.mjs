@@ -17,18 +17,18 @@ const { chromium } = require('../../crm/console/node_modules/playwright')
 
 const stagingOrigin = 'https://skincos-staging.pages.dev'
 const baseUrl = new URL(process.env.FINANCE_STAGING_UI_URL || `${stagingOrigin}/?module=finance`)
-const username = String(process.env.FINANCE_STAGING_SMOKE_USERNAME || '').trim()
-const password = String(process.env.FINANCE_STAGING_SMOKE_PASSWORD || '')
+const username = String(process.env.FINANCE_SMOKE_USERNAME || '').trim()
+const password = String(process.env.FINANCE_SMOKE_PASSWORD || '')
 const artifactDir = process.env.FINANCE_SMOKE_ARTIFACT_DIR || path.join(os.tmpdir(), 'skincos-finance-staging-smoke')
 
-if (process.env.FINANCE_STAGING_SMOKE_ACK !== '1') {
-  throw new Error('Defina FINANCE_STAGING_SMOKE_ACK=1 para executar o smoke autenticado de staging.')
+if (process.env.FINANCE_SMOKE_ACK !== '1') {
+  throw new Error('Defina FINANCE_SMOKE_ACK=1 para executar o smoke autenticado de staging.')
 }
 if (baseUrl.origin !== stagingOrigin) {
   throw new Error(`O smoke aceita apenas ${stagingOrigin}; origem recebida: ${baseUrl.origin}`)
 }
 if (!username || !password) {
-  throw new Error('FINANCE_STAGING_SMOKE_USERNAME e FINANCE_STAGING_SMOKE_PASSWORD são obrigatórios.')
+  throw new Error('FINANCE_SMOKE_USERNAME e FINANCE_SMOKE_PASSWORD são obrigatórios.')
 }
 
 fs.mkdirSync(artifactDir, { recursive: true })
@@ -77,11 +77,11 @@ try {
     fail(`Bootstrap Financeiro autorizado falhou: ${bootstrap.status}`)
   }
   const labels = (bootstrap.body?.grants || []).map((grant) => grant.label).sort()
-  if (JSON.stringify(labels) !== JSON.stringify(['BarraShoppingSul', 'Novo Hamburgo'])) {
-    fail(`Grants empresariais inesperados: ${JSON.stringify(labels)}`)
+  if (JSON.stringify(labels) !== JSON.stringify(['Novo Hamburgo'])) {
+    fail(`Grant mínimo do smoke inesperado: ${JSON.stringify(labels)}`)
   }
-  if ((bootstrap.body?.grants || []).some((grant) => grant.kind === 'personal')) {
-    fail('O contexto pessoal foi exposto no bootstrap.')
+  if ((bootstrap.body?.grants || []).length !== 1 || bootstrap.body.grants[0]?.unit_slug !== 'novo-hamburgo' || (bootstrap.body?.grants || []).some((grant) => grant.kind === 'personal')) {
+    fail('O bootstrap expôs escopo fora da unidade sintética autorizada.')
   }
 
   const financeNav = page.locator('[data-module-nav="true"][data-module-key="finance"]')
@@ -91,9 +91,6 @@ try {
   console.log('[finance-staging-ui] módulo Financeiro renderizado')
   await page.getByRole('tab', { name: 'Visão geral' }).waitFor({ state: 'visible', timeout: 30_000 })
   await page.getByRole('tab', { name: 'Visão geral' }).click()
-  await page.getByText('Contas e saldos').waitFor({ state: 'visible', timeout: 30_000 })
-  await page.locator('[data-finance-module] [role="combobox"]').first().click()
-  await page.getByRole('option', { name: 'BarraShoppingSul' }).click()
   await page.getByText('Contas e saldos').waitFor({ state: 'visible', timeout: 30_000 })
   await page.getByRole('button', { name: 'Atualizar' }).waitFor({ state: 'visible', timeout: 30_000 })
   await page.waitForTimeout(250)
