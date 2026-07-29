@@ -3,10 +3,13 @@ param(
   [Parameter(Mandatory)]
   [ValidateSet('Status', 'Disable', 'Enable', 'RemoveRegistration', 'RestoreRegistration')]
   [string]$Action,
-  [string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot)
+  [string]$RepositoryRoot
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+  $RepositoryRoot = Split-Path -Parent $PSScriptRoot
+}
 $root = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 $codexRoot = Join-Path $root '.codex'
 $registration = Join-Path $codexRoot 'hooks.json'

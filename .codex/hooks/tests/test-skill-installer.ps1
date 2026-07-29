@@ -1,18 +1,30 @@
 [CmdletBinding()]
 param(
-  [string]$RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+  [string]$RepositoryRoot
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+  $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+}
 $tempBase = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).Path
 $testRoot = Join-Path $tempBase ("skincos-skill-installer-" + [guid]::NewGuid().ToString('N'))
 $sourceOne = Join-Path $testRoot 'source-one'
 $sourceTwo = Join-Path $testRoot 'source-two'
 $targetRoot = Join-Path $testRoot 'installed'
 $target = Join-Path $targetRoot 'skincos-project-orchestrator'
+$defaultTargetRoot = Join-Path $testRoot 'default-installed'
+$defaultTarget = Join-Path $defaultTargetRoot 'skincos-project-orchestrator'
 $installer = Join-Path $RepositoryRoot 'scripts\install-project-skill.ps1'
 
 try {
+  & $installer -TargetRoot $defaultTargetRoot
+  $defaultLink = Get-Item -LiteralPath $defaultTarget -Force
+  if (-not ($defaultLink.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw 'Installer did not resolve its default source root.'
+  }
+  & $installer -TargetRoot $defaultTargetRoot -Uninstall
+
   foreach ($source in @($sourceOne, $sourceTwo)) {
     New-Item -ItemType Directory -Path (Join-Path $source 'skills\skincos-project-orchestrator') -Force | Out-Null
   }

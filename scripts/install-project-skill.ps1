@@ -1,12 +1,15 @@
 [CmdletBinding()]
 param(
-  [string]$SourceRoot = (Split-Path -Parent $PSScriptRoot),
+  [string]$SourceRoot,
   [string]$TargetRoot = (Join-Path $env:USERPROFILE '.agents\skills'),
   [switch]$ReplaceExistingLink,
   [switch]$Uninstall
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
+  $SourceRoot = Split-Path -Parent $PSScriptRoot
+}
 $projectRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
 $skillName = 'skincos-project-orchestrator'
 $source = Join-Path $projectRoot "skills\$skillName"

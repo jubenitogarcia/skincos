@@ -1,15 +1,18 @@
 [CmdletBinding()]
 param(
-  [string]$RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+  [string]$RepositoryRoot
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+  $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+}
 $tempBase = [IO.Path]::GetTempPath()
 $testRoot = Join-Path $tempBase ("skincos-supervisor-rollback-" + [guid]::NewGuid().ToString('N'))
 $resolvedTempBase = (Resolve-Path -LiteralPath $tempBase).Path
+$controller = Join-Path $RepositoryRoot 'scripts\manage-skincos-supervisor-hook.ps1'
 
 function Invoke-Control([string]$Action) {
-  $controller = Join-Path $RepositoryRoot 'scripts\manage-skincos-supervisor-hook.ps1'
   $raw = & $controller -Action $Action -RepositoryRoot $testRoot
   return $raw | ConvertFrom-Json
 }
@@ -40,6 +43,11 @@ function Invoke-Runner([string]$Payload) {
 }
 
 try {
+  $defaultStatus = & $controller -Action Status | ConvertFrom-Json
+  if ($defaultStatus.repository_root -ne (Resolve-Path -LiteralPath $RepositoryRoot).Path) {
+    throw "Controller did not resolve its default repository root: $($defaultStatus.repository_root)"
+  }
+
   New-Item -ItemType Directory -Path (Join-Path $testRoot '.codex\runtime\supervisor') -Force | Out-Null
   New-Item -ItemType Directory -Path (Join-Path $testRoot 'skills') -Force | Out-Null
   Copy-Item -LiteralPath (Join-Path $RepositoryRoot '.codex\hooks.json') -Destination (Join-Path $testRoot '.codex\hooks.json')

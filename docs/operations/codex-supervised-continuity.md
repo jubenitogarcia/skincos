@@ -111,6 +111,9 @@ powershell -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-rollback.ps1
 powershell -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-skill-installer.ps1
 ```
 
+These commands intentionally omit root overrides so Windows PowerShell 5.1 also
+exercises the scripts' canonical default-root resolution.
+
 The tests use only temporary state and synthetic Stop payloads. A real proof
 must use a disposable checkout and a small reversible non-production objective,
 show one automatic generated turn, one real technical validation, a terminal

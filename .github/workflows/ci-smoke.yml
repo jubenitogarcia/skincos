@@ -126,6 +126,6 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           python -m unittest discover -s .codex/hooks/tests -p 'test_*.py' -v
-          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-host-wrappers.ps1 -RepositoryRoot (Get-Location).Path
-          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-rollback.ps1 -RepositoryRoot (Get-Location).Path
-          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-skill-installer.ps1 -RepositoryRoot (Get-Location).Path
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-host-wrappers.ps1
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-rollback.ps1
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-skill-installer.ps1

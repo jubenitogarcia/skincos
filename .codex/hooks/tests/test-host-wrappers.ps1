@@ -1,9 +1,12 @@
 [CmdletBinding()]
 param(
-  [string]$RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+  [string]$RepositoryRoot
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+  $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+}
 $sourceSubdirectory = Join-Path $RepositoryRoot 'skills\skincos-project-orchestrator'
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('skincos-hook-windows-' + [guid]::NewGuid().ToString('N'))
 $redirectRoot = Join-Path ([IO.Path]::GetTempPath()) ('skincos-hook-windows-redirect-' + [guid]::NewGuid().ToString('N'))
