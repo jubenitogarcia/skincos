@@ -8,6 +8,7 @@ const artifactDir = path.join(repositoryRoot, 'artifacts', 'ui-audit')
 const sharedEnvironment = {
   ...process.env,
   E2E_START_SERVER: '1',
+  E2E_BASE_URL: 'http://127.0.0.1:5173',
   PLAYWRIGHT_KEEP_ARTIFACTS: '1',
   A11Y_ENFORCE: process.env.A11Y_ENFORCE || '0',
 }

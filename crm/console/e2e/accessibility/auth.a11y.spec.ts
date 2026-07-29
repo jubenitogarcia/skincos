@@ -2,8 +2,10 @@ import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { blockNonLoopbackRequests } from '../local-only'
 
 test('CRM shell records automatic accessibility results without side effects', async ({ page }, testInfo) => {
+  await blockNonLoopbackRequests(page)
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Insumos' })).toBeVisible()
 

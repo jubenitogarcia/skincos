@@ -7,6 +7,13 @@ import { spawn } from 'node:child_process'
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const artifactDir = path.join(repositoryRoot, 'artifacts', 'lighthouse')
 const baseURL = process.env.LIGHTHOUSE_URL || 'http://127.0.0.1:5173/'
+const parsedBaseURL = new URL(baseURL)
+const isLoopback = parsedBaseURL.protocol === 'http:' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsedBaseURL.hostname)
+
+if (!isLoopback) {
+  throw new Error('LIGHTHOUSE_URL must be an HTTP loopback URL for the local UX/UI baseline')
+}
+
 const shouldStartServer = !process.env.LIGHTHOUSE_URL
 const require = createRequire(import.meta.url)
 

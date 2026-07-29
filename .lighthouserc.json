@@ -8,7 +8,7 @@
       "startServerReadyTimeout": 60000,
       "settings": {
         "onlyCategories": ["performance", "accessibility", "best-practices"],
-        "chromeFlags": "--headless=new --no-sandbox"
+        "chromeFlags": "--headless=new --no-sandbox --user-data-dir=/tmp/skincos-lhci-chrome"
       }
     },
     "upload": {

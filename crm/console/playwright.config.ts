@@ -3,6 +3,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const baseURL = process.env.E2E_BASE_URL || 'http://localhost:5173'
+const allowedLoopbackHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
+const parsedBaseURL = new URL(baseURL)
+
+if (parsedBaseURL.protocol !== 'http:' || !allowedLoopbackHosts.has(parsedBaseURL.hostname)) {
+  throw new Error('E2E_BASE_URL must be an HTTP loopback URL for synthetic CRM tests')
+}
 const headed = process.env.HEADED === '1' || process.env.HEADED === 'true' || process.env.PWDEBUG === '1'
 const isCodex =
   process.env.CODEX_SHELL === '1' ||
@@ -33,6 +39,7 @@ const screenshotMode: ScreenshotSetting =
 const artifactRoot = path.resolve(process.env.PLAYWRIGHT_ARTIFACT_DIR || '../../artifacts/playwright')
 const startLocalServer = process.env.E2E_START_SERVER === '1'
 const configDir = path.dirname(fileURLToPath(import.meta.url))
+const uxAuditTestMatch = ['e2e/pilot/**/*.spec.ts', 'e2e/accessibility/**/*.spec.ts', 'e2e/visual/**/*.spec.ts']
 
 export default defineConfig({
   testDir: './e2e',
@@ -62,9 +69,9 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium-desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
-    { name: 'chromium-notebook', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 720 } } },
-    { name: 'chromium-tablet', use: { ...devices['Desktop Chrome'], viewport: { width: 1024, height: 768 } } },
-    { name: 'chromium-mobile', use: { ...devices['iPhone 13'], browserName: 'chromium', viewport: { width: 390, height: 844 } } },
+    { name: 'chromium-notebook', testMatch: uxAuditTestMatch, use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 720 } } },
+    { name: 'chromium-tablet', testMatch: uxAuditTestMatch, use: { ...devices['Desktop Chrome'], viewport: { width: 1024, height: 768 } } },
+    { name: 'chromium-mobile', testMatch: uxAuditTestMatch, use: { ...devices['iPhone 13'], browserName: 'chromium', viewport: { width: 390, height: 844 } } },
   ],
   webServer: startLocalServer
     ? {
