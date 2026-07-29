@@ -56,14 +56,16 @@
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "mood": {
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "tempo": {
       "type": "object",
@@ -81,7 +83,9 @@
           "type": "array",
           "items": {
             "type": "number"
-          }
+          },
+          "minItems": 2,
+          "maxItems": 2
         }
       }
     },
@@ -99,7 +103,8 @@
           "items": {
             "type": "string",
             "minLength": 1
-          }
+          },
+          "minItems": 1
         },
         "mode": {
           "type": "string",
@@ -133,21 +138,60 @@
     "energy_curve": {
       "type": "array",
       "items": {
-        "type": "number"
-      }
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "minItems": 1
     },
     "instrument_palette": {
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "vocal_profile": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "consent_status",
+        "synthetic_voice_disclosed"
+      ],
+      "properties": {
+        "requested": {
+          "type": "boolean"
+        },
+        "consent_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "synthetic_voice_disclosed": {
+          "type": "boolean"
+        }
+      }
     },
     "lyrical_constraints": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original_only",
+        "forbidden_words"
+      ],
+      "properties": {
+        "original_only": {
+          "type": "boolean"
+        },
+        "forbidden_words": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     },
     "reference_rules": {
       "type": "array",
@@ -161,27 +205,63 @@
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "structure_preferences": {
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "technical_targets": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "master_lufs",
+        "true_peak_db",
+        "sample_rate",
+        "bit_depth"
+      ],
+      "properties": {
+        "master_lufs": {
+          "type": "number"
+        },
+        "true_peak_db": {
+          "type": "number"
+        },
+        "sample_rate": {
+          "type": "integer",
+          "minimum": 8000
+        },
+        "bit_depth": {
+          "type": "integer",
+          "minimum": 8
+        }
+      }
     },
     "deliverables": {
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "budget_limits": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_cost"
+      ],
+      "properties": {
+        "max_cost": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
     }
   },
   "examples": [
@@ -224,8 +304,15 @@
       "instrument_palette": [
         "piano"
       ],
-      "vocal_profile": {},
-      "lyrical_constraints": {},
+      "vocal_profile": {
+        "requested": false,
+        "consent_status": "NOT_REQUIRED",
+        "synthetic_voice_disclosed": false
+      },
+      "lyrical_constraints": {
+        "original_only": true,
+        "forbidden_words": []
+      },
       "reference_rules": [
         "analyze only"
       ],
@@ -236,11 +323,18 @@
         "intro",
         "outro"
       ],
-      "technical_targets": {},
+      "technical_targets": {
+        "master_lufs": -14,
+        "true_peak_db": -1,
+        "sample_rate": 48000,
+        "bit_depth": 24
+      },
       "deliverables": [
         "master_wav"
       ],
-      "budget_limits": {}
+      "budget_limits": {
+        "max_cost": 0
+      }
     }
   ],
   "x-invalid-examples": [

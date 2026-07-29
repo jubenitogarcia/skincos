@@ -8,7 +8,8 @@
     "composition_id",
     "uri",
     "duration_seconds",
-    "components"
+    "components",
+    "technical_metadata"
   ],
   "properties": {
     "animatic_id": {
@@ -32,10 +33,70 @@
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "technical_metadata": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "duration_seconds",
+        "loudness_lufs",
+        "true_peak_db",
+        "sample_rate",
+        "bit_depth",
+        "channels",
+        "clipping",
+        "phase_warning",
+        "silence_warning",
+        "integrity",
+        "byte_length"
+      ],
+      "properties": {
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "loudness_lufs": {
+          "type": "number"
+        },
+        "true_peak_db": {
+          "type": "number"
+        },
+        "sample_rate": {
+          "type": "integer",
+          "minimum": 8000
+        },
+        "bit_depth": {
+          "type": "integer",
+          "minimum": 8
+        },
+        "channels": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "clipping": {
+          "type": "boolean"
+        },
+        "phase_warning": {
+          "type": "boolean"
+        },
+        "silence_warning": {
+          "type": "boolean"
+        },
+        "integrity": {
+          "type": "string",
+          "minLength": 1,
+          "enum": [
+            "VALID",
+            "INVALID"
+          ]
+        },
+        "byte_length": {
+          "type": "integer",
+          "minimum": 44
+        }
+      }
     }
   },
   "examples": [
@@ -48,7 +109,19 @@
         "piano",
         "guide-drums"
       ],
-      "technical_metadata": {}
+      "technical_metadata": {
+        "duration_seconds": 30,
+        "loudness_lufs": -14,
+        "true_peak_db": -18,
+        "sample_rate": 8000,
+        "bit_depth": 16,
+        "channels": 1,
+        "clipping": false,
+        "phase_warning": false,
+        "silence_warning": false,
+        "integrity": "VALID",
+        "byte_length": 480044
+      }
     }
   ],
   "x-invalid-examples": [

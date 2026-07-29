@@ -58,14 +58,16 @@
           "items": {
             "type": "string",
             "minLength": 1
-          }
+          },
+          "minItems": 1
         },
         "mood": {
           "type": "array",
           "items": {
             "type": "string",
             "minLength": 1
-          }
+          },
+          "minItems": 1
         },
         "voice_requested": {
           "type": "boolean"
@@ -93,7 +95,13 @@
               },
               "rights_status": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "enum": [
+                  "LICENSED",
+                  "OWNED",
+                  "PUBLIC_DOMAIN",
+                  "RESTRICTED"
+                ]
               },
               "reference_usage_scope": {
                 "type": "string",
@@ -139,7 +147,8 @@
           "items": {
             "type": "string",
             "minLength": 1
-          }
+          },
+          "minItems": 1
         }
       }
     },

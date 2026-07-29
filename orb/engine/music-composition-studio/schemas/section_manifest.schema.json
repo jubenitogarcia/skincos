@@ -47,7 +47,8 @@
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "groove_id": {
       "type": "string",
@@ -62,16 +63,46 @@
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "vocal_plan": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
     },
     "transition_in": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     },
     "transition_out": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     },
     "dependencies": {
       "type": "array",
@@ -98,9 +129,15 @@
       "instrument_roles": [
         "piano"
       ],
-      "vocal_plan": {},
-      "transition_in": {},
-      "transition_out": {},
+      "vocal_plan": {
+        "enabled": false
+      },
+      "transition_in": {
+        "type": "fade-in"
+      },
+      "transition_out": {
+        "type": "continuity"
+      },
       "dependencies": []
     }
   ],

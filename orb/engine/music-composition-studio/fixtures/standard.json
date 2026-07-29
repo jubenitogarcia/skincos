@@ -27,7 +27,7 @@
   "provider_policy": {
     "mode": "mock",
     "max_cost": 0,
-    "max_jobs": 100,
+    "max_jobs": 500,
     "allowed_providers": [
       "mock"
     ]

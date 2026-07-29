@@ -1,47 +1,104 @@
 # Acceptance report
 
-## Scope
+## Scope and state
 
-Local implementation only: no workflow import/activation, remote migration,
-provider credential, or paid call is authorized or performed.
+Evidence refreshed on 2026-07-29 from branch
+`codex/admin/music-composition-studio`.
 
-## Expected evidence
+- Repository candidate: one generated, inactive, inline workflow named
+  `Music Composition Studio (Unified)`.
+- Operational import package: exactly that one workflow.
+- Archive: 11 inactive predecessor descriptors under
+  `orb/engine/archived-workflows/music-composition-studio`, outside the import
+  package.
+- Live Orb: healthy on n8n 2.8.3, but no workflow named Music Composition
+  Studio is imported or active.
+- Live database/provider: the migration is not applied to `n8n_runtime`; no
+  provider credential or paid call is configured.
 
-- 23 closed schemas generated;
-- one inactive unified workflow generated and structurally validated, with 11
-  archived predecessor snapshots;
-- `Music Composition Studio tests: OK`;
-- FAST, STANDARD, PREMIUM mock dry-runs returning `READY` packages.
+This report proves the local candidate and isolated compatibility checks. It is
+not production deployment evidence.
 
-## Local validation — 2026-07-24
+## Commands and results
 
-Executed in Ubuntu-24.04 from `orb/engine`:
+Executed in Ubuntu-24.04:
 
 ```text
-npm run workflow:music:build       -> 23 schemas; valid/invalid schema fixtures;
-                                       FAST/STANDARD/PREMIUM fixtures; one unified
-                                       workflow and 11 archived predecessors
-npm run workflow:music:validate    -> OK (one unified workflow; zero subworkflow nodes)
-npm run workflow:music:test        -> Music Composition Studio tests: OK
-npm run workflow:music:dry-run     -> FAST READY (6 stems), STANDARD READY
-                                       (24 stems), PREMIUM READY (48 stems)
-npm run lint                       -> OK
+npm run workflow:music:build
+  -> 23 schemas, valid/invalid fixtures, FAST/STANDARD/PREMIUM fixtures,
+     1 operational workflow, 11 predecessors archived outside the package
+
+npm run workflow:music:validate
+  -> 1 operational workflow; inline FAST/STANDARD/PREMIUM behavior;
+     MSC-99 error routing; zero Execute Workflow nodes
+
+npm run workflow:music:test
+  -> Music Composition Studio tests: OK
+
+npm run workflow:music:dry-run
+  -> FAST, STANDARD and PREMIUM READY; mock cost USD 0
+
+bash scripts/validate-music-composition-studio-migration.sh
+  -> 16 PostgreSQL tables; migration applied twice; FK insert succeeded;
+     transaction rollback preserved zero rows; temporary database removed
+
+bash scripts/validate-music-composition-studio-n8n-import.sh
+  -> n8n 2.8.3 imported and exported exactly 1 inactive unified workflow;
+     isolated SQLite profile removed
+
+npm run lint
+  -> all Music Composition Studio JavaScript parsed successfully
 ```
 
-Tests also proved duplicate callback/job suppression, zero-cost mock provider,
-budget rejection, voice-consent rejection, high-similarity rejection, WAV
-fixture integrity, selective invalidation, constitution revision, and additive
-migration shape.
+The Campaign Creative Generator validator was also invoked. It stops before
+execution because clean `origin/main` does not contain its referenced
+`campaign-creative-generator.full-image-reference-fix.current.json`. This is a
+pre-existing baseline defect. The music diff changes no Campaign Creative
+Generator path. Read-only live evidence shows its unified graph still has 23
+nodes, 22 connections and no subworkflow calls; it is currently archived and
+inactive. No visual workflow or runtime state was changed by this work.
 
-No production claim follows from that evidence: it does not certify deployment,
-licensing, commercial audio quality, a real-provider integration, workflow
-import, database migration, or workflow activation.
+## Acceptance matrix
 
-## Visual workflow non-regression boundary
+| Requirement | Result | Evidence |
+| --- | --- | --- |
+| Preserve the visual workflow | Pass at source boundary | Zero visual/CCG paths in the diff; read-only live graph unchanged by this task |
+| Isolated music domain | Pass | Only `music-composition-studio` paths plus scoped package scripts/migration |
+| Builder-authoritative workflows | Pass | Regeneration is deterministic and validation follows the builder |
+| One operational workflow | Pass | Package length 1; one top-level unified JSON |
+| Predecessors outside operational package | Pass | 11 descriptors in `archived-workflows`, no nested operational archive |
+| Valid/importable JSON | Pass | JSON parse, graph validation and isolated n8n 2.8.3 import/export |
+| Closed schemas and fixtures | Pass | 23 roots with `additionalProperties: false`, valid/invalid pairs |
+| Migration works | Pass | Fresh temporary PostgreSQL, idempotent second apply and rollback test |
+| FAST dry-run | Pass | READY, three DNA/animatics, one arrangement/mix |
+| STANDARD dry-run | Pass | READY, four DNA/animatics, two arrangements/mixes |
+| PREMIUM dry-run | Pass | READY, five DNA/animatics, voice, three arrangements/mixes |
+| No paid calls | Pass | Explicit mock-only gate and USD 0 |
+| Mock providers | Pass | Deterministic submit/status/result/cancel path |
+| Real-provider abstraction | Pass, disabled | HTTP submit/status/result/cancel, timeout/retry/rate hook/fallback/model; credential headers injected privately |
+| Callbacks and bounded polling | Pass | Callback dedupe and bounded polling tests |
+| Cache/idempotency/lineage | Pass | Reused job/artifact and stable input hash tests |
+| Compatibility matrix and DNA | Pass | Hard filters, top-k and bounded beam; three to five DNA |
+| Animatic before final stems | Pass | State-order assertion |
+| Stems/arrangement/mix/master | Pass | URI-only fixtures and tier cardinality assertions |
+| Multilevel QA | Pass | Musical, rhythmic, vocal, technical, creative and similarity fields |
+| Similarity block | Pass | Derivative-purpose fixture returns FAILED |
+| Vocal consent | Pass | Denied consent fails before provider work |
+| Selective reprocessing | Pass | Metadata, bass, chorus, loudness and Constitution paths asserted |
+| Final package schema | Pass | Strict runtime validation |
+| Cost registration | Pass | Cost event shape and zero-cost dry-run |
+| MSC-99 | Pass | Error routing, classification and redaction |
+| Large files by URL | Pass | Storage/file URIs only; no base64/binary in n8n |
+| No hardcoded secret | Pass | Structural scan plus injected-header provider test |
+| No fragile fixed wait/loop | Pass | Bounded attempts/backoff; graph cycle validation |
+| No critical TODO | Pass | No TODO/FIXME in the domain |
+| Documentation | Pass | Ten required documents plus this command ledger |
 
-The current shared-workspace Content Studio v2 validator also returned
-`CCG v2 workflow validation: OK (11 workflows)` in a read-only run. This is
-local-only evidence for that uncommitted workspace state. The legacy CCG
-validator cannot be run from clean `origin/main`, because it references an
-untracked snapshot absent from that baseline; therefore legacy runtime behavior
-is unproven, not inferred from the new music-domain tests.
+## Deployment decision
+
+Do not import or activate this workflow in live Orb, apply the migration to the
+live database, or enable a provider merely to close a source task. Production
+currently has no Music Composition Studio workflow. A later rollout requires a
+named staging target, database backup/rollback checkpoint, private provider
+credentials and budget approval. The isolated n8n/PostgreSQL tests establish
+compatibility without changing production.

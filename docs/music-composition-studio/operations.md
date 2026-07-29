@@ -1,12 +1,36 @@
 # Operations
 
-Import generated MSC workflows only as a new inactive package. Do not overwrite
-the Campaign Creative Generator, activate an MSC workflow, apply the migration,
-or configure a real provider during local validation.
+## Local and isolated validation
 
-For a future controlled rollout: back up PostgreSQL; apply the additive
-`20260724_music_composition_studio.sql` to equivalent staging; verify
-`music_studio` tables; import inactive workflows; configure credentials outside
-Git; and capture dry-run, callback/idempotency, rights, cost-limit, rollback,
-and smoke evidence. Rollback disables the module/workflows and retains ledger
-history rather than deleting it.
+Regenerate and validate from `orb/engine`:
+
+```bash
+npm run workflow:music:build
+npm run workflow:music:validate
+npm run workflow:music:test
+npm run workflow:music:dry-run
+bash scripts/validate-music-composition-studio-migration.sh
+bash scripts/validate-music-composition-studio-n8n-import.sh
+```
+
+The import validator creates a temporary n8n SQLite profile, imports the
+one-item package, exports it back, confirms one inactive workflow and removes
+the profile. The migration validator creates a uniquely named temporary
+PostgreSQL database, applies the migration twice, tests FK/rollback behavior
+and removes the database.
+
+## Controlled rollout
+
+1. Record the immutable release SHA and current live Orb/database checkpoint.
+2. Back up PostgreSQL and prove the restore path in a non-production target.
+3. Apply the additive migration to staging.
+4. Import `generated-workflows/music-composition-studio/package.json`; verify
+   exactly one inactive workflow.
+5. Configure provider endpoint/model and credentials outside Git.
+6. Run synthetic FAST/STANDARD/PREMIUM mock journeys and callback/idempotency,
+   cost, rights and rollback checks.
+7. Activate only after explicit production authorization.
+
+Rollback disables/archives the unified workflow and provider access. Ledger
+history is retained for audit; tables are not deleted. The workflow has no
+publication action.

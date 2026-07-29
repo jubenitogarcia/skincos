@@ -6,7 +6,10 @@
   "required": [
     "composition_id",
     "entries",
-    "method"
+    "method",
+    "evaluated_combinations",
+    "pruned_combinations",
+    "limits"
   ],
   "properties": {
     "composition_id": {
@@ -24,7 +27,9 @@
           "groove_id",
           "bass_id",
           "palette_id",
+          "lyric_id",
           "score",
+          "dimensions",
           "reasons"
         ],
         "properties": {
@@ -48,24 +53,154 @@
             "type": "string",
             "minLength": 1
           },
+          "lyric_id": {
+            "type": "string",
+            "minLength": 1
+          },
           "score": {
             "type": "number",
             "minimum": 0,
             "maximum": 1
+          },
+          "dimensions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "tonality",
+              "scale",
+              "melodic_fit",
+              "harmonic_rhythm",
+              "groove",
+              "density",
+              "energy",
+              "vocal_space",
+              "timbre",
+              "objective",
+              "genre",
+              "duration",
+              "complexity",
+              "originality"
+            ],
+            "properties": {
+              "tonality": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "scale": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "melodic_fit": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "harmonic_rhythm": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "groove": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "density": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "energy": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "vocal_space": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "timbre": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "objective": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "genre": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "duration": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "complexity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "originality": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
           },
           "reasons": {
             "type": "array",
             "items": {
               "type": "string",
               "minLength": 1
-            }
+            },
+            "minItems": 1
           }
         }
-      }
+      },
+      "minItems": 1
     },
     "method": {
       "type": "string",
       "minLength": 1
+    },
+    "evaluated_combinations": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pruned_combinations": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "top_k",
+        "beam_width",
+        "minimum_score"
+      ],
+      "properties": {
+        "top_k": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "beam_width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minimum_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
     }
   },
   "examples": [
@@ -78,19 +213,51 @@
           "groove_id": "GRV-1",
           "bass_id": "BAS-1",
           "palette_id": "PAL-1",
+          "lyric_id": "LYR-NONE",
           "score": 0.9,
+          "dimensions": {
+            "tonality": 1,
+            "scale": 1,
+            "melodic_fit": 0.9,
+            "harmonic_rhythm": 0.9,
+            "groove": 0.9,
+            "density": 0.9,
+            "energy": 0.9,
+            "vocal_space": 1,
+            "timbre": 0.9,
+            "objective": 0.9,
+            "genre": 0.9,
+            "duration": 1,
+            "complexity": 0.9,
+            "originality": 1
+          },
           "reasons": [
-            "key"
+            "tonality"
           ]
         }
       ],
-      "method": "beam-search"
+      "method": "beam-search",
+      "evaluated_combinations": 8,
+      "pruned_combinations": 7,
+      "limits": {
+        "top_k": 2,
+        "beam_width": 1,
+        "minimum_score": 0.6
+      }
     }
   ],
   "x-invalid-examples": [
     {
       "composition_id": "CMP-1",
-      "entries": []
+      "entries": [],
+      "method": "beam-search",
+      "evaluated_combinations": 0,
+      "pruned_combinations": 0,
+      "limits": {
+        "top_k": 1,
+        "beam_width": 1,
+        "minimum_score": 0.6
+      }
     }
   ]
 }

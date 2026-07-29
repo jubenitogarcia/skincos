@@ -1,14 +1,29 @@
 # Providers
 
-Composition, MIDI, generation, instrument, vocal, voice, effects, analysis,
-mix, mastering and storage providers share `submit`, `status`, `result`,
-`cancel`, `estimateCost`, and `validate`.
+The catalog exposes composition, MIDI, generation, instrument, vocal, voice,
+effects, analysis, mix, mastering and storage provider kinds. Every adapter
+implements `submit`, `status`, `result`, `cancel`, `estimateCost` and
+`validate`.
 
-`MockMusicProvider` is the default and records zero cost. It refuses work unless
-both `dry_run: true` and mock policy are explicit. `HttpMusicProvider` is a
-fail-closed shell for a real adapter: it needs an approved endpoint and private
-credential adapter, neither of which is stored in this repository.
+`MockMusicProvider` is the executable default. It requires both
+`dry_run: true` and provider mode `mock`, returns deterministic results and
+records zero cost.
 
-Polling is bounded by attempts rather than a fixed wait. A real provider needs
-license, model, privacy, rate-limit, timeout, fallback, budget, and staging
-approval before activation.
+`HttpMusicProvider` is a real transport adapter but remains disabled until
+explicitly configured. It supports:
+
+- POST submit and cancel plus GET status/result;
+- abort timeout and bounded exponential retry;
+- rate-limiter hook and approved fallback;
+- model/version propagation and cost estimation;
+- private header injection through `headersProvider`.
+
+Credentials are created in the target secret/credential store and supplied by
+the runtime adapter. No credential value, token or provider endpoint is stored
+in generated workflow JSON. Enabling live mode additionally requires licensing,
+privacy, staging, callback, rate, fallback and budget review.
+
+Environment/config names for a future adapter are intentionally generic:
+`MSC_PROVIDER_ENDPOINT`, `MSC_PROVIDER_MODEL`, `MSC_PROVIDER_TIMEOUT_MS` and a
+credential-store reference. The repository must never contain the secret
+itself.

@@ -32,7 +32,8 @@
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "rough_mix_uri": {
       "type": "string",
@@ -56,6 +57,7 @@
       "arrangement_id": "ARR-1",
       "composition_id": "CMP-1",
       "type": "RADIO",
+      "lock_hash": "hash",
       "stem_uris": []
     }
   ]

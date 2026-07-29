@@ -6,6 +6,10 @@ function classify(error) {
   if (text.includes('AUTHORIZATION')) return 'AUTHORIZATION_ERROR';
   if (text.includes('SIMILARITY')) return 'SIMILARITY_BLOCK';
   if (text.includes('TIMEOUT')) return 'TIMEOUT';
+  if (text.includes('RATE_LIMIT') || text.includes('HTTP 429')) return 'RATE_LIMIT';
+  if (text.includes('STORAGE')) return 'STORAGE_ERROR';
+  if (text.includes('VALIDATION')) return 'VALIDATION_ERROR';
+  if (text.includes('QUALITY')) return 'QUALITY_ERROR';
   if (text.includes('SCHEMA') || text.includes('REQUIRED') || text.includes('NOT ALLOWED')) return 'SCHEMA_ERROR';
   if (text.includes('AUDIO')) return 'AUDIO_PROCESSING_ERROR';
   if (text.includes('PROVIDER')) return 'PROVIDER_ERROR';
@@ -14,12 +18,15 @@ function classify(error) {
 
 function sanitize(value) {
   const text = String(value || '');
-  return text.replace(/(authorization|token|api[_-]?key|secret)\s*[:=]\s*[^\s,]+/ig, '$1=[REDACTED]');
+  return text
+    .replace(/(authorization|token|api[_-]?key|secret|cookie|password)\s*["']?\s*[:=]\s*["']?[^\s,"'}]+/ig, '$1=[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED_JWT]')
+    .replace(/([?&](?:token|api[_-]?key|secret|password)=)[^&\s]+/ig, '$1[REDACTED]');
 }
 
 function handleError(context, error) {
   const code = classify(error); const retryable = ['PROVIDER_ERROR', 'TIMEOUT', 'RATE_LIMIT', 'STORAGE_ERROR'].includes(code);
-  return { workflow: context.workflow, node: context.node, production_id: context.production_id, job_id: context.job_id || null, component_id: context.component_id || null, provider: context.provider || null, attempt: Number(context.attempt || 0), error_code: code, payload: sanitize(JSON.stringify(context.payload || {})), message: sanitize(error?.message || error), retry: retryable, fallback: retryable ? 'mock_or_approved_fallback' : null, manual_review: ['SIMILARITY_BLOCK', 'AUTHORIZATION_ERROR', 'QUALITY_ERROR'].includes(code), cancel: ['BUDGET_EXCEEDED', 'AUTHORIZATION_ERROR', 'SIMILARITY_BLOCK'].includes(code), timestamp: new Date().toISOString() };
+  return { workflow: context.workflow, node: context.node, production_id: context.production_id, job_id: context.job_id || null, component_id: context.component_id || null, provider: context.provider || null, attempt: Number(context.attempt || 0), error_code: code, payload: sanitize(JSON.stringify(context.payload || {})), message: sanitize(error?.message || error), stack: sanitize(error?.stack || ''), retry: retryable, fallback: retryable ? 'mock_or_approved_fallback' : null, blocked: !retryable, manual_review: ['SIMILARITY_BLOCK', 'AUTHORIZATION_ERROR', 'QUALITY_ERROR'].includes(code), cancel: ['BUDGET_EXCEEDED', 'AUTHORIZATION_ERROR', 'SIMILARITY_BLOCK'].includes(code), timestamp: new Date().toISOString() };
 }
 
 module.exports = { ERROR_CODES, classify, sanitize, handleError };

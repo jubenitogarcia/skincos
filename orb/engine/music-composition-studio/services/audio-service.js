@@ -14,11 +14,38 @@ function renderFixture({ outputDir, kind, compositionId, seconds, frequency = 22
   fs.mkdirSync(outputDir, { recursive: true });
   const id = stableId(kind.toUpperCase(), { compositionId, seconds, frequency });
   const file = path.join(outputDir, `${id}.wav`);
-  const content = wavBuffer({ seconds: Math.min(Math.max(seconds, 0.25), 8), frequency });
+  const requestedSeconds = Math.max(Number(seconds), 0.25);
+  // Keep physical fixtures small for CI; the manifest retains logical length.
+  const renderedSeconds = Math.min(requestedSeconds, 2);
+  const content = wavBuffer({ seconds: renderedSeconds, frequency });
   fs.writeFileSync(file, content);
-  const checksum = hash(content.toString('base64'));
-  return { artifact_id: id, kind, uri: `file://${file.replace(/\\/g, '/')}`, path: file, checksum, mime_type: 'audio/wav', duration_seconds: seconds, sample_rate: 8000, bit_depth: 16, channels: 1, binary_in_control_plane: false };
+  const checksum = hash(content);
+  return { artifact_id: id, kind, uri: `file://${file.replace(/\\/g, '/')}`, path: file, checksum, mime_type: 'audio/wav', duration_seconds: requestedSeconds, rendered_duration_seconds: renderedSeconds, sample_rate: 8000, bit_depth: 16, channels: 1, byte_length: content.length, binary_in_control_plane: false };
 }
-function analyzeArtifact(artifact) { return { duration_seconds: artifact.duration_seconds, loudness_lufs: -14, true_peak_db: -1, sample_rate: artifact.sample_rate, bit_depth: artifact.bit_depth, channels: artifact.channels, clipping: false, phase_warning: false, silence_warning: false }; }
+function analyzeArtifact(artifact) {
+  const content = fs.readFileSync(artifact.path);
+  const riff = content.subarray(0, 4).toString();
+  const wave = content.subarray(8, 12).toString();
+  const sampleRate = content.readUInt32LE(24);
+  const channels = content.readUInt16LE(22);
+  const bitDepth = content.readUInt16LE(34);
+  const dataBytes = content.readUInt32LE(40);
+  const duration = dataBytes / (sampleRate * channels * (bitDepth / 8));
+  let peak = 0;
+  for (let offset = 44; offset + 1 < content.length; offset += 2) peak = Math.max(peak, Math.abs(content.readInt16LE(offset)) / 32767);
+  return {
+    duration_seconds: Number(duration.toFixed(3)),
+    loudness_lufs: -14,
+    true_peak_db: peak > 0 ? Number((20 * Math.log10(peak)).toFixed(2)) : -Infinity,
+    sample_rate: sampleRate,
+    bit_depth: bitDepth,
+    channels,
+    clipping: peak >= 1,
+    phase_warning: false,
+    silence_warning: peak === 0,
+    integrity: riff === 'RIFF' && wave === 'WAVE' && content.length === 44 + dataBytes && hash(content) === artifact.checksum ? 'VALID' : 'INVALID',
+    byte_length: content.length,
+  };
+}
 function renderManifest({ outputDir, kind, value }) { fs.mkdirSync(outputDir, { recursive: true }); const file = path.join(outputDir, `${stableId(kind, value)}.json`); fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`); return { uri: `file://${file.replace(/\\/g, '/')}`, path: file, checksum: hash(value), mime_type: 'application/json', binary_in_control_plane: false }; }
 module.exports = { renderFixture, analyzeArtifact, renderManifest };

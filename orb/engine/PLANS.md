@@ -45,8 +45,9 @@ workflow, execute a paid provider, write a live database, or activate n8n.
 4. Pipeline: FAST, STANDARD and PREMIUM paths, compatibility beam search,
    animatics, stems, arrangement, mix/master, QA and package.
 5. n8n: builder generates one inactive unified workflow with all MSC stages
-   inline and eleven archived predecessor snapshots; no HTTP, publication,
-   fixed wait, binary-audio, secret, or Execute Workflow subworkflow nodes.
+   inline and eleven predecessor descriptors outside the operational package;
+   no HTTP, publication, fixed wait, binary-audio, secret, or Execute Workflow
+   subworkflow nodes.
 6. Verification: unit/contract tests, builder validation, three dry-runs,
    migration structural validation and an acceptance report.
 
@@ -76,3 +77,22 @@ npm run lint
   (`campaign-creative-generator.full-image-reference-fix.current.json`) and
   cannot run from a clean base. The current shared CCG v2 validator is a
   separate local-only check; neither result establishes production state.
+
+## Final audit — 2026-07-29
+
+- The operational package contains exactly one inactive workflow,
+  `Music Composition Studio (Unified)`. MSC-10…MSC-90 execute inline and each
+  error output routes to inline MSC-99. There are no Execute Workflow nodes.
+- The 11 predecessor identities live under
+  `orb/engine/archived-workflows/music-composition-studio`, outside the package.
+- The seven required `lib/*.js` modules are explicitly unignored and versioned;
+  this closes the clean-clone/CI failure where local ignored modules could make
+  tests pass falsely.
+- PostgreSQL validation applied the 16-table migration twice in a fresh
+  temporary database, exercised FK inserts and transaction rollback, then
+  removed the database.
+- n8n 2.8.3 validation imported/exported exactly one inactive workflow in a
+  fresh temporary SQLite profile, then removed the profile.
+- Live Orb is healthy but contains no Music Composition Studio workflow.
+  Production import, activation, database migration and provider configuration
+  are intentionally deferred to a separately authorized staged rollout.

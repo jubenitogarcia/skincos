@@ -1,21 +1,28 @@
 # Music Composition Studio
 
-`music-composition-studio` is an isolated, mock-first music-production domain
-for Orb. It transforms a structured briefing into a locked Music Constitution,
-candidate compositions, an animatic, stems, arrangement, mix/master fixtures,
-QA, and a portable package. It never publishes, distributes, schedules, or
-activates anything.
+`music-composition-studio` is an isolated, mock-first Orb domain. It turns a
+structured request into a locked Music Constitution, bounded candidate/DNA
+selection, song animatics, stems, vocals when authorized, arrangements,
+mix/master manifests, multilevel QA and a portable `MUSIC_PACKAGE`.
 
-From `orb/engine` in Ubuntu-24.04 run:
+The generated n8n package contains one workflow only:
+`Music Composition Studio (Unified)`. MSC-10 through MSC-90 run inline and
+errors route to inline MSC-99. There are no Execute Workflow nodes. The 11
+former MSC module identities are inactive archive descriptors outside the
+operational package.
+
+From `orb/engine` in Ubuntu-24.04:
 
 ```bash
 npm run workflow:music:build
 npm run workflow:music:validate
 npm run workflow:music:test
 npm run workflow:music:dry-run
+npm run lint
+bash scripts/validate-music-composition-studio-migration.sh
+bash scripts/validate-music-composition-studio-n8n-import.sh
 ```
 
-The generated n8n import package contains one inactive, control-plane-only
-workflow: `Music Composition Studio (Unified)`. The former MSC-00…MSC-99
-exports are archived snapshots, not operational workflows. Audio uses URIs; the
-deterministic WAV service is only local dry-run evidence.
+The default is deliberately inactive and mock-only. It never publishes,
+distributes, schedules or activates content. Audio traverses n8n as URI and
+metadata only.

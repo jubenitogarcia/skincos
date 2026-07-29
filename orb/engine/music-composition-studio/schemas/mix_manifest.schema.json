@@ -8,7 +8,8 @@
     "composition_id",
     "uri",
     "lock_hash",
-    "technical_targets"
+    "technical_targets",
+    "stem_uris"
   ],
   "properties": {
     "mix_id": {
@@ -28,14 +29,38 @@
       "minLength": 1
     },
     "technical_targets": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "master_lufs",
+        "true_peak_db",
+        "sample_rate",
+        "bit_depth"
+      ],
+      "properties": {
+        "master_lufs": {
+          "type": "number"
+        },
+        "true_peak_db": {
+          "type": "number"
+        },
+        "sample_rate": {
+          "type": "integer",
+          "minimum": 8000
+        },
+        "bit_depth": {
+          "type": "integer",
+          "minimum": 8
+        }
+      }
     },
     "stem_uris": {
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     }
   },
   "examples": [
@@ -44,8 +69,15 @@
       "composition_id": "CMP-1",
       "uri": "storage://mix.wav",
       "lock_hash": "hash",
-      "technical_targets": {},
-      "stem_uris": []
+      "technical_targets": {
+        "master_lufs": -14,
+        "true_peak_db": -1,
+        "sample_rate": 48000,
+        "bit_depth": 24
+      },
+      "stem_uris": [
+        "storage://stem.wav"
+      ]
     }
   ],
   "x-invalid-examples": [

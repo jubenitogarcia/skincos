@@ -29,14 +29,16 @@
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "mood": {
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "minItems": 1
     },
     "voice_requested": {
       "type": "boolean"
@@ -44,7 +46,37 @@
     "references": {
       "type": "array",
       "items": {
-        "type": "object"
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reference_id",
+          "kind",
+          "rights_status",
+          "reference_usage_scope",
+          "source_uri"
+        ],
+        "properties": {
+          "reference_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rights_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reference_usage_scope": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_uri": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
     "restrictions": {
