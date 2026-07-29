@@ -142,6 +142,15 @@ function identityOnboardingId(row) {
   try { return cleanText(JSON.parse(String(row?.metadata_json || '{}'))?.identityOnboardingId, 120) } catch { return '' }
 }
 
+// A route is only usable when there is exactly one active manager. Do not
+// infer a superior from a partial or ambiguous route: the empty relationship
+// remains editable and the onboarding audit records the manual-review reason.
+function resolveOnboardingManager(rows) {
+  const candidates = (rows || []).filter((route) => route?.manager_employee_id && route.status === 'ACTIVE' && (!route.access_state || route.access_state === 'ACTIVE'))
+  if (candidates.length === 1) return { managerId: candidates[0].manager_employee_id, reason: 'RESOLVED' }
+  return { managerId: null, reason: candidates.length > 1 ? 'AMBIGUOUS' : 'MISSING' }
+}
+
 const profilePrivateFields = ['cpf', 'mobilePhone', 'pis', 'rgNumber', 'rgIssuer', 'rgIssuerState', 'rgIssuedAt', 'motherName', 'fatherName', 'zipCode', 'street', 'addressNumber', 'addressComplement', 'neighborhood']
 const profilePublicFields = ['socialName', 'personalEmail', 'groupName', 'departmentName', 'managerEmployeeId', 'managerCpf', 'admittedAt', 'dismissedAt', 'birthPlace', 'educationLevel', 'city', 'state']
 const profileSelfPublicFields = ['socialName', 'personalEmail', 'birthPlace', 'educationLevel', 'city', 'state']
@@ -647,11 +656,13 @@ async function syncIdentityOnboarding(db, body, requestId) {
   )
   const managerByUnit = {}
   const ambiguousManagerUnits = []
+  const unresolvedManagerUnits = []
   for (const unit of units) {
     const routes = await db.prepare('SELECT r.manager_employee_id, e.status, e.access_state FROM workforce_department_routes r LEFT JOIN workforce_employees e ON e.id=r.manager_employee_id WHERE r.unit_id=? AND r.department_id=? AND r.employee_profile=? AND r.active=1').bind(unit, department.id, profile).all()
-    const candidates = (routes?.results || []).filter((route) => route?.manager_employee_id && route.status === 'ACTIVE' && (!route.access_state || route.access_state === 'ACTIVE'))
-    const managerId = candidates.length === 1 ? candidates[0].manager_employee_id : null
-    if (candidates.length > 1) ambiguousManagerUnits.push(unit)
+    const resolution = resolveOnboardingManager(routes?.results)
+    const managerId = resolution.managerId
+    if (resolution.reason === 'AMBIGUOUS') ambiguousManagerUnits.push(unit)
+    if (resolution.reason !== 'RESOLVED') unresolvedManagerUnits.push({ unit, reason: resolution.reason })
     managerByUnit[unit] = managerId
     statements.push(
       db.prepare('INSERT INTO timekeeping_employee_units (id, employee_id, unit_id, effective_from, created_at) VALUES (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), employeeId, unit, at.slice(0, 10), at),
@@ -660,6 +671,7 @@ async function syncIdentityOnboarding(db, body, requestId) {
   }
   const actor = { id: 'identity-service', role: 'ADMIN', email: 'identity-service@internal', allowedUnits: units, name: 'Identity service' }
   statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_SYNC', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, canonicalEmployeeId, profile, accountStatus, departmentId: department.id, units, managerConfiguredByUnit: Object.fromEntries(Object.entries(managerByUnit).map(([unit, managerId]) => [unit, !!managerId])) } }))
+  if (unresolvedManagerUnits.length) statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_UNRESOLVED', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: unresolvedManagerUnits, resolution: 'MANUAL_REVIEW' } }))
   if (ambiguousManagerUnits.length) statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_AMBIGUOUS', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: ambiguousManagerUnits, resolution: 'MANUAL_REVIEW' } }))
   await db.batch(statements)
   return { employeeId, canonicalEmployeeId, idempotent: false }
@@ -1250,4 +1262,4 @@ export async function handleTimekeeping(request, env) {
 }
 
 export default { fetch: handleTimekeeping }
-export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential, profileInput, profileDocumentStatus, normalizeNetworks, ipInNetwork, locationEvidence, normalizePresenceMode, normalizeNetworkPolicy, identityServiceAuthorized, normalizedDepartmentKey, publicEmployee, isOperationalEmployee, identityOnboardingId, syncIdentityOnboardingStatus }
+export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential, profileInput, profileDocumentStatus, normalizeNetworks, ipInNetwork, locationEvidence, normalizePresenceMode, normalizeNetworkPolicy, identityServiceAuthorized, normalizedDepartmentKey, publicEmployee, isOperationalEmployee, identityOnboardingId, resolveOnboardingManager, syncIdentityOnboardingStatus }
