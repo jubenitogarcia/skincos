@@ -2,17 +2,17 @@
 
 ## Identidade e owner
 
-`finance-staging-smoke` é a identidade sintética exclusiva de staging para o smoke e canary Financeiro. Ela é propriedade de `@skincos/finance`; `admin` é o operador responsável pela execução, rotação e teardown. `finance-staging-monitor` permanece somente como identidade `viewer` do monitor e nunca é reutilizada pelo smoke. A identidade usa o login real `POST /insumos/auth/login` e a sessão assinada consumida pelo gateway em `/finance/*`.
+`finance-staging-smoke` é a identidade sintética exclusiva de staging para o smoke e canary Financeiro. Ela é propriedade de `@skincos/finance`; `admin` é o operador responsável pela execução, rotação e teardown. `finance-staging-monitor` permanece somente como identidade `viewer` do monitor e nunca é reutilizada pelo smoke. A identidade usa o login real do shell `POST /api/auth/login` e a sessão assinada consumida pelo gateway em `/api/finance/*`.
 
 - bancos: conta somente em `skincos-db-staging` e grant somente em `skincos-finance-staging`; nunca consultar ou escrever os equivalentes produtivos;
 - e-mail sintético: `finance-staging-smoke@staging.invalid`;
-- papel: `CONSULTOR`;
+- papel: `INJETOR`, o menor papel que preserva o grant explícito de `finance`; `CONSULTOR` é deliberadamente limitado ao Atendimento pelo shell;
 - módulos: somente `finance`;
 - unidade e grant: somente `finance-scope-novo-hamburgo`, permissão `operator`, o mínimo necessário para importar e desfazer;
 - pessoal, BarraShoppingSul, administrador e qualquer mutação fora da importação/compensação sintética controlada: negados;
 - a flag `finance_settings.module_enabled` permanece `false` fora de uma janela de smoke aprovada.
 
-A senha não fica no Git, em secret de produção, cookie ou sessão compartilhada. A credencial atual fica cifrada por DPAPI no runtime privado do operador. Cookies emitidos pelo login são host-only para `api-staging.skincos.com.br` e não devem ser enviados a nenhuma origem de produção.
+A senha não fica no Git, em secret de produção, cookie ou sessão compartilhada. A credencial atual fica cifrada por DPAPI no runtime privado do operador. Cookies emitidos pelo login permanecem no shell de staging e não devem ser enviados a nenhuma origem de produção.
 
 O segredo fica somente no environment GitHub `staging` como
 `FINANCE_SMOKE_PASSWORD`; os nomes não secretos necessários pela jornada usam
