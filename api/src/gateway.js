@@ -5,9 +5,13 @@ import { createSignedDomainContext } from '../../shared/service-adapters/signed-
 
 const gatewayError = (status, error) => new Response(JSON.stringify({ ok: false, error }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const isOperationalProbe = (request) => request.method === 'GET' && ['/health', '/readiness'].includes(new URL(request.url).pathname);
+const FINANCE_PROBE_TIMEOUT_MS = 3_000;
 
 export async function forwardFinanceProbe(request, env) {
-    return fetchBoundService(request, env, 'FINANCE', { timeoutMs: 800 });
+    // This route is read-only and is itself evaluated by the external monitor's
+    // latency budget. Keep the service-binding deadline above that budget so a
+    // slow response is reported as degraded latency instead of a fabricated 503.
+    return fetchBoundService(request, env, 'FINANCE', { timeoutMs: FINANCE_PROBE_TIMEOUT_MS });
 }
 
 export async function forwardFinanceToService(request, env, ctx, auth) {
