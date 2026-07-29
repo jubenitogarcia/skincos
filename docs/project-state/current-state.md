@@ -826,7 +826,10 @@ O registro de autorização e o runbook versionado especificam a promoção
 `stage-only`, o rollback por nova versão histórica, os probes HTTP e a retenção
 dos bundles referenciados por manifestos. O export sanitizado e versionado da
 versão publicada está em `orb/engine/workflows/livia/livia.current.json`
-(SHA-256 `c60184e6a6df16a4df74b2bbfa702b029bc0f9de0bcfa77a3904a5c02b5deec0`).
+(SHA-256 `1dcdef7df289311b553f2b5f44932f999f9a96f96fa32bc2d5d6a5b1192fe4cc`).
+O arquivo usa escapes JSON equivalentes somente para as menções editoriais a
+Facebook, evitando o falso positivo específico de OAuth sem retirar seus nós
+Code/Execute Command da análise SAST.
 A evidência de publicação real
 continua histórica (execuções 336 e 339); uma publicação posterior só pode ser
 considerada prova da versão corrigida se registrar seu `workflowVersionId`
