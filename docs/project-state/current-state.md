@@ -1,5 +1,18 @@
 # Current state
 
+## UX/UI PR #832 — second main sync clean; remote checks restarted — 2026-07-29T03:53Z
+
+While the first remote-check run was in progress, `origin/main` advanced to
+`2f0bba6ab5df9c09bc3171e190189991a3891052`. It was merged into
+`codex/admin/ux-ui-infrastructure` as `1e30fc0df34151e6aa70007bc27c6f0ca523ee9a`;
+there were no conflicts and the merge contains only the upstream
+`deploy-core-workers.yml` addition. `git diff --check` passed and the
+three-dot PR diff remains limited to the UX/UI infrastructure, its versioned
+baselines and the related documentation. This branch does not activate or run
+that deployment workflow, and no deployment, production access, secret or
+product change occurred. The PR remains draft while GitHub recomputes the
+checks against this head.
+
 ## UX/UI PR #832 — main sync resolved and local suite passed — 2026-07-29T03:48Z
 
 `origin/main` at `1a6650d9c0598d810dca97e778d7adf3e0bd25d7` was merged locally

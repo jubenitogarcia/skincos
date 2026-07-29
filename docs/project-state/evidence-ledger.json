@@ -2,6 +2,15 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T03:53:00Z",
+      "surface": "git-github-ux-ui-pr-main-sync",
+      "scope": "PR #832 second main synchronization during remote-check monitoring",
+      "state": "clean-main-sync-remote-checks-restarted",
+      "method": "Fetched origin/main 2f0bba6ab5df9c09bc3171e190189991a3891052; inspected the one upstream commit; merged it into the UX/UI branch as 1e30fc0df34151e6aa70007bc27c6f0ca523ee9a; ran git diff --check and compared origin/main...HEAD",
+      "result": "The merge was conflict-free and contains only the upstream .github/workflows/deploy-core-workers.yml addition. The three-dot branch diff still contains only UX/UI infrastructure, versioned baselines and related documentation; GitHub reports the PR as mergeable but behind until the new head is pushed and checks are recomputed.",
+      "limitation": "No deployment workflow was dispatched, no production URL or data was accessed, and no secret, account, token, snapshot update or product UI change occurred. Local UX/UI runtime validation remains the clean ext4 WSL result recorded at 03:48Z; remote checks must finish on the new head before readiness can be assessed."
+    },
+    {
       "observed_at": "2026-07-29T03:48:17Z",
       "surface": "git-github-local-wsl-ux-ui-pr-sync",
       "scope": "PR #832 main-conflict resolution and post-merge local validation",
