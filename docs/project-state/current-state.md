@@ -926,3 +926,30 @@ O source nativo do Orb foi promovido por release descendente de
 e Booking usam esse SHA e os health checks local/público são 200. O archive,
 checksum, lineage e rollback permanecem privados em
 `C:\CodexRuntime\operator\admin\skincos\native-promotions\a32cf1a9034ccd4872cfbde1ae089e56355300c4`.
+
+## Music Composition Studio — candidato unificado 2026-07-29
+
+O candidato local `925fec6d61201ef96079b47f634314f99e045ae1` na branch
+`codex/admin/music-composition-studio` gera exatamente um workflow operacional
+inativo, `Music Composition Studio (Unified)`. MSC-10 a MSC-90 executam inline,
+os outputs de erro convergem no MSC-99 inline e não há nodes Execute Workflow.
+Os 11 predecessores estão arquivados fora do pacote de importação em
+`orb/engine/archived-workflows/music-composition-studio`.
+
+A validação local passou em FAST, STANDARD e PREMIUM com provider mock e custo
+zero; também comprovou cache sem nova submissão, callback/artifact dedupe,
+polling limitado, rate limit, budget, fallback e reprocessamento seletivo
+executável com preservação de URIs não afetadas. Achados Semgrep da revisão
+foram tratados com schema patterns fail-closed e paths/nomes de fixtures
+restritos, incluindo testes de regressão. O builder foi regenerado duas vezes
+com hashes idênticos. A migration
+PostgreSQL foi aplicada duas vezes em um banco temporário, produziu 16 tabelas,
+aceitou inserts com FK e preservou zero linhas após rollback. O pacote foi
+importado/exportado pelo n8n 2.8.3 em perfil SQLite temporário como exatamente
+um workflow inativo. Banco e perfil temporários foram removidos.
+
+O Orb live está saudável, mas a busca somente leitura retorna zero Music
+Composition Studio; o `n8n_runtime` também tem zero tabelas no schema
+`music_studio`. Nada foi importado, ativado ou migrado em produção e
+nenhuma credencial/provider pago foi configurado. Rollout live permanece uma
+ação separada que exige staging, backup/rollback e autorização explícita.

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Normalized music brief",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "production_id",
+    "purpose",
+    "duration_target_seconds",
+    "genre_family",
+    "mood",
+    "voice_requested"
+  ],
+  "properties": {
+    "production_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1
+    },
+    "duration_target_seconds": {
+      "type": "number",
+      "minimum": 1
+    },
+    "genre_family": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "mood": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "voice_requested": {
+      "type": "boolean"
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reference_id",
+          "kind",
+          "rights_status",
+          "reference_usage_scope",
+          "source_uri"
+        ],
+        "properties": {
+          "reference_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rights_status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reference_usage_scope": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_uri": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "restrictions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "production_id": "MSC-1",
+      "purpose": "video",
+      "duration_target_seconds": 30,
+      "genre_family": [
+        "pop"
+      ],
+      "mood": [
+        "upbeat"
+      ],
+      "voice_requested": false,
+      "references": [],
+      "restrictions": []
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "MSC-1",
+      "purpose": 3,
+      "duration_target_seconds": 30,
+      "genre_family": [],
+      "mood": [],
+      "voice_requested": false
+    }
+  ]
+}

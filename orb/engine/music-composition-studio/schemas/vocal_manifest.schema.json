@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Vocal manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "composition_id",
+    "voice_consent_status",
+    "synthetic_voice_disclosed",
+    "artifacts"
+  ],
+  "properties": {
+    "composition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "voice_consent_status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "synthetic_voice_disclosed": {
+      "type": "boolean"
+    },
+    "voice_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "composition_id": "CMP-1",
+      "voice_consent_status": "GRANTED",
+      "synthetic_voice_disclosed": true,
+      "voice_id": "voice-1",
+      "artifacts": [
+        "storage://lead.wav"
+      ]
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "composition_id": "CMP-1",
+      "voice_consent_status": "DENIED",
+      "synthetic_voice_disclosed": true
+    }
+  ]
+}
