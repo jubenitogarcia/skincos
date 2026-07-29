@@ -58,6 +58,14 @@ with `/hooks` or the Codex App hook settings. Do not bypass that review for
 normal App operation, and expect any future command hash change to require a
 new review.
 
+Trust and enablement are separate App controls. **Trust** persists the reviewed
+command as `trusted_hash`; it does not necessarily enable the hook. In
+`/hooks`, also turn on `SKINCOS supervised continuity` and confirm that the
+matching entry under `[hooks.state]` in the user `config.toml` contains both
+the current `trusted_hash` and `enabled = true`. A trusted entry without
+`enabled = true` is not acceptance evidence: the real proof must still show a
+`block_and_continue` event and an automatically generated second turn.
+
 The registered host commands resolve the runner only from the physical parent
 of `git rev-parse --path-format=absolute --git-common-dir`. They require the
 common directory to be a real `.git` directory, use the exact
