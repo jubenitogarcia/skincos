@@ -20,6 +20,26 @@ const VERIFIER_ENV_FILES = [
   '/etc/skincos/orb-business.env',
   path.join(runtimePaths.runtimeHome, 'env', 'n8n-business.env'),
 ];
+// These markers assert behavior, rather than a single platform-specific
+// wording. The platform contract deliberately records unsupported alt text
+// explicitly for every unsupported media type, not only for videos.
+const ACCESSIBILITY_BUILD_GRAPH_MARKERS = Object.freeze([
+  'cloudinaryVideoCoverUrl',
+  'normalizeGraphApiVersion',
+  'cover_url',
+  'applyPlatformAccessibilityContract',
+  'accessibilityReason',
+  'alt_text_omitted_for_unsupported_',
+  'body.title = text.title',
+]);
+const ACCESSIBILITY_VERIFIER_MARKERS = Object.freeze([
+  'expectedMediaKind',
+  'facebookStaticPost',
+  'not_applicable_for_static_image',
+  'alt_text_not_submitted_or_mismatched',
+  'alt_text_submitted_to_unsupported_media',
+  'media_alt_text_not_supported_in_current_flow',
+]);
 
 function parseProcessMediaOutput(run) {
   const raw = String(run?.data?.main?.[0]?.[0]?.json?.stdout || '').trim();
@@ -587,7 +607,7 @@ function validateWorkflow() {
   if (command.length > 2500) {
     errors.push(`Process Media Asset command is too large for stable n8n expression parsing (${command.length} chars).`);
   }
-  for (const required of ['cloudinaryVideoCoverUrl', 'normalizeGraphApiVersion', 'cover_url', 'applyPlatformAccessibilityContract', 'alt_text_omitted_for_video', 'body.title = text.title']) {
+  for (const required of ACCESSIBILITY_BUILD_GRAPH_MARKERS) {
     if (!buildGraphScript.includes(required)) {
       errors.push(`build-platform-job-graph.js must enforce the publication delivery contract (${required}).`);
     }
@@ -839,7 +859,7 @@ function validateWorkflow() {
   if (!verifierScript.includes('facebookCompositePost') || !verifierScript.includes('facebookReadObjectId')) {
     errors.push('verify-published-artifacts.js must safely verify Facebook composite post IDs through their numeric attached media.');
   }
-  for (const required of ['expectedMediaKind', 'facebookStaticPost', 'not_applicable_for_static_image', 'video_alt_text_not_supported']) {
+  for (const required of ACCESSIBILITY_VERIFIER_MARKERS) {
     if (!verifierScript.includes(required)) errors.push(`verify-published-artifacts.js must verify images separately from video (${required}).`);
   }
   if (notificationNode === 'Inform Success (1)' && !String(nodeByName.get(notificationNode)?.parameters?.remoteJid || '').includes('N8N_DEFAULT_TEST_PHONE')) {
@@ -1012,6 +1032,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  ACCESSIBILITY_BUILD_GRAPH_MARKERS,
+  ACCESSIBILITY_VERIFIER_MARKERS,
   driveAuditForExecution,
   notificationForExecution,
   readSelectedEnvironmentFile,
