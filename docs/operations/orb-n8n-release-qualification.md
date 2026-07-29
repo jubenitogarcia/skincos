@@ -10,7 +10,7 @@ Execute o auditor somente em um staging marcado explicitamente e em um diretóri
 N8N_UPGRADE_ENV=staging N8N_EXPECTED_ENV=staging \
 N8N_STAGING_MARKER=orb-n8n-staging N8N_AUDIT_APPLY=YES \
 N8N_AUDIT_ROOT=/tmp/n8n-release-audit \
-ops/runtime/n8n-security/audit-release-baseline.sh 2.32.5
+bash ops/runtime/n8n-security/audit-release-baseline.sh 2.32.5
 ```
 
 Compare versões por meio de seus `summary.json`. A comparação de advisories não comprova alcançabilidade; cada item crítico requer uma matriz separada de origem, pré-condição, superfície externa, workflow e evidência de teste negativo.
@@ -21,15 +21,18 @@ Compare versões por meio de seus `summary.json`. A comparação de advisories n
 oficial, recusa uma tag pré-release e registra `next`/beta somente como
 informação ignorada. Ele compara a versão com
 `ops/runtime/n8n-security/release-watch-policy.json`; se houver uma release
-estável mais nova, gera lockfiles, executa o auditor isolado e produz um
-relatório sanitizado no diretório privado. O resultado `REJECTED_CRITICAL_DEPENDENCY_GATE`
-encerra a sequência antes de startup, migration ou qualquer alteração live.
+estável mais nova, gera lockfiles exclusivamente a partir de
+`https://registry.npmjs.org/`, executa o auditor isolado e produz um relatório
+sanitizado no diretório privado. `REJECTED_CRITICAL_DEPENDENCY_GATE` e
+`REJECTED_AUDIT_ERROR` encerram a sequência antes de startup, migration ou
+qualquer alteração live. Um relatório íntegro já existente é reutilizado de
+forma idempotente.
 
 ```bash
 N8N_UPGRADE_ENV=staging N8N_EXPECTED_ENV=staging \
 N8N_STAGING_MARKER=orb-n8n-staging N8N_RELEASE_WATCH_APPLY=YES \
 N8N_AUDIT_ROOT=/var/tmp/skincos-n8n-release-watch \
-ops/runtime/n8n-security/watch-stable-release.sh
+bash ops/runtime/n8n-security/watch-stable-release.sh
 ```
 
 O observador não atualiza a política, não executa a qualificação funcional

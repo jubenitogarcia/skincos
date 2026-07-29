@@ -13,6 +13,12 @@ fi
 if N8N_UPGRADE_ENV=staging N8N_EXPECTED_ENV=staging N8N_STAGING_MARKER=orb-n8n-staging N8N_AUDIT_APPLY=YES N8N_AUDIT_ROOT=/var/lib/skincos "$ROOT/audit-release-baseline.sh" 2.32.5; then
   echo 'expected production path refusal' >&2; exit 1
 fi
+if N8N_UPGRADE_ENV=staging N8N_EXPECTED_ENV=staging N8N_STAGING_MARKER=orb-n8n-staging N8N_AUDIT_APPLY=YES N8N_AUDIT_ROOT=/opt "$ROOT/audit-release-baseline.sh" 2.32.5; then
+  echo 'expected exact runtime root refusal' >&2; exit 1
+fi
+if N8N_UPGRADE_ENV=staging N8N_EXPECTED_ENV=staging N8N_STAGING_MARKER=orb-n8n-staging N8N_AUDIT_APPLY=YES N8N_AUDIT_ROOT=/var/../opt "$ROOT/audit-release-baseline.sh" 2.32.5; then
+  echo 'expected traversal runtime root refusal' >&2; exit 1
+fi
 node --input-type=module - "$ROOT/community-packages.json" <<'NODE'
 import fs from 'node:fs';
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
