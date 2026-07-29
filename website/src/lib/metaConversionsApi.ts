@@ -35,6 +35,14 @@ type CapiLogWrite = (entry: {
     waClickId?: string | null;
 }) => Promise<void>;
 
+async function writeDeliveryLog(logDelivery: CapiLogWrite | undefined, entry: Parameters<CapiLogWrite>[0]): Promise<void> {
+    try {
+        await logDelivery?.(entry);
+    } catch {
+        // Meta delivery must not make a confirmed booking or WhatsApp redirect fail when D1 auditing is unavailable.
+    }
+}
+
 function normalizeSecret(value: string | null | undefined): string {
     return (value ?? "").trim();
 }
@@ -82,13 +90,30 @@ export async function sendMetaServerEvent(
         logDelivery?: CapiLogWrite;
     } = {},
 ): Promise<{ ok: boolean; skipped?: string; httpStatus?: number | null; responseBody?: string | null; error?: string | null }> {
+    const consent = event.trackingContext?.consent;
+    if (consent?.marketing !== true) {
+        await writeDeliveryLog(options.logDelivery, {
+            channel: "server",
+            eventName: event.eventName,
+            eventId: event.eventId,
+            endpoint: "meta_capi_not_sent_without_marketing_consent",
+            ok: false,
+            httpStatus: null,
+            responseBody: null,
+            errorMessage: "marketing_consent_denied",
+            bookingId: event.bookingId ?? null,
+            waClickId: event.waClickId ?? null,
+        });
+        return { ok: false, skipped: "marketing_consent_denied" };
+    }
+
     const config = await resolveConfig();
     const endpoint = config.pixelId
         ? `https://graph.facebook.com/${config.apiVersion}/${config.pixelId}/events`
         : "meta_capi_not_configured";
 
     if (!config.pixelId || !config.accessToken) {
-        await options.logDelivery?.({
+        await writeDeliveryLog(options.logDelivery, {
             channel: "server",
             eventName: event.eventName,
             eventId: event.eventId,
@@ -101,23 +126,6 @@ export async function sendMetaServerEvent(
             waClickId: event.waClickId ?? null,
         });
         return { ok: false, skipped: "missing_meta_capi_config" };
-    }
-
-    const consent = event.trackingContext?.consent;
-    if (consent?.marketing === false) {
-        await options.logDelivery?.({
-            channel: "server",
-            eventName: event.eventName,
-            eventId: event.eventId,
-            endpoint,
-            ok: false,
-            httpStatus: null,
-            responseBody: null,
-            errorMessage: "marketing_consent_denied",
-            bookingId: event.bookingId ?? null,
-            waClickId: event.waClickId ?? null,
-        });
-        return { ok: false, skipped: "marketing_consent_denied" };
     }
     const eventTime = event.eventTime ?? Math.floor(Date.now() / 1000);
 
@@ -174,7 +182,7 @@ export async function sendMetaServerEvent(
         }
 
         const ok = response.ok;
-        await options.logDelivery?.({
+        await writeDeliveryLog(options.logDelivery, {
             channel: "server",
             eventName: event.eventName,
             eventId: event.eventId,
@@ -201,7 +209,7 @@ export async function sendMetaServerEvent(
             });
         }
 
-        await options.logDelivery?.({
+        await writeDeliveryLog(options.logDelivery, {
             channel: "server",
             eventName: event.eventName,
             eventId: event.eventId,
