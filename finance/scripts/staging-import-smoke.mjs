@@ -17,7 +17,7 @@ const arg = (name, fallback = '') => {
 };
 const timeoutMs = Number(arg('--timeout-ms', '15000'));
 if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 60000) throw new Error('--timeout-ms must be between 1000 and 60000');
-if (process.env.FINANCE_STAGING_SMOKE_ACK !== '1') throw new Error('FINANCE_STAGING_SMOKE_ACK=1 is required');
+if (process.env.FINANCE_SMOKE_ACK !== '1') throw new Error('FINANCE_SMOKE_ACK=1 is required');
 
 const baseUrl = required('FINANCE_SMOKE_BASE_URL').replace(/\/$/, '');
 if (!/^https:\/\/api-staging\.skincos\.com\.br$/i.test(baseUrl)) throw new Error('FINANCE_SMOKE_BASE_URL must be the staging gateway');
