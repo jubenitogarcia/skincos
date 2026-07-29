@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBookingDb, coerceTrackingContext, insertMetaCapiDeliveryLog, insertWhatsappClickEvent, nowMs, parseCookieHeader, sanitizeOneLine } from "@/lib/bookingDb";
 import { sendMetaServerEvent } from "@/lib/metaConversionsApi";
-import { buildWhatsappClickToken, injectWhatsappToken, parseWhatsappDestination } from "@/lib/whatsappTracking";
+import { buildWhatsappClickToken, expandWhatsappTrackingContext, injectWhatsappToken, parseWhatsappDestination } from "@/lib/whatsappTracking";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +32,9 @@ export async function GET(request: Request) {
     let trackingContext = null;
     if (rawContext) {
         try {
-            trackingContext = coerceTrackingContext(JSON.parse(rawContext));
+            trackingContext = coerceTrackingContext(
+                expandWhatsappTrackingContext(JSON.parse(rawContext)),
+            );
         } catch {
             trackingContext = null;
         }

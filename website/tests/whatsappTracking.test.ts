@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { TrackingContext } from "../src/lib/attribution";
-import { buildWhatsappRedirectHref, buildWhatsappRedirectHrefFromRequest, buildWhatsappClickToken, injectWhatsappToken, parseWhatsappDestination } from "../src/lib/whatsappTracking";
+import { buildWhatsappRedirectHref, buildWhatsappRedirectHrefFromRequest, buildWhatsappClickToken, expandWhatsappTrackingContext, injectWhatsappToken, parseWhatsappDestination } from "../src/lib/whatsappTracking";
 
 test("buildWhatsappRedirectHref wraps supported whatsapp destination with tracking params", () => {
     const href = buildWhatsappRedirectHref({
@@ -118,15 +118,20 @@ test("campaign-rich Contact redirect keeps consent and matching context within a
     assert.equal(redirectUrl.searchParams.has("page_url"), false);
     assert.equal(redirectUrl.searchParams.has("page_path"), false);
 
-    const transportedContext = JSON.parse(redirectUrl.searchParams.get("ctx") ?? "null") as TrackingContext;
+    const compactContext = JSON.parse(redirectUrl.searchParams.get("ctx") ?? "null") as TrackingContext;
+    const transportedContext = expandWhatsappTrackingContext(compactContext) as TrackingContext;
     assert.deepEqual(transportedContext.consent, { analytics: true, marketing: true });
     assert.deepEqual(transportedContext.params, trackingContext.params);
     assert.equal(transportedContext.fbp, trackingContext.fbp);
     assert.equal(transportedContext.fbc, trackingContext.fbc);
     assert.equal(transportedContext.fbclid, trackingContext.fbclid);
     assert.equal(transportedContext.landingUrl, trackingContext.landingUrl);
-    assert.equal(transportedContext.firstTouch, null);
-    assert.equal(transportedContext.lastTouch, null);
+    assert.deepEqual(transportedContext.firstTouch, trackingContext.firstTouch);
+    assert.deepEqual(transportedContext.lastTouch, {
+        ...trackingContext.lastTouch,
+        landingUrl: trackingContext.pageUrl,
+        landingPath: trackingContext.pagePath,
+    });
 });
 
 test("injectWhatsappToken appends short token once", () => {

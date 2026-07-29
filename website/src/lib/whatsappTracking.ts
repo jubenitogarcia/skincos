@@ -21,14 +21,71 @@ function normalizeUrl(value: string | null | undefined): string | null {
     return trimmed || null;
 }
 
-function compactTrackingContext(context: TrackingContext): TrackingContext {
+type CompactAttributionTouch = Pick<
+    NonNullable<TrackingContext["firstTouch"]>,
+    "capturedAtMs" | "referrer" | "params" | "fbclid"
+>;
+
+type CompactTrackingContext = Omit<TrackingContext, "firstTouch" | "lastTouch"> & {
+    firstTouch: CompactAttributionTouch | null;
+    lastTouch: CompactAttributionTouch | null;
+};
+
+function compactTouch(
+    touch: TrackingContext["firstTouch"],
+): CompactAttributionTouch | null {
+    if (!touch) return null;
+    return {
+        capturedAtMs: touch.capturedAtMs,
+        referrer: touch.referrer,
+        params: touch.params,
+        fbclid: touch.fbclid,
+    };
+}
+
+function compactTrackingContext(context: TrackingContext): CompactTrackingContext {
     return {
         ...context,
         // The redirect already carries the normalized top-level attribution.
-        // Repeating full first/last-touch objects can push a campaign-rich URL
-        // past reliable request-target limits before it reaches the Worker.
-        firstTouch: null,
-        lastTouch: null,
+        // Keep the distinct touch timestamp/campaign/referrer while omitting
+        // URLs and Facebook IDs that the server can reconstruct from the
+        // corresponding top-level first/current fields.
+        firstTouch: compactTouch(context.firstTouch),
+        lastTouch: compactTouch(context.lastTouch),
+    };
+}
+
+export function expandWhatsappTrackingContext(raw: unknown): unknown {
+    if (!raw || typeof raw !== "object") return raw;
+    const context = raw as Partial<CompactTrackingContext>;
+
+    const expandTouch = (
+        touch: CompactAttributionTouch | null | undefined,
+        landingUrl: string | null | undefined,
+        landingPath: string | null | undefined,
+    ) => {
+        if (!touch || !landingUrl || !landingPath) return null;
+        return {
+            ...touch,
+            landingUrl,
+            landingPath,
+            fbp: context.fbp ?? null,
+            fbc: context.fbc ?? null,
+        };
+    };
+
+    return {
+        ...context,
+        firstTouch: expandTouch(
+            context.firstTouch,
+            context.landingUrl,
+            context.landingPath,
+        ),
+        lastTouch: expandTouch(
+            context.lastTouch,
+            context.pageUrl ?? context.landingUrl,
+            context.pagePath ?? context.landingPath,
+        ),
     };
 }
 
