@@ -1849,9 +1849,11 @@ for (const group of groupedCreatives) {
       landing_page_validation: deepClone(destination.landing_page_validation || {}),
       placement_eligibility: deepClone(placementCheck || {}),
       freshness_window_days: Number(destination.freshness_window_days || 7),
-      campaign_objective: safeString(destination.campaign_objective),
-      optimization_goal: safeString(destination.optimization_goal),
-      destination_type: safeString(destination.destination_type).toUpperCase(),
+      // Live ad-set data wins over an optional Token Vault metadata mirror.
+      // In particular, OUTCOME_LEADS dynamic creatives cannot stage BOOK_NOW.
+      campaign_objective: safeString(placementCheck && placementCheck.campaign_objective || destination.campaign_objective).toUpperCase(),
+      optimization_goal: safeString(placementCheck && placementCheck.optimization_goal || destination.optimization_goal).toUpperCase(),
+      destination_type: safeString(placementCheck && placementCheck.destination_type || destination.destination_type).toUpperCase(),
       whatsapp_destination_url: safeString(destination.whatsapp_destination_url),
       carousel_native_campaign_id: safeString(destination.carousel_native_campaign_id),
       carousel_native_adset_id: safeString(destination.carousel_native_adset_id),

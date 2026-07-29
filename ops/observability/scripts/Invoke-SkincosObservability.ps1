@@ -4,6 +4,7 @@ param(
   [string]$StateDirectory = 'C:\CodexRuntime\operator\admin\skincos\observability',
   [string]$NotificationWebhook = $env:SKINCOS_OBS_NOTIFICATION_WEBHOOK,
   [string]$NotificationToken = $env:SKINCOS_OBS_NOTIFICATION_TOKEN,
+  [string]$MessageExecutable = "$env:SystemRoot\System32\msg.exe",
   [switch]$ControlledFailure,
   [switch]$SuppressHumanNotification
 )
@@ -32,11 +33,25 @@ function Emit-OperationalEvent([int]$EventId, [string]$Message, [string]$EntryTy
   try { Write-EventLog -LogName Application -Source 'SkincosObservability' -EventId $EventId -EntryType $EntryType -Message $Message; return $true }
   catch { Write-Warning "event-log-write-failed: $($_.Exception.Message)"; return $false }
 }
-function Send-HumanNotification($Payload) {
+function Send-HumanNotification($Payload, [int]$TimeoutSeconds) {
   if ($SuppressHumanNotification) { return 'suppressed' }
   $message = "SKINCOS $($Payload.kind): $($Payload.environment)/$($Payload.unit) is $($Payload.state). Cause: $($Payload.probable_cause)."
-  try { & "$env:SystemRoot\System32\msg.exe" * /TIME:120 $message | Out-Null; if ($LASTEXITCODE -eq 0) { return 'windows-message-delivered' } } catch {}
+  try { & $MessageExecutable * "/TIME:$TimeoutSeconds" $message | Out-Null; if ($LASTEXITCODE -eq 0) { return 'windows-message-delivered' } } catch {}
   return 'windows-message-failed'
+}
+function Read-Json([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { return $null }
+  try { return Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json } catch { return $null }
+}
+function Get-NotificationRecord($Records, [string]$Key, [string]$InitialState) {
+  if ($Records.ContainsKey($Key)) { return $Records[$Key] }
+  $record = [ordered]@{ confirmed_state=$InitialState; candidate_state=$InitialState; candidate_runs=0; last_desktop_alert_at=$null }
+  $Records[$Key] = $record
+  return $record
+}
+function DesktopAlertCooldownElapsed($Record, [int]$CooldownSeconds, [datetime]$Now) {
+  if ([string]::IsNullOrWhiteSpace([string]$Record.last_desktop_alert_at)) { return $true }
+  try { return ($Now.ToUniversalTime() - [datetime]::Parse([string]$Record.last_desktop_alert_at).ToUniversalTime()).TotalSeconds -ge $CooldownSeconds } catch { return $true }
 }
 function Get-Probe($Unit) {
   $requestId = "obs-$([guid]::NewGuid().ToString('N'))"; $endpointResults = @()
@@ -69,13 +84,77 @@ function New-Dashboard([object[]]$Results, [string]$GeneratedAt) {
 }
 
 New-Item -ItemType Directory -Force -Path $StateDirectory | Out-Null
-$catalog = Get-Content -Raw -LiteralPath $CatalogPath | ConvertFrom-Json; $previousPath = Join-Path $StateDirectory 'latest.json'; $previous = if (Test-Path $previousPath) { Get-Content -Raw $previousPath | ConvertFrom-Json } else {$null}; $results = @()
+$monitorMutex = [System.Threading.Mutex]::new($false, 'Local\SkincosObservabilityProbe')
+$lockTaken = $false
+try {
+  $lockTaken = $monitorMutex.WaitOne(30000)
+  if (-not $lockTaken) { return }
+$catalog = Get-Content -Raw -LiteralPath $CatalogPath | ConvertFrom-Json
+$policy = $catalog.primaryMonitor.notificationPolicy
+if ($null -eq $policy) { throw 'notificationPolicy is required in the observability catalog' }
+$previousPath = Join-Path $StateDirectory 'latest.json'
+$previous = Read-Json $previousPath
+$notificationStatePath = Join-Path $StateDirectory 'notification-state.json'
+$persistedNotificationState = Read-Json $notificationStatePath
+$notificationRecords = @{}
+if ($persistedNotificationState -and $persistedNotificationState.units) {
+  foreach ($property in $persistedNotificationState.units.PSObject.Properties) {
+    $record = $property.Value
+    $notificationRecords[$property.Name] = [ordered]@{
+      confirmed_state = [string]$record.confirmed_state
+      candidate_state = [string]$record.candidate_state
+      candidate_runs = [int]$record.candidate_runs
+      last_desktop_alert_at = if ($record.last_desktop_alert_at) { [string]$record.last_desktop_alert_at } else { $null }
+    }
+  }
+}
+$results = @()
 foreach ($unit in $catalog.units) { if (-not $unit.enabled) { $results += [pscustomobject]@{ unit=$unit.id; environment=$unit.environment; disabled=$true; disabled_reason=$unit.disabledReason; state='disabled'; version='not-deployed'; impact=$unit.impact; probable_cause=$unit.probableCause; request_id=''; health=[pscustomobject]@{status=0;duration_ms=0}; readiness=$null; checked_at=[DateTime]::UtcNow.ToString('o') } } else { $results += Get-Probe $unit } }
 $drillState = if ($ControlledFailure) {'failed'} else {'healthy'}; $results += [pscustomobject]@{ unit='controlled-alert-drill'; environment='staging'; state=$drillState; version='drill'; impact='No production service is changed; only the monitor evaluates an intentionally unreachable endpoint.'; probable_cause=if ($ControlledFailure) {'intentional controlled test'} else {'drill idle'}; request_id="obs-drill-$([guid]::NewGuid().ToString('N'))"; health=[pscustomobject]@{status=if ($ControlledFailure) {0} else {200};duration_ms=0}; readiness=$null; checked_at=[DateTime]::UtcNow.ToString('o') }
-$healthy = @($results | Where-Object {$_.state -eq 'healthy'} | ForEach-Object unit); $priorByKey = @{}; if ($previous -and $previous.results) { foreach ($item in $previous.results) {$priorByKey["$($item.environment)/$($item.unit)"]=$item.state} }; $transitions=@()
-foreach ($result in $results | Where-Object {-not $_.disabled}) { $prior=$priorByKey["$($result.environment)/$($result.unit)"]; if ($prior -and $prior -ne $result.state) { $kind=if($result.state -eq 'healthy'){'resolved'}else{'alert'}; $payload=[ordered]@{kind=$kind;unit=$result.unit;environment=$result.environment;version=$result.version;impact=$result.impact;probable_cause=$result.probable_cause;healthy_modules=$healthy;request_id=$result.request_id;state=$result.state;previous_state=$prior;occurred_at=[DateTime]::UtcNow.ToString('o')}; $eventDelivered=Emit-OperationalEvent $(if($kind -eq 'alert'){1001}else{1002}) ($payload|ConvertTo-Json -Compress) $(if($kind -eq 'alert'){'Warning'}else{'Information'}); $payload['event_log_delivery']=if($eventDelivered){'delivered'}else{'failed'}; $payload['human_notification_delivery']=Send-HumanNotification $payload; if($NotificationWebhook){try{$headers=@{'content-type'='application/json';'x-alert-source'='skincos-external-monitor'};if($NotificationToken){$headers['x-obs-token']=$NotificationToken};Invoke-RestMethod -Method Post -Uri $NotificationWebhook -Headers $headers -Body ($payload|ConvertTo-Json -Compress) -TimeoutSec 10|Out-Null;$payload['webhook_delivery']='delivered'}catch{$payload['webhook_delivery']='failed'}}; Append-JsonLine (Join-Path $StateDirectory 'notifications.jsonl') $payload; $transitions += [pscustomobject]$payload } }
-$generatedAt=[DateTime]::UtcNow.ToString('o'); $document=[ordered]@{schema_version=2;generated_at=$generatedAt;monitor='windows-scheduled-probe';results=$results;transitions=$transitions;notification_route=if($NotificationWebhook){'windows-message+event-log+https-webhook'}else{'windows-message+event-log'}}; Write-AtomicJson $previousPath $document; Append-JsonLine (Join-Path $StateDirectory 'history.jsonl') $document
+$healthy = @($results | Where-Object {$_.state -eq 'healthy'} | ForEach-Object unit)
+$transitions = @()
+foreach ($result in $results | Where-Object {-not $_.disabled}) {
+  $key = "$($result.environment)/$($result.unit)"
+  $record = Get-NotificationRecord $notificationRecords $key $result.state
+  if ($result.state -eq $record.confirmed_state) {
+    $record.candidate_state = $result.state
+    $record.candidate_runs = 0
+    continue
+  }
+
+  if ($result.state -eq $record.candidate_state) { $record.candidate_runs = [int]$record.candidate_runs + 1 }
+  else { $record.candidate_state = $result.state; $record.candidate_runs = 1 }
+  $requiredRuns = if ($result.state -eq 'healthy') { [int]$policy.recoverAfterConsecutiveHealthyRuns } else { [int]$policy.alertAfterConsecutiveFailures }
+  if ($record.candidate_runs -lt $requiredRuns) { continue }
+
+  $prior = $record.confirmed_state
+  $record.confirmed_state = $result.state
+  $record.candidate_state = $result.state
+  $record.candidate_runs = 0
+  $kind = if ($result.state -eq 'healthy') {'resolved'} else {'alert'}
+  $now = [DateTime]::UtcNow
+  $payload = [ordered]@{kind=$kind;unit=$result.unit;environment=$result.environment;version=$result.version;impact=$result.impact;probable_cause=$result.probable_cause;healthy_modules=$healthy;request_id=$result.request_id;state=$result.state;previous_state=$prior;confirmed_after_runs=$requiredRuns;occurred_at=$now.ToString('o')}
+  $eventDelivered = Emit-OperationalEvent $(if($kind -eq 'alert'){1001}else{1002}) ($payload | ConvertTo-Json -Compress) $(if($kind -eq 'alert'){'Warning'}else{'Information'})
+  $payload['event_log_delivery'] = if($eventDelivered){'delivered'}else{'failed'}
+  if ($kind -eq 'alert') {
+    if (DesktopAlertCooldownElapsed $record ([int]$policy.desktopAlertCooldownSeconds) $now) {
+      $payload['human_notification_delivery'] = Send-HumanNotification $payload ([int]$policy.desktopMessageTimeoutSeconds)
+      if ($payload['human_notification_delivery'] -in @('windows-message-delivered','suppressed')) { $record.last_desktop_alert_at = $now.ToString('o') }
+    } else { $payload['human_notification_delivery'] = 'cooldown-suppressed' }
+  } else { $payload['human_notification_delivery'] = 'not-applicable' }
+  if($NotificationWebhook){try{$headers=@{'content-type'='application/json';'x-alert-source'='skincos-external-monitor'};if($NotificationToken){$headers['x-obs-token']=$NotificationToken};Invoke-RestMethod -Method Post -Uri $NotificationWebhook -Headers $headers -Body ($payload|ConvertTo-Json -Compress) -TimeoutSec 10|Out-Null;$payload['webhook_delivery']='delivered'}catch{$payload['webhook_delivery']='failed'}}
+  Append-JsonLine (Join-Path $StateDirectory 'notifications.jsonl') $payload
+  $transitions += [pscustomobject]$payload
+}
+$persistedUnits = [ordered]@{}
+foreach ($key in ($notificationRecords.Keys | Sort-Object)) { $persistedUnits[$key] = $notificationRecords[$key] }
+Write-AtomicJson $notificationStatePath ([ordered]@{schema_version=1;updated_at=[DateTime]::UtcNow.ToString('o');units=$persistedUnits})
+$generatedAt=[DateTime]::UtcNow.ToString('o'); $document=[ordered]@{schema_version=2;generated_at=$generatedAt;monitor='windows-scheduled-probe';results=$results;transitions=$transitions;notification_route=if($NotificationWebhook){'confirmed-windows-alert+event-log+https-webhook'}else{'confirmed-windows-alert+event-log'}}; Write-AtomicJson $previousPath $document; Append-JsonLine (Join-Path $StateDirectory 'history.jsonl') $document
 $samples = @($results | Where-Object {-not $_.disabled} | ForEach-Object { [ordered]@{unit=$_.unit;environment=$_.environment;state=$_.state;duration_ms=$_.health.duration_ms;version=$_.version} })
 $metricSample=[ordered]@{generated_at=$generatedAt;samples=$samples}; Append-JsonLine (Join-Path $StateDirectory 'metrics-history.jsonl') $metricSample; [System.IO.File]::WriteAllText((Join-Path $StateDirectory 'metrics.prom'),(Get-Metrics $results),$utf8NoBom); [System.IO.File]::WriteAllText((Join-Path $StateDirectory 'dashboard.html'),(New-Dashboard $results $generatedAt),$utf8NoBom)
-$retentionDays=[int]$catalog.primaryMonitor.retentionDays; $cutoff=[DateTime]::UtcNow.AddDays(-$retentionDays); foreach($file in @('history.jsonl','metrics-history.jsonl','notifications.jsonl')) { Retain-JsonLines (Join-Path $StateDirectory $file) $cutoff }; $monitorHealth=[ordered]@{ok=$true;monitor='windows-scheduled-probe';generated_at=$generatedAt;last_success_at=$generatedAt;retention_days=$retentionDays;dashboard='loopback';notification='windows-message'}; Write-AtomicJson (Join-Path $StateDirectory 'monitor-health.json') $monitorHealth
+$retentionDays=[int]$catalog.primaryMonitor.retentionDays; $cutoff=[DateTime]::UtcNow.AddDays(-$retentionDays); foreach($file in @('history.jsonl','metrics-history.jsonl','notifications.jsonl')) { Retain-JsonLines (Join-Path $StateDirectory $file) $cutoff }; $monitorHealth=[ordered]@{ok=$true;monitor='windows-scheduled-probe';generated_at=$generatedAt;last_success_at=$generatedAt;retention_days=$retentionDays;dashboard='loopback';notification='confirmed-windows-alert'}; Write-AtomicJson (Join-Path $StateDirectory 'monitor-health.json') $monitorHealth
 $document | ConvertTo-Json -Depth 16
+} finally {
+  if ($lockTaken) { $monitorMutex.ReleaseMutex() }
+  $monitorMutex.Dispose()
+}

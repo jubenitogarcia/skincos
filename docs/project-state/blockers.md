@@ -2,13 +2,15 @@
 
 ## P0 — Insumos unit access
 
-PR #763 merged into main as `4a8b2074` after its Central E2E and required
-checks passed. The P0 access incident is now stable in production: the explicit
-Inventory/Core Worker run `30137182608` and corrected CRM Pages run
-`30137826907` promoted `c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d`, and the
-authenticated read-only smoke confirmed both canonical units without
-`RBAC_UNIT_DENIED`, unexpected 401/403/500, or shell failure. No business data,
-user, grant or flag was changed.
+PR #763 remains the source correction; the current closure evidence is the
+immutable release `f30f66e70e0dc949adde5120378509a1c95fe557`, recorded on
+`main` by PR #847/#848. Production Inventory run `30420719000` and CRM Pages
+run `30420793906` completed through the canonical pipelines with checkpoint
+artifact `8711811875`. Controlled synthetic onboarding and authenticated UI
+smokes passed, including canonical-unit access, localStorage reconciliation,
+Atendimento without `UNAUTHORIZED`, and explicit out-of-scope denial
+`403/RBAC_UNIT_DENIED`. All synthetic identities were torn down; no business
+data, real user, grant or flag was changed.
 
 The P0 queue item can be marked resolved for orchestration purposes, with the
 rollback checkpoints and sanitized evidence retained in the evidence ledger.

@@ -2,13 +2,14 @@
 
 ## P0 operacional — incidente de acesso a Insumos
 
-- [ ] **P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos.**
-  A correção de fonte foi integrada pela PR #763, com Central E2E e todos os
-  checks requeridos verdes. A validação de acesso no ambiente continua pendente
-  porque esta fase proíbe deploys. Até a resolução operacional completa, não iniciar
-  extrações arquiteturais, piloto Financeiro, transferência para GitHub
-  Organization, mudanças de Ponto/Atendimento ou outro módulo. Não fazer deploy
-  nem alterar dados, flags, grants ou produção nesta fase.
+- [x] **P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos.**
+  O ciclo foi concluído em `f30f66e70e0dc949adde5120378509a1c95fe557` e
+  registrado pela PR #847 (`2f0bba6a`). Staging e produção foram validados com
+  identidades sintéticas removidas ao final: unidades canônicas reconciliadas,
+  movimentações/overview/insights em 200, sem tempestade de requests e recusa
+  fora do escopo preservada como `403/RBAC_UNIT_DENIED`. A regressão autenticada
+  de Atendimento também foi aprovada. Débitos de outros módulos seguem
+  independentes deste P0.
 
 ## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
 
@@ -29,9 +30,24 @@
 
 - [ ] Confirm or reauthorize the `Google Calendar (Skincos)` credential for the exact scopes required by the inactive clinic Orb workflows.
 - [ ] Provide `GOOGLE_CALENDAR_ID`, approved test data and a non-production-safe validation window before enabling a workflow that can create a real calendar event or booking.
-- [ ] Review and finish the independent Meta Ads publish-journal work in
-  `codex/admin/meta-ads-publish-production-audit`; do not mix it into runtime
-  cleanup commits.
+- [x] Reconciliar e versionar o contrato do `Meta Ads – Publish` (workflow,
+  fontes dos Code nodes, Token Vault, migrations, preflight e testes) pela PR
+  #840; a execução manual 333 concluiu o lote comercial final.
+- [ ] **P1 — reconciliar os runs históricos não terminais do journal Meta Ads e
+  validar a entrega da notificação WhatsApp.** A auditoria de 2026-07-29 não
+  encontrou lock ativo nem pendência no run final `map_f6a59341d6dace99d70f5533`,
+  mas encontrou registros antigos em `acquired`/`processing`/`staged` e um
+  retorno de erro do nó WhatsApp na execução 333. Antes de alterar qualquer
+  registro, mapear os recursos Meta de cada run, decidir compensação ou
+  conclusão idempotente e registrar evidência de entrega; não reenviar
+  notificação nem apagar journal por suposição.
+- [ ] **P1 — promover o source release nativo do Orb até o `main` que contém a
+  PR #840.** O serviço ainda executa o release
+  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, anterior ao contrato canônico.
+  O workflow n8n e o Token Vault já estão sincronizados, mas a promoção do
+  release inclui superfícies além do Meta Ads e exige checkpoint, validação
+  pré-produção e autorização explícita de produção. Após a promoção, repetir o
+  preflight a partir do release ativo e registrar o SHA/rollback.
 - [ ] Decide whether draft PR #674 should graduate from the optional GitHub
   autonomy-broker experiment; it is isolated and not deployed.
 

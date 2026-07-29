@@ -131,6 +131,26 @@ function publicEmployee(row) {
   return row ? { id: row.id, employeeId: row.canonical_employee_id, name: row.display_name, email: row.login_email || null, status: row.status, accessState, terminatedAt: row.terminated_at || null } : null
 }
 
+// `status` is retained for timekeeping compatibility, but onboarding account
+// state is authoritative. A generic employee edit must never turn a pending
+// or invited account operational merely by changing the legacy status column.
+function isOperationalEmployee(row) {
+  return normalizeAccountState(row?.access_state || (row?.status === 'ACTIVE' ? 'ACTIVE' : row?.status === 'TERMINATED' ? 'TERMINATED' : 'SUSPENDED')) === 'ACTIVE'
+}
+
+function identityOnboardingId(row) {
+  try { return cleanText(JSON.parse(String(row?.metadata_json || '{}'))?.identityOnboardingId, 120) } catch { return '' }
+}
+
+// A route is only usable when there is exactly one active manager. Do not
+// infer a superior from a partial or ambiguous route: the empty relationship
+// remains editable and the onboarding audit records the manual-review reason.
+function resolveOnboardingManager(rows) {
+  const candidates = (rows || []).filter((route) => route?.manager_employee_id && route.status === 'ACTIVE' && (!route.access_state || route.access_state === 'ACTIVE'))
+  if (candidates.length === 1) return { managerId: candidates[0].manager_employee_id, reason: 'RESOLVED' }
+  return { managerId: null, reason: candidates.length > 1 ? 'AMBIGUOUS' : 'MISSING' }
+}
+
 const profilePrivateFields = ['cpf', 'mobilePhone', 'pis', 'rgNumber', 'rgIssuer', 'rgIssuerState', 'rgIssuedAt', 'motherName', 'fatherName', 'zipCode', 'street', 'addressNumber', 'addressComplement', 'neighborhood']
 const profilePublicFields = ['socialName', 'personalEmail', 'groupName', 'departmentName', 'managerEmployeeId', 'managerCpf', 'admittedAt', 'dismissedAt', 'birthPlace', 'educationLevel', 'city', 'state']
 const profileSelfPublicFields = ['socialName', 'personalEmail', 'birthPlace', 'educationLevel', 'city', 'state']
@@ -636,11 +656,13 @@ async function syncIdentityOnboarding(db, body, requestId) {
   )
   const managerByUnit = {}
   const ambiguousManagerUnits = []
+  const unresolvedManagerUnits = []
   for (const unit of units) {
     const routes = await db.prepare('SELECT r.manager_employee_id, e.status, e.access_state FROM workforce_department_routes r LEFT JOIN workforce_employees e ON e.id=r.manager_employee_id WHERE r.unit_id=? AND r.department_id=? AND r.employee_profile=? AND r.active=1').bind(unit, department.id, profile).all()
-    const candidates = (routes?.results || []).filter((route) => route?.manager_employee_id && route.status === 'ACTIVE' && (!route.access_state || route.access_state === 'ACTIVE'))
-    const managerId = candidates.length === 1 ? candidates[0].manager_employee_id : null
-    if (candidates.length > 1) ambiguousManagerUnits.push(unit)
+    const resolution = resolveOnboardingManager(routes?.results)
+    const managerId = resolution.managerId
+    if (resolution.reason === 'AMBIGUOUS') ambiguousManagerUnits.push(unit)
+    if (resolution.reason !== 'RESOLVED') unresolvedManagerUnits.push({ unit, reason: resolution.reason })
     managerByUnit[unit] = managerId
     statements.push(
       db.prepare('INSERT INTO timekeeping_employee_units (id, employee_id, unit_id, effective_from, created_at) VALUES (?, ?, ?, ?, ?)').bind(crypto.randomUUID(), employeeId, unit, at.slice(0, 10), at),
@@ -649,8 +671,12 @@ async function syncIdentityOnboarding(db, body, requestId) {
   }
   const actor = { id: 'identity-service', role: 'ADMIN', email: 'identity-service@internal', allowedUnits: units, name: 'Identity service' }
   statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_SYNC', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, canonicalEmployeeId, profile, accountStatus, departmentId: department.id, units, managerConfiguredByUnit: Object.fromEntries(Object.entries(managerByUnit).map(([unit, managerId]) => [unit, !!managerId])) } }))
-  if (ambiguousManagerUnits.length) statements.push(await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_AMBIGUOUS', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: ambiguousManagerUnits, resolution: 'MANUAL_REVIEW' } }))
   await db.batch(statements)
+  // The audit table is hash-chained. Derive every follow-up event only after
+  // the primary onboarding audit has committed, otherwise two events share a
+  // predecessor hash and the D1 trigger correctly rejects the batch.
+  if (unresolvedManagerUnits.length) await (await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_UNRESOLVED', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: unresolvedManagerUnits, resolution: 'MANUAL_REVIEW' } })).run()
+  if (ambiguousManagerUnits.length) await (await audit(db, { actor, action: 'IDENTITY_ONBOARDING_MANAGER_AMBIGUOUS', entityType: 'workforce_employee', entityId: employeeId, requestId, after: { onboardingId, units: ambiguousManagerUnits, resolution: 'MANUAL_REVIEW' } })).run()
   return { employeeId, canonicalEmployeeId, idempotent: false }
 }
 
@@ -892,7 +918,17 @@ export async function handleTimekeeping(request, env) {
       const employee = await employeeById(db, actor, decodeURIComponent(employeeMatch[1]))
       if (!employee) return failure(404, 'EMPLOYEE_NOT_FOUND', requestId)
       const body = request.method === 'PATCH' ? await readJson(request) : {}
-      const status = request.method === 'DELETE' || body?.active === false ? 'TERMINATED' : 'ACTIVE'
+      // Account state for an Identity-originated employee can only transition
+      // through the signed Identity service route, which records the saga and
+      // preserves the fail-closed access_state contract.
+      if (identityOnboardingId(employee) && (request.method === 'DELETE' || body?.active !== undefined)) return failure(409, 'IDENTITY_ONBOARDING_STATUS_MANAGED', requestId)
+      const status = request.method === 'DELETE'
+        ? 'TERMINATED'
+        : body?.active === false
+          ? 'TERMINATED'
+          : body?.active === true
+            ? 'ACTIVE'
+            : employee.status
       const email = body?.loginEmail === undefined ? employee.login_email : cleanText(body.loginEmail, 240).toLowerCase() || null
       const name = body?.name === undefined ? employee.display_name : cleanText(body.name, 180)
       if (!name) return failure(400, 'INVALID_EMPLOYEE', requestId)
@@ -913,7 +949,7 @@ export async function handleTimekeeping(request, env) {
       if (isTerminal && (body.descriptor !== undefined || body.template !== undefined || body.pin === undefined)) return failure(400, 'TERMINAL_PIN_REQUIRED', requestId)
       let employee = isTerminal ? await employeeForTerminal(db, actor, body.employeeCode) : isConsultor(actor) ? await employeeForActor(db, actor) : await employeeById(db, actor, cleanText(body.employeeId, 120))
       if (!employee) return failure(404, 'EMPLOYEE_NOT_LINKED', requestId)
-      if (employee.status !== 'ACTIVE') return failure(409, 'EMPLOYEE_NOT_ACTIVE', requestId)
+      if (!isOperationalEmployee(employee)) return failure(409, 'EMPLOYEE_NOT_ACTIVE', requestId)
       const occurredAt = isTerminal ? now() : body.occurredAt ? new Date(body.occurredAt).toISOString() : now()
       const unitId = isTerminal ? actor.allowedUnits[0] : cleanText(body.unitId || body.unit, 120)
       const initialWorkDate = isoDateInZone(occurredAt, 'America/Sao_Paulo')
@@ -1229,4 +1265,4 @@ export async function handleTimekeeping(request, env) {
 }
 
 export default { fetch: handleTimekeeping }
-export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential, profileInput, profileDocumentStatus, normalizeNetworks, ipInNetwork, locationEvidence, normalizePresenceMode, normalizeNetworkPolicy, identityServiceAuthorized, normalizedDepartmentKey, publicEmployee, syncIdentityOnboardingStatus }
+export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential, profileInput, profileDocumentStatus, normalizeNetworks, ipInNetwork, locationEvidence, normalizePresenceMode, normalizeNetworkPolicy, identityServiceAuthorized, normalizedDepartmentKey, publicEmployee, isOperationalEmployee, identityOnboardingId, resolveOnboardingManager, syncIdentityOnboardingStatus }

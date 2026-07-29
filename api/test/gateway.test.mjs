@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createGatewayHandler } from '../src/router.js';
-import { createApiGateway, forwardFinanceToService, handleGatewayRequest } from '../src/gateway.js';
+import { createApiGateway, forwardFinanceProbe, forwardFinanceToService, handleGatewayRequest } from '../src/gateway.js';
 import { verifySignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
 import { resetBoundServiceResilienceForTest } from '../../shared/service-adapters/cloudflare-service-binding.js';
 
@@ -135,6 +135,27 @@ test('Finance health probes bypass user identity but remain isolated to the Fina
   assert.equal(response.status, 200);
   assert.equal(receivedPath, '/health');
   assert.equal((await response.json()).unit, 'finance');
+});
+
+test('Finance health probes preserve a slow successful binding response for latency classification', async () => {
+  resetBoundServiceResilienceForTest();
+  const startedAt = Date.now();
+  const response = await forwardFinanceProbe(new Request('https://api.skincos.com.br/finance/health'), {
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 900)); return new Response(JSON.stringify({ ok: true, unit: 'finance' }), { headers: { 'content-type': 'application/json' } }); } },
+  });
+  assert.equal(response.status, 200);
+  assert.ok(Date.now() - startedAt >= 850);
+  assert.equal((await response.json()).unit, 'finance');
+});
+
+test('Finance health probes still classify a genuine upstream failure as unavailable', async () => {
+  resetBoundServiceResilienceForTest();
+  const response = await forwardFinanceProbe(new Request('https://api.skincos.com.br/finance/health'), {
+    FINANCE: { fetch: async () => new Response(JSON.stringify({ ok: false, error: 'D1_UNAVAILABLE' }), { status: 503, headers: { 'content-type': 'application/json' } }) },
+  });
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('x-skincos-dependency-status'), 'degraded');
+  assert.equal((await response.json()).error, 'domain_service_degraded');
 });
 
 test('finance gateway passes only an authenticated, CSRF-valid request', async () => {

@@ -1,3 +1,8 @@
+import {
+  handleMetaAdsPublishRequest,
+  isMetaAdsPublishPath,
+} from './meta-ads-publish.js';
+
 const TOKEN_PREFIX = '/internal/token-vault';
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -25,6 +30,17 @@ export async function handleRequest(request, env) {
 
     if (request.method === 'GET' && pathname === '/health') {
       return health(env, requestId);
+    }
+
+    if (isMetaAdsPublishPath(pathname)) {
+      return await handleMetaAdsPublishRequest({
+        request,
+        env,
+        requestId,
+        pathname,
+        decryptToken,
+        writeAudit,
+      });
     }
 
     if (request.method === 'GET' && pathname === '/v1/tokens') {

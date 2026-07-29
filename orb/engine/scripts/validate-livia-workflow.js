@@ -304,6 +304,8 @@ function validateContracts() {
   assert(jobGraphSource.includes('normalizeExternalResult'), 'Livia job graph must accept both direct n8n jobs and jobs envelopes.');
   assert(jobGraphSource.includes('assertOutputContract'), 'Livia job graph must self-test its output contract.');
   assert(jobGraphSource.includes('assertJobGraphContracts'), 'Livia job graph must test image, Reel and carousel fixtures without the gateway.');
+  assert(jobGraphSource.includes('semanticJobKey'), 'Livia job graph must derive a semantic durable resume identity.');
+  assert(jobGraphSource.includes('assertResumeIdentityContracts'), 'Livia job graph must prove queue-index changes do not alter resume identity.');
   assert(jobGraphSource.includes('invalidateIncompleteCarouselResume'), 'Livia resume logic must invalidate partial Instagram carousel attempts before reusing child containers');
   assert(jobGraphSource.includes('groupResumeContextKey'), 'Livia resume logic must inspect group-scoped carousel container results');
   assert(jobGraphSource.includes('normalizeThreadsCarouselJob'), 'Livia job graph must keep Threads carousel child and parent request contracts distinct');
@@ -399,10 +401,13 @@ function validateContracts() {
   assert(processHttp.includes('const simulatedRemoteId ='), 'Process HTTP Publish Result must create a synthetic ID during Codex dry-run');
   assert(processHttp.includes('id: simulatedRemoteId'), 'Codex dry-run response body must include a synthetic Graph-compatible ID');
   assert(processHttp.includes('compactResumeRecord'), 'Process HTTP Publish Result must emit a sanitized durable progress record');
+  assert(processHttp.includes('semanticJobKey: str(source.semanticJobKey'), 'Process HTTP Publish Result must preserve semanticJobKey in durable progress records');
   assert(processHttp.includes('facebook_static_photo_already_posted_recovery'), 'Process HTTP Publish Result must recover an already-published Facebook static photo without duplicating it');
-  assert(codeOf('BQ - Seed Publish State').includes('resumeRecords'), 'BQ - Seed Publish State must restore durable completed jobs before retrying');
+  assert(codeOf('BQ - Seed Publish State').includes('resumeBySemanticKey'), 'BQ - Seed Publish State must restore durable completed jobs by semantic identity');
+  assert(codeOf('BQ - Seed Publish State').includes('completedSemanticJobKeys'), 'BQ - Seed Publish State must not use sequential indexes as durable resume keys');
   assert(codeOf('BQ - Validate Job Graph').includes('resumeCompleted: asArray(payload.resumeCompleted)'), 'BQ - Validate Job Graph must preserve durable completed jobs');
   assert(commandOf('Record Publish Progress').includes('publish-progress-ledger.js'), 'Record Publish Progress must call the private runtime ledger script');
+  assert(!codeOf('BQ - Seed Publish State').includes('completedRunIndexes'), 'BQ - Seed Publish State must not use publishRunIndex as a durable resume identity');
   assert(collect.includes('buildFinalCollectorRows'), 'Collect Publish Results must reuse buildFinalCollectorRows');
   assert(collect.includes('buildPublishVerificationTargets'), 'Collect Publish Results must produce provider verification targets');
   assert(collect.includes('mediaKindFor'), 'Collect Publish Results must resolve image, video, and carousel delivery separately');
@@ -538,7 +543,7 @@ function validateManualDryRunFixture() {
   if (getNode('Build Publish Queue')) return;
 
   const seedCode = codeOf('BQ - Seed Publish State');
-  const executeSeed = (mode, id) => {
+  const executeSeed = (mode, id, payload = { jobs: [{ platform: 'instagram', publishRunIndex: 0, semanticJobKey: 'livia:v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }], codexPayloadCompacted: true }) => {
     const fn = new Function(
       '$input',
       '$json',
@@ -552,7 +557,7 @@ function validateManualDryRunFixture() {
     );
     return fn(
       { all: () => [] },
-      { jobs: [{ platform: 'instagram', publishRunIndex: 0 }], codexPayloadCompacted: true },
+      payload,
       { id, mode },
       () => ({}),
       () => [],
@@ -567,6 +572,21 @@ function validateManualDryRunFixture() {
   assert(manual?.[0]?.json?.codexDryRun === true, 'Manual seed fixture must default to codexDryRun=true');
   assert(manual?.[0]?.json?.firstJob?.codexDryRun === true, 'Manual seed fixture must decorate the first job as dry-run');
   assert(trigger?.[0]?.json?.codexDryRun === false, 'Trigger seed fixture must preserve production behavior by default');
+
+  const semanticJobKey = 'livia:v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const job = { platform: 'instagram', publishRunIndex: 0, semanticJobKey };
+  const matching = executeSeed('trigger', 'semantic-match', {
+    jobs: [job],
+    codexPayloadCompacted: true,
+    resumeCompleted: [{ ...job, publishRunIndex: 99, lastResponseBody: { id: 'provider-object' } }],
+  });
+  const mismatched = executeSeed('trigger', 'semantic-mismatch', {
+    jobs: [job],
+    codexPayloadCompacted: true,
+    resumeCompleted: [{ ...job, semanticJobKey: 'livia:v2:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', lastResponseBody: { id: 'stale-provider-object' } }],
+  });
+  assert(matching?.[0]?.json?.recoveryFinal === true, 'Matching semantic progress must be resumable regardless of its historical queue index');
+  assert(mismatched?.[0]?.json?.firstJob?.semanticJobKey === semanticJobKey, 'Mismatched semantic progress must not suppress a current provider job');
 }
 
 validateStructure();

@@ -24,9 +24,12 @@ const REQUIRED_VIDEO_ONLY_REWARDED_AUDIENCE_NETWORK_POSITIONS = ['rewarded_video
 const REQUIRED_VIDEO_ONLY_WHATSAPP_POSITIONS = ['status'];
 const REQUIRED_HORIZONTAL_PLATFORMS = ['facebook'];
 const REQUIRED_HORIZONTAL_FACEBOOK_POSITIONS = ['search'];
-const REQUIRED_CTA = 'LEARN_MORE';
+// OUTCOME_LEADS dynamic creatives reject BOOK_NOW at staging. The expected
+// CTA comes from the live campaign objective carried by destination_meta.
+const REQUIRED_CTA = 'BOOK_NOW';
+const OUTCOME_LEADS_CTA = 'LEARN_MORE';
 const WHATSAPP_CTA = 'WHATSAPP_MESSAGE';
-const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v12_native_carousel_route';
+const WORKFLOW_CONTRACT_REVISION = 'meta_destination_contract_v18_live_campaign_cta';
 const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'add_text_overlay',
   'image_touchups',
@@ -40,11 +43,6 @@ const ALLOWED_ADVANTAGE_PLUS_FEATURES = new Set([
   'show_destination_blurbs',
   'image_animation',
   'site_extensions',
-  'adapt_to_placement',
-  'video_filtering',
-  'video_highlights',
-  'video_auto_crop',
-  'video_uncrop',
 ]);
 const FORBIDDEN_ADVANTAGE_PLUS_FEATURES = new Set([
   'image_template',
@@ -58,6 +56,14 @@ function safeString(value) { return String(value ?? '').trim(); }
 function safeArray(value) { return Array.isArray(value) ? value : []; }
 function asObject(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
+
+function expectedFlexibleCta(source, destinationKind) {
+  if (destinationKind === 'whatsapp') return WHATSAPP_CTA;
+  const destination = asObject(source.destination_meta);
+  return safeString(destination.campaign_objective || source.destination_campaign_objective).toUpperCase() === 'OUTCOME_LEADS'
+    ? OUTCOME_LEADS_CTA
+    : REQUIRED_CTA;
+}
 
 function restoredRunContext() {
   let groups = [];
@@ -358,11 +364,13 @@ function validateAdvantagePlus(payload, source, hosts) {
   }
 
   const sourcing = asObject(payload.creative_sourcing_spec);
-  // Meta accepts the scheduling landing page in asset_feed_spec.link_urls.  Do
-  // not add creative_sourcing_spec.source_url unless Meta site extensions are
-  // configured: it was rejected by this account's creative endpoint.
+  // Token Vault and Meta must receive exactly the same HTTPS landing page in
+  // the asset feed and the sourcing spec. This prevents a later redirect or
+  // fallback from silently changing the commercial destination.
   const sourceUrl = safeString(sourcing.source_url);
-  assert(!sourceUrl, 'creative_source_url_forbidden_without_site_extensions', {});
+  assert(Boolean(sourceUrl), 'creative_source_url_missing', {});
+  if (destinationContractKind(source) === 'whatsapp') assert(isWhatsAppUrl(sourceUrl), 'creative_source_url_whatsapp_invalid', {});
+  else validateUrl(sourceUrl, hosts, 'creative_source_url');
 
   const siteLinks = safeArray(sourcing.site_links_spec);
   assert(siteLinks.length === 0 || (siteLinks.length >= 2 && siteLinks.length <= 4), 'site_links_count_invalid', { count: siteLinks.length });
@@ -478,6 +486,17 @@ return $input.all().map((item) => {
   const legacyCarousel = isCarousel && Object.keys(asObject(story.link_data)).length > 0;
   const hosts = allowedHosts(source);
   const destinationKind = destinationContractKind(source);
+  // This value is also checked inside validateAdvantagePlus(), but the main
+  // payload contract needs it in this scope to prove that Token Vault receives
+  // the same destination as the primary asset-feed link. Native carousels are
+  // deliberately exempt because their approved contract forbids a sourcing
+  // spec altogether.
+  const sourceUrl = safeString(asObject(payload.creative_sourcing_spec).source_url);
+  if (!isCarousel) {
+    assert(Boolean(sourceUrl), 'creative_source_url_missing', {});
+    if (destinationKind === 'whatsapp') assert(isWhatsAppUrl(sourceUrl), 'creative_source_url_whatsapp_invalid', {});
+    else validateUrl(sourceUrl, hosts, 'creative_source_url');
+  }
   assert(safeString(payload.name), 'creative_name_missing', {});
   assert(safeString(story.page_id) === safeString(source.page_id), 'creative_page_id_mismatch', {});
   assert(legacyCarousel || Object.keys(feed).length > 0, 'asset_feed_spec_required', {});
@@ -530,17 +549,20 @@ return $input.all().map((item) => {
     ? validateNativeCarousel(story, source, hosts, destinationKind)
     : validateCarouselFeed(feed, story, source, hosts, destinationKind)) : null;
   if (!isCarousel) assert(linkUrls.length === 1, 'link_url_count_invalid', { actual: linkUrls.length });
-  const primaryLink = isCarousel ? carouselValidation.primaryLink : validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
+  const primaryLink = isCarousel ? carouselValidation.primaryLink : destinationKind === 'whatsapp'
+    ? (assert(isWhatsAppUrl(linkUrls[0] && linkUrls[0].website_url), 'primary_link_whatsapp_required', {}), safeString(linkUrls[0] && linkUrls[0].website_url))
+    : validateUrl(linkUrls[0] && linkUrls[0].website_url, hosts, 'primary_link');
+  if (!isCarousel) assert(sourceUrl === primaryLink, 'creative_source_url_primary_link_mismatch', {});
   const whatsappDestination = destinationKind === 'whatsapp';
   if (isCarousel && whatsappDestination) assert(isWhatsAppUrl(primaryLink), 'carousel_primary_link_whatsapp_required', {});
   if (isCarousel && !whatsappDestination) assert(!isWhatsAppUrl(primaryLink), 'carousel_primary_link_whatsapp_forbidden', {});
   if (whatsappDestination && !isCarousel) {
-    assert(ctas.length === 1 && safeString(ctas[0]).toUpperCase() === WHATSAPP_CTA, 'cta_must_be_whatsapp_message', { value: ctas });
+    assert(ctas.length === 1 && safeString(ctas[0]).toUpperCase() === expectedFlexibleCta(source, destinationKind), 'cta_type_incompatible_with_campaign_objective', { value: ctas });
     assert(isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_required', {});
     const schedulingUrl = validateUrl(source.scheduling_landing_page_url, hosts, 'scheduling_landing_page');
     assert(!isWhatsAppUrl(schedulingUrl), 'scheduling_landing_page_whatsapp_forbidden', {});
   } else if (!isCarousel) {
-    assert(ctas.length === 1 && safeString(ctas[0]).toUpperCase() === REQUIRED_CTA, 'cta_must_be_learn_more', { value: ctas });
+    assert(ctas.length === 1 && safeString(ctas[0]).toUpperCase() === expectedFlexibleCta(source, destinationKind), 'cta_type_incompatible_with_campaign_objective', { value: ctas });
     assert(!isWhatsAppUrl(primaryLink), 'primary_link_whatsapp_forbidden', {});
     assert(primaryLink === safeString(source.landing_page_url), 'primary_link_landing_page_mismatch', {});
   }
