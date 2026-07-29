@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Arrangement manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "arrangement_id",
+    "composition_id",
+    "type",
+    "lock_hash",
+    "stem_uris"
+  ],
+  "properties": {
+    "arrangement_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "composition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lock_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stem_uris": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "rough_mix_uri": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "examples": [
+    {
+      "arrangement_id": "ARR-1",
+      "composition_id": "CMP-1",
+      "type": "RADIO",
+      "lock_hash": "hash",
+      "stem_uris": [
+        "storage://stem.wav"
+      ],
+      "rough_mix_uri": "storage://rough.wav"
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "arrangement_id": "ARR-1",
+      "composition_id": "CMP-1",
+      "type": "RADIO",
+      "stem_uris": []
+    }
+  ]
+}

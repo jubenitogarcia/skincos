@@ -1,0 +1,82 @@
+{
+  "id": "music-composition-studio-msc-10",
+  "name": "MSC-10 Brief and Reference Analyzer (Archived)",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "msc-10-archived-trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -520,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "msc-10-archived-validate",
+      "name": "Validate archived module input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nif (!items.length) throw new Error('missing input');\nconst input = items[0].json || {};\nif (input.dry_run !== true || input.provider_policy?.mode !== 'mock') throw new Error('MSC is mock-only until explicitly activated');\nif (!input.production_id) throw new Error('production_id is required');\nreturn [{ json: { ...input, msc_workflow: 'unified', workflow_active: false, binary_audio_transferred: false } }];"
+      }
+    },
+    {
+      "id": "msc-10-archived-emit",
+      "name": "Archived REFERENCE_ANALYSIS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-10', msc_output: 'REFERENCE_ANALYSIS', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate archived module input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate archived module input": {
+      "main": [
+        [
+          {
+            "node": "Archived REFERENCE_ANALYSIS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "staticData": null,
+  "meta": {
+    "codex_generated": true,
+    "archived": true,
+    "superseded_by": "music-composition-studio-unified",
+    "module": "MSC-10",
+    "rollback_snapshot": true
+  }
+}

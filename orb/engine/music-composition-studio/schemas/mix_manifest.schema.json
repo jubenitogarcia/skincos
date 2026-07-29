@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mix manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mix_id",
+    "composition_id",
+    "uri",
+    "lock_hash",
+    "technical_targets"
+  ],
+  "properties": {
+    "mix_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "composition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lock_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "technical_targets": {
+      "type": "object"
+    },
+    "stem_uris": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "mix_id": "MIX-1",
+      "composition_id": "CMP-1",
+      "uri": "storage://mix.wav",
+      "lock_hash": "hash",
+      "technical_targets": {},
+      "stem_uris": []
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "mix_id": "MIX-1",
+      "composition_id": "CMP-1",
+      "uri": "x",
+      "lock_hash": "hash"
+    }
+  ]
+}

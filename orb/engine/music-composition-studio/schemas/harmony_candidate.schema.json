@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Harmony candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_id",
+    "key",
+    "scale",
+    "progression",
+    "complexity",
+    "preview_uri"
+  ],
+  "properties": {
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "progression": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "complexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "preview_uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "midi_uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "compatible_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "candidate_id": "HAR-1",
+      "key": "A",
+      "scale": "minor",
+      "progression": [
+        "Am",
+        "F"
+      ],
+      "complexity": "simple",
+      "preview_uri": "storage://h.wav",
+      "midi_uri": "storage://h.mid",
+      "compatible_tags": [
+        "calm"
+      ]
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "candidate_id": "HAR-1",
+      "key": "A",
+      "scale": "minor",
+      "progression": []
+    }
+  ]
+}

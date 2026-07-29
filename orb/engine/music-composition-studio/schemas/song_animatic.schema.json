@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Song animatic",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "animatic_id",
+    "composition_id",
+    "uri",
+    "duration_seconds",
+    "components"
+  ],
+  "properties": {
+    "animatic_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "composition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 1
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "technical_metadata": {
+      "type": "object"
+    }
+  },
+  "examples": [
+    {
+      "animatic_id": "ANI-1",
+      "composition_id": "CMP-1",
+      "uri": "storage://animatic.wav",
+      "duration_seconds": 30,
+      "components": [
+        "piano",
+        "guide-drums"
+      ],
+      "technical_metadata": {}
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "animatic_id": "ANI-1",
+      "composition_id": "CMP-1",
+      "uri": "x",
+      "duration_seconds": 0,
+      "components": []
+    }
+  ]
+}

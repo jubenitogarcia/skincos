@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Instrument palette",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "palette_id",
+    "roles",
+    "timbre_profile"
+  ],
+  "properties": {
+    "palette_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "timbre_profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "forbidden_instruments": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "palette_id": "PAL-1",
+      "roles": [
+        "piano",
+        "bass"
+      ],
+      "timbre_profile": "warm",
+      "forbidden_instruments": []
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "palette_id": "PAL-1",
+      "roles": []
+    }
+  ]
+}

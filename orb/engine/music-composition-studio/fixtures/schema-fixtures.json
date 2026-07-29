@@ -1,0 +1,590 @@
+{
+  "music_production_request": {
+    "valid": {
+      "schema_version": "1.0.0",
+      "production_id": "MSC-TEST-FAST",
+      "production_tier": "FAST",
+      "dry_run": true,
+      "brief": {
+        "purpose": "vinheta original",
+        "duration_target_seconds": 15,
+        "genre_family": [
+          "ambient"
+        ],
+        "mood": [
+          "calm"
+        ],
+        "voice_requested": false,
+        "references": [
+          {
+            "reference_id": "REF-001",
+            "kind": "STRUCTURAL_REFERENCE",
+            "rights_status": "LICENSED",
+            "reference_usage_scope": "ANALYZE_ONLY",
+            "source_uri": "storage://references/ref-001.wav"
+          }
+        ]
+      },
+      "provider_policy": {
+        "mode": "mock",
+        "max_cost": 0,
+        "max_jobs": 20,
+        "allowed_providers": [
+          "mock"
+        ]
+      },
+      "budget_limits": {
+        "max_cost": 0
+      },
+      "voice_consent": {
+        "status": "NOT_REQUIRED",
+        "voice_id": "none"
+      }
+    },
+    "invalid": {
+      "schema_version": "1.0.0",
+      "production_id": "bad",
+      "production_tier": "FAST",
+      "dry_run": true,
+      "brief": {},
+      "provider_policy": {}
+    }
+  },
+  "music_brief": {
+    "valid": {
+      "production_id": "MSC-1",
+      "purpose": "video",
+      "duration_target_seconds": 30,
+      "genre_family": [
+        "pop"
+      ],
+      "mood": [
+        "upbeat"
+      ],
+      "voice_requested": false,
+      "references": [],
+      "restrictions": []
+    },
+    "invalid": {
+      "production_id": "MSC-1",
+      "purpose": 3,
+      "duration_target_seconds": 30,
+      "genre_family": [],
+      "mood": [],
+      "voice_requested": false
+    }
+  },
+  "reference_analysis": {
+    "valid": {
+      "reference_id": "REF-1",
+      "kind": "MIX_REFERENCE",
+      "rights_status": "LICENSED",
+      "analysis": {
+        "bpm": 120,
+        "key": "A minor",
+        "meter": "4/4",
+        "duration_seconds": 180,
+        "energy_curve": [
+          0.2,
+          0.8
+        ],
+        "mix_profile": "wide"
+      },
+      "similarity_risk": 0.1
+    },
+    "invalid": {
+      "reference_id": "REF-1",
+      "kind": "MIX_REFERENCE",
+      "rights_status": "LICENSED",
+      "analysis": {}
+    }
+  },
+  "music_constitution": {
+    "valid": {
+      "composition_id": "CMP-1",
+      "revision": 1,
+      "lock_hash": "hash",
+      "purpose": "video",
+      "use_context": "social",
+      "duration_target_seconds": 30,
+      "production_tier": "FAST",
+      "genre_family": [
+        "ambient"
+      ],
+      "mood": [
+        "calm"
+      ],
+      "tempo": {
+        "target_bpm": 100,
+        "allowed_range": [
+          96,
+          104
+        ]
+      },
+      "tonality": {
+        "preferred_keys": [
+          "A minor"
+        ],
+        "mode": "minor",
+        "allowed_modulations": []
+      },
+      "meter": "4/4",
+      "harmonic_complexity": "simple",
+      "melodic_character": "memorable",
+      "rhythmic_character": "steady",
+      "energy_curve": [
+        0.2,
+        0.8
+      ],
+      "instrument_palette": [
+        "piano"
+      ],
+      "vocal_profile": {},
+      "lyrical_constraints": {},
+      "reference_rules": [
+        "analyze only"
+      ],
+      "forbidden_similarities": [
+        "recognizable melody"
+      ],
+      "structure_preferences": [
+        "intro",
+        "outro"
+      ],
+      "technical_targets": {},
+      "deliverables": [
+        "master_wav"
+      ],
+      "budget_limits": {}
+    },
+    "invalid": {
+      "composition_id": "CMP-1",
+      "revision": 1,
+      "lock_hash": "hash"
+    }
+  },
+  "harmony_candidate": {
+    "valid": {
+      "candidate_id": "HAR-1",
+      "key": "A",
+      "scale": "minor",
+      "progression": [
+        "Am",
+        "F"
+      ],
+      "complexity": "simple",
+      "preview_uri": "storage://h.wav",
+      "midi_uri": "storage://h.mid",
+      "compatible_tags": [
+        "calm"
+      ]
+    },
+    "invalid": {
+      "candidate_id": "HAR-1",
+      "key": "A",
+      "scale": "minor",
+      "progression": []
+    }
+  },
+  "melody_candidate": {
+    "valid": {
+      "candidate_id": "MEL-1",
+      "notes": [
+        69
+      ],
+      "rhythm": [
+        1
+      ],
+      "range": [
+        60,
+        76
+      ],
+      "memorability_score": 0.8,
+      "preview_uri": "storage://m.wav",
+      "midi_uri": "storage://m.mid",
+      "compatible_harmony_ids": [
+        "HAR-1"
+      ]
+    },
+    "invalid": {
+      "candidate_id": "MEL-1",
+      "notes": [],
+      "rhythm": [],
+      "range": [],
+      "memorability_score": 2,
+      "preview_uri": "x"
+    }
+  },
+  "rhythm_candidate": {
+    "valid": {
+      "candidate_id": "GRV-1",
+      "bpm": 100,
+      "meter": "4/4",
+      "groove": "steady",
+      "preview_uri": "storage://r.wav",
+      "midi_uri": "storage://r.mid",
+      "swing": 0
+    },
+    "invalid": {
+      "candidate_id": "GRV-1",
+      "bpm": 0,
+      "meter": "4/4",
+      "groove": "x",
+      "preview_uri": "x"
+    }
+  },
+  "bass_candidate": {
+    "valid": {
+      "candidate_id": "BAS-1",
+      "strategy": "minimal",
+      "compatible_harmony_ids": [
+        "HAR-1"
+      ],
+      "preview_uri": "storage://b.wav",
+      "midi_uri": "storage://b.mid"
+    },
+    "invalid": {
+      "candidate_id": "BAS-1",
+      "strategy": "minimal",
+      "compatible_harmony_ids": []
+    }
+  },
+  "instrument_palette": {
+    "valid": {
+      "palette_id": "PAL-1",
+      "roles": [
+        "piano",
+        "bass"
+      ],
+      "timbre_profile": "warm",
+      "forbidden_instruments": []
+    },
+    "invalid": {
+      "palette_id": "PAL-1",
+      "roles": []
+    }
+  },
+  "lyric_candidate": {
+    "valid": {
+      "candidate_id": "LYR-1",
+      "concept": "new start",
+      "lyrics": "original words",
+      "meter": "4/4",
+      "similarity_risk": 0.1,
+      "forbidden_words": []
+    },
+    "invalid": {
+      "candidate_id": "LYR-1",
+      "concept": "x",
+      "lyrics": "x",
+      "meter": "4/4",
+      "similarity_risk": 2
+    }
+  },
+  "compatibility_matrix": {
+    "valid": {
+      "composition_id": "CMP-1",
+      "entries": [
+        {
+          "harmony_id": "HAR-1",
+          "melody_id": "MEL-1",
+          "groove_id": "GRV-1",
+          "bass_id": "BAS-1",
+          "palette_id": "PAL-1",
+          "score": 0.9,
+          "reasons": [
+            "key"
+          ]
+        }
+      ],
+      "method": "beam-search"
+    },
+    "invalid": {
+      "composition_id": "CMP-1",
+      "entries": []
+    }
+  },
+  "composition_dna": {
+    "valid": {
+      "composition_dna_id": "DNA-1",
+      "harmony_id": "HAR-1",
+      "melody_ids": [
+        "MEL-1"
+      ],
+      "groove_id": "GRV-1",
+      "bass_strategy_id": "BAS-1",
+      "palette_id": "PAL-1",
+      "lyric_concept_id": "LYR-1",
+      "compatibility_score": 0.9
+    },
+    "invalid": {
+      "composition_dna_id": "DNA-1",
+      "harmony_id": "HAR-1",
+      "melody_ids": [],
+      "groove_id": "GRV-1",
+      "bass_strategy_id": "BAS-1",
+      "palette_id": "PAL-1",
+      "compatibility_score": 2
+    }
+  },
+  "song_blueprint": {
+    "valid": {
+      "composition_id": "CMP-1",
+      "composition_dna_id": "DNA-1",
+      "sections": [
+        {
+          "section_id": "SEC-1"
+        }
+      ],
+      "duration_target_seconds": 30,
+      "energy_curve": [
+        0.2,
+        0.8
+      ]
+    },
+    "invalid": {
+      "composition_id": "CMP-1",
+      "composition_dna_id": "DNA-1",
+      "sections": [],
+      "duration_target_seconds": 0
+    }
+  },
+  "section_manifest": {
+    "valid": {
+      "section_id": "SEC-1",
+      "type": "VERSE",
+      "start_bar": 1,
+      "bars": 8,
+      "duration_seconds": 16,
+      "energy": 0.4,
+      "harmony_id": "HAR-1",
+      "melody_ids": [
+        "MEL-1"
+      ],
+      "groove_id": "GRV-1",
+      "bass_id": "BAS-1",
+      "instrument_roles": [
+        "piano"
+      ],
+      "vocal_plan": {},
+      "transition_in": {},
+      "transition_out": {},
+      "dependencies": []
+    },
+    "invalid": {
+      "section_id": "SEC-1",
+      "type": "VERSE",
+      "start_bar": 0,
+      "bars": 0,
+      "duration_seconds": 0,
+      "energy": 2,
+      "dependencies": []
+    }
+  },
+  "song_animatic": {
+    "valid": {
+      "animatic_id": "ANI-1",
+      "composition_id": "CMP-1",
+      "uri": "storage://animatic.wav",
+      "duration_seconds": 30,
+      "components": [
+        "piano",
+        "guide-drums"
+      ],
+      "technical_metadata": {}
+    },
+    "invalid": {
+      "animatic_id": "ANI-1",
+      "composition_id": "CMP-1",
+      "uri": "x",
+      "duration_seconds": 0,
+      "components": []
+    }
+  },
+  "stem_job": {
+    "valid": {
+      "stem_job_id": "STEM-1",
+      "composition_id": "CMP-1",
+      "composition_dna_id": "DNA-1",
+      "section_id": "SEC-1",
+      "stem_role": "DRUMS",
+      "instrument": "kit",
+      "key": "A",
+      "scale": "minor",
+      "bpm": 100,
+      "meter": "4/4",
+      "bars": 8,
+      "start_bar": 1,
+      "midi_input_url": "storage://m.mid",
+      "audio_reference_urls": [],
+      "variation_index": 1,
+      "priority": 1,
+      "dependencies": [],
+      "provider": "mock",
+      "status": "QUEUED"
+    },
+    "invalid": {
+      "stem_job_id": "STEM-1",
+      "composition_id": "CMP-1",
+      "section_id": "SEC-1",
+      "stem_role": "DRUMS",
+      "instrument": "kit",
+      "key": "A",
+      "bpm": 0,
+      "meter": "4/4",
+      "status": "QUEUED"
+    }
+  },
+  "vocal_manifest": {
+    "valid": {
+      "composition_id": "CMP-1",
+      "voice_consent_status": "GRANTED",
+      "synthetic_voice_disclosed": true,
+      "voice_id": "voice-1",
+      "artifacts": [
+        "storage://lead.wav"
+      ]
+    },
+    "invalid": {
+      "composition_id": "CMP-1",
+      "voice_consent_status": "DENIED",
+      "synthetic_voice_disclosed": true
+    }
+  },
+  "arrangement_manifest": {
+    "valid": {
+      "arrangement_id": "ARR-1",
+      "composition_id": "CMP-1",
+      "type": "RADIO",
+      "lock_hash": "hash",
+      "stem_uris": [
+        "storage://stem.wav"
+      ],
+      "rough_mix_uri": "storage://rough.wav"
+    },
+    "invalid": {
+      "arrangement_id": "ARR-1",
+      "composition_id": "CMP-1",
+      "type": "RADIO",
+      "stem_uris": []
+    }
+  },
+  "mix_manifest": {
+    "valid": {
+      "mix_id": "MIX-1",
+      "composition_id": "CMP-1",
+      "uri": "storage://mix.wav",
+      "lock_hash": "hash",
+      "technical_targets": {},
+      "stem_uris": []
+    },
+    "invalid": {
+      "mix_id": "MIX-1",
+      "composition_id": "CMP-1",
+      "uri": "x",
+      "lock_hash": "hash"
+    }
+  },
+  "master_manifest": {
+    "valid": {
+      "master_id": "MAS-1",
+      "composition_id": "CMP-1",
+      "uri": "storage://master.wav",
+      "loudness_lufs": -14,
+      "true_peak_db": -1,
+      "deliverable_uris": [],
+      "sample_rate": 44100,
+      "bit_depth": 16
+    },
+    "invalid": {
+      "master_id": "MAS-1",
+      "composition_id": "CMP-1",
+      "uri": "x",
+      "loudness_lufs": -14
+    }
+  },
+  "music_qa_report": {
+    "valid": {
+      "candidate_id": "DNA-1",
+      "scores": {
+        "harmonic_coherence": 0.9,
+        "melodic_memorability": 0.8,
+        "rhythmic_quality": 0.8,
+        "arrangement": 0.8,
+        "emotional_fit": 0.8,
+        "vocal_quality": 1,
+        "technical_quality": 0.9,
+        "originality": 0.9
+      },
+      "blocking_issues": [],
+      "revision_targets": [],
+      "decision": "APPROVE"
+    },
+    "invalid": {
+      "candidate_id": "DNA-1",
+      "scores": {},
+      "blocking_issues": [],
+      "revision_targets": [],
+      "decision": "APPROVE"
+    }
+  },
+  "music_package": {
+    "valid": {
+      "composition_id": "CMP-1",
+      "production_id": "MSC-1",
+      "status": "READY",
+      "music_constitution": {},
+      "composition_dna": {},
+      "song_blueprint": {},
+      "arrangement_manifest": {},
+      "deliverables": {
+        "master_wav": "storage://m.wav",
+        "master_mp3": "storage://m.mp3",
+        "pre_master": "storage://p.wav",
+        "instrumental": "storage://i.wav",
+        "acapella": "",
+        "clean_version": "storage://c.wav",
+        "performance_version": "storage://v.wav",
+        "short_version_60s": "storage://60.wav",
+        "short_version_30s": "storage://30.wav",
+        "short_version_15s": "storage://15.wav",
+        "loop_version": "storage://loop.wav",
+        "stems": [],
+        "midi_files": [],
+        "lyrics": "",
+        "chord_sheet": "storage://sheet.txt",
+        "metadata": {}
+      },
+      "qa_reports": [],
+      "generation_history": [],
+      "costs": {},
+      "provider_usage": {},
+      "warnings": []
+    },
+    "invalid": {
+      "composition_id": "CMP-1",
+      "production_id": "MSC-1",
+      "status": "READY",
+      "deliverables": {},
+      "qa_reports": [],
+      "generation_history": [],
+      "costs": {}
+    }
+  },
+  "music_production_report": {
+    "valid": {
+      "production_id": "MSC-1",
+      "status": "READY",
+      "jobs": [],
+      "costs": {},
+      "warnings": [],
+      "retry_summary": {}
+    },
+    "invalid": {
+      "production_id": "MSC-1",
+      "status": "READY",
+      "jobs": [],
+      "costs": {}
+    }
+  }
+}

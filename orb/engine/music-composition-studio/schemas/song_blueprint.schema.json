@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Song blueprint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "composition_id",
+    "composition_dna_id",
+    "sections",
+    "duration_target_seconds"
+  ],
+  "properties": {
+    "composition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "composition_dna_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "duration_target_seconds": {
+      "type": "number",
+      "minimum": 1
+    },
+    "energy_curve": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    }
+  },
+  "examples": [
+    {
+      "composition_id": "CMP-1",
+      "composition_dna_id": "DNA-1",
+      "sections": [
+        {
+          "section_id": "SEC-1"
+        }
+      ],
+      "duration_target_seconds": 30,
+      "energy_curve": [
+        0.2,
+        0.8
+      ]
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "composition_id": "CMP-1",
+      "composition_dna_id": "DNA-1",
+      "sections": [],
+      "duration_target_seconds": 0
+    }
+  ]
+}

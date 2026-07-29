@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Compatibility matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "composition_id",
+    "entries",
+    "method"
+  ],
+  "properties": {
+    "composition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "harmony_id",
+          "melody_id",
+          "groove_id",
+          "bass_id",
+          "palette_id",
+          "score",
+          "reasons"
+        ],
+        "properties": {
+          "harmony_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "melody_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "groove_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bass_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "palette_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "method": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "examples": [
+    {
+      "composition_id": "CMP-1",
+      "entries": [
+        {
+          "harmony_id": "HAR-1",
+          "melody_id": "MEL-1",
+          "groove_id": "GRV-1",
+          "bass_id": "BAS-1",
+          "palette_id": "PAL-1",
+          "score": 0.9,
+          "reasons": [
+            "key"
+          ]
+        }
+      ],
+      "method": "beam-search"
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "composition_id": "CMP-1",
+      "entries": []
+    }
+  ]
+}

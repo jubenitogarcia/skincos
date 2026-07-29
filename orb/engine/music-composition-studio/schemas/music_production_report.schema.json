@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Music production report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "production_id",
+    "status",
+    "jobs",
+    "costs",
+    "warnings"
+  ],
+  "properties": {
+    "production_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "costs": {
+      "type": "object"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "retry_summary": {
+      "type": "object"
+    }
+  },
+  "examples": [
+    {
+      "production_id": "MSC-1",
+      "status": "READY",
+      "jobs": [],
+      "costs": {},
+      "warnings": [],
+      "retry_summary": {}
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "production_id": "MSC-1",
+      "status": "READY",
+      "jobs": [],
+      "costs": {}
+    }
+  ]
+}

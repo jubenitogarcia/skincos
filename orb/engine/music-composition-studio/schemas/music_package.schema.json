@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Music package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "composition_id",
+    "production_id",
+    "status",
+    "deliverables",
+    "qa_reports",
+    "generation_history",
+    "costs"
+  ],
+  "properties": {
+    "composition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "production_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1,
+      "enum": [
+        "READY",
+        "PARTIALLY_READY",
+        "FAILED"
+      ]
+    },
+    "music_constitution": {
+      "type": "object"
+    },
+    "composition_dna": {
+      "type": "object"
+    },
+    "song_blueprint": {
+      "type": "object"
+    },
+    "arrangement_manifest": {
+      "type": "object"
+    },
+    "deliverables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "master_wav",
+        "master_mp3",
+        "pre_master",
+        "instrumental",
+        "acapella",
+        "clean_version",
+        "performance_version",
+        "short_version_60s",
+        "short_version_30s",
+        "short_version_15s",
+        "loop_version",
+        "stems",
+        "midi_files",
+        "lyrics",
+        "chord_sheet",
+        "metadata"
+      ],
+      "properties": {
+        "master_wav": {
+          "type": "string",
+          "minLength": 1
+        },
+        "master_mp3": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pre_master": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instrumental": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acapella": {
+          "type": "string"
+        },
+        "clean_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "performance_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "short_version_60s": {
+          "type": "string",
+          "minLength": 1
+        },
+        "short_version_30s": {
+          "type": "string",
+          "minLength": 1
+        },
+        "short_version_15s": {
+          "type": "string",
+          "minLength": 1
+        },
+        "loop_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stems": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "midi_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "lyrics": {
+          "type": "string"
+        },
+        "chord_sheet": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "qa_reports": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "generation_history": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "costs": {
+      "type": "object"
+    },
+    "provider_usage": {
+      "type": "object"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "composition_id": "CMP-1",
+      "production_id": "MSC-1",
+      "status": "READY",
+      "music_constitution": {},
+      "composition_dna": {},
+      "song_blueprint": {},
+      "arrangement_manifest": {},
+      "deliverables": {
+        "master_wav": "storage://m.wav",
+        "master_mp3": "storage://m.mp3",
+        "pre_master": "storage://p.wav",
+        "instrumental": "storage://i.wav",
+        "acapella": "",
+        "clean_version": "storage://c.wav",
+        "performance_version": "storage://v.wav",
+        "short_version_60s": "storage://60.wav",
+        "short_version_30s": "storage://30.wav",
+        "short_version_15s": "storage://15.wav",
+        "loop_version": "storage://loop.wav",
+        "stems": [],
+        "midi_files": [],
+        "lyrics": "",
+        "chord_sheet": "storage://sheet.txt",
+        "metadata": {}
+      },
+      "qa_reports": [],
+      "generation_history": [],
+      "costs": {},
+      "provider_usage": {},
+      "warnings": []
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "composition_id": "CMP-1",
+      "production_id": "MSC-1",
+      "status": "READY",
+      "deliverables": {},
+      "qa_reports": [],
+      "generation_history": [],
+      "costs": {}
+    }
+  ]
+}

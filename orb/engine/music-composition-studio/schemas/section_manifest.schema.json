@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Section manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "section_id",
+    "type",
+    "start_bar",
+    "bars",
+    "duration_seconds",
+    "energy",
+    "dependencies"
+  ],
+  "properties": {
+    "section_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "start_bar": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "bars": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "energy": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "harmony_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "melody_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "groove_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bass_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instrument_roles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "vocal_plan": {
+      "type": "object"
+    },
+    "transition_in": {
+      "type": "object"
+    },
+    "transition_out": {
+      "type": "object"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "section_id": "SEC-1",
+      "type": "VERSE",
+      "start_bar": 1,
+      "bars": 8,
+      "duration_seconds": 16,
+      "energy": 0.4,
+      "harmony_id": "HAR-1",
+      "melody_ids": [
+        "MEL-1"
+      ],
+      "groove_id": "GRV-1",
+      "bass_id": "BAS-1",
+      "instrument_roles": [
+        "piano"
+      ],
+      "vocal_plan": {},
+      "transition_in": {},
+      "transition_out": {},
+      "dependencies": []
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "section_id": "SEC-1",
+      "type": "VERSE",
+      "start_bar": 0,
+      "bars": 0,
+      "duration_seconds": 0,
+      "energy": 2,
+      "dependencies": []
+    }
+  ]
+}

@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Music production request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "production_id",
+    "brief",
+    "production_tier",
+    "dry_run",
+    "provider_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1,
+      "const": "1.0.0"
+    },
+    "production_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "production_tier": {
+      "type": "string",
+      "minLength": 1,
+      "enum": [
+        "FAST",
+        "STANDARD",
+        "PREMIUM"
+      ]
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purpose",
+        "duration_target_seconds",
+        "genre_family",
+        "mood",
+        "voice_requested",
+        "references"
+      ],
+      "properties": {
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration_target_seconds": {
+          "type": "number",
+          "minimum": 1
+        },
+        "genre_family": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "mood": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "voice_requested": {
+          "type": "boolean"
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reference_id",
+              "kind",
+              "rights_status",
+              "reference_usage_scope",
+              "source_uri"
+            ],
+            "properties": {
+              "reference_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rights_status": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reference_usage_scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_uri": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "provider_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "max_cost",
+        "max_jobs",
+        "allowed_providers"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "minLength": 1,
+          "enum": [
+            "mock",
+            "live"
+          ]
+        },
+        "max_cost": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_jobs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "allowed_providers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "budget_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_cost"
+      ],
+      "properties": {
+        "max_cost": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "voice_consent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "voice_id"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "minLength": 1,
+          "enum": [
+            "NOT_REQUIRED",
+            "GRANTED",
+            "DENIED"
+          ]
+        },
+        "voice_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1.0.0",
+      "production_id": "MSC-TEST-FAST",
+      "production_tier": "FAST",
+      "dry_run": true,
+      "brief": {
+        "purpose": "vinheta original",
+        "duration_target_seconds": 15,
+        "genre_family": [
+          "ambient"
+        ],
+        "mood": [
+          "calm"
+        ],
+        "voice_requested": false,
+        "references": [
+          {
+            "reference_id": "REF-001",
+            "kind": "STRUCTURAL_REFERENCE",
+            "rights_status": "LICENSED",
+            "reference_usage_scope": "ANALYZE_ONLY",
+            "source_uri": "storage://references/ref-001.wav"
+          }
+        ]
+      },
+      "provider_policy": {
+        "mode": "mock",
+        "max_cost": 0,
+        "max_jobs": 20,
+        "allowed_providers": [
+          "mock"
+        ]
+      },
+      "budget_limits": {
+        "max_cost": 0
+      },
+      "voice_consent": {
+        "status": "NOT_REQUIRED",
+        "voice_id": "none"
+      }
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "schema_version": "1.0.0",
+      "production_id": "bad",
+      "production_tier": "FAST",
+      "dry_run": true,
+      "brief": {},
+      "provider_policy": {}
+    }
+  ]
+}

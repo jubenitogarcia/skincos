@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Music QA report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_id",
+    "scores",
+    "blocking_issues",
+    "revision_targets",
+    "decision"
+  ],
+  "properties": {
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "harmonic_coherence",
+        "melodic_memorability",
+        "rhythmic_quality",
+        "arrangement",
+        "emotional_fit",
+        "vocal_quality",
+        "technical_quality",
+        "originality"
+      ],
+      "properties": {
+        "harmonic_coherence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "melodic_memorability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rhythmic_quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "arrangement": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "emotional_fit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "vocal_quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "technical_quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "originality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "revision_targets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "decision": {
+      "type": "string",
+      "minLength": 1,
+      "enum": [
+        "APPROVE",
+        "REVISE_TARGETED",
+        "REGENERATE_COMPONENT",
+        "REBUILD_SECTION",
+        "REARRANGE",
+        "REMIX",
+        "REMASTER",
+        "REJECT"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "candidate_id": "DNA-1",
+      "scores": {
+        "harmonic_coherence": 0.9,
+        "melodic_memorability": 0.8,
+        "rhythmic_quality": 0.8,
+        "arrangement": 0.8,
+        "emotional_fit": 0.8,
+        "vocal_quality": 1,
+        "technical_quality": 0.9,
+        "originality": 0.9
+      },
+      "blocking_issues": [],
+      "revision_targets": [],
+      "decision": "APPROVE"
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "candidate_id": "DNA-1",
+      "scores": {},
+      "blocking_issues": [],
+      "revision_targets": [],
+      "decision": "APPROVE"
+    }
+  ]
+}

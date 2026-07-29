@@ -1,0 +1,348 @@
+[
+  {
+    "id": "music-composition-studio-unified",
+    "name": "Music Composition Studio (Unified)",
+    "active": false,
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "msc-unified-trigger",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          -760,
+          0
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "msc-unified-validate",
+        "name": "Validate controlled input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -520,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const items = $input.all();\nif (!items.length) throw new Error('missing input');\nconst input = items[0].json || {};\nif (input.dry_run !== true || input.provider_policy?.mode !== 'mock') throw new Error('MSC is mock-only until explicitly activated');\nif (!input.production_id) throw new Error('production_id is required');\nreturn [{ json: { ...input, msc_workflow: 'unified', workflow_active: false, binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-10",
+        "name": "MSC-10 Brief and Reference Analyzer",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -240,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-10', msc_output: 'REFERENCE_ANALYSIS', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-20",
+        "name": "MSC-20 Musical Direction",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          20,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-20', msc_output: 'MUSIC_CONSTITUTION', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-30",
+        "name": "MSC-30 Composition Lab",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          280,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-30', msc_output: 'COMPOSITION_DNA', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-40",
+        "name": "MSC-40 Song Blueprint",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          540,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-40', msc_output: 'SONG_ANIMATIC', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-50",
+        "name": "MSC-50 Stem Factory",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          800,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-50', msc_output: 'STEM_MANIFEST', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-60",
+        "name": "MSC-60 Vocal Factory",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1060,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-60', msc_output: 'VOCAL_MANIFEST', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-70",
+        "name": "MSC-70 Arrangement and Assembly",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-70', msc_output: 'ARRANGEMENT_MANIFEST', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-80",
+        "name": "MSC-80 Mix and Master",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1580,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-80', msc_output: 'MASTER_MANIFEST', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-90",
+        "name": "MSC-90 Evaluation and Package",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1840,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-90', msc_output: 'MUSIC_PACKAGE', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-msc-99",
+        "name": "MSC-99 Error Handler",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2100,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-99', msc_output: 'ERROR_POLICY', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+        }
+      },
+      {
+        "id": "msc-unified-package",
+        "name": "Build MUSIC_PACKAGE",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2500,
+          0
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const item = $input.first().json || {}; return [{ json: { ...item, output_type: 'MUSIC_PACKAGE', publish_requested: false, package_status: 'READY_FOR_REVIEW' } }];"
+        }
+      }
+    ],
+    "connections": {
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Validate controlled input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate controlled input": {
+        "main": [
+          [
+            {
+              "node": "MSC-10 Brief and Reference Analyzer",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-10 Brief and Reference Analyzer": {
+        "main": [
+          [
+            {
+              "node": "MSC-20 Musical Direction",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-20 Musical Direction": {
+        "main": [
+          [
+            {
+              "node": "MSC-30 Composition Lab",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-30 Composition Lab": {
+        "main": [
+          [
+            {
+              "node": "MSC-40 Song Blueprint",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-40 Song Blueprint": {
+        "main": [
+          [
+            {
+              "node": "MSC-50 Stem Factory",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-50 Stem Factory": {
+        "main": [
+          [
+            {
+              "node": "MSC-60 Vocal Factory",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-60 Vocal Factory": {
+        "main": [
+          [
+            {
+              "node": "MSC-70 Arrangement and Assembly",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-70 Arrangement and Assembly": {
+        "main": [
+          [
+            {
+              "node": "MSC-80 Mix and Master",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-80 Mix and Master": {
+        "main": [
+          [
+            {
+              "node": "MSC-90 Evaluation and Package",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-90 Evaluation and Package": {
+        "main": [
+          [
+            {
+              "node": "MSC-99 Error Handler",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "MSC-99 Error Handler": {
+        "main": [
+          [
+            {
+              "node": "Build MUSIC_PACKAGE",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "pinData": {},
+    "staticData": null,
+    "meta": {
+      "codex_generated": true,
+      "builder": "build-music-composition-studio.js",
+      "architecture": "unified-inline",
+      "active_by_default": false,
+      "control_plane_only": true,
+      "no_paid_provider_calls": true,
+      "archived_predecessors": [
+        "MSC-00",
+        "MSC-10",
+        "MSC-20",
+        "MSC-30",
+        "MSC-40",
+        "MSC-50",
+        "MSC-60",
+        "MSC-70",
+        "MSC-80",
+        "MSC-90",
+        "MSC-99"
+      ]
+    }
+  }
+]

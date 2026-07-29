@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0.0",
+  "production_id": "MSC-FIXTURE-FAST",
+  "production_tier": "FAST",
+  "dry_run": true,
+  "brief": {
+    "purpose": "vinheta instrumental original para conteúdo social",
+    "duration_target_seconds": 15,
+    "genre_family": [
+      "ambient-pop"
+    ],
+    "mood": [
+      "warm",
+      "optimistic"
+    ],
+    "voice_requested": false,
+    "references": [
+      {
+        "reference_id": "REF-MIX-1",
+        "kind": "MIX_REFERENCE",
+        "rights_status": "LICENSED",
+        "reference_usage_scope": "ANALYZE_ONLY",
+        "source_uri": "storage://fixture/mix-reference.wav"
+      }
+    ]
+  },
+  "provider_policy": {
+    "mode": "mock",
+    "max_cost": 0,
+    "max_jobs": 100,
+    "allowed_providers": [
+      "mock"
+    ]
+  },
+  "budget_limits": {
+    "max_cost": 0
+  },
+  "voice_consent": {
+    "status": "NOT_REQUIRED",
+    "voice_id": "none"
+  }
+}

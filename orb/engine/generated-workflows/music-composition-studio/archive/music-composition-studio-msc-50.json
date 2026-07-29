@@ -1,0 +1,82 @@
+{
+  "id": "music-composition-studio-msc-50",
+  "name": "MSC-50 Stem Factory (Archived)",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "msc-50-archived-trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -520,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "msc-50-archived-validate",
+      "name": "Validate archived module input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nif (!items.length) throw new Error('missing input');\nconst input = items[0].json || {};\nif (input.dry_run !== true || input.provider_policy?.mode !== 'mock') throw new Error('MSC is mock-only until explicitly activated');\nif (!input.production_id) throw new Error('production_id is required');\nreturn [{ json: { ...input, msc_workflow: 'unified', workflow_active: false, binary_audio_transferred: false } }];"
+      }
+    },
+    {
+      "id": "msc-50-archived-emit",
+      "name": "Archived STEM_MANIFEST",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json || {};\nreturn [{ json: { ...item, msc_module: 'MSC-50', msc_output: 'STEM_MANIFEST', module_status: 'COMPLETED', binary_audio_transferred: false } }];"
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate archived module input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate archived module input": {
+      "main": [
+        [
+          {
+            "node": "Archived STEM_MANIFEST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "staticData": null,
+  "meta": {
+    "codex_generated": true,
+    "archived": true,
+    "superseded_by": "music-composition-studio-unified",
+    "module": "MSC-50",
+    "rollback_snapshot": true
+  }
+}
