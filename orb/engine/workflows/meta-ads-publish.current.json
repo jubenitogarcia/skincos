@@ -467,14 +467,26 @@
     },
     {
       "parameters": {
-        "resource": "messages-api",
-        "instanceName": "crm-channel-1",
-        "remoteJid": "5551995103563",
-        "messageText": "={{ $json.event.payload.whatsapp_message }}",
-        "options_message": {}
+        "method": "POST",
+        "url": "={{($env.EVOLUTION_INTERNAL_BASE_URL || 'http://127.0.0.1:8080').trim().replace(/\\/$/, '')}}/message/sendText/{{($env.N8N_META_ADS_NOTIFY_INSTANCE || 'crm-channel-1').trim()}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.EVOLUTION_API_KEY.trim() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const number = String($env.N8N_META_ADS_NOTIFY_NUMBER || $env.N8N_HANDOFF_NOTIFY_NUMBER || '').replace(/\\D/g, ''); if (!number) throw new Error('meta_ads_notify_number_missing'); return { number, text: $json.event.payload.whatsapp_message }; })() }}",
+        "options": {
+          "timeout": 60000
+        }
       },
-      "type": "n8n-nodes-evolution-api-en.evolutionApi",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
       "position": [
         15024,
         1352
@@ -482,13 +494,9 @@
       "id": "e8ac9e77-fbc6-4082-8358-f197ac53cf08",
       "name": "Inform Meta Publish Success (WhatsApp)",
       "executeOnce": true,
-      "retryOnFail": false,
-      "credentials": {
-        "evolutionApi": {
-          "id": "bfuWTzZoi8VCYCzE",
-          "name": "Evolution Token"
-        }
-      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
       "onError": "continueRegularOutput"
     },
     {

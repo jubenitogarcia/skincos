@@ -1,0 +1,5 @@
+# MCP inventory
+
+The project adds a local Storybook MCP endpoint at `http://127.0.0.1:6006/mcp` when Storybook runs. `npm run storybook:mcp` completed a JSON-RPC `initialize` request with HTTP 200 on 2026-07-25. The official Inspector also completed `tools/list` against that local endpoint and discovered Storybook preview, documentation and story-test tools; use it only against this local endpoint.
+
+The versioned project portion is only the Storybook source configuration and local check scripts. MCP registrations, browser profiles and OAuth state belong outside the repository. During the 2026-07-29 audit, the Windows `codex mcp list` command exposed no registration, so earlier Playwright, Chrome DevTools and `skincos-github-readonly` registrations are historical operator evidence rather than current validated capability. The GitHub read-only endpoint would use `https://api.githubcopilot.com/mcp/readonly` without a PAT, but this host previously stopped at `Dynamic client registration not supported` and no grant exists. Figma uses `https://mcp.figma.com/mcp`; complete its official OAuth manually before reading an authorized test file.

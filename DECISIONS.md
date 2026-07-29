@@ -438,3 +438,47 @@
   retained as references. A run is not considered closed merely because n8n is
   green: Drive, journal, locks, readback and notification delivery each need
   explicit evidence.
+
+## 2026-07-29 - Keep Meta Ads notifications local and reconcile journal evidence-first
+
+- Decision: replace the Meta Ads success WhatsApp community-node call with a
+  direct HTTP request to the local Evolution API, using private, Meta-specific
+  instance and recipient configuration. Preserve Telegram as a separate
+  parallel notification branch. Record historical journal closure through an
+  immutable event before updating a provable terminal state.
+- Why: a CRLF-contaminated environment value and an external public endpoint
+  caused an avoidable connection failure. Historical rows cannot be treated as
+  completed merely because their locks expired.
+- Impact: the notification has bounded timeout/retries and can be tested with
+  a synthetic message without invoking the commercial workflow or Meta. Runs
+  without staging are closed only when operations prove no activation; staged
+  runs are closed only after a recorded read-only Graph lookup establishes the
+  physical resource state.
+
+## 2026-07-29 - Promote native Orb source only through a lineage-checked release
+
+- Decision: promote the native Orb source from immutable archives only with
+  `prepare-native-source-release.sh` followed by
+  `promote-native-source-release.sh`; require the expected prior release SHA,
+  private checkpoint and a no-active-publication drain before switching the
+  `/opt/skincos/current/source` pointer.
+- Why: this keeps the live process, proxy and application sidecars on one
+  auditable source release and makes a pointer rollback independent from the
+  shared Windows checkout.
+- Impact: the 2026-07-29 promotion advanced
+  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a` to
+  `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89` (including PRs #840/#844).
+  The preparer grants `postgres` read/traverse access only to the immutable
+  Meta Ads preflight surface, so the peer-authenticated audit can validate all
+  49 Code nodes without exposing writable source or credentials.
+
+## 2026-07-29 - Close Meta Ads audit only from terminal external evidence
+
+- Decision: close the three historical staged runs only after their physical
+  ads were read from Graph and found `ARCHIVED`; retain the original journal
+  records, append a readback event and use `rolled_back` rather than deletion.
+- Why: a staged job alone is insufficient to infer whether an ad was active,
+  absent or safely recoverable.
+- Impact: the journal now has no active/reconciliation state, while the full
+  audit trail remains available. A current isolated WhatsApp delivery test must
+  reach provider `DELIVERY_ACK`; HTTP acceptance alone is not closure evidence.

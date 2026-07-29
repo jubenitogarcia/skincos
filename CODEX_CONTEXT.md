@@ -46,16 +46,17 @@
   the source of truth. The older `meta-ads-*` worktrees remain operator-owned
   historical worktrees and are not cleanup targets for unrelated tasks.
 - The production workflow is intentionally inactive/manual. Its current live
-  version is `825` (`4ec178e3-bc9d-4ed6-b481-eb9015777b2e`); the Token Vault
-  production deployment is `beba53d9-67f3-495b-a002-5dc579463c29`. A final
-  historical journal reconciliation and WhatsApp-notification delivery check
-  remain tracked in `TASKS.md`; do not treat execution success alone as their
-  proof.
-- The native Orb source release currently resolves to
-  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, which predates PR #840. The
-  n8n definition and Worker are reconciled, but the runtime source release is
-  not yet `main`; promote it only through the native release gate with an
-  explicit production authorization and a rollback checkpoint.
+  version is `830` (`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`); the Token Vault
+  production deployment is `beba53d9-67f3-495b-a002-5dc579463c29`. A current
+  isolated Evolution test reached `DELIVERY_ACK`; Telegram remains independent.
+  The historical journal has 110 terminal runs and zero active locks or
+  `reconciliation_required` rows; see
+  `orb/engine/docs/meta-ads-publish-historical-run-audit-2026-07-29.md`.
+- The native Orb source release resolves to the current `main` merge
+  `a32cf1a9034ccd4872cfbde1ae089e56355300c4` (PR #854). Its immutable archive,
+  verified descendant lineage from `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89`,
+  and rollback evidence are private under
+  `C:\CodexRuntime\operator\admin\skincos\native-promotions\`.
 - PR #674 (`codex/admin/github-codex-autonomy`) remains a deliberate draft for
   the optional GitHub autonomy broker; it is not part of the production
   runtime and has no deployment dependency.

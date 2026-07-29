@@ -1,0 +1,60 @@
+name: UX/UI Infrastructure (informative)
+
+on:
+  pull_request:
+    paths:
+      - 'crm/console/**'
+      - 'website/**'
+      - 'scripts/ux-ui/**'
+      - '.lighthouserc.json'
+      - '.github/workflows/ux-ui-infrastructure.yml'
+      - 'docs/developer-experience/ux-ui-infrastructure/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ux-ui-baseline:
+    name: UX/UI baseline (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.23.1'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            crm/console/package-lock.json
+            website/package-lock.json
+      - name: Install local audit dependencies
+        run: |
+          set -euxo pipefail
+          npm ci
+          npm --prefix crm/console ci
+          npm --prefix website ci
+          npm --prefix crm/console exec -- playwright install --with-deps chromium
+      - name: Run component, journey, accessibility and visual baselines
+        env:
+          PLAYWRIGHT_KEEP_ARTIFACTS: '1'
+          A11Y_ENFORCE: '0'
+        run: |
+          set -euxo pipefail
+          npm run test:components
+          E2E_START_SERVER=1 npm --prefix crm/console run test:e2e -- e2e/pilot e2e/accessibility e2e/visual
+      - name: Build Storybook states and accessibility addon
+        run: |
+          set -euxo pipefail
+          npm --prefix crm/console run storybook:build
+      - name: Collect local Lighthouse baseline
+        run: npm run audit:lighthouse
+      - name: Upload UX/UI artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ux-ui-baseline-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7

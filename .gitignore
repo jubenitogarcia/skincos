@@ -203,6 +203,9 @@ backend/tools/xiaomi/token_extractor_docker/
 frontend/test-results/
 output/
 
+# UX/UI audit artifacts may include screenshots, traces and local reports.
+artifacts/
+
 # Codex local state
 .codex/*
 !.codex/environments/

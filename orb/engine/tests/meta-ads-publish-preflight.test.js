@@ -34,6 +34,15 @@ test('execution version follows current for inactive workflows and published ver
   assert.deepEqual(executionSummaryForWorkflow({ active: true, activeVersionId: 'published' }, current, history), history[0]);
 });
 
+test('version alignment treats an inactive workflow current definition as authoritative', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'inspect-meta-ads-publish-version-alignment.js'),
+    'utf8',
+  );
+  assert.match(source, /row\.active === true/);
+  assert.match(source, /executionSummary\.version_id === row\.versionId/);
+});
+
 test('manual execution retention is reported without assuming execution data exists', () => {
   assert.equal(manualExecutionAuditState({ saveManualExecutions: true }), 'persisted');
   assert.equal(manualExecutionAuditState({ saveManualExecutions: false }), 'not_persisted');

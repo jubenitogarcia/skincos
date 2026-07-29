@@ -20,6 +20,10 @@ required=(
   'apply-livia-runtime-isolation.js'
   'Missing required command: setfacl'
   'u:postgres:rwx'
+  'inspect-meta-ads-publish-version-alignment.js'
+  'validate-meta-ads-publish-preflight.js'
+  'workflow-src/meta-ads-publish'
+  'setfacl -Rm u:postgres:rX'
   'LIVIA_BUILD_JOB_GRAPH_SOURCE="$STAGING/orb/engine/compose2-current.js"'
   '--assert-runtime-compatibility'
   '--assert-output-contract'
@@ -45,5 +49,7 @@ LIVIA_BUILD_JOB_GRAPH_SOURCE="$ROOT_DIR/orb/engine/compose2-current.js" \
   node "$ROOT_DIR/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-output-contract >/dev/null
 LIVIA_BUILD_JOB_GRAPH_SOURCE="$ROOT_DIR/orb/engine/compose2-current.js" \
   node "$ROOT_DIR/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-job-graph-contracts >/dev/null
+
+"$ROOT_DIR/scripts/runtime/test-workflow-runtime-retention.sh" >/dev/null
 
 echo 'PASS: native source release accepts only a checksum-verified Linux archive.'

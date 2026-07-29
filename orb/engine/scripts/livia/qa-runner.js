@@ -667,6 +667,10 @@ function validateWorkflow() {
   if (!verificationCommand.includes('verify-published-artifacts.js')) {
     errors.push('Verify Published Artifacts must call the external verifier.');
   }
+  if (!/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine\/scripts\/livia\/verify-published-artifacts\.js/.test(verificationCommand) ||
+      /\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b|\/mnt\/c\/|livia-verify-provider-copy-drift-wrapper|--verifier\b/.test(verificationCommand)) {
+    errors.push('Verify Published Artifacts must invoke only the pinned immutable verifier without a compatibility wrapper.');
+  }
   const collectCode = String(nodeByName.get('Collect Publish Results')?.parameters?.jsCode || '');
   const processHttpCode = String(nodeByName.get('Process HTTP Publish Result')?.parameters?.jsCode || '');
   if (!processHttpCode.includes('const simulatedRemoteId =') || !processHttpCode.includes('id: simulatedRemoteId')) {

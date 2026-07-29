@@ -119,7 +119,10 @@ Never roll back by starting source from a worktree or by reviving retired units.
 
 After successful restart persistence, public smoke and observation:
 
-- keep the active release and one proven prior release;
+- keep the active release and one proven prior release, **plus every release
+  referenced by a workflow runtime manifest**. Before deleting any release,
+  run `scripts/runtime/assert-workflow-runtime-retention.sh --candidate-delete
+  <release-sha>` and stop on a protected-reference failure;
 - keep the latest restore-verified Orb backup plus the explicit cutover
   checkpoint while it still has audit value;
 - remove stale staging archives, caches, disabled unit files and clean merged
