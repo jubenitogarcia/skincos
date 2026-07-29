@@ -154,6 +154,19 @@ done
 sudo -n setfacl -m u:postgres:r-- \
   "$DESTINATION/orb/engine/scripts/workflow-runtime-manifest.js" \
   "$DESTINATION/orb/engine/scripts/apply-livia-runtime-isolation.js"
+# The Livia candidate builder and structural validator are deliberately run as
+# postgres by the promotion runbook, so peer-authenticated workflow writes can
+# consume the exact same immutable source tree.  Their patch modules contain
+# no credentials, but must be readable rather than relying on a privileged
+# operator-side workaround during a promotion.
+sudo -n setfacl -m u:postgres:r-- \
+  "$DESTINATION/orb/engine/scripts/prepare-livia-production-candidate.js" \
+  "$DESTINATION/orb/engine/scripts/validate-livia-workflow.js" \
+  "$DESTINATION/orb/engine/scripts/patch-livia-drive-publication-marks.js" \
+  "$DESTINATION/orb/engine/scripts/patch-livia-token-vault-preflight.js" \
+  "$DESTINATION/orb/engine/scripts/patch-livia-accessibility-contract.js" \
+  "$DESTINATION/orb/engine/scripts/patch-livia-facebook-carousel-contract.js" \
+  "$DESTINATION/orb/engine/scripts/patch-livia-runtime-isolation.js"
 # The workflow-version writer runs as postgres.  It hashes the exact Livia
 # sidecar entrypoints before committing a workflow version, so it needs read
 # access to those files only (directory traversal is granted above).  Without

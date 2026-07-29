@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Miniflare } from 'miniflare';
 import { createFinanceHandler } from '../api/worker.js';
 
-const migrations = await Promise.all(['0001_finance_foundation.sql', '0002_finance_operational_core.sql', '0003_finance_integrity_guards.sql', '0004_finance_csv_import_workflow.sql', '0005_finance_moneywiz_adapter.sql', '0006_finance_ef_caixa_adapter.sql', '0007_finance_security_integrity.sql', '0008_finance_draft_revision.sql', '0009_finance_registration_lifecycle.sql', '0010_finance_reconciliation_workflow.sql', '0011_finance_obligations.sql', '0012_finance_obligation_recurrences.sql'].map(async (file) => (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, '')));
+const migrationFiles = (await readdir(new URL('../migrations/', import.meta.url)))
+  .filter((file) => /^\d{4}_.+\.sql$/.test(file))
+  .sort();
+const migrations = await Promise.all(
+  migrationFiles.map(async (file) =>
+    (await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8')).replace(/^--.*$/gm, ''),
+  ),
+);
 const handler = createFinanceHandler();
 const scopeNh = 'finance-scope-novo-hamburgo';
 const scopeBss = 'finance-scope-barra-shopping-sul';

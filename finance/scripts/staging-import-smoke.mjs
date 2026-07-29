@@ -129,9 +129,13 @@ try {
       method: 'POST', headers: authHeaders(`${key}:analyze`), body: JSON.stringify(analyzePayload),
     });
     const analysisBody = await json(analyzed);
-    if (!analysisBody.analysis?.rows?.length) throw new Error('import analyze did not return rows');
-    result.analyze = { status: analyzed.status, rows: Number(analysisBody.analysis.rows.length) };
+    if (analysisBody?.ok !== true || String(analysisBody.batchId || '') !== batchId) throw new Error('import analyze did not confirm the staged batch');
+    // The API writes analysed rows to the batch journal and returns its summary
+    // contract, not a duplicate row collection. Confirm the persisted result
+    // through the same read endpoint used by the UI.
     loaded = await loadBatch();
+    if (!(loaded.rows || []).some((row) => row.status === 'valid')) throw new Error(`import analyze did not persist valid rows: ${JSON.stringify(stateSummary(loaded))}`);
+    result.analyze = { status: analyzed.status, rows: Number((loaded.rows || []).length) };
     const candidate = (loaded.rows || []).find((row) => row.status === 'valid');
     if (!candidate) throw new Error(`no valid import row after staging: ${JSON.stringify(stateSummary(loaded))}`);
     const account = await createRegistration('accounts', { name: `Conta sintética ${nonce}`, type: 'bank', currency: 'BRL', openingBalanceMinor: 0 }, `${key}:account`);
