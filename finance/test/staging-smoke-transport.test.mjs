@@ -29,6 +29,11 @@ test('staging Finance API smokes use the authenticated Pages transport', async (
   assert.match(importer, /body: JSON\.stringify\(analyzePayload\)/);
   assert.match(importer, /analysisBody\?\.ok !== true/);
   assert.doesNotMatch(importer, /analysisBody\.analysis\?\.rows/);
+  assert.match(importer, /loaded\.batch\?\.undone_at/);
+  assert.match(importer, /financePath\(`\/movements\/\$\{encodeURIComponent\(movementId\)\}`\)/);
+  assert.match(importer, /movement\.operationalStatus !== 'cancelled'/);
+  assert.match(importer, /Number\(undoBody\.undone \|\| 0\) !== movementIds\.length/);
+  assert.doesNotMatch(importer, /loaded\.batch\?\.status !== 'undone'/);
   assert.match(remoteFinanceModule, /data-finance-remote-error/);
   assert.match(remoteFinanceModule, /remoteFailureKind\(cause\)/);
   assert.match(financeViteConfig, /'process\.env\.NODE_ENV': '\"production\"'/);

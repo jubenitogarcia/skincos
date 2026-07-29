@@ -70,3 +70,20 @@ test('a Finance chunk failure does not take down the shell or another module', a
   await expect(page).toHaveURL(/module=insumos/)
   await expect(page.getByRole('heading', { name: 'Insumos' })).toBeVisible({ timeout: 30_000 })
 })
+
+test('a transient Finance bootstrap failure retries without exposing Finance before authorization', async ({ page }) => {
+  await mockAuthenticatedShell(page)
+  let attempts = 0
+  await page.route('**/api/finance/bootstrap**', async (route) => {
+    attempts += 1
+    if (attempts === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'DEPENDENCY_UNAVAILABLE' }) })
+      return
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, moduleEnabled: true, canAccess: true }) })
+  })
+  await page.goto('/?module=finance')
+
+  await expect(page.getByRole('button', { name: 'Financeiro' })).toBeVisible({ timeout: 30_000 })
+  await expect.poll(() => attempts).toBeGreaterThanOrEqual(2)
+})
