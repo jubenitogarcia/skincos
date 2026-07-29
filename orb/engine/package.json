@@ -49,7 +49,7 @@
         "service:backup": "sudo -n bash scripts/backup-n8n.sh",
         "livia:qa:inspect": "node scripts/livia/qa-runner.js inspect",
         "livia:qa:audit": "node scripts/livia/qa-runner.js audit",
-        "livia:qa:test": "node --test tests/livia-qa-runner.test.js tests/livia-validate-publish-token-health.test.js tests/livia-token-vault-preflight-patch.test.js tests/livia-drive-publication-marks.test.js tests/livia-accessibility-contract.test.js && bash scripts/test-livia-qa-runner-safety.sh",
+        "livia:qa:test": "node --test tests/livia-qa-runner.test.js tests/livia-validate-publish-token-health.test.js tests/livia-token-vault-preflight-patch.test.js tests/livia-drive-publication-marks.test.js tests/livia-accessibility-contract.test.js tests/livia-production-candidate.test.js && bash scripts/test-livia-qa-runner-safety.sh",
         "livia:qa:validate": "node scripts/livia/qa-runner.js validate",
         "livia:qa:replay-process-media": "node scripts/livia/qa-runner.js replay-process-media",
         "livia:qa:replay-build-graph": "node scripts/livia/qa-runner.js replay-build-graph",
