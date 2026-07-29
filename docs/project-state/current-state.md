@@ -797,18 +797,24 @@ anteriores e migrations aditivas já aplicadas.
 ## Livia — promoção de bundle isolado 2026-07-29
 
 O workflow Livia (`WGXr4vYkv9UoJ8zc`) está ativo na versão histórica
-`a1983ff1-4b58-4753-860e-c25dda057f3f`, apontando somente para o bundle
-imutável `c525f5e1d68829fe4c93197f65d85429a2e0385c`, produzido do merge da
-PR #851. O ponteiro global não foi alterado. O manifesto ativo tem SHA-256
+`a1983ff1-4b58-4753-860e-c25dda057f3f`, com os cinco sidecars principais
+fixados no bundle imutável `c525f5e1d68829fe4c93197f65d85429a2e0385c`,
+produzido do merge da PR #851. O manifesto ativo tem SHA-256
 `a7ced345b16a3538fac5f7dc24135332ac2c2de81bf810744e51352c2989730f`.
-O schedule diário foi preservado explicitamente como `field: days` às 13:26;
-o audit-live encontrou zero referências mutáveis. Checkpoint pós-promoção:
+O schedule diário foi preservado explicitamente como `field: days` às 13:26.
+Checkpoint pós-promoção:
 `livia-postpromote-c525f5e1-20260729T085430-0300`, índice SHA-256
 `e4eabf9e76bb96c30794a231102466a685d8ce971208dee432fb4b959ac4d60d`.
 
+Uma auditoria posterior encontrou que `Verify Published Artifacts` ainda
+invoca um wrapper externo em `C:\CodexRuntime`, que ignora seu argumento
+versionado e chama `/opt/skincos/current/source`. Portanto, a versão c525 não
+é aceite de isolamento completo: a correção pendente deve reconstruir esse
+comando para chamar diretamente o verificador do bundle, recusar wrappers,
+`--verifier`, DrvFS e ponteiros mutáveis, e publicar uma nova versão histórica.
 O registro de autorização e o runbook versionado especificam a promoção
 `stage-only`, o rollback por nova versão histórica, os probes HTTP e a retenção
 dos bundles referenciados por manifestos. A evidência de publicação real
 continua histórica (execuções 336 e 339); uma publicação posterior só pode ser
-considerada prova da versão ativa se o seu `workflowVersionId` for
-`a1983ff1-4b58-4753-860e-c25dda057f3f` ou um descendente publicado.
+considerada prova da versão corrigida se registrar seu `workflowVersionId`
+publicado e o verificador direto do bundle.

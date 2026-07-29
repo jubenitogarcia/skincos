@@ -17,9 +17,23 @@ const REQUIRED_NODES = new Set([
 const RELEASE_ROOT_RE = /^\/opt\/skincos\/releases\/[0-9a-f]{7,64}\/source\/orb\/engine$/;
 const PINNED_ROOT_RE = /\/opt\/skincos\/releases\/[0-9a-f]{7,64}\/source\/orb\/engine/g;
 const SEMANTIC_JOB_KEY_RE = /^livia:v2:[a-f0-9]{64}$/;
+const MUTABLE_RUNTIME_RE = /\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b|\/mnt\/c\/|livia-verify-provider-copy-drift-wrapper|--verifier\b/;
 
 function fail(message) { throw new Error(message); }
 function arg(prefix) { return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length) || ''; }
+
+function directVerifierCommand(releaseRoot) {
+  // Keep the verifier inside the workflow-version bundle.  In particular, do
+  // not insert a compatibility wrapper: a wrapper can silently call another
+  // release or turn a provider mismatch into a successful verification.
+  return `={{ (() => {
+  const final = ($json && typeof $json === "object") ? $json : {};
+  function sh(value) {
+    return "'" + String(value).replace(/'/g, "'\\\\''") + "'";
+  }
+  return "set -a; . /etc/skincos/orb-business.env; set +a; printf %s " + sh(JSON.stringify({ final })) + " | node " + sh("${releaseRoot}/scripts/livia/verify-published-artifacts.js") + " --payload -";
+})() }}`;
+}
 
 function patchResumeIdentity(workflow) {
   const nodes = new Map((workflow.nodes || []).map((node) => [node?.name, node]));
@@ -27,6 +41,14 @@ function patchResumeIdentity(workflow) {
   const process = nodes.get('Process HTTP Publish Result');
   if (seed?.type !== 'n8n-nodes-base.code' || process?.type !== 'n8n-nodes-base.code') {
     fail('Livia semantic resume patch requires BQ - Seed Publish State and Process HTTP Publish Result Code nodes.');
+  }
+
+  const seedCode = String(seed.parameters?.jsCode || '');
+  const processCode = String(process.parameters?.jsCode || '');
+  if (seedCode.includes('resumeBySemanticKey') &&
+      seedCode.includes('completedSemanticJobKeys') &&
+      processCode.includes('semanticJobKey: str(source.semanticJobKey')) {
+    return [];
   }
 
   const seedNeedle = `const rawResumeRecords = codexDryRun ? [] : __prAsArray(payload.resumeCompleted);
@@ -79,7 +101,6 @@ for (const entry of resumeRecords) {
 }
 const completedSemanticJobKeys = new Set(resumeRecords.map((entry) => __prStr(entry.semanticJobKey)));
 const pendingJobs = qaAwareJobs.filter((job) => !completedSemanticJobKeys.has(__prStr(job.semanticJobKey)));`;
-  const seedCode = String(seed.parameters?.jsCode || '');
   if (!seedCode.includes(seedNeedle)) {
     fail('Livia semantic resume patch could not find the expected legacy publishRunIndex resume block.');
   }
@@ -87,7 +108,6 @@ const pendingJobs = qaAwareJobs.filter((job) => !completedSemanticJobKeys.has(__
 
   const processNeedle = '    publishRunIndex: source.publishRunIndex,\n    media: {';
   const processReplacement = '    publishRunIndex: source.publishRunIndex,\n    semanticJobKey: str(source.semanticJobKey, ""),\n    media: {';
-  const processCode = String(process.parameters?.jsCode || '');
   if (!processCode.includes(processNeedle)) {
     fail('Livia semantic resume patch could not preserve semanticJobKey in compactResumeRecord.');
   }
@@ -106,15 +126,19 @@ function validate(workflow, releaseRoot) {
     const hasMutableRoot = command.includes('/opt/skincos/current/source/orb/engine');
     const hasPinnedRoot = PINNED_ROOT_RE.test(command);
     PINNED_ROOT_RE.lastIndex = 0;
-    if (!hasMutableRoot && !hasPinnedRoot) fail(`${node.name} has no recognized Orb runtime root.`);
-    node.parameters.command = hasMutableRoot
-      ? command.replaceAll('/opt/skincos/current/source/orb/engine', releaseRoot)
-      : command.replace(PINNED_ROOT_RE, releaseRoot);
+    if (node.name === 'Verify Published Artifacts') {
+      node.parameters.command = directVerifierCommand(releaseRoot);
+    } else {
+      if (!hasMutableRoot && !hasPinnedRoot) fail(`${node.name} has no recognized Orb runtime root.`);
+      node.parameters.command = hasMutableRoot
+        ? command.replaceAll('/opt/skincos/current/source/orb/engine', releaseRoot)
+        : command.replace(PINNED_ROOT_RE, releaseRoot);
+    }
     touched.push(node.name);
   }
   if (touched.length !== REQUIRED_NODES.size) fail(`Expected to pin ${REQUIRED_NODES.size} Livia sidecars, changed ${touched.length}.`);
   const mutable = (workflow.nodes || []).filter((node) => node?.type === 'n8n-nodes-base.executeCommand')
-    .filter((node) => /\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/.test(String(node.parameters?.command || '')))
+    .filter((node) => MUTABLE_RUNTIME_RE.test(String(node.parameters?.command || '')))
     .map((node) => node.name);
   if (mutable.length) fail(`Mutable Execute Command reference remains: ${mutable.join(', ')}.`);
   return touched.sort();

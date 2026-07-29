@@ -52,6 +52,17 @@ necessária, use somente `scripts/runtime/promote-native-source-release.sh`;
 ele cria a janela de manutenção, aguarda execuções ativas e verifica o CWD do
 Orb. Nunca use `systemctl restart orb.service` diretamente.
 
+### Contrato do verificador
+
+`Verify Published Artifacts` deve chamar diretamente
+`/opt/skincos/releases/<release>/source/orb/engine/scripts/livia/verify-published-artifacts.js`
+via stdin. A promoção deve recusar o candidato se esse comando contiver
+`/opt/skincos/current`, `ORB_ROOT`, `N8N_ROOT`, `/mnt/c`, um wrapper externo,
+ou `--verifier`. Não introduza wrapper para aceitar `caption_mismatch`: uma
+divergência de legenda é falha causal e deve bloquear Drive, notificações e
+cleanup de sucesso até a evidência do provedor ser reconciliada no verificador
+versionado.
+
 ## Rollback de workflow
 
 O rollback é uma nova versão histórica, nunca uma edição do banco nem a
