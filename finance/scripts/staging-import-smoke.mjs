@@ -18,7 +18,7 @@ if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 60000) t
 if (process.env.FINANCE_SMOKE_ACK !== '1') throw new Error('FINANCE_SMOKE_ACK=1 is required');
 
 const baseUrl = required('FINANCE_SMOKE_BASE_URL').replace(/\/$/, '');
-if (!/^https:\/\/api-staging\.skincos\.com\.br$/i.test(baseUrl)) throw new Error('FINANCE_SMOKE_BASE_URL must be the staging gateway');
+if (baseUrl !== 'https://skincos-staging.pages.dev') throw new Error('FINANCE_SMOKE_BASE_URL must be the staging CRM shell');
 const username = required('FINANCE_SMOKE_USERNAME');
 const password = required('FINANCE_SMOKE_PASSWORD');
 const scopeId = required('FINANCE_SMOKE_SCOPE_ID');
@@ -42,25 +42,26 @@ async function request(path, init = {}) {
   try { return await fetch(`${baseUrl}${path}`, { ...init, signal: timer.signal }); }
   finally { timer.done(); }
 }
+const financePath = (path) => `/api/finance${path}`;
 const json = async (response) => {
   const body = await response.json().catch(() => null);
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${body?.error || 'unexpected response'}`);
   return body;
 };
 
-const login = await request('/insumos/auth/login', {
-  method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://crm-staging.skincos.com.br' },
+const login = await request('/api/auth/login', {
+  method: 'POST', headers: { 'content-type': 'application/json', origin: baseUrl },
   body: JSON.stringify({ username, password }),
 });
 const loginBody = await json(login);
 const setCookies = typeof login.headers.getSetCookie === 'function' ? login.headers.getSetCookie() : [login.headers.get('set-cookie') || ''];
 const cookie = setCookies.map((value) => value.split(';', 1)[0]).filter(Boolean).join('; ');
 if (!cookie || !loginBody.csrfToken) throw new Error('staging auth did not issue session and CSRF cookies');
-const authHeaders = (idempotencyKey) => ({ 'content-type': 'application/json', cookie, origin: 'https://crm-staging.skincos.com.br', 'x-csrf-token': loginBody.csrfToken, ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}) });
+const authHeaders = (idempotencyKey) => ({ 'content-type': 'application/json', cookie, origin: baseUrl, 'x-csrf-token': loginBody.csrfToken, ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}) });
 const key = `staging-import-smoke:${sourceType}:${scopeId}:${nonce}`;
 const created = [];
 const createRegistration = async (collection, value, idempotencyKey) => {
-  const response = await request(`/finance/${collection}?scopeId=${encodeURIComponent(scopeId)}`, {
+  const response = await request(`${financePath(`/${collection}`)}?scopeId=${encodeURIComponent(scopeId)}`, {
     method: 'POST', headers: authHeaders(idempotencyKey), body: JSON.stringify(value),
   });
   const createdBody = await json(response);
@@ -72,7 +73,7 @@ const createRegistration = async (collection, value, idempotencyKey) => {
 const cleanup = async () => {
   const results = [];
   for (const entity of [...created].reverse()) {
-    const response = await request(`/finance/${entity.collection}/${encodeURIComponent(entity.id)}/archive?scopeId=${encodeURIComponent(scopeId)}`, {
+    const response = await request(`${financePath(`/${entity.collection}/${encodeURIComponent(entity.id)}/archive`)}?scopeId=${encodeURIComponent(scopeId)}`, {
       method: 'POST', headers: authHeaders(`${key}:cleanup:${entity.collection}:${entity.id}`), body: JSON.stringify({ reason: 'Controlled staging smoke cleanup' }),
     });
     const archived = await json(response);
@@ -93,20 +94,20 @@ try {
   const payload = sourceType === 'ef-caixa'
     ? { filename: 'staging-ef-smoke.json', sourceType, efCaixa: JSON.parse(raw) }
     : { filename: `staging-${sourceType}-smoke.csv`, sourceType, csv: raw, encoding: 'utf-8' };
-  const staged = await request(`/finance/imports?scopeId=${encodeURIComponent(scopeId)}`, {
+  const staged = await request(`${financePath('/imports')}?scopeId=${encodeURIComponent(scopeId)}`, {
     method: 'POST', headers: authHeaders(key), body: JSON.stringify(payload),
   });
   const stagedBody = await json(staged);
   const batchId = String(stagedBody.batchId || '').trim();
   if (!batchId) throw new Error('staging did not return batchId');
-  const loadBatch = async () => json(await request(`/finance/imports/${encodeURIComponent(batchId)}?scopeId=${encodeURIComponent(scopeId)}`, { headers: authHeaders() }));
+  const loadBatch = async () => json(await request(`${financePath(`/imports/${encodeURIComponent(batchId)}`)}?scopeId=${encodeURIComponent(scopeId)}`, { headers: authHeaders() }));
   result.stage = { status: staged.status, alreadyStaged: Boolean(stagedBody.alreadyStaged), rows: Number(stagedBody.analysis?.rows?.length || 0) };
   let loaded = await loadBatch();
   result.before = stateSummary(loaded);
   if (commitRequested) {
     if (stagedBody.alreadyStaged) throw new Error('synthetic import unexpectedly reused a previous batch');
     if (loaded.batch?.status !== 'staged') throw new Error(`batch is not staged (${loaded.batch?.status || 'unknown'}); refusing commit`);
-    const analyzed = await request(`/finance/imports/${encodeURIComponent(batchId)}/analyze?scopeId=${encodeURIComponent(scopeId)}`, {
+    const analyzed = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/analyze`)}?scopeId=${encodeURIComponent(scopeId)}`, {
       method: 'POST', headers: authHeaders(`${key}:analyze`), body: JSON.stringify(payload),
     });
     const analysisBody = await json(analyzed);
@@ -118,29 +119,29 @@ try {
     const account = await createRegistration('accounts', { name: `Conta sintética ${nonce}`, type: 'bank', currency: 'BRL', openingBalanceMinor: 0 }, `${key}:account`);
     const income = await createRegistration('categories', { name: `Receita sintética ${nonce}`, direction: 'income' }, `${key}:income`);
     const expense = await createRegistration('categories', { name: `Despesa sintética ${nonce}`, direction: 'expense' }, `${key}:expense`);
-    const decision = await request(`/finance/imports/${encodeURIComponent(batchId)}/decisions?scopeId=${encodeURIComponent(scopeId)}`, {
+    const decision = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/decisions`)}?scopeId=${encodeURIComponent(scopeId)}`, {
       method: 'POST', headers: authHeaders(`${key}:decision`), body: JSON.stringify({ rowId: candidate.id, decision: 'import' }),
     });
     await json(decision);
     loaded = await loadBatch();
     const persisted = (loaded.rows || []).find((row) => row.id === candidate.id);
     if (!persisted || persisted.status !== 'valid' || persisted.decision !== 'import') throw new Error(`import decision did not persist: ${JSON.stringify(stateSummary(loaded))}`);
-    const preview = await request(`/finance/imports/${encodeURIComponent(batchId)}/preview?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:preview`), body: '{}' });
+    const preview = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/preview`)}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:preview`), body: '{}' });
     const previewBody = await json(preview);
     if (Number(previewBody.ready || 0) < 1) throw new Error('no approved rows after explicit decision');
     const commitPayload = { defaultAccountId: account.id, incomeCategoryId: income.id, expenseCategoryId: expense.id };
-    const commit = await request(`/finance/imports/${encodeURIComponent(batchId)}/commit?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:commit`), body: JSON.stringify(commitPayload) });
+    const commit = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/commit`)}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:commit`), body: JSON.stringify(commitPayload) });
     const commitBody = await json(commit);
     loaded = await loadBatch();
     const committedRows = (loaded.rows || []).filter((row) => row.status === 'committed' && row.movement_id);
     if (loaded.batch?.status !== 'committed' || !committedRows.length) throw new Error(`commit did not produce committed rows: ${JSON.stringify(stateSummary(loaded))}`);
-    const replay = await request(`/finance/imports/${encodeURIComponent(batchId)}/commit?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:commit`), body: JSON.stringify(commitPayload) });
+    const replay = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/commit`)}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:commit`), body: JSON.stringify(commitPayload) });
     const replayBody = await json(replay);
     if (!replayBody.replayed) throw new Error('repeat commit did not replay the original operation');
-    const conflict = await request(`/finance/imports/${encodeURIComponent(batchId)}/commit?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:commit`), body: JSON.stringify({ ...commitPayload, expenseCategoryId: income.id }) });
+    const conflict = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/commit`)}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:commit`), body: JSON.stringify({ ...commitPayload, expenseCategoryId: income.id }) });
     const conflictBody = await conflict.json().catch(() => null);
     if (conflict.status !== 409 || conflictBody?.error !== 'IDEMPOTENCY_CONFLICT') throw new Error(`incompatible second confirmation did not conflict: ${conflict.status}`);
-    const audit = await request(`/finance/audit?scopeId=${encodeURIComponent(scopeId)}&entityType=import_batch&entityId=${encodeURIComponent(batchId)}`, { headers: authHeaders() });
+    const audit = await request(`${financePath('/audit')}?scopeId=${encodeURIComponent(scopeId)}&entityType=import_batch&entityId=${encodeURIComponent(batchId)}`, { headers: authHeaders() });
     const auditBody = await json(audit);
     if (Number(auditBody.total || 0) < 2) throw new Error('import audit trail is incomplete');
     result.decision = { status: decision.status, persisted: true };
@@ -149,7 +150,7 @@ try {
     result.audit = { status: audit.status, events: Number(auditBody.total || 0) };
     result.afterCommit = stateSummary(loaded);
     if (undoRequested) {
-      const undo = await request(`/finance/imports/${encodeURIComponent(batchId)}/undo?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:undo`), body: JSON.stringify({ reason: 'Controlled staging smoke reversal' }) });
+      const undo = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/undo`)}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:undo`), body: JSON.stringify({ reason: 'Controlled staging smoke reversal' }) });
       const undoBody = await json(undo);
       loaded = await loadBatch();
       if (loaded.batch?.status !== 'undone') throw new Error('import undo did not reach the compensated state');
