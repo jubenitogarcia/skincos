@@ -61,7 +61,8 @@ param(
     )]
     [string]$Action,
     [string]$ProjectRoot,
-    [switch]$CrmAtendimentoDetachedStart
+    [switch]$CrmAtendimentoDetachedStart,
+    [switch]$CrmLocalDetachedStart
 )
 
 $ErrorActionPreference = "Stop"
@@ -1115,7 +1116,8 @@ function Start-CrmGestorBackgroundUpdate {
     $errLog = Join-Path $logRoot "crm-local-gestor-action.err.log"
     $arguments = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath,
-        '-Action', 'CrmLocal', '-ProjectRoot', $ProjectRoot
+        '-Action', 'CrmLocal', '-ProjectRoot', $ProjectRoot,
+        '-CrmLocalDetachedStart'
     )
     $previousReviewRef = $env:CRM_LOCAL_REVIEW_REF
     try {
@@ -1125,7 +1127,7 @@ function Start-CrmGestorBackgroundUpdate {
     } finally {
         $env:CRM_LOCAL_REVIEW_REF = $previousReviewRef
     }
-    Write-Host "[crm-consultor] Atualização do Gestor iniciada em segundo plano para $TargetCommit."
+    Write-Host "[crm-local] Inicialização persistente do Gestor iniciada em segundo plano para $TargetCommit."
 }
 
 function Ensure-CrmGestorForConsultor {
@@ -1233,6 +1235,15 @@ function Invoke-ShortcutActionInternal {
         "WebsiteSiteCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:check" }
         "WebsiteReleaseCheck" { Invoke-ShortcutWsl -Command "npm run codex:site:release-check" }
         "CrmLocal" {
+            # run-local-crm keeps the process group alive while it supervises
+            # Pages and its dependencies.  The user-facing shortcut must hand
+            # that group to a hidden PowerShell child; otherwise closing the
+            # invoking terminal tears down a healthy Gestor preview.
+            if (-not $CrmLocalDetachedStart) {
+                $targetCommit = Get-CrmLocalTargetCommit
+                Start-CrmGestorBackgroundUpdate -TargetCommit $targetCommit
+                return
+            }
             Stop-LegacyCrmRuntimeIfNeeded
             $targetCommit = Get-CrmLocalTargetCommit
             Invoke-CrmPersonaAction -Persona Gestor -TargetCommit $targetCommit
