@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Melody candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_id",
+    "notes",
+    "rhythm",
+    "range",
+    "memorability_score",
+    "preview_uri"
+  ],
+  "properties": {
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "rhythm": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "range": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "memorability_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "preview_uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "midi_uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "compatible_harmony_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "candidate_id": "MEL-1",
+      "notes": [
+        69
+      ],
+      "rhythm": [
+        1
+      ],
+      "range": [
+        60,
+        76
+      ],
+      "memorability_score": 0.8,
+      "preview_uri": "storage://m.wav",
+      "midi_uri": "storage://m.mid",
+      "compatible_harmony_ids": [
+        "HAR-1"
+      ]
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "candidate_id": "MEL-1",
+      "notes": [],
+      "rhythm": [],
+      "range": [],
+      "memorability_score": 2,
+      "preview_uri": "x"
+    }
+  ]
+}

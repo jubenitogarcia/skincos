@@ -2,6 +2,7 @@ import {
   handleMetaAdsPublishRequest,
   isMetaAdsPublishPath,
 } from './meta-ads-publish.js';
+import { handleSocialPublishOperation } from './social-publish.js';
 
 const TOKEN_PREFIX = '/internal/token-vault';
 const JSON_HEADERS = {
@@ -43,16 +44,23 @@ export async function handleRequest(request, env) {
       });
     }
 
+    if (request.method === 'POST' && pathname === '/v1/social-publish/operations') {
+      return handleSocialPublishOperation({ request, env, requestId, decryptToken, writeAudit });
+    }
+
     if (request.method === 'GET' && pathname === '/v1/tokens') {
+      if (auth.role !== 'admin') return adminOnly(requestId);
       return listTokens(url, env, requestId);
     }
 
     if (request.method === 'POST' && pathname === '/v1/tokens') {
+      if (auth.role !== 'admin') return adminOnly(requestId);
       return createToken(request, env, requestId);
     }
 
     const patchMatch = pathname.match(/^\/v1\/tokens\/([^/]+)$/);
     if (request.method === 'PATCH' && patchMatch) {
+      if (auth.role !== 'admin') return adminOnly(requestId);
       return patchToken(decodeURIComponent(patchMatch[1]), request, env, requestId);
     }
 
@@ -67,6 +75,10 @@ export async function handleRequest(request, env) {
       { status: 500 },
     );
   }
+}
+
+function adminOnly(requestId) {
+  return json({ ok: false, error: 'admin_credential_required', requestId }, { status: 403 });
 }
 
 function normalizePath(pathname) {
@@ -337,20 +349,22 @@ async function serializeToken(row, env) {
 function authorizeRequest(request, env) {
   if (safeString(env.REQUIRE_AUTH || 'true') !== 'true') return { ok: true };
 
-  const configuredToken = safeString(env.TOKEN_VAULT_API_TOKEN);
-  if (!configuredToken) return { ok: false, status: 500, reason: 'missing_worker_secret' };
+  const adminToken = safeString(env.TOKEN_VAULT_API_TOKEN);
+  const operationalToken = safeString(env.TOKEN_VAULT_N8N_API_TOKEN);
+  if (!adminToken && !operationalToken) return { ok: false, status: 500, reason: 'missing_worker_secret' };
 
   const headerName = safeString(env.WORKER_AUTH_HEADER_NAME || 'Authorization') || 'Authorization';
   const scheme = safeString(env.WORKER_AUTH_SCHEME || 'Bearer') || 'Bearer';
   const authHeader = safeString(request.headers.get(headerName));
   if (!authHeader) return { ok: false, status: 401, reason: 'missing_auth_header' };
 
-  const expected = `${scheme} ${configuredToken}`.trim();
-  if (!constantTimeEqual(authHeader, expected)) {
-    return { ok: false, status: 401, reason: 'invalid_auth_header' };
+  if (adminToken && constantTimeEqual(authHeader, `${scheme} ${adminToken}`.trim())) {
+    return { ok: true, role: 'admin' };
   }
-
-  return { ok: true };
+  if (operationalToken && constantTimeEqual(authHeader, `${scheme} ${operationalToken}`.trim())) {
+    return { ok: true, role: 'operational' };
+  }
+  return { ok: false, status: 401, reason: 'invalid_auth_header' };
 }
 
 async function encryptToken(token, env) {

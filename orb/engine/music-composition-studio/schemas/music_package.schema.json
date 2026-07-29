@@ -1,0 +1,1731 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Music package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "composition_id",
+    "production_id",
+    "status",
+    "music_constitution",
+    "compatibility_matrix",
+    "composition_dna",
+    "song_blueprint",
+    "arrangement_manifest",
+    "deliverables",
+    "qa_reports",
+    "generation_history",
+    "costs",
+    "provider_usage",
+    "warnings"
+  ],
+  "properties": {
+    "composition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "production_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1,
+      "enum": [
+        "READY",
+        "PARTIALLY_READY",
+        "FAILED"
+      ]
+    },
+    "music_constitution": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Music Constitution",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "composition_id",
+        "revision",
+        "lock_hash",
+        "purpose",
+        "duration_target_seconds",
+        "production_tier",
+        "tempo",
+        "tonality",
+        "meter",
+        "instrument_palette",
+        "reference_rules",
+        "forbidden_similarities"
+      ],
+      "properties": {
+        "composition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lock_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "use_context": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration_target_seconds": {
+          "type": "number",
+          "minimum": 1
+        },
+        "production_tier": {
+          "type": "string",
+          "minLength": 1,
+          "enum": [
+            "FAST",
+            "STANDARD",
+            "PREMIUM"
+          ]
+        },
+        "genre_family": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "mood": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "tempo": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target_bpm",
+            "allowed_range"
+          ],
+          "properties": {
+            "target_bpm": {
+              "type": "number",
+              "minimum": 1
+            },
+            "allowed_range": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          }
+        },
+        "tonality": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "preferred_keys",
+            "mode",
+            "allowed_modulations"
+          ],
+          "properties": {
+            "preferred_keys": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
+            "mode": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allowed_modulations": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "meter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "harmonic_complexity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "melodic_character": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rhythmic_character": {
+          "type": "string",
+          "minLength": 1
+        },
+        "energy_curve": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 1
+        },
+        "instrument_palette": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "vocal_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requested",
+            "consent_status",
+            "synthetic_voice_disclosed"
+          ],
+          "properties": {
+            "requested": {
+              "type": "boolean"
+            },
+            "consent_status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "synthetic_voice_disclosed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "lyrical_constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "original_only",
+            "forbidden_words"
+          ],
+          "properties": {
+            "original_only": {
+              "type": "boolean"
+            },
+            "forbidden_words": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "reference_rules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "forbidden_similarities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "structure_preferences": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "technical_targets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "master_lufs",
+            "true_peak_db",
+            "sample_rate",
+            "bit_depth"
+          ],
+          "properties": {
+            "master_lufs": {
+              "type": "number"
+            },
+            "true_peak_db": {
+              "type": "number"
+            },
+            "sample_rate": {
+              "type": "integer",
+              "minimum": 8000
+            },
+            "bit_depth": {
+              "type": "integer",
+              "minimum": 8
+            }
+          }
+        },
+        "deliverables": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "budget_limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_cost"
+          ],
+          "properties": {
+            "max_cost": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "examples": [
+        {
+          "composition_id": "CMP-1",
+          "revision": 1,
+          "lock_hash": "hash",
+          "purpose": "video",
+          "use_context": "social",
+          "duration_target_seconds": 30,
+          "production_tier": "FAST",
+          "genre_family": [
+            "ambient"
+          ],
+          "mood": [
+            "calm"
+          ],
+          "tempo": {
+            "target_bpm": 100,
+            "allowed_range": [
+              96,
+              104
+            ]
+          },
+          "tonality": {
+            "preferred_keys": [
+              "A minor"
+            ],
+            "mode": "minor",
+            "allowed_modulations": []
+          },
+          "meter": "4/4",
+          "harmonic_complexity": "simple",
+          "melodic_character": "memorable",
+          "rhythmic_character": "steady",
+          "energy_curve": [
+            0.2,
+            0.8
+          ],
+          "instrument_palette": [
+            "piano"
+          ],
+          "vocal_profile": {
+            "requested": false,
+            "consent_status": "NOT_REQUIRED",
+            "synthetic_voice_disclosed": false
+          },
+          "lyrical_constraints": {
+            "original_only": true,
+            "forbidden_words": []
+          },
+          "reference_rules": [
+            "analyze only"
+          ],
+          "forbidden_similarities": [
+            "recognizable melody"
+          ],
+          "structure_preferences": [
+            "intro",
+            "outro"
+          ],
+          "technical_targets": {
+            "master_lufs": -14,
+            "true_peak_db": -1,
+            "sample_rate": 48000,
+            "bit_depth": 24
+          },
+          "deliverables": [
+            "master_wav"
+          ],
+          "budget_limits": {
+            "max_cost": 0
+          }
+        }
+      ],
+      "x-invalid-examples": [
+        {
+          "composition_id": "CMP-1",
+          "revision": 1,
+          "lock_hash": "hash"
+        }
+      ]
+    },
+    "compatibility_matrix": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Compatibility matrix",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "composition_id",
+        "entries",
+        "method",
+        "evaluated_combinations",
+        "pruned_combinations",
+        "limits"
+      ],
+      "properties": {
+        "composition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "harmony_id",
+              "melody_id",
+              "groove_id",
+              "bass_id",
+              "palette_id",
+              "lyric_id",
+              "score",
+              "dimensions",
+              "reasons"
+            ],
+            "properties": {
+              "harmony_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "melody_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "groove_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "bass_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "palette_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "lyric_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "dimensions": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "tonality",
+                  "scale",
+                  "melodic_fit",
+                  "harmonic_rhythm",
+                  "groove",
+                  "density",
+                  "energy",
+                  "vocal_space",
+                  "timbre",
+                  "objective",
+                  "genre",
+                  "duration",
+                  "complexity",
+                  "originality"
+                ],
+                "properties": {
+                  "tonality": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "scale": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "melodic_fit": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "harmonic_rhythm": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "groove": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "density": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "energy": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "vocal_space": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "timbre": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "objective": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "genre": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "duration": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "complexity": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "originality": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              }
+            }
+          },
+          "minItems": 1
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evaluated_combinations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pruned_combinations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "top_k",
+            "beam_width",
+            "minimum_score"
+          ],
+          "properties": {
+            "top_k": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "beam_width": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minimum_score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      },
+      "examples": [
+        {
+          "composition_id": "CMP-1",
+          "entries": [
+            {
+              "harmony_id": "HAR-1",
+              "melody_id": "MEL-1",
+              "groove_id": "GRV-1",
+              "bass_id": "BAS-1",
+              "palette_id": "PAL-1",
+              "lyric_id": "LYR-NONE",
+              "score": 0.9,
+              "dimensions": {
+                "tonality": 1,
+                "scale": 1,
+                "melodic_fit": 0.9,
+                "harmonic_rhythm": 0.9,
+                "groove": 0.9,
+                "density": 0.9,
+                "energy": 0.9,
+                "vocal_space": 1,
+                "timbre": 0.9,
+                "objective": 0.9,
+                "genre": 0.9,
+                "duration": 1,
+                "complexity": 0.9,
+                "originality": 1
+              },
+              "reasons": [
+                "tonality"
+              ]
+            }
+          ],
+          "method": "beam-search",
+          "evaluated_combinations": 8,
+          "pruned_combinations": 7,
+          "limits": {
+            "top_k": 2,
+            "beam_width": 1,
+            "minimum_score": 0.6
+          }
+        }
+      ],
+      "x-invalid-examples": [
+        {
+          "composition_id": "CMP-1",
+          "entries": [],
+          "method": "beam-search",
+          "evaluated_combinations": 0,
+          "pruned_combinations": 0,
+          "limits": {
+            "top_k": 1,
+            "beam_width": 1,
+            "minimum_score": 0.6
+          }
+        }
+      ]
+    },
+    "composition_dna": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Composition DNA",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "composition_dna_id",
+        "harmony_id",
+        "melody_ids",
+        "groove_id",
+        "bass_strategy_id",
+        "palette_id",
+        "compatibility_score"
+      ],
+      "properties": {
+        "composition_dna_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "harmony_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "melody_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "groove_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bass_strategy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "palette_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lyric_concept_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "compatibility_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "examples": [
+        {
+          "composition_dna_id": "DNA-1",
+          "harmony_id": "HAR-1",
+          "melody_ids": [
+            "MEL-1"
+          ],
+          "groove_id": "GRV-1",
+          "bass_strategy_id": "BAS-1",
+          "palette_id": "PAL-1",
+          "lyric_concept_id": "LYR-1",
+          "compatibility_score": 0.9
+        }
+      ],
+      "x-invalid-examples": [
+        {
+          "composition_dna_id": "DNA-1",
+          "harmony_id": "HAR-1",
+          "melody_ids": [],
+          "groove_id": "GRV-1",
+          "bass_strategy_id": "BAS-1",
+          "palette_id": "PAL-1",
+          "compatibility_score": 2
+        }
+      ]
+    },
+    "song_blueprint": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Song blueprint",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "composition_id",
+        "composition_dna_id",
+        "sections",
+        "duration_target_seconds"
+      ],
+      "properties": {
+        "composition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "composition_dna_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Section manifest",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "section_id",
+              "type",
+              "start_bar",
+              "bars",
+              "duration_seconds",
+              "energy",
+              "dependencies"
+            ],
+            "properties": {
+              "section_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "start_bar": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "bars": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "duration_seconds": {
+                "type": "number",
+                "minimum": 0
+              },
+              "energy": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "harmony_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "melody_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "groove_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "bass_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "instrument_roles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "vocal_plan": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "enabled"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "transition_in": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "transition_out": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "examples": [
+              {
+                "section_id": "SEC-1",
+                "type": "VERSE",
+                "start_bar": 1,
+                "bars": 8,
+                "duration_seconds": 16,
+                "energy": 0.4,
+                "harmony_id": "HAR-1",
+                "melody_ids": [
+                  "MEL-1"
+                ],
+                "groove_id": "GRV-1",
+                "bass_id": "BAS-1",
+                "instrument_roles": [
+                  "piano"
+                ],
+                "vocal_plan": {
+                  "enabled": false
+                },
+                "transition_in": {
+                  "type": "fade-in"
+                },
+                "transition_out": {
+                  "type": "continuity"
+                },
+                "dependencies": []
+              }
+            ],
+            "x-invalid-examples": [
+              {
+                "section_id": "SEC-1",
+                "type": "VERSE",
+                "start_bar": 0,
+                "bars": 0,
+                "duration_seconds": 0,
+                "energy": 2,
+                "dependencies": []
+              }
+            ]
+          },
+          "minItems": 1
+        },
+        "duration_target_seconds": {
+          "type": "number",
+          "minimum": 1
+        },
+        "energy_curve": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 1
+        }
+      },
+      "examples": [
+        {
+          "composition_id": "CMP-1",
+          "composition_dna_id": "DNA-1",
+          "sections": [
+            {
+              "section_id": "SEC-1",
+              "type": "VERSE",
+              "start_bar": 1,
+              "bars": 8,
+              "duration_seconds": 16,
+              "energy": 0.4,
+              "harmony_id": "HAR-1",
+              "melody_ids": [
+                "MEL-1"
+              ],
+              "groove_id": "GRV-1",
+              "bass_id": "BAS-1",
+              "instrument_roles": [
+                "piano"
+              ],
+              "vocal_plan": {
+                "enabled": false
+              },
+              "transition_in": {
+                "type": "fade-in"
+              },
+              "transition_out": {
+                "type": "continuity"
+              },
+              "dependencies": []
+            }
+          ],
+          "duration_target_seconds": 30,
+          "energy_curve": [
+            0.2,
+            0.8
+          ]
+        }
+      ],
+      "x-invalid-examples": [
+        {
+          "composition_id": "CMP-1",
+          "composition_dna_id": "DNA-1",
+          "sections": [],
+          "duration_target_seconds": 0
+        }
+      ]
+    },
+    "arrangement_manifest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Arrangement manifest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "arrangement_id",
+        "composition_id",
+        "type",
+        "lock_hash",
+        "stem_uris"
+      ],
+      "properties": {
+        "arrangement_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "composition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lock_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stem_uris": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "rough_mix_uri": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "examples": [
+        {
+          "arrangement_id": "ARR-1",
+          "composition_id": "CMP-1",
+          "type": "RADIO",
+          "lock_hash": "hash",
+          "stem_uris": [
+            "storage://stem.wav"
+          ],
+          "rough_mix_uri": "storage://rough.wav"
+        }
+      ],
+      "x-invalid-examples": [
+        {
+          "arrangement_id": "ARR-1",
+          "composition_id": "CMP-1",
+          "type": "RADIO",
+          "lock_hash": "hash",
+          "stem_uris": []
+        }
+      ]
+    },
+    "deliverables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "master_wav",
+        "master_mp3",
+        "pre_master",
+        "instrumental",
+        "acapella",
+        "clean_version",
+        "performance_version",
+        "short_version_60s",
+        "short_version_30s",
+        "short_version_15s",
+        "loop_version",
+        "stems",
+        "midi_files",
+        "lyrics",
+        "chord_sheet",
+        "metadata"
+      ],
+      "properties": {
+        "master_wav": {
+          "type": "string",
+          "minLength": 1
+        },
+        "master_mp3": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pre_master": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instrumental": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acapella": {
+          "type": "string"
+        },
+        "clean_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "performance_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "short_version_60s": {
+          "type": "string",
+          "minLength": 1
+        },
+        "short_version_30s": {
+          "type": "string",
+          "minLength": 1
+        },
+        "short_version_15s": {
+          "type": "string",
+          "minLength": 1
+        },
+        "loop_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stems": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "midi_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "lyrics": {
+          "type": "string"
+        },
+        "chord_sheet": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "master",
+            "binary_in_control_plane",
+            "dry_run_audio_format"
+          ],
+          "properties": {
+            "master": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "duration_seconds",
+                "loudness_lufs",
+                "true_peak_db",
+                "sample_rate",
+                "bit_depth",
+                "channels",
+                "clipping",
+                "phase_warning",
+                "silence_warning",
+                "integrity",
+                "byte_length"
+              ],
+              "properties": {
+                "duration_seconds": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "loudness_lufs": {
+                  "type": "number"
+                },
+                "true_peak_db": {
+                  "type": "number"
+                },
+                "sample_rate": {
+                  "type": "integer",
+                  "minimum": 8000
+                },
+                "bit_depth": {
+                  "type": "integer",
+                  "minimum": 8
+                },
+                "channels": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "clipping": {
+                  "type": "boolean"
+                },
+                "phase_warning": {
+                  "type": "boolean"
+                },
+                "silence_warning": {
+                  "type": "boolean"
+                },
+                "integrity": {
+                  "type": "string",
+                  "minLength": 1,
+                  "enum": [
+                    "VALID",
+                    "INVALID"
+                  ]
+                },
+                "byte_length": {
+                  "type": "integer",
+                  "minimum": 44
+                }
+              }
+            },
+            "binary_in_control_plane": {
+              "type": "boolean"
+            },
+            "dry_run_audio_format": {
+              "type": "string",
+              "minLength": 1
+            },
+            "annotations": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": {}
+            }
+          }
+        }
+      }
+    },
+    "qa_reports": {
+      "type": "array",
+      "items": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Music QA report",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id",
+          "scores",
+          "blocking_issues",
+          "revision_targets",
+          "decision"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scores": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "harmonic_coherence",
+              "melodic_memorability",
+              "rhythmic_quality",
+              "arrangement",
+              "emotional_fit",
+              "vocal_quality",
+              "technical_quality",
+              "originality"
+            ],
+            "properties": {
+              "harmonic_coherence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "melodic_memorability": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "rhythmic_quality": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "arrangement": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "emotional_fit": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "vocal_quality": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "technical_quality": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "originality": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "blocking_issues": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "revision_targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "decision": {
+            "type": "string",
+            "minLength": 1,
+            "enum": [
+              "APPROVE",
+              "REVISE_TARGETED",
+              "REGENERATE_COMPONENT",
+              "REBUILD_SECTION",
+              "REARRANGE",
+              "REMIX",
+              "REMASTER",
+              "REJECT"
+            ]
+          }
+        },
+        "examples": [
+          {
+            "candidate_id": "DNA-1",
+            "scores": {
+              "harmonic_coherence": 0.9,
+              "melodic_memorability": 0.8,
+              "rhythmic_quality": 0.8,
+              "arrangement": 0.8,
+              "emotional_fit": 0.8,
+              "vocal_quality": 1,
+              "technical_quality": 0.9,
+              "originality": 0.9
+            },
+            "blocking_issues": [],
+            "revision_targets": [],
+            "decision": "APPROVE"
+          }
+        ],
+        "x-invalid-examples": [
+          {
+            "candidate_id": "DNA-1",
+            "scores": {},
+            "blocking_issues": [],
+            "revision_targets": [],
+            "decision": "APPROVE"
+          }
+        ]
+      },
+      "minItems": 1
+    },
+    "generation_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "model",
+          "request_id",
+          "dry_run",
+          "reused",
+          "attempts"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "reused": {
+            "type": "boolean"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "minItems": 1
+    },
+    "costs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "currency",
+        "events"
+      ],
+      "properties": {
+        "total": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "production_id",
+              "provider",
+              "amount",
+              "currency",
+              "job_key",
+              "event_id",
+              "created_at"
+            ],
+            "properties": {
+              "production_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "amount": {
+                "type": "number",
+                "minimum": 0
+              },
+              "currency": {
+                "type": "string",
+                "minLength": 1
+              },
+              "job_key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "event_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "created_at": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "provider_usage": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "properties": {}
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "examples": [
+    {
+      "composition_id": "CMP-1",
+      "production_id": "MSC-1",
+      "status": "READY",
+      "music_constitution": {
+        "composition_id": "CMP-1",
+        "revision": 1,
+        "lock_hash": "hash",
+        "purpose": "video",
+        "use_context": "social",
+        "duration_target_seconds": 30,
+        "production_tier": "FAST",
+        "genre_family": [
+          "ambient"
+        ],
+        "mood": [
+          "calm"
+        ],
+        "tempo": {
+          "target_bpm": 100,
+          "allowed_range": [
+            96,
+            104
+          ]
+        },
+        "tonality": {
+          "preferred_keys": [
+            "A minor"
+          ],
+          "mode": "minor",
+          "allowed_modulations": []
+        },
+        "meter": "4/4",
+        "harmonic_complexity": "simple",
+        "melodic_character": "memorable",
+        "rhythmic_character": "steady",
+        "energy_curve": [
+          0.2,
+          0.8
+        ],
+        "instrument_palette": [
+          "piano"
+        ],
+        "vocal_profile": {
+          "requested": false,
+          "consent_status": "NOT_REQUIRED",
+          "synthetic_voice_disclosed": false
+        },
+        "lyrical_constraints": {
+          "original_only": true,
+          "forbidden_words": []
+        },
+        "reference_rules": [
+          "analyze only"
+        ],
+        "forbidden_similarities": [
+          "recognizable melody"
+        ],
+        "structure_preferences": [
+          "intro",
+          "outro"
+        ],
+        "technical_targets": {
+          "master_lufs": -14,
+          "true_peak_db": -1,
+          "sample_rate": 48000,
+          "bit_depth": 24
+        },
+        "deliverables": [
+          "master_wav"
+        ],
+        "budget_limits": {
+          "max_cost": 0
+        }
+      },
+      "compatibility_matrix": {
+        "composition_id": "CMP-1",
+        "entries": [
+          {
+            "harmony_id": "HAR-1",
+            "melody_id": "MEL-1",
+            "groove_id": "GRV-1",
+            "bass_id": "BAS-1",
+            "palette_id": "PAL-1",
+            "lyric_id": "LYR-NONE",
+            "score": 0.9,
+            "dimensions": {
+              "tonality": 1,
+              "scale": 1,
+              "melodic_fit": 0.9,
+              "harmonic_rhythm": 0.9,
+              "groove": 0.9,
+              "density": 0.9,
+              "energy": 0.9,
+              "vocal_space": 1,
+              "timbre": 0.9,
+              "objective": 0.9,
+              "genre": 0.9,
+              "duration": 1,
+              "complexity": 0.9,
+              "originality": 1
+            },
+            "reasons": [
+              "tonality"
+            ]
+          }
+        ],
+        "method": "beam-search",
+        "evaluated_combinations": 8,
+        "pruned_combinations": 7,
+        "limits": {
+          "top_k": 2,
+          "beam_width": 1,
+          "minimum_score": 0.6
+        }
+      },
+      "composition_dna": {
+        "composition_dna_id": "DNA-1",
+        "harmony_id": "HAR-1",
+        "melody_ids": [
+          "MEL-1"
+        ],
+        "groove_id": "GRV-1",
+        "bass_strategy_id": "BAS-1",
+        "palette_id": "PAL-1",
+        "lyric_concept_id": "LYR-1",
+        "compatibility_score": 0.9
+      },
+      "song_blueprint": {
+        "composition_id": "CMP-1",
+        "composition_dna_id": "DNA-1",
+        "sections": [
+          {
+            "section_id": "SEC-1",
+            "type": "VERSE",
+            "start_bar": 1,
+            "bars": 8,
+            "duration_seconds": 16,
+            "energy": 0.4,
+            "harmony_id": "HAR-1",
+            "melody_ids": [
+              "MEL-1"
+            ],
+            "groove_id": "GRV-1",
+            "bass_id": "BAS-1",
+            "instrument_roles": [
+              "piano"
+            ],
+            "vocal_plan": {
+              "enabled": false
+            },
+            "transition_in": {
+              "type": "fade-in"
+            },
+            "transition_out": {
+              "type": "continuity"
+            },
+            "dependencies": []
+          }
+        ],
+        "duration_target_seconds": 30,
+        "energy_curve": [
+          0.2,
+          0.8
+        ]
+      },
+      "arrangement_manifest": {
+        "arrangement_id": "ARR-1",
+        "composition_id": "CMP-1",
+        "type": "RADIO",
+        "lock_hash": "hash",
+        "stem_uris": [
+          "storage://stem.wav"
+        ],
+        "rough_mix_uri": "storage://rough.wav"
+      },
+      "deliverables": {
+        "master_wav": "storage://m.wav",
+        "master_mp3": "storage://m.mp3",
+        "pre_master": "storage://p.wav",
+        "instrumental": "storage://i.wav",
+        "acapella": "",
+        "clean_version": "storage://c.wav",
+        "performance_version": "storage://v.wav",
+        "short_version_60s": "storage://60.wav",
+        "short_version_30s": "storage://30.wav",
+        "short_version_15s": "storage://15.wav",
+        "loop_version": "storage://loop.wav",
+        "stems": [
+          "storage://stem.wav"
+        ],
+        "midi_files": [
+          "storage://m.mid"
+        ],
+        "lyrics": "",
+        "chord_sheet": "storage://sheet.txt",
+        "metadata": {
+          "master": {
+            "duration_seconds": 30,
+            "loudness_lufs": -14,
+            "true_peak_db": -18,
+            "sample_rate": 8000,
+            "bit_depth": 16,
+            "channels": 1,
+            "clipping": false,
+            "phase_warning": false,
+            "silence_warning": false,
+            "integrity": "VALID",
+            "byte_length": 480044
+          },
+          "binary_in_control_plane": false,
+          "dry_run_audio_format": "audio/wav-fixture"
+        }
+      },
+      "qa_reports": [
+        {
+          "candidate_id": "DNA-1",
+          "scores": {
+            "harmonic_coherence": 0.9,
+            "melodic_memorability": 0.8,
+            "rhythmic_quality": 0.8,
+            "arrangement": 0.8,
+            "emotional_fit": 0.8,
+            "vocal_quality": 1,
+            "technical_quality": 0.9,
+            "originality": 0.9
+          },
+          "blocking_issues": [],
+          "revision_targets": [],
+          "decision": "APPROVE"
+        }
+      ],
+      "generation_history": [
+        {
+          "provider": "mock",
+          "model": "fixture",
+          "request_id": "REQ-1",
+          "dry_run": true,
+          "reused": false,
+          "attempts": 1
+        }
+      ],
+      "costs": {
+        "total": 0,
+        "currency": "USD",
+        "events": []
+      },
+      "provider_usage": {
+        "mock": 1
+      },
+      "warnings": []
+    }
+  ],
+  "x-invalid-examples": [
+    {
+      "composition_id": "CMP-1",
+      "production_id": "MSC-1",
+      "status": "READY",
+      "deliverables": {},
+      "qa_reports": [],
+      "generation_history": [],
+      "costs": {}
+    }
+  ]
+}
