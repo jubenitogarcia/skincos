@@ -7,6 +7,9 @@ const reportFile = process.argv.includes('--report') ? process.argv[process.argv
 if (!reportFile) throw new Error('--report is required');
 const report = { ok: false, generatedAt: new Date().toISOString(), samples: [], errors: 0, authenticationFailures: 0, journeyFailures: 0, dataDivergences: 0, auditFailures: 0, dependencyFailures: 0 };
 const required = (name) => { const item = String(process.env[name] || '').trim(); if (!item) throw new Error(`${name} is required`); return item; };
+// Credentials are opaque values: trimming would silently change a valid
+// password while the browser uses it verbatim.
+const requiredSecret = (name) => { const item = String(process.env[name] ?? ''); if (!item) throw new Error(`${name} is required`); return item; };
 const finish = async (ok, cause) => {
   report.ok = ok;
   if (cause) report.failure = String(cause.message || cause).replace(/[\r\n]/g, ' ').slice(0, 180);
@@ -19,7 +22,7 @@ try {
   if (baseUrl !== 'https://skincos-staging.pages.dev') throw new Error('canary base URL must be the staging CRM shell');
   const username = required('FINANCE_CANARY_USERNAME');
   if (username !== 'finance-staging-smoke') throw new Error('only dedicated synthetic smoke actor may run canary');
-  const password = required('FINANCE_CANARY_PASSWORD');
+  const password = requiredSecret('FINANCE_CANARY_PASSWORD');
   const scopeId = required('FINANCE_CANARY_SCOPE_ID');
   if (scopeId !== 'finance-scope-novo-hamburgo') throw new Error('only synthetic Novo Hamburgo scope is allowed');
   const financePath = (path) => `/api/finance${path}`;
