@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "owner": "platform/observability",
   "primaryMonitor": {
     "type": "windows-scheduled-probe",
@@ -9,7 +9,14 @@
     "retentionDays": 30,
     "healthMaxAgeSeconds": 180,
     "dashboard": "loopback Windows dashboard with /health and /metrics",
-    "notification": "Windows desktop message plus Windows Application event log; optional HTTPS webhook is a secondary route"
+    "notification": "Confirmed Windows desktop alerts plus Windows Application event log; optional HTTPS webhook is a secondary route",
+    "notificationPolicy": {
+      "alertAfterConsecutiveFailures": 2,
+      "recoverAfterConsecutiveHealthyRuns": 2,
+      "desktopAlertCooldownSeconds": 900,
+      "desktopMessageTimeoutSeconds": 30,
+      "desktopNotifyRecovery": false
+    }
   },
   "contract": {
     "health": "liveness only; performs no write",

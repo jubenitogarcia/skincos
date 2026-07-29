@@ -16,9 +16,85 @@ const REQUIRED_NODES = new Set([
 ]);
 const RELEASE_ROOT_RE = /^\/opt\/skincos\/releases\/[0-9a-f]{7,64}\/source\/orb\/engine$/;
 const PINNED_ROOT_RE = /\/opt\/skincos\/releases\/[0-9a-f]{7,64}\/source\/orb\/engine/g;
+const SEMANTIC_JOB_KEY_RE = /^livia:v2:[a-f0-9]{64}$/;
 
 function fail(message) { throw new Error(message); }
 function arg(prefix) { return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length) || ''; }
+
+function patchResumeIdentity(workflow) {
+  const nodes = new Map((workflow.nodes || []).map((node) => [node?.name, node]));
+  const seed = nodes.get('BQ - Seed Publish State');
+  const process = nodes.get('Process HTTP Publish Result');
+  if (seed?.type !== 'n8n-nodes-base.code' || process?.type !== 'n8n-nodes-base.code') {
+    fail('Livia semantic resume patch requires BQ - Seed Publish State and Process HTTP Publish Result Code nodes.');
+  }
+
+  const seedNeedle = `const rawResumeRecords = codexDryRun ? [] : __prAsArray(payload.resumeCompleted);
+const resumeRecords = rawResumeRecords
+  .map((entry) => __prAsObject(entry))
+  .filter((entry) => Number.isInteger(Number(entry.publishRunIndex)) && Object.keys(__prAsObject(entry.lastResponseBody)).length);
+const resumeByRun = {};
+for (const entry of resumeRecords) {
+  resumeByRun[__prStr(entry.publishRunIndex)] = {
+    statusCode: entry.lastStatusCode || 200,
+    body: __prAsObject(entry.lastResponseBody),
+  };
+}
+const completedRunIndexes = new Set(resumeRecords.map((entry) => __prStr(entry.publishRunIndex)));
+const pendingJobs = qaAwareJobs.filter((job) => !completedRunIndexes.has(__prStr(job.publishRunIndex)));`;
+  const seedReplacement = `const rawResumeRecords = codexDryRun ? [] : __prAsArray(payload.resumeCompleted);
+const jobsBySemanticKey = new Map();
+for (const job of qaAwareJobs) {
+  const semanticJobKey = __prStr(job.semanticJobKey, "");
+  if (!/^livia:v2:[a-f0-9]{64}$/.test(semanticJobKey)) {
+    throw new Error("BQ - Seed Publish State: job sem semanticJobKey válido; bloqueando antes do gateway.");
+  }
+  if (jobsBySemanticKey.has(semanticJobKey)) {
+    throw new Error("BQ - Seed Publish State: semanticJobKey duplicado; bloqueando antes do gateway.");
+  }
+  jobsBySemanticKey.set(semanticJobKey, job);
+}
+const resumeBySemanticKey = new Map();
+for (const rawEntry of rawResumeRecords.map((entry) => __prAsObject(entry))) {
+  const semanticJobKey = __prStr(rawEntry.semanticJobKey, "");
+  if (!/^livia:v2:[a-f0-9]{64}$/.test(semanticJobKey)) continue;
+  if (!jobsBySemanticKey.has(semanticJobKey)) continue;
+  if (!Object.keys(__prAsObject(rawEntry.lastResponseBody)).length) continue;
+  resumeBySemanticKey.set(semanticJobKey, rawEntry);
+}
+const resumeRecords = qaAwareJobs
+  .map((job) => {
+    const record = resumeBySemanticKey.get(__prStr(job.semanticJobKey));
+    return record ? __prRemoveNulls({ ...record, publishRunIndex: job.publishRunIndex, semanticJobKey: job.semanticJobKey }) : null;
+  })
+  .filter(Boolean);
+const resumeByRun = {};
+for (const entry of resumeRecords) {
+  // This map serves only intra-execution dependency references. The durable
+  // lookup above is exclusively semanticJobKey based.
+  resumeByRun[__prStr(entry.publishRunIndex)] = {
+    statusCode: entry.lastStatusCode || 200,
+    body: __prAsObject(entry.lastResponseBody),
+  };
+}
+const completedSemanticJobKeys = new Set(resumeRecords.map((entry) => __prStr(entry.semanticJobKey)));
+const pendingJobs = qaAwareJobs.filter((job) => !completedSemanticJobKeys.has(__prStr(job.semanticJobKey)));`;
+  const seedCode = String(seed.parameters?.jsCode || '');
+  if (!seedCode.includes(seedNeedle)) {
+    fail('Livia semantic resume patch could not find the expected legacy publishRunIndex resume block.');
+  }
+  seed.parameters.jsCode = seedCode.replace(seedNeedle, seedReplacement);
+
+  const processNeedle = '    publishRunIndex: source.publishRunIndex,\n    media: {';
+  const processReplacement = '    publishRunIndex: source.publishRunIndex,\n    semanticJobKey: str(source.semanticJobKey, ""),\n    media: {';
+  const processCode = String(process.parameters?.jsCode || '');
+  if (!processCode.includes(processNeedle)) {
+    fail('Livia semantic resume patch could not preserve semanticJobKey in compactResumeRecord.');
+  }
+  process.parameters.jsCode = processCode.replace(processNeedle, processReplacement);
+  return ['BQ - Seed Publish State', 'Process HTTP Publish Result'];
+}
+
 function validate(workflow, releaseRoot) {
   if (workflow?.id !== WORKFLOW_ID || workflow?.active !== true) fail('Expected the active Livia workflow.');
   if (!RELEASE_ROOT_RE.test(releaseRoot)) fail(`Invalid immutable Orb release root: ${releaseRoot}.`);
@@ -51,9 +127,10 @@ function main() {
     fail('Usage: patch-livia-runtime-isolation.js <live-export.json> <candidate.json> --release-root=/opt/skincos/releases/<sha>/source/orb/engine');
   }
   const workflow = JSON.parse(fs.readFileSync(path.resolve(input), 'utf8'));
+  const semanticResumeNodes = patchResumeIdentity(workflow);
   const touched = validate(workflow, releaseRoot);
   fs.writeFileSync(path.resolve(output), `${JSON.stringify(workflow, null, 2)}\n`, { mode: 0o640 });
-  process.stdout.write(JSON.stringify({ ok: true, workflowId: WORKFLOW_ID, releaseRoot, nodes: touched }) + '\n');
+  process.stdout.write(JSON.stringify({ ok: true, workflowId: WORKFLOW_ID, releaseRoot, nodes: touched, semanticResumeNodes }) + '\n');
 }
 
 main();

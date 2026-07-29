@@ -528,8 +528,11 @@ function validateWorkflow() {
       errors.push(`BQ - Seed Publish State must protect manual execution (${required}).`);
     }
   }
-  for (const required of ['resumeRecords', 'resumeByRun', 'completedRunIndexes']) {
+  for (const required of ['resumeRecords', 'resumeBySemanticKey', 'completedSemanticJobKeys']) {
     if (!bqSeedCode.includes(required)) errors.push(`BQ - Seed Publish State must restore durable publish progress (${required}).`);
+  }
+  if (bqSeedCode.includes('completedRunIndexes')) {
+    errors.push('BQ - Seed Publish State must not use publishRunIndex as a durable resume identity.');
   }
   if (!String(nodeByName.get('BQ - Validate Job Graph')?.parameters?.jsCode || '').includes('resumeCompleted: asArray(payload.resumeCompleted)')) {
     errors.push('BQ - Validate Job Graph must preserve durable completed jobs for BQ - Seed Publish State.');
@@ -551,7 +554,7 @@ function validateWorkflow() {
   const progressScript = fs.existsSync(PUBLISH_PROGRESS_LEDGER_SCRIPT)
     ? fs.readFileSync(PUBLISH_PROGRESS_LEDGER_SCRIPT, 'utf8')
     : '';
-  for (const required of ['livia-publish-ledger', 'codexDryRun === true', 'publishRunIndex', "'__group__'"]) {
+  for (const required of ['livia-publish-ledger', 'codexDryRun === true', 'semanticJobKey', "'__group__'"]) {
     if (!progressScript.includes(required)) errors.push(`publish-progress-ledger.js must preserve safe resume semantics (${required}).`);
   }
   for (const name of ['Verify Published Artifacts', 'Attach Verified Publish Artifacts', 'Switch Final Dry Run', 'Merge Drive Result and Context', 'Assert Drive Published', 'Cleanup Temp Files']) {

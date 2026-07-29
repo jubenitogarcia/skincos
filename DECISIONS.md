@@ -423,3 +423,18 @@
 - Decision: own Controle de Ponto in `workforce/timekeeping`, expose it only through the public `api` gateway and use its D1 as the sole operational persistence.
 - Why: the CRM-local JSON backend could not provide durable concurrency, canonical employee identity, period snapshots or enforceable cross-unit authorization.
 - Impact: CRM is a same-origin client/proxy; legacy JSON is import-only, corrections preserve original events, Escala links require explicit aliases, and staging must pass before the guarded production workflow can run.
+
+## 2026-07-29 - Make the Meta Ads publish contract singular and manual
+
+- Decision: treat the tracked Meta Ads workflow export, all mapped Code-node
+  sources, the Token Vault gateway, contract revision, migration, preflight and
+  regression tests as one atomic contract. Production changes use a
+  version-checked workflow apply and a separately versioned Worker deployment.
+- Why: direct editor changes and independent worktrees had allowed the live
+  workflow, gateway and repository to drift, causing a previously successful
+  path to regress on a later manual run.
+- Impact: `Meta Ads – Publish` remains inactive and manual; `WHATSAPP_MESSAGE`
+  is paired only with the WhatsApp handoff URL, while unit appointment URLs are
+  retained as references. A run is not considered closed merely because n8n is
+  green: Drive, journal, locks, readback and notification delivery each need
+  explicit evidence.

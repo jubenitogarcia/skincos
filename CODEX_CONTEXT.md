@@ -40,9 +40,22 @@
 
 ## Preserved independent work
 
-- `codex/admin/meta-ads-publish-production-audit` contains uncommitted product
-  work for the Meta Ads publish journal. It is intentionally isolated from the
-  completed architecture/runtime program and must be reviewed in its own task.
+- The canonical `Meta Ads – Publish` contract was integrated by PR #840
+  (`11417df9e362f82337882a4b57e87c98b1a21547`). Its tracked workflow export,
+  Code-node sources, Token Vault gateway, migration, preflight and tests are
+  the source of truth. The older `meta-ads-*` worktrees remain operator-owned
+  historical worktrees and are not cleanup targets for unrelated tasks.
+- The production workflow is intentionally inactive/manual. Its current live
+  version is `825` (`4ec178e3-bc9d-4ed6-b481-eb9015777b2e`); the Token Vault
+  production deployment is `beba53d9-67f3-495b-a002-5dc579463c29`. A final
+  historical journal reconciliation and WhatsApp-notification delivery check
+  remain tracked in `TASKS.md`; do not treat execution success alone as their
+  proof.
+- The native Orb source release currently resolves to
+  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, which predates PR #840. The
+  n8n definition and Worker are reconciled, but the runtime source release is
+  not yet `main`; promote it only through the native release gate with an
+  explicit production authorization and a rollback checkpoint.
 - PR #674 (`codex/admin/github-codex-autonomy`) remains a deliberate draft for
   the optional GitHub autonomy broker; it is not part of the production
   runtime and has no deployment dependency.
