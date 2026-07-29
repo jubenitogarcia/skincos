@@ -328,7 +328,7 @@ export default function AppFunctionalNeatlab() {
 	    React.useEffect(() => {
 	        if (!Array.isArray(user?.allowedModules) || !user.allowedModules.map(String).includes('finance')) { setFinanceEnabled(false); return }
 	        let cancelled = false
-	        let retryTimer: ReturnType<typeof window.setTimeout> | undefined
+	        let retryTimer: number | undefined
 	        const bootstrap = async (attempt: number): Promise<void> => {
 	            try {
 	                const response = await fetch(`${String(import.meta.env.VITE_FINANCE_API_ORIGIN || '/api').replace(/\/$/, '')}/finance/bootstrap`, { credentials: 'include' })
