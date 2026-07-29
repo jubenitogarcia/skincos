@@ -311,6 +311,125 @@ function contractPayload(name, kinds) {
   };
 }
 
+function requestBodies(job) {
+  return [
+    asObject(job?.jsonRequest),
+    asObject(job?.requestBody),
+    asObject(asObject(job?.httpRequest).body),
+    asObject(asObject(job?.httpRequest).json),
+  ].filter((body) => Object.keys(body).length);
+}
+
+function altTextValue(body) {
+  for (const key of ['alt_text', 'altText', 'alt_text_custom']) {
+    const value = body?.[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return '';
+}
+
+// Only upload jobs that carry a concrete media URL are media accessibility
+// obligations.  Carousel/container publish jobs intentionally have no alt text
+// of their own; their ordered children carry the evidence.
+function mediaUploadDescriptor(job) {
+  if (String(job?.phase || '').trim().toLowerCase() !== 'upload') return null;
+  const platform = String(job?.platform || '').trim().toLowerCase();
+  const step = String(job?.step || '').trim().toLowerCase();
+  for (const body of requestBodies(job)) {
+    const mediaType = String(body.media_type || body.mediaType || '').trim().toUpperCase();
+    if (body.video_url || body.file_url) return { platform, mediaKind: 'video', body };
+    if (body.image_url || (platform === 'facebook' && body.url)) return { platform, mediaKind: 'image', body };
+    if (mediaType === 'CAROUSEL') continue;
+  }
+  // Facebook Reels begin with a session-start job and upload the binary to its
+  // returned URL.  That session-start job is the single semantic media record
+  // for an otherwise body-less, explicitly unsupported accessibility contract.
+  if (platform === 'facebook' && step === 'reels_start') {
+    return { platform, mediaKind: 'video', body: null, virtual: true };
+  }
+  return null;
+}
+
+function accessibilitySupport(platform, mediaKind) {
+  if (platform === 'facebook') return 'unsupported';
+  if (platform === 'instagram' && mediaKind === 'video') return 'unsupported';
+  if ((platform === 'instagram' || platform === 'threads') && (mediaKind === 'image' || mediaKind === 'video')) return 'required';
+  return 'unsupported';
+}
+
+function assertComposeAccessibility(jobs, scenario, kinds) {
+  for (const platform of ['instagram', 'facebook', 'threads']) {
+    const descriptors = jobs
+      .filter((job) => String(job?.platform || '').trim().toLowerCase() === platform)
+      .map((job) => ({ job, descriptor: mediaUploadDescriptor(job) }))
+      .filter((entry) => entry.descriptor);
+    if (descriptors.length < kinds.length * 2) {
+      fail(`${NODE_NAME}: ${scenario} fixture did not create every ${platform} media upload (expected at least ${kinds.length * 2}, got ${descriptors.length}).`);
+    }
+    for (const { descriptor } of descriptors) {
+      const support = accessibilitySupport(platform, descriptor.mediaKind);
+      const submitted = altTextValue(descriptor.body || {});
+      if (support === 'required' && !submitted) {
+        fail(`${NODE_NAME}: ${scenario} fixture lost required alt_text for ${platform}/${descriptor.mediaKind} before the gateway.`);
+      }
+      if (support === 'unsupported' && submitted) {
+        fail(`${NODE_NAME}: ${scenario} fixture sent alt_text to unsupported ${platform}/${descriptor.mediaKind}.`);
+      }
+    }
+  }
+}
+
+// A Page Reel is a single-video surface.  For a carousel, the only accepted
+// Facebook representation is one feed publication with one unpublished upload
+// for every ordered source asset.  This assertion deliberately rejects both
+// historic failure modes: using just the first video and silently dropping a
+// video after an image.
+function assertFacebookCarouselRepresentation(jobs, scenario, kinds) {
+  for (const unit of ['bss', 'nh']) {
+    const rows = jobs.filter((job) =>
+      String(job?.platform || '').trim().toLowerCase() === 'facebook' &&
+      normalizeUnit(job?.unit) === unit,
+    );
+    const publish = rows.find((job) => String(job?.phase || '').trim().toLowerCase() === 'publish');
+    if (!publish) fail(`${NODE_NAME}: ${scenario} fixture omitted Facebook publish for ${unit}.`);
+
+    if (kinds.length === 1 && kinds[0] === 'video') {
+      const starts = rows.filter((job) => String(job?.step || '').trim().toLowerCase() === 'reels_start');
+      if (starts.length !== 1 || String(publish.facebookPublishMode || '').toLowerCase() !== 'reels') {
+        fail(`${NODE_NAME}: ${scenario} fixture must use exactly one Facebook Reel chain for ${unit}.`);
+      }
+      continue;
+    }
+
+    const uploads = rows.filter((job) =>
+      String(job?.phase || '').trim().toLowerCase() === 'upload' &&
+      String(job?.step || '').trim().toLowerCase() === 'default_upload',
+    );
+    if (rows.some((job) => String(job?.step || '').trim().toLowerCase().startsWith('reels_'))) {
+      fail(`${NODE_NAME}: ${scenario} fixture must not replace a Facebook carousel with a Reel for ${unit}.`);
+    }
+    if (uploads.length !== kinds.length) {
+      fail(`${NODE_NAME}: ${scenario} fixture did not retain every Facebook carousel child for ${unit} (expected ${kinds.length}, got ${uploads.length}).`);
+    }
+    const actualKinds = uploads.map((job) => String(job?.media?.sourceMediaKind || '').trim().toLowerCase());
+    if (actualKinds.join('|') !== kinds.join('|')) {
+      fail(`${NODE_NAME}: ${scenario} fixture changed Facebook carousel media order/kinds for ${unit}.`);
+    }
+    const sourceIds = uploads.map((job) => String(job?.media?.id || '').trim());
+    if (sourceIds.some((id) => !id) || new Set(sourceIds).size !== sourceIds.length) {
+      fail(`${NODE_NAME}: ${scenario} fixture lost Facebook carousel source identity for ${unit}.`);
+    }
+    if (String(publish.facebookPublishMode || '').toLowerCase() !== 'feed' ||
+        String(publish?.dependency?.fieldName || '') !== 'attached_media' ||
+        !Array.isArray(publish.attachedMediaFromPublishRunIndexes) ||
+        publish.attachedMediaFromPublishRunIndexes.length !== kinds.length ||
+        Number(publish.sourceMediaCount) !== kinds.length ||
+        !Array.isArray(publish.sourceMediaIds) || publish.sourceMediaIds.join('|') !== sourceIds.join('|')) {
+      fail(`${NODE_NAME}: ${scenario} fixture has an incomplete Facebook feed attachment contract for ${unit}.`);
+    }
+  }
+}
+
 function assertJobGraphContracts(jsCode) {
   const scenarios = [
     ['single-image', ['image']],
@@ -331,6 +450,8 @@ function assertJobGraphContracts(jsCode) {
     for (const platform of ['instagram', 'facebook', 'threads']) {
       if (!platforms.has(platform)) fail(`${NODE_NAME}: ${name} fixture omitted ${platform}.`);
     }
+    assertComposeAccessibility(jobs, name, kinds);
+    assertFacebookCarouselRepresentation(jobs, name, kinds);
     results.push({ name, mediaKinds: kinds, jobCount: jobs.length });
   }
   return results;
@@ -874,22 +995,17 @@ function assertFrameSelectionContracts() {
 function applyPlatformAccessibilityContract(job) {
   const current = { ...job };
   const platform = String(current.platform || '').trim().toLowerCase();
-  if (platform !== 'instagram' && platform !== 'threads') return current;
-
-  const bodies = [
-    asObject(current.jsonRequest),
-    asObject(current.requestBody),
-    asObject(asObject(current.httpRequest).body),
-    asObject(asObject(current.httpRequest).json),
-  ];
-  const mediaSignals = [
-    current.mediaKind,
-    current.mediaType,
-    current.media_type,
-    asObject(current.media).mediaKind,
-    ...bodies.map((body) => body.media_type),
-  ].map((value) => String(value || '').toUpperCase()).join(' ');
-  if (!mediaSignals.includes('VIDEO') && !mediaSignals.includes('REEL')) return current;
+  if (!['instagram', 'facebook', 'threads'].includes(platform)) return current;
+  const descriptor = mediaUploadDescriptor(current);
+  if (!descriptor) return current;
+  const support = accessibilitySupport(platform, descriptor.mediaKind);
+  const bodies = requestBodies(current).filter((body) => {
+    if (descriptor.mediaKind === 'video') return Boolean(body.video_url || body.file_url);
+    return Boolean(body.image_url || (platform === 'facebook' && body.url));
+  });
+  if (!bodies.length && !(descriptor.virtual && support === 'unsupported')) {
+    fail(`${NODE_NAME}: ${platform}/${descriptor.mediaKind} upload has no concrete request body.`);
+  }
 
   const warningSet = new Set(asArray(current.warnings).map((entry) => String(entry)).filter(Boolean));
   let removed = false;
@@ -905,6 +1021,22 @@ function applyPlatformAccessibilityContract(job) {
     return out;
   };
 
+  const text = { ...asObject(current.text) };
+  if (support === 'required') {
+    const submitted = bodies.map((body) => altTextValue(body));
+    if (submitted.some((value) => !value)) {
+      fail(`${NODE_NAME}: required alt_text is missing for ${platform}/${descriptor.mediaKind}; refusing gateway publication.`);
+    }
+    if (new Set(submitted).size !== 1) {
+      fail(`${NODE_NAME}: conflicting alt_text values for one ${platform}/${descriptor.mediaKind} upload.`);
+    }
+    text.accessibilityStatus = 'submitted';
+    text.accessibilityReason = `${platform}_${descriptor.mediaKind}_alt_text_submitted`;
+    current.text = removeNulls(text);
+    current.warnings = [...warningSet];
+    return current;
+  }
+
   current.jsonRequest = scrubAltText(current.jsonRequest);
   current.requestBody = scrubAltText(current.requestBody);
   if (current.httpRequest && typeof current.httpRequest === 'object') {
@@ -914,13 +1046,59 @@ function applyPlatformAccessibilityContract(job) {
       json: scrubAltText(current.httpRequest.json),
     };
   }
-  const text = { ...asObject(current.text) };
   text.accessibilityStatus = 'unsupported';
-  text.accessibilityReason = `${platform}_video_alt_text_not_supported`;
+  text.accessibilityReason = platform === 'facebook'
+    ? `facebook_${descriptor.mediaKind}_alt_text_not_available_in_current_flow`
+    : `${platform}_${descriptor.mediaKind}_alt_text_not_supported`;
   current.text = removeNulls(text);
-  if (removed) warningSet.add(`alt_text_omitted_for_video:${platform}`);
+  if (removed) warningSet.add(`alt_text_omitted_for_unsupported_${platform}_${descriptor.mediaKind}`);
   current.warnings = [...warningSet];
   return current;
+}
+
+function assertAccessibilityContracts() {
+  const instagramImage = applyPlatformAccessibilityContract({
+    platform: 'instagram', phase: 'upload',
+    jsonRequest: { image_url: 'https://example.invalid/image.jpg', alt_text: 'Imagem verificada' },
+    text: { alt_text: 'Imagem verificada' },
+  });
+  if (instagramImage.text?.accessibilityStatus !== 'submitted' || instagramImage.jsonRequest?.alt_text !== 'Imagem verificada') {
+    fail(`${NODE_NAME}: Instagram image accessibility contract was not preserved.`);
+  }
+
+  const threadsVideo = applyPlatformAccessibilityContract({
+    platform: 'threads', phase: 'upload',
+    jsonRequest: { video_url: 'https://example.invalid/video.mp4', media_type: 'VIDEO', alt_text: 'Vídeo verificado' },
+    text: { alt_text: 'Vídeo verificado' },
+  });
+  if (threadsVideo.text?.accessibilityStatus !== 'submitted' || threadsVideo.jsonRequest?.alt_text !== 'Vídeo verificado') {
+    fail(`${NODE_NAME}: Threads video accessibility contract was not preserved.`);
+  }
+
+  const instagramVideo = applyPlatformAccessibilityContract({
+    platform: 'instagram', phase: 'upload',
+    jsonRequest: { video_url: 'https://example.invalid/video.mp4', media_type: 'REELS', alt_text: 'Não enviar' },
+    text: { alt_text: 'Evidência editorial preservada' },
+  });
+  if (instagramVideo.text?.accessibilityStatus !== 'unsupported' || instagramVideo.jsonRequest?.alt_text) {
+    fail(`${NODE_NAME}: Instagram video accessibility contract was not normalized explicitly.`);
+  }
+
+  const facebookImage = applyPlatformAccessibilityContract({
+    platform: 'facebook', phase: 'upload',
+    jsonRequest: { url: 'https://example.invalid/photo.jpg', alt_text_custom: 'Não enviar' },
+    text: { alt_text: 'Evidência editorial preservada' },
+  });
+  if (facebookImage.text?.accessibilityStatus !== 'unsupported' || facebookImage.jsonRequest?.alt_text_custom) {
+    fail(`${NODE_NAME}: Facebook current-flow accessibility limitation was not explicit.`);
+  }
+
+  return {
+    instagramImage: 'submitted',
+    threadsVideo: 'submitted',
+    instagramVideo: 'unsupported',
+    facebookImage: 'unsupported',
+  };
 }
 
 function normalizeFacebookGraphUrl(value, warnings, credential) {
@@ -1247,6 +1425,7 @@ function main() {
     process.stdout.write(JSON.stringify({
       ok: true,
       jobGraphContracts: assertJobGraphContracts(source.jsCode),
+      accessibilityContracts: assertAccessibilityContracts(),
       frameSelectionContracts: assertFrameSelectionContracts(),
       resumeIdentityContracts: assertResumeIdentityContracts(),
     }));

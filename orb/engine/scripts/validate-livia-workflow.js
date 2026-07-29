@@ -306,9 +306,12 @@ function validateContracts() {
   assert(processMediaAssetCommand.length < 2500, `Process Media Asset command must stay small enough for stable expression parsing (${processMediaAssetCommand.length} chars)`);
   const jobGraphScript = path.join(__dirname, 'livia', 'build-platform-job-graph.js');
   const jobGraphSource = fs.readFileSync(jobGraphScript, 'utf8');
+  const compose2Source = fs.readFileSync(path.join(__dirname, '..', 'compose2-current.js'), 'utf8');
+  const verifierSource = fs.readFileSync(path.join(__dirname, 'livia', 'verify-published-artifacts.js'), 'utf8');
   assert(jobGraphSource.includes('normalizeExternalResult'), 'Livia job graph must accept both direct n8n jobs and jobs envelopes.');
   assert(jobGraphSource.includes('assertOutputContract'), 'Livia job graph must self-test its output contract.');
   assert(jobGraphSource.includes('assertJobGraphContracts'), 'Livia job graph must test image, Reel and carousel fixtures without the gateway.');
+  assert(jobGraphSource.includes('assertFacebookCarouselRepresentation'), 'Livia job graph must reject Facebook carousel jobs that drop, duplicate, or reorder media.');
   assert(jobGraphSource.includes('semanticJobKey'), 'Livia job graph must derive a semantic durable resume identity.');
   assert(jobGraphSource.includes('assertResumeIdentityContracts'), 'Livia job graph must prove queue-index changes do not alter resume identity.');
   assert(jobGraphSource.includes('invalidateIncompleteCarouselResume'), 'Livia resume logic must invalidate partial Instagram carousel attempts before reusing child containers');
@@ -316,6 +319,10 @@ function validateContracts() {
   assert(jobGraphSource.includes('normalizeThreadsCarouselJob'), 'Livia job graph must keep Threads carousel child and parent request contracts distinct');
   assert(jobGraphSource.includes("request.media_type = 'IMAGE'"), 'Livia Threads carousel children must explicitly request media_type=IMAGE');
   assert(jobGraphSource.includes("request.media_type = 'CAROUSEL'"), 'Livia Threads carousel parent must explicitly request media_type=CAROUSEL');
+  assert(compose2Source.includes('facebookUseReels'), 'Livia must use Facebook Reels only for a single source video.');
+  assert(compose2Source.includes('sourceMediaIds') && compose2Source.includes('sourceMediaCount'), 'Livia must preserve Facebook attachment source identity/count before the gateway.');
+  assert(!compose2Source.includes('usando apenas o 1º vídeo'), 'Livia must not publish only the first video from a carousel.');
+  assert(!compose2Source.includes('vídeo detectado em grupo não-reels; ignorado'), 'Livia must not silently discard a video from a mixed carousel.');
   assert(prepareHttp.includes('JSON.stringify(ids)'), 'Prepare HTTP Publish Request must serialize Threads carousel children as a JSON array');
   assert(prepareBatch.includes('uploadEligible'), 'Prepare Media Upload Batch must preserve uploadEligible from the media processor');
   assert(prepareBatch.includes('blockReason'), 'Prepare Media Upload Batch must preserve the media block reason');
@@ -398,6 +405,8 @@ function validateContracts() {
   assert(processHttp.includes('state.completed.push(resultJson)'), 'Process HTTP Publish Result must accumulate completed jobs');
   assert(prepareHttp.includes('childrenPublishRunIndexes'), 'Prepare HTTP Publish Request must resolve carousel child container ids');
   assert(prepareHttp.includes('ids.join(",")'), 'Prepare HTTP Publish Request must serialize carousel children in the Meta format');
+  assert(prepareHttp.includes('sourceMediaCount') && prepareHttp.includes('sourceMediaIds'), 'Prepare HTTP Publish Request must validate the complete Facebook attachment contract before the gateway.');
+  assert(prepareHttp.includes('perdeu a ordem ou identidade semântica'), 'Prepare HTTP Publish Request must fail closed on Facebook attachment order/identity drift.');
   assert(processHttp.includes('resolvePrepareRequestContext'), 'Process HTTP Publish Result must recover the prepared request context after HTTP nodes replace the input payload');
   assert(processHttp.includes('resolvedStateKey'), 'Process HTTP Publish Result must resolve the matching inflight state deterministically during retries');
   assert(!processHttp.includes('$("Prepare HTTP Publish Request").item'), 'Process HTTP Publish Result must not use named-node lookups inside the task runner');
@@ -419,6 +428,7 @@ function validateContracts() {
   assert(collect.includes('publishMode'), 'Collect Publish Results must distinguish Reels from static posts');
   assert(collect.includes('providerMediaId'), 'Collect Publish Results must preserve the provider media id alongside the final post id');
   assert(collect.includes('firstSubmitted'), 'Collect Publish Results must aggregate submitted fields across upload and publish phases');
+  assert(collect.includes('mediaEvidenceContract') && collect.includes('providerMediaId'), 'Collect Publish Results must preserve ordered provider media evidence for every source asset.');
   assert(!collect.includes('platform === "facebook"\n        ? __prStr(startBody.video_id'), 'Collect Publish Results must not require a Reels video_id for every Facebook post');
   assert(collect.includes('codexDryRun'), 'Collect Publish Results must propagate codexDryRun');
   assert(collect.includes('shouldNotify: codexDryRun ? false'), 'Collect Publish Results must disable notifications during Codex dry-run');
@@ -451,6 +461,8 @@ function validateContracts() {
   assert(/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine\/scripts\/livia\/verify-published-artifacts\.js/.test(verifyCommand), 'Verifier must invoke the immutable release entrypoint directly');
   assert(!/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b|\/mnt\/c\/|livia-verify-provider-copy-drift-wrapper|--verifier\b/.test(verifyCommand), 'Verifier must not use a mutable root or compatibility wrapper');
   assert(!verifyCommand.includes('Get Credential Tokens') && !verifyCommand.includes('tokenRoot'), 'Verifier must not expose token-vault data in its command line');
+  assert(verifierSource.includes('assessMediaEvidence'), 'Published-artifact verification must reject a provider post that omits a source media attachment.');
+  assert(verifierSource.includes('facebook_composite_attachment_identity_missing'), 'Published-artifact verification must name missing Facebook carousel attachments causally.');
   assert(attachVerified.includes('result.ok !== true'), 'Verifier failures must stop final effects');
   assert(prepareDriveMarks.includes('driveExpectedFileIds') && prepareDriveMarks.includes('fileIds'), 'Drive fan-out must use the verified source fileIds contract');
   assert(collectDriveMarks.includes("$items('Prepare Drive Publication Marks')"), 'Drive collector must correlate readbacks to the semantic fan-out contract');
