@@ -1,0 +1,73 @@
+name: Finance staging smoke identity
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Staging-only lifecycle action for the synthetic Finance actor
+        required: true
+        type: choice
+        options: [provision, rotate, revoke]
+      expires_at:
+        description: UTC ISO-8601 expiration recorded in audit evidence
+        required: true
+        type: string
+      acknowledge_staging_only:
+        description: Confirm that this affects only the removable staging identity
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: finance-staging-smoke-identity
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  manage:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - name: Guard staging-only synthetic identity operation
+        env:
+          ACTION: ${{ inputs.action }}
+          EXPIRES_AT: ${{ inputs.expires_at }}
+          ACKNOWLEDGED: ${{ inputs.acknowledge_staging_only }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FINANCE_SMOKE_PASSWORD: ${{ secrets.FINANCE_SMOKE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ "$ACKNOWLEDGED" == true ]] || { echo 'Staging-only acknowledgement is required.'; exit 1; }
+          [[ "$ACTION" =~ ^(provision|rotate|revoke)$ ]] || { echo 'Unsupported lifecycle action.'; exit 1; }
+          date --date="$EXPIRES_AT" --iso-8601=seconds >/dev/null
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do [[ -n "${!name:-}" ]] || { echo "Missing required staging value: $name"; exit 1; }; done
+          if [[ "$ACTION" != revoke ]]; then [[ ${#FINANCE_SMOKE_PASSWORD} -ge 24 ]] || { echo 'FINANCE_SMOKE_PASSWORD is missing or too short.'; exit 1; }; fi
+      - name: Verify one safe synthetic-identity target
+        env:
+          ACTION: ${{ inputs.action }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          active_count="$(npx --yes wrangler@4.114.0 d1 execute skincos-db-staging --remote --command \"SELECT COUNT(*) AS count FROM crm_users WHERE username='finance-staging-smoke' AND ativo=1;\" --json | node -e \"const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));process.stdout.write(String(x[0]?.results?.[0]?.count ?? ''))\")"
+          if [[ "$ACTION" == provision ]]; then [[ "$active_count" == 0 ]] || { echo 'Synthetic identity already exists; use rotate.'; exit 1; }; else [[ "$active_count" == 1 ]] || { echo 'Expected exactly one active synthetic identity.'; exit 1; }; fi
+      - name: Apply audited staging identity lifecycle SQL
+        env:
+          ACTION: ${{ inputs.action }}
+          EXPIRES_AT: ${{ inputs.expires_at }}
+          FINANCE_SMOKE_IDENTITY_ACK: "1"
+          FINANCE_SMOKE_PASSWORD: ${{ secrets.FINANCE_SMOKE_PASSWORD }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          core_sql="$RUNNER_TEMP/finance-staging-smoke-core.sql"
+          finance_sql="$RUNNER_TEMP/finance-staging-smoke-finance.sql"
+          node finance/scripts/staging-smoke-identity-sql.mjs "$ACTION" --expires-at "$EXPIRES_AT" --core-output "$core_sql" --finance-output "$finance_sql"
+          npx --yes wrangler@4.114.0 d1 execute skincos-db-staging --remote --file "$core_sql"
+          npx --yes wrangler@4.114.0 d1 execute skincos-finance-staging --remote --file "$finance_sql"
+          rm -f "$core_sql" "$finance_sql"
