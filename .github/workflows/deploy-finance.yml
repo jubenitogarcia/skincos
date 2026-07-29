@@ -67,6 +67,27 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full commit SHA'; exit 1; }
           [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checked-out source does not match promotion evidence'; exit 1; }
+      - name: Attest production authorization and remote resources before mutation
+        if: inputs.target == 'production'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FINANCE_D1_PRODUCTION_ID: ${{ vars.FINANCE_D1_PRODUCTION_ID }}
+          FINANCE_CONTROL_PRODUCTION_KV_ID: ${{ vars.FINANCE_CONTROL_PRODUCTION_KV_ID }}
+          ENABLE_FINANCE_PRODUCTION_DEPLOY: ${{ vars.ENABLE_FINANCE_PRODUCTION_DEPLOY }}
+          FINANCE_BACKUP_PASSPHRASE: ${{ secrets.FINANCE_BACKUP_PASSPHRASE }}
+          FINANCE_SERVICE_AUTH_SECRET: ${{ secrets.FINANCE_SERVICE_AUTH_SECRET }}
+          OPERATION: ${{ inputs.operation }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: node .github/scripts/finance-production-preflight.mjs "$RUNNER_TEMP/finance-production-preflight/preflight.json"
+      - name: Upload sanitized production preflight evidence
+        if: always() && inputs.target == 'production'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: finance-production-preflight-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/finance-production-preflight/preflight.json
+          retention-days: 30
+          if-no-files-found: warn
       - name: Guard isolated bindings and secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -103,6 +124,24 @@ jobs:
           else
             sed -i "s/__CONFIGURE_FINANCE_STAGING_D1_ID__/$D1_ID/;s/__CONFIGURE_MODULE_CONTROL_STAGING_KV_ID__/$CONTROL_KV_ID/;s/__RELEASE_SHA__/$RELEASE_SHA/g" finance/wrangler.toml
           fi
+      - name: Provision or attest Finance service secret before D1 checkpoint
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SERVICE_SECRET: ${{ secrets.FINANCE_SERVICE_AUTH_SECRET }}
+          TARGET: ${{ inputs.target }}
+          BOOTSTRAP_SERVICE_SECRET: ${{ inputs.bootstrap_service_secret }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
+          if [[ "$BOOTSTRAP_SERVICE_SECRET" == "true" ]]; then
+            [[ "$TARGET" == "staging" ]] || { echo 'Finance service-secret bootstrap is staging-only.'; exit 1; }
+            [[ -n "${SERVICE_SECRET:-}" ]] || { echo 'Missing FINANCE_SERVICE_AUTH_SECRET.'; exit 1; }
+            printf '%s' "$SERVICE_SECRET" | npx --yes wrangler@4.112.0 secret put FINANCE_SERVICE_AUTH_SECRET --config finance/wrangler.toml "${ENV_ARGS[@]}"
+          fi
+          npx --yes wrangler@4.114.0 secret list --config finance/wrangler.toml "${ENV_ARGS[@]}" \
+            | grep -q 'FINANCE_SERVICE_AUTH_SECRET' \
+            || { echo 'FINANCE_SERVICE_AUTH_SECRET must be provisioned before checkpoint or migration'; exit 1; }
       - name: Capture encrypted D1 checkpoint before migrations
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -126,15 +165,12 @@ jobs:
           path: ${{ env.CHECKPOINT }}
           retention-days: 30
           if-no-files-found: error
-      - name: Apply additive migrations and upload immutable Finance version
+      - name: Apply additive Finance migrations
         if: inputs.operation == 'deploy'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          SERVICE_SECRET: ${{ secrets.FINANCE_SERVICE_AUTH_SECRET }}
           TARGET: ${{ inputs.target }}
-          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
-          BOOTSTRAP_SERVICE_SECRET: ${{ inputs.bootstrap_service_secret }}
         run: |
           set -euo pipefail
           if [[ "$TARGET" == production ]]; then ENV_ARGS=(); DB=skincos-finance; else ENV_ARGS=(--env staging); DB=skincos-finance-staging; fi
@@ -150,12 +186,16 @@ jobs:
             { cat "$migration"; printf "\nINSERT INTO d1_migrations(name) VALUES ('%s');\n" "$name"; } > "$batch"
             npx --yes wrangler@4.114.0 d1 execute "$DB" --remote --config finance/wrangler.toml "${ENV_ARGS[@]}" --file "$batch"
           done
-          if [[ "$BOOTSTRAP_SERVICE_SECRET" == "true" ]]; then
-            [[ "$TARGET" == "staging" ]] || { echo 'Finance service-secret bootstrap is staging-only.'; exit 1; }
-            [[ -n "${SERVICE_SECRET:-}" ]] || { echo 'Missing FINANCE_SERVICE_AUTH_SECRET.'; exit 1; }
-            printf '%s' "$SERVICE_SECRET" | npx --yes wrangler@4.112.0 secret put FINANCE_SERVICE_AUTH_SECRET --config finance/wrangler.toml "${ENV_ARGS[@]}"
-          fi
-          npx --yes wrangler@4.114.0 secret list --config finance/wrangler.toml "${ENV_ARGS[@]}" | grep -q 'FINANCE_SERVICE_AUTH_SECRET' || { echo 'FINANCE_SERVICE_AUTH_SECRET must be provisioned before release'; exit 1; }
+      - name: Upload immutable Finance version
+        if: inputs.operation == 'deploy'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == production ]]; then ENV_ARGS=(); else ENV_ARGS=(--env staging); fi
           upload_output="$(npx --yes wrangler@4.114.0 versions upload --config finance/wrangler.toml --keep-vars --message "finance:deploy:$RELEASE_SHA" "${ENV_ARGS[@]}")"
           printf '%s\n' "$upload_output"
           VERSION_ID="$(printf '%s\n' "$upload_output" | sed -n 's/^Worker Version ID: //p' | tail -n 1)"
@@ -189,12 +229,17 @@ jobs:
         env:
           TARGET: ${{ inputs.target }}
           STAGING_WORKER_URL: ${{ vars.FINANCE_STAGING_WORKER_URL }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == production ]]; then URL=https://api.skincos.com.br/finance/health; else URL="$STAGING_WORKER_URL/health"; fi
-          code="$(curl --silent --show-error --output "$RUNNER_TEMP/finance-health.json" --write-out '%{http_code}' "$URL")"
-          [[ "$code" == 200 ]] || { cat "$RUNNER_TEMP/finance-health.json"; exit 1; }
-          node -e "const x=require(process.argv[1]);if(!x.ok||x.unit!=='finance')process.exit(1)" "$RUNNER_TEMP/finance-health.json"
+          if [[ "$TARGET" == production ]]; then BASE_URL="${FINANCE_PRODUCTION_WORKER_URL:-}"; else BASE_URL="$STAGING_WORKER_URL"; fi
+          [[ "$BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'Finance Worker URL is missing or invalid'; exit 1; }
+          for endpoint in health readiness; do
+            output="$RUNNER_TEMP/finance-${endpoint}.json"
+            code="$(curl --silent --show-error --output "$output" --write-out '%{http_code}' "$BASE_URL/$endpoint")"
+            [[ "$code" == 200 ]] || { cat "$output"; exit 1; }
+            node -e "const x=require(process.argv[1]);const expected=process.argv[2];if(!x.ok||x.unit!=='finance'||x.version!==expected||(process.argv[3]==='readiness'&&!x.ready))process.exit(1)" "$output" "$RELEASE_SHA" "$endpoint"
+          done
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'
         env:

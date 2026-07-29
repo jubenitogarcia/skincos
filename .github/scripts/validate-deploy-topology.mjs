@@ -61,6 +61,35 @@ for (const filename of workflowFiles) {
   if (publishingLines.length && !canonicalPaths.has(relativePath)) fail(`non-canonical publisher found: ${relativePath}`);
 }
 
+const financeWorkflow = read('.github/workflows/deploy-finance.yml');
+for (const required of [
+  'finance-production-preflight.mjs',
+  'ENABLE_FINANCE_PRODUCTION_DEPLOY',
+  'Attest production authorization and remote resources before mutation',
+  'Provision or attest Finance service secret before D1 checkpoint',
+  'FINANCE_PRODUCTION_WORKER_URL',
+]) {
+  if (!financeWorkflow.includes(required)) fail(`Finance publisher is missing its production safety gate: ${required}`);
+}
+const financePreflightIndex = financeWorkflow.indexOf('Attest production authorization and remote resources before mutation');
+const financeSecretIndex = financeWorkflow.indexOf('Provision or attest Finance service secret before D1 checkpoint');
+const financeCheckpointIndex = financeWorkflow.indexOf('Capture encrypted D1 checkpoint before migrations');
+const financeMigrationIndex = financeWorkflow.indexOf('Apply additive Finance migrations');
+const financeUploadIndex = financeWorkflow.indexOf('Upload immutable Finance version');
+if (
+  [financePreflightIndex, financeSecretIndex, financeCheckpointIndex, financeMigrationIndex, financeUploadIndex].some((index) => index < 0) ||
+  !(financePreflightIndex < financeSecretIndex &&
+    financeSecretIndex < financeCheckpointIndex &&
+    financeCheckpointIndex < financeMigrationIndex &&
+    financeMigrationIndex < financeUploadIndex)
+) {
+  fail('Finance production preflight and secret attestation must precede checkpoint, migration and upload');
+}
+for (const filename of fs.readdirSync(path.join(root, 'finance/migrations')).filter((name) => /^\d{4}_.+\.sql$/.test(name))) {
+  const migration = read(path.posix.join('finance/migrations', filename)).replace(/^--.*$/gm, '');
+  if (/\bDROP\b/i.test(migration)) fail(`Finance migration violates the additive-only policy: ${filename}`);
+}
+
 if (failures.length) {
   for (const message of failures) process.stderr.write(`deploy topology validation failed: ${message}\n`);
   process.exitCode = 1;
