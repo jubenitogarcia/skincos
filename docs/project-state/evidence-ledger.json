@@ -527,6 +527,17 @@
       "method": "behavior test, selector, shell syntax and diff check",
       "result": "passed",
       "limitation": "PR/CI/staging pending"
+    },
+    {
+      "observed_at": "2026-07-29T11:23:15Z",
+      "surface": "production",
+      "scope": "livia-isolated-runtime-promotion",
+      "state": "validated",
+      "method": "PR #837 merge f6b8698a, immutable staged release, transactional workflow history publish, audit-live and local/public health",
+      "result": "workflow WGXr4vYkv9UoJ8zc active at 9f7beced-c075-46d1-be78-0e26968e135e; zero mutable active-runtime references; schedule field days at 13:26",
+      "limitation": "historical real publication evidence remains executions 336 and 339; no synthetic social publication was made",
+      "sha": "f6b8698a450ee2b346ccc93989a365c3455c792d",
+      "pr": 837
     }
   ]
 }

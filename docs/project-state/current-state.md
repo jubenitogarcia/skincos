@@ -775,3 +775,15 @@ carregou referências, atendimentos, overview e catálogo em HTTP 200 sem
 vazio e dois de módulos vazios em legados; eles permaneceram sem acesso e não
 receberam concessão automática. Rollback permanece disponível pelas versões
 anteriores e migrations aditivas já aplicadas.
+
+## Livia — promoção de bundle isolado 2026-07-29
+
+O workflow Livia (`WGXr4vYkv9UoJ8zc`) está ativo na versão histórica
+`9f7beced-c075-46d1-be78-0e26968e135e`, apontando somente para o bundle
+imutável `f6b8698a450ee2b346ccc93989a365c3455c792d` da PR #837. O ponteiro
+global não foi alterado. O manifesto ativo tem SHA-256
+`4a4fb1d4173021404458eef9b868001fa5cfc33bc21c642d9939f8c2473cfb05`.
+O schedule diário foi preservado explicitamente como `field: days` às 13:26;
+o audit-live encontrou zero referências mutáveis. Checkpoint pós-promoção:
+`livia-postpromote-f6b8698a-20260729T112300-0300`, índice SHA-256
+`3cd984dc63e8cef3c1b446cbf15e10dded6b3e588102803795ee5abc97988e4e`.
