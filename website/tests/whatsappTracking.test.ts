@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { TrackingContext } from "../src/lib/attribution";
+import { CADASTRO_WHEEL_PRIZES } from "../src/lib/cadastroWheelPrizes";
+import { buildWhatsAppUrl } from "../src/lib/whatsapp";
 import { buildWhatsappRedirectHref, buildWhatsappRedirectHrefFromRequest, buildWhatsappClickToken, expandWhatsappTrackingContext, injectWhatsappToken, parseWhatsappDestination } from "../src/lib/whatsappTracking";
 
 test("buildWhatsappRedirectHref wraps supported whatsapp destination with tracking params", () => {
@@ -127,11 +129,44 @@ test("campaign-rich Contact redirect keeps consent and matching context within a
     assert.equal(transportedContext.fbclid, trackingContext.fbclid);
     assert.equal(transportedContext.landingUrl, trackingContext.landingUrl);
     assert.deepEqual(transportedContext.firstTouch, trackingContext.firstTouch);
-    assert.deepEqual(transportedContext.lastTouch, {
-        ...trackingContext.lastTouch,
-        landingUrl: trackingContext.pageUrl,
-        landingPath: trackingContext.pagePath,
+    assert.deepEqual(transportedContext.lastTouch, trackingContext.lastTouch);
+
+    for (const prize of CADASTRO_WHEEL_PRIZES) {
+        const prizeHref = buildWhatsappRedirectHref({
+            rawUrl: buildWhatsAppUrl("5551995811008", prize.message),
+            tracking: {
+                eventId: `contact_transport_prize_${prize.id}`,
+                placement: "cadastro",
+                source: "cadastro_wheel",
+                unitSlug: "novo-hamburgo",
+                pageUrl,
+                pagePath,
+                trackingContext,
+            },
+        });
+        assert.ok(
+            prizeHref?.startsWith("/api/whatsapp/redirect?"),
+            `prize ${prize.id} unexpectedly used the direct fallback`,
+        );
+        assert.ok(prizeHref.length <= 2_000, `prize ${prize.id} redirect length: ${prizeHref.length}`);
+    }
+});
+
+test("buildWhatsappRedirectHref falls back to the direct destination when the complete redirect exceeds the bound", () => {
+    const destination = buildWhatsAppUrl("5551995811008", "A".repeat(1_900));
+    assert.ok(destination);
+
+    const href = buildWhatsappRedirectHref({
+        rawUrl: destination,
+        tracking: {
+            eventId: "contact_transport_fallback",
+            placement: "oversized_fixture",
+            source: "test",
+        },
     });
+
+    assert.equal(href, destination);
+    assert.ok(href.length <= 2_000);
 });
 
 test("injectWhatsappToken appends short token once", () => {
