@@ -1,5 +1,26 @@
 # Current state
 
+## UX/UI audit infrastructure — draft PR #832 — 2026-07-29T01:34Z
+
+The infrastructure-only UX/UI foundation is committed on
+`codex/admin/ux-ui-infrastructure` and published as draft PR #832
+(`chore(ux): add local audit infrastructure`). Its original base was
+`c70c85bbdce7d7724cf9e29ac80d167e9c86980e`; it was merged non-destructively
+with the then-current `origin/main` `b1afd84b9191841d1f4bc28497f70b3755375d70`
+before push. The PR contains synthetic local Playwright/axe/visual/Lighthouse
+and LHCI baselines, Storybook a11y/MCP support, a non-blocking path-filtered
+workflow, ignored artifacts, and operator documentation.
+
+In a clean native WSL checkout, `npm run tools:doctor`,
+`npm run audit:ui:full`, `npm --prefix crm/console run storybook:build`,
+`npm run storybook:mcp`, and `npm run audit:lighthouse:ci` passed. The full
+audit covers one Testing Library component test plus four desktop/tablet/mobile
+projects each for the synthetic pilot, axe results and visual snapshots; no
+production endpoint, account, secret, database, workflow, deployment or
+business data was changed. This is **local-only plus PR-open** evidence, not
+integration, staging or production evidence. The initial PR checks are queued
+or in progress; review/CI completion is the next action.
+
 ## Fresh runtime-config verification — 2026-07-25T05:05Z
 
 The fresh provider transfer of the encrypted runtime configuration was

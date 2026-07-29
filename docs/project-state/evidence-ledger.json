@@ -2,6 +2,17 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T01:34:00Z",
+      "surface": "local-wsl-and-github-pr",
+      "scope": "UX/UI audit infrastructure draft PR",
+      "state": "local-validated-pr-open",
+      "method": "git fetch --prune; branch/worktree/stash/remote/PR inspection; non-destructive merge of origin/main; clean native WSL npm ci and focused audit commands; GitHub PR metadata",
+      "result": "Draft PR #832 is open from codex/admin/ux-ui-infrastructure against main. Commit 62d36ba140e5f1ab0d2f27932f5515a0ea152a04 was validated after merge with origin/main b1afd84b9191841d1f4bc28497f70b3755375d70. tools:doctor, audit:ui:full, Storybook build/MCP and one LHCI baseline passed using only synthetic local data.",
+      "limitation": "PR checks were queued or in progress at observation time. This proves local behavior and PR publication only; it is not main integration, staging or production evidence. GitHub/Figma MCP OAuth remains separately unproven as documented.",
+      "sha": "62d36ba140e5f1ab0d2f27932f5515a0ea152a04",
+      "pr": 832
+    },
+    {
       "observed_at": "2026-07-25T05:05:34Z",
       "surface": "google-drive-offsite-runtime-config",
       "scope": "Fresh runtime-config ciphertext and scratch decrypt",

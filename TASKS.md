@@ -27,6 +27,9 @@
 
 ## External/product follow-up
 
+- [ ] Review draft PR #832 (`codex/admin/ux-ui-infrastructure`) after required
+  checks finish; its UX/UI audit infrastructure is local/synthetic only and
+  must not be treated as a production UI audit or deployment authorization.
 - [ ] Confirm or reauthorize the `Google Calendar (Skincos)` credential for the exact scopes required by the inactive clinic Orb workflows.
 - [ ] Provide `GOOGLE_CALENDAR_ID`, approved test data and a non-production-safe validation window before enabling a workflow that can create a real calendar event or booking.
 - [ ] Review and finish the independent Meta Ads publish-journal work in
