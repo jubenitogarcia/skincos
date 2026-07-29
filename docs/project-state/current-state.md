@@ -1,13 +1,15 @@
 # Current state
 
-## Observability alert hardening — 2026-07-29T02:07Z
+## Observability alert hardening — 2026-07-29T02:23Z
 
 The desktop-alert correction is integrated on `main`: PR #833 merged as
 `2ba1e0a74eea8a88a5cdb609ba426c8df2c94261`, and the installer fallback repair
-in PR #836 merged as `34c9baff3978df71402b917449b6971a914b1110`. Both PRs had
-their applicable CI, test and security checks green. The operator runtime was
-reinstalled from a clean worktree at that integrated SHA in
-`operator-run-key` mode at 02:07Z. `installation.json`, the Run key, one
+in PR #836 merged as `34c9baff3978df71402b917449b6971a914b1110`. The final
+installer self-process guard and evidence update merged in PR #839 as
+`62ff787554f67a0d1ea2f40a40543b52b2054263`. All applicable CI, test and
+security checks were green. The operator runtime was reinstalled from a clean
+worktree matching that final integrated SHA in `operator-run-key` mode at
+02:23Z. `installation.json`, the Run key, one
 supervisor plus one dashboard child, and loopback `/health` prove the active
 local runtime; the preserved rollback checkpoint is
 `C:\CodexRuntime\operator\admin\skincos\checkpoints\observability-alert-hardening-20260728T2052Z`.
@@ -32,6 +34,12 @@ API health remains reachable, but is not proof of this release. No D1 data,
 secrets, bindings, Finance Worker or business data were changed. The remaining
 action needs an explicit production Finance resource/binding decision; do not
 retry the same API promotion until that prerequisite is satisfied.
+
+Direct post-promotion reads prove staging API `/health` is HTTP 200 at
+`2ba1e0a7…`, and staging `/finance/health` is HTTP 200 with D1/module-control
+healthy. Production API `/health` is HTTP 200, while its existing
+`/finance/health` path returns 401; neither result proves the blocked API
+release or a production Finance journey.
 
 ## Fresh runtime-config verification — 2026-07-25T05:05Z
 
