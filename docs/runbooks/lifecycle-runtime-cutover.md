@@ -21,14 +21,20 @@ through `\\wsl.localhost`; WSL never recursively walks `/mnt/c`.
 
 1. Confirm the reviewed `origin/main` SHA and a clean canonical clone.
 2. On Windows, create `git archive --format=tar <sha>` in the private runtime,
-   compute SHA-256, and copy the tar to native Linux storage through
+   compute SHA-256, produce verified lineage against `origin/main`, and copy
+   the tar and lineage to native Linux storage through
    `\\wsl.localhost\Ubuntu-24.04\home\admin\skincos-native-release\<sha>`.
+
+   ```powershell
+   & scripts/runtime/verify-native-source-release-lineage.ps1 -ReleaseSha <sha> -ParentReleaseSha <current-release-sha>
+   ```
 3. From WSL, validate and promote source:
 
    ```bash
    scripts/runtime/prepare-native-source-release.sh \
      --archive /home/admin/skincos-native-release/<sha>/source.tar \
-     --sha256 <sha256> --release-sha <sha> --apply
+     --sha256 <sha256> --lineage /home/admin/skincos-native-release/<sha>/lineage.json \
+     --lineage-sha256 <lineage-sha256> --apply --stage-only
    ```
 
 4. Build and promote WhatsApp from the same source release:
