@@ -71,6 +71,7 @@ const readRemoteState = () => page.evaluate(() => ({
   container: Boolean(document.querySelector('[data-finance-remote="true"]')),
   module: Boolean(document.querySelector('[data-finance-module="true"]')),
   unavailable: Boolean(document.querySelector('[data-testid="finance-remote-unavailable"]')),
+  failureKind: document.querySelector('[data-testid="finance-remote-unavailable"]')?.getAttribute('data-finance-remote-error') || null,
 }))
 try {
   console.log('[finance-staging-ui] carregando CRM de staging')
@@ -105,7 +106,7 @@ try {
   await page.getByTestId('crm-header-layout').getByRole('heading', { name: 'Financeiro' }).waitFor({ state: 'visible', timeout: 30_000 })
   await page.locator('[data-finance-remote="true"], [data-testid="finance-remote-unavailable"], [data-finance-module="true"]').waitFor({ state: 'visible', timeout: 30_000 })
   remoteState = await readRemoteState()
-  if (remoteState.unavailable) fail('O bundle remoto do Financeiro não pôde ser carregado.')
+  if (remoteState.unavailable) fail(`O bundle remoto do Financeiro não pôde ser carregado (${remoteState.failureKind || 'RemoteLoadError'}).`)
   await page.locator('[data-finance-module="true"]').waitFor({ state: 'visible', timeout: 30_000 })
   remoteState = await readRemoteState()
   console.log('[finance-staging-ui] módulo Financeiro renderizado')

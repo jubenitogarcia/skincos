@@ -117,8 +117,16 @@ try {
   if (commitRequested) {
     if (stagedBody.alreadyStaged) throw new Error('synthetic import unexpectedly reused a previous batch');
     if (loaded.batch?.status !== 'staged') throw new Error(`batch is not staged (${loaded.batch?.status || 'unknown'}); refusing commit`);
+    // Staging persists the source at the stage boundary. Analyse must mirror
+    // the UI contract and send only the mutable analysis controls; reposting
+    // the original source omits the persisted batch mapping and can turn a
+    // valid staged batch into an empty analysis.
+    const analyzePayload = {
+      mapping: loaded.batch?.mapping || stagedBody.analysis?.mapping || {},
+      encoding: payload.encoding || 'utf-8',
+    };
     const analyzed = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/analyze`)}?scopeId=${encodeURIComponent(scopeId)}`, {
-      method: 'POST', headers: authHeaders(`${key}:analyze`), body: JSON.stringify(payload),
+      method: 'POST', headers: authHeaders(`${key}:analyze`), body: JSON.stringify(analyzePayload),
     });
     const analysisBody = await json(analyzed);
     if (!analysisBody.analysis?.rows?.length) throw new Error('import analyze did not return rows');
