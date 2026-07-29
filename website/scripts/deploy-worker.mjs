@@ -78,8 +78,27 @@ function readSiteUrlFromConfig(configPath) {
   return match?.[1]?.trim() || fallback;
 }
 
-async function getCurrentVersionId(configPath, env) {
-  const { stdout } = await runAndCapture("npx", ["wrangler", "deployments", "list", "-c", configPath], env);
+function parseOptionalArg(args, name) {
+  const index = args.indexOf(name);
+  if (index < 0) return null;
+
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${name} requires a value`);
+  }
+  return value;
+}
+
+function getWranglerEnvironmentArgs(environmentName) {
+  if (!environmentName) return [];
+  if (!/^[a-z][a-z0-9_-]*$/i.test(environmentName)) {
+    throw new Error(`Invalid Wrangler environment name: ${environmentName}`);
+  }
+  return ["--env", environmentName];
+}
+
+async function getCurrentVersionId(configPath, env, wranglerEnvironmentArgs) {
+  const { stdout } = await runAndCapture("npx", ["wrangler", "deployments", "list", "-c", configPath, ...wranglerEnvironmentArgs], env);
   const match = stdout.match(/\(100%\)\s+([0-9a-f-]{36})/i);
   return match?.[1] ?? null;
 }
@@ -109,8 +128,9 @@ async function runPostDeploySmoke({ env, siteUrl, retries, delayMs }) {
 }
 
 const args = process.argv.slice(2);
-const configIndex = args.indexOf("--config");
-const configPath = configIndex >= 0 ? args[configIndex + 1] : "wrangler.toml";
+const configPath = parseOptionalArg(args, "--config") ?? "wrangler.toml";
+const wranglerEnvironment = parseOptionalArg(args, "--env");
+const wranglerEnvironmentArgs = getWranglerEnvironmentArgs(wranglerEnvironment);
 const smokeRetries = Number.parseInt(process.env.POST_DEPLOY_SMOKE_RETRIES ?? "6", 10);
 const smokeDelayMs = Number.parseInt(process.env.POST_DEPLOY_SMOKE_DELAY_MS ?? "5000", 10);
 
@@ -120,14 +140,14 @@ const env = {
   NEXT_PUBLIC_BUILD_TIME: getBuildTime(),
 };
 
-const siteUrl = readSiteUrlFromConfig(configPath);
-const previousVersionId = await getCurrentVersionId(configPath, env);
+const siteUrl = process.env.DEPLOY_SITE_URL?.trim() || readSiteUrlFromConfig(configPath);
+const previousVersionId = await getCurrentVersionId(configPath, env, wranglerEnvironmentArgs);
 
 await run("node", ["scripts/assert-production-snapshot.mjs"], env);
 await run("npx", ["opennextjs-cloudflare", "build"], env);
 
 try {
-  await run("npx", ["wrangler", "deploy", "-c", configPath], env);
+  await run("npx", ["wrangler", "deploy", "-c", configPath, ...wranglerEnvironmentArgs], env);
   await runPostDeploySmoke({
     env,
     siteUrl,
@@ -146,6 +166,7 @@ try {
       previousVersionId,
       "-c",
       configPath,
+      ...wranglerEnvironmentArgs,
       "-y",
       "-m",
       `auto-rollback: smoke failure after deploy ${env.NEXT_PUBLIC_BUILD_SHA ?? "unknown"}`,
