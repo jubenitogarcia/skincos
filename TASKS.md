@@ -45,13 +45,16 @@
   registrar decisão de rollback ou ativação autorizada; não excluir nem mudar
   recursos por suposição. A entrega WhatsApp foi comprovada isoladamente por
   `DELIVERY_ACK`; Telegram permaneceu independente.
-- [ ] **P1 — promover o source release nativo do Orb até o `main` que contém a
-  PR #840.** O serviço ainda executa o release
-  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a`, anterior ao contrato canônico.
-  O workflow n8n e o Token Vault já estão sincronizados, mas a promoção do
-  release inclui superfícies além do Meta Ads e exige checkpoint, validação
-  pré-produção e autorização explícita de produção. Após a promoção, repetir o
-  preflight a partir do release ativo e registrar o SHA/rollback.
+- [x] **P1 — promover o source release nativo do Orb até o `main` que contém as
+  PRs #840 e #844.** Em 2026-07-29 o ponteiro foi promovido de
+  `71ec3a8f63bd8fcaa6861ad1487baf6f1e1be59a` para
+  `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89` por troca atômica controlada.
+  O checkpoint privado, a linhagem e o procedimento de rollback estão em
+  `C:\CodexRuntime\operator\admin\skincos\native-promotions\`; preflight do
+  Meta Ads Publish, smoke nativo e healths local/público foram aprovados sem
+  iniciar execução comercial. O workflow permaneceu inativo/manual na versão
+  830. A regra de ACL do preparador foi ampliada e testada para que o preflight
+  peer-authenticated consiga ler os 49 Code nodes em releases futuros.
 - [ ] Decide whether draft PR #674 should graduate from the optional GitHub
   autonomy-broker experiment; it is isolated and not deployed.
 
