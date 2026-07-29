@@ -264,6 +264,8 @@ test('Atendimento runtime is detached from the invoking action but keeps the per
   assert.match(launcher, /CRM_OPEN_BROWSER=0/)
   assert.match(launcher, /-AcceptedExitCode @\(0, 143\)/)
   assert.match(launcher, /function Wait-CrmAtendimentoReady/)
+  assert.match(launcher, /function Test-CrmSourceOriginEquivalent/)
+  assert.match(launcher, /Windows source roots are[\s\S]*module suffix and native paths must remain exact/)
   assert.match(launcher, /Wait-CrmAtendimentoReady -TargetCommit \$targetCommit -SourceFingerprint \$snapshot\.Fingerprint -SourceOrigin \$sourceOrigin -TimeoutSeconds 600/)
   assert.match(launcher, /previous manifest is intentionally retained/)
   assert.match(launcher, /a 143 is only accepted here/)
