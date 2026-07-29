@@ -4,7 +4,7 @@
   "environment": "staging",
   "syntheticOnly": true,
   "cohort": {
-    "pilotActors": ["finance-staging-monitor"],
+    "pilotActors": ["finance-staging-smoke"],
     "pilotUnits": ["novo-hamburgo"],
     "percentage": 100
   },

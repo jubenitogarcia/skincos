@@ -2,6 +2,20 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T14:02:00Z",
+      "surface": "origin-main-github-actions-cloudflare-d1-pages-live-http-and-operator-monitor",
+      "scope": "Authoritative Finance reconciliation",
+      "state": "experimental-staging-baseline-current-main-gate-open",
+      "method": "Fetched origin/main; inspected merged PRs after #815, canonical workflow definitions and recent runs; queried GitHub environment variable/secret names only; made read-only Cloudflare Worker/D1/KV/Pages queries; executed direct health/readiness probes; and inspected the private external-monitor health/metrics without reading secret values or personal data.",
+      "result": "origin/main is 6963ba0495870e8f9b15a0b1e81477dd5f7f3f8b. PR #815 is merged at 32bf3ebb296ca95e3273bb4fed664480eb5642e5 and remains an ancestor. Its Worker/UI preview and staging runs 30168426616/30168445270 and 30168426575/30168445288 attest that SHA. Live staging Finance health/readiness and gateway probes are 200, ready, version 32bf3ebb, D1/module-control healthy, module_enabled=false and the D1 journal contains migrations 0001 through 0012. Direct Workers inspection identifies immutable staging version 51bd6fa4-d775-43e4-96c3-6fbe0cec8513. The historical rollback 30143185583, kill-switch 30143674681/30143742671 and scratch restore remain valid for those tested capabilities. The external Windows monitor is live through its Run-key supervisor with loopback health/metrics 200, 30-day retention and recorded controlled human-alert/recovery evidence. The historical canary audit 503 in 30168648150 is not currently observed by live probes or the monitor.",
+      "limitation": "This is not a current-main single-SHA Finance staging release: staging API reports 2ba1e0a7 and general CRM Pages reports f30f66e while Finance Worker/UI report 32bf3ebb. No synthetic authenticated import/UI journey is evidenced for a current-main candidate. D1 offsite restore and runtime-config retrieval are evidenced, but fresh offsite PostgreSQL retrieval/restoration remains blocked by the connector IPC limit and unauthorized alternate access. Production Finance is absent: direct Cloudflare reads report Worker skincos-finance missing; no Finance production D1/KV/UI/Worker secret/version/artifact/migration exists, and Core API run 30418523054 failed before upload or smoke because its FINANCE binding targets that missing Worker. No production, flag, grant, user, secret, resource or data was changed.",
+      "sha": "6963ba0495870e8f9b15a0b1e81477dd5f7f3f8b",
+      "pr": 815,
+      "runs": [30168426616, 30168445270, 30168426575, 30168445288, 30143185583, 30143674681, 30143742671, 30168648150, 30418523054, 30456978257],
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\finance-recovery-drills\\20260725T-current-main-b869485b\\restore-evidence.sanitized.json",
+      "next_action": "Under a separate staging authorization, promote an explicit current-main SHA through canonical Finance Worker/UI preview and staging, then run the controlled synthetic authenticated import/UI journey. Obtain authorized provider streaming before retrying the PostgreSQL offsite restore."
+    },
+    {
       "observed_at": "2026-07-29T11:21:32Z",
       "surface": "github-actions-cloudflare-configuration-and-live-endpoints",
       "scope": "Finance canonical production provision preflight",
