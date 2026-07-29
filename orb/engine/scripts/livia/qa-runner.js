@@ -15,6 +15,7 @@ const BUILD_GRAPH_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 
 const VERIFY_PUBLISHED_ARTIFACTS_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'verify-published-artifacts.js');
 const PUBLISH_PROGRESS_LEDGER_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'publish-progress-ledger.js');
 const VALIDATE_PUBLISH_TOKEN_HEALTH_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'validate-publish-token-health.js');
+const BUILD_GRAPH_REPLAY_SOURCE = path.join(runtimePaths.repoRoot, 'compose2-current.js');
 const VERIFIER_ENV_KEYS = new Set(['TOKEN_VAULT_BASE_URL', 'TOKEN_VAULT_N8N_API_TOKEN']);
 const VERIFIER_ENV_FILES = [
   '/etc/skincos/orb-business.env',
@@ -216,6 +217,16 @@ function verifierEnvironment({ envFiles = VERIFIER_ENV_FILES, inherited = proces
     if (String(inherited[key] || '').trim()) result[key] = inherited[key];
   }
   return result;
+}
+
+function buildGraphReplayEnvironment(inherited = process.env) {
+  // The production Execute Command node supplies this same immutable source
+  // explicitly. A replay must never fall back to a mutable runtime pointer or
+  // the retired in-workflow Code-node discovery path.
+  return {
+    ...inherited,
+    LIVIA_BUILD_JOB_GRAPH_SOURCE: BUILD_GRAPH_REPLAY_SOURCE,
+  };
 }
 
 function notificationForExecution(runData) {
@@ -948,6 +959,7 @@ function replayBuildGraph(executionId) {
   const result = spawnSync('node', [BUILD_GRAPH_SCRIPT, '--payload', JSON.stringify(payload)], {
     encoding: 'utf8',
     maxBuffer: 50 * 1024 * 1024,
+    env: buildGraphReplayEnvironment(),
   });
   if (result.status !== 0) {
     console.error(result.stdout);
@@ -1038,4 +1050,5 @@ module.exports = {
   notificationForExecution,
   readSelectedEnvironmentFile,
   verifierEnvironment,
+  buildGraphReplayEnvironment,
 };

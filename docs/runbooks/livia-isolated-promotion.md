@@ -78,6 +78,23 @@ divergência de legenda é falha causal e deve bloquear Drive, notificações e
 cleanup de sucesso até a evidência do provedor ser reconciliada no verificador
 versionado.
 
+### Replay offline do grafo de publicação
+
+Para conferir uma execução histórica sem chamar o gateway, use o `qa-runner`
+da própria release imutável:
+
+```bash
+sudo node /opt/skincos/releases/<release-40-hex>/source/orb/engine/scripts/livia/qa-runner.js \
+  replay-build-graph --execution '<execution-id>'
+```
+
+O runner fixa `LIVIA_BUILD_JOB_GRAPH_SOURCE` em
+`/opt/skincos/releases/<release-40-hex>/source/orb/engine/compose2-current.js`.
+Ele não pode herdar `/opt/skincos/current`, `ORB_ROOT`, `N8N_ROOT` nem procurar
+o antigo Code node. Confirme no resultado a quantidade/fases dos jobs, a
+`coverUrl` de Instagram e o contrato de acessibilidade de Threads; uma falha
+ou qualquer tentativa de gateway invalida o replay.
+
 ## Rollback de workflow
 
 O rollback é uma nova versão histórica, nunca uma edição do banco nem a
