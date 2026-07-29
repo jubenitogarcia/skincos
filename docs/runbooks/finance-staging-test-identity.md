@@ -23,6 +23,11 @@ sete dias; renovar exige rotação e novo registro de evidência. Ao encerrar o
 marco, execute `revoke` e remova os valores `FINANCE_SMOKE_*` que não forem
 necessários para outro exercício aprovado.
 
+O workflow manual `finance-staging-smoke-identity.yml` é o caminho
+reproduzível para `provision`, `rotate` e `revoke`. Ele só usa o environment
+`staging`, exige confirmação explícita, verifica um único ator ativo antes de
+rotacionar e apaga os SQL efêmeros do runner sem publicá-los como artefato.
+
 ## Criação
 
 1. Confirme os alvos `skincos-db-staging` e `skincos-finance-staging` e confirme que `finance_settings.module_enabled=false` antes de escrever.
