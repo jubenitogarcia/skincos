@@ -1,0 +1,1826 @@
+[
+  {
+    "id": "ccg-orchestrator-001",
+    "name": "00 - Orquestrador - Campaign Creative Generator",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "Orquestra campanha criativa multiformato: interpreta materiais, planeja variacoes, gera uma imagem por job e envia para QA/ledger.",
+          "height": 240,
+          "width": 420
+        },
+        "id": "sticky-orchestrator",
+        "name": "Objetivo",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1120,
+          -320
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "manual-orchestrator",
+        "name": "When clicking 'Execute workflow'",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -1120,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "keepOnlySet": true,
+          "values": {
+            "string": [
+              {
+                "name": "campaign_name",
+                "value": "Campanha Maio"
+              },
+              {
+                "name": "source_drive_folder_id",
+                "value": "google-drive-folder-id"
+              },
+              {
+                "name": "output_drive_folder_id",
+                "value": "google-drive-folder-id"
+              },
+              {
+                "name": "execution_mode",
+                "value": "dry_run"
+              },
+              {
+                "name": "requested_formats",
+                "value": "[\"feed_3x4\",\"stories_9x16\",\"square_1x1\",\"website_banner\",\"horizontal_ad\"]"
+              },
+              {
+                "name": "variation_mode",
+                "value": "auto_all"
+              },
+              {
+                "name": "brand",
+                "value": "Espaco Facial"
+              },
+              {
+                "name": "compliance_note",
+                "value": "Avaliacao individual. Resultados variam."
+              },
+              {
+                "name": "phase_1_workflow_id",
+                "value": "ccg-phase1-interpret-campaign"
+              },
+              {
+                "name": "phase_2_workflow_id",
+                "value": "ccg-phase2-plan-variations"
+              },
+              {
+                "name": "phase_3_workflow_id",
+                "value": "ccg-phase3-generate-asset"
+              },
+              {
+                "name": "phase_4_workflow_id",
+                "value": "ccg-phase4-qa-ledger"
+              }
+            ],
+            "number": [
+              {
+                "name": "max_variations_per_format",
+                "value": 6
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "config-orchestrator",
+        "name": "Configuracao Inicial",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          -880,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nfunction safeArray(value) {\n  if (Array.isArray(value)) return value;\n  const text = safeString(value);\n  if (!text) return [];\n  try { const parsed = JSON.parse(text); return Array.isArray(parsed) ? parsed : []; } catch {}\n  return text.split(',').map((item) => item.trim()).filter(Boolean);\n}\nconst cfg = $('Configuracao Inicial').first().json || {};\nconst requested_formats = safeArray(cfg.requested_formats);\nreturn [{\n  json: {\n    campaign_name: safeString(cfg.campaign_name) || 'Campanha sem nome',\n    source_drive_folder_id: safeString(cfg.source_drive_folder_id),\n    output_drive_folder_id: safeString(cfg.output_drive_folder_id),\n    execution_mode: safeString(cfg.execution_mode || 'dry_run').toLowerCase(),\n    requested_formats: requested_formats.length ? requested_formats : ['feed_3x4','stories_9x16','square_1x1','website_banner','horizontal_ad'],\n    variation_mode: safeString(cfg.variation_mode || 'auto_all'),\n    max_variations_per_format: Number(cfg.max_variations_per_format || 6),\n    brand: safeString(cfg.brand || 'Espaco Facial'),\n    compliance_note: safeString(cfg.compliance_note || 'Avaliacao individual. Resultados variam.'),\n    phase_1_workflow_id: safeString(cfg.phase_1_workflow_id),\n    phase_2_workflow_id: safeString(cfg.phase_2_workflow_id),\n    phase_3_workflow_id: safeString(cfg.phase_3_workflow_id),\n    phase_4_workflow_id: safeString(cfg.phase_4_workflow_id),\n    orchestrated_at: new Date().toISOString(),\n  },\n}];\n"
+        },
+        "id": "prepare-orchestration",
+        "name": "Preparar Orquestracao",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -640,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "source": "database",
+          "workflowId": {
+            "__rl": true,
+            "value": "={{ $json.phase_1_workflow_id }}",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "campaign_payload_json": "={{ JSON.stringify($json) }}"
+            },
+            "matchingColumns": [
+              "campaign_payload_json"
+            ],
+            "schema": [
+              {
+                "id": "campaign_payload_json",
+                "displayName": "campaign_payload_json",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "removed": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          },
+          "mode": "once",
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "id": "execute-phase-1",
+        "name": "Execute Fase 1",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          -380,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "source": "database",
+          "workflowId": {
+            "__rl": true,
+            "value": "={{ $(\"Preparar Orquestracao\").first().json.phase_2_workflow_id }}",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "campaign_brief_json": "={{ JSON.stringify($json) }}"
+            },
+            "matchingColumns": [
+              "campaign_brief_json"
+            ],
+            "schema": [
+              {
+                "id": "campaign_brief_json",
+                "displayName": "campaign_brief_json",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "removed": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          },
+          "mode": "once",
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "id": "execute-phase-2",
+        "name": "Execute Fase 2",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          -120,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "source": "database",
+          "workflowId": {
+            "__rl": true,
+            "value": "={{ $(\"Preparar Orquestracao\").first().json.phase_3_workflow_id }}",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "generation_job_json": "={{ JSON.stringify($json) }}"
+            },
+            "matchingColumns": [
+              "generation_job_json"
+            ],
+            "schema": [
+              {
+                "id": "generation_job_json",
+                "displayName": "generation_job_json",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "removed": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          },
+          "mode": "each",
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "id": "execute-phase-3",
+        "name": "Execute Fase 3",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          140,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "source": "database",
+          "workflowId": {
+            "__rl": true,
+            "value": "={{ $(\"Preparar Orquestracao\").first().json.phase_4_workflow_id }}",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "generation_result_json": "={{ JSON.stringify($json) }}"
+            },
+            "matchingColumns": [
+              "generation_result_json"
+            ],
+            "schema": [
+              {
+                "id": "generation_result_json",
+                "displayName": "generation_result_json",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "removed": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          },
+          "mode": "each",
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "id": "execute-phase-4",
+        "name": "Execute Fase 4",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          400,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst items = $input.all().map((item) => item.json || {});\nconst approved = items.filter((item) => safeString(item.status) === 'approved').length;\nconst needs_review = items.filter((item) => safeString(item.status) === 'needs_review').length;\nconst failed = items.filter((item) => safeString(item.status) === 'failed').length;\nreturn [{\n  json: {\n    campaign_name: safeString(($('Preparar Orquestracao').first().json || {}).campaign_name),\n    execution_mode: safeString(($('Preparar Orquestracao').first().json || {}).execution_mode),\n    finished_at: new Date().toISOString(),\n    summary: { total_assets: items.length, approved, needs_review, failed },\n    assets: items,\n  },\n}];\n"
+        },
+        "id": "final-report",
+        "name": "Relatorio Final da Orquestracao",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          40
+        ]
+      }
+    ],
+    "connections": {
+      "When clicking 'Execute workflow'": {
+        "main": [
+          [
+            {
+              "node": "Configuracao Inicial",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Configuracao Inicial": {
+        "main": [
+          [
+            {
+              "node": "Preparar Orquestracao",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Preparar Orquestracao": {
+        "main": [
+          [
+            {
+              "node": "Execute Fase 1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execute Fase 1": {
+        "main": [
+          [
+            {
+              "node": "Execute Fase 2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execute Fase 2": {
+        "main": [
+          [
+            {
+              "node": "Execute Fase 3",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execute Fase 3": {
+        "main": [
+          [
+            {
+              "node": "Execute Fase 4",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execute Fase 4": {
+        "main": [
+          [
+            {
+              "node": "Relatorio Final da Orquestracao",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {},
+    "staticData": null,
+    "pinData": {},
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "codex_generated": true,
+      "generated_by": "scripts/build-campaign-creative-generator.js"
+    }
+  },
+  {
+    "id": "ccg-phase1-interpret-campaign",
+    "name": "01 - Interpretar Campanha",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "Fase 1: baixa materiais do Drive, extrai texto de PDFs quando possivel, anexa imagens e produz campaign_brief estruturado.",
+          "height": 240,
+          "width": 420
+        },
+        "id": "sticky-phase1",
+        "name": "Objetivo",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1120,
+          -420
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "manual-phase1",
+        "name": "When clicking 'Execute workflow'",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -1120,
+          40
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "execute-trigger-phase1",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          -1120,
+          -140
+        ]
+      },
+      {
+        "parameters": {
+          "keepOnlySet": false,
+          "values": {
+            "string": [
+              {
+                "name": "campaign_name",
+                "value": "={{ $json.campaign_name || (JSON.parse($json.campaign_payload_json || \"{}\")).campaign_name || \"Campanha\" }}"
+              },
+              {
+                "name": "source_drive_folder_id",
+                "value": "={{ $json.source_drive_folder_id || (JSON.parse($json.campaign_payload_json || \"{}\")).source_drive_folder_id || \"\" }}"
+              },
+              {
+                "name": "output_drive_folder_id",
+                "value": "={{ $json.output_drive_folder_id || (JSON.parse($json.campaign_payload_json || \"{}\")).output_drive_folder_id || \"\" }}"
+              },
+              {
+                "name": "execution_mode",
+                "value": "={{ $json.execution_mode || (JSON.parse($json.campaign_payload_json || \"{}\")).execution_mode || \"dry_run\" }}"
+              },
+              {
+                "name": "brand",
+                "value": "={{ $json.brand || (JSON.parse($json.campaign_payload_json || \"{}\")).brand || \"Espaco Facial\" }}"
+              },
+              {
+                "name": "compliance_note",
+                "value": "={{ $json.compliance_note || (JSON.parse($json.campaign_payload_json || \"{}\")).compliance_note || \"Avaliacao individual. Resultados variam.\" }}"
+              },
+              {
+                "name": "requested_formats",
+                "value": "={{ $json.requested_formats || JSON.stringify((JSON.parse($json.campaign_payload_json || \"{}\")).requested_formats || []) }}"
+              },
+              {
+                "name": "variation_mode",
+                "value": "={{ $json.variation_mode || (JSON.parse($json.campaign_payload_json || \"{}\")).variation_mode || \"auto_all\" }}"
+              },
+              {
+                "name": "max_variations_per_format",
+                "value": "={{ $json.max_variations_per_format || (JSON.parse($json.campaign_payload_json || \"{}\")).max_variations_per_format || 6 }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "config-phase1",
+        "name": "Configuracao Fase 1",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          -860,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "fileFolder",
+          "returnAll": true,
+          "filter": {
+            "folderId": {
+              "__rl": true,
+              "value": "={{ $json.source_drive_folder_id }}",
+              "mode": "id"
+            },
+            "includeTrashed": false
+          },
+          "options": {
+            "fields": [
+              "id",
+              "mimeType",
+              "name",
+              "size",
+              "webViewLink",
+              "webContentLink",
+              "thumbnailLink"
+            ]
+          }
+        },
+        "id": "search-campaign-files",
+        "name": "Search Campaign Files",
+        "type": "n8n-nodes-base.googleDrive",
+        "typeVersion": 3,
+        "position": [
+          -600,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "download",
+          "fileId": {
+            "__rl": true,
+            "value": "={{ $json.id }}",
+            "mode": "id"
+          },
+          "options": {}
+        },
+        "id": "download-campaign-file",
+        "name": "Download Campaign File",
+        "type": "n8n-nodes-base.googleDrive",
+        "typeVersion": 3,
+        "position": [
+          -340,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nfunction safeArray(value) {\n  if (Array.isArray(value)) return value;\n  const text = safeString(value);\n  if (!text) return [];\n  try { const parsed = JSON.parse(text); return Array.isArray(parsed) ? parsed : []; } catch {}\n  return text.split(',').map((item) => item.trim()).filter(Boolean);\n}\nfunction slug(value) {\n  return safeString(value).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'campaign';\n}\nasync function binaryBuffer(itemIndex, key) {\n  if (this.helpers && this.helpers.getBinaryDataBuffer) {\n    return await this.helpers.getBinaryDataBuffer(itemIndex, key);\n  }\n  const data = (($input.all()[itemIndex] || {}).binary || {})[key];\n  if (!data || !data.data) return Buffer.alloc(0);\n  return Buffer.from(data.data, 'base64');\n}\nfunction extractPdfText(filePath) {\n  const childProcess = require('child_process');\n  const script = [\n    'import sys',\n    'from pathlib import Path',\n    'path = Path(sys.argv[1])',\n    'text = \"\"',\n    'try:',\n    '    import pypdf',\n    '    reader = pypdf.PdfReader(str(path))',\n    '    text = \"\\\\n\".join([(page.extract_text() or \"\") for page in reader.pages])',\n    'except Exception:',\n    '    try:',\n    '        import PyPDF2',\n    '        reader = PyPDF2.PdfReader(str(path))',\n    '        text = \"\\\\n\".join([(page.extract_text() or \"\") for page in reader.pages])',\n    '    except Exception as exc:',\n    '        text = \"PDF_TEXT_EXTRACTION_FAILED: \" + str(exc)',\n    'print(text[:12000])',\n  ].join('\\n');\n  try {\n    return childProcess.execFileSync('python3', ['-c', script, filePath], { encoding: 'utf8', timeout: 30000 });\n  } catch (error) {\n    return 'PDF_TEXT_EXTRACTION_FAILED: ' + safeString(error.message);\n  }\n}\n\nconst cfg = $('Configuracao Fase 1').first().json || {};\nconst items = $input.all();\nconst fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\nconst runId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;\nconst materialFolder = path.join('/tmp', 'n8n-campaign-creative', runId);\nfs.mkdirSync(materialFolder, { recursive: true });\n\nconst source_materials = [];\nconst binary = {};\nlet imageIndex = 0;\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i] || {};\n  const json = item.json || {};\n  const binaryKeys = Object.keys(item.binary || {});\n  const binaryKey = binaryKeys[0] || 'data';\n  const name = safeString(json.name || json.fileName || `material-${i + 1}`);\n  const mimeType = safeString(json.mimeType || ((item.binary || {})[binaryKey] || {}).mimeType);\n  const filePath = path.join(materialFolder, name.replace(/[\\\\/:*?\"<>|]+/g, '_'));\n  let sha256 = '';\n  let text_excerpt = '';\n  let kind = mimeType.includes('pdf') || /\\.pdf$/i.test(name) ? 'pdf' : mimeType.startsWith('image/') ? 'image' : 'other';\n  if (binaryKeys.length) {\n    const buf = await binaryBuffer.call(this, i, binaryKey);\n    fs.writeFileSync(filePath, buf);\n    sha256 = crypto.createHash('sha256').update(buf).digest('hex');\n    if (kind === 'pdf') text_excerpt = extractPdfText(filePath);\n    if (kind === 'image' && imageIndex < 8) {\n      const key = `image_${imageIndex + 1}`;\n      binary[key] = item.binary[binaryKey];\n      imageIndex++;\n    }\n  }\n  source_materials.push({\n    id: safeString(json.id),\n    name,\n    mimeType,\n    kind,\n    size: safeString(json.size),\n    sha256,\n    local_path: filePath,\n    text_excerpt: safeString(text_excerpt).slice(0, 12000),\n    webViewLink: safeString(json.webViewLink),\n    thumbnailLink: safeString(json.thumbnailLink),\n  });\n}\n\nreturn [{\n  json: {\n    campaign_name: safeString(cfg.campaign_name || $json.campaign_name),\n    source_drive_folder_id: safeString(cfg.source_drive_folder_id || $json.source_drive_folder_id),\n    output_drive_folder_id: safeString(cfg.output_drive_folder_id || $json.output_drive_folder_id),\n    execution_mode: safeString(cfg.execution_mode || $json.execution_mode || 'dry_run').toLowerCase(),\n    requested_formats: safeArray(cfg.requested_formats || $json.requested_formats),\n    variation_mode: safeString($json.variation_mode || cfg.variation_mode || 'auto_all'),\n    max_variations_per_format: Number($json.max_variations_per_format || cfg.max_variations_per_format || 6),\n    brand: safeString(cfg.brand || $json.brand || 'Espaco Facial'),\n    compliance_note: safeString(cfg.compliance_note || $json.compliance_note || 'Avaliacao individual. Resultados variam.'),\n    material_folder: materialFolder,\n    source_materials,\n    material_summary: {\n      total_files: source_materials.length,\n      images_attached: imageIndex,\n      pdfs: source_materials.filter((item) => item.kind === 'pdf').length,\n      images: source_materials.filter((item) => item.kind === 'image').length,\n    },\n  },\n  binary,\n}];\n"
+        },
+        "id": "prepare-campaign-inputs",
+        "name": "Prepare Campaign Inputs",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -80,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "=Analise os materiais da campanha e retorne SOMENTE JSON no schema exigido.\\n\\nDados recebidos:\\n{{ JSON.stringify($json) }}",
+          "hasOutputParser": true,
+          "options": {
+            "systemMessage": "Voce e um Diretor de Arte Senior de Performance para Meta Ads, Social Media e Web em clinicas premium de estetica. Interprete imagens anexadas como referencia visual e textos extraidos de PDFs como fonte de ofertas/condicoes. Nunca invente preco, condicao ou promessa. Quando algo estiver ilegivel ou incerto, registre em needs_review. Use portugues do Brasil sem exageros promocionais.",
+            "maxIterations": 4,
+            "passthroughBinaryImages": true
+          }
+        },
+        "id": "campaign-interpreter",
+        "name": "Campaign Interpreter",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 2.2,
+        "position": [
+          180,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "schemaType": "manual",
+          "inputSchema": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"campaign_brief\"\n  ],\n  \"properties\": {\n    \"campaign_brief\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"concept\",\n        \"visual_identity\",\n        \"offers\",\n        \"offer_groups\",\n        \"tone\",\n        \"mandatory_claims\",\n        \"forbidden_claims\",\n        \"needs_review\"\n      ],\n      \"properties\": {\n        \"concept\": {\n          \"type\": \"string\"\n        },\n        \"visual_identity\": {\n          \"type\": \"object\",\n          \"required\": [\n            \"palette\",\n            \"typography_style\",\n            \"decorative_elements\",\n            \"composition_rules\"\n          ],\n          \"properties\": {\n            \"palette\": {\n              \"type\": \"array\",\n              \"items\": {\n                \"type\": \"string\"\n              }\n            },\n            \"typography_style\": {\n              \"type\": \"string\"\n            },\n            \"decorative_elements\": {\n              \"type\": \"array\",\n              \"items\": {\n                \"type\": \"string\"\n              }\n            },\n            \"composition_rules\": {\n              \"type\": \"array\",\n              \"items\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        },\n        \"offers\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"offer_id\",\n              \"title\",\n              \"price\",\n              \"conditions\",\n              \"evidence\",\n              \"confidence\"\n            ],\n            \"properties\": {\n              \"offer_id\": {\n                \"type\": \"string\"\n              },\n              \"title\": {\n                \"type\": \"string\"\n              },\n              \"price\": {\n                \"type\": \"string\"\n              },\n              \"conditions\": {\n                \"type\": \"string\"\n              },\n              \"evidence\": {\n                \"type\": \"string\"\n              },\n              \"confidence\": {\n                \"type\": \"number\"\n              }\n            }\n          }\n        },\n        \"offer_groups\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"group_id\",\n              \"title\",\n              \"offer_ids\",\n              \"strategic_role\"\n            ],\n            \"properties\": {\n              \"group_id\": {\n                \"type\": \"string\"\n              },\n              \"title\": {\n                \"type\": \"string\"\n              },\n              \"offer_ids\": {\n                \"type\": \"array\",\n                \"items\": {\n                  \"type\": \"string\"\n                }\n              },\n              \"strategic_role\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        },\n        \"tone\": {\n          \"type\": \"string\"\n        },\n        \"mandatory_claims\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        },\n        \"forbidden_claims\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        },\n        \"needs_review\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        }\n      }\n    }\n  }\n}",
+          "autoFix": true
+        },
+        "id": "campaign-brief-parser",
+        "name": "Campaign Brief Parser",
+        "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+        "typeVersion": 1.3,
+        "position": [
+          180,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "model": {
+            "__rl": true,
+            "value": "gpt-5.2",
+            "mode": "list",
+            "cachedResultName": "gpt-5.2"
+          },
+          "builtInTools": {},
+          "options": {}
+        },
+        "id": "campaign-interpreter-model",
+        "name": "OpenAI Chat Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        "typeVersion": 1.2,
+        "position": [
+          -80,
+          220
+        ],
+        "credentials": {
+          "openAiApi": {
+            "id": "d5x9D1q8y2QXDeUD",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nfunction safeArray(value) {\n  if (Array.isArray(value)) return value;\n  const text = safeString(value);\n  if (!text) return [];\n  try { const parsed = JSON.parse(text); return Array.isArray(parsed) ? parsed : []; } catch {}\n  return text.split(',').map((item) => item.trim()).filter(Boolean);\n}\nfunction unwrapAi(value) {\n  if (value && typeof value.output === 'object') return value.output;\n  if (value && typeof value.text === 'string') {\n    try { return JSON.parse(value.text); } catch {}\n  }\n  return value || {};\n}\nconst base = $('Prepare Campaign Inputs').first().json || {};\nconst ai = unwrapAi($json);\nconst campaign_brief = ai.campaign_brief || {};\ncampaign_brief.needs_review = safeArray(campaign_brief.needs_review);\nfor (const offer of safeArray(campaign_brief.offers)) {\n  if (!safeString(offer.evidence) || Number(offer.confidence || 0) < 0.65) {\n    campaign_brief.needs_review.push(`Oferta incerta: ${safeString(offer.title || offer.offer_id)}`);\n  }\n}\nreturn [{\n  json: {\n    ...base,\n    campaign_brief,\n    interpretation_status: campaign_brief.needs_review.length ? 'needs_review' : 'ready',\n    interpreted_at: new Date().toISOString(),\n  },\n}];\n"
+        },
+        "id": "normalize-campaign-brief",
+        "name": "Normalize Campaign Brief",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          -40
+        ]
+      }
+    ],
+    "connections": {
+      "When clicking 'Execute workflow'": {
+        "main": [
+          [
+            {
+              "node": "Configuracao Fase 1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Configuracao Fase 1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Configuracao Fase 1": {
+        "main": [
+          [
+            {
+              "node": "Search Campaign Files",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Search Campaign Files": {
+        "main": [
+          [
+            {
+              "node": "Download Campaign File",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Download Campaign File": {
+        "main": [
+          [
+            {
+              "node": "Prepare Campaign Inputs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Campaign Inputs": {
+        "main": [
+          [
+            {
+              "node": "Campaign Interpreter",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Campaign Interpreter": {
+        "main": [
+          [
+            {
+              "node": "Normalize Campaign Brief",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Chat Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Campaign Interpreter",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Campaign Brief Parser": {
+        "ai_outputParser": [
+          [
+            {
+              "node": "Campaign Interpreter",
+              "type": "ai_outputParser",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {},
+    "staticData": null,
+    "pinData": {},
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "codex_generated": true,
+      "generated_by": "scripts/build-campaign-creative-generator.js"
+    }
+  },
+  {
+    "id": "ccg-phase2-plan-variations",
+    "name": "02 - Planejar Variacoes",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "Fase 2: converte campaign_brief em uma matriz de jobs por formato e variacao. Cada job gera exatamente uma imagem.",
+          "height": 240,
+          "width": 420
+        },
+        "id": "sticky-phase2",
+        "name": "Objetivo",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1020,
+          -340
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "manual-phase2",
+        "name": "When clicking 'Execute workflow'",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -1020,
+          40
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "execute-trigger-phase2",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          -1020,
+          -140
+        ]
+      },
+      {
+        "parameters": {
+          "keepOnlySet": false,
+          "values": {
+            "string": [
+              {
+                "name": "execution_mode",
+                "value": "dry_run"
+              },
+              {
+                "name": "requested_formats",
+                "value": "[\"feed_3x4\",\"stories_9x16\",\"square_1x1\",\"website_banner\",\"horizontal_ad\"]"
+              },
+              {
+                "name": "variation_mode",
+                "value": "auto_all"
+              }
+            ],
+            "number": [
+              {
+                "name": "max_variations_per_format",
+                "value": 6
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "config-phase2",
+        "name": "Configuracao Fase 2",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          -780,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nlet payload = {};\nif (safeString($json.campaign_brief_json)) payload = JSON.parse($json.campaign_brief_json);\nelse payload = $json || {};\nreturn [{ json: { ...payload, execution_mode: safeString(payload.execution_mode || $json.execution_mode || 'dry_run').toLowerCase() } }];\n"
+        },
+        "id": "normalize-brief-input",
+        "name": "Normalizar Brief",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -520,
+          -40
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nfunction safeArray(value) {\n  if (Array.isArray(value)) return value;\n  const text = safeString(value);\n  if (!text) return [];\n  try { const parsed = JSON.parse(text); return Array.isArray(parsed) ? parsed : []; } catch {}\n  return text.split(',').map((item) => item.trim()).filter(Boolean);\n}\nfunction slug(value) {\n  return safeString(value).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').toLowerCase() || 'item';\n}\nfunction formatSpec(format) {\n  const map = {\n    feed_3x4: { size: '1024x1536', aspect_ratio: '3:4', objective: 'feed equilibrado e comercial' },\n    stories_9x16: { size: '1024x1792', aspect_ratio: '9:16', objective: 'leitura imediata para stories/reels' },\n    square_1x1: { size: '1024x1024', aspect_ratio: '1:1', objective: 'post quadrado sintetico' },\n    website_banner: { size: '1536x1024', aspect_ratio: '3:2', objective: 'banner web horizontal claro' },\n    horizontal_ad: { size: '1792x1024', aspect_ratio: '16:9', objective: 'anuncio horizontal de leitura rapida' },\n  };\n  return map[format] || { size: '1024x1024', aspect_ratio: '1:1', objective: 'formato customizado' };\n}\nfunction selectedOffersForVariation(variation, offers, groups) {\n  if (!offers.length) return [];\n  if (variation === 'combo') {\n    const group = groups[0];\n    if (group && safeArray(group.offer_ids).length) return offers.filter((offer) => group.offer_ids.includes(offer.offer_id)).slice(0, 4);\n  }\n  if (variation === 'secundaria') return offers.slice(1, 3);\n  return offers.slice(0, variation === 'hero' ? 2 : 1);\n}\nfunction buildPrompt(ctx) {\n  const offersText = ctx.offers.map((offer) => [offer.title, offer.price, offer.conditions].filter(Boolean).join(' - ')).join('; ');\n  return [\n    'Voce e um Diretor de Arte Senior de Performance para Meta Ads, Social Media e Web.',\n    'Crie exatamente 1 imagem final, premium, profissional e coerente com a campanha.',\n    `Marca: ${ctx.brand}.`,\n    `Campanha: ${ctx.campaign_name}.`,\n    `Formato: ${ctx.format} (${ctx.spec.aspect_ratio}, tamanho recomendado ${ctx.spec.size}).`,\n    `Variacao: ${ctx.variation_key}. Objetivo: ${ctx.objective}.`,\n    `Conceito criativo: ${ctx.brief.concept || 'usar materiais da campanha'}.`,\n    `Paleta: ${safeArray(ctx.brief.visual_identity && ctx.brief.visual_identity.palette).join(', ')}.`,\n    `Tipografia/estilo: ${safeString(ctx.brief.visual_identity && ctx.brief.visual_identity.typography_style)}.`,\n    `Elementos decorativos: ${safeArray(ctx.brief.visual_identity && ctx.brief.visual_identity.decorative_elements).join(', ')}.`,\n    `Ofertas autorizadas: ${offersText || 'nenhuma oferta/preco confirmado; criar variacao institucional sem inventar preco'}.`,\n    `Tom: ${ctx.brief.tone || 'premium, claro, comercial e responsavel'}.`,\n    `Compliance: nao prometer resultado garantido, nao usar antes/depois, nao explorar insegurancas. ${ctx.compliance_note}`,\n    'Selecione apenas informacoes legiveis para o formato. Nao tente colocar toda a campanha em uma arte.',\n    'A imagem deve parecer parte de uma familia visual maior de variacoes.',\n  ].filter(Boolean).join('\\n');\n}\n\nconst input = $input.first().json || {};\nconst brief = input.campaign_brief || {};\nconst offers = safeArray(brief.offers);\nconst groups = safeArray(brief.offer_groups);\nconst requestedFormats = safeArray(input.requested_formats).length ? safeArray(input.requested_formats) : ['feed_3x4','stories_9x16','square_1x1','website_banner','horizontal_ad'];\nconst allVariations = ['hero','oferta_principal','combo','preco','beneficio','secundaria'];\nconst maxPerFormat = Math.max(1, Math.min(12, Number(input.max_variations_per_format || 6)));\nconst variationMode = safeString(input.variation_mode || 'auto_all');\nconst selectedVariations = variationMode === 'auto_best' ? ['hero'] : allVariations.slice(0, maxPerFormat);\nconst jobs = [];\nlet priority = 1;\nfor (const format of requestedFormats) {\n  const spec = formatSpec(format);\n  for (const variation_key of selectedVariations) {\n    const selectedOffers = selectedOffersForVariation(variation_key, offers, groups);\n    const objectiveByVariation = {\n      hero: 'entrada conceitual da campanha',\n      oferta_principal: 'destacar a oferta principal com clareza',\n      combo: 'agrupar ofertas compativeis sem poluir a arte',\n      preco: 'dar foco comercial ao preco confirmado',\n      beneficio: 'valorizar beneficio percebido sem promessa garantida',\n      secundaria: 'dar espaco para oferta secundaria ou institucional',\n    };\n    const asset_id = `${slug(input.campaign_name)}__${format}__${variation_key}__v1`;\n    const ctx = {\n      brand: input.brand || 'Espaco Facial',\n      campaign_name: input.campaign_name,\n      format,\n      variation_key,\n      objective: objectiveByVariation[variation_key] || spec.objective,\n      spec,\n      brief,\n      offers: selectedOffers,\n      compliance_note: input.compliance_note,\n    };\n    jobs.push({\n      asset_id,\n      campaign_name: input.campaign_name,\n      brand: input.brand,\n      format,\n      variation_key,\n      objective: ctx.objective,\n      priority: priority++,\n      selected_offer_ids: selectedOffers.map((offer) => offer.offer_id),\n      selected_offers: selectedOffers,\n      size: spec.size,\n      aspect_ratio: spec.aspect_ratio,\n      output_format: 'png',\n      generation_prompt: buildPrompt(ctx),\n      qa_requirements: [\n        'texto legivel no formato',\n        'precos e condicoes apenas se confirmados no material',\n        'sem promessas de resultado',\n        'sem antes e depois',\n        'familia visual coerente com campanha',\n      ],\n      campaign_brief: brief,\n      source_materials: safeArray(input.source_materials),\n      output_drive_folder_id: safeString(input.output_drive_folder_id),\n      execution_mode: safeString(input.execution_mode || 'dry_run').toLowerCase(),\n      compliance_note: input.compliance_note,\n      planned_at: new Date().toISOString(),\n    });\n  }\n}\nreturn jobs.map((job) => ({ json: job }));\n"
+        },
+        "id": "build-variation-plan",
+        "name": "Build Variation Plan",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -260,
+          -40
+        ]
+      }
+    ],
+    "connections": {
+      "When clicking 'Execute workflow'": {
+        "main": [
+          [
+            {
+              "node": "Configuracao Fase 2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Configuracao Fase 2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Configuracao Fase 2": {
+        "main": [
+          [
+            {
+              "node": "Normalizar Brief",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalizar Brief": {
+        "main": [
+          [
+            {
+              "node": "Build Variation Plan",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {},
+    "staticData": null,
+    "pinData": {},
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "codex_generated": true,
+      "generated_by": "scripts/build-campaign-creative-generator.js"
+    }
+  },
+  {
+    "id": "ccg-phase3-generate-asset",
+    "name": "03 - Gerar 1 Peca",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "Fase 3: recebe um job, monta request OpenAI Images, gera uma imagem em live ou somente manifesto em dry-run, e salva asset no Drive.",
+          "height": 240,
+          "width": 420
+        },
+        "id": "sticky-phase3",
+        "name": "Objetivo",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1220,
+          -360
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "manual-phase3",
+        "name": "When clicking 'Execute workflow'",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -1220,
+          80
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "execute-trigger-phase3",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          -1220,
+          -100
+        ]
+      },
+      {
+        "parameters": {
+          "keepOnlySet": false,
+          "values": {
+            "string": [
+              {
+                "name": "execution_mode",
+                "value": "dry_run"
+              },
+              {
+                "name": "image_model",
+                "value": "gpt-image-2"
+              },
+              {
+                "name": "fallback_image_models",
+                "value": "gpt-image-1.5,gpt-image-1"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "config-phase3",
+        "name": "Configuracao Fase 3",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          -980,
+          -20
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst cfg = $('Configuracao Fase 3').first().json || {};\nconst raw = safeString($json.generation_job_json) ? JSON.parse($json.generation_job_json) : ($json || {});\nconst execution_mode = safeString(raw.execution_mode || cfg.execution_mode || 'dry_run').toLowerCase();\nconst model = safeString(cfg.image_model || raw.image_model || 'gpt-image-2');\nconst fallback_models = safeString(cfg.fallback_image_models || 'gpt-image-1.5,gpt-image-1').split(',').map((item) => item.trim()).filter(Boolean);\nconst blockers = [];\nif (!safeString(raw.asset_id)) blockers.push('missing_asset_id');\nif (!safeString(raw.generation_prompt)) blockers.push('missing_generation_prompt');\nif (!safeString(raw.output_drive_folder_id)) blockers.push('missing_output_drive_folder_id');\nreturn [{\n  json: {\n    ...raw,\n    execution_mode,\n    image_model: model,\n    fallback_image_models: fallback_models,\n    generation_status: blockers.length ? 'blocked' : 'ready',\n    blockers,\n    file_name: `${safeString(raw.asset_id || 'asset')}.png`,\n  },\n}];\n"
+        },
+        "id": "normalize-generation-job",
+        "name": "Normalizar Job de Geracao",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -720,
+          -20
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 3
+                  },
+                  "conditions": [
+                    {
+                      "id": "switch-generation-mode-dry-run",
+                      "leftValue": "={{ $json.execution_mode }}",
+                      "rightValue": "dry_run",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals",
+                        "name": "filter.operator.equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "DryRun"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 3
+                  },
+                  "conditions": [
+                    {
+                      "id": "switch-generation-mode-live",
+                      "leftValue": "={{ $json.execution_mode }}",
+                      "rightValue": "live",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals",
+                        "name": "filter.operator.equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "Live"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "switch-generation-mode",
+        "name": "Switch Modo Geracao",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          -460,
+          -20
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nreturn [{\n  json: {\n    ...$json,\n    status: $json.generation_status === 'blocked' ? 'failed' : 'dry_run_ready',\n    drive_file_id: '',\n    preview_url: '',\n    generated_asset: null,\n    generation: {\n      model: $json.image_model,\n      request: null,\n      prompt: $json.generation_prompt,\n      note: 'Dry-run: imagem nao gerada e nenhum arquivo foi enviado ao Drive.',\n    },\n  },\n}];\n"
+        },
+        "id": "dry-run-asset",
+        "name": "Dry Run Asset",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -200,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst prompt = safeString($json.generation_prompt);\nreturn [{\n  json: {\n    ...$json,\n    openai_image_request: {\n      model: safeString($json.image_model || 'gpt-image-2'),\n      prompt,\n      size: safeString($json.size || '1024x1024'),\n      quality: 'high',\n      n: 1,\n      output_format: safeString($json.output_format || 'png'),\n    },\n    image_request_started_at: new Date().toISOString(),\n  },\n}];\n"
+        },
+        "id": "build-openai-image-request",
+        "name": "Build OpenAI Image Request",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -200,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/images/generations",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{$vars.OPENAI_API_KEY}}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify($json.openai_image_request) }}",
+          "options": {
+            "timeout": 180000
+          }
+        },
+        "id": "openai-image-generation",
+        "name": "OpenAI Image Generation",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          60,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst response = $json || {};\nconst data = Array.isArray(response.data) ? response.data : [];\nconst first = data[0] || {};\nconst b64 = safeString(first.b64_json || first.image_base64 || response.b64_json);\nif (!b64) throw new Error('OpenAI Image Generation nao retornou b64_json.');\nconst context = $('Build OpenAI Image Request').first().json || {};\nreturn [{\n  json: {\n    ...context,\n    b64_json: b64,\n    revised_prompt: safeString(first.revised_prompt),\n    usage: response.usage || {},\n    image_request_completed_at: new Date().toISOString(),\n  },\n}];\n"
+        },
+        "id": "normalize-openai-image",
+        "name": "Normalize OpenAI Image",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          320,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst b64 = safeString($json.b64_json);\nif (!b64) throw new Error('b64_json ausente para montar binario.');\nconst buffer = Buffer.from(b64, 'base64');\nconst binaryData = await this.helpers.prepareBinaryData(buffer, safeString($json.file_name || 'generated.png'), 'image/png');\nconst json = { ...$json };\ndelete json.b64_json;\nreturn [{ json, binary: { data: binaryData } }];\n"
+        },
+        "id": "build-image-binary",
+        "name": "Build Image Binary",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          580,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "file",
+          "operation": "upload",
+          "inputDataFieldName": "data",
+          "name": "={{ $json.file_name }}",
+          "driveId": {
+            "__rl": true,
+            "value": "My Drive",
+            "mode": "list",
+            "cachedResultName": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.output_drive_folder_id }}",
+            "mode": "id"
+          },
+          "options": {
+            "simplifyOutput": true,
+            "propertiesUi": {
+              "propertyValues": [
+                {
+                  "key": "campaign_name",
+                  "value": "={{ $json.campaign_name }}"
+                },
+                {
+                  "key": "asset_id",
+                  "value": "={{ $json.asset_id }}"
+                },
+                {
+                  "key": "format",
+                  "value": "={{ $json.format }}"
+                },
+                {
+                  "key": "variation_key",
+                  "value": "={{ $json.variation_key }}"
+                },
+                {
+                  "key": "execution_mode",
+                  "value": "={{ $json.execution_mode }}"
+                }
+              ]
+            }
+          }
+        },
+        "id": "upload-generated-asset",
+        "name": "Upload Generated Asset",
+        "type": "n8n-nodes-base.googleDrive",
+        "typeVersion": 3,
+        "position": [
+          840,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst upload = $input.first().json || {};\nconst context = $('Build Image Binary').first().json || {};\nreturn [{\n  json: {\n    ...context,\n    status: 'generated',\n    drive_file_id: safeString(upload.id),\n    preview_url: safeString(upload.webViewLink || upload.webContentLink || upload.webUrl),\n    generated_asset: {\n      drive_file_id: safeString(upload.id),\n      file_name: safeString(context.file_name),\n      mime_type: 'image/png',\n    },\n  },\n}];\n"
+        },
+        "id": "live-asset-result",
+        "name": "Live Asset Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          100
+        ]
+      }
+    ],
+    "connections": {
+      "When clicking 'Execute workflow'": {
+        "main": [
+          [
+            {
+              "node": "Configuracao Fase 3",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Configuracao Fase 3",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Configuracao Fase 3": {
+        "main": [
+          [
+            {
+              "node": "Normalizar Job de Geracao",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalizar Job de Geracao": {
+        "main": [
+          [
+            {
+              "node": "Switch Modo Geracao",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch Modo Geracao": {
+        "main": [
+          [
+            {
+              "node": "Dry Run Asset",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build OpenAI Image Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build OpenAI Image Request": {
+        "main": [
+          [
+            {
+              "node": "OpenAI Image Generation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Image Generation": {
+        "main": [
+          [
+            {
+              "node": "Normalize OpenAI Image",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize OpenAI Image": {
+        "main": [
+          [
+            {
+              "node": "Build Image Binary",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Image Binary": {
+        "main": [
+          [
+            {
+              "node": "Upload Generated Asset",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Upload Generated Asset": {
+        "main": [
+          [
+            {
+              "node": "Live Asset Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {},
+    "staticData": null,
+    "pinData": {},
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "codex_generated": true,
+      "generated_by": "scripts/build-campaign-creative-generator.js"
+    }
+  },
+  {
+    "id": "ccg-phase4-qa-ledger",
+    "name": "04 - QA, Export e Ledger",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "Fase 4: executa QA visual quando houver imagem, decide approved/needs_review/failed e grava manifest JSON no Drive.",
+          "height": 240,
+          "width": 420
+        },
+        "id": "sticky-phase4",
+        "name": "Objetivo",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -1220,
+          -360
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "manual-phase4",
+        "name": "When clicking 'Execute workflow'",
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -1220,
+          80
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "execute-trigger-phase4",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          -1220,
+          -100
+        ]
+      },
+      {
+        "parameters": {
+          "keepOnlySet": false,
+          "values": {
+            "string": [
+              {
+                "name": "execution_mode",
+                "value": "dry_run"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "config-phase4",
+        "name": "Configuracao Fase 4",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          -980,
+          -20
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nlet payload = {};\nif (safeString($json.generation_result_json)) payload = JSON.parse($json.generation_result_json);\nelse payload = $json || {};\nreturn [{ json: { ...payload, qa_started_at: new Date().toISOString() } }];\n"
+        },
+        "id": "normalize-generated-result",
+        "name": "Normalizar Resultado Gerado",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -720,
+          -20
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 3
+                  },
+                  "conditions": [
+                    {
+                      "id": "switch-qa-mode-dry-run",
+                      "leftValue": "={{ $json.status === \"generated\" ? \"live\" : \"dry_run\" }}",
+                      "rightValue": "dry_run",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals",
+                        "name": "filter.operator.equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "DryRun"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 3
+                  },
+                  "conditions": [
+                    {
+                      "id": "switch-qa-mode-live",
+                      "leftValue": "={{ $json.status === \"generated\" ? \"live\" : \"dry_run\" }}",
+                      "rightValue": "live",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals",
+                        "name": "filter.operator.equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "Live"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "switch-qa-mode",
+        "name": "Switch Modo QA",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          -460,
+          -20
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nreturn [{\n  json: {\n    ...$json,\n    qa: {\n      readability_score: 0,\n      offer_consistency: 'needs_review',\n      compliance: 'needs_review',\n      format_fit: 'needs_review',\n      visual_consistency: 'needs_review',\n      notes: ['Dry-run: QA visual nao executado porque nenhuma imagem final foi gerada.'],\n    },\n    status: $json.status === 'failed' ? 'failed' : 'needs_review',\n  },\n}];\n"
+        },
+        "id": "dry-run-qa",
+        "name": "Dry Run QA",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -200,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "download",
+          "fileId": {
+            "__rl": true,
+            "value": "={{ $json.drive_file_id }}",
+            "mode": "id"
+          },
+          "options": {}
+        },
+        "id": "download-generated-asset",
+        "name": "Download Generated Asset",
+        "type": "n8n-nodes-base.googleDrive",
+        "typeVersion": 3,
+        "position": [
+          -200,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nconst context = $('Normalizar Resultado Gerado').first().json || {};\nconst input = $input.first() || {};\nreturn [{ json: { ...context, downloaded_for_qa: true }, binary: input.binary || {} }];\n"
+        },
+        "id": "prepare-qa-binary",
+        "name": "Prepare QA Binary",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          60,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "=Avalie a imagem final gerada e retorne SOMENTE JSON no schema exigido.\\n\\nContexto do job:\\n{{ JSON.stringify($json) }}",
+          "hasOutputParser": true,
+          "options": {
+            "systemMessage": "Voce e um revisor senior de direcao de arte e compliance para Meta Ads de clinica estetica. Avalie legibilidade, excesso de texto, aderencia ao formato, fidelidade a ofertas confirmadas e compliance. Reprove promessas de resultado, antes/depois, preco inventado ou informacao ilegivel.",
+            "maxIterations": 4,
+            "passthroughBinaryImages": true
+          }
+        },
+        "id": "qa-reviewer",
+        "name": "QA Reviewer",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 2.2,
+        "position": [
+          320,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "schemaType": "manual",
+          "inputSchema": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"qa\"\n  ],\n  \"properties\": {\n    \"qa\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"readability_score\",\n        \"offer_consistency\",\n        \"compliance\",\n        \"format_fit\",\n        \"visual_consistency\",\n        \"notes\"\n      ],\n      \"properties\": {\n        \"readability_score\": {\n          \"type\": \"number\"\n        },\n        \"offer_consistency\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"needs_review\",\n            \"fail\"\n          ]\n        },\n        \"compliance\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"needs_review\",\n            \"fail\"\n          ]\n        },\n        \"format_fit\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"needs_review\",\n            \"fail\"\n          ]\n        },\n        \"visual_consistency\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"needs_review\",\n            \"fail\"\n          ]\n        },\n        \"notes\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        }\n      }\n    }\n  }\n}",
+          "autoFix": true
+        },
+        "id": "qa-parser",
+        "name": "QA Parser",
+        "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+        "typeVersion": 1.3,
+        "position": [
+          320,
+          360
+        ]
+      },
+      {
+        "parameters": {
+          "model": {
+            "__rl": true,
+            "value": "gpt-5.2",
+            "mode": "list",
+            "cachedResultName": "gpt-5.2"
+          },
+          "builtInTools": {},
+          "options": {}
+        },
+        "id": "qa-model",
+        "name": "OpenAI Chat Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        "typeVersion": 1.2,
+        "position": [
+          60,
+          360
+        ],
+        "credentials": {
+          "openAiApi": {
+            "id": "d5x9D1q8y2QXDeUD",
+            "name": "OpenAi account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nfunction safeArray(value) { return Array.isArray(value) ? value : []; }\nfunction unwrapAi(value) {\n  if (value && typeof value.output === 'object') return value.output;\n  if (value && typeof value.text === 'string') {\n    try { return JSON.parse(value.text); } catch {}\n  }\n  return value || {};\n}\nconst base = $('Normalizar Resultado Gerado').first().json || {};\nconst ai = unwrapAi($json);\nconst qa = ai.qa || $json.qa || {};\nconst failures = [qa.offer_consistency, qa.compliance, qa.format_fit, qa.visual_consistency].map(safeString).filter((item) => item === 'fail');\nconst review = [qa.offer_consistency, qa.compliance, qa.format_fit, qa.visual_consistency].map(safeString).filter((item) => item === 'needs_review');\nconst readability = Number(qa.readability_score || 0);\nlet status = 'approved';\nif (safeString(base.status) === 'failed' || failures.length) status = 'failed';\nelse if (review.length || readability < 70) status = 'needs_review';\nreturn [{\n  json: {\n    ...base,\n    status,\n    qa: {\n      readability_score: readability,\n      offer_consistency: safeString(qa.offer_consistency || 'needs_review'),\n      compliance: safeString(qa.compliance || 'needs_review'),\n      format_fit: safeString(qa.format_fit || 'needs_review'),\n      visual_consistency: safeString(qa.visual_consistency || 'needs_review'),\n      notes: safeArray(qa.notes),\n    },\n    qa_completed_at: new Date().toISOString(),\n  },\n}];\n"
+        },
+        "id": "finalize-qa",
+        "name": "Finalize QA Status",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          580,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nconst item = $input.first().json || {};\nconst manifest = {\n  generated_at: new Date().toISOString(),\n  campaign_name: item.campaign_name,\n  asset_id: item.asset_id,\n  format: item.format,\n  variation_key: item.variation_key,\n  status: item.status,\n  drive_file_id: item.drive_file_id,\n  preview_url: item.preview_url,\n  prompt: item.generation_prompt,\n  qa: item.qa,\n  generation: item.generation || { model: item.image_model, usage: item.usage || {} },\n};\nreturn [{\n  json: {\n    ...item,\n    manifest_file_name: `${safeString(item.asset_id || 'asset')}.campaign_manifest.json`,\n    manifest_json: JSON.stringify(manifest, null, 2),\n  },\n}];\n"
+        },
+        "id": "build-ledger",
+        "name": "Build Campaign Manifest",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          840,
+          -20
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "file",
+          "operation": "createFromText",
+          "content": "={{ $json.manifest_json }}",
+          "name": "={{ $json.manifest_file_name }}",
+          "driveId": {
+            "__rl": true,
+            "value": "My Drive",
+            "mode": "list",
+            "cachedResultName": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.output_drive_folder_id }}",
+            "mode": "id"
+          },
+          "options": {}
+        },
+        "id": "upload-manifest",
+        "name": "Upload Campaign Manifest",
+        "type": "n8n-nodes-base.googleDrive",
+        "typeVersion": 3,
+        "position": [
+          1120,
+          -20
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "return [{ json: { ...$(\"Build Campaign Manifest\").first().json, manifest_drive_file_id: $json.id || \"\" } }];"
+        },
+        "id": "ledger-result",
+        "name": "Ledger Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1380,
+          -20
+        ]
+      }
+    ],
+    "connections": {
+      "When clicking 'Execute workflow'": {
+        "main": [
+          [
+            {
+              "node": "Configuracao Fase 4",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Configuracao Fase 4",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Configuracao Fase 4": {
+        "main": [
+          [
+            {
+              "node": "Normalizar Resultado Gerado",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalizar Resultado Gerado": {
+        "main": [
+          [
+            {
+              "node": "Switch Modo QA",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch Modo QA": {
+        "main": [
+          [
+            {
+              "node": "Dry Run QA",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Download Generated Asset",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Download Generated Asset": {
+        "main": [
+          [
+            {
+              "node": "Prepare QA Binary",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare QA Binary": {
+        "main": [
+          [
+            {
+              "node": "QA Reviewer",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dry Run QA": {
+        "main": [
+          [
+            {
+              "node": "Build Campaign Manifest",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "QA Reviewer": {
+        "main": [
+          [
+            {
+              "node": "Finalize QA Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Finalize QA Status": {
+        "main": [
+          [
+            {
+              "node": "Build Campaign Manifest",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Campaign Manifest": {
+        "main": [
+          [
+            {
+              "node": "Upload Campaign Manifest",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Upload Campaign Manifest": {
+        "main": [
+          [
+            {
+              "node": "Ledger Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Chat Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "QA Reviewer",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "QA Parser": {
+        "ai_outputParser": [
+          [
+            {
+              "node": "QA Reviewer",
+              "type": "ai_outputParser",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {},
+    "staticData": null,
+    "pinData": {},
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "codex_generated": true,
+      "generated_by": "scripts/build-campaign-creative-generator.js"
+    }
+  }
+]

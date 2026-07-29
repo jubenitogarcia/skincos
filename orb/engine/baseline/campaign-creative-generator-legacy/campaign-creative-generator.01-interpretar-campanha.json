@@ -1,0 +1,346 @@
+{
+  "id": "ccg-phase1-interpret-campaign",
+  "name": "01 - Interpretar Campanha",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Fase 1: baixa materiais do Drive, extrai texto de PDFs quando possivel, anexa imagens e produz campaign_brief estruturado.",
+        "height": 240,
+        "width": 420
+      },
+      "id": "sticky-phase1",
+      "name": "Objetivo",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        -420
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-phase1",
+      "name": "When clicking 'Execute workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        40
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "execute-trigger-phase1",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1120,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "campaign_name",
+              "value": "={{ $json.campaign_name || (JSON.parse($json.campaign_payload_json || \"{}\")).campaign_name || \"Campanha\" }}"
+            },
+            {
+              "name": "source_drive_folder_id",
+              "value": "={{ $json.source_drive_folder_id || (JSON.parse($json.campaign_payload_json || \"{}\")).source_drive_folder_id || \"\" }}"
+            },
+            {
+              "name": "output_drive_folder_id",
+              "value": "={{ $json.output_drive_folder_id || (JSON.parse($json.campaign_payload_json || \"{}\")).output_drive_folder_id || \"\" }}"
+            },
+            {
+              "name": "execution_mode",
+              "value": "={{ $json.execution_mode || (JSON.parse($json.campaign_payload_json || \"{}\")).execution_mode || \"dry_run\" }}"
+            },
+            {
+              "name": "brand",
+              "value": "={{ $json.brand || (JSON.parse($json.campaign_payload_json || \"{}\")).brand || \"Espaco Facial\" }}"
+            },
+            {
+              "name": "compliance_note",
+              "value": "={{ $json.compliance_note || (JSON.parse($json.campaign_payload_json || \"{}\")).compliance_note || \"Avaliacao individual. Resultados variam.\" }}"
+            },
+            {
+              "name": "requested_formats",
+              "value": "={{ $json.requested_formats || JSON.stringify((JSON.parse($json.campaign_payload_json || \"{}\")).requested_formats || []) }}"
+            },
+            {
+              "name": "variation_mode",
+              "value": "={{ $json.variation_mode || (JSON.parse($json.campaign_payload_json || \"{}\")).variation_mode || \"auto_all\" }}"
+            },
+            {
+              "name": "max_variations_per_format",
+              "value": "={{ $json.max_variations_per_format || (JSON.parse($json.campaign_payload_json || \"{}\")).max_variations_per_format || 6 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "config-phase1",
+      "name": "Configuracao Fase 1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -860,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.source_drive_folder_id }}",
+            "mode": "id"
+          },
+          "includeTrashed": false
+        },
+        "options": {
+          "fields": [
+            "id",
+            "mimeType",
+            "name",
+            "size",
+            "webViewLink",
+            "webContentLink",
+            "thumbnailLink"
+          ]
+        }
+      },
+      "id": "search-campaign-files",
+      "name": "Search Campaign Files",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -600,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "download-campaign-file",
+      "name": "Download Campaign File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -340,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nfunction safeArray(value) {\n  if (Array.isArray(value)) return value;\n  const text = safeString(value);\n  if (!text) return [];\n  try { const parsed = JSON.parse(text); return Array.isArray(parsed) ? parsed : []; } catch {}\n  return text.split(',').map((item) => item.trim()).filter(Boolean);\n}\nfunction slug(value) {\n  return safeString(value).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'campaign';\n}\nasync function binaryBuffer(itemIndex, key) {\n  if (this.helpers && this.helpers.getBinaryDataBuffer) {\n    return await this.helpers.getBinaryDataBuffer(itemIndex, key);\n  }\n  const data = (($input.all()[itemIndex] || {}).binary || {})[key];\n  if (!data || !data.data) return Buffer.alloc(0);\n  return Buffer.from(data.data, 'base64');\n}\nfunction extractPdfText(filePath) {\n  const childProcess = require('child_process');\n  const script = [\n    'import sys',\n    'from pathlib import Path',\n    'path = Path(sys.argv[1])',\n    'text = \"\"',\n    'try:',\n    '    import pypdf',\n    '    reader = pypdf.PdfReader(str(path))',\n    '    text = \"\\\\n\".join([(page.extract_text() or \"\") for page in reader.pages])',\n    'except Exception:',\n    '    try:',\n    '        import PyPDF2',\n    '        reader = PyPDF2.PdfReader(str(path))',\n    '        text = \"\\\\n\".join([(page.extract_text() or \"\") for page in reader.pages])',\n    '    except Exception as exc:',\n    '        text = \"PDF_TEXT_EXTRACTION_FAILED: \" + str(exc)',\n    'print(text[:12000])',\n  ].join('\\n');\n  try {\n    return childProcess.execFileSync('python3', ['-c', script, filePath], { encoding: 'utf8', timeout: 30000 });\n  } catch (error) {\n    return 'PDF_TEXT_EXTRACTION_FAILED: ' + safeString(error.message);\n  }\n}\n\nconst cfg = $('Configuracao Fase 1').first().json || {};\nconst items = $input.all();\nconst fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\nconst runId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;\nconst materialFolder = path.join('/tmp', 'n8n-campaign-creative', runId);\nfs.mkdirSync(materialFolder, { recursive: true });\n\nconst source_materials = [];\nconst binary = {};\nlet imageIndex = 0;\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i] || {};\n  const json = item.json || {};\n  const binaryKeys = Object.keys(item.binary || {});\n  const binaryKey = binaryKeys[0] || 'data';\n  const name = safeString(json.name || json.fileName || `material-${i + 1}`);\n  const mimeType = safeString(json.mimeType || ((item.binary || {})[binaryKey] || {}).mimeType);\n  const filePath = path.join(materialFolder, name.replace(/[\\\\/:*?\"<>|]+/g, '_'));\n  let sha256 = '';\n  let text_excerpt = '';\n  let kind = mimeType.includes('pdf') || /\\.pdf$/i.test(name) ? 'pdf' : mimeType.startsWith('image/') ? 'image' : 'other';\n  if (binaryKeys.length) {\n    const buf = await binaryBuffer.call(this, i, binaryKey);\n    fs.writeFileSync(filePath, buf);\n    sha256 = crypto.createHash('sha256').update(buf).digest('hex');\n    if (kind === 'pdf') text_excerpt = extractPdfText(filePath);\n    if (kind === 'image' && imageIndex < 8) {\n      const key = `image_${imageIndex + 1}`;\n      binary[key] = item.binary[binaryKey];\n      imageIndex++;\n    }\n  }\n  source_materials.push({\n    id: safeString(json.id),\n    name,\n    mimeType,\n    kind,\n    size: safeString(json.size),\n    sha256,\n    local_path: filePath,\n    text_excerpt: safeString(text_excerpt).slice(0, 12000),\n    webViewLink: safeString(json.webViewLink),\n    thumbnailLink: safeString(json.thumbnailLink),\n  });\n}\n\nreturn [{\n  json: {\n    campaign_name: safeString(cfg.campaign_name || $json.campaign_name),\n    source_drive_folder_id: safeString(cfg.source_drive_folder_id || $json.source_drive_folder_id),\n    output_drive_folder_id: safeString(cfg.output_drive_folder_id || $json.output_drive_folder_id),\n    execution_mode: safeString(cfg.execution_mode || $json.execution_mode || 'dry_run').toLowerCase(),\n    requested_formats: safeArray(cfg.requested_formats || $json.requested_formats),\n    variation_mode: safeString($json.variation_mode || cfg.variation_mode || 'auto_all'),\n    max_variations_per_format: Number($json.max_variations_per_format || cfg.max_variations_per_format || 6),\n    brand: safeString(cfg.brand || $json.brand || 'Espaco Facial'),\n    compliance_note: safeString(cfg.compliance_note || $json.compliance_note || 'Avaliacao individual. Resultados variam.'),\n    material_folder: materialFolder,\n    source_materials,\n    material_summary: {\n      total_files: source_materials.length,\n      images_attached: imageIndex,\n      pdfs: source_materials.filter((item) => item.kind === 'pdf').length,\n      images: source_materials.filter((item) => item.kind === 'image').length,\n    },\n  },\n  binary,\n}];\n"
+      },
+      "id": "prepare-campaign-inputs",
+      "name": "Prepare Campaign Inputs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analise os materiais da campanha e retorne SOMENTE JSON no schema exigido.\\n\\nDados recebidos:\\n{{ JSON.stringify($json) }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Voce e um Diretor de Arte Senior de Performance para Meta Ads, Social Media e Web em clinicas premium de estetica. Interprete imagens anexadas como referencia visual e textos extraidos de PDFs como fonte de ofertas/condicoes. Nunca invente preco, condicao ou promessa. Quando algo estiver ilegivel ou incerto, registre em needs_review. Use portugues do Brasil sem exageros promocionais.",
+          "maxIterations": 4,
+          "passthroughBinaryImages": true
+        }
+      },
+      "id": "campaign-interpreter",
+      "name": "Campaign Interpreter",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        180,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"required\": [\n    \"campaign_brief\"\n  ],\n  \"properties\": {\n    \"campaign_brief\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"concept\",\n        \"visual_identity\",\n        \"offers\",\n        \"offer_groups\",\n        \"tone\",\n        \"mandatory_claims\",\n        \"forbidden_claims\",\n        \"needs_review\"\n      ],\n      \"properties\": {\n        \"concept\": {\n          \"type\": \"string\"\n        },\n        \"visual_identity\": {\n          \"type\": \"object\",\n          \"required\": [\n            \"palette\",\n            \"typography_style\",\n            \"decorative_elements\",\n            \"composition_rules\"\n          ],\n          \"properties\": {\n            \"palette\": {\n              \"type\": \"array\",\n              \"items\": {\n                \"type\": \"string\"\n              }\n            },\n            \"typography_style\": {\n              \"type\": \"string\"\n            },\n            \"decorative_elements\": {\n              \"type\": \"array\",\n              \"items\": {\n                \"type\": \"string\"\n              }\n            },\n            \"composition_rules\": {\n              \"type\": \"array\",\n              \"items\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        },\n        \"offers\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"offer_id\",\n              \"title\",\n              \"price\",\n              \"conditions\",\n              \"evidence\",\n              \"confidence\"\n            ],\n            \"properties\": {\n              \"offer_id\": {\n                \"type\": \"string\"\n              },\n              \"title\": {\n                \"type\": \"string\"\n              },\n              \"price\": {\n                \"type\": \"string\"\n              },\n              \"conditions\": {\n                \"type\": \"string\"\n              },\n              \"evidence\": {\n                \"type\": \"string\"\n              },\n              \"confidence\": {\n                \"type\": \"number\"\n              }\n            }\n          }\n        },\n        \"offer_groups\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"group_id\",\n              \"title\",\n              \"offer_ids\",\n              \"strategic_role\"\n            ],\n            \"properties\": {\n              \"group_id\": {\n                \"type\": \"string\"\n              },\n              \"title\": {\n                \"type\": \"string\"\n              },\n              \"offer_ids\": {\n                \"type\": \"array\",\n                \"items\": {\n                  \"type\": \"string\"\n                }\n              },\n              \"strategic_role\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        },\n        \"tone\": {\n          \"type\": \"string\"\n        },\n        \"mandatory_claims\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        },\n        \"forbidden_claims\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        },\n        \"needs_review\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\"\n          }\n        }\n      }\n    }\n  }\n}",
+        "autoFix": true
+      },
+      "id": "campaign-brief-parser",
+      "name": "Campaign Brief Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        180,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.2",
+          "mode": "list",
+          "cachedResultName": "gpt-5.2"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "campaign-interpreter-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -80,
+        220
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "d5x9D1q8y2QXDeUD",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction safeString(value) { return String(value ?? '').trim(); }\nfunction safeArray(value) {\n  if (Array.isArray(value)) return value;\n  const text = safeString(value);\n  if (!text) return [];\n  try { const parsed = JSON.parse(text); return Array.isArray(parsed) ? parsed : []; } catch {}\n  return text.split(',').map((item) => item.trim()).filter(Boolean);\n}\nfunction unwrapAi(value) {\n  if (value && typeof value.output === 'object') return value.output;\n  if (value && typeof value.text === 'string') {\n    try { return JSON.parse(value.text); } catch {}\n  }\n  return value || {};\n}\nconst base = $('Prepare Campaign Inputs').first().json || {};\nconst ai = unwrapAi($json);\nconst campaign_brief = ai.campaign_brief || {};\ncampaign_brief.needs_review = safeArray(campaign_brief.needs_review);\nfor (const offer of safeArray(campaign_brief.offers)) {\n  if (!safeString(offer.evidence) || Number(offer.confidence || 0) < 0.65) {\n    campaign_brief.needs_review.push(`Oferta incerta: ${safeString(offer.title || offer.offer_id)}`);\n  }\n}\nreturn [{\n  json: {\n    ...base,\n    campaign_brief,\n    interpretation_status: campaign_brief.needs_review.length ? 'needs_review' : 'ready',\n    interpreted_at: new Date().toISOString(),\n  },\n}];\n"
+      },
+      "id": "normalize-campaign-brief",
+      "name": "Normalize Campaign Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        -40
+      ]
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [
+          {
+            "node": "Configuracao Fase 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Configuracao Fase 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuracao Fase 1": {
+      "main": [
+        [
+          {
+            "node": "Search Campaign Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Campaign Files": {
+      "main": [
+        [
+          {
+            "node": "Download Campaign File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Campaign File": {
+      "main": [
+        [
+          {
+            "node": "Prepare Campaign Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Campaign Inputs": {
+      "main": [
+        [
+          {
+            "node": "Campaign Interpreter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Campaign Interpreter": {
+      "main": [
+        [
+          {
+            "node": "Normalize Campaign Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Campaign Interpreter",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Campaign Brief Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Campaign Interpreter",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "staticData": null,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "codex_generated": true,
+    "generated_by": "scripts/build-campaign-creative-generator.js"
+  }
+}
