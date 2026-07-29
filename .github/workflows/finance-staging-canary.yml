@@ -35,6 +35,9 @@ jobs:
         with:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22
       - name: Verify immutable staging promotion evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -95,6 +98,49 @@ jobs:
           FINANCE_CANARY_SCOPE_ID: finance-scope-novo-hamburgo
           FINANCE_CANARY_RELEASE_SHA: ${{ inputs.release_sha }}
         run: node finance/scripts/staging-synthetic-canary.mjs --report "$RUNNER_TEMP/canary-report.json"
+      - name: Run complete import and compensation journey
+        id: import
+        continue-on-error: true
+        env:
+          FINANCE_SMOKE_ACK: "1"
+          FINANCE_SMOKE_BASE_URL: https://api-staging.skincos.com.br
+          FINANCE_SMOKE_USERNAME: finance-staging-smoke
+          FINANCE_SMOKE_PASSWORD: ${{ secrets.FINANCE_SMOKE_PASSWORD }}
+          FINANCE_SMOKE_SCOPE_ID: finance-scope-novo-hamburgo
+        run: node finance/scripts/staging-import-smoke.mjs --fixture finance/test/fixtures/staging-smoke-import.csv --commit --undo --report "$RUNNER_TEMP/import-report.json"
+      - name: Install browser dependencies for isolated shell smoke
+        if: always()
+        run: |
+          npm --prefix crm/console ci
+          npm --prefix crm/console exec -- playwright install --with-deps chromium
+      - name: Run isolated Finance shell smoke
+        id: ui
+        if: always()
+        continue-on-error: true
+        env:
+          FINANCE_SMOKE_ACK: "1"
+          FINANCE_SMOKE_USERNAME: finance-staging-smoke
+          FINANCE_SMOKE_PASSWORD: ${{ secrets.FINANCE_SMOKE_PASSWORD }}
+          FINANCE_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/finance-ui
+        run: node finance/scripts/staging-ui-smoke.mjs
+      - name: Merge complete-journey failures into canary report
+        if: always()
+        env:
+          JOURNEY_OUTCOME: ${{ steps.journey.outcome }}
+          IMPORT_OUTCOME: ${{ steps.import.outcome }}
+          UI_OUTCOME: ${{ steps.ui.outcome }}
+        run: |
+          node - "$RUNNER_TEMP/canary-report.json" <<'NODE'
+          const fs = require('fs'); const file = process.argv[2]; let report = {};
+          try { report = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { report = { samples: [] }; }
+          const failed = Object.entries({ journey: process.env.JOURNEY_OUTCOME, import: process.env.IMPORT_OUTCOME, ui: process.env.UI_OUTCOME }).filter(([, outcome]) => outcome !== 'success').map(([name]) => name);
+          if (failed.length) {
+            report.errors = Number(report.errors || 0) + failed.length;
+            report.journeyFailures = Number(report.journeyFailures || 0) + failed.length;
+            report.completeJourneyFailures = failed;
+          }
+          fs.writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
+          NODE
       - name: Inject a controlled threshold breach
         if: always() && inputs.mode == 'abort-drill'
         run: |
@@ -145,6 +191,8 @@ jobs:
           path: |
             ${{ runner.temp }}/canary-report.json
             ${{ runner.temp }}/canary-decision.json
+            ${{ runner.temp }}/import-report.json
+            ${{ runner.temp }}/finance-ui/finance-staging-ui.json
           retention-days: 90
           if-no-files-found: warn
       - name: Fail promotion when a limit was breached
