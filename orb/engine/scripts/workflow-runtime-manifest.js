@@ -10,7 +10,7 @@ const path = require('path');
 
 const DEFAULT_RUNTIME_HOME = '/var/lib/skincos-runtime/orb';
 const RELEASE_ROOT_RE = /^\/opt\/skincos\/releases\/([0-9a-f]{7,64})\/source\/orb\/engine$/;
-const MUTABLE_SOURCE_RE = /\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/;
+const MUTABLE_SOURCE_RE = /\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b|\/mnt\/c\/|livia-verify-provider-copy-drift-wrapper|--verifier\b/;
 const WORKFLOW_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const WORKFLOW_VERSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

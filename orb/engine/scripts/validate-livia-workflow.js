@@ -437,6 +437,8 @@ function validateContracts() {
   assert(commandOf('Cleanup Temp Files').includes('isAllowedCleanupDir'), 'Cleanup Temp Files must delete per-execution asset directories safely');
   assert(verifyCommand.includes('verify-published-artifacts.js'), 'Verify Published Artifacts must call the external verifier');
   assert(verifyCommand.includes('--payload -') && verifyCommand.includes('printf %s'), 'Verifier must receive a bounded payload through stdin');
+  assert(/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine\/scripts\/livia\/verify-published-artifacts\.js/.test(verifyCommand), 'Verifier must invoke the immutable release entrypoint directly');
+  assert(!/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b|\/mnt\/c\/|livia-verify-provider-copy-drift-wrapper|--verifier\b/.test(verifyCommand), 'Verifier must not use a mutable root or compatibility wrapper');
   assert(!verifyCommand.includes('Get Credential Tokens') && !verifyCommand.includes('tokenRoot'), 'Verifier must not expose token-vault data in its command line');
   assert(attachVerified.includes('result.ok !== true'), 'Verifier failures must stop final effects');
   assert(assertDrive.includes('appProperties.published'), 'Drive verification must assert published=true');
