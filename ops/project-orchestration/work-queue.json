@@ -1,29 +1,40 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-29T14:02:00Z",
-  "source_main_sha": "6963ba0495870e8f9b15a0b1e81477dd5f7f3f8b",
+  "authoritative_at": "2026-07-29T22:29:04Z",
+  "source_main_sha": "6642487142e4de30cf27ae337da60d9f7f64449c",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
-      "objective": "Restore CONSULTOR/EMPLOYEE Ponto navigation and prove one immutable Workforce Timekeeping release through staging before any production pilot.",
+      "objective": "Complete the governed Workforce Timekeeping release through preview, staging, pilot, canary and production on one immutable source SHA.",
       "priority": 1100,
-      "state": "source-remediated-staging-blocked-by-secret",
-      "dependencies": [],
+      "state": "source-integrated-production-fail-closed-controls-secret-and-pilot-blocked",
+      "dependencies": [
+        "ponto-release-prerequisites"
+      ],
       "blockers": [
-        "PONTO_PROFILE_DATA_KEY is absent from accessible staging and production secret-name metadata",
-        "no current-main same-SHA Timekeeping, Core API and CRM Pages staging lineage",
-        "module-control:timekeeping has no explicit active state or rollback drill evidence"
+        "PONTO_PROFILE_DATA_KEY is absent from accessible GitHub staging/production secret metadata and both deployed Timekeeping Workers",
+        "remaining Ponto runtime secrets resolve from shared repository scope instead of independent environment custody",
+        "no final candidate SHA is selected after the full post-PR-886 delta and required control changes",
+        "Core Workers, CRM Pages and Timekeeping lack the governed pilot/canary routing, version-affinity, cohort and external-SLO controls",
+        "Core deploy defaults a missing gate to enabled, Timekeeping labels checkpoints with dispatch SHA, and executable publishers do not enforce pilot/canary predecessors",
+        "CRM Pages staging routes its canonical default to the production API and reports no Ponto actor key",
+        "production Core API FINANCE binding targets nonexistent skincos-finance and needs a Ponto gateway-only release path",
+        "no same-SHA Timekeeping, Core API and CRM Pages preview/staging lineage",
+        "staging module-control:timekeeping has no explicit state or rollback drill evidence; production is intentionally maintenance",
+        "aggregate reconciliation found no active CONSULTOR eligible for a production pilot and one active staging CONSULTOR without an active Workforce counterpart"
       ],
       "environment": "staging-then-production",
       "permitted_actions": [
-        "green PR/CI and immutable staging promotion after approved secret provisioning",
+        "green scoped PR/CI for Ponto pilot/canary controls",
+        "immutable preview and staging promotion after approved secret provisioning",
         "synthetic CONSULTOR-only authenticated journey with teardown and sanitised evidence",
         "staging module-control maintenance to active rollback drill",
-        "production promotion only after matching staging evidence and named pilot scope"
+        "production promotion only after matching staging, pilot and canary evidence and an Identity/Workforce-valid pilot scope"
       ],
       "prohibited_actions": [
         "invent, generate, copy or disclose PONTO_PROFILE_DATA_KEY",
         "treat health 200 or historical workflow runs as authenticated release proof",
+        "enable ENABLE_CORE_WORKERS_DEPLOY in production before valid staging, pilot and canary predecessors",
         "advance Finance or unrelated release work under this objective",
         "archive the workstream before production evidence and post-release observation"
       ],
@@ -32,16 +43,77 @@
         "synthetic authenticated CONSULTOR journey including Ponto visibility, PIN, idempotency, unit denial, correction and administrative denial",
         "sanitised teardown evidence preserving audit rows",
         "explicit module-control active state and staging rollback drill",
+        "version affinity, gradual routing, network-context cohort, minimal grants, automatic interruption and external SLO evidence for pilot and canary",
         "production checkpoint, deployment/version, health/readiness, authenticated pilot and post-release observation"
       ],
-      "done_definition": "A single immutable release has complete staging evidence and then separately approved production/pilot evidence; no historical or health-only claim substitutes for that lineage.",
-      "next_item": "finance-current-main-staging-evidence",
-      "last_verified": "2026-07-29T20:45:00Z",
+      "done_definition": "A single immutable release has complete preview, staging, pilot, canary and production evidence, an authenticated authorized-user journey, proven rollback and post-release observation.",
+      "next_item": null,
+      "last_verified": "2026-07-29T22:29:04Z",
       "evidence": {
         "base_sha": "f202e29f4178bba8966edf71539c942618254de0",
+        "merge_sha": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
+        "selected_release_sha": null,
+        "origin_main_last_verified": "6642487142e4de30cf27ae337da60d9f7f64449c",
+        "post_pr_886_delta": {
+          "total_files": 29,
+          "finance_files": 17,
+          "orb_n8n_release_watch_files": 8,
+          "livia_qa_files": 2,
+          "native_release_preparer_files": 2,
+          "direct_ponto_runtime_or_publisher_files": 0
+        },
+        "promotion_source_rule": "full commit SHA reachable from origin/main; HEAD is not required",
+        "pr": 886,
         "regression_commit": "4bfc56af0ac5b2bf0387a71dfa1825cb84ecdca0",
-        "secret_gate": "PONTO_PROFILE_DATA_KEY"
+        "secret_gate": "PONTO_PROFILE_DATA_KEY",
+        "core_deploy_gate": {
+          "staging": true,
+          "production": false,
+          "production_disabled_at": "2026-07-29T22:17:37Z"
+        },
+        "module_control": {
+          "staging": "absent",
+          "production": "maintenance",
+          "production_run": 30496220685,
+          "production_changed_at": "2026-07-29T22:28:04Z"
+        }
       }
+    },
+    {
+      "id": "ponto-release-prerequisites",
+      "objective": "Close the technical and authorized-input prerequisites for the single-SHA Ponto staging, pilot and canary sequence.",
+      "priority": 1099,
+      "state": "in-progress-controls-blocked-by-approved-secret-source-and-pilot-decision",
+      "dependencies": [],
+      "blockers": [
+        "approved PONTO_PROFILE_DATA_KEY and remaining Ponto secret provisioning for staging before any production secret",
+        "reviewed fail-closed pilot/canary controls and release-SHA checkpoint labeling for Core API, CRM Pages and Timekeeping",
+        "isolated CRM Pages staging proxy and actor-key configuration",
+        "Ponto gateway-only Core API release path independent of the absent Finance Worker",
+        "Identity/Workforce-valid production pilot designation"
+      ],
+      "environment": "source-and-staging",
+      "permitted_actions": [
+        "implement and review version affinity, gradual routing, network-context cohort, minimal grants, automatic interruption and SLO evidence",
+        "provision staging secret names only through an approved source/process without reading or exposing values",
+        "provision independent production secrets only after complete staging evidence and separate pre-production authorization",
+        "select one immutable main-reachable SHA after the controls merge",
+        "run preview/staging and synthetic teardown only after all staging guards pass"
+      ],
+      "prohibited_actions": [
+        "generate, copy, disclose or reuse a secret outside the approved custody process",
+        "invent, activate or grant a pilot identity",
+        "production deployment, migration, grant or module activation before pilot and canary evidence"
+      ],
+      "required_evidence": [
+        "green reviewed PR for the controls",
+        "staging secret presence by name before staging and later production presence after separate authorization",
+        "eligible pilot decision through Identity/Workforce",
+        "selected immutable SHA and complete predecessor evidence"
+      ],
+      "done_definition": "All technical controls and authorized inputs required to begin the governed single-SHA release sequence are present and fail-closed defaults remain intact.",
+      "next_item": "p0-workforce-timekeeping-current-main-release",
+      "last_verified": "2026-07-29T22:29:04Z"
     },
     {
       "id": "p0-insumos-unit-access",
