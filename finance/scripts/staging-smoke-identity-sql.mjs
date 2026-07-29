@@ -42,41 +42,32 @@ let financeSql;
 const baseline = { username, environment: 'staging', expiresAt, allowedUnits: ['novo-hamburgo'], allowedModules: ['finance'] };
 if (action === 'provision') {
   coreSql = [
-    'BEGIN IMMEDIATE;',
+    // Cloudflare D1's remote SQL API rejects explicit transaction control.
+    // Each generated file is submitted as a single D1 request by the canonical
+    // workflow, so leave transaction ownership to the D1 service.
     `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version) VALUES(${quote(username)},${quote('finance-staging-smoke@staging.invalid')},${quote('Finance staging smoke (synthetic)')},${quote(passwordHash())},'CONSULTOR','',${quote(JSON.stringify(['novo-hamburgo']))},${quote(JSON.stringify(['finance']))},1,${quote(now)},${quote(now)},1);`,
     audit('FINANCE_SMOKE_IDENTITY_PROVISIONED', null, { ...baseline, active: true }),
-    'COMMIT;',
   ].join('\n');
   financeSql = [
-    'BEGIN IMMEDIATE;',
     `INSERT INTO finance_access_grants(id,username,scope_id,permission,created_at,created_by) VALUES(${quote('finance-staging-smoke-operator-nh')},${quote(username)},${quote(scopeId)},'operator',${quote(now)},${quote(technicalActor)});`,
     financeAudit('FINANCE_SMOKE_GRANT_PROVISIONED', null, { ...baseline, permission: 'operator' }),
-    'COMMIT;',
   ].join('\n');
 } else if (action === 'rotate') {
   coreSql = [
-    'BEGIN IMMEDIATE;',
     `UPDATE crm_users SET password_hash=${quote(passwordHash())},session_version=COALESCE(session_version,0)+1,updated_at=${quote(now)} WHERE username=${quote(username)} AND ativo=1;`,
     audit('FINANCE_SMOKE_IDENTITY_ROTATED', { active: true }, { ...baseline, active: true }),
-    'COMMIT;',
   ].join('\n');
   financeSql = [
-    'BEGIN IMMEDIATE;',
     financeAudit('FINANCE_SMOKE_GRANT_ROTATION_CONFIRMED', { permission: 'operator' }, { ...baseline, permission: 'operator' }),
-    'COMMIT;',
   ].join('\n');
 } else {
   coreSql = [
-    'BEGIN IMMEDIATE;',
     `UPDATE crm_users SET ativo=0,session_version=COALESCE(session_version,0)+1,updated_at=${quote(now)} WHERE username=${quote(username)};`,
     audit('FINANCE_SMOKE_IDENTITY_REVOKED', { active: true }, { ...baseline, active: false }),
-    'COMMIT;',
   ].join('\n');
   financeSql = [
-    'BEGIN IMMEDIATE;',
     `DELETE FROM finance_access_grants WHERE username=${quote(username)};`,
     financeAudit('FINANCE_SMOKE_GRANT_REVOKED', { permission: 'operator' }, { ...baseline, permission: null }),
-    'COMMIT;',
   ].join('\n');
 }
 
