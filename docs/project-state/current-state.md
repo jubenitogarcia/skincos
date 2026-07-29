@@ -1006,11 +1006,13 @@ No código desse release, `Schedule` envia ao Meta apenas
 parâmetros originais de `Contact` continuam disponíveis para Google Ads. O
 contrato preserva `event_id`, dados de correspondência com hash, IP/UA,
 `fbp`/`fbc`, persistência D1 e o bloqueio fail-closed sem consentimento de
-marketing. A suíte isolada passou com 86 testes, ESLint e TypeScript. Os testes
+marketing. A suíte isolada passou com 88 testes, ESLint e TypeScript. Os testes
 de regressão fazem igualdade exata do `custom_data` de `Schedule`, confirmam
 ausência da propriedade em `Contact` CAPI e comprovam que os parâmetros
 originais de `Contact` continuam indo ao Google Ads enquanto o Pixel recebe
-objeto vazio.
+objeto vazio. Dois testes adicionais executam requisições representativas
+contra as rotas de booking e redirect do WhatsApp com um spy no sender CAPI;
+assim, uma regressão nos call sites de servidor também falha a suíte.
 
 Uma jornada sintética indispensável foi executada no release já publicado, com
 consentimento de marketing, UTM e `fbclid`. Navegador e servidor usaram
