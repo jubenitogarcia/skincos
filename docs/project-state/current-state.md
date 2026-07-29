@@ -787,3 +787,10 @@ O schedule diário foi preservado explicitamente como `field: days` às 13:26;
 o audit-live encontrou zero referências mutáveis. Checkpoint pós-promoção:
 `livia-postpromote-f6b8698a-20260729T112300-0300`, índice SHA-256
 `3cd984dc63e8cef3c1b446cbf15e10dded6b3e588102803795ee5abc97988e4e`.
+
+O registro de autorização e o runbook versionado especificam a promoção
+`stage-only`, o rollback por nova versão histórica, os probes HTTP e a retenção
+dos bundles referenciados por manifestos. A evidência de publicação real
+continua histórica (execuções 336 e 339); uma publicação posterior só pode ser
+considerada prova da versão ativa se o seu `workflowVersionId` for
+`9f7beced-c075-46d1-be78-0e26968e135e` ou um descendente publicado.
