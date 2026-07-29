@@ -1,5 +1,19 @@
 # Current state
 
+## UX/UI PR #832 — main sync resolved and local suite passed — 2026-07-29T03:48Z
+
+`origin/main` at `1a6650d9c0598d810dca97e778d7adf3e0bd25d7` was merged locally
+into `codex/admin/ux-ui-infrastructure` as `04e217fbc3fe5f9119a0cb86a291d9c04f920f98`.
+The only conflicts were the shared project-state documents; both the current
+main records and UX/UI evidence were retained, with JSON parsing and
+`git diff --check` passing. A clean disposable ext4 WSL checkout of the merge
+commit then passed `npm run audit:ui:full` from 03:45:33Z to 03:47:43Z:
+components, four synthetic pilot viewports, axe JSON, four visual-baseline
+comparisons and Lighthouse. No snapshot update, product change, deployment,
+secret or production access occurred. This is local validation of an
+unpublished merge resolution; PR #832 remains draft until remote checks and
+review state are observed again.
+
 ## UX/UI infrastructure audit — reproducibility rerun passed — 2026-07-29T03:32Z
 
 After the LHCI Linux-profile and Storybook MCP protocol corrections, a second

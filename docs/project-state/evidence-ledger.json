@@ -2,6 +2,15 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T03:48:17Z",
+      "surface": "git-github-local-wsl-ux-ui-pr-sync",
+      "scope": "PR #832 main-conflict resolution and post-merge local validation",
+      "state": "local-main-sync-resolved-remote-checks-pending",
+      "method": "Fetched origin/main 1a6650d9c0598d810dca97e778d7adf3e0bd25d7; merged it into the UX/UI branch as 04e217fbc3fe5f9119a0cb86a291d9c04f920f98; preserved both sides of the two project-state-document conflicts; parsed JSON and ran git diff --check; clean ext4 WSL bundle clone with sequential lockfile installs and Chromium-only Playwright ran audit:ui:full",
+      "result": "The only merge conflicts were docs/project-state/current-state.md and docs/project-state/evidence-ledger.json. audit:ui:full passed from 2026-07-29T03:45:33.942Z to 03:47:43.184Z with components, pilot, accessibility, visual and Lighthouse all passed. No validation-owned process remained afterwards.",
+      "limitation": "This proves local merge resolution only. No production access, deploy, secret, account, snapshot update or product UI change occurred. PR #832 remains draft until remote checks and review threads are refreshed after the non-force push."
+    },
+    {
       "observed_at": "2026-07-29T03:32:49Z",
       "surface": "local-wsl-ux-ui-reproducibility-rerun",
       "scope": "Post-correction final integrated UX/UI validation",
