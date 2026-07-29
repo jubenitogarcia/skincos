@@ -538,6 +538,18 @@
       "limitation": "The repository record is evidence of the scoped operator authorization and promotion, not a substitute for a pre-promotion staging environment. Historical real publication evidence remains executions 336 and 339; no synthetic social publication was made, and a real active-version journey remains required before closure.",
       "sha": "f6b8698a450ee2b346ccc93989a365c3455c792d",
       "pr": 837
+    },
+    {
+      "observed_at": "2026-07-29T11:53:04.953Z",
+      "surface": "production",
+      "scope": "livia-isolated-runtime-repin-after-pr-851",
+      "state": "production-promoted-post-promotion-audit-pending-real-active-version-journey",
+      "method": "No-active-execution preflight; checksum-verified native archive and descendant lineage; stage-only release preparation; multimodal contract matrix; version-checked manifest and transactional workflow-history publication; audit-live; local http://127.0.0.1:5678/healthz=200 and public https://orb.skincos.com.br/healthz=200",
+      "result": "workflow WGXr4vYkv9UoJ8zc active at a1983ff1-4b58-4753-860e-c25dda057f3f; release c525f5e1d68829fe4c93197f65d85429a2e0385c from PR #851; six entrypoint hashes matched manifest a7ced345b16a3538fac5f7dc24135332ac2c2de81bf810744e51352c2989730f; zero mutable active-runtime references; retention guard rejects cleanup of active bundle",
+      "limitation": "No new social content was available in the date-filtered Drive source folder, so no historical media was reused and no synthetic publication was made. A real production-trigger journey on this active version remains required before closure.",
+      "sha": "c525f5e1d68829fe4c93197f65d85429a2e0385c",
+      "pr": 851,
+      "rollback_checkpoint": "livia-postpromote-c525f5e1-20260729T085430-0300"
     }
   ]
 }

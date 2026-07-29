@@ -797,18 +797,18 @@ anteriores e migrations aditivas já aplicadas.
 ## Livia — promoção de bundle isolado 2026-07-29
 
 O workflow Livia (`WGXr4vYkv9UoJ8zc`) está ativo na versão histórica
-`9f7beced-c075-46d1-be78-0e26968e135e`, apontando somente para o bundle
-imutável `f6b8698a450ee2b346ccc93989a365c3455c792d` da PR #837. O ponteiro
-global não foi alterado. O manifesto ativo tem SHA-256
-`4a4fb1d4173021404458eef9b868001fa5cfc33bc21c642d9939f8c2473cfb05`.
+`a1983ff1-4b58-4753-860e-c25dda057f3f`, apontando somente para o bundle
+imutável `c525f5e1d68829fe4c93197f65d85429a2e0385c`, produzido do merge da
+PR #851. O ponteiro global não foi alterado. O manifesto ativo tem SHA-256
+`a7ced345b16a3538fac5f7dc24135332ac2c2de81bf810744e51352c2989730f`.
 O schedule diário foi preservado explicitamente como `field: days` às 13:26;
 o audit-live encontrou zero referências mutáveis. Checkpoint pós-promoção:
-`livia-postpromote-f6b8698a-20260729T112300-0300`, índice SHA-256
-`3cd984dc63e8cef3c1b446cbf15e10dded6b3e588102803795ee5abc97988e4e`.
+`livia-postpromote-c525f5e1-20260729T085430-0300`, índice SHA-256
+`e4eabf9e76bb96c30794a231102466a685d8ce971208dee432fb4b959ac4d60d`.
 
 O registro de autorização e o runbook versionado especificam a promoção
 `stage-only`, o rollback por nova versão histórica, os probes HTTP e a retenção
 dos bundles referenciados por manifestos. A evidência de publicação real
 continua histórica (execuções 336 e 339); uma publicação posterior só pode ser
 considerada prova da versão ativa se o seu `workflowVersionId` for
-`9f7beced-c075-46d1-be78-0e26968e135e` ou um descendente publicado.
+`a1983ff1-4b58-4753-860e-c25dda057f3f` ou um descendente publicado.
