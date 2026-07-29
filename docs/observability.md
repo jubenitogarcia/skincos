@@ -30,9 +30,9 @@ powershell -ExecutionPolicy Bypass -File .\ops\observability\scripts\Install-Ski
 # rollback: Unregister-ScheduledTask -TaskName SkincosObservabilityProbe -Confirm:$false
 ```
 
-O catálogo exige duas leituras consecutivas fora do saudável antes de confirmar um alerta e duas leituras saudáveis antes de confirmá-lo como resolvido. Por unidade, a mensagem de desktop tem cooldown de 15 minutos e expira em 30 segundos. Oscilações de uma única sonda continuam no histórico/métricas, mas não interrompem o operador.
+O catálogo exige duas leituras consecutivas fora do saudável antes de confirmar um alerta e duas leituras saudáveis antes de confirmá-lo como resolvido. Por ambiente e unidade, a mensagem de desktop tem cooldown de 15 minutos e expira em 30 segundos. Oscilações de uma única sonda continuam no histórico/métricas, mas não interrompem o operador. Uma resposta Finance lenta porém HTTP válida é classificada por latência; somente a resposta upstream efetivamente 5xx permanece uma indisponibilidade.
 
-O watchdog usa o mesmo limiar de duas observações stale, mantém estado próprio e serializa o monitor com mutex local. Assim, ele reinicia o dashboard quando necessário sem abrir mensagens repetidas nem perder uma transição confirmável durante invocações simultâneas.
+O watchdog usa o mesmo limiar de duas observações stale, mantém estado próprio e serializa o monitor com mutex local. Assim, ele reinicia o dashboard quando necessário sem abrir mensagens repetidas nem perder uma transição confirmável durante invocações simultâneas. O instalador encerra somente processos do runtime-alvo e nunca seu próprio PID, preservando uma única dupla supervisor/dashboard durante reinstalações.
 
 Uma jornada sintética autenticada exige ator exclusivo de staging, segredo fora do Git e passos sem escrita. Enquanto Identity/Finance não estiverem implantados em staging, o catálogo a mantém desabilitada em vez de reutilizar uma sessão humana.
 

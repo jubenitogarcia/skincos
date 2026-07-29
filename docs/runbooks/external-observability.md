@@ -6,7 +6,7 @@ O catálogo em `ops/observability/catalog.json` define os probes. O monitor prim
 
 O estado `healthy` mede somente o endpoint de health e o orçamento de latência. `contract_status: incomplete` ou `partial` significa que a unidade ainda não comprovou todos os campos/health-readiness-dependencies-version exigidos: não é gate de promoção. O alerta humano só é confirmado após duas leituras não saudáveis consecutivas; a recuperação também exige duas leituras saudáveis e fica registrada, sem abrir pop-up.
 
-O instalador registra três tarefas Windows: probe a cada minuto, dashboard local em loopback e watchdog independente a cada dois minutos. Em sessão elevada, elas executam como `SYSTEM` e iniciam no boot; sem elevação, executam como o operador atual, iniciam no logon e continuam automaticamente durante sua sessão. Caso uma política local bloqueie até a criação de tarefas do operador, o instalador registra um supervisor em `HKCU\...\Run`: ele inicia no próximo logon, executa probes a cada minuto e reinicia o dashboard se ele encerrar. O modo efetivo fica em `installation.json`. O dashboard fica somente em `127.0.0.1`, expõe `/`, `/health` e `/metrics` e não depende de Cloudflare ou GitHub. `history.jsonl`, `metrics-history.jsonl` e `notifications.jsonl` retêm 30 dias; nenhum token, payload de negócio ou dado pessoal é gravado.
+O instalador registra três tarefas Windows: probe a cada minuto, dashboard local em loopback e watchdog independente a cada dois minutos. Em sessão elevada, elas executam como `SYSTEM` e iniciam no boot; sem elevação, executam como o operador atual, iniciam no logon e continuam automaticamente durante sua sessão. Caso uma política local bloqueie até a criação de tarefas do operador, o instalador registra um supervisor em `HKCU\...\Run`: ele inicia no próximo logon, executa probes a cada minuto e reinicia o dashboard se ele encerrar. Nesse modo é esperado que as três tarefas estejam ausentes; a prova é `installation.json` com `execution_mode=operator-run-key`, a chave Run, exatamente um supervisor e seu único dashboard filho. O instalador exclui o próprio PID ao encerrar processos anteriores. O dashboard fica somente em `127.0.0.1`, expõe `/`, `/health` e `/metrics` e não depende de Cloudflare ou GitHub. `history.jsonl`, `metrics-history.jsonl` e `notifications.jsonl` retêm 30 dias; nenhum token, payload de negócio ou dado pessoal é gravado.
 
 ## Instalação e rollback
 
@@ -31,6 +31,12 @@ Remove-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -N
 ```
 
 O rollback remove apenas o agendamento e a inicialização automática; se o modo `operator-run-key` estiver ativo, encerre o processo supervisor na próxima sessão ou reinicie o Windows. Os arquivos de evidência ficam retidos no runtime privado.
+
+Se a fonte `SkincosObservability` ainda não existir no Windows Application Event
+Log, as tentativas ficam registradas como `event_log_delivery=failed`, mas a
+política de confirmação, o popup com expiração e `notifications.jsonl` continuam
+operacionais. Execute uma reinstalação elevada para registrar a fonte; não
+interprete essa limitação de telemetria como confirmação de entrega humana.
 
 ## Alerta e recuperação controlados
 

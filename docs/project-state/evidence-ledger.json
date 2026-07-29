@@ -13,6 +13,19 @@
       "base_sha": "f6fc637439618771e3cd3953859fa1875820a832"
     },
     {
+      "observed_at": "2026-07-29T02:07:17Z",
+      "surface": "github-cloudflare-and-windows-observability",
+      "scope": "Integrated desktop alert hardening, canonical API promotion and local runtime reinstallation",
+      "state": "main-integrated-staging-deployed-production-blocked",
+      "method": "PR #833/#836 merge and check metadata; canonical Deploy Core Worker run metadata and failed production log; clean origin/main worktree hash comparison; private runtime installation, process, Run-key, loopback health and controlled-drill readback",
+      "result": "PR #833 merged as 2ba1e0a74eea8a88a5cdb609ba426c8df2c94261 and PR #836 as 34c9baff3978df71402b917449b6971a914b1110, with applicable CI/security checks green. Core API preview 30414699651 and staging 30414749763 succeeded for 2ba1e0a7. The runtime was reinstalled from clean integrated source at 02:07:17Z in operator-run-key mode; one supervisor and one dashboard child were active and loopback health returned ok. The controlled drill recorded one windows-message-delivered alert after its second failure, one resolved record with human_notification_delivery not-applicable, and a subsequent cooldown-suppressed alert. Finance uses a 3-second probe deadline, so a valid slow response is measured as degradation while an actual upstream 503 remains non-healthy.",
+      "limitation": "Production API run 30414808715 failed before Worker upload or smoke because Cloudflare error 10143 reported service binding FINANCE references missing Worker skincos-finance. No binding, secret, Finance Worker, D1 data or business data was changed. Production API health alone does not prove this release.",
+      "release_sha": "2ba1e0a74eea8a88a5cdb609ba426c8df2c94261",
+      "integrated_main_sha": "34c9baff3978df71402b917449b6971a914b1110",
+      "runs": [30414699651, 30414749763, 30414808715],
+      "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\observability-alert-hardening-20260728T2052Z"
+    },
+    {
       "observed_at": "2026-07-25T05:05:34Z",
       "surface": "google-drive-offsite-runtime-config",
       "scope": "Fresh runtime-config ciphertext and scratch decrypt",

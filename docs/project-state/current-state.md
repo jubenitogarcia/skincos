@@ -1,29 +1,37 @@
 # Current state
 
-## Observability alert hardening — 2026-07-28T20:48Z
+## Observability alert hardening — 2026-07-29T02:07Z
 
-The active Windows monitor is currently in `operator-run-key` mode and emits a
-desktop `msg.exe` window for every raw health transition. Its private history
-contains 479 such messages since 2026-07-24, primarily Finance staging
-oscillations. Read-only live probes at 20:48Z returned six consecutive 200
-responses for Finance health/readiness and the sampled production API and
-Escala health routes.
-
-An isolated branch based on `origin/main` contains the correction:
-two consecutive non-healthy probes are required before a confirmed alert, two
-healthy probes before resolution, desktop recovery notices are disabled, and
-desktop alerts have a 15-minute per-unit cooldown with a 30-second expiry. The
-Finance health binding deadline is raised to 3 seconds so the monitor can
-classify a slow successful probe as latency degradation rather than a synthetic
-503. Concurrent probes are serialized with a local mutex, and the watchdog now
-uses the same two-run confirmation and cooldown policy. Tests and catalog validation pass. At 20:51Z the reviewed monitor source
-was installed into the private operator runtime after the checkpoint
+The desktop-alert correction is integrated on `main`: PR #833 merged as
+`2ba1e0a74eea8a88a5cdb609ba426c8df2c94261`, and the installer fallback repair
+in PR #836 merged as `34c9baff3978df71402b917449b6971a914b1110`. Both PRs had
+their applicable CI, test and security checks green. The operator runtime was
+reinstalled from a clean worktree at that integrated SHA in
+`operator-run-key` mode at 02:07Z. `installation.json`, the Run key, one
+supervisor plus one dashboard child, and loopback `/health` prove the active
+local runtime; the preserved rollback checkpoint is
 `C:\CodexRuntime\operator\admin\skincos\checkpoints\observability-alert-hardening-20260728T2052Z`.
-The copied catalog/monitor/watchdog hashes match the branch, exactly one
-supervisor is active, and the subsequent 20:52Z probe completed with all six
-enabled units healthy and no transition. No Cloudflare deployment, D1 data or
-production service was changed; the gateway timeout correction is source-only
-until its normal integration and staging release path runs.
+
+The policy requires two consecutive non-healthy probes before an alert and two
+healthy probes before resolution. Desktop recovery notices are disabled,
+desktop alerts have a 15-minute per-unit/environment cooldown, and `msg.exe`
+expires after 30 seconds. The integrated controlled drill produced one desktop
+delivery on its second failure, a persisted recovery with
+`human_notification_delivery=not-applicable`, and a cooldown-suppressed second
+incident. The watchdog/probe mutex and deterministic tests cover concurrent
+invocations and watchdog deduplication. Finance probe requests now have a
+three-second service-binding deadline so a valid slow response is classified as
+latency degradation; genuine Finance 503 responses remain degraded.
+
+Canonical API promotion used preview run `30414699651` and staging run
+`30414749763`, both for immutable SHA `2ba1e0a7…`. Production run `30414808715`
+stopped before upload or smoke: Cloudflare rejected API binding `FINANCE`
+because production Worker `skincos-finance` does not exist (error 10143). Thus
+the API timeout fix is deployed to staging but **not** production; production
+API health remains reachable, but is not proof of this release. No D1 data,
+secrets, bindings, Finance Worker or business data were changed. The remaining
+action needs an explicit production Finance resource/binding decision; do not
+retry the same API promotion until that prerequisite is satisfied.
 
 ## Fresh runtime-config verification — 2026-07-25T05:05Z
 
