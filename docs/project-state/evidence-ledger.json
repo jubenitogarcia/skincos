@@ -2,6 +2,83 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T04:35:00Z",
+      "surface": "github-advanced-security-and-isolated-wsl-ux-ui-validation",
+      "scope": "PR #832 hosted Semgrep OSS inline-suppression alignment",
+      "state": "inline-semgrep-rationale-isolated-integrated-suite-passed",
+      "method": "Read the second hosted Semgrep OSS annotation, moved only the existing rule-specific rationale from the preceding line to the annotated fetch line, reran the exact local Semgrep target, then used a fresh ext4 WSL clone with clean root/CRM/website installs and Chromium in an unprivileged private network namespace so localhost:5173 could not collide with unrelated CRM Local work",
+      "result": "The exact Semgrep scan reported 0 findings. The canonical audit:ui:full passed 2026-07-29T04:31:33.004Z–04:34:35.621Z with components, pilot, accessibility, visual and Lighthouse all passed. Lighthouse HTML, JSON and metadata were generated locally. No validation-owned process or listener on 5173/6006 remained; the independently running CRM Local Vite process was neither stopped nor used by the tests.",
+      "limitation": "The only source adjustment is placement of a scoped rationale for a fixed loopback request. Assertions, endpoints, snapshots, visual tolerances, dependencies, production access, credentials, accounts and deployment behavior remain unchanged. Remote checks must finish on the pushed head before the draft PR is assessed for readiness."
+    },
+    {
+      "observed_at": "2026-07-29T04:15:00Z",
+      "surface": "github-advanced-security-and-local-wsl-ux-ui-validation",
+      "scope": "PR #832 Semgrep OSS false-positive remediation",
+      "state": "semgrep-remediated-local-integrated-suite-passed",
+      "method": "Read the failed Semgrep OSS check annotation and full workflow context; validated the exact rule in a clean WSL Python virtual environment with semgrep scan --config auto --error; created a disposable ext4 clone at fdc520c8, performed clean sequential npm ci for root/CRM/website and Chromium-only Playwright installation, then reran Lighthouse and audit:ui:full",
+      "result": "The one annotation was typescript.react.security.react-insecure-request on the fixed loopback Storybook MCP fetch. Moving the existing scoped nosemgrep rationale to that fetch produced 0 findings. Direct Lighthouse generated crm-auth.report.html, crm-auth.report.json and metadata.json; audit:ui:full passed 04:12:19.997Z–04:14:50.036Z with components, pilot, accessibility, visual and Lighthouse all passed. No validation-owned process or listener on 5173/6006 remained afterwards.",
+      "limitation": "The correction changes only SAST directive placement for a loopback-only request. It does not relax test behavior, alter snapshots or visual tolerances, introduce a dependency, access production, create a secret/token/account or dispatch a deployment. Remote checks must rerun on the pushed corrected commit before the draft PR can be assessed for readiness."
+    },
+    {
+      "observed_at": "2026-07-29T03:53:00Z",
+      "surface": "git-github-ux-ui-pr-main-sync",
+      "scope": "PR #832 second main synchronization during remote-check monitoring",
+      "state": "clean-main-sync-remote-checks-restarted",
+      "method": "Fetched origin/main 2f0bba6ab5df9c09bc3171e190189991a3891052; inspected the one upstream commit; merged it into the UX/UI branch as 1e30fc0df34151e6aa70007bc27c6f0ca523ee9a; ran git diff --check and compared origin/main...HEAD",
+      "result": "The merge was conflict-free and contains only the upstream .github/workflows/deploy-core-workers.yml addition. The three-dot branch diff still contains only UX/UI infrastructure, versioned baselines and related documentation; GitHub reports the PR as mergeable but behind until the new head is pushed and checks are recomputed.",
+      "limitation": "No deployment workflow was dispatched, no production URL or data was accessed, and no secret, account, token, snapshot update or product UI change occurred. Local UX/UI runtime validation remains the clean ext4 WSL result recorded at 03:48Z; remote checks must finish on the new head before readiness can be assessed."
+    },
+    {
+      "observed_at": "2026-07-29T03:48:17Z",
+      "surface": "git-github-local-wsl-ux-ui-pr-sync",
+      "scope": "PR #832 main-conflict resolution and post-merge local validation",
+      "state": "local-main-sync-resolved-remote-checks-pending",
+      "method": "Fetched origin/main 1a6650d9c0598d810dca97e778d7adf3e0bd25d7; merged it into the UX/UI branch as 04e217fbc3fe5f9119a0cb86a291d9c04f920f98; preserved both sides of the two project-state-document conflicts; parsed JSON and ran git diff --check; clean ext4 WSL bundle clone with sequential lockfile installs and Chromium-only Playwright ran audit:ui:full",
+      "result": "The only merge conflicts were docs/project-state/current-state.md and docs/project-state/evidence-ledger.json. audit:ui:full passed from 2026-07-29T03:45:33.942Z to 03:47:43.184Z with components, pilot, accessibility, visual and Lighthouse all passed. No validation-owned process remained afterwards.",
+      "limitation": "This proves local merge resolution only. No production access, deploy, secret, account, snapshot update or product UI change occurred. PR #832 remains draft until remote checks and review threads are refreshed after the non-force push."
+    },
+    {
+      "observed_at": "2026-07-29T03:32:49Z",
+      "surface": "local-wsl-ux-ui-reproducibility-rerun",
+      "scope": "Post-correction final integrated UX/UI validation",
+      "state": "reproducibly-green-local-remediation-pr-not-updated",
+      "method": "Second disposable ext4 WSL clone; clean sequential npm ci from root/CRM/website lockfiles; Playwright Chromium-only install; direct LHCI baseline and Storybook MCP Inspector checks before the canonical integrated audit",
+      "result": "LHCI baseline produced local HTML/JSON; Storybook MCP initialize plus Inspector tools/list returned 8 tools. audit:ui:full passed from 2026-07-29T03:26:33.982Z to 03:30:43.839Z with components, pilot, accessibility, visual and Lighthouse all passed. CRM typecheck passed; lint had 0 errors and 96 existing warnings; Storybook build and npm audit --omit=dev (0 vulnerabilities) passed.",
+      "limitation": "No snapshot update, tolerance change, assertion weakening, experimental dependency, production endpoint, account, secret, token, external authentication, deployment or product UI change was used. The clone and generated artifacts are local/disposable; PR #832 remains unmodified and its remote checks remain historical."
+    },
+    {
+      "observed_at": "2026-07-29T03:14:21Z",
+      "surface": "local-wsl-ux-ui-final-validation",
+      "scope": "Final UX/UI infrastructure validation before delivery preparation",
+      "state": "all-local-checks-passed-remediation-local-pr-not-updated",
+      "method": "Disposable ext4 WSL clone at /home/admin/skincos-ux-final.vewq2s; source overlay only with no node_modules copy; sequential clean npm ci from root/CRM/website lockfiles; Playwright Chromium-only install; canonical JSON/config, diff, doctor, test, lint, UI audit, LHCI, Storybook/MCP, Inspector and production-dependency audit commands",
+      "result": "Node 22.23.1/npm 10.9.8; Playwright 1.58.0, axe 4.12.1, Storybook 10.5.4, Lighthouse 13.0.3, LHCI 0.15.1 and MCP Inspector 1.0.0. JSON/config parsing and git diff --check passed; components, CRM typecheck/lint, audit:ui:full (four pilot, four axe JSON, four visual comparisons and Lighthouse HTML/JSON), LHCI baseline, Storybook build, JSON-RPC initialize plus Inspector tools/list (8 tools), and npm audit --omit=dev (0 vulnerabilities) passed. The LHCI profile is explicitly /tmp/skincos-lhci-chrome for WSL compatibility and has no score assertions.",
+      "limitation": "No snapshot update command, production URL, account, secret, credential, customer data, deployment, workflow save or external MCP authentication was used. The validation-owned Vite, Storybook, Lighthouse and Chromium processes were confirmed absent afterwards. The local remediation remains uncommitted, so PR #832 and its historical remote checks have not rerun."
+    },
+    {
+      "observed_at": "2026-07-29T03:30:00Z",
+      "surface": "local-wsl-ux-ui-audit",
+      "scope": "Complete UX/UI infrastructure diff audit and local-only remediation",
+      "state": "audit-complete-remediation-local-pr-not-updated",
+      "method": "Diff and lockfile review against merge base b1afd84b9191841d1f4bc28497f70b3755375d70; local synthetic component, pilot, axe, visual and Escala checks in a disposable native WSL clone; workflow and MCP registration inspection",
+      "result": "No secrets, personal data, production target, generated report, experimental Storybook runner, incompatible eslint-plugin-jsx-a11y, or direct MSW/Chromatic/Percy/Sentry/PostHog/Clarity addition was found. Playwright and Lighthouse loopback guards plus non-loopback request blocking were added locally; four visual references were regenerated from the local synthetic harness.",
+      "limitation": "The remediation is intentionally uncommitted. PR #832 remains at its earlier head, so remote checks have not rerun; the earlier Central E2E Smoke failure (14 unrelated functional mobile tests), Escala failure and external Semgrep warning remain historical PR state until an authorized follow-up commit triggers CI. GitHub/Figma MCP OAuth remains manual and unproven.",
+      "base_sha": "b1afd84b9191841d1f4bc28497f70b3755375d70",
+      "published_head_sha": "5f1bbe75a6072c7da3b55643ab82e9363a0b4c8c",
+      "pr": 832
+    },
+    {
+      "observed_at": "2026-07-29T01:34:00Z",
+      "surface": "local-wsl-and-github-pr",
+      "scope": "UX/UI audit infrastructure draft PR",
+      "state": "local-validated-pr-open",
+      "method": "git fetch --prune; branch/worktree/stash/remote/PR inspection; non-destructive merge of origin/main; clean native WSL npm ci and focused audit commands; GitHub PR metadata",
+      "result": "Draft PR #832 is open from codex/admin/ux-ui-infrastructure against main. Commit 62d36ba140e5f1ab0d2f27932f5515a0ea152a04 was validated after merge with origin/main b1afd84b9191841d1f4bc28497f70b3755375d70. tools:doctor, audit:ui:full, Storybook build/MCP and one LHCI baseline passed using only synthetic local data.",
+      "limitation": "PR checks were queued or in progress at observation time. This proves local behavior and PR publication only; it is not main integration, staging or production evidence. GitHub/Figma MCP OAuth remains separately unproven as documented.",
+      "sha": "62d36ba140e5f1ab0d2f27932f5515a0ea152a04",
+      "pr": 832
+    },
+    {
       "observed_at": "2026-07-29T03:30:00Z",
       "surface": "github-http-windows-observability-independent-audit",
       "scope": "Independent final audit of observability alert hardening and its API promotion",

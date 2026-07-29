@@ -86,9 +86,28 @@
     "website:preview:snapshot": "npm run module:site-public:website:preview:snapshot",
     "codex:website:local": "bash ./scripts/run-local-website.sh --no-browser",
     "codex:website:local-stop": "bash ./scripts/run-local-website.sh --stop",
-    "website:deploy": "npm run module:site-public:website:deploy"
+    "website:deploy": "npm run module:site-public:website:deploy",
+    "test:unit": "npm --prefix crm/console run test",
+    "test:components": "npm --prefix crm/console run test:components",
+    "test:e2e": "E2E_START_SERVER=1 npm --prefix crm/console run test:e2e",
+    "test:e2e:ui": "npm --prefix crm/console run test:e2e:ui",
+    "test:e2e:headed": "npm --prefix crm/console run test:e2e:headed",
+    "test:a11y": "npm --prefix crm/console run test:a11y",
+    "test:visual": "npm --prefix crm/console run test:visual",
+    "audit:lighthouse": "node ./scripts/ux-ui/run-lighthouse.mjs",
+    "audit:lighthouse:ci": "lhci autorun --config=./.lighthouserc.json",
+    "audit:performance": "npm run audit:lighthouse",
+    "audit:bundle": "npm --prefix crm/console run analyze:bundle",
+    "audit:ui": "npm run test:components && npm run test:e2e && npm run test:a11y && npm run test:visual",
+    "audit:ui:full": "node ./scripts/ux-ui/run-ui-audit.mjs",
+    "storybook": "npm --prefix crm/console run storybook",
+    "storybook:mcp": "node ./scripts/ux-ui/check-storybook-mcp.mjs",
+    "tools:doctor": "node ./scripts/ux-ui/doctor.mjs",
+    "tools:mcp:check": "node ./scripts/ux-ui/mcp-check.mjs"
   },
   "devDependencies": {
+    "@lhci/cli": "^0.15.1",
+    "@modelcontextprotocol/inspector": "^1.0.0",
     "semver": "^7.7.3"
   }
 }

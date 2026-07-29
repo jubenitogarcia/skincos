@@ -1,0 +1,19 @@
+{
+  "ci": {
+    "collect": {
+      "url": ["http://127.0.0.1:5173/"],
+      "numberOfRuns": 1,
+      "startServerCommand": "npm --prefix crm/console run dev -- --host 127.0.0.1 --port 5173",
+      "startServerReadyPattern": "Local:",
+      "startServerReadyTimeout": 60000,
+      "settings": {
+        "onlyCategories": ["performance", "accessibility", "best-practices"],
+        "chromeFlags": "--headless=new --no-sandbox --user-data-dir=/tmp/skincos-lhci-chrome"
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "artifacts/lighthouse/lhci"
+    }
+  }
+}
