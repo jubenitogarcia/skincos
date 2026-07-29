@@ -527,6 +527,17 @@
       "method": "behavior test, selector, shell syntax and diff check",
       "result": "passed",
       "limitation": "PR/CI/staging pending"
+    },
+    {
+      "observed_at": "2026-07-29T14:23:15Z",
+      "surface": "production",
+      "scope": "livia-isolated-runtime-promotion",
+      "state": "production-promoted-post-promotion-audit-pending-real-active-version-journey",
+      "method": "Operator-authorized Livia-only promotion recorded 2026-07-29; PR #837 merge f6b8698a, immutable staged release, transactional workflow history publish, audit-live, local http://127.0.0.1:5678/healthz=200 and public https://orb.skincos.com.br/healthz=200",
+      "result": "workflow WGXr4vYkv9UoJ8zc active at 9f7beced-c075-46d1-be78-0e26968e135e; zero mutable active-runtime references; schedule field days at 13:26",
+      "limitation": "The repository record is evidence of the scoped operator authorization and promotion, not a substitute for a pre-promotion staging environment. Historical real publication evidence remains executions 336 and 339; no synthetic social publication was made, and a real active-version journey remains required before closure.",
+      "sha": "f6b8698a450ee2b346ccc93989a365c3455c792d",
+      "pr": 837
     }
   ]
 }

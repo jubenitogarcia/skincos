@@ -46,4 +46,6 @@ LIVIA_BUILD_JOB_GRAPH_SOURCE="$ROOT_DIR/orb/engine/compose2-current.js" \
 LIVIA_BUILD_JOB_GRAPH_SOURCE="$ROOT_DIR/orb/engine/compose2-current.js" \
   node "$ROOT_DIR/orb/engine/scripts/livia/build-platform-job-graph.js" --assert-job-graph-contracts >/dev/null
 
+"$ROOT_DIR/scripts/runtime/test-workflow-runtime-retention.sh" >/dev/null
+
 echo 'PASS: native source release accepts only a checksum-verified Linux archive.'
