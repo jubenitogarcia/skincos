@@ -90,6 +90,39 @@ jobs:
           (cd ../api && npm install --no-package-lock --no-audit --no-fund)
         working-directory: inventory
 
+      # The Identity/Inventory D1 contains account records.  A production
+      # migration must have a recoverable, encrypted checkpoint before any
+      # schema write; staging has its own isolated lifecycle and attestation.
+      - name: Capture encrypted Inventory D1 checkpoint
+        id: inventory_checkpoint
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' && (inputs.unit == 'inventory' || inputs.unit == 'all') }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          IDENTITY_BACKUP_PASSPHRASE: ${{ secrets.IDENTITY_BACKUP_PASSPHRASE }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ -n "${IDENTITY_BACKUP_PASSPHRASE:-}" ]] || { echo 'Missing IDENTITY_BACKUP_PASSPHRASE.'; exit 1; }
+          checkpoint_dir="$RUNNER_TEMP/inventory-production-pre-migration-$RELEASE_SHA"
+          mkdir -p "$checkpoint_dir"
+          plain="$checkpoint_dir/skincos-db.sql"
+          encrypted="$checkpoint_dir/skincos-db.sql.gpg"
+          trap 'rm -f "$plain"' EXIT
+          npx --yes wrangler@3 d1 export skincos-db --remote --output "$plain" --config inventory/wrangler.toml
+          printf '%s' "$IDENTITY_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
+          sha256sum "$encrypted" > "$checkpoint_dir/skincos-db.sql.gpg.sha256"
+          echo "artifact=$checkpoint_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Upload encrypted Inventory migration checkpoint
+        if: ${{ steps.inventory_checkpoint.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: inventory-production-pre-migration-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ steps.inventory_checkpoint.outputs.artifact }}
+          retention-days: 30
+          if-no-files-found: error
+
       - name: Deploy only the selected operational unit
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
