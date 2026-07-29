@@ -625,6 +625,28 @@
       "pr": 870,
       "merge_sha": "8442bb840fa8f620ea7e8cb5b37beecd064a7987",
       "validated_candidate_sha": "925fec6d61201ef96079b47f634314f99e045ae1"
+    },
+    {
+      "observed_at": "2026-07-29T22:30:30Z",
+      "surface": "production-orb-token-vault-google-drive-github",
+      "scope": "livia-pr897-immutable-qa-promotion",
+      "state": "production-promoted-real-active-version-journey-blocked-by-no-new-media",
+      "method": "GitHub PR #866/#897 merge and check readback; Token Vault Worker production deployment with --keep-vars; authenticated health/canonical/legacy-token-list reads; no-active-execution gate; checksum and lineage-verified stage-only immutable release; candidate builder, structural validator, multimodal offline QA, version-checked workflow-history transaction; manifest audit, entrypoint SHA-256 verification, health/log/lock/process reads, and authenticated Google Drive queue listing.",
+      "result": "PR #866 merged as 17ae6094be17dc9235afccb8644a2e0fd98add94 with 13 successful checks; Token Vault deployment 09832cf7-84ac-420f-9b66-ffec67705925 is healthy. The protected health, /v1/tokens?active=true and /v1/token-metadata?active=true endpoints returned 200; canonical and compatibility lists have the same eight provider/unit/external-account combinations. The Livia selector retains exactly the six social credentials, and its direct provider and gateway preflight checks were 6/6 HTTP 200. PR #897 merged as 7b661a76ec6da748378c4e991c6a19c2c730d026 with 16 successful checks. Workflow WGXr4vYkv9UoJ8zc is active at historical version 644e4c0a-c6cf-4173-8725-c3d28ae0b5ff, pinned to immutable release 7b661a76ec6da748378c4e991c6a19c2c730d026; the six manifest entrypoint hashes matched, audit-live found zero mutable references across five active workflows, schedule remains days 13:26, and local/public Orb health were 200. No global-pointer change or Orb restart occurred.",
+      "limitation": "The authenticated canonical Drive-folder listing found no new eligible media. Its newest file, 2907261000.mp4 (1h2bmgH4_EOMStKpoXh_oDiHmy68QF9I_), already belongs to execution 343 and was not reused. Therefore no post-promotion Schedule Trigger journey, social mutation, Drive mark, notification or cleanup was initiated. A newly approved, unmarked file in the canonical folder is the single remaining causal input required for end-to-end acceptance of this active version.",
+      "sha": "7b661a76ec6da748378c4e991c6a19c2c730d026",
+      "pr": 897,
+      "merge_sha": "7b661a76ec6da748378c4e991c6a19c2c730d026",
+      "worker_pr": 866,
+      "worker_merge_commit": "17ae6094be17dc9235afccb8644a2e0fd98add94",
+      "worker_deployment_id": "09832cf7-84ac-420f-9b66-ffec67705925",
+      "workflow_id": "WGXr4vYkv9UoJ8zc",
+      "workflow_version": "644e4c0a-c6cf-4173-8725-c3d28ae0b5ff",
+      "manifest_sha256": "f38ab5edc4874ef9728fd8191c0ef1878356937b057a791a2f54adbd5463d832",
+      "rollback_checkpoint": "livia-pr897-postpromotion-20260729T223030Z",
+      "rollback_checkpoint_sha256": "0c2f18a1468b41869a412c8da7dae202e52fd622656079a7fee12fcf30cb3d95",
+      "prepromotion_checkpoint": "livia-pr897-prepromotion-20260729T221933Z",
+      "prepromotion_checkpoint_sha256": "926b781f42e30f273876809d64d93812dc607ed86cacdf8bbc3c069cb9bb8013"
     }
   ]
 }

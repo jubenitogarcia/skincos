@@ -926,6 +926,50 @@ continua histórica (execuções 336 e 339); uma publicação posterior só pode
 considerada prova da versão corrigida se registrar seu `workflowVersionId`
 publicado e o verificador direto do bundle.
 
+## Livia — promoção QA isolada e preflight Token Vault 2026-07-29
+
+A PR #866 foi integrada como
+`17ae6094be17dc9235afccb8644a2e0fd98add94`, com seus 13 checks concluídos
+em sucesso. O Worker Token Vault foi então publicado com `--keep-vars` no
+deployment `09832cf7-84ac-420f-9b66-ffec67705925`, sem substituir secrets ou
+bindings. As leituras autenticadas de `/health`, `/v1/tokens?active=true` e do
+compatível `/v1/token-metadata?active=true` retornaram HTTP 200. As duas
+listagens tiveram os mesmos oito registros e as mesmas combinações
+`provider/unit/external_account_id`.
+
+Os oito registros incluem dois destinados ao Meta Ads Publish. O nó `Get
+Credential Tokens` usa a rota compatível e recebe esses oito itens ativos; o
+preflight do Livia seleciona explicitamente as seis identidades sociais
+(Instagram, Facebook e Threads para BarraShoppingSul e Novo Hamburgo), sem
+inferência por posição. As seis passaram tanto na consulta direta ao provedor
+quanto pela operação de verificação do gateway, sempre com HTTP 200 e sem
+expor tokens nesta evidência.
+
+A PR #897 corrigiu uma falsa falha do QA que ainda procurava marcadores de alt
+text de um contrato de vídeo antigo. Foi integrada como
+`7b661a76ec6da748378c4e991c6a19c2c730d026`, com os 16 checks verdes. A
+promoção Livia-only publicou a versão histórica
+`644e4c0a-c6cf-4173-8725-c3d28ae0b5ff` às 2026-07-29T22:24:13.246Z, fixada
+na release imutável do mesmo merge. O manifesto tem hash de workflow
+`f38ab5edc4874ef9728fd8191c0ef1878356937b057a791a2f54adbd5463d832`; os
+seis entrypoints foram conferidos contra seus SHA-256. `audit-live` confirmou
+cinco workflows ativos e zero referências mutáveis. O schedule permanece
+`field: days`, 13:26, intervalo diário; os healthchecks local e público foram
+200. A promoção não alterou `/opt/skincos/current/source` e não reiniciou o
+Orb.
+
+Os checkpoints privados preservados são
+`livia-pr897-prepromotion-20260729T221933Z`
+(`926b781f42e30f273876809d64d93812dc607ed86cacdf8bbc3c069cb9bb8013`) e
+`livia-pr897-postpromotion-20260729T223030Z`
+(`0c2f18a1468b41869a412c8da7dae202e52fd622656079a7fee12fcf30cb3d95`). A
+fila canônica do Drive não continha mídia inédita elegível: o arquivo mais
+novo, `2907261000.mp4`, já é a origem da execução 343. Nenhuma mídia histórica
+foi reutilizada e nenhuma nova publicação foi acionada. Portanto, a única
+evidência ainda necessária para aceite end-to-end desta versão é uma nova
+mídia aprovada e não marcada na pasta canônica, a ser processada pelo Schedule
+Trigger real.
+
 ## Meta Ads Publish — encerramento operacional 2026-07-29
 
 A execução manual comercial `333` terminou `success` e concluiu
