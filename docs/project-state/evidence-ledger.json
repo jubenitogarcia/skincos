@@ -2,6 +2,15 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T04:15:00Z",
+      "surface": "github-advanced-security-and-local-wsl-ux-ui-validation",
+      "scope": "PR #832 Semgrep OSS false-positive remediation",
+      "state": "semgrep-remediated-local-integrated-suite-passed",
+      "method": "Read the failed Semgrep OSS check annotation and full workflow context; validated the exact rule in a clean WSL Python virtual environment with semgrep scan --config auto --error; created a disposable ext4 clone at fdc520c8, performed clean sequential npm ci for root/CRM/website and Chromium-only Playwright installation, then reran Lighthouse and audit:ui:full",
+      "result": "The one annotation was typescript.react.security.react-insecure-request on the fixed loopback Storybook MCP fetch. Moving the existing scoped nosemgrep rationale to that fetch produced 0 findings. Direct Lighthouse generated crm-auth.report.html, crm-auth.report.json and metadata.json; audit:ui:full passed 04:12:19.997Z–04:14:50.036Z with components, pilot, accessibility, visual and Lighthouse all passed. No validation-owned process or listener on 5173/6006 remained afterwards.",
+      "limitation": "The correction changes only SAST directive placement for a loopback-only request. It does not relax test behavior, alter snapshots or visual tolerances, introduce a dependency, access production, create a secret/token/account or dispatch a deployment. Remote checks must rerun on the pushed corrected commit before the draft PR can be assessed for readiness."
+    },
+    {
       "observed_at": "2026-07-29T03:53:00Z",
       "surface": "git-github-ux-ui-pr-main-sync",
       "scope": "PR #832 second main synchronization during remote-check monitoring",

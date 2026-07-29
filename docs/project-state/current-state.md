@@ -1,5 +1,22 @@
 # Current state
 
+## UX/UI PR #832 — Semgrep loopback finding remediated and rerun passed — 2026-07-29T04:15Z
+
+GitHub Advanced Security reported one `Semgrep OSS` error on the local
+Storybook MCP checker: a generic rule interpreted its fixed
+`http://127.0.0.1:6006/mcp` request as unencrypted external traffic. The
+endpoint is constrained to the locally spawned Storybook process; the existing
+documented `nosemgrep` rationale was moved to the exact `fetch` line instead
+of the indirect call site. A clean WSL Python virtual environment ran the
+same `semgrep scan --config auto --error` target with zero findings. A
+disposable ext4 WSL clone at `fdc520c8` then used clean sequential root, CRM
+and website lockfile installs plus Chromium only: the direct Lighthouse run
+produced HTML/JSON, and `audit:ui:full` passed from 04:12:19Z to 04:14:50Z
+for components, four synthetic pilot viewports, axe, the four visual baselines
+and Lighthouse. No snapshot update, tolerance change, production access,
+secret, account, deployment or product UI change occurred. The PR remains
+draft until GitHub reruns and completes remote checks on the corrected head.
+
 ## UX/UI PR #832 — second main sync clean; remote checks restarted — 2026-07-29T03:53Z
 
 While the first remote-check run was in progress, `origin/main` advanced to
