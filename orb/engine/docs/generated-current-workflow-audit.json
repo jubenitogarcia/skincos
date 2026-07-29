@@ -1,0 +1,331 @@
+{
+  "source": "scripts/build-campaign-creative-generator.js",
+  "files": [
+    "campaign-creative-generator.00-orquestrador.json",
+    "campaign-creative-generator.01-interpretar-campanha.json",
+    "campaign-creative-generator.02-planejar-variacoes.json",
+    "campaign-creative-generator.03-gerar-1-peca.json",
+    "campaign-creative-generator.04-qa-export-ledger.json",
+    "campaign-creative-generator.package.json"
+  ],
+  "workflows": [
+    {
+      "file": "campaign-creative-generator.00-orquestrador.json",
+      "id": "ccg-orchestrator-001",
+      "name": "00 - Orquestrador - Campaign Creative Generator",
+      "nodes": 9,
+      "node_types": [
+        "n8n-nodes-base.stickyNote",
+        "n8n-nodes-base.manualTrigger",
+        "n8n-nodes-base.set",
+        "n8n-nodes-base.code",
+        "n8n-nodes-base.executeWorkflow"
+      ],
+      "triggers": [
+        "When clicking 'Execute workflow'"
+      ],
+      "roots": [
+        "Objetivo",
+        "When clicking 'Execute workflow'"
+      ],
+      "leaves": [
+        "Objetivo",
+        "Relatorio Final da Orquestracao"
+      ],
+      "duplicate_names": [],
+      "broken_references": [],
+      "code_nodes": [
+        {
+          "name": "Preparar Orquestracao",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Relatorio Final da Orquestracao",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        }
+      ],
+      "edge_count": 7
+    },
+    {
+      "file": "campaign-creative-generator.01-interpretar-campanha.json",
+      "id": "ccg-phase1-interpret-campaign",
+      "name": "01 - Interpretar Campanha",
+      "nodes": 11,
+      "node_types": [
+        "n8n-nodes-base.stickyNote",
+        "n8n-nodes-base.manualTrigger",
+        "n8n-nodes-base.executeWorkflowTrigger",
+        "n8n-nodes-base.set",
+        "n8n-nodes-base.googleDrive",
+        "n8n-nodes-base.code",
+        "@n8n/n8n-nodes-langchain.agent",
+        "@n8n/n8n-nodes-langchain.outputParserStructured",
+        "@n8n/n8n-nodes-langchain.lmChatOpenAi"
+      ],
+      "triggers": [
+        "When clicking 'Execute workflow'",
+        "When Executed by Another Workflow"
+      ],
+      "roots": [
+        "Objetivo",
+        "When clicking 'Execute workflow'",
+        "When Executed by Another Workflow",
+        "Campaign Brief Parser",
+        "OpenAI Chat Model"
+      ],
+      "leaves": [
+        "Objetivo",
+        "Campaign Brief Parser",
+        "OpenAI Chat Model",
+        "Normalize Campaign Brief"
+      ],
+      "duplicate_names": [],
+      "broken_references": [],
+      "code_nodes": [
+        {
+          "name": "Prepare Campaign Inputs",
+          "has_child_process": true,
+          "has_python": true,
+          "has_base64": true,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Normalize Campaign Brief",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        }
+      ],
+      "edge_count": 9
+    },
+    {
+      "file": "campaign-creative-generator.02-planejar-variacoes.json",
+      "id": "ccg-phase2-plan-variations",
+      "name": "02 - Planejar Variacoes",
+      "nodes": 6,
+      "node_types": [
+        "n8n-nodes-base.stickyNote",
+        "n8n-nodes-base.manualTrigger",
+        "n8n-nodes-base.executeWorkflowTrigger",
+        "n8n-nodes-base.set",
+        "n8n-nodes-base.code"
+      ],
+      "triggers": [
+        "When clicking 'Execute workflow'",
+        "When Executed by Another Workflow"
+      ],
+      "roots": [
+        "Objetivo",
+        "When clicking 'Execute workflow'",
+        "When Executed by Another Workflow"
+      ],
+      "leaves": [
+        "Objetivo",
+        "Build Variation Plan"
+      ],
+      "duplicate_names": [],
+      "broken_references": [],
+      "code_nodes": [
+        {
+          "name": "Normalizar Brief",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Build Variation Plan",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        }
+      ],
+      "edge_count": 4
+    },
+    {
+      "file": "campaign-creative-generator.03-gerar-1-peca.json",
+      "id": "ccg-phase3-generate-asset",
+      "name": "03 - Gerar 1 Peca",
+      "nodes": 13,
+      "node_types": [
+        "n8n-nodes-base.stickyNote",
+        "n8n-nodes-base.manualTrigger",
+        "n8n-nodes-base.executeWorkflowTrigger",
+        "n8n-nodes-base.set",
+        "n8n-nodes-base.code",
+        "n8n-nodes-base.switch",
+        "n8n-nodes-base.httpRequest",
+        "n8n-nodes-base.googleDrive"
+      ],
+      "triggers": [
+        "When clicking 'Execute workflow'",
+        "When Executed by Another Workflow"
+      ],
+      "roots": [
+        "Objetivo",
+        "When clicking 'Execute workflow'",
+        "When Executed by Another Workflow"
+      ],
+      "leaves": [
+        "Objetivo",
+        "Dry Run Asset",
+        "Live Asset Result"
+      ],
+      "duplicate_names": [],
+      "broken_references": [],
+      "code_nodes": [
+        {
+          "name": "Normalizar Job de Geracao",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Dry Run Asset",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Build OpenAI Image Request",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Normalize OpenAI Image",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": true,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Build Image Binary",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": true,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Live Asset Result",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        }
+      ],
+      "edge_count": 11
+    },
+    {
+      "file": "campaign-creative-generator.04-qa-export-ledger.json",
+      "id": "ccg-phase4-qa-ledger",
+      "name": "04 - QA, Export e Ledger",
+      "nodes": 16,
+      "node_types": [
+        "n8n-nodes-base.stickyNote",
+        "n8n-nodes-base.manualTrigger",
+        "n8n-nodes-base.executeWorkflowTrigger",
+        "n8n-nodes-base.set",
+        "n8n-nodes-base.code",
+        "n8n-nodes-base.switch",
+        "n8n-nodes-base.googleDrive",
+        "@n8n/n8n-nodes-langchain.agent",
+        "@n8n/n8n-nodes-langchain.outputParserStructured",
+        "@n8n/n8n-nodes-langchain.lmChatOpenAi"
+      ],
+      "triggers": [
+        "When clicking 'Execute workflow'",
+        "When Executed by Another Workflow"
+      ],
+      "roots": [
+        "Objetivo",
+        "When clicking 'Execute workflow'",
+        "When Executed by Another Workflow",
+        "QA Parser",
+        "OpenAI Chat Model"
+      ],
+      "leaves": [
+        "Objetivo",
+        "QA Parser",
+        "OpenAI Chat Model",
+        "Ledger Result"
+      ],
+      "duplicate_names": [],
+      "broken_references": [],
+      "code_nodes": [
+        {
+          "name": "Normalizar Resultado Gerado",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Dry Run QA",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Prepare QA Binary",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Finalize QA Status",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Build Campaign Manifest",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        },
+        {
+          "name": "Ledger Result",
+          "has_child_process": false,
+          "has_python": false,
+          "has_base64": false,
+          "has_absolute_path": false
+        }
+      ],
+      "edge_count": 15
+    },
+    {
+      "file": "campaign-creative-generator.package.json",
+      "nodes": 0,
+      "node_types": [],
+      "triggers": [],
+      "roots": [],
+      "leaves": [],
+      "duplicate_names": [],
+      "broken_references": [],
+      "code_nodes": [],
+      "edge_count": 0
+    }
+  ],
+  "findings": [
+    {
+      "type": "legacy_contract",
+      "message": "The current builder has Manual Trigger, static campaign/Drive values, Python child_process, base64 transport and no transactional ledger."
+    }
+  ]
+}
