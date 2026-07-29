@@ -24,10 +24,22 @@ function Assert-ReparsePoint([string]$Path) {
   return $item
 }
 
+function Remove-SkillLink([string]$Path) {
+  Assert-ReparsePoint -Path $Path | Out-Null
+  $targetRootFull = [IO.Path]::GetFullPath($TargetRoot).TrimEnd('\')
+  $pathFull = [IO.Path]::GetFullPath($Path)
+  if ([IO.Path]::GetDirectoryName($pathFull).TrimEnd('\') -ne $targetRootFull) {
+    throw "Refusing to remove a skill link outside the exact target root: $pathFull"
+  }
+  [IO.Directory]::Delete($pathFull)
+  if (Test-Path -LiteralPath $pathFull) {
+    throw "Skill link still exists after removal: $pathFull"
+  }
+}
+
 if ($Uninstall) {
   if (Test-Path -LiteralPath $target) {
-    Assert-ReparsePoint -Path $target | Out-Null
-    Remove-Item -LiteralPath $target -Force
+    Remove-SkillLink -Path $target
     Write-Output "Removed local skill link: $target"
   } else {
     Write-Output "No local skill link found: $target"
@@ -47,7 +59,7 @@ if (Test-Path -LiteralPath $target) {
   if (-not $ReplaceExistingLink) {
     throw "A different skill link occupies $target. Re-run with -ReplaceExistingLink after verifying its source."
   }
-  Remove-Item -LiteralPath $target -Force
+  Remove-SkillLink -Path $target
 }
 
 New-Item -ItemType Junction -Path $target -Target $source | Out-Null

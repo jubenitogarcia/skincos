@@ -81,6 +81,7 @@ Native Windows wrapper:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-host-wrappers.ps1
 powershell -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-rollback.ps1
+powershell -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-skill-installer.ps1
 ```
 
 The tests use only temporary state and synthetic Stop payloads. A real proof
