@@ -155,3 +155,15 @@
 - Use `--headed-smoke --browser` only for explicit visual debugging.
 - Do not commit `.playwright-mcp/`, screenshots, or local evidence images unless
   the user explicitly asks for an artifact.
+
+## UX/UI audit infrastructure
+
+- Future UX/UI audits use the `SKINCOS Senior UX/UI Designer` Skill. In its
+  diagnostic phase, inspect available tools and collect evidence before changing
+  product code or recommending work.
+- Use Playwright for synthetic user journeys, axe for automatic accessibility,
+  Chrome DevTools and Lighthouse for performance, Storybook before creating
+  shared components, and Figma only when an approved design is available.
+- Do not access production without explicit authorization. Keep audit fixtures
+  synthetic, keep artifacts out of Git, and perform independent validation after
+  any implementation.
