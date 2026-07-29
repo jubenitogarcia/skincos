@@ -39,13 +39,16 @@ const financeAudit = (actionName, before, after) => `INSERT INTO finance_audit_e
 
 let coreSql;
 let financeSql;
-const baseline = { username, environment: 'staging', expiresAt, allowedUnits: ['novo-hamburgo'], allowedModules: ['finance'] };
+// CONSULTOR is intentionally constrained by the CRM shell to Atendimento,
+// regardless of its configured modules. INJETOR is the least-privileged role
+// that preserves the explicit, single-module Finance grant below.
+const baseline = { username, environment: 'staging', role: 'INJETOR', allowedUnits: ['novo-hamburgo'], allowedModules: ['finance'] };
 if (action === 'provision') {
   coreSql = [
     // Cloudflare D1's remote SQL API rejects explicit transaction control.
     // Each generated file is submitted as a single D1 request by the canonical
     // workflow, so leave transaction ownership to the D1 service.
-    `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version) VALUES(${quote(username)},${quote('finance-staging-smoke@staging.invalid')},${quote('Finance staging smoke (synthetic)')},${quote(passwordHash())},'CONSULTOR','',${quote(JSON.stringify(['novo-hamburgo']))},${quote(JSON.stringify(['finance']))},1,${quote(now)},${quote(now)},1);`,
+    `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version) VALUES(${quote(username)},${quote('finance-staging-smoke@staging.invalid')},${quote('Finance staging smoke (synthetic)')},${quote(passwordHash())},'INJETOR','',${quote(JSON.stringify(['novo-hamburgo']))},${quote(JSON.stringify(['finance']))},1,${quote(now)},${quote(now)},1);`,
     audit('FINANCE_SMOKE_IDENTITY_PROVISIONED', null, { ...baseline, active: true }),
   ].join('\n');
   financeSql = [
@@ -54,7 +57,7 @@ if (action === 'provision') {
   ].join('\n');
 } else if (action === 'rotate') {
   coreSql = [
-    `UPDATE crm_users SET password_hash=${quote(passwordHash())},session_version=COALESCE(session_version,0)+1,updated_at=${quote(now)} WHERE username=${quote(username)} AND ativo=1;`,
+    `UPDATE crm_users SET password_hash=${quote(passwordHash())},role='INJETOR',allowed_units_json=${quote(JSON.stringify(['novo-hamburgo']))},allowed_modules_json=${quote(JSON.stringify(['finance']))},session_version=COALESCE(session_version,0)+1,updated_at=${quote(now)} WHERE username=${quote(username)} AND ativo=1;`,
     audit('FINANCE_SMOKE_IDENTITY_ROTATED', { active: true }, { ...baseline, active: true }),
   ].join('\n');
   financeSql = [

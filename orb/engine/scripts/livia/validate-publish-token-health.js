@@ -86,22 +86,39 @@ async function checkThroughGateway(item) {
   }
 }
 
+async function validatePayload(payload) {
+  const items = activeItems(payload).filter((item) => item && item.active !== false);
+  const checks = (await Promise.all(items.map(check))).filter(Boolean);
+  const gatewayChecks = (await Promise.all(items.map(checkThroughGateway))).filter(Boolean);
+  const expected = ['instagram', 'threads', 'facebook'];
+  const missingDirect = expected.filter((provider) => !checks.some((entry) => entry.provider === provider));
+  const directFailures = checks.filter((entry) => !entry.ok);
+  const missingGateway = expected.filter((provider) => !gatewayChecks.some((entry) => entry.provider === provider));
+  const gatewayFailures = gatewayChecks.filter((entry) => !entry.ok);
+  if (missingDirect.length || directFailures.length || missingGateway.length || gatewayFailures.length) {
+    const detail = (entries) => entries
+      .map((entry) => `${entry.provider}/${entry.unit}:status=${entry.status}:code=${entry.error?.code ?? 'n/a'}`)
+      .join(', ');
+    throw new Error(
+      'Livia publish credential preflight failed ' +
+      `(direct_missing=${missingDirect.join('|') || 'none'}; direct_failures=${detail(directFailures) || 'none'}; ` +
+      `gateway_missing=${missingGateway.join('|') || 'none'}; gateway_failures=${detail(gatewayFailures) || 'none'}).`,
+    );
+  }
+  return { ok: true, checkedAt: new Date().toISOString(), checks, gatewayChecks };
+}
+
 async function main() {
   const raw = argument('--payload');
   if (!raw) throw new Error('validate-publish-token-health requires --payload JSON.');
-  const items = activeItems(JSON.parse(raw)).filter((item) => item && item.active !== false);
-  const checks = (await Promise.all(items.map(async (item) => (await check(item)) || (await checkThroughGateway(item))))).filter(Boolean);
-  const expected = ['instagram', 'threads', 'facebook'];
-  const missing = expected.filter((provider) => !checks.some((entry) => entry.provider === provider));
-  const failures = checks.filter((entry) => !entry.ok);
-  if (missing.length || failures.length) {
-    const detail = failures.map((entry) => `${entry.provider}/${entry.unit}:status=${entry.status}:code=${entry.error?.code ?? 'n/a'}`).join(', ');
-    throw new Error(`Livia publish credential preflight failed (missing=${missing.join('|') || 'none'}; failures=${detail || 'none'}).`);
-  }
-  process.stdout.write(`${JSON.stringify({ ok: true, checkedAt: new Date().toISOString(), checks })}\n`);
+  process.stdout.write(`${JSON.stringify(await validatePayload(JSON.parse(raw)))}\n`);
 }
 
-main().catch((error) => {
-  console.error(error.stack || String(error));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.stack || String(error));
+    process.exit(1);
+  });
+}
+
+module.exports = { validatePayload };

@@ -41,5 +41,7 @@ export function trackContactConversion(
     if (!hasMarketingConsent()) return;
 
     fireGoogleAdsConversion(GOOGLE_ADS_CONTACT_SEND_TO, params);
-    trackMetaStandardEvent("Contact", params, options);
+    // Keep Meta's Contact event limited to its standard event context. Attribution
+    // details stay in the first-party store and are not needed for optimization.
+    trackMetaStandardEvent("Contact", {}, options);
 }

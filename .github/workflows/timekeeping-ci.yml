@@ -7,9 +7,16 @@ on:
       - 'api/**'
       - 'crm/console/functions/api/ponto/**'
       - 'crm/console/PontoModule.tsx'
+      - 'crm/console/crmRoleAccess.ts'
+      - 'crm/console/moduleAvailability.ts'
       - 'crm/console/pontoApi.ts'
       - 'crm/console/pontoTypes.ts'
       - 'crm/console/tests/ponto*.test.ts'
+      - 'crm/console/tests/crmRoleAccess.test.ts'
+      - 'crm/console/tests/moduleRegistry.test.ts'
+      - 'crm/console/scripts/ponto-staging-journey.cjs'
+      - 'workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs'
+      - '.github/workflows/timekeeping-staging-journey.yml'
       - '.github/workflows/timekeeping-ci.yml'
   push:
     branches: [main]
@@ -17,6 +24,17 @@ on:
       - 'workforce/timekeeping/**'
       - 'api/**'
       - 'crm/console/functions/api/ponto/**'
+      - 'crm/console/PontoModule.tsx'
+      - 'crm/console/crmRoleAccess.ts'
+      - 'crm/console/moduleAvailability.ts'
+      - 'crm/console/pontoApi.ts'
+      - 'crm/console/pontoTypes.ts'
+      - 'crm/console/tests/ponto*.test.ts'
+      - 'crm/console/tests/crmRoleAccess.test.ts'
+      - 'crm/console/tests/moduleRegistry.test.ts'
+      - 'crm/console/scripts/ponto-staging-journey.cjs'
+      - 'workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs'
+      - '.github/workflows/timekeeping-staging-journey.yml'
 
 permissions:
   contents: read
@@ -47,6 +65,19 @@ jobs:
         run: |
           node workforce/timekeeping/scripts/import-ponto-json.mjs --source workforce/timekeeping/fixtures/ponto_store.synthetic.json --dry-run
           node workforce/timekeeping/scripts/migration-local.test.mjs
+      - name: Validate synthetic staging fixture contract
+        run: |
+          set -euo pipefail
+          fixtures="$RUNNER_TEMP/ponto-staging-fixtures.json"
+          core_sql="$RUNNER_TEMP/ponto-staging-core.sql"
+          timekeeping_sql="$RUNNER_TEMP/ponto-staging-timekeeping.sql"
+          teardown_core="$RUNNER_TEMP/ponto-staging-core-teardown.sql"
+          teardown_timekeeping="$RUNNER_TEMP/ponto-staging-timekeeping-teardown.sql"
+          node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action provision --run-id 123456 --fixtures "$fixtures" --core-sql "$core_sql" --timekeeping-sql "$timekeeping_sql"
+          node -e "const fs=require('fs');const f=JSON.parse(fs.readFileSync(process.argv[1]));const core=fs.readFileSync(process.argv[2],'utf8');const timekeeping=fs.readFileSync(process.argv[3],'utf8');if(f.environment!=='staging'||f.role!=='CONSULTOR'||f.allowedModules.join(',')!=='atendimento,ponto'||!f.pin||!f.password||!core.includes('STAGING_SYNTHETIC')||core.includes(f.password)||core.includes(f.pin)||timekeeping.includes(f.password)||timekeeping.includes(f.pin))process.exit(1)" "$fixtures" "$core_sql" "$timekeeping_sql"
+          node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action teardown --run-id 123456 --fixtures "$fixtures" --core-sql "$teardown_core" --timekeeping-sql "$teardown_timekeeping"
+          node -e "const fs=require('fs');const core=fs.readFileSync(process.argv[1],'utf8');const timekeeping=fs.readFileSync(process.argv[2],'utf8');if(!core.includes('STAGING_SYNTHETIC')||timekeeping.includes('DELETE FROM timekeeping_audit_events'))process.exit(1)" "$teardown_core" "$teardown_timekeeping"
+          rm -f "$fixtures" "$core_sql" "$timekeeping_sql" "$teardown_core" "$teardown_timekeeping"
       - name: Test gateway routing
         run: |
           set -euo pipefail
@@ -55,4 +86,14 @@ jobs:
           npm --prefix api test
           api/node_modules/.bin/wrangler deploy --dry-run --config api/wrangler.toml --env="" --outdir "$RUNNER_TEMP/api-dry-run"
       - name: Typecheck and test CRM proxy
-        run: npm --prefix crm/console ci && npm --prefix crm/console run typecheck && npm --prefix crm/console run lint && npm --prefix crm/console test && npm --prefix crm/console run build
+        run: |
+          set -euo pipefail
+          npm --prefix crm/console ci
+          npm --prefix crm/console run typecheck
+          npm --prefix crm/console run lint
+          npm --prefix crm/console test
+          npm --prefix crm/console run build
+          if PONTO_STAGING_CRM_URL='https://user@candidate.skincos-staging.pages.dev/' node crm/console/scripts/ponto-staging-journey.cjs 2>/dev/null; then
+            echo 'Ponto staging journey accepted an origin with userinfo.' >&2
+            exit 1
+          fi
