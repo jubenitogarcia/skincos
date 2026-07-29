@@ -1,6 +1,40 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { hash, stableId } = require('../lib/canonical');
+
+const SAFE_KIND = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+function isInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+function safeKind(kind) {
+  if (typeof kind !== 'string' || !SAFE_KIND.test(kind)) {
+    throw new Error('Audio artifact kind must contain only letters, numbers, underscores or hyphens');
+  }
+  return kind;
+}
+
+function safeOutputFile(outputDir, filename) {
+  if (typeof outputDir !== 'string' || !path.isAbsolute(outputDir) || outputDir.includes('\0')) {
+    throw new Error('Audio fixture output directory must be an absolute path');
+  }
+  const temporaryRoot = fs.realpathSync(os.tmpdir());
+  if (!isInside(temporaryRoot, outputDir)) {
+    throw new Error('Audio fixtures must stay inside the operating-system temporary directory');
+  }
+  fs.mkdirSync(outputDir, { recursive: true });
+  const realOutputDir = fs.realpathSync(outputDir);
+  if (!isInside(temporaryRoot, realOutputDir)) {
+    throw new Error('Audio fixture output directory resolves outside the temporary artifact root');
+  }
+  if (path.basename(filename) !== filename || !/^[A-Za-z0-9_-]+\.(?:json|wav)$/.test(filename)) {
+    throw new Error('Unsafe audio artifact filename');
+  }
+  return path.format({ dir: realOutputDir, base: filename });
+}
 
 function wavBuffer({ seconds = 1, sampleRate = 8000, frequency = 220, gain = 0.12 } = {}) {
   const samples = Math.max(1, Math.floor(seconds * sampleRate));
@@ -11,9 +45,9 @@ function wavBuffer({ seconds = 1, sampleRate = 8000, frequency = 220, gain = 0.1
   return buffer;
 }
 function renderFixture({ outputDir, kind, compositionId, seconds, frequency = 220 }) {
-  fs.mkdirSync(outputDir, { recursive: true });
-  const id = stableId(kind.toUpperCase(), { compositionId, seconds, frequency });
-  const file = path.join(outputDir, `${id}.wav`);
+  const normalizedKind = safeKind(kind);
+  const id = stableId(normalizedKind.toUpperCase(), { compositionId, seconds, frequency });
+  const file = safeOutputFile(outputDir, `${id}.wav`);
   const requestedSeconds = Math.max(Number(seconds), 0.25);
   // Keep physical fixtures small for CI; the manifest retains logical length.
   const renderedSeconds = Math.min(requestedSeconds, 2);
@@ -47,5 +81,16 @@ function analyzeArtifact(artifact) {
     byte_length: content.length,
   };
 }
-function renderManifest({ outputDir, kind, value }) { fs.mkdirSync(outputDir, { recursive: true }); const file = path.join(outputDir, `${stableId(kind, value)}.json`); fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`); return { uri: `file://${file.replace(/\\/g, '/')}`, path: file, checksum: hash(value), mime_type: 'application/json', binary_in_control_plane: false }; }
+function renderManifest({ outputDir, kind, value }) {
+  const normalizedKind = safeKind(kind);
+  const file = safeOutputFile(outputDir, `${stableId(normalizedKind, value)}.json`);
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+  return {
+    uri: `file://${file.replace(/\\/g, '/')}`,
+    path: file,
+    checksum: hash(value),
+    mime_type: 'application/json',
+    binary_in_control_plane: false,
+  };
+}
 module.exports = { renderFixture, analyzeArtifact, renderManifest };

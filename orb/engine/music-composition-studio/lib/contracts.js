@@ -17,7 +17,10 @@ function check(schema, value, path = '$') {
   } else if (schema.type === 'string') {
     if (typeof value !== 'string') throw new Error(`${path} must be a string`);
     if (schema.minLength && value.length < schema.minLength) throw new Error(`${path} must not be empty`);
-    if (schema.pattern && !(new RegExp(schema.pattern).test(value))) throw new Error(`${path} must match ${schema.pattern}`);
+    // Patterns are intentionally unsupported until each expression is reviewed
+    // and added as a literal validator. Compiling schema-provided expressions
+    // here would make validation vulnerable to regular-expression DoS.
+    if (schema.pattern !== undefined) throw new Error(`${path} uses an unsupported schema pattern`);
   } else if (schema.type === 'number' || schema.type === 'integer') {
     if (typeof value !== 'number' || !Number.isFinite(value) || (schema.type === 'integer' && !Number.isInteger(value))) throw new Error(`${path} must be a ${schema.type}`);
   } else if (schema.type === 'boolean' && typeof value !== 'boolean') throw new Error(`${path} must be boolean`);

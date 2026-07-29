@@ -16,7 +16,7 @@ const {
 } = require('../music-composition-studio/lib/providers');
 const { DIMENSIONS, buildCompatibilityMatrix, compositionDna } = require('../music-composition-studio/lib/compatibility');
 const { invalidationPlan } = require('../music-composition-studio/lib/invalidation');
-const { renderFixture, analyzeArtifact } = require('../music-composition-studio/services/audio-service');
+const { renderFixture, analyzeArtifact, renderManifest } = require('../music-composition-studio/services/audio-service');
 const {
   TIER,
   STATES,
@@ -87,6 +87,10 @@ async function testContracts() {
   assert.throws(
     () => validate('harmonyCandidate', { ...definitions.harmony_candidate.examples[0], progression: [] }),
     /at least 1/,
+  );
+  assert.throws(
+    () => check({ type: 'string', pattern: '^(a+)+$' }, 'aaaaaaaa'),
+    /unsupported schema pattern/,
   );
 }
 
@@ -318,6 +322,23 @@ async function testAudioService() {
   assert.deepStrictEqual(
     { duration_seconds: analyzeArtifact(audio).duration_seconds, integrity: analyzeArtifact(audio).integrity },
     { duration_seconds: 2, integrity: 'VALID' },
+  );
+  assert.throws(
+    () => renderFixture({
+      outputDir,
+      kind: '../../escape',
+      compositionId: 'CMP-1',
+      seconds: 1,
+    }),
+    /kind must contain only/,
+  );
+  assert.throws(
+    () => renderManifest({
+      outputDir: path.dirname(os.tmpdir()),
+      kind: 'manifest',
+      value: { safe: true },
+    }),
+    /must stay inside/,
   );
 }
 
