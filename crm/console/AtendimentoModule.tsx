@@ -165,6 +165,7 @@ const panelClass = 'border-slate-800/80 bg-slate-950/60 shadow-[0_20px_80px_rgba
 const ATENDIMENTO_METRIC_LAYOUT_KEY = 'skincos.atendimento.layout.metrics.v2'
 const ATENDIMENTO_CHART_LAYOUT_KEY = 'skincos.atendimento.layout.charts.v3'
 const ATENDIMENTO_ANALYSIS_EXPANDED_KEY = 'skincos.atendimento.analysis.expanded.v1'
+const ATENDIMENTO_ATTENDANCES_EXPANDED_KEY = 'skincos.atendimento.attendances.expanded.v1'
 const ATTENDANCE_PAGE_SIZE = 50
 const DEFAULT_UNIT_LEGEND = [
   { slug: 'novo-hamburgo', name: 'Novo Hamburgo' },
@@ -207,6 +208,7 @@ type AtendimentoMetricHierarchyNode = {
 }
 type MetricTooltipSpec = {
   what: string
+  formula?: string
   calculation: string
   usage: string
   detailPresentation?: 'compact' | 'doctors' | 'interval'
@@ -473,9 +475,10 @@ function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
     const presentation = info.detailPresentation || 'compact'
     return (
       <div className="space-y-2 text-left">
-        <div className="max-h-[22rem] space-y-1.5 overflow-y-auto pr-1">
+        <p className="text-[11px] leading-snug text-slate-300"><span className="font-semibold text-slate-100">O que é:</span> {info.what}</p>
+        <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-slate-700/70 bg-slate-900/50 p-2 pr-1.5">
           {info.details.map((detail) => (
-            <div key={`${detail.label}:${detail.value}`} className="rounded border border-slate-700/70 bg-slate-900/50 px-2 py-1.5">
+            <div key={`${detail.label}:${detail.value}`} className="flex min-w-0 items-center justify-between gap-3 py-1 first:pt-0 last:pb-0">
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
                   {presentation === 'doctors' && detail.isProfessional ? (
@@ -504,12 +507,15 @@ function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
             Juntos, esses componentes definem a largura das faixas: desvio padrão × multiplicador. O multiplicador é escolhido pela homogeneidade do período.
           </p>
         ) : null}
+        <p className="border-t border-slate-700/80 pt-2 text-[10px] leading-snug text-slate-400"><span className="font-semibold text-slate-200">Fórmula:</span> {info.formula || info.calculation}</p>
+        <p className="text-[10px] leading-snug text-slate-400"><span className="font-semibold text-slate-200">Uso:</span> {info.usage}</p>
       </div>
     )
   }
   return (
-    <div className="space-y-1 text-left">
+    <div className="space-y-1.5 text-left leading-snug">
       <div><span className="font-semibold text-slate-100">O que é:</span> {info.what}</div>
+      <div><span className="font-semibold text-slate-100">Fórmula:</span> {info.formula || info.calculation}</div>
       <div><span className="font-semibold text-slate-100">Cálculo:</span> {info.calculation}</div>
       <div><span className="font-semibold text-slate-100">Uso:</span> {info.usage}</div>
     </div>
@@ -749,13 +755,14 @@ function MetricGroupContent({
   const renderRow = (row: AtendimentoMetricGroupRow, isChild = false, componentRows: AtendimentoMetricGroupRow[] = []) => {
     const RowIcon = row.icon
     const isDetail = row.presentation === 'detail'
-    const detailPresentation = row.key === 'average' || row.key === 'median'
+    const detailPresentation: NonNullable<MetricTooltipSpec['detailPresentation']> = row.key === 'average' || row.key === 'median'
       ? 'doctors'
       : row.key === 'interval'
         ? 'interval'
         : 'compact'
     const componentTooltip: MetricTooltipSpec | undefined = componentRows.length ? {
       what: `Componentes usados para calcular ${row.label}.`,
+      formula: row.tooltip?.formula || row.tooltip?.calculation || row.calculation,
       calculation: row.tooltip?.calculation || row.calculation || 'Confira os valores atuais de cada insumo abaixo.',
       usage: 'Clique no subtítulo novamente para manter esta conferência aberta.',
       detailPresentation,
@@ -769,14 +776,19 @@ function MetricGroupContent({
         isProfessional: component.key.includes(':doctor:'),
       })),
     } : undefined
-    const multiplierDescription = row.key === 'interval' && componentTooltip && multiplierOptimization ? (
+    const multiplierDescription = row.key === 'conversion:distribution-details' && row.tooltip && multiplierOptimization ? (
       <div className="space-y-3">
-        <MetricTooltipContent info={componentTooltip} />
+        <MetricTooltipContent info={row.tooltip} />
         <div className="border-t border-slate-700/80 pt-3">
           <ConversionMultiplierDetails optimization={multiplierOptimization} />
         </div>
       </div>
     ) : undefined
+    const rowTooltip = componentTooltip && row.tooltip ? {
+      ...row.tooltip,
+      details: componentTooltip.details,
+      detailPresentation,
+    } : row.tooltip
     const rowContent = (
       <div className={`flex min-w-0 items-center gap-2 ${horizontal ? 'justify-center' : ''} ${isChild ? 'py-0.5' : ''}`}>
         {row.avatarUrl ? (
@@ -805,28 +817,12 @@ function MetricGroupContent({
     )
     return (
       <div key={row.key} className="min-w-0">
-        <div className="min-w-0">{row.tooltip ? <MetricTooltip label={row.label} info={row.tooltip}>{rowContent}</MetricTooltip> : rowContent}</div>
-        {row.calculation ? (
-          <div className={`${horizontal ? 'mt-0.5 text-center' : 'ml-7 mt-0.5'} min-w-0 text-[9px] leading-snug text-slate-500`}>
-            {componentTooltip ? (
-              <MetricTooltip
-                label={`Componentes de ${row.label}`}
-                info={componentTooltip}
-                description={multiplierDescription}
-                contentClassName={multiplierDescription ? 'w-[min(42rem,calc(100vw-2rem))] max-w-none' : detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'max-w-[22rem]'}
-              >
-                <div className="inline-flex max-w-full cursor-help rounded-sm px-0.5 transition hover:bg-slate-800/70 hover:text-slate-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60">
-                  {row.calculation.split('=')[0].trim()}
-                </div>
-              </MetricTooltip>
-            ) : row.calculation.split('=')[0].trim()}
-          </div>
-        ) : null}
+        <div className="min-w-0">{rowTooltip ? <MetricTooltip label={row.label} info={rowTooltip} description={multiplierDescription} contentClassName={multiplierDescription ? 'w-[min(34rem,calc(100vw-2rem))] max-w-none max-h-[min(32rem,calc(100vh-2rem))] overflow-y-auto' : detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'max-w-[22rem]'}>{rowContent}</MetricTooltip> : rowContent}</div>
       </div>
     )
   }
 
-  const renderNode = (node: AtendimentoMetricHierarchyNode, depth = 0, index = 0): React.ReactNode => {
+  const renderNode = (node: AtendimentoMetricHierarchyNode, depth = 0): React.ReactNode => {
     const row = rowsByKey.get(node.key)
     if (!row) return null
     const children = (node.children || []).filter((child) => rowsByKey.has(child.key))
@@ -834,13 +830,13 @@ function MetricGroupContent({
       .map((child) => rowsByKey.get(child.key))
       .filter((child): child is AtendimentoMetricGroupRow => Boolean(child))
     return (
-      <div key={node.key} className={`min-w-0 ${horizontal && nodes.length === 7 ? (index < 4 ? 'md:col-span-3' : 'md:col-span-4') : ''}`}>
+      <div key={node.key} className="min-w-0">
         {renderRow(row, depth > 0, componentRows)}
       </div>
     )
   }
 
-  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'mx-auto w-full max-w-5xl grid-cols-1 sm:grid-cols-2 md:grid-cols-12' : 'gap-1.5'}`}>{nodes.map((node, index) => renderNode(node, 0, index))}</div>
+  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'mx-auto w-full max-w-5xl grid-cols-1 sm:grid-cols-2 lg:grid-cols-4' : 'gap-1.5'}`}>{nodes.map((node) => renderNode(node))}</div>
 }
 
 function MetricTile({
@@ -1054,15 +1050,15 @@ const CONVERSION_METRIC_DEFINITIONS = [
   { key: 'periodGoal', label: 'Meta do período', description: 'Meta acumulada do período selecionado.', calculation: 'Soma das metas diárias dos dias trabalhados dentro do período.', usage: 'É a meta principal de comparação da janela filtrada.' },
   { key: 'monthOperationalDays', label: 'Dias mês', description: 'Dias trabalhados usados para diluir a meta mensal.', calculation: 'Dias operacionais do mês consolidados na agenda do CRM.', usage: 'Define a meta diária.' },
   { key: 'periodOperationalDays', label: 'Dias período', description: 'Dias trabalhados dentro do filtro ativo.', calculation: 'Dias operacionais entre início e fim do período selecionado.', usage: 'Define a meta proporcional do período.' },
-  { key: 'average', label: 'Média', description: 'Média do realizado dos doutores elegíveis.', calculation: 'total_ranqueável / doutores_elegíveis.', usage: 'Compõe 30% da linha de corte.' },
-  { key: 'median', label: 'Mediana', description: 'Valor central do realizado dos doutores elegíveis.', calculation: 'Ordena os realizados e pega o centro; em par, média dos dois centrais.', usage: 'Compõe 20% da linha de corte e reduz distorção por extremos.' },
-  { key: 'standardDeviation', label: 'Desvio Padrão', description: 'Dispersão do realizado entre doutores elegíveis.', calculation: 'Desvio padrão amostral dos valores realizados.', usage: 'Multiplicado pelo fator de intervalo para definir a largura das faixas.' },
-  { key: 'cutLine', label: 'Linha Corte', description: 'Centro das faixas de classificação na escala do período selecionado.', calculation: 'linha_corte = (média_periodo * 0,30) + (mediana_periodo * 0,20) + (meta_diária * 0,50).', usage: 'Separa níveis 1/2 e orienta os limites inferior e superior.' },
-  { key: 'interval', label: 'Intervalo', description: 'Largura das faixas ao redor da linha de corte.', calculation: 'intervalo = desvio_padrão_amostral(realizado_doutores) * multiplicador_otimizado.', usage: 'Define limite inferior e superior.' },
+  { key: 'average', label: 'Média diária', description: 'Média da produção diária dos doutores elegíveis.', calculation: 'soma(produção_do_doutor / dias_trabalhados_do_doutor) / doutores_elegíveis.', usage: 'Compõe 30% da linha de corte e elimina a vantagem de quem trabalhou mais dias.' },
+  { key: 'median', label: 'Mediana diária', description: 'Valor central da produção diária dos doutores elegíveis.', calculation: 'Ordena as produções diárias e pega o centro; em par, média dos dois centrais.', usage: 'Compõe 20% da linha de corte e reduz distorção por extremos.' },
+  { key: 'standardDeviation', label: 'Desvio Padrão diário', description: 'Dispersão da produção diária entre doutores elegíveis.', calculation: 'Desvio padrão amostral das produções diárias.', usage: 'Multiplicado pelo fator de intervalo para definir a largura diária das faixas.' },
+  { key: 'cutLine', label: 'Linha Corte diária', description: 'Centro diário das faixas de classificação.', calculation: 'linha_corte_diária = (média_diária * 0,30) + (mediana_diária * 0,20) + (meta_diária * 0,50).', usage: 'Separa níveis 1/2 sem favorecer quem trabalhou mais dias.' },
+  { key: 'interval', label: 'Intervalo diário', description: 'Largura diária das faixas ao redor da linha de corte.', calculation: 'intervalo_diário = desvio_padrão_amostral(produção_diária) * multiplicador_otimizado.', usage: 'Define os limites inferior e superior diários.' },
   { key: 'intervalMultiplier', label: 'Multiplicador Otimizado', description: 'Fator aplicado ao desvio padrão e derivado da maior homogeneidade possível.', calculation: 'Avalia os breakpoints exatos entre 0 e 2; mantém o valor anterior somente dentro de um platô ótimo e, fora dele, usa o centro do maior platô ótimo.', usage: 'Redistribui os doutores entre faixas internas e externas sem alterar quem está acima ou abaixo da linha de corte.' },
   { key: 'homogeneityScore', label: 'Homogeneidade', description: 'Índice de equilíbrio entre as quatro faixas.', calculation: '1 - (4/3) × soma((proporção da faixa - 25%)²).', usage: 'Varia de 0% (concentração extrema) a 100% (quatro faixas uniformes).' },
-  { key: 'lowerLimit', label: 'Limite Inferior', description: 'Piso da faixa central.', calculation: 'linha_corte - intervalo.', usage: 'Abaixo dele o doutor entra no nível 0.' },
-  { key: 'upperLimit', label: 'Limite Superior', description: 'Teto da faixa central.', calculation: 'linha_corte + intervalo.', usage: 'Acima dele o doutor entra no nível 3.' },
+  { key: 'lowerLimit', label: 'Limite Inferior diário', description: 'Piso diário da faixa central.', calculation: 'linha_corte_diária - intervalo_diário.', usage: 'Abaixo dele o doutor entra no nível 0.' },
+  { key: 'upperLimit', label: 'Limite Superior diário', description: 'Teto diário da faixa central.', calculation: 'linha_corte_diária + intervalo_diário.', usage: 'Acima dele o doutor entra no nível 3.' },
   { key: 'level0', label: 'Nível 0', description: 'Doutores abaixo do limite inferior.', calculation: 'Conta realizado < limite_inferior.', usage: 'Entra no divisor das razões com peso 0.' },
   { key: 'level1', label: 'Nível 1', description: 'Doutores entre limite inferior e linha de corte.', calculation: 'Conta limite_inferior <= realizado < linha_corte.', usage: 'Entra no divisor das razões com peso 1.' },
   { key: 'level2', label: 'Nível 2', description: 'Doutores entre linha de corte e limite superior.', calculation: 'Conta linha_corte <= realizado <= limite_superior.', usage: 'Entra no divisor das razões com peso 2.' },
@@ -1213,6 +1209,7 @@ function buildMetricTooltip(
 ): MetricTooltipSpec {
   return {
     what: overrides?.what || definition.description,
+    formula: overrides?.formula || definition.calculation,
     calculation: overrides?.calculation || formula || definition.calculation,
     usage: overrides?.usage || definition.usage,
   }
@@ -2148,6 +2145,13 @@ export function AtendimentoModule() {
       return false
     }
   })
+  const [attendancesExpanded, setAttendancesExpanded] = useState(() => {
+    try {
+      return typeof window === 'undefined' || window.localStorage.getItem(ATENDIMENTO_ATTENDANCES_EXPANDED_KEY) !== 'false'
+    } catch {
+      return true
+    }
+  })
   const [localMirrorStatus, setLocalMirrorStatus] = useState<AtendimentoLocalMirrorStatus | null>(null)
   const loadingMoreRowsRef = React.useRef(false)
   const conversionReportCacheRef = React.useRef(new Map<string, AtendimentoManagementConversionReport>())
@@ -2193,6 +2197,14 @@ export function AtendimentoModule() {
       // ignore localStorage errors
     }
   }, [analysisExpanded])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ATENDIMENTO_ATTENDANCES_EXPANDED_KEY, String(attendancesExpanded))
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [attendancesExpanded])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -2505,11 +2517,11 @@ export function AtendimentoModule() {
         case 'periodOperationalDays':
           return 'Dias usados para proporcionalizar a meta'
         case 'average':
-          return `Σ produção dos doutores ÷ ${number('eligibleDoctorCount')} doutores`
+          return `Σ produção diária dos doutores ÷ ${number('eligibleDoctorCount')} doutores`
         case 'median':
-          return `mediana de ${number('eligibleDoctorCount')} realizados`
+          return `mediana de ${number('eligibleDoctorCount')} produções diárias`
         case 'standardDeviation':
-          return `DP amostral de ${number('eligibleDoctorCount')} realizados`
+          return `DP amostral de ${number('eligibleDoctorCount')} produções diárias`
         case 'upperLimit':
           return `${currency('cutLine')} + ${currency('interval')}`
         case 'cutLine':
@@ -2588,12 +2600,14 @@ export function AtendimentoModule() {
           key: `${parentKey}:doctor:${rank}:${canonicalName}`,
           label: canonicalName,
           value: formatCurrencyBRL(Number(doctor.weekValue || 0)),
+          detail: `${formatCurrencyBRL(Number(doctor.totalValue || 0))} ÷ ${formatNumberBR(Number(doctor.workingDays || 0))} dias`,
+          calculation: `${formatCurrencyBRL(Number(doctor.totalValue || 0))} ÷ ${formatNumberBR(Number(doctor.workingDays || 0))} dias trabalhados`,
           tooltip: {
-            what: `Produção de ${canonicalName} usada nas estatísticas do ranking.`,
-            calculation: 'Soma dos atendimentos atribuídos ao profissional elegível no período e na unidade ativos.',
+            what: `Produção diária de ${canonicalName} usada nas estatísticas do ranking.`,
+            calculation: 'Total dos atendimentos atribuídos ao profissional dividido pelos dias em que ele esteve escalado no período; sem Escala histórica, usa os dias distintos com atendimento registrado.',
             usage: parentKey === 'average'
-              ? 'Esta produção compõe o total dividido pela quantidade de doutores para obter a média.'
-              : 'Os valores ordenados dos doutores determinam a posição central da mediana.',
+              ? 'Esta produção diária compõe o total dividido pela quantidade de doutores para obter a média diária.'
+              : 'As produções diárias ordenadas dos doutores determinam a posição central da mediana.',
           },
           icon: Stethoscope,
           tone: 'sky',
@@ -2629,12 +2643,28 @@ export function AtendimentoModule() {
         const averageDoctorRows = buildDoctorProductionRows('average')
         const medianDoctorRows = buildDoctorProductionRows('median')
         const goalSegmentRows = buildGoalSegmentRows()
-        const rows = [...buildConversionRows(group.metricKeys), ...averageDoctorRows, ...medianDoctorRows, ...goalSegmentRows]
+        const distributionDetailRow: AtendimentoMetricGroupRow[] = group.key === 'conversion:stats' && conversionSection?.optimization
+          ? [{
+              key: 'conversion:distribution-details',
+              label: 'Faixas, níveis e razões',
+              value: 'Ver distribuição',
+              calculation: 'Distribuição dos doutores entre os lados e os quatro níveis da régua diária.',
+              tooltip: {
+                what: 'Composição dos lados, níveis e razões que sustentam a escolha do multiplicador.',
+                formula: 'níveis = comparação da produção_diária com limite_inferior, linha_corte e limite_superior.',
+                calculation: 'As proporções e razões usam as contagens dos níveis 0 a 3; a curva escolhe o multiplicador mais homogêneo possível.',
+                usage: 'Use para auditar a distribuição sem misturar essa análise avançada ao cálculo do intervalo.',
+              },
+              icon: Gauge,
+              tone: 'violet',
+            }]
+          : []
+        const rows = [...buildConversionRows(group.metricKeys), ...distributionDetailRow, ...averageDoctorRows, ...medianDoctorRows, ...goalSegmentRows]
         return {
           ...group,
           rows,
           hierarchy: group.key === 'conversion:stats'
-            ? buildStatsHierarchy(averageDoctorRows, medianDoctorRows, goalSegmentRows)
+            ? [...buildStatsHierarchy(averageDoctorRows, medianDoctorRows, goalSegmentRows), ...distributionDetailRow.map((row) => ({ key: row.key }))]
             : group.hierarchy,
         }
       })
@@ -3143,6 +3173,19 @@ export function AtendimentoModule() {
 
       <div className="grid min-h-0 flex-1 gap-4">
         <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" aria-label="Atendimentos">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-3 text-left transition hover:bg-slate-900/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/70"
+            aria-expanded={attendancesExpanded}
+            aria-controls="atendimento-table-content"
+            data-testid="atendimento-table-toggle"
+            onClick={() => setAttendancesExpanded((current) => !current)}
+          >
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Atendimentos</span><span className="block text-[11px] text-slate-400">Registros, pendências e valores do período filtrado.</span></span>
+            <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">{attendancesExpanded ? 'Recolher' : 'Ver registros'}{attendancesExpanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}</span>
+          </button>
+          {attendancesExpanded ? (
+          <div id="atendimento-table-content">
           {filters.unit === 'all' ? (
             <div className="flex items-center justify-end gap-3 border-b border-slate-800/75 px-3 py-2">
               <div className="flex flex-wrap items-center justify-end gap-1.5" data-testid="atendimento-unit-legend" aria-label="Legenda de unidades">
@@ -3459,6 +3502,8 @@ export function AtendimentoModule() {
               </table>
             </div>
           </div>
+          </div>
+          ) : <div id="atendimento-table-content" className="px-3 py-3 text-xs leading-relaxed text-slate-400" data-testid="atendimento-table-collapsed">A listagem está recolhida. Abra-a para consultar, criar ou ajustar os atendimentos do período.</div>}
         </section>
 
         <AtendimentoChartsPanel overview={overview} professionals={references?.professionals || []} slots={chartSlots} onSlotsChange={setChartSlots} />

@@ -408,10 +408,10 @@ export type AtendimentoManagementConversionReport = {
         configHash?: string
         calendarHash?: string
       }
-      doctors: Array<{ name: string; unitName?: string; unitSlug?: string; weekValue: number; totalValue: number; score: number; position?: string; rank: number; classification?: string; level?: number; modifiedZ?: number; distanceToCutOff?: number; distanceToLowerLimit?: number; distanceToUpperLimit?: number }>
+      doctors: Array<{ name: string; unitName?: string; unitSlug?: string; weekValue: number; totalValue: number; workingDays?: number; score: number; position?: string; rank: number; classification?: string; level?: number; modifiedZ?: number; distanceToCutOff?: number; distanceToLowerLimit?: number; distanceToUpperLimit?: number }>
       comparisonMetric?: 'production' | 'unit-score'
     }>
-    topDoctors: Array<{ name: string; unitName: string; unitSlug: string; weekValue: number; totalValue: number; score: number; position?: string; rank: number; classification?: string; level?: number }>
+    topDoctors: Array<{ name: string; unitName: string; unitSlug: string; weekValue: number; totalValue: number; workingDays?: number; score: number; position?: string; rank: number; classification?: string; level?: number }>
   }
   sections: Array<{
     unitName: string

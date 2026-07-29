@@ -131,6 +131,30 @@ test('calculates internal doctor conversion metrics using CRM values and weighte
     ])
 })
 
+test('normalizes doctor conversion statistics by each doctor working days while preserving raw totals', () => {
+    const result = calculateDoctorConversionRanking({
+        dailyGoal: 1000,
+        doctors: [
+            { id: 'd1', name: 'Dra. Um Dia', realized: 1000, workingDays: 1 },
+            { id: 'd2', name: 'Dra. Dois Dias', realized: 2000, workingDays: 2 },
+            { id: 'd3', name: 'Dra. Quatro Dias', realized: 4000, workingDays: 4 },
+            { id: 'd4', name: 'Dra. Sem Escala', realized: 0, workingDays: 0 },
+        ],
+    })
+
+    assert.equal(result.eligibleDoctorCount, 3)
+    assert.equal(result.rankedDoctorTotal, 7000)
+    assert.equal(result.average, 1000)
+    assert.equal(result.median, 1000)
+    assert.equal(result.standardDeviation, 0)
+    assert.equal(result.cutLine, 1000)
+    assert.deepEqual(result.ranking.map((doctor) => ({ name: doctor.name, daily: doctor.weekValue, total: doctor.totalValue, days: doctor.workingDays })), [
+        { name: 'Dra. Dois Dias', daily: 1000, total: 2000, days: 2 },
+        { name: 'Dra. Quatro Dias', daily: 1000, total: 4000, days: 4 },
+        { name: 'Dra. Um Dia', daily: 1000, total: 1000, days: 1 },
+    ])
+})
+
 test('classifies every boundary value exactly once with half-open conversion bands', () => {
     assert.equal(classifyDoctorConversionValue(90, 100, 10).level, 1)
     assert.equal(classifyDoctorConversionValue(100, 100, 10).level, 2)
