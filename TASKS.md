@@ -30,7 +30,11 @@
   attest only the isolated Worker, D1, KV, Pages project and environment
   configuration through the canonical path; do not copy staging identifiers.
 
-## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
+## Controle de Ponto — liberação atual de Workforce Timekeeping
+
+As marcações abaixo registram a entrega histórica. Elas não comprovam que o
+`main` atual tenha a mesma versão no CRM Pages, gateway e Worker, nem que a
+jornada autenticada atual continue válida.
 
 - [x] Domínio definitivo criado em `workforce/timekeeping` e montado no gateway.
 - [x] D1 modelado com migrations reproduzíveis, constraints, índices, snapshots e auditoria imutável.
@@ -42,8 +46,30 @@
 - [x] Perfil canônico preparado a partir do modelo de Pessoas, com campos privados cifrados, CNPJ por unidade e tela de perfil no Ponto.
 - [x] Testes locais do domínio, gateway, proxy, cliente, D1 e integração HTTP.
 - [x] Executar todos os gates finais (lint completo, testes completos e build de produção).
-- [x] Publicar e validar staging com D1/secrets próprios (workflow `29700256254`).
-- [x] Promover por workflow oficial e executar smoke produtivo somente leitura (produção `29700295125`; API `29700339758`; UI `29753110570`).
+- [x] Publicar e validar staging com D1/secrets próprios (workflow histórico `29700256254`).
+- [x] Promover por workflow oficial e executar smoke produtivo somente leitura (evidência histórica `29700295125`; API `29700339758`; UI `29753110570`).
+
+### P0 — candidato atual (não promovido)
+
+- [x] Restaurar a navegação de CONSULTOR/EMPLOYEE para exatamente Atendimento e
+  Ponto, preservando a autorização no servidor.
+- [x] Cobrir a regressão de navegação e incluir seus arquivos no path filter de
+  Timekeeping CI.
+- [x] Criar jornada autenticada sintética, com fixture efêmera, teardown
+  específico por execução e evidência sanitizada.
+- [x] Tornar `PONTO_PROFILE_DATA_KEY` obrigatório nos sync/deploys e registrar
+  release SHA/environment no health do Worker.
+- [ ] Criar `PONTO_PROFILE_DATA_KEY` por processo de segredo aprovado nos
+  environments `staging` e `production`; não gerar/copyar valor pelo código.
+- [ ] Fazer preview e staging do mesmo SHA para Timekeeping, Core API e CRM
+  Pages; executar a jornada sintética pelo URL imutável do Pages e confirmar
+  que o teardown preservou auditoria.
+- [ ] Exercitar `module-control:timekeeping` em staging (`maintenance` →
+  `active`) e registrar o rollback; só então tornar `active` explícito em
+  produção após promoção imutável, piloto e observação.
+- [ ] Não considerar produção, piloto, conclusão ou arquivamento provados até
+  existirem artefatos, health/version/gateway e jornada autenticada para o
+  mesmo SHA.
 
 ## External/product follow-up
 

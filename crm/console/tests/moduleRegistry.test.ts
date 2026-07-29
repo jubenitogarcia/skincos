@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { crmModuleRegistry, moduleAvailability } from '../modules/registry'
 import { ModuleErrorBoundary } from '../modules/ModuleHost'
+import { unlockedModuleKeys } from '../moduleAvailability'
 
 describe('CRM module registry', () => {
+  it('keeps Ponto released for authenticated self-service navigation', () => {
+    expect(unlockedModuleKeys('insumos', false).has('ponto')).toBe(true)
+    expect(unlockedModuleKeys('insumos', true).has('ponto')).toBe(true)
+  })
+
   it('gives every module a manifest, lazy entrypoint, permission and isolated states', () => {
     const keys = crmModuleRegistry.map((entry) => entry.key)
     expect(new Set(keys).size).toBe(keys.length)

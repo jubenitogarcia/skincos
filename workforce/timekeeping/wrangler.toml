@@ -19,6 +19,9 @@ id = "__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__"
 [vars]
 APP_VERSION = "1.0.0"
 APP_ORIGIN = "https://crm.skincos.com.br"
+# Face capture/identification remains deliberately disabled until a separately
+# governed operational release. PIN is the only self-service credential.
+PONTO_FACE_PUNCH_ENABLED = "false"
 
 [env.staging]
 name = "skincos-timekeeping-staging"
@@ -40,3 +43,4 @@ id = "e69fe06b6abc46eca4f4c00198d078f2"
 [env.staging.vars]
 APP_VERSION = "1.0.0"
 APP_ORIGIN = "https://crm-staging.skincos.com.br"
+PONTO_FACE_PUNCH_ENABLED = "false"

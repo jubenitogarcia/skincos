@@ -13,6 +13,9 @@ export const DEFAULT_UNLOCKED_MODULE_KEYS = [
   'insumos',
   'conversa',
   'atendimento',
+  // Ponto is self-service for authenticated Workforce identities. Role and
+  // server authorization still constrain what each identity can do inside it.
+  'ponto',
   'clientes',
   'caixa',
   'faturamento',

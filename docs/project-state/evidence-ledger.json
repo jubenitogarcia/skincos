@@ -2,6 +2,17 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T20:45:00Z",
+      "surface": "isolated-worktree-origin-main-github-metadata-cloudflare-d1-kv-live-http",
+      "scope": "Workforce Timekeeping current-main release preparation",
+      "state": "source-remediated-local-validation-staging-blocked-by-missing-secret",
+      "method": "Created an isolated worktree from origin/main f202e29f4178bba8966edf71539c942618254de0; reviewed role/navigation history, canonical deploy and sync workflows, D1/KV metadata and live health/readiness; queried GitHub secret names only; generated and inspected private synthetic fixture SQL locally without disclosing credentials; ran Timekeeping domain tests and CRM role/type checks in WSL.",
+      "result": "The candidate restores Ponto navigation for CONSULTOR/EMPLOYEE while retaining server-side authorization, extends Timekeeping CI path coverage, explicitly keeps face punching false, makes Worker health attest the deployed SHA/environment, aligns Worker secret sync with the runtime contract, and adds an immutable multi-surface staging journey with run-scoped synthetic identity/employee data and audit-preserving teardown. Timekeeping D1 migration journals are present in staging and production; both current health/readiness paths returned HTTP 200. Staging/production D1 and module-control IDs were present in GitHub environment metadata; module-control:timekeeping was not yet written explicitly.",
+      "limitation": "PONTO_PROFILE_DATA_KEY is absent from accessible repository/environment secret-name metadata. The candidate deploy/sync guard therefore fails closed before checkpoint, migration or upload; no value was generated, copied or changed. The candidate has not been pushed, reviewed, merged, deployed, run in staging, or promoted. Existing HTTP 200 responses and historical Ponto workflows are not proof of an authenticated current-SHA journey, module activation, pilot or production closure.",
+      "sha": "f202e29f4178bba8966edf71539c942618254de0",
+      "next_action": "Provision PONTO_PROFILE_DATA_KEY through the approved secret path, merge a green candidate, then promote the same immutable SHA through Timekeeping, Core API and CRM Pages staging before the synthetic journey and controlled module-control rollback drill."
+    },
+    {
       "observed_at": "2026-07-29T14:02:00Z",
       "surface": "origin-main-github-actions-cloudflare-d1-pages-live-http-and-operator-monitor",
       "scope": "Authoritative Finance reconciliation",
