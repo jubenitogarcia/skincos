@@ -26,6 +26,18 @@
       "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\observability-alert-hardening-20260728T2052Z"
     },
     {
+      "observed_at": "2026-07-29T02:23:12Z",
+      "surface": "integrated-main-runtime-and-http",
+      "scope": "Final installer guard integration, local runtime alignment and API/Finance read-only validation",
+      "state": "main-integrated-runtime-aligned-staging-validated-production-blocked",
+      "method": "PR #839 merge/check metadata; clean worktree equivalence to origin/main; SHA-256 comparison of runtime monitor scripts; installation/process/loopback health readback; public HTTP GET probes",
+      "result": "PR #839 merged as 62ff787554f67a0d1ea2f40a40543b52b2054263 after all applicable checks passed. Runtime scripts matched clean integrated source, installation.json recorded operator-run-key at 02:23:07Z, exactly one supervisor/dashboard pair was active, dashboard health returned ok, and the next baseline had zero transitions. api-staging.skincos.com.br/health returned 200 with version 2ba1e0a74eea8a88a5cdb609ba426c8df2c94261; its real gateway path /finance/health returned 200 with Finance D1 and module-control healthy. api.skincos.com.br/health returned 200.",
+      "limitation": "Production /finance/health returned 401 from the pre-existing API and cannot validate the unapplied release. Production canonical promotion remains blocked before upload by error 10143: FINANCE binding references absent Worker skincos-finance. No production binding, Worker, secret, D1 or business record was changed.",
+      "integrated_main_sha": "62ff787554f67a0d1ea2f40a40543b52b2054263",
+      "release_sha": "2ba1e0a74eea8a88a5cdb609ba426c8df2c94261",
+      "runs": [30414699651, 30414749763, 30414808715]
+    },
+    {
       "observed_at": "2026-07-25T05:05:34Z",
       "surface": "google-drive-offsite-runtime-config",
       "scope": "Fresh runtime-config ciphertext and scratch decrypt",
