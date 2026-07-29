@@ -26,8 +26,8 @@
       ],
       "done_definition": "The unit-access regression is corrected, CI remains green, current-main staging and production prove authorized access for the canonical units, and denied cross-unit/no-unit behavior is covered without business-data mutation.",
       "next_item": null,
-      "last_verified": "2026-07-25T01:15:00Z",
-      "sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
+      "last_verified": "2026-07-29T04:36:09Z",
+      "sha": "f30f66e70e0dc949adde5120378509a1c95fe557",
       "pr": 763,
       "evidence": {
         "historical_inventory_preview_run": 30125747962,
@@ -54,7 +54,11 @@
         "production_inventory_version": "6d7dadc6-7b02-4577-b8b3-d1d4a09cd9ef",
         "production_pages_deployment": "e65832a0-5925-4212-b252-2ff20cd08362",
         "production_release_sha": "c64ff2b6655ce9e035a1b3a3840b1d6d809a9c2d",
-        "production_authenticated_smoke": "read-only browser smoke passed; no user, flag, grant or business-data write"
+        "production_authenticated_smoke": "controlled synthetic onboarding and authenticated UI smokes passed; all synthetic identities were torn down",
+        "production_inventory_run": 30420719000,
+        "production_pages_run": 30420793906,
+        "production_checkpoint_artifact": 8711811875,
+        "production_rbac_scope_smoke": "403/RBAC_UNIT_DENIED for a canonical unit outside the synthetic actor scope"
       }
     },
     {
