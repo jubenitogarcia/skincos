@@ -1,5 +1,35 @@
 # Current state
 
+## Finance production provision — blocked before workflow dispatch — 2026-07-29T11:21Z
+
+The versioned architecture is unambiguous: the production Finance Worker is
+`skincos-finance`, its production D1 database is `skincos-finance`, and the API
+production service binding targets that Worker. The current staging release
+`32bf3ebb296ca95e3273bb4fed664480eb5642e5` is an ancestor of `origin/main` and
+the canonical Finance preview (`30168426616`) and staging (`30168445270`) runs
+for that SHA succeeded. Fresh staging Finance health and readiness both returned
+HTTP 200 with `ready=true`.
+
+Production provisioning did not start. The GitHub `production` environment
+lacks `FINANCE_D1_PRODUCTION_ID`, `FINANCE_CONTROL_PRODUCTION_KV_ID`,
+`FINANCE_BACKUP_PASSPHRASE`, and `FINANCE_SERVICE_AUTH_SECRET`; the repository
+flag `ENABLE_FINANCE_PRODUCTION_DEPLOY` is also `false`. Therefore the canonical
+workflow would fail its required resource/secret guards before it can create the
+encrypted D1 checkpoint or apply a migration. No workflow was dispatched, no
+Cloudflare Worker/D1/KV/binding/secret was changed, no migration ran, and no
+Finance production artifact or version exists. Production API `/health` remains
+HTTP 200; protected Finance routes return 401, which is not Worker Finance
+health evidence.
+
+The 12 Finance migrations were reviewed. They contain no table/data deletion;
+`0008_finance_draft_revision.sql` replaces three guard triggers atomically, so
+it is a schema-guard replacement rather than data-destructive DDL. Before a
+future canonical production run, an authorized operator must provision and
+verify the isolated production D1/KV resources and the four GitHub environment
+configuration items through the approved platform path. A follow-up PR should
+add a read-only Finance production preflight that attests those resource IDs,
+secret presence, Worker existence, and the migration plan before dispatch.
+
 ## UX/UI PR #832 — Semgrep hosted scanner alignment and isolated rerun passed — 2026-07-29T04:35Z
 
 The hosted `Semgrep OSS` scanner did not honor the preceding-line form of the
