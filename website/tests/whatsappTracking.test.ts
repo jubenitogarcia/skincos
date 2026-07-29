@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { TrackingContext } from "../src/lib/attribution";
 import { buildWhatsappRedirectHref, buildWhatsappRedirectHrefFromRequest, buildWhatsappClickToken, injectWhatsappToken, parseWhatsappDestination } from "../src/lib/whatsappTracking";
 
 test("buildWhatsappRedirectHref wraps supported whatsapp destination with tracking params", () => {
@@ -44,6 +45,88 @@ test("buildWhatsappRedirectHrefFromRequest preserves attribution params on the d
         href,
         "/api/whatsapp/redirect?dest=https%3A%2F%2Fapi.whatsapp.com%2Fsend%3Fphone%3D5551999999999%26text%3DOi%26utm_source%3Dmeta%26utm_campaign%3Dabril%26fbclid%3Dfbclid_123&placement=legacy_redirect&unit_slug=novo-hamburgo&source=legacy_redirect%3A%2Fnovohamburgo%2Ffaleconosco",
     );
+});
+
+test("campaign-rich Contact redirect keeps consent and matching context within a bounded URL", () => {
+    const pageUrl = "https://espacofacial.com/unidades?utm_source=codex_capi_contact&utm_medium=synthetic&utm_campaign=meta_capi_closeout&fbclid=contactproof123";
+    const pagePath = new URL(pageUrl).pathname + new URL(pageUrl).search;
+    const trackingContext: TrackingContext = {
+        capturedAtMs: 1_785_367_500_000,
+        pageUrl,
+        pagePath,
+        referrer: null,
+        consent: { analytics: true, marketing: true },
+        params: {
+            utm_source: "codex_capi_contact",
+            utm_medium: "synthetic",
+            utm_campaign: "meta_capi_closeout",
+            fbclid: "contactproof123",
+        },
+        fbclid: "contactproof123",
+        fbp: "fb.1.1785367500.contact-browser",
+        fbc: "fb.1.1785367500.contactproof123",
+        landingUrl: pageUrl,
+        landingPath: pagePath,
+        firstTouch: {
+            capturedAtMs: 1_785_367_500_000,
+            landingUrl: pageUrl,
+            landingPath: pagePath,
+            referrer: null,
+            params: {
+                utm_source: "codex_capi_contact",
+                utm_medium: "synthetic",
+                utm_campaign: "meta_capi_closeout",
+                fbclid: "contactproof123",
+            },
+            fbclid: "contactproof123",
+            fbp: "fb.1.1785367500.contact-browser",
+            fbc: "fb.1.1785367500.contactproof123",
+        },
+        lastTouch: {
+            capturedAtMs: 1_785_367_500_000,
+            landingUrl: pageUrl,
+            landingPath: pagePath,
+            referrer: null,
+            params: {
+                utm_source: "codex_capi_contact",
+                utm_medium: "synthetic",
+                utm_campaign: "meta_capi_closeout",
+                fbclid: "contactproof123",
+            },
+            fbclid: "contactproof123",
+            fbp: "fb.1.1785367500.contact-browser",
+            fbc: "fb.1.1785367500.contactproof123",
+        },
+    };
+
+    const href = buildWhatsappRedirectHref({
+        rawUrl: "https://api.whatsapp.com/send?phone=5551980882293",
+        tracking: {
+            eventId: "contact_transport_contract",
+            placement: "units_page",
+            source: "units_page",
+            unitSlug: "novo-hamburgo",
+            pageUrl,
+            pagePath,
+            trackingContext,
+        },
+    });
+
+    assert.ok(href);
+    assert.equal(href.length < 2_000, true);
+    const redirectUrl = new URL(href, "https://espacofacial.com");
+    assert.equal(redirectUrl.searchParams.has("page_url"), false);
+    assert.equal(redirectUrl.searchParams.has("page_path"), false);
+
+    const transportedContext = JSON.parse(redirectUrl.searchParams.get("ctx") ?? "null") as TrackingContext;
+    assert.deepEqual(transportedContext.consent, { analytics: true, marketing: true });
+    assert.deepEqual(transportedContext.params, trackingContext.params);
+    assert.equal(transportedContext.fbp, trackingContext.fbp);
+    assert.equal(transportedContext.fbc, trackingContext.fbc);
+    assert.equal(transportedContext.fbclid, trackingContext.fbclid);
+    assert.equal(transportedContext.landingUrl, trackingContext.landingUrl);
+    assert.equal(transportedContext.firstTouch, null);
+    assert.equal(transportedContext.lastTouch, null);
 });
 
 test("injectWhatsappToken appends short token once", () => {

@@ -21,6 +21,17 @@ function normalizeUrl(value: string | null | undefined): string | null {
     return trimmed || null;
 }
 
+function compactTrackingContext(context: TrackingContext): TrackingContext {
+    return {
+        ...context,
+        // The redirect already carries the normalized top-level attribution.
+        // Repeating full first/last-touch objects can push a campaign-rich URL
+        // past reliable request-target limits before it reaches the Worker.
+        firstTouch: null,
+        lastTouch: null,
+    };
+}
+
 export function isSupportedWhatsappUrl(value: string): boolean {
     try {
         const url = new URL(value);
@@ -73,11 +84,11 @@ export function buildWhatsappRedirectHref(params: {
     if (tracking?.unitSlug) url.searchParams.set("unit_slug", tracking.unitSlug);
     if (tracking?.doctorName) url.searchParams.set("doctor_name", tracking.doctorName);
     if (tracking?.source) url.searchParams.set("source", tracking.source);
-    if (tracking?.pageUrl) url.searchParams.set("page_url", tracking.pageUrl);
-    if (tracking?.pagePath) url.searchParams.set("page_path", tracking.pagePath);
+    if (tracking?.pageUrl && !tracking.trackingContext) url.searchParams.set("page_url", tracking.pageUrl);
+    if (tracking?.pagePath && !tracking.trackingContext) url.searchParams.set("page_path", tracking.pagePath);
     if (tracking?.bookingId) url.searchParams.set("booking_id", tracking.bookingId);
     if (tracking?.trackingContext) {
-        url.searchParams.set("ctx", JSON.stringify(tracking.trackingContext));
+        url.searchParams.set("ctx", JSON.stringify(compactTrackingContext(tracking.trackingContext)));
     }
 
     return `${url.pathname}${url.search}`;
