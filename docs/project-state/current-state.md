@@ -718,3 +718,30 @@ actor with an authorized unit; that expression is absent from `f276…` and pres
 only after merge `7ba0c11d8a98ff87262b13e268892191120c8544`. The new current-main
 candidate and staging cycle above include that change; historical evidence is
 preserved but is not used for production.
+
+## Cadastro hierárquico e regressões CRM — fechamento operacional 2026-07-29
+
+O release funcional imutável foi `f30f66e70e0dc949adde5120378509a1c95fe557`;
+o checkpoint de pipeline foi integrado pela PR #847 no `main`
+`2f0bba6ab5df9c09bc3171e190189991a3891052`. Workforce, Inventory/Identity e
+CRM Pages foram promovidos pelos workflows canônicos, com migration Identity
+`0018_onboarding_consistency.sql` aplicada antes do Worker e checkpoint D1
+cifrado do Inventory preservado no artefato `8711811875`.
+
+O smoke de onboarding em produção, com contatos controlados e teardown
+verificado, aprovou 29 cenários: limites de cargo/unidade, convite e consumo
+único, login corporativo, recuperação anti-enumeração pelo contato protegido,
+status e `session_version`, sessões, sincronização Workforce e fail-closed.
+O SMTP usou a configuração iCloud preexistente `smtp.mail.me.com` com remetente
+corporativo; nenhum valor de secret foi lido. Aceitação SMTP não prova leitura
+de caixa postal.
+
+O smoke UI autenticado em produção confirmou Insumos com reconciliação de
+`localStorage` para `novo-hamburgo`, endpoints essenciais em HTTP 200 sem storm
+e recusa `400/UNIT_INVALID` para unidade desconhecida e
+`403/RBAC_UNIT_DENIED` para uma unidade canônica fora do escopo. Atendimento
+carregou referências, atendimentos, overview e catálogo em HTTP 200 sem
+`UNAUTHORIZED`. A consulta agregada pós-smoke encontrou um escopo de unidades
+vazio e dois de módulos vazios em legados; eles permaneceram sem acesso e não
+receberam concessão automática. Rollback permanece disponível pelas versões
+anteriores e migrations aditivas já aplicadas.

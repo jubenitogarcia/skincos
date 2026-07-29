@@ -2,13 +2,14 @@
 
 ## P0 operacional — incidente de acesso a Insumos
 
-- [ ] **P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos.**
-  A correção de fonte foi integrada pela PR #763, com Central E2E e todos os
-  checks requeridos verdes. A validação de acesso no ambiente continua pendente
-  porque esta fase proíbe deploys. Até a resolução operacional completa, não iniciar
-  extrações arquiteturais, piloto Financeiro, transferência para GitHub
-  Organization, mudanças de Ponto/Atendimento ou outro módulo. Não fazer deploy
-  nem alterar dados, flags, grants ou produção nesta fase.
+- [x] **P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos.**
+  O ciclo foi concluído em `f30f66e70e0dc949adde5120378509a1c95fe557` e
+  registrado pela PR #847 (`2f0bba6a`). Staging e produção foram validados com
+  identidades sintéticas removidas ao final: unidades canônicas reconciliadas,
+  movimentações/overview/insights em 200, sem tempestade de requests e recusa
+  fora do escopo preservada como `403/RBAC_UNIT_DENIED`. A regressão autenticada
+  de Atendimento também foi aprovada. Débitos de outros módulos seguem
+  independentes deste P0.
 
 ## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
 
