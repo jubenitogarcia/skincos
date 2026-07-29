@@ -2,6 +2,24 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T03:30:00Z",
+      "surface": "github-http-windows-observability-independent-audit",
+      "scope": "Independent final audit of observability alert hardening and its API promotion",
+      "state": "main-integrated-staging-deployed-production-blocked",
+      "method": "Fresh origin/main ancestry, PR/check/review metadata, Core Worker run logs and artifacts, three staging HTTP rounds, production read-only HTTP probes, runtime hash/process/dashboard inspection, controlled-drill readback, and rerun of catalog plus deterministic monitor-policy tests",
+      "result": "PR #833 merge 2ba1e0a74eea8a88a5cdb609ba426c8df2c94261 and documentation PR #845 merge a20361017f267468846771fb90d438bfaa45949c are ancestors of origin/main. All recorded checks are successful and no review thread is open. Runtime files match clean integrated descendant 62ff787554f67a0d1ea2f40a40543b52b2054263; one supervisor owns one dashboard child, loopback health is current, Finance staging is healthy with no post-drill spam, and the policy suite revalidated two-failure confirmation, silent two-run recovery, 900-second cooldown, 30-second expiry, retention, mutex and watchdog deduplication. Staging API and Finance health/readiness were HTTP 200 in three rounds; API reports release SHA 2ba1e0a74eea8a88a5cdb609ba426c8df2c94261. Preview 30417971117, staging 30418027776 and production dispatch 30418523054 all carried that release SHA.",
+      "limitation": "Run 30418523054 is a failed dispatch, not a production deployment: Cloudflare error 10143 rejected the API upload because FINANCE references missing Worker skincos-finance, so no version, artifact or automatic smoke exists. Current production API health is 200, but readiness is 404 and Finance safe reads are 401; this confirms an authorization boundary, not functional Finance production validation or release provenance. The separately governed Finance production path may checkpoint D1 and run migrations, which remain outside this API-only authorization.",
+      "pr": 833,
+      "documentation_pr": 845,
+      "release_sha": "2ba1e0a74eea8a88a5cdb609ba426c8df2c94261",
+      "runs": {
+        "preview": 30417971117,
+        "staging": 30418027776,
+        "production_attempt": 30418523054
+      },
+      "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\observability-reinstall-20260728T234648Z"
+    },
+    {
       "observed_at": "2026-07-29T03:00:00Z",
       "surface": "meta-ads-publish-live-n8n-token-vault-github",
       "scope": "Final closure audit of Meta Ads – Publish",
