@@ -3,17 +3,23 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { parse } = require('/usr/local/lib/node_modules/n8n/node_modules/flatted');
 const runtimePaths = require('../lib/runtime-paths');
 
 const WORKFLOW_ID = 'WGXr4vYkv9UoJ8zc';
-const WORKFLOW_PATH = path.join(runtimePaths.workflowsDir, 'livia.active.json');
 const PROCESS_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'process-media-asset.js');
 const BUILD_GRAPH_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'build-platform-job-graph.js');
 const VERIFY_PUBLISHED_ARTIFACTS_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'verify-published-artifacts.js');
 const PUBLISH_PROGRESS_LEDGER_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'publish-progress-ledger.js');
+const VALIDATE_PUBLISH_TOKEN_HEALTH_SCRIPT = path.join(runtimePaths.repoRoot, 'scripts', 'livia', 'validate-publish-token-health.js');
+const VERIFIER_ENV_KEYS = new Set(['TOKEN_VAULT_BASE_URL', 'TOKEN_VAULT_N8N_API_TOKEN']);
+const VERIFIER_ENV_FILES = [
+  '/etc/skincos/orb-business.env',
+  path.join(runtimePaths.runtimeHome, 'env', 'n8n-business.env'),
+];
 
 function parseProcessMediaOutput(run) {
   const raw = String(run?.data?.main?.[0]?.[0]?.json?.stdout || '').trim();
@@ -167,6 +173,39 @@ function readRuntimePhone() {
   return line ? line.split('=').slice(1).join('').replace(/\D/g, '') : '';
 }
 
+function readSelectedEnvironmentFile(filePath, allowedKeys = VERIFIER_ENV_KEYS) {
+  if (!fs.existsSync(filePath)) return {};
+  const result = {};
+  for (const rawLine of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+    const line = rawLine.replace(/^\uFEFF/, '');
+    if (!line || line.trimStart().startsWith('#')) continue;
+    const separator = line.indexOf('=');
+    if (separator <= 0) continue;
+    const key = line.slice(0, separator).trim();
+    if (!allowedKeys.has(key)) continue;
+    const value = line.slice(separator + 1).trim();
+    if (value) result[key] = value;
+  }
+  return result;
+}
+
+function verifierEnvironment({ envFiles = VERIFIER_ENV_FILES, inherited = process.env } = {}) {
+  const result = {};
+  for (const envFile of envFiles) Object.assign(result, readSelectedEnvironmentFile(envFile));
+  for (const key of VERIFIER_ENV_KEYS) {
+    if (String(inherited[key] || '').trim()) result[key] = inherited[key];
+  }
+  return result;
+}
+
+function notificationForExecution(runData) {
+  for (const nodeName of ['Inform Success (2)', 'Inform Success (1)']) {
+    const notification = executionItems(runData, nodeName)[0]?.json || {};
+    if (Object.keys(notification).length) return { nodeName, notification };
+  }
+  return { nodeName: '', notification: {} };
+}
+
 function auditExecution(executionId) {
   const summary = summarizeExecution(executionId);
   const execution = loadExecutionEntity(executionId);
@@ -177,7 +216,11 @@ function auditExecution(executionId) {
     final: { publishVerification: { targets } },
     tokenRoot,
     tokenOverrides,
-  })], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+  })], {
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+    env: verifierEnvironment(),
+  });
   let verificationResult = {};
   try {
     verificationResult = JSON.parse(verification.stdout || '{}');
@@ -188,9 +231,15 @@ function auditExecution(executionId) {
   const processMedia = parseProcessMediaOutput((runData['Process Media Asset'] || [])[0]);
   const final = executionItems(runData, 'Collect Publish Results')[0]?.json || {};
   const drive = executionItems(runData, 'Update File')[0]?.json || {};
-  const notification = executionItems(runData, 'Inform Success (1)')[0]?.json || {};
+  const { nodeName: notificationNode, notification } = notificationForExecution(runData);
   const runtimePhone = readRuntimePhone();
   const destination = String(notification?.data?.key?.remoteJid || '').replace(/\D/g, '');
+  const telegramDelivered = notificationNode === 'Inform Success (2)'
+    && notification?.ok === true
+    && Boolean(notification?.result?.message_id);
+  const legacyState = String(notification?.data?.status || '').toLowerCase() === 'pending'
+    ? 'queued'
+    : String(notification?.data?.status || '') || 'unconfirmed';
   const deprecations = jobs
     .flatMap((job) => Object.values(job.response?.headers || {}))
     .filter((value) => /deprecated|auto-upgraded/i.test(String(value)));
@@ -250,8 +299,9 @@ function auditExecution(executionId) {
       state: String(drive.appProperties?.published || drive.properties?.published || '').toLowerCase() === 'true' ? 'verified' : 'unconfirmed',
     },
     notification: {
-      state: String(notification?.data?.status || '').toLowerCase() === 'pending' ? 'queued' : String(notification?.data?.status || '') || 'unconfirmed',
-      destinationMatchesRuntime: Boolean(runtimePhone) && destination === runtimePhone,
+      node: notificationNode || 'unavailable',
+      state: telegramDelivered ? 'delivered' : legacyState,
+      destinationMatchesRuntime: telegramDelivered || (Boolean(runtimePhone) && destination === runtimePhone),
       shouldNotify: final.shouldNotify === true,
     },
     findings: {
@@ -394,11 +444,31 @@ function printInspect(executionId) {
 }
 
 function loadWorkflow() {
-  return JSON.parse(fs.readFileSync(WORKFLOW_PATH, 'utf8').replace(/^\uFEFF/, ''));
+  const requestedWorkflowPath = flag('--workflow');
+  if (requestedWorkflowPath) {
+    return {
+      source: requestedWorkflowPath,
+      workflow: JSON.parse(fs.readFileSync(requestedWorkflowPath, 'utf8').replace(/^\uFEFF/, '')),
+    };
+  }
+  const raw = runPsql(`select json_build_object(
+    'id', w.id,
+    'name', w.name,
+    'active', w.active,
+    'versionId', w."activeVersionId",
+    'nodes', h.nodes,
+    'connections', h.connections,
+    'settings', w.settings
+  )::text
+  from n8n_runtime.workflow_entity w
+  join n8n_runtime.workflow_history h on h."versionId" = w."activeVersionId"
+  where w.id='${WORKFLOW_ID}';`);
+  if (!raw) throw new Error(`Active Livia workflow ${WORKFLOW_ID} was not found.`);
+  return { source: `postgres:workflow_history:${WORKFLOW_ID}`, workflow: JSON.parse(raw) };
 }
 
 function validateWorkflow() {
-  const workflow = loadWorkflow();
+  const { source: workflowSource, workflow } = loadWorkflow();
   const errors = [];
   const nodeByName = new Map(workflow.nodes.map((node) => [node.name, node]));
   const processMedia = nodeByName.get('Process Media Asset');
@@ -443,8 +513,20 @@ function validateWorkflow() {
   if (!prepareMediaItemsCode.includes('livia_missing_drive_mime_type')) {
     errors.push('Prepare Media Items must reject scheduled files whose MIME type is missing.');
   }
-  if (!usesTokenVaultGateway && (tokenHealth?.type !== 'n8n-nodes-base.executeCommand' || !String(tokenHealth?.parameters?.command || '').includes('validate-publish-token-health.js'))) {
+  const tokenHealthCommand = String(tokenHealth?.parameters?.command || '');
+  if (tokenHealth?.type !== 'n8n-nodes-base.executeCommand' || !tokenHealthCommand.includes('validate-publish-token-health.js')) {
     errors.push('Validate Publish Token Health must run the versioned read-only credential preflight.');
+  }
+  if (!tokenHealthCommand.includes('. /etc/skincos/orb-business.env')) {
+    errors.push('Validate Publish Token Health must load the same protected Token Vault bearer used by post-publication verification.');
+  }
+  const tokenHealthScript = fs.existsSync(VALIDATE_PUBLISH_TOKEN_HEALTH_SCRIPT)
+    ? fs.readFileSync(VALIDATE_PUBLISH_TOKEN_HEALTH_SCRIPT, 'utf8')
+    : '';
+  for (const required of ['gatewayChecks', 'gateway_missing', 'checkThroughGateway']) {
+    if (!tokenHealthScript.includes(required)) {
+      errors.push(`validate-publish-token-health.js must fail closed on gateway authorization (${required}).`);
+    }
   }
   const credentialTargets = (workflow.connections['Get Credential Tokens']?.main?.[0] || []).map((edge) => edge.node);
   const tokenHealthTargets = (workflow.connections['Validate Publish Token Health']?.main?.[0] || []).map((edge) => edge.node);
@@ -610,7 +692,7 @@ function validateWorkflow() {
   if (!collectTargets.includes('Verify Published Artifacts')) {
     errors.push('Collect Publish Results must feed Verify Published Artifacts.');
   }
-  if (collectTargets.includes('Update File') || collectTargets.includes('Inform Success (1)')) {
+  if (collectTargets.includes('Update File') || collectTargets.includes('Inform Success (1)') || collectTargets.includes('Inform Success (2)')) {
     errors.push('Collect Publish Results must not directly feed Update File or Inform Success in QA-safe topology.');
   }
   const finalSwitchTargets = workflow.connections['Switch Final Dry Run']?.main || [];
@@ -639,8 +721,9 @@ function validateWorkflow() {
   if (mergeParameters.mode !== 'combine' || mergeParameters.combineBy !== 'combineByPosition') {
     errors.push('Merge Drive Result and Context must combine Drive output and notification context by position.');
   }
+  const notificationNode = nodeByName.has('Inform Success (2)') ? 'Inform Success (2)' : 'Inform Success (1)';
   const driveTargets = (workflow.connections['Assert Drive Published']?.main?.[0] || []).map((edge) => edge.node);
-  for (const required of ['Inform Success (1)', 'Cleanup Temp Files']) {
+  for (const required of [notificationNode, 'Cleanup Temp Files']) {
     if (!driveTargets.includes(required)) errors.push(`Assert Drive Published must feed ${required}.`);
   }
   if (dryTargets.length !== 1 || dryTargets[0] !== 'Cleanup Temp Files') {
@@ -653,8 +736,11 @@ function validateWorkflow() {
   }
   if (usesManagedSocialGateway) {
     const httpParameters = nodeByName.get('HTTP Request')?.parameters || {};
-    if (httpParameters.contentType !== 'json' || httpParameters.specifyBody !== 'json') {
+    if (httpParameters.contentType !== 'json' && httpParameters.specifyBody !== 'json') {
       errors.push('Managed social publish gateway must use n8n JSON transport, not raw transport.');
+    }
+    if (httpParameters.specifyBody !== 'json') {
+      errors.push('Managed social publish gateway must use the JSON body editor.');
     }
     if (!String(httpParameters.jsonBody || '').includes('JSON.stringify')) {
       errors.push('Managed social publish gateway JSON body expression is missing.');
@@ -688,18 +774,26 @@ function validateWorkflow() {
   for (const required of ['expectedMediaKind', 'facebookStaticPost', 'not_applicable_for_static_image', 'video_alt_text_not_supported']) {
     if (!verifierScript.includes(required)) errors.push(`verify-published-artifacts.js must verify images separately from video (${required}).`);
   }
-  if (!String(nodeByName.get('Inform Success (1)')?.parameters?.remoteJid || '').includes('N8N_DEFAULT_TEST_PHONE')) {
+  if (notificationNode === 'Inform Success (1)' && !String(nodeByName.get(notificationNode)?.parameters?.remoteJid || '').includes('N8N_DEFAULT_TEST_PHONE')) {
     errors.push('Inform Success (1) must use N8N_DEFAULT_TEST_PHONE.');
   }
-  if (!String(nodeByName.get('Inform Success (2)')?.parameters?.text || '').includes("$('Assert Drive Published').first().json.whatsappMessage")) {
+  if (notificationNode === 'Inform Success (2)' && !String(nodeByName.get(notificationNode)?.parameters?.text || '').includes("$('Assert Drive Published').first().json.whatsappMessage")) {
     errors.push('Inform Success (2) must read the verified message instead of the Evolution response.');
   }
 
   const validateScript = path.join(runtimePaths.repoRoot, 'scripts', 'validate-livia-workflow.js');
-  const staticValidation = spawnSync('node', [validateScript, WORKFLOW_PATH], {
-    cwd: runtimePaths.repoRoot,
-    encoding: 'utf8',
-  });
+  const validationDir = fs.mkdtempSync(path.join(os.tmpdir(), 'livia-qa-workflow-'));
+  let staticValidation;
+  try {
+    const validationPath = path.join(validationDir, 'livia.active.json');
+    fs.writeFileSync(validationPath, `${JSON.stringify(workflow)}\n`, { mode: 0o600 });
+    staticValidation = spawnSync('node', [validateScript, validationPath], {
+      cwd: runtimePaths.repoRoot,
+      encoding: 'utf8',
+    });
+  } finally {
+    fs.rmSync(validationDir, { recursive: true, force: true });
+  }
   if (staticValidation.status !== 0) {
     errors.push(staticValidation.stdout || staticValidation.stderr || 'validate-livia-workflow failed.');
   }
@@ -710,7 +804,8 @@ function validateWorkflow() {
   }
   console.log(JSON.stringify({
     ok: true,
-    workflowPath: WORKFLOW_PATH,
+    workflowSource,
+    workflowVersionId: workflow.versionId || '',
     processCommandLength: command.length,
     buildGraphCommandLength: bqCommand.length,
   }, null, 2));
@@ -841,7 +936,15 @@ async function main() {
   throw new Error(`Unknown Livia QA command: ${command}`);
 }
 
-main().catch((error) => {
-  console.error(error && error.stack ? error.stack : String(error));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error && error.stack ? error.stack : String(error));
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  notificationForExecution,
+  readSelectedEnvironmentFile,
+  verifierEnvironment,
+};

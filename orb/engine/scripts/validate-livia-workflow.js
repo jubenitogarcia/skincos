@@ -278,6 +278,7 @@ function validateContracts() {
   const prepareHttp = codeOf('Prepare HTTP Publish Request');
   const processHttp = codeOf('Process HTTP Publish Result');
   const collect = codeOf('Collect Publish Results');
+  const tokenHealthCommand = commandOf('Validate Publish Token Health');
   const verifyCommand = commandOf('Verify Published Artifacts');
   const attachVerified = codeOf('Attach Verified Publish Artifacts');
   const assertDrive = codeOf('Assert Drive Published');
@@ -435,6 +436,12 @@ function validateContracts() {
     assert(!Object.prototype.hasOwnProperty.call(httpParameters, 'body'), 'Managed social publish gateway must not retain a raw body, which turns the response into a stream');
   }
   assert(commandOf('Cleanup Temp Files').includes('isAllowedCleanupDir'), 'Cleanup Temp Files must delete per-execution asset directories safely');
+  assert(tokenHealthCommand.includes('validate-publish-token-health.js'), 'Validate Publish Token Health must invoke the versioned credential preflight');
+  assert(tokenHealthCommand.includes('. /etc/skincos/orb-business.env'), 'Token preflight must load the same protected bearer used by the verifier');
+  const tokenHealthScript = fs.readFileSync(path.join(__dirname, 'livia', 'validate-publish-token-health.js'), 'utf8');
+  for (const required of ['gatewayChecks', 'gateway_missing', 'checkThroughGateway']) {
+    assert(tokenHealthScript.includes(required), `Token preflight must fail closed on gateway authorization (${required})`);
+  }
   assert(verifyCommand.includes('verify-published-artifacts.js'), 'Verify Published Artifacts must call the external verifier');
   assert(verifyCommand.includes('--payload -') && verifyCommand.includes('printf %s'), 'Verifier must receive a bounded payload through stdin');
   assert(/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine\/scripts\/livia\/verify-published-artifacts\.js/.test(verifyCommand), 'Verifier must invoke the immutable release entrypoint directly');
