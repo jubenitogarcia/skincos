@@ -1,0 +1,81 @@
+name: Orb n8n stable release watch
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orb-n8n-stable-release-watch
+  cancel-in-progress: false
+
+jobs:
+  audit-stable-release:
+    name: Audit new stable n8n release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      N8N_UPGRADE_ENV: staging
+      N8N_EXPECTED_ENV: staging
+      N8N_STAGING_MARKER: orb-n8n-staging
+      N8N_RELEASE_WATCH_APPLY: 'YES'
+      N8N_AUDIT_ROOT: /tmp/skincos-n8n-release-watch
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.23.1'
+
+      - name: Set up pinned npm from the official registry
+        run: |
+          set -euo pipefail
+          npm --registry https://registry.npmjs.org/ install --global npm@10.9.8 --ignore-scripts
+          test "$(node --version)" = 'v22.23.1'
+          test "$(npm --version)" = '10.9.8'
+
+      - name: Discover and audit only a new official stable release
+        run: |
+          set -euo pipefail
+          bash ops/runtime/n8n-security/watch-stable-release.sh | tee "$RUNNER_TEMP/n8n-release-watch.log"
+
+      - name: Publish sanitized result summary
+        if: always()
+        run: |
+          set -euo pipefail
+          report="$(find "$N8N_AUDIT_ROOT" -maxdepth 1 -type f -name 'release-watch-*.json' -print -quit 2>/dev/null || true)"
+          if [[ -z "$report" ]]; then
+            printf '%s\n' 'No new official stable n8n release was audited in this run.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node --input-type=module - "$report" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
+          import fs from 'node:fs';
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          console.log('## n8n stable-release watch');
+          console.log(`- candidate: ${report.candidate_version}`);
+          console.log(`- result: ${report.result}`);
+          console.log(`- critical findings: ${report.critical_findings}`);
+          console.log(`- high findings: ${report.high_findings}`);
+          console.log(`- audit errors: ${(report.audit_errors ?? []).length}`);
+          console.log('- scope: isolated dependency audit only; no production action was attempted.');
+          NODE
+
+      - name: Upload sanitized release-watch evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: orb-n8n-release-watch-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/n8n-release-watch.log
+            ${{ env.N8N_AUDIT_ROOT }}/release-watch-*.json
+            ${{ env.N8N_AUDIT_ROOT }}/n8n-*/summary.json
+            ${{ env.N8N_AUDIT_ROOT }}/n8n-*/components/*/summary.json
+            ${{ env.N8N_AUDIT_ROOT }}/n8n-*/components/*/package-lock.json

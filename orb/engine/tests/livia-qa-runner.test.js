@@ -6,10 +6,22 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const {
+  ACCESSIBILITY_BUILD_GRAPH_MARKERS,
+  ACCESSIBILITY_VERIFIER_MARKERS,
   driveAuditForExecution,
   notificationForExecution,
   verifierEnvironment,
 } = require('../scripts/livia/qa-runner');
+
+test('QA accessibility markers follow the current cross-media contract', () => {
+  const buildGraph = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'livia', 'build-platform-job-graph.js'), 'utf8');
+  const verifier = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'livia', 'verify-published-artifacts.js'), 'utf8');
+
+  for (const marker of ACCESSIBILITY_BUILD_GRAPH_MARKERS) assert.ok(buildGraph.includes(marker), marker);
+  for (const marker of ACCESSIBILITY_VERIFIER_MARKERS) assert.ok(verifier.includes(marker), marker);
+  assert.ok(!buildGraph.includes('alt_text_omitted_for_video'));
+  assert.ok(!verifier.includes('video_alt_text_not_supported'));
+});
 
 test('qa audit passes only the selected Token Vault values to the independent verifier', () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'livia-qa-env-'));
