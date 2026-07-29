@@ -552,6 +552,18 @@
       "rollback_checkpoint": "livia-postpromote-c525f5e1-20260729T085430-0300"
     },
     {
+      "observed_at": "2026-07-29T12:50:00Z",
+      "surface": "production-meta-ads-token-vault-orb-and-evolution",
+      "scope": "Meta Ads Publish final operational closure",
+      "state": "closed-with-current-evidence",
+      "method": "Read-only n8n/PostgreSQL execution inspection, Token Vault health and D1 journal queries, current Ads Manager status view, workflow preflight/audit-live, native release pointer/PID/health inspection, and isolated Evolution delivery-status query.",
+      "result": "Execution 333 is success and its idempotent run map_f6a59341d6dace99d70f5533 is completed. Workflow is inactive/manual at version 830 with 49 synchronized sources. Both expected ads are active. Journal has 52 completed, 54 failed, 3 rolled_back and 1 calibration_archived runs, zero active locks, terminal jobs only and no reconciliation_required. Evolution isolated notification reached DELIVERY_ACK. Orb/proxy/CRM/Booking execute native release a32cf1a9034ccd4872cfbde1ae089e56355300c4; Token Vault is healthy on deployment beba53d9-67f3-495b-a002-5dc579463c29.",
+      "limitation": "The Ads Manager view confirms current delivery state; the CTA/handoff evidence remains the persisted Graph readback from the completed commercial run plus the live versioned destination contract. No commercial execution or Meta mutation was performed during this audit.",
+      "sha": "a32cf1a9034ccd4872cfbde1ae089e56355300c4",
+      "pr": 854,
+      "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\native-promotions\\a32cf1a9034ccd4872cfbde1ae089e56355300c4"
+    },
+    {
       "observed_at": "2026-07-29T12:19:45Z",
       "surface": "production-runtime-and-isolated-worktree",
       "scope": "livia-transitive-mutable-verifier-audit",

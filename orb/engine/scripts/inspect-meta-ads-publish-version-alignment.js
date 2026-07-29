@@ -134,7 +134,11 @@ async function main() {
       version_counter: Number(row.versionCounter),
       current_version_id: row.versionId,
       active_version_id: row.activeVersionId,
-      version_aligned: row.versionId === row.activeVersionId,
+      // Inactive workflows execute their current definition; activeVersionId is
+      // intentionally null and must not be reported as configuration drift.
+      version_aligned: row.active === true
+        ? row.versionId === row.activeVersionId
+        : executionSummary.version_id === row.versionId,
       manual_execution_audit: manualExecutionAuditState(parseJson(row.settings, {})),
       execution_version_id: executionSummary.version_id,
       execution: executionSummary,

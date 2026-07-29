@@ -818,3 +818,33 @@ dos bundles referenciados por manifestos. A evidência de publicação real
 continua histórica (execuções 336 e 339); uma publicação posterior só pode ser
 considerada prova da versão corrigida se registrar seu `workflowVersionId`
 publicado e o verificador direto do bundle.
+
+## Meta Ads Publish — encerramento operacional 2026-07-29
+
+A execução manual comercial `333` terminou `success` e concluiu
+idempotentemente o run `map_f6a59341d6dace99d70f5533` (o registro preserva a
+origem física na execução `331`). Stage, ativação, Drive, readback, conclusão e
+notificação Telegram foram executados; o teste isolado posterior da Evolution
+foi persistido com `DELIVERY_ACK`. Os anúncios ativos confirmados no Ads Manager
+são `120247386191180157`/criativo `1011986138341232` (BarraShoppingSul) e
+`120247386191560157`/criativo `1400344355311942` (Novo Hamburgo). O contrato
+live conserva `WHATSAPP_MESSAGE` com `https://api.whatsapp.com/send`; os URLs
+de agendamento continuam referências por unidade.
+
+O workflow `eFJhFg79lyaycjlm` está inativo/manual, versão `830`, versão runtime
+`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`, schema SHA-256
+`87e82f8d7c89afbe97b6057d1a417013a37e7a2b6227ba14315c4e869e7ce62f`; o
+preflight somente leitura confirmou as 49 fontes sincronizadas e zero mutação
+Meta. O Token Vault está 100% no
+deployment `b24fc28a-ce09-4978-8fc0-ea40561bbb8c`, versão
+`beba53d9-67f3-495b-a002-5dc579463c29`, com D1, token e chave de cifragem
+saudáveis. O journal tem 52 `completed`, 54 `failed`, 3 `rolled_back` e 1
+`calibration_archived`, sem locks ativos, jobs não terminais ou
+`reconciliation_required`.
+
+O source nativo do Orb foi promovido por release descendente de
+`0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89` para
+`a32cf1a9034ccd4872cfbde1ae089e56355300c4` (merge PR #854). Orb, proxy, CRM
+e Booking usam esse SHA e os health checks local/público são 200. O archive,
+checksum, lineage e rollback permanecem privados em
+`C:\CodexRuntime\operator\admin\skincos\native-promotions\a32cf1a9034ccd4872cfbde1ae089e56355300c4`.

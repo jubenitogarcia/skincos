@@ -18,7 +18,7 @@ ativação, pausa, rollback ou exclusão de recurso Meta.
 | `failed_execution_error` | 6 | A execução n8n correspondente terminou em `error`; não houve staging ou ativação. Estado atualizado para `failed`. |
 | `abandoned_after_creative_before_stage` | 7 | Há `create_creative` concluído, mas não há job, `stage_batch` ou ativação. Estado atualizado para `failed`; possíveis criativos ficam apenas para auditoria futura de órfãos, sem autorização de exclusão. |
 | `abandoned_before_stage` | 33 | Sem staging/ativação e sem evidência de execução resumível. Inclui uploads parciais, falhas pré-criativo e tentativas sem operação. Estado atualizado para `failed`. |
-| `reconciliation_required` | 3 | Há job staged e/ou `stage_batch` concluído, mas nenhuma ativação. Mantido para lookup Graph somente leitura antes de qualquer decisão. |
+| `rolled_back_after_graph_readback` | 3 | Lookup Graph somente leitura encontrou o anúncio físico `ARCHIVED`; evento de readback foi gravado e jobs/runs foram fechados como `rolled_back`, sem mutação Meta. |
 
 ### `failed_execution_error` (6)
 
@@ -53,23 +53,24 @@ ativação, pausa, rollback ou exclusão de recurso Meta.
 `map_3aad73dc83808d2c607a5349`, `map_eb77e6bd8d937da867358b3c`,
 `map_6092f48cd6942488052a434b`.
 
-### Casos que permanecem em `reconciliation_required` (3)
+### Casos encerrados por readback Graph (3)
 
-| Run | Evidência persistida | Responsável | Próximo passo |
-| --- | --- | --- | --- |
-| `map_9c175ce1ed571ccd158ef509` | 1 job staged; `create_creative` e `stage_batch` concluídos; sem `activate_batch`. | Operador Meta Ads | Lookup Graph somente leitura por resource/operation key; registrar se há anúncio físico e decidir ativar ou rollback com autorização. |
-| `map_d4162ea2a7e9660512796dcb` | 1 job staged; `stage_batch` concluído; sem `activate_batch`. | Operador Meta Ads | Mesmo procedimento. |
-| `map_7464107b2ee04e0cab6a27cf` | 1 job staged; `stage_batch` concluído; sem `activate_batch`. | Operador Meta Ads | Mesmo procedimento. |
+| Run | Evidência de readback | Decisão |
+| --- | --- | --- |
+| `map_9c175ce1ed571ccd158ef509` | anúncio `120247362451810157` e criativo `1628576642171208` retornaram `ARCHIVED`. | `rolled_back` com evento `historical_graph_readback_archived_v1`. |
+| `map_d4162ea2a7e9660512796dcb` | anúncio `120247362589160157` e criativo `1628576642171208` retornaram `ARCHIVED`. | `rolled_back` com evento `historical_graph_readback_archived_v1`. |
+| `map_7464107b2ee04e0cab6a27cf` | anúncio `120247362613520157` e criativo `1028746516559170` retornaram `ARCHIVED`. | `rolled_back` com evento `historical_graph_readback_archived_v1`. |
 
 ## Contagem confirmada depois da reconciliação
 
 - `calibration_archived`: 1
 - `completed`: 52
 - `failed`: 54
-- `reconciliation_required`: 3
+- `rolled_back`: 3
 - locks ativos: 0
-- eventos de auditoria gravados: 49
+- `reconciliation_required`: 0
+- jobs não terminais: 0
 
-Os três casos restantes não podem ser encerrados sem a evidência externa
-específica indicada acima. Não há execução comercial em andamento e esta
-auditoria não alterou anúncios, campanhas, conjuntos ou criativos.
+Não há execução comercial em andamento. A reconciliação adicionou somente
+evidência ao journal; não criou, ativou, pausou, arquivou ou excluiu recursos
+na Meta.

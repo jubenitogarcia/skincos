@@ -36,14 +36,13 @@
 - [x] Reconciliar e versionar o contrato do `Meta Ads – Publish` (workflow,
   fontes dos Code nodes, Token Vault, migrations, preflight e testes) pela PR
   #840; a execução manual 333 concluiu o lote comercial final.
-- [ ] **P1 — concluir as três reconciliações Meta Ads restantes, somente após
-  lookup Graph em modo leitura.** Em 2026-07-29, 46 runs históricos foram
-  encerrados com evento de auditoria e os três que tinham job staged foram
-  corretamente marcados `reconciliation_required`: `map_9c175ce1ed571ccd158ef509`,
-  `map_d4162ea2a7e9660512796dcb` e `map_7464107b2ee04e0cab6a27cf`. O operador
-  Meta Ads deve identificar o recurso físico por operation/resource key e
-  registrar decisão de rollback ou ativação autorizada; não excluir nem mudar
-  recursos por suposição. A entrega WhatsApp foi comprovada isoladamente por
+- [x] **P1 — reconciliar as três pendências Meta Ads por lookup Graph somente
+  leitura.** Em 2026-07-29 os recursos dos runs
+  `map_9c175ce1ed571ccd158ef509`, `map_d4162ea2a7e9660512796dcb` e
+  `map_7464107b2ee04e0cab6a27cf` foram comprovadamente `ARCHIVED` e seus jobs
+  foram fechados como `rolled_back`, com evento imutável de readback. Não houve
+  mutação na Meta; o journal ficou com 110 runs terminais, zero locks ativos e
+  zero `reconciliation_required`. A entrega WhatsApp isolada atingiu
   `DELIVERY_ACK`; Telegram permaneceu independente.
 - [x] **P1 — promover o source release nativo do Orb até o `main` que contém as
   PRs #840 e #844.** Em 2026-07-29 o ponteiro foi promovido de
@@ -55,6 +54,12 @@
   iniciar execução comercial. O workflow permaneceu inativo/manual na versão
   830. A regra de ACL do preparador foi ampliada e testada para que o preflight
   peer-authenticated consiga ler os 49 Code nodes em releases futuros.
+- [x] **P1 — realinhar a release nativa após a integração da PR #854.** O
+  release `a32cf1a9034ccd4872cfbde1ae089e56355300c4` foi promovido por troca
+  atômica a partir de `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89`, com archive,
+  lineage, preflight e rollback privados. Orb, proxy, CRM e Booking usam esse
+  mesmo SHA; healths local e públicos, audit-live e preflight Meta Ads passaram
+  sem iniciar execução comercial.
 - [ ] Decide whether draft PR #674 should graduate from the optional GitHub
   autonomy-broker experiment; it is isolated and not deployed.
 
