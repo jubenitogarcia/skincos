@@ -84,6 +84,10 @@ npm run workflow:music:verify
 
 ## Final audit — 2026-07-29
 
+- PR #870 was integrated into `main` as
+  `8442bb840fa8f620ea7e8cb5b37beecd064a7987`. The squash merge tree is
+  byte-identical to the final validated PR head tree, and the required PR
+  matrix passed, including Central E2E, JS/TS, Semgrep and CodeQL.
 - The operational package contains exactly one inactive workflow,
   `Music Composition Studio (Unified)`. MSC-10…MSC-90 execute inline and each
   error output routes to inline MSC-99. There are no Execute Workflow nodes.

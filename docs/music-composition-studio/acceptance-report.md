@@ -2,10 +2,10 @@
 
 ## Scope and state
 
-Evidence refreshed on 2026-07-29 from branch
-`codex/admin/music-composition-studio`.
+Evidence refreshed on 2026-07-29 after PR #870 was integrated into `main` as
+`8442bb840fa8f620ea7e8cb5b37beecd064a7987`.
 
-- Repository candidate: one generated, inactive, inline workflow named
+- Integrated repository source: one generated, inactive, inline workflow named
   `Music Composition Studio (Unified)`.
 - Operational import package: exactly that one workflow.
 - Archive: 11 inactive predecessor descriptors under
@@ -16,8 +16,9 @@ Evidence refreshed on 2026-07-29 from branch
 - Live database/provider: the migration is not applied to `n8n_runtime`; no
   provider credential or paid call is configured.
 
-This report proves the local candidate and isolated compatibility checks. It is
-not production deployment evidence.
+The integrated `main` tree is byte-identical to the validated PR head tree.
+This report proves the integrated source and isolated compatibility checks. It
+is not production deployment evidence.
 
 ## Commands and results
 
@@ -54,6 +55,10 @@ bash scripts/validate-music-composition-studio-n8n-import.sh
 
 npm run lint
   -> all Music Composition Studio JavaScript parsed successfully
+
+PR #870 required checks
+  -> Central E2E, JS/TS, Semgrep, CodeQL, CI Smoke, coverage, lint,
+     dependency audits, Bandit, Gitleaks and architecture governance passed
 ```
 
 The Campaign Creative Generator validator was also invoked. It stops before
@@ -71,6 +76,7 @@ inactive. No visual workflow or runtime state was changed by this work.
 | Preserve the visual workflow | Pass at source boundary | Zero visual/CCG paths in the diff; read-only live graph unchanged by this task |
 | Isolated music domain | Pass | Only `music-composition-studio` paths plus scoped package scripts/migration |
 | Builder-authoritative workflows | Pass | Regeneration is deterministic and validation follows the builder |
+| Integrated source | Pass | PR #870 merged as `8442bb84`; integrated tree equals validated head tree |
 | One operational workflow | Pass | Package length 1; one top-level unified JSON |
 | Predecessors outside operational package | Pass | 11 descriptors in `archived-workflows`, no nested operational archive |
 | Valid/importable JSON | Pass | JSON parse, graph validation and isolated n8n 2.8.3 import/export |
