@@ -90,27 +90,35 @@ function recordOne(value) {
   if (!Object.keys(record).length || record.codexDryRun === true) {
     return { recorded: false, reason: record.codexDryRun === true ? 'dry_run' : 'empty' };
   }
-  const runIndex = Number(record.publishRunIndex);
-  if (!Number.isInteger(runIndex) || runIndex < 0) {
-    throw new Error('Livia publish progress requires a non-negative publishRunIndex.');
+  const semanticJobKey = str(record.semanticJobKey);
+  if (!/^livia:v2:[a-f0-9]{64}$/.test(semanticJobKey)) {
+    throw new Error('Livia publish progress requires a semanticJobKey (livia:v2 SHA-256); publishRunIndex is not a durable identity.');
   }
   if (!asObject(record.lastResponseBody).id && !asObject(record.lastResponseBody).post_id && !asObject(record.lastResponseBody).video_id) {
-    throw new Error(`Livia publish progress requires a provider identifier for run ${runIndex}.`);
+    throw new Error(`Livia publish progress requires a provider identifier for semantic job ${semanticJobKey}.`);
   }
 
   const context = contextFor(record);
   const filePath = ledgerPath(context.key);
   const ledger = loadLedger(filePath, context);
-  const completed = ledger.completed.filter((entry) => Number(entry.publishRunIndex) !== runIndex);
+  const completed = ledger.completed.filter((entry) => str(asObject(entry).semanticJobKey) !== semanticJobKey);
   completed.push({ ...record, recordedAt: new Date().toISOString() });
-  completed.sort((left, right) => Number(left.publishRunIndex) - Number(right.publishRunIndex));
+  completed.sort((left, right) => str(left.semanticJobKey).localeCompare(str(right.semanticJobKey)));
   ledger.completed = completed;
   ledger.updatedAt = new Date().toISOString();
   writeLedger(filePath, ledger);
-  return { recorded: true, key: context.key, completedCount: completed.length, publishRunIndex: runIndex };
+  return { recorded: true, key: context.key, completedCount: completed.length, semanticJobKey };
 }
 
 function main() {
+  if (process.argv.includes('--assert-contract')) {
+    const source = fs.readFileSync(__filename, 'utf8');
+    if (!source.includes('semanticJobKey') || !source.includes('filter((entry) => str(asObject(entry).semanticJobKey) !== semanticJobKey)')) {
+      throw new Error('Livia ledger resume contract is not semantic-key based.');
+    }
+    process.stdout.write(`${JSON.stringify({ ok: true, resumeIdentity: 'semanticJobKey', legacyIndexOnlyResume: false })}\n`);
+    return;
+  }
   const payload = readPayload();
   const rows = Array.isArray(payload) ? payload : [payload];
   const results = rows.map(recordOne);

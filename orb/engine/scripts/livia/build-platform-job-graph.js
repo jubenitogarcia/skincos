@@ -316,6 +316,7 @@ function assertJobGraphContracts(jsCode) {
     ['single-image', ['image']],
     ['single-video', ['video']],
     ['carousel-images', ['image', 'image', 'image']],
+    ['carousel-videos', ['video', 'video', 'video']],
     ['carousel-mixed', ['image', 'video']],
   ];
   const results = [];
@@ -333,6 +334,28 @@ function assertJobGraphContracts(jsCode) {
     results.push({ name, mediaKinds: kinds, jobCount: jobs.length });
   }
   return results;
+}
+
+function assertResumeIdentityContracts() {
+  const base = {
+    groupKey: 'fixture:resume',
+    groupOrder: 0,
+    platform: 'instagram',
+    unit: 'bss',
+    phase: 'upload',
+    step: 'default_upload',
+    publishRunIndex: 3,
+    media: { id: 'fixture-video', mediaKind: 'video', finalUrl: 'https://example.invalid/video.mp4', groupOrder: 0 },
+    text: { caption: 'Legenda aprovada', selectedFrameUrl: 'https://example.invalid/cover-a.jpg' },
+    jsonRequest: { video_url: 'https://example.invalid/video.mp4', caption: 'Legenda aprovada', cover_url: 'https://example.invalid/cover-a.jpg' },
+  };
+  const first = semanticJobKey(base);
+  const reordered = semanticJobKey({ ...base, publishRunIndex: 99, attempt: 2, waitSeconds: 30 });
+  const changedCaption = semanticJobKey({ ...base, text: { ...base.text, caption: 'Legenda editorial diferente' }, jsonRequest: { ...base.jsonRequest, caption: 'Legenda editorial diferente' } });
+  const changedFrame = semanticJobKey({ ...base, text: { ...base.text, selectedFrameUrl: 'https://example.invalid/cover-b.jpg' }, jsonRequest: { ...base.jsonRequest, cover_url: 'https://example.invalid/cover-b.jpg' } });
+  if (first !== reordered) fail(`${NODE_NAME}: sequential queue ordering changed semantic resume identity.`);
+  if (first === changedCaption || first === changedFrame) fail(`${NODE_NAME}: editorial content change did not invalidate durable resume identity.`);
+  return { stableAcrossQueueReorder: true, captionChangeInvalidates: true, frameChangeInvalidates: true };
 }
 
 // A Facebook Reel is not complete when its upload session is ready.  Preserve
@@ -973,6 +996,87 @@ function normalizeThreadsCarouselJob(job) {
   return current;
 }
 
+// publishRunIndex is deliberately *not* a resume identity. It is rebuilt when
+// Facebook Reel status checks are expanded and is only valid inside one queue.
+// A durable record must instead bind the exact editorial and provider contract
+// to the media that produced it.
+const RESUME_VOLATILE_KEYS = new Set([
+  'publishRunIndex', 'statusFromPublishRunIndex', 'postPublishFromRunIndex',
+  'checkStatusFromPublishRunIndex', 'creationIdFromPublishRunIndex',
+  'lastUploadFromPublishRunIndex', 'reelsStartFromPublishRunIndex',
+  'attempt', 'maxAttempts', 'waitSeconds', 'recoveryAttempt', 'remoteId',
+  'permalink', 'lastStatusCode', 'lastResponseBody', 'codexDryRun', 'warnings',
+]);
+const RESUME_SECRET_KEY = /(access[_-]?token|authorization|api[_-]?key|client[_-]?secret|password|cookie|credential)/i;
+
+function canonicalResumeValue(value, key = '') {
+  if (RESUME_VOLATILE_KEYS.has(key) || RESUME_SECRET_KEY.test(key)) return undefined;
+  if (Array.isArray(value)) return value.map((entry) => canonicalResumeValue(entry)).filter((entry) => entry !== undefined);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort()
+      .map((entryKey) => [entryKey, canonicalResumeValue(value[entryKey], entryKey)])
+      .filter(([, entryValue]) => entryValue !== undefined));
+  }
+  return value === undefined || value === null ? undefined : value;
+}
+
+function semanticJobKey(job) {
+  const current = asObject(job);
+  const media = asObject(current.media);
+  const phase = String(current.phase || '').trim().toLowerCase();
+  const mediaId = String(media.id || current.mediaId || '').trim() ||
+    (['publish', 'checkstatus', 'uploadcontainer'].includes(phase) ? '__group__' : '');
+  const contract = canonicalResumeValue({
+    schema: 'livia-resume-v2',
+    groupKey: String(current.groupKey || '').trim(),
+    groupOrder: Number.isFinite(Number(current.groupOrder)) ? Number(current.groupOrder) : undefined,
+    platform: String(current.platform || '').trim().toLowerCase(),
+    unit: normalizeUnit(current.unit),
+    phase,
+    step: String(current.step || '').trim().toLowerCase(),
+    checkKind: String(current.checkKind || '').trim().toLowerCase(),
+    checkFields: String(current.checkFields || '').trim().toLowerCase(),
+    method: String(current.method || asObject(current.httpRequest).method || '').trim().toUpperCase(),
+    endpoint: String(current.url || asObject(current.httpRequest).url || '').trim(),
+    media: {
+      id: mediaId,
+      sourceMediaKind: String(media.sourceMediaKind || media.mediaKind || current.sourceMediaKind || current.mediaKind || '').trim().toLowerCase(),
+      finalUrl: String(media.finalUrl || media.secure_url || media.url || current.finalUrl || '').trim(),
+      groupOrder: Number.isFinite(Number(media.groupOrder || current.groupOrder)) ? Number(media.groupOrder || current.groupOrder) : undefined,
+    },
+    text: asObject(current.text),
+    request: asObject(current.jsonRequest || current.requestBody || asObject(current.httpRequest).body),
+    resumeDependencies: asObject(current.resumeDependencies),
+  });
+  if (!contract.groupKey || !contract.platform || !contract.unit || !contract.phase || !contract.step || !contract.media.id) {
+    fail(`${NODE_NAME}: semantic resume identity is incomplete for ${contract.platform || 'unknown'}/${contract.unit || 'unknown'} ${contract.phase || 'unknown'}/${contract.step || 'unknown'}.`);
+  }
+  return `livia:v2:${crypto.createHash('sha256').update(JSON.stringify(contract)).digest('hex')}`;
+}
+
+function assignSemanticJobKeys(jobs) {
+  const refs = ['statusFromPublishRunIndex', 'postPublishFromRunIndex', 'checkStatusFromPublishRunIndex', 'creationIdFromPublishRunIndex', 'lastUploadFromPublishRunIndex', 'reelsStartFromPublishRunIndex'];
+  const baseKeys = jobs.map((job) => semanticJobKey({ ...job, resumeDependencies: {} }));
+  const seen = new Set();
+  return jobs.map((job) => {
+    const dependencies = {};
+    for (const ref of refs) {
+      const index = Number(job[ref]);
+      if (Number.isInteger(index) && baseKeys[index]) dependencies[ref.replace(/PublishRunIndex$/, '')] = baseKeys[index];
+    }
+    for (const ref of ['attachedMediaFromPublishRunIndexes', 'childrenPublishRunIndexes']) {
+      if (!Array.isArray(job[ref])) continue;
+      dependencies[ref.replace(/PublishRunIndexes$/, '')] = job[ref]
+        .map((value) => baseKeys[Number(value)])
+        .filter(Boolean);
+    }
+    const key = semanticJobKey({ ...job, resumeDependencies: dependencies });
+    if (seen.has(key)) fail(`${NODE_NAME}: duplicate semantic resume identity for distinct provider jobs.`);
+    seen.add(key);
+    return { ...job, semanticJobKey: key };
+  });
+}
+
 function resumeContextKey(job) {
   const current = asObject(job);
   const media = asObject(current.media);
@@ -1059,15 +1163,19 @@ function loadResumeCompleted(jobs) {
       }
       const rows = asArray(ledger.completed)
         .map((entry) => asObject(entry))
-        .filter((entry) => Number.isInteger(Number(entry.publishRunIndex)) && Object.keys(asObject(entry.lastResponseBody)).length);
+        .filter((entry) => /^livia:v2:[a-f0-9]{64}$/.test(String(entry.semanticJobKey || '')) && Object.keys(asObject(entry.lastResponseBody)).length);
       completed.push(...rows);
     }
   }
-  const byRun = new Map();
-  for (const row of completed) byRun.set(Number(row.publishRunIndex), row);
+  const allowedKeys = new Set(jobs.map((job) => String(job.semanticJobKey || '')));
+  const bySemanticKey = new Map();
+  for (const row of completed) {
+    const key = String(row.semanticJobKey || '');
+    if (allowedKeys.has(key)) bySemanticKey.set(key, row);
+  }
   return invalidateIncompleteCarouselResume(
     jobs,
-    [...byRun.values()].sort((left, right) => Number(left.publishRunIndex) - Number(right.publishRunIndex)),
+    jobs.map((job) => bySemanticKey.get(String(job.semanticJobKey || ''))).filter(Boolean),
   );
 }
 
@@ -1076,7 +1184,7 @@ function compactResult(result, payload, sourceFile) {
   const facebookCredentials = facebookCredentialContext(payload);
   const credentialRefs = credentialReferences(payload);
   const frameContext = technicalFrameContext(payload);
-  const jobs = normalizeFacebookReelsChecks(asArray(firstJson.jobs)
+  const jobs = assignSemanticJobKeys(normalizeFacebookReelsChecks(asArray(firstJson.jobs)
     .map((entry) => asObject(entry))
     .map((entry) => applyCaptionHygiene(entry))
     .map((entry) => applyTechnicalFrame(entry, frameContext))
@@ -1085,7 +1193,7 @@ function compactResult(result, payload, sourceFile) {
     .map((entry) => normalizeFacebookJob(entry, facebookCredentials))
     .map((entry) => normalizeThreadsCarouselJob(entry))
     .map((entry) => applyCredentialReference(entry, credentialRefs))
-    .filter((entry) => Object.keys(entry).length));
+    .filter((entry) => Object.keys(entry).length)));
   if (!jobs.length) fail(`${NODE_NAME}: external source did not produce jobs.`);
   const resume = loadResumeCompleted(jobs);
   const resumeCompleted = resume.completed;
@@ -1140,6 +1248,7 @@ function main() {
       ok: true,
       jobGraphContracts: assertJobGraphContracts(source.jsCode),
       frameSelectionContracts: assertFrameSelectionContracts(),
+      resumeIdentityContracts: assertResumeIdentityContracts(),
     }));
     return;
   }
