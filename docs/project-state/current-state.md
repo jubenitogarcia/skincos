@@ -33,6 +33,65 @@ recorded; the WhatsApp notification node returned an error. Both are tracked as
 P1 in `TASKS.md` and must be reconciled with idempotent readback before this
 workstream can be archived.
 
+## Observability alert hardening operational closeout — 2026-07-29T03:06Z
+
+PR [#833](https://github.com/jubenitogarcia/skincos/pull/833) is the source
+change for the Windows alert correction and merged to `main` as
+`2ba1e0a74eea8a88a5cdb609ba426c8df2c94261`.  The later installer guard
+repair is integrated on `main` as `62ff787554f67a0d1ea2f40a40543b52b2054263`;
+the local monitor therefore runs the descendant that contains the requested
+release and its self-supervision fix.
+
+The canonical Core API promotion was immutable: preview
+`30417971117` and staging `30418027776` both used release SHA
+`2ba1e0a74eea8a88a5cdb609ba426c8df2c94261` and source tree
+`6beae5048890803e0fa8b3894eb69cb5eee0f9de`.  Their sanitized promotion
+artifacts are retained privately at
+`C:\CodexRuntime\operator\admin\skincos\evidence\observability-api-promotion\preview-30417971117\promotion-evidence.json`
+and
+`C:\CodexRuntime\operator\admin\skincos\evidence\observability-api-promotion\staging-30418027776\promotion-evidence-core-api\promotion-evidence.json`.
+Staging API `/health` and `/readiness` returned HTTP 200 with the requested
+SHA; the gateway Finance `/health` and `/readiness` also returned HTTP 200,
+with dependency `live`, module `active`, sync `current`, and healthy D1/module
+control.  Two later four-endpoint rounds remained HTTP 200 (0.174–0.615 s).
+The local observer recorded the same staging Finance health/readiness as
+healthy, with no post-promotion notification spam.
+
+Production run `30418523054` used that exact release SHA, `unit=api`,
+`staging_run_id=30418027776`, and `bootstrap_finance_context=false`.  The
+promotion gate passed, but Cloudflare rejected the API upload before a Worker
+version, artifact, or automatic smoke existed: error `10143` says the
+`FINANCE` service binding references missing Worker `skincos-finance`.  The
+release is therefore **not deployed to production**.  Existing production
+API `/health` remained HTTP 200, but its old Finance path returned 401 and is
+not evidence of this release.  No D1 migration, inventory/all deployment,
+binding, secret, or business-data change was made.  Resolving the external
+prerequisite requires the separately governed Finance production path, which
+would create a D1 checkpoint and may run Finance migrations; it must not be
+started without explicit authorization.
+
+Validation included the merged PR's required CI/security checks, catalog
+validation, 16 API gateway tests, deterministic monitor policy tests, the
+staging HTTP/latency reads above, and a real controlled desktop drill.  The
+final drill persisted an alert after two failed probes with
+`human_notification_delivery=windows-message-delivered`, then a two-probe
+recovery with `human_notification_delivery=not-applicable`; it produced no
+recovery popup.  Windows Event Log registration remains unavailable in the
+non-elevated `operator-run-key` session, so that secondary delivery channel
+reports failure without affecting the delivered desktop alert.
+
+The local runtime is healthy in `operator-run-key` mode: its scripts match the
+clean `62ff7875…` source, exactly one supervisor owns one dashboard child, and
+loopback dashboard `/health` is HTTP 200.  Baseline Finance staging reads are
+healthy.  Preserve
+`C:\CodexRuntime\operator\admin\skincos\checkpoints\observability-reinstall-20260728T234648Z`
+and the earlier hardening checkpoint.  For a local-monitor rollback, restore
+the preserved private runtime checkpoint and restart the Run-key supervisor,
+then verify loopback `/health`.  No production API rollback is needed because
+no new production version was published; any future source rollback must be a
+reviewed revert PR followed by the same immutable preview/staging/production
+promotion chain.
+
 ## Observability alert hardening — 2026-07-29T02:23Z
 
 The desktop-alert correction is integrated on `main`: PR #833 merged as

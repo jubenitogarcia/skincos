@@ -17,6 +17,29 @@
       "token_vault_worker_version": 64
     },
     {
+      "observed_at": "2026-07-29T03:06:13Z",
+      "surface": "github-cloudflare-windows-observability-and-http",
+      "scope": "Operational closeout of PR #833 and the canonical Core API promotion",
+      "state": "main-integrated-staging-deployed-production-blocked",
+      "method": "PR/check metadata; immutable preview, staging and production workflow records; promotion artifacts; direct staging and production HTTP reads; private runtime process/dashboard/monitor-state inspection; deterministic tests and controlled desktop drill",
+      "result": "PR #833 merged as 2ba1e0a74eea8a88a5cdb609ba426c8df2c94261. Preview 30417971117 and staging 30418027776 used that exact release SHA and source tree 6beae5048890803e0fa8b3894eb69cb5eee0f9de; their private sanitized artifacts are retained. Staging API health/readiness and its gateway Finance health/readiness were HTTP 200, with Finance dependency live, module active, sync current, D1/module-control healthy, and two later endpoint rounds stable at 0.174–0.615 seconds. The operator-run-key monitor matches clean integrated descendant 62ff787554f67a0d1ea2f40a40543b52b2054263, has exactly one supervisor/dashboard pair, loopback health 200, a healthy baseline and no post-promotion notification spam. Catalog validation, 16 API gateway tests, deterministic monitor tests and the real drill passed; the drill delivered one alert after two failures and recorded a no-popup recovery after two healthy probes.",
+      "limitation": "Production run 30418523054 passed the promotion gate but failed before Worker version publication, artifact creation or automatic smoke: Cloudflare error 10143 says FINANCE references missing Worker skincos-finance. Existing production health is not proof of this unapplied release. No D1 migration, inventory/all target, binding, secret, Finance Worker or business-data change was made. Event Log delivery remains unavailable in the non-elevated operator session, although the controlled desktop alert was delivered.",
+      "pr": 833,
+      "merge_sha": "2ba1e0a74eea8a88a5cdb609ba426c8df2c94261",
+      "release_sha": "2ba1e0a74eea8a88a5cdb609ba426c8df2c94261",
+      "source_tree": "6beae5048890803e0fa8b3894eb69cb5eee0f9de",
+      "runs": {
+        "preview": 30417971117,
+        "staging": 30418027776,
+        "production": 30418523054
+      },
+      "promotion_artifacts": [
+        "C:\\CodexRuntime\\operator\\admin\\skincos\\evidence\\observability-api-promotion\\preview-30417971117\\promotion-evidence.json",
+        "C:\\CodexRuntime\\operator\\admin\\skincos\\evidence\\observability-api-promotion\\staging-30418027776\\promotion-evidence-core-api\\promotion-evidence.json"
+      ],
+      "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\observability-reinstall-20260728T234648Z"
+    },
+    {
       "observed_at": "2026-07-28T20:48:44Z",
       "surface": "windows-observability-and-public-health",
       "scope": "Desktop alert flood investigation and local hardening candidate",
