@@ -1,0 +1,4 @@
+# Sanitized immutable n8n workflow snapshot. It is data, not executable source;
+# semantic content is validated by the Livia export sanitizer and SHA-256 ledger.
+# Generic Semgrep OAuth detection otherwise flags editorial mentions of Facebook.
+orb/engine/workflows/livia/livia.current.json
