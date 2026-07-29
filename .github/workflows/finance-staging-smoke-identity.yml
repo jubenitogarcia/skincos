@@ -53,8 +53,19 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          active_count="$(npx --yes wrangler@4.114.0 d1 execute skincos-db-staging --remote --command \"SELECT COUNT(*) AS count FROM crm_users WHERE username='finance-staging-smoke' AND ativo=1;\" --json | node -e \"const fs=require('fs');const x=JSON.parse(fs.readFileSync(0,'utf8'));process.stdout.write(String(x[0]?.results?.[0]?.count ?? ''))\")"
-          if [[ "$ACTION" == provision ]]; then [[ "$active_count" == 0 ]] || { echo 'Synthetic identity already exists; use rotate.'; exit 1; }; else [[ "$active_count" == 1 ]] || { echo 'Expected exactly one active synthetic identity.'; exit 1; }; fi
+          counts="$(
+            npx --yes wrangler@4.114.0 d1 execute skincos-db-staging --remote \
+              --command "SELECT COUNT(*) AS total_count, COALESCE(SUM(CASE WHEN ativo=1 THEN 1 ELSE 0 END), 0) AS active_count FROM crm_users WHERE username='finance-staging-smoke';" \
+              --json |
+              node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync(0,"utf8")); const row=x[0]?.results?.[0] ?? {}; process.stdout.write(`${row.active_count ?? ""}:${row.total_count ?? ""}`);'
+          )"
+          IFS=: read -r active_count total_count <<< "$counts"
+          [[ "$active_count" =~ ^[0-9]+$ && "$total_count" =~ ^[0-9]+$ ]] || { echo 'Could not verify the synthetic-identity count.'; exit 1; }
+          if [[ "$ACTION" == provision ]]; then
+            [[ "$total_count" == 0 ]] || { echo 'Synthetic identity already exists; use rotate or revoke before provisioning.'; exit 1; }
+          else
+            [[ "$active_count" == 1 && "$total_count" == 1 ]] || { echo 'Expected exactly one active synthetic identity.'; exit 1; }
+          fi
       - name: Apply audited staging identity lifecycle SQL
         env:
           ACTION: ${{ inputs.action }}
