@@ -1,5 +1,13 @@
 # Current state
 
+## Observability independent audit — 2026-07-29T03:30Z
+
+A fresh read-only audit confirms that PR #833 remains integrated in `main`, the local monitor matches clean integrated descendant `62ff7875…`, and the operator runtime has one Run-key supervisor, one dashboard child, and a healthy loopback dashboard. The monitor-policy suite and catalog validation passed again: alert after two failures, recovery after two healthy runs without a popup, 900-second cooldown, 30-second desktop expiry, retention, probe mutex, and watchdog deduplication/cooldown are covered. The real controlled drill still records a delivered alert and a no-popup recovery; no later notification was emitted.
+
+Fresh staging reads keep API health/readiness and gateway Finance health/readiness at HTTP 200. The API reports release `2ba1e0a74eea8a88a5cdb609ba426c8df2c94261`; Finance reports live/current, healthy D1/module control, and no artificial 503 in three rounds. Preview `30417971117`, staging `30418027776`, and attempted production run `30418523054` were all dispatched with that release SHA; production is not a deployment of it. The production API health read is HTTP 200, while production readiness is 404 and Finance safe reads are 401 from the pre-existing API. Those authorization responses prove no unauthenticated Finance data exposure, but do not prove a functional Finance production journey.
+
+The production workflow is terminal, not pending: it failed before version publication or smoke because `FINANCE` references absent Worker `skincos-finance` (Cloudflare 10143). This cannot be corrected by retrying the API-only flow: the governed Finance production path may create a D1 checkpoint and apply migrations, actions excluded from this release authorization. Keep the private reinstall checkpoint and promotion artifacts. Do not declare the release fully promoted or the thread archive-ready until that prerequisite is explicitly authorized and a new immutable production promotion succeeds.
+
 ## Meta Ads Publish closure audit — 2026-07-29T03:00Z
 
 PR #840 merged the canonical workflow and Token Vault contract as
