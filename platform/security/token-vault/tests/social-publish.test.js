@@ -86,6 +86,45 @@ test('social gateway injects token upstream and never returns it', async () => {
   }
 });
 
+test('social gateway strips credential query parameters from provider pagination URLs', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    data: [{ id: 'media-1' }],
+    paging: {
+      next: `https://graph.instagram.com/v25.0/123/media?after=cursor-1&access_token=${SECRET_TOKEN}&fields=id`,
+    },
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+  try {
+    const ctx = context();
+    const response = await handleSocialPublishOperation({
+      request: new Request('https://api.skincos.com.br/internal/token-vault/v1/social-publish/operations', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          platform: 'instagram',
+          unit: 'nh',
+          operation: 'media_list',
+          method: 'GET',
+          url: 'https://graph.instagram.com/v25.0/123/media',
+        }),
+      }),
+      ...ctx,
+    });
+    const body = await response.json();
+    const next = new URL(body.paging.next);
+    assert.equal(response.status, 200);
+    assert.equal(JSON.stringify(body).includes(SECRET_TOKEN), false);
+    assert.equal(next.searchParams.has('access_token'), false);
+    assert.equal(next.searchParams.get('after'), 'cursor-1');
+    assert.equal(next.searchParams.get('fields'), 'id');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('social gateway rejects arbitrary hosts before credential lookup', async () => {
   const ctx = context();
   const request = new Request('https://api.skincos.com.br/internal/token-vault/v1/social-publish/operations', {

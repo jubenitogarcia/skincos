@@ -128,6 +128,7 @@ function sanitizeObject(value) {
 }
 
 function sanitizeValue(value) {
+  if (typeof value === 'string') return sanitizeUrlString(value);
   if (Array.isArray(value)) return value.map(sanitizeValue);
   if (!isObject(value)) return value;
   const out = {};
@@ -136,6 +137,22 @@ function sanitizeValue(value) {
     out[key] = sanitizeValue(entry);
   }
   return out;
+}
+
+function sanitizeUrlString(value) {
+  try {
+    const url = new URL(value);
+    let removed = false;
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (FORBIDDEN_KEYS.test(key)) {
+        url.searchParams.delete(key);
+        removed = true;
+      }
+    }
+    return removed ? url.toString() : value;
+  } catch {
+    return value;
+  }
 }
 
 function normalizeUnit(value) {
