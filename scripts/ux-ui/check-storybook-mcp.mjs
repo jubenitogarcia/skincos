@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
+import { request } from 'node:http'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -25,7 +26,22 @@ async function postMcp(payload, sessionId) {
     'MCP-Protocol-Version': '2025-03-26',
   }
   if (sessionId) headers['Mcp-Session-Id'] = sessionId
-  return fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) }) // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- fixed loopback endpoint for the local Storybook process above.
+  return new Promise((resolve, reject) => {
+    const requestBody = JSON.stringify(payload)
+    const client = request(url, { method: 'POST', headers }, response => {
+      const chunks = []
+      response.on('data', chunk => chunks.push(chunk))
+      response.on('error', reject)
+      response.on('end', () => resolve({
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        status: response.statusCode,
+        headers: { get: name => response.headers[name.toLowerCase()] },
+        text: async () => Buffer.concat(chunks).toString('utf8'),
+      }))
+    })
+    client.on('error', reject)
+    client.end(requestBody)
+  })
 }
 
 function stopServer() {
