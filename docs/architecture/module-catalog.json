@@ -141,6 +141,15 @@
     {
       "id": "finance",
       "maturity": "experimental",
+      "readiness": {
+        "assessedAt": "2026-07-29T14:02:00Z",
+        "state": "experimental",
+        "integratedImportStateMachine": "PR #815 / 32bf3ebb296ca95e3273bb4fed664480eb5642e5",
+        "stagingBaseline": "Worker and independent UI healthy at 32bf3ebb; module_enabled=false; not a current-main single-SHA release",
+        "provenCapabilities": ["staging rollback", "remote kill switch", "isolated scratch restore", "continuous external monitor and controlled human alert"],
+        "openGates": ["current-main single-SHA preview/staging", "synthetic authenticated import/UI journey", "fresh offsite PostgreSQL retrieval and scratch restore", "named pilot approval"],
+        "production": "not provisioned: skincos-finance Worker, D1, control KV and Finance UI project absent"
+      },
       "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },
       "dataOwnership": ["Ledger, accounts, obligations, movements, imports, access grants and finance audit trail"],
       "dependencies": { "hard": ["shared"], "optional": ["integration"] },

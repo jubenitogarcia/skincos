@@ -1,5 +1,67 @@
 # Current state
 
+## Authoritative Finance reconciliation — 2026-07-29T14:02Z
+
+This entry is the authoritative Finance status for `origin/main`
+`6963ba0495870e8f9b15a0b1e81477dd5f7f3f8b`. Older entries below remain an
+audit trail; they do not prove a later deployment or replace the facts in this
+section.
+
+**Integrated:** PR #815 is merged at `32bf3ebb296ca95e3273bb4fed664480eb5642e5`
+and is an ancestor of the current `main`. Its import state machine is present:
+only a persisted `decision=import` on a valid row contributes to preview and
+commit, a completed batch rejects a new key with `IMPORT_ALREADY_COMMITTED`,
+replaying the same key is idempotent, and undo is compensating/audited.
+
+**Staging:** Finance Worker preview/staging runs `30168426616`/`30168445270`
+and Finance UI runs `30168426575`/`30168445288` attested `32bf3ebb…`. Direct
+reads now return `200`, `ready=true`, healthy D1/module-control dependencies
+and version `32bf3ebb…`; the D1 journal has migrations `0001`–`0012` and
+`finance_settings.module_enabled=false`. The currently deployed Finance
+Worker is immutable version `51bd6fa4-d775-43e4-96c3-6fbe0cec8513`; the
+independent UI Pages deployment also reports source `32bf3eb…`. This is a
+healthy, disabled staging baseline, **not** a current-main single-SHA release:
+the staging API reports `2ba1e0a7…` and the general CRM Pages project reports
+`f30f66e…`.
+
+**Recovery and observability:** staging rollback run `30143185583`, remote-KV
+kill-switch runs `30143674681`/`30143742671`, and the isolated Finance scratch
+restore are valid historical proof of rollback, kill switch and restore. The
+outside-GitHub Windows monitor is currently live through the `SkincosObservability`
+Run-key supervisor; its loopback dashboard `/health` and `/metrics` returned
+`200` at this reconciliation, with 30-day retention and a recorded controlled
+human desktop alert/recovery. This closes the monitor-infrastructure blocker,
+but it does not make a later Finance artifact observed.
+
+The `audit returned 503` canary result in run `30168648150` is historical:
+that run stopped, restored its baseline, and failed the promotion as designed.
+Fresh direct Worker/gateway probes and the continuous monitor currently return
+healthy Finance responses; there is no current observation of that `503`.
+It remains a resilience finding, not a current deployment blocker.
+
+**Production:** direct Cloudflare read-only queries confirm that
+`skincos-finance` does not exist. There is no production `skincos-finance` D1,
+Finance control KV namespace, Finance UI Pages project, Worker secret, Worker
+version, artifact or applied Finance migration. The production API's `FINANCE`
+binding remains configured for that absent Worker; Core API run `30418523054`
+therefore failed before upload/smoke (Cloudflare `10143`). Production API
+`/health` is reachable, while `/readiness` is `404` and `/finance/health` is
+`401`; none is Finance production proof. Production environment configuration
+also lacks the four Finance-specific names required by the canonical workflow:
+`FINANCE_D1_PRODUCTION_ID`, `FINANCE_CONTROL_PRODUCTION_KV_ID`,
+`FINANCE_BACKUP_PASSPHRASE` and `FINANCE_SERVICE_AUTH_SECRET`.
+
+**Open gates:** first create a new immutable candidate from the current main,
+then run the canonical Finance Worker/UI preview and staging paths and complete
+the synthetic authenticated import/UI journey against that one SHA. The
+offsite PostgreSQL recovery gate remains blocked: D1 offsite restoration and
+runtime-config retrieval are evidenced, but the large PostgreSQL object has
+not been freshly retrieved from the provider-separated vault (IPC limit and
+unauthorized alternate path). A named pilot approval follows only after those
+staging gates. Production provisioning is a separate, explicitly authorized
+change; no production resource, flag, grant, user, secret or data was changed
+by this reconciliation.
+
 ## Finance production provision — blocked before workflow dispatch — 2026-07-29T11:21Z
 
 The versioned architecture is unambiguous: the production Finance Worker is
