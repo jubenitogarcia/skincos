@@ -2,6 +2,17 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T11:21:32Z",
+      "surface": "github-actions-cloudflare-configuration-and-live-endpoints",
+      "scope": "Finance canonical production provision preflight",
+      "state": "blocked-before-workflow-dispatch",
+      "method": "Inspected versioned deploy-finance.yml, finance/api Wrangler configuration and independent-module architecture; queried GitHub production variable and secret names only; inspected Finance workflow history/lineage; and performed read-only staging and production HTTP probes.",
+      "result": "The architecture confirms production Worker skincos-finance, production D1 skincos-finance and API production Finance service binding. Current staging release 32bf3ebb296ca95e3273bb4fed664480eb5642e5 is an origin/main ancestor; preview 30168426616 and staging 30168445270 succeeded, while fresh staging health/readiness returned HTTP 200 ready=true. Production has neither FINANCE_D1_PRODUCTION_ID nor FINANCE_CONTROL_PRODUCTION_KV_ID, and neither FINANCE_BACKUP_PASSPHRASE nor FINANCE_SERVICE_AUTH_SECRET is present. ENABLE_FINANCE_PRODUCTION_DEPLOY=false. The 12 reviewed migrations contain no table/data deletion; 0008 atomically replaces three guard triggers.",
+      "limitation": "No production workflow was dispatched because the canonical guard would fail before checkpoint and migration. No D1/KV identifier could be verified, no encrypted checkpoint/artifact/Cloudflare version/migration exists, and no Worker, D1, KV, binding, secret, Inventory, CRM, Escala or Orb surface changed. An authorized platform operator must provision and attest the isolated production resources and GitHub environment configuration; do not copy staging values. Recommended architectural follow-up: a read-only Finance production preflight workflow that validates resource IDs, secret presence, Worker existence and migration plan before deployment.",
+      "sha": "32bf3ebb296ca95e3273bb4fed664480eb5642e5",
+      "runs": [30168426616, 30168445270]
+    },
+    {
       "observed_at": "2026-07-29T04:35:00Z",
       "surface": "github-advanced-security-and-isolated-wsl-ux-ui-validation",
       "scope": "PR #832 hosted Semgrep OSS inline-suppression alignment",
