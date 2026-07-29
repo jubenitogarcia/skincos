@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'; $sourceRoot = Split-Path -Parent $PSScriptRoot;
 function Stop-ExistingSupervisor {
   $managedScripts = @('Start-SkincosObservabilitySupervisor.ps1', 'Serve-SkincosObservabilityDashboard.ps1')
   foreach ($candidate in Get-CimInstance Win32_Process) {
+    if ($candidate.ProcessId -eq $PID) { continue }
     if ($candidate.Name -ne 'powershell.exe' -or -not $candidate.CommandLine -or $candidate.CommandLine -notlike "*$RuntimeDirectory*") { continue }
     if (-not ($managedScripts | Where-Object { $candidate.CommandLine -like "*$_*" })) { continue }
     try { Stop-Process -Id $candidate.ProcessId -Force -ErrorAction Stop } catch {}
