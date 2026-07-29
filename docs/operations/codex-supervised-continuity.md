@@ -58,6 +58,16 @@ with `/hooks` or the Codex App hook settings. Do not bypass that review for
 normal App operation, and expect any future command hash change to require a
 new review.
 
+Codex resolves project hook declarations for a linked Git worktree from the
+root checkout's matching `.codex/` directory, not from a hook declaration that
+exists only in the linked worktree. Therefore, use worktrees for implementation
+and deterministic tests, but perform App activation and the real same-thread
+proof from a clean standalone clone containing the integrated commit. This
+avoids copying an unmerged hook into the dirty shared root checkout and keeps
+the hook source and trust state authoritative. The standalone clone must remain
+secret-free and must be updated only by fast-forward from the integrated
+`main`.
+
 The active Skill is installed as a local junction:
 
 ```powershell

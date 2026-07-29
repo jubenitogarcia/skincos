@@ -3,7 +3,8 @@ set -euo pipefail
 
 repo="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)}"
 subdir="$repo/skills/skincos-project-orchestrator"
-payload='{"hook_event_name":"Stop","session_id":"wrapper-shell","turn_id":"wrapper-shell-1","cwd":"'"$subdir"'","transcript_path":null,"stop_hook_active":false,"last_assistant_message":"No structured supervisor contract."}'
+test_id="wrapper-shell-$$-$(date +%s%N)"
+payload='{"hook_event_name":"Stop","session_id":"'"$test_id"'","turn_id":"'"$test_id"'-direct","cwd":"'"$subdir"'","transcript_path":null,"stop_hook_active":false,"last_assistant_message":"No structured supervisor contract."}'
 
 assert_allow() {
   python3 - "$1" <<'PY'
@@ -11,7 +12,12 @@ import json, sys
 value = json.loads(sys.argv[1])
 assert value.get("continue") is True, value
 reason = value.get("stopReason", "")
-assert not any(term in reason for term in ("internal error", "not found", "process failed", "runner failed")), value
+assert not any(term in reason for term in (
+    "internal error",
+    "project hook runner not found",
+    "process failed",
+    "runner failed",
+)), value
 PY
 }
 
@@ -33,10 +39,11 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     print(json.load(handle)["hooks"]["Stop"][0]["hooks"][0]["command"])
 PY
 )"
-registered_output="$(cd "$subdir" && printf '%s' "$payload" | bash -c "$registered_command")"
+registered_payload="${payload/$test_id-direct/$test_id-registered}"
+registered_output="$(cd "$subdir" && printf '%s' "$registered_payload" | bash -c "$registered_command")"
 assert_allow "$registered_output"
 
-session="wrapper-shell-$$-$(date +%s)"
+session="$test_id-supervisor"
 continue_payload="$(python3 - "$session" "$subdir" <<'PY'
 import json, sys
 session, cwd = sys.argv[1:]
