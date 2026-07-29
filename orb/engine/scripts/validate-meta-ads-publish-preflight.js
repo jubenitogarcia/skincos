@@ -71,8 +71,20 @@ function videoUploadContractDrift(workflow) {
   }
 }
 
+const CONTRACT_CONSTANT_PATTERNS = Object.freeze({
+  WORKFLOW_CONTRACT_REVISION: /const\s+WORKFLOW_CONTRACT_REVISION\s*=\s*'([^']+)'/,
+  DEFAULT_CTA_TYPE: /const\s+DEFAULT_CTA_TYPE\s*=\s*'([^']+)'/,
+  WHATSAPP_CTA_TYPE: /const\s+WHATSAPP_CTA_TYPE\s*=\s*'([^']+)'/,
+  REQUIRED_CTA: /const\s+REQUIRED_CTA\s*=\s*'([^']+)'/,
+  WHATSAPP_CTA: /const\s+WHATSAPP_CTA\s*=\s*'([^']+)'/,
+  OUTCOME_LEADS_CTA_TYPE: /const\s+OUTCOME_LEADS_CTA_TYPE\s*=\s*'([^']+)'/,
+  OUTCOME_LEADS_CTA: /const\s+OUTCOME_LEADS_CTA\s*=\s*'([^']+)'/,
+});
+
 function codeConstant(code, name) {
-  const match = new RegExp(`const\\s+${name}\\s*=\\s*'([^']+)'`).exec(String(code || ''));
+  const pattern = CONTRACT_CONSTANT_PATTERNS[name];
+  if (!pattern) return '';
+  const match = pattern.exec(String(code || ''));
   return match ? match[1] : '';
 }
 

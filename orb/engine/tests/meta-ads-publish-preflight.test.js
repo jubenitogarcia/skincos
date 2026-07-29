@@ -84,6 +84,7 @@ test('preflight loads workflow connections before validating the CRM tool edge',
   );
   assert.match(source, /SELECT active, nodes, connections, settings,/);
   assert.match(source, /gateway_contract_revision_gate_missing/);
+  assert.doesNotMatch(source, /new RegExp\(/);
 });
 
 test('gateway parameters reject a Token Vault contract revision mismatch before publication', () => {
