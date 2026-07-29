@@ -16,12 +16,13 @@ const finish = async (ok, cause) => {
 try {
   if (process.env.FINANCE_STAGING_CANARY_ACK !== '1') throw new Error('FINANCE_STAGING_CANARY_ACK=1 is required');
   const baseUrl = required('FINANCE_CANARY_BASE_URL').replace(/\/$/, '');
-  if (baseUrl !== 'https://api-staging.skincos.com.br') throw new Error('canary base URL must be staging gateway');
+  if (baseUrl !== 'https://skincos-staging.pages.dev') throw new Error('canary base URL must be the staging CRM shell');
   const username = required('FINANCE_CANARY_USERNAME');
   if (username !== 'finance-staging-smoke') throw new Error('only dedicated synthetic smoke actor may run canary');
   const password = required('FINANCE_CANARY_PASSWORD');
   const scopeId = required('FINANCE_CANARY_SCOPE_ID');
   if (scopeId !== 'finance-scope-novo-hamburgo') throw new Error('only synthetic Novo Hamburgo scope is allowed');
+  const financePath = (path) => `/api/finance${path}`;
   const request = async (name, path, init = {}) => {
     const started = Date.now();
     try {
@@ -39,35 +40,40 @@ try {
     if (response.status !== status) { report.errors += 1; if (status === 200 && response.status === 401) report.authenticationFailures += 1; throw new Error(`${name} returned ${response.status}`); }
     return body;
   };
-  const loginResponse = await request('login', '/insumos/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://crm-staging.skincos.com.br' }, body: JSON.stringify({ username, password }) });
+  // Authenticate through the same Pages proxy used by the browser shell. The
+  // session cookie is host-scoped to the staging shell and is not portable to
+  // a direct api-staging request.
+  // The CRM authentication contract calls the credential identifier `email`
+  // even when the synthetic actor signs in with its canonical username.
+  const loginResponse = await request('login', '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', origin: baseUrl }, body: JSON.stringify({ email: username, password }) });
   const login = await loginResponse.json().catch(() => null);
   if (loginResponse.status !== 200) { report.authenticationFailures += 1; throw new Error(`login returned ${loginResponse.status}`); }
   const cookie = (typeof loginResponse.headers.getSetCookie === 'function' ? loginResponse.headers.getSetCookie() : [loginResponse.headers.get('set-cookie') || '']).map((item) => item.split(';', 1)[0]).filter(Boolean).join('; ');
   if (!cookie || !login?.csrfToken) { report.authenticationFailures += 1; throw new Error('synthetic staging login did not issue session'); }
-  const headers = { cookie, origin: 'https://crm-staging.skincos.com.br', 'x-csrf-token': login.csrfToken };
+  const headers = { cookie, origin: baseUrl, 'x-csrf-token': login.csrfToken };
   const expectedSha = required('FINANCE_CANARY_RELEASE_SHA');
   if (!/^[0-9a-f]{40}$/.test(expectedSha)) throw new Error('FINANCE_CANARY_RELEASE_SHA must be a full SHA');
-  const health = await expect('health', '/finance/health', { headers: { origin: 'https://crm-staging.skincos.com.br' } });
+  const health = await expect('health', financePath('/health'), { headers: { origin: baseUrl } });
   if (health.version !== expectedSha) { report.dependencyFailures += 1; throw new Error('Finance Worker version does not match canary SHA'); }
-  const bootstrap = await expect('bootstrap', `/finance/bootstrap?scopeId=${encodeURIComponent(scopeId)}`, { headers });
+  const bootstrap = await expect('bootstrap', `${financePath('/bootstrap')}?scopeId=${encodeURIComponent(scopeId)}`, { headers });
   if (bootstrap.moduleEnabled !== true || bootstrap.canAccess !== true || !Array.isArray(bootstrap.grants) || bootstrap.grants.length !== 1 || bootstrap.grants[0]?.scope_id !== scopeId || bootstrap.grants[0]?.unit_slug !== 'novo-hamburgo' || bootstrap.grants[0]?.permission !== 'operator') throw new Error('synthetic canary scope or grant mismatch');
-  const readiness = await expect('readiness', '/finance/readiness', { headers: { origin: 'https://crm-staging.skincos.com.br' } });
+  const readiness = await expect('readiness', financePath('/readiness'), { headers: { origin: baseUrl } });
   if (!readiness.ready || readiness.dependencies?.d1?.state !== 'healthy') { report.dependencyFailures += 1; throw new Error('Finance dependency is not ready'); }
-  await expect('accounts', `/finance/accounts?scopeId=${encodeURIComponent(scopeId)}`, { headers });
-  await expect('categories', `/finance/categories?scopeId=${encodeURIComponent(scopeId)}`, { headers });
+  await expect('accounts', `${financePath('/accounts')}?scopeId=${encodeURIComponent(scopeId)}`, { headers });
+  await expect('categories', `${financePath('/categories')}?scopeId=${encodeURIComponent(scopeId)}`, { headers });
   const nonce = `canary-${Date.now()}`;
-  const tag = await expect('synthetic-audit-create', `/finance/tags?scopeId=${encodeURIComponent(scopeId)}`, {
+  const tag = await expect('synthetic-audit-create', `${financePath('/tags')}?scopeId=${encodeURIComponent(scopeId)}`, {
     method: 'POST', headers: { ...headers, 'content-type': 'application/json', 'idempotency-key': `${nonce}:create` }, body: JSON.stringify({ name: nonce }),
   }, 201);
   const tagId = String(tag.tag?.id || '').trim();
   if (!tagId) { report.auditFailures += 1; throw new Error('synthetic audit probe did not return an identifier'); }
-  const archived = await expect('synthetic-audit-compensate', `/finance/tags/${encodeURIComponent(tagId)}/archive?scopeId=${encodeURIComponent(scopeId)}`, {
+  const archived = await expect('synthetic-audit-compensate', `${financePath(`/tags/${encodeURIComponent(tagId)}/archive`)}?scopeId=${encodeURIComponent(scopeId)}`, {
     method: 'POST', headers: { ...headers, 'content-type': 'application/json', 'idempotency-key': `${nonce}:archive` }, body: JSON.stringify({ reason: 'Synthetic canary compensation' }),
   }, 201);
   if (archived.active !== false) { report.dataDivergences += 1; throw new Error('synthetic canary compensation did not archive its record'); }
-  const audit = await expect('audit', `/finance/audit?scopeId=${encodeURIComponent(scopeId)}&entityType=tag&entityId=${encodeURIComponent(tagId)}`, { headers });
+  const audit = await expect('audit', `${financePath('/audit')}?scopeId=${encodeURIComponent(scopeId)}&entityType=tag&entityId=${encodeURIComponent(tagId)}`, { headers });
   if (Number(audit.total || 0) < 2) { report.auditFailures += 1; throw new Error('synthetic canary audit trail is incomplete'); }
-  const denied = await request('cross-unit-denied', '/finance/accounts?scopeId=finance-scope-barra-shopping-sul', { headers });
+  const denied = await request('cross-unit-denied', `${financePath('/accounts')}?scopeId=finance-scope-barra-shopping-sul`, { headers });
   if (denied.status !== 403) { report.journeyFailures += 1; throw new Error('cross-unit access was not denied'); }
   // The only write is a synthetic tag and its compensating archive; no real
   // actor, unit, financial movement, import or personal scope is touched.
