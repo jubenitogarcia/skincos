@@ -26,6 +26,7 @@ export function isAuthorizedSyntheticBookingTest(input: SyntheticBookingTestInpu
     return (
         input.patientName.trim().toUpperCase().startsWith("META CAPI TEST") &&
         input.email.trim().toLowerCase().endsWith("@capi-test.invalid") &&
-        input.whatsapp.trim() === "555199990000"
+        // Booking requests normalize WhatsApp to E.164 before this guard runs.
+        input.whatsapp.trim() === "+555199990000"
     );
 }
