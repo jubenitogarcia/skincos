@@ -231,15 +231,25 @@ jobs:
           STAGING_WORKER_URL: ${{ vars.FINANCE_STAGING_WORKER_URL }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
-          set -euo pipefail
-          if [[ "$TARGET" == production ]]; then BASE_URL="${FINANCE_PRODUCTION_WORKER_URL:-}"; else BASE_URL="$STAGING_WORKER_URL"; fi
-          [[ "$BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'Finance Worker URL is missing or invalid'; exit 1; }
-          for endpoint in health readiness; do
-            output="$RUNNER_TEMP/finance-${endpoint}.json"
-            code="$(curl --silent --show-error --output "$output" --write-out '%{http_code}' "$BASE_URL/$endpoint")"
-            [[ "$code" == 200 ]] || { cat "$output"; exit 1; }
-            node -e "const x=require(process.argv[1]);const expected=process.argv[2];if(!x.ok||x.unit!=='finance'||x.version!==expected||(process.argv[3]==='readiness'&&!x.ready))process.exit(1)" "$output" "$RELEASE_SHA" "$endpoint"
-          done
+            set -euo pipefail
+            if [[ "$TARGET" == production ]]; then BASE_URL="${FINANCE_PRODUCTION_WORKER_URL:-}"; else BASE_URL="$STAGING_WORKER_URL"; fi
+            [[ "$BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'Finance Worker URL is missing or invalid'; exit 1; }
+            for endpoint in health readiness; do
+              output="$RUNNER_TEMP/finance-${endpoint}.json"
+              verified=false
+              # Routes can briefly serve the prior immutable Worker version after a deploy.
+              # Wait for the selected version rather than accepting an ambiguous promotion.
+              for attempt in $(seq 1 30); do
+                code="$(curl --silent --show-error --output "$output" --write-out '%{http_code}' "$BASE_URL/$endpoint" || true)"
+                if [[ "$code" == 200 ]] && node -e "const x=require(process.argv[1]);const expected=process.argv[2];const endpoint=process.argv[3];if(x.ok&&x.unit==='finance'&&x.version===expected&&(endpoint!=='readiness'||x.ready))process.exit(0);console.log(JSON.stringify({endpoint,httpCode:200,observedVersion:x.version||null,observedUnit:x.unit||null,ready:x.ready===true}));process.exit(1)" "$output" "$RELEASE_SHA" "$endpoint"; then
+                  verified=true
+                  break
+                fi
+                echo "Finance Worker $endpoint has not propagated selected version (attempt $attempt/30; http=$code)"
+                sleep 2
+              done
+              [[ "$verified" == true ]] || { echo "Finance Worker $endpoint did not serve the selected immutable version after 60 seconds"; exit 1; }
+            done
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'
         env:
