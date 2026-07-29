@@ -79,6 +79,8 @@ dist/
 eggs/
 .eggs/
 lib/
+!orb/engine/music-composition-studio/lib/
+!orb/engine/music-composition-studio/lib/**
 !orb/engine/scripts/lib/
 orb/engine/scripts/lib/*
 !orb/engine/scripts/lib/runtime-paths.sh

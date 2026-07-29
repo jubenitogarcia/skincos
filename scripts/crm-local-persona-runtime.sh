@@ -8,21 +8,20 @@ crm_persona_runtime_init() {
   CRM_BUILD_STATE_FILE="${CRM_BUILD_STATE_FILE:-$CRM_RUNTIME_ROOT/build-state.json}"
   CRM_RUNTIME_STARTED_AT="${CRM_RUNTIME_STARTED_AT:-$(date -Iseconds)}"
   CRM_TARGET_COMMIT="${CRM_TARGET_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || printf unknown)}"
+  CRM_SOURCE_FINGERPRINT="${CRM_SOURCE_FINGERPRINT:-commit:$CRM_TARGET_COMMIT}"
+  CRM_SOURCE_ORIGIN="${CRM_SOURCE_ORIGIN:-$ROOT_DIR}"
   CRM_BUILD_COMMIT="${CRM_BUILD_COMMIT:-}"
   CRM_RUNTIME_LOCK_HELD=0
   mkdir -p "$CRM_RUNTIME_ROOT"
 }
 
-# A Windows-side relay can own a localhost port without appearing in WSL's
-# process table.  Both the generic CRM launcher and focused module launchers
-# must reject it before starting Vite or Pages on the same port.
 crm_runtime_port_is_free() {
   local port="$1"
-  [[ "$port" =~ ^[0-9]+$ ]] || return 1
-  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    return 1
+  if command -v ss >/dev/null 2>&1; then
+    ! ss -H -ltn "sport = :$port" | grep -q .
+    return $?
   fi
-  ! curl -sS --connect-timeout 1 --max-time 1 -o /dev/null "http://127.0.0.1:$port" 2>/dev/null
+  ! lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | tail -n +2 | grep -q .
 }
 
 crm_persona_runtime_acquire_lock() {
@@ -67,6 +66,8 @@ crm_persona_runtime_write_manifest() {
   CRM_RUNTIME_WHATSAPP_PID="${WHATSAPP_ORCHESTRATOR_PID:-}" \
   CRM_RUNTIME_TARGET_COMMIT="$CRM_TARGET_COMMIT" \
   CRM_RUNTIME_BUILD_COMMIT="$CRM_BUILD_COMMIT" \
+  CRM_RUNTIME_SOURCE_FINGERPRINT="$CRM_SOURCE_FINGERPRINT" \
+  CRM_RUNTIME_SOURCE_ORIGIN="$CRM_SOURCE_ORIGIN" \
   ROOT_DIR="$ROOT_DIR" \
   DEFAULT_URL="$DEFAULT_URL" \
   LOG_FILE="$LOG_FILE" \
@@ -93,6 +94,8 @@ const payload = {
   url: process.env.DEFAULT_URL,
   targetCommit: process.env.CRM_RUNTIME_TARGET_COMMIT || null,
   buildCommit: process.env.CRM_RUNTIME_BUILD_COMMIT || null,
+  sourceFingerprint: process.env.CRM_RUNTIME_SOURCE_FINGERPRINT || null,
+  sourceOrigin: process.env.CRM_RUNTIME_SOURCE_ORIGIN || null,
   ports: {
     pages: number(process.env.CRM_PAGES_PORT),
     vite: number(process.env.CRM_VITE_PORT),
@@ -120,11 +123,13 @@ crm_persona_runtime_write_build_state() {
     CRM_BUILD_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || printf unknown)"
   fi
   export CRM_BUILD_COMMIT
-  CRM_BUILD_UPDATED_AT="$(date -Iseconds)" node - "$CRM_BUILD_STATE_FILE" <<'NODE'
+  CRM_BUILD_UPDATED_AT="$(date -Iseconds)" CRM_SOURCE_FINGERPRINT="$CRM_SOURCE_FINGERPRINT" CRM_SOURCE_ORIGIN="$CRM_SOURCE_ORIGIN" node - "$CRM_BUILD_STATE_FILE" <<'NODE'
 const fs = require('fs')
 fs.writeFileSync(process.argv[2], JSON.stringify({
   persona: process.env.CRM_PERSONA,
   commit: process.env.CRM_BUILD_COMMIT,
+  sourceFingerprint: process.env.CRM_SOURCE_FINGERPRINT || null,
+  sourceOrigin: process.env.CRM_SOURCE_ORIGIN || null,
   updatedAt: process.env.CRM_BUILD_UPDATED_AT,
 }, null, 2) + '\n', { mode: 0o600 })
 NODE
