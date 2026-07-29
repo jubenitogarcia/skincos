@@ -12,6 +12,7 @@ Os baselines foram instalados em fixtures sintéticos independentes (`npm ci --i
 | 2.19.0 | comparação | 10 | 7 | 65 | não reduz o risco a nível aceitável |
 | 2.31.7 | comparação | 10 | 6 | 74 | bloqueada |
 | 2.32.5 | estável oficial corrente | 10 | 6 | 74 | bloqueada |
+| 2.33.0 | beta/rc, não candidata | — | — | — | instalação sintética não concluiu sob contenção WSL; sem inferência de segurança e sem promoção |
 
 ## Matriz crítica
 
@@ -31,3 +32,5 @@ Os baselines foram instalados em fixtures sintéticos independentes (`npm ci --i
 ## Próxima ação autorizada
 
 Esperar uma release oficial estável cuja árvore resolvida seja requalificada pelo auditor isolado e pela matriz de alcançabilidade. Não usar `npm audit fix`, overrides transitivos ou cópia de `node_modules` como substituto da release oficial.
+
+O registro de `2.33.0` permanece como evidência parcial em fixture privado e não deve ser usado para justificar uma exceção: o registry ainda o classifica como `beta`/`rc`, enquanto `2.32.5` permanece `stable`.
