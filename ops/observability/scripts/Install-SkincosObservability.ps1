@@ -2,9 +2,11 @@
 param([string]$RuntimeDirectory = 'C:\CodexRuntime\operator\admin\skincos\observability', [string]$TaskName = 'SkincosObservabilityProbe', [int]$DashboardPort = 18799)
 $ErrorActionPreference = 'Stop'; $sourceRoot = Split-Path -Parent $PSScriptRoot; $bin = Join-Path $RuntimeDirectory 'bin'; $isElevated=([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); New-Item -ItemType Directory -Force -Path $bin | Out-Null
 function Stop-ExistingSupervisor {
-  $supervisorName = 'Start-SkincosObservabilitySupervisor.ps1'
-  foreach ($process in Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'powershell.exe' -and $_.CommandLine -and $_.CommandLine -like "*$supervisorName*" -and $_.CommandLine -like "*$RuntimeDirectory*" }) {
-    try { Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop } catch {}
+  $managedScripts = @('Start-SkincosObservabilitySupervisor.ps1', 'Serve-SkincosObservabilityDashboard.ps1')
+  foreach ($candidate in Get-CimInstance Win32_Process) {
+    if ($candidate.Name -ne 'powershell.exe' -or -not $candidate.CommandLine -or $candidate.CommandLine -notlike "*$RuntimeDirectory*") { continue }
+    if (-not ($managedScripts | Where-Object { $candidate.CommandLine -like "*$_*" })) { continue }
+    try { Stop-Process -Id $candidate.ProcessId -Force -ErrorAction Stop } catch {}
   }
 }
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'catalog.json') -Destination (Join-Path $RuntimeDirectory 'catalog.json') -Force
