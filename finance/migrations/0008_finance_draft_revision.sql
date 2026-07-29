@@ -2,11 +2,10 @@
 -- replaced atomically while it is still pending; every posted/reconciled or
 -- reversed record remains immutable and must be corrected by reversal.
 --
--- This migration replaces only overly-broad guards introduced by v7.  It does
--- not rewrite historical rows and preserves the append-only audit, journal and
--- reversal tables.
+-- The v7 definitions already contain the expanded draft-aware guards for new
+-- databases.  The idempotent definitions below adopt the same contract without
+-- replacing schema objects, rewriting rows, or using destructive DDL.
 
-DROP TRIGGER IF EXISTS finance_movements_immutable_fields;
 CREATE TRIGGER IF NOT EXISTS finance_movements_immutable_fields
 BEFORE UPDATE OF scope_id,source,external_id,created_by,created_at,submitted_at ON finance_movements
 BEGIN SELECT RAISE(ABORT, 'submitted finance movement fields are immutable'); END;
@@ -54,7 +53,6 @@ BEGIN
   SELECT CASE WHEN NEW.cost_center_id IS NOT NULL AND (SELECT scope_id FROM finance_cost_centers WHERE id=NEW.cost_center_id) != NEW.scope_id THEN RAISE(ABORT, 'movement cost center scope mismatch') END;
 END;
 
-DROP TRIGGER IF EXISTS finance_movement_splits_no_delete;
 CREATE TRIGGER IF NOT EXISTS finance_movement_splits_no_delete
 BEFORE DELETE ON finance_movement_splits
 WHEN NOT EXISTS(SELECT 1 FROM finance_movements m WHERE m.id=OLD.movement_id AND m.status='draft' AND m.operational_status='pending')
@@ -85,7 +83,6 @@ CREATE TRIGGER IF NOT EXISTS finance_installments_no_delete
 BEFORE DELETE ON finance_installments
 WHEN NOT EXISTS(SELECT 1 FROM finance_movements m WHERE m.id=OLD.movement_id AND m.status='draft' AND m.operational_status='pending')
 BEGIN SELECT RAISE(ABORT, 'installments are append-only'); END;
-DROP TRIGGER IF EXISTS finance_installments_immutable_fields;
 CREATE TRIGGER IF NOT EXISTS finance_installments_immutable_fields
 BEFORE UPDATE OF movement_id,sequence,due_date,amount_minor,created_at ON finance_installments
 WHEN NOT EXISTS(SELECT 1 FROM finance_movements m WHERE m.id=OLD.movement_id AND m.status='draft' AND m.operational_status='pending')
