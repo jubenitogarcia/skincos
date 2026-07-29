@@ -175,8 +175,9 @@ try {
       const undo = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/undo`)}?scopeId=${encodeURIComponent(scopeId)}`, { method: 'POST', headers: authHeaders(`${key}:undo`), body: JSON.stringify({ reason: 'Controlled staging smoke reversal' }) });
       const undoBody = await json(undo);
       loaded = await loadBatch();
-      if (loaded.batch?.status !== 'undone') throw new Error('import undo did not reach the compensated state');
-      result.undo = { status: undo.status, undone: Number(undoBody.undone || 0), replayed: Boolean(undoBody.replayed), batchStatus: loaded.batch.status, movementsCompensated: (loaded.rows || []).filter((row) => row.movement_id).length };
+      const movementsCompensated = (loaded.rows || []).filter((row) => row.movement_id).length;
+      if (!loaded.batch?.undone_at || Number(undoBody.undone || 0) < movementsCompensated) throw new Error('import undo did not reach the compensated state');
+      result.undo = { status: undo.status, undone: Number(undoBody.undone || 0), replayed: Boolean(undoBody.replayed), batchStatus: loaded.batch.status, compensatedAt: loaded.batch.undone_at, movementsCompensated };
     }
   }
   result.ok = true;
