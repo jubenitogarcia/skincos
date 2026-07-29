@@ -10,6 +10,7 @@
 | Lighthouse | installed in Website | local CRM route reports HTML/JSON |
 | Lighthouse CI | installed | baseline-only config; no budgets or blocking assertions |
 | Storybook / a11y / MCP addon | validated | build and local JSON-RPC endpoint passed; no Storybook test runner is enabled |
+| Chrome DevTools / Playwright / GitHub MCP registrations | not currently exposed | local operator configuration is outside the repository; no grant or PAT is recorded |
 | Native Playwright snapshots | configured | synthetic auth baseline convention |
 | MSW | optional | existing route interception is sufficient today |
 | Chromatic / Percy | depends on license | neither installed; avoid duplicate cloud visual services |

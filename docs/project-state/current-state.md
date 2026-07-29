@@ -1,5 +1,54 @@
 # Current state
 
+## UX/UI infrastructure audit — reproducibility rerun passed — 2026-07-29T03:32Z
+
+After the LHCI Linux-profile and Storybook MCP protocol corrections, a second
+disposable ext4 WSL clone repeated the clean lockfile installs and Chromium-only
+browser install. The directly affected LHCI baseline and Storybook MCP
+Inspector checks passed first. The integrated `audit:ui:full` then passed from
+2026-07-29T03:26:33Z to 03:30:43Z: components, all four synthetic pilot
+viewports, all four axe JSON results, all four versioned visual-baseline
+comparisons and Lighthouse HTML/JSON. CRM typecheck passed; lint completed
+with 0 errors and 96 pre-existing warnings outside this infrastructure scope;
+Storybook build and `npm audit --omit=dev` (0 vulnerabilities) also passed.
+No visual tolerance, assertion, dependency, snapshot, product UI or external
+endpoint was changed. The native clone and its generated artifacts are
+disposable local evidence only; no validation-owned process remains.
+
+## UX/UI infrastructure audit — final WSL-native validation passed; local remediation pending commit — 2026-07-29T03:14Z
+
+The complete diff from `origin/main` merge base
+`b1afd84b9191841d1f4bc28497f70b3755375d70` to published PR head
+`5f1bbe75a6072c7da3b55643ab82e9363a0b4c8c` was reviewed before any new
+commit or PR action. Two confirmed local-only policy gaps were corrected only
+in this worktree: Playwright and Lighthouse now reject non-loopback targets,
+and UX request interception prevents network access outside the local harness.
+The four visual references were regenerated from that local synthetic state.
+The final validation used a disposable ext4 WSL clone at
+`/home/admin/skincos-ux-final.vewq2s`, copied only the reviewed source overlay
+(never `node_modules`), then ran clean sequential `npm ci` installs from the
+root, CRM and website versioned lockfiles. Node 22.23.1, npm 10.9.8,
+Playwright 1.58.0 (Chromium only), axe 4.12.1, Storybook 10.5.4, Lighthouse
+13.0.3, LHCI 0.15.1 and MCP Inspector 1.0.0 were used. JSON/config parsing,
+`git diff --check`, `tools:doctor`, CRM typecheck/lint, components,
+`audit:ui:full` (four pilot, four axe JSON and four visual comparisons),
+Lighthouse HTML/JSON, LHCI baseline, Storybook build, Storybook MCP
+initialize plus Inspector `tools/list`, and `npm audit --omit=dev` all passed.
+The LHCI WSL configuration now pins a temporary Linux Chrome profile so
+chrome-launcher does not select a Windows profile; it does not add score gates.
+No snapshot update command was run, and no local validation Vite, Storybook,
+Lighthouse or Chromium process remained. No production URL, deployment,
+credential, secret, account, business data, workflow save or configuration
+outside the repository was changed.
+
+PR #832 remains open at its earlier published head. Its prior `Central E2E
+Smoke` failure (14 unrelated functional mobile tests), `Escala UI E2E` failure
+and external Semgrep warning are not yet rerun remotely because these local
+corrections are deliberately uncommitted; the scope remains **audit-complete,
+remediation-local, PR-not-updated**. GitHub and Figma MCP
+OAuth remain manual/unproven exactly as documented; no manual authentication
+was claimed or performed.
+
 ## UX/UI audit infrastructure — draft PR #832 — 2026-07-29T01:34Z
 
 The infrastructure-only UX/UI foundation is committed on

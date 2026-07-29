@@ -2,6 +2,36 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T03:32:49Z",
+      "surface": "local-wsl-ux-ui-reproducibility-rerun",
+      "scope": "Post-correction final integrated UX/UI validation",
+      "state": "reproducibly-green-local-remediation-pr-not-updated",
+      "method": "Second disposable ext4 WSL clone; clean sequential npm ci from root/CRM/website lockfiles; Playwright Chromium-only install; direct LHCI baseline and Storybook MCP Inspector checks before the canonical integrated audit",
+      "result": "LHCI baseline produced local HTML/JSON; Storybook MCP initialize plus Inspector tools/list returned 8 tools. audit:ui:full passed from 2026-07-29T03:26:33.982Z to 03:30:43.839Z with components, pilot, accessibility, visual and Lighthouse all passed. CRM typecheck passed; lint had 0 errors and 96 existing warnings; Storybook build and npm audit --omit=dev (0 vulnerabilities) passed.",
+      "limitation": "No snapshot update, tolerance change, assertion weakening, experimental dependency, production endpoint, account, secret, token, external authentication, deployment or product UI change was used. The clone and generated artifacts are local/disposable; PR #832 remains unmodified and its remote checks remain historical."
+    },
+    {
+      "observed_at": "2026-07-29T03:14:21Z",
+      "surface": "local-wsl-ux-ui-final-validation",
+      "scope": "Final UX/UI infrastructure validation before delivery preparation",
+      "state": "all-local-checks-passed-remediation-local-pr-not-updated",
+      "method": "Disposable ext4 WSL clone at /home/admin/skincos-ux-final.vewq2s; source overlay only with no node_modules copy; sequential clean npm ci from root/CRM/website lockfiles; Playwright Chromium-only install; canonical JSON/config, diff, doctor, test, lint, UI audit, LHCI, Storybook/MCP, Inspector and production-dependency audit commands",
+      "result": "Node 22.23.1/npm 10.9.8; Playwright 1.58.0, axe 4.12.1, Storybook 10.5.4, Lighthouse 13.0.3, LHCI 0.15.1 and MCP Inspector 1.0.0. JSON/config parsing and git diff --check passed; components, CRM typecheck/lint, audit:ui:full (four pilot, four axe JSON, four visual comparisons and Lighthouse HTML/JSON), LHCI baseline, Storybook build, JSON-RPC initialize plus Inspector tools/list (8 tools), and npm audit --omit=dev (0 vulnerabilities) passed. The LHCI profile is explicitly /tmp/skincos-lhci-chrome for WSL compatibility and has no score assertions.",
+      "limitation": "No snapshot update command, production URL, account, secret, credential, customer data, deployment, workflow save or external MCP authentication was used. The validation-owned Vite, Storybook, Lighthouse and Chromium processes were confirmed absent afterwards. The local remediation remains uncommitted, so PR #832 and its historical remote checks have not rerun."
+    },
+    {
+      "observed_at": "2026-07-29T03:30:00Z",
+      "surface": "local-wsl-ux-ui-audit",
+      "scope": "Complete UX/UI infrastructure diff audit and local-only remediation",
+      "state": "audit-complete-remediation-local-pr-not-updated",
+      "method": "Diff and lockfile review against merge base b1afd84b9191841d1f4bc28497f70b3755375d70; local synthetic component, pilot, axe, visual and Escala checks in a disposable native WSL clone; workflow and MCP registration inspection",
+      "result": "No secrets, personal data, production target, generated report, experimental Storybook runner, incompatible eslint-plugin-jsx-a11y, or direct MSW/Chromatic/Percy/Sentry/PostHog/Clarity addition was found. Playwright and Lighthouse loopback guards plus non-loopback request blocking were added locally; four visual references were regenerated from the local synthetic harness.",
+      "limitation": "The remediation is intentionally uncommitted. PR #832 remains at its earlier head, so remote checks have not rerun; the earlier Central E2E Smoke failure (14 unrelated functional mobile tests), Escala failure and external Semgrep warning remain historical PR state until an authorized follow-up commit triggers CI. GitHub/Figma MCP OAuth remains manual and unproven.",
+      "base_sha": "b1afd84b9191841d1f4bc28497f70b3755375d70",
+      "published_head_sha": "5f1bbe75a6072c7da3b55643ab82e9363a0b4c8c",
+      "pr": 832
+    },
+    {
       "observed_at": "2026-07-29T01:34:00Z",
       "surface": "local-wsl-and-github-pr",
       "scope": "UX/UI audit infrastructure draft PR",
