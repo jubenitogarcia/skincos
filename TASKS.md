@@ -16,10 +16,11 @@
 - [x] Confirm continuous external observability, a controlled human-alert
   recovery, historical Finance rollback/kill-switch/scratch-restore evidence,
   and the merged PR #815 import state machine.
-- [ ] Create a candidate from the then-current `origin/main` and, in a
-  separately authorized staging operation, promote that exact SHA through the
-  canonical Finance Worker/UI preview and staging pipelines. Complete the
-  synthetic authenticated import/UI journey on the same artifact lineage.
+- [x] Promote current `origin/main` `c277032db96ba96484522a19994a66cbb323a46d`
+  through the canonical immutable candidate, Finance Worker/UI and CRM Pages
+  preview/staging paths. The synthetic authenticated import/UI canary passed in
+  run `30500922386` with zero threshold breaches; the workflow restored the
+  non-enabled staging baseline and synthetic grant.
 - [ ] Obtain an authorized streaming/provider path for fresh PostgreSQL
   offsite retrieval, verify integrity, and perform the isolated scratch
   restore. D1/runtime-config evidence does not close this PostgreSQL gate.
