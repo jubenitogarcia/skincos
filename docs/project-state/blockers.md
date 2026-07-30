@@ -245,9 +245,12 @@ The executable blockers, in required order, are:
    the minimal unit/network cohort. Then environment owners may register
    `PONTO_PILOT_LOGIN`, `PONTO_PILOT_PASSWORD` and
    `PONTO_PILOT_COHORT_JSON`; do not invent or activate a collaborator.
-8. Provide `PONTO_PILOT_RUNNER_LABELS_JSON` as a repository variable (never an
-   environment variable with the same name), plus a clinic-network
-   self-hosted runner matching it, online and idle, and a reviewed
+8. Provide `PONTO_PILOT_RUNNER_LABELS_JSON` and
+   `PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM` as repository variables
+   (never environment variables with the same names). The selector must contain
+   the three automatic labels plus one reviewed `ponto-jit-*` one-shot label
+   and resolve uniquely to the policy-pinned clinic-network runner, online and
+   idle, with the reviewed supervisor/JIT custody. Also provide
    `PONTO_CANARY_COHORT_PERCENTAGE`. The current repository runner inventory is
    zero.
 9. Enable production deploy flags only for the authorized stage, then complete

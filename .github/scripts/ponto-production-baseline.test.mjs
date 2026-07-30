@@ -241,4 +241,17 @@ test("baseline workflow, reusable gate, and coordinator retain every exported Wo
     assert.match(coordinator, new RegExp(`steps\\.baseline\\.outputs\\.${name}`));
   }
   assert.match(coordinator, /Pin exported Worker deployment and version identities for every pilot publisher/);
+  const reuse = coordinator.slice(
+    coordinator.indexOf("Resolve and verify the immutable production baseline before pilot mutation"),
+    coordinator.indexOf("Download the exact production baseline evidence"),
+  );
+  for (const required of [
+    "run.head_sha === process.env.RELEASE_SHA",
+    "run.run_attempt === 1",
+    "String(run.repository?.id || \"\") === process.env.GITHUB_REPOSITORY_ID",
+    "String(run.head_repository?.id || \"\") === process.env.GITHUB_REPOSITORY_ID",
+    "exactTitle.test(String(run.display_title || \"\"))",
+    "nonce=[0-9a-f]{32}",
+    "reusableRuns.length > 1",
+  ]) assert.ok(reuse.includes(required), `baseline reuse misses strict provenance: ${required}`);
 });

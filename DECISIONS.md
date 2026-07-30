@@ -720,6 +720,22 @@
 - Why: the CRM-local JSON backend could not provide durable concurrency, canonical employee identity, period snapshots or enforceable cross-unit authorization.
 - Impact: CRM is a same-origin client/proxy; legacy JSON is import-only, corrections preserve original events, Escala links require explicit aliases, and staging must pass before the guarded production workflow can run.
 
+## 2026-07-30 - Bind Ponto pilot routing to one exact one-shot runner
+
+- Decision: treat both root secrets as environment-only, reject repository
+  duplicates, and admit a live Ponto cohort only after a complete runner
+  inventory proves exactly one online/idle runner whose ID, name, four-label
+  selector, JIT Ed25519 policy and RSA encryption key match the versioned
+  policy. The protected preflight emits the selector consumed by `runs-on`.
+- Why: environment variables are unavailable when `runs-on` is resolved, a
+  homonymous mutable variable can shadow repository scope, and a generic or
+  non-unique label set can schedule a different self-hosted runner after the
+  cohort has already opened.
+- Impact: the fourth label is a reviewed `ponto-jit-*` one-shot identifier;
+  labels and encryption public key exist only as repository variables, are
+  attested before cohort mutation and again before SLO scheduling, and missing,
+  duplicated, shadowed, stale or incomplete custody remains fail-closed.
+
 ## 2026-07-29 - Make the Meta Ads publish contract singular and manual
 
 - Decision: treat the tracked Meta Ads workflow export, all mapped Code-node
