@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildMetaScheduleCustomData } from "../src/lib/metaEventContracts";
+
+test("browser Schedule call site uses the exact minimized Meta payload", () => {
+    assert.deepEqual(buildMetaScheduleCustomData(), {
+        content_type: "booking",
+        currency: "BRL",
+    });
+});
 
 test("browser Contact preserves Google Ads attribution but minimizes Meta", async () => {
     const globals = globalThis as unknown as Record<string, unknown>;

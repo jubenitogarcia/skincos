@@ -13,6 +13,8 @@ type FakeStatement = {
 const capturedMetaEvents: MetaServerEvent[] = [];
 const capturedWhatsappRows: Array<Record<string, unknown>> = [];
 const fixedNowMs = Date.parse("2029-01-01T12:00:00Z");
+const moduleUrl = (relativePath: string) =>
+    new URL(`../src/${relativePath}.ts`, import.meta.url).href;
 
 function fakeStatement(): FakeStatement {
     const statement: FakeStatement = {
@@ -43,7 +45,7 @@ function parseCookieHeader(value: string | null): Record<string, string> {
     );
 }
 
-mock.module("@/lib/metaConversionsApi", {
+mock.module(moduleUrl("lib/metaConversionsApi"), {
     namedExports: {
         sendMetaServerEvent: async (event: MetaServerEvent) => {
             capturedMetaEvents.push(event);
@@ -52,7 +54,7 @@ mock.module("@/lib/metaConversionsApi", {
     },
 });
 
-mock.module("@/lib/bookingDb", {
+mock.module(moduleUrl("lib/bookingDb"), {
     namedExports: {
         addMinutes: (value: number, minutes: number) => value + minutes * 60_000,
         clampText: (value: string, maxLength: number) => value.slice(0, maxLength),
@@ -75,13 +77,13 @@ mock.module("@/lib/bookingDb", {
     },
 });
 
-mock.module("@/data/services", {
+mock.module(moduleUrl("data/services"), {
     namedExports: {
         getServiceById: (id: string) => ({ id, name: "Procedimento sintético" }),
     },
 });
 
-mock.module("@/lib/injectorsDirectory", {
+mock.module(moduleUrl("lib/injectorsDirectory"), {
     namedExports: {
         getUnitDoctorsResult: async () => ({
             ok: true,
@@ -90,13 +92,13 @@ mock.module("@/lib/injectorsDirectory", {
     },
 });
 
-mock.module("@/lib/agendaDb", {
+mock.module(moduleUrl("lib/agendaDb"), {
     namedExports: {
         getAgendaDb: async () => fakeDb,
     },
 });
 
-mock.module("@/lib/bookingNotifications", {
+mock.module(moduleUrl("lib/bookingNotifications"), {
     namedExports: {
         sendBookingNotifications: async () => ({
             email: { ok: true, status: "sent", error: null },
@@ -106,33 +108,33 @@ mock.module("@/lib/bookingNotifications", {
     },
 });
 
-mock.module("@/lib/doctorSlug", {
+mock.module(moduleUrl("lib/doctorSlug"), {
     namedExports: {
         doctorSlugMatchesQuery: () => true,
     },
 });
 
-mock.module("@/lib/escalaDb", {
+mock.module(moduleUrl("lib/escalaDb"), {
     namedExports: {
         fetchEscalaDaySchedule: async () => null,
         personNameMatches: () => true,
     },
 });
 
-mock.module("@/lib/bookingSecurity", {
+mock.module(moduleUrl("lib/bookingSecurity"), {
     namedExports: {
         issueBookingStatusToken: async () => "status-token",
     },
 });
 
-mock.module("@/lib/runtimeSecrets", {
+mock.module(moduleUrl("lib/runtimeSecrets"), {
     namedExports: {
         getRuntimeSecret: async (name: string) =>
             name === "BOOKING_SYNTHETIC_TEST_TOKEN" ? "synthetic-token" : null,
     },
 });
 
-mock.module("@/lib/syntheticBookingTest", {
+mock.module(moduleUrl("lib/syntheticBookingTest"), {
     namedExports: {
         SYNTHETIC_BOOKING_TEST_TOKEN_HEADER: "x-booking-synthetic-test-token",
         isAuthorizedSyntheticBookingTest: () => true,

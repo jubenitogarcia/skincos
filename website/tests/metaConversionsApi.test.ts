@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { TrackingContext } from "../src/lib/attribution";
-import { META_SCHEDULE_CONTENT_TYPE } from "../src/lib/metaEventContracts";
+import { buildMetaScheduleCustomData } from "../src/lib/metaEventContracts";
 import {
     sendMetaServerEvent,
     type MetaServerEvent,
@@ -54,10 +54,7 @@ function scheduleEvent(overrides: Partial<MetaServerEvent> = {}): MetaServerEven
             fbp: "fb.1.1712345678.browser",
             fbc: "fb.1.1712345678.test-fbclid",
         },
-        customData: {
-            content_type: META_SCHEDULE_CONTENT_TYPE,
-            currency: "BRL",
-        },
+        customData: buildMetaScheduleCustomData(),
         trackingContext: acceptedTrackingContext(),
         bookingId: "synthetic-booking-123",
         ...overrides,
