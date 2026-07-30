@@ -1,19 +1,19 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-30T16:50:51Z",
-  "source_main_sha": "15ac662e0c3b01317d48270cd211d7910000ca5a",
-  "source_main_state": "verified-current-main-after-pr-927",
+  "authoritative_at": "2026-07-30T17:23:36Z",
+  "source_main_sha": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
+  "source_main_state": "verified-current-main-after-pr-929",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
       "objective": "Complete the governed Workforce Timekeeping release through preview, staging, pilot, canary and production on one immutable source SHA.",
       "priority": 1100,
-      "state": "pr-927-integrated-replacement-preview-failed-pnpm-successor-pending-both-environments-maintenance-external-gates-pending",
+      "state": "pr-929-integrated-replacement-preview-failed-corepack-key-successor-pending-both-environments-maintenance-external-gates-pending",
       "dependencies": [
         "ponto-release-prerequisites"
       ],
       "blockers": [
-        "PR #927 final head 7d894530 passed 14 hosted checks, exact-head Codex re-review and two resolved threads, then merged without bypass as 15ac662e0c3b01317d48270cd211d7910000ca5a; replacement preview 30562834119 passed source and Timekeeping child 30562866947 but Identity child 30562970927 failed before tests because setup-node requested pnpm caching before pnpm existed, and the bounded bootstrap successor is pending",
+        "PR #929 final head 019a34367f3e2e40387b3f50da74b35149ff5981 passed all 14 hosted checks and exact-head Codex review, then merged without bypass as 77f241ec20f8956fc7e9b20dd2b373518dafa7be; replacement preview 30564873785 passed source and Timekeeping child 30564915304 but Identity child 30565019029 failed job 90947405936 before tests because Node 22.12 bundled Corepack had a stale pnpm signing key, and the bounded exact-version Corepack successor is pending",
         "the release-probe and Identity-session contracts are integrated by PR #924 but not live; HMAC-before-login, pilot/canary v2 provenance, atomic UNIQUE D1 nonce acceptance, Core-owned affinity and stale-cookie 401 teardown remain unexercised without authorized staging inputs",
         "the watchdog source is integrated, but run 30558653559 exposed a REST dynamic-name P1 fixed in PR #927; broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI, broker endpoint/credential/keys, clinic runner and independent external recovery proof remain absent",
         "seven historical Timekeeping child runs and CRM Pages attempt-2 run 30491926800 retain their old definitions; live dispatch fences and both disabled legacy Ponto smokes must remain through expiry or reviewed replacement",
@@ -27,7 +27,7 @@
       ],
       "environment": "staging-then-production",
       "permitted_actions": [
-        "integrate the bounded Identity pnpm bootstrap successor without bypass, then rerun preview on its exact protected-main merge SHA",
+        "integrate the bounded Identity Corepack signing-key successor without bypass, then rerun preview on its exact protected-main merge SHA",
         "preserve the external replay containment checkpoint and fail-closed production and staging environment overrides/fences until the permanent control and governed predecessors are proved",
         "after corrective merge and authorized WAF/secret-custody provisioning, select only the exact then-current main GITHUB_SHA and execute immutable preview then staging",
         "synthetic CONSULTOR-only authenticated journey with teardown and sanitised evidence",
@@ -35,7 +35,7 @@
         "production promotion only after matching staging, pilot and canary evidence and an Identity/Workforce-valid pilot scope"
       ],
       "prohibited_actions": [
-        "dispatch staging before the bounded pnpm successor is integrated and a complete four-surface replacement preview succeeds on one exact coordinator GITHUB_SHA",
+        "dispatch staging before the bounded Corepack successor is integrated and a complete four-surface replacement preview succeeds on one exact coordinator GITHUB_SHA",
         "restore any removed, disabled or fenced production/staging dispatch input before the permanent legacy-run control is merged and release predecessors are authorized",
         "use administrator environment bypass or PR #921 code-governance status as deployment/pilot approval",
         "claim automatic interruption rollback or external freeze readiness before the policy-bound broker, clinic runner and independent external recovery proof exist",
@@ -63,12 +63,12 @@
       ],
       "done_definition": "A single immutable release has complete preview, staging, pilot, canary and production evidence, an authenticated authorized-user journey, proven rollback and post-release observation.",
       "next_item": "finance-current-main-staging-evidence",
-      "last_verified": "2026-07-30T16:50:51Z",
+      "last_verified": "2026-07-30T17:23:36Z",
       "evidence": {
         "base_sha": "f202e29f4178bba8966edf71539c942618254de0",
         "merge_sha": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
         "selected_release_sha": null,
-        "origin_main_last_verified": "15ac662e0c3b01317d48270cd211d7910000ca5a",
+        "origin_main_last_verified": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
         "origin_main_last_verified_state": "verified",
         "technical_controls_merge_sha": "aa9bfa6595b9cb12e7228f67f9606527bb375de2",
         "post_pr_886_delta": {
@@ -126,7 +126,10 @@
         "pnpm_bootstrap_successor": {
           "branch": "codex/admin/ponto-preview-pnpm",
           "base_main_sha": "15ac662e0c3b01317d48270cd211d7910000ca5a",
-          "state": "local-reviewed-tests-green-pr-pending",
+          "pr": 929,
+          "final_head_sha": "019a34367f3e2e40387b3f50da74b35149ff5981",
+          "merge_sha": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
+          "state": "merged-all-14-hosted-checks-green-exact-head-codex-review-clean",
           "failed_preview_run": 30562834119,
           "failed_identity_child_run": 30562970927,
           "failed_identity_job": 90940563185,
@@ -137,6 +140,36 @@
           "governed_tests": "212/212",
           "inventory_tests": "17/17",
           "resolved_pnpm_version": "9.15.4"
+        },
+        "corepack_signing_key_successor": {
+          "branch": "codex/admin/ponto-preview-corepack",
+          "base_main_sha": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
+          "state": "local-bounded-pr-merge-and-complete-preview-pending",
+          "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T142303-19-corepack-preview-failure.md",
+          "failed_preview_run": 30564873785,
+          "failed_preview_job": 90946808121,
+          "failed_identity_child_run": 30565019029,
+          "failed_identity_job": 90947405936,
+          "successful_timekeeping_child_run": 30564915304,
+          "timekeeping_surface_artifact": {
+            "id": 8768441812,
+            "digest": "sha256:541edf288b8cb62ded320c08d3dfb71d28e219164e19bac834966a7b8fd95604"
+          },
+          "timekeeping_promotion_artifact": {
+            "id": 8768441200,
+            "digest": "sha256:6a7b0a45628672aa57acc8a00a4ba6195407ef4bcb1bc4bc69639f02b702f044"
+          },
+          "coordinator_ledger_artifact": {
+            "id": 8768476655,
+            "digest": "sha256:90dc7777a40570b7c823344b876415727ae82d77812e7b32baec96b8ffc5eb02"
+          },
+          "identity_artifact_count": 0,
+          "root_cause": "node-22.12-bundled-corepack-stale-pnpm-signing-key-cannot-find-matching-keyid",
+          "package_manager_source": "inventory/package.json#packageManager",
+          "activation": "corepack-prepare-exact-version-activate",
+          "pre_use_verification": "pnpm-version-must-equal-exact-package-manager-pin",
+          "covered_identity_jobs": 3,
+          "live_mutation": false
         },
         "post_merge_corrective_overlay": {
           "branch": "codex/admin/ponto-release-evidence",
@@ -622,10 +655,10 @@
       "id": "ponto-release-prerequisites",
       "objective": "Close the technical and authorized-input prerequisites for the single-SHA Ponto staging, pilot and canary sequence.",
       "priority": 1099,
-      "state": "pr-927-integrated-pnpm-preview-successor-pending-both-environments-maintenance-broker-policy-null-external-gates-open",
+      "state": "pr-929-integrated-corepack-preview-successor-pending-both-environments-maintenance-broker-policy-null-external-gates-open",
       "dependencies": [],
       "blockers": [
-        "PR #927 integrated the bounded REST path/dynamic-name and environment-payload correction as 15ac662e0c3b01317d48270cd211d7910000ca5a; replacement preview 30562834119 passed Timekeeping but exposed setup-node pnpm bootstrap ordering in Identity child 30562970927, and its bounded successor plus a complete replacement preview are pending",
+        "PR #929 integrated the first pnpm bootstrap correction as 77f241ec20f8956fc7e9b20dd2b373518dafa7be after all 14 checks and exact-head Codex review passed; replacement preview 30564873785 passed Timekeeping but Identity child 30565019029 exposed the Node 22.12 bundled Corepack stale signing-key path, and its bounded exact-version activation successor plus a complete replacement preview are pending",
         "the release-probe and Identity-session contracts are integrated but not live; authorized custody and staging predecessors required to exercise them are absent",
         "the watchdog REST correction is integrated by PR #927, but broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI, endpoint/credential/keys, clinic runner and independent external recovery proof remain absent",
         "historical child runs remain rerunnable under their old definitions and therefore externally contained through expiry or reviewed replacement",
@@ -639,16 +672,16 @@
       ],
       "environment": "source-and-staging",
       "permitted_actions": [
-        "integrate the bounded pnpm bootstrap successor without bypass and rerun preview on the exact resulting main SHA",
+        "integrate the bounded Corepack signing-key successor without bypass and rerun preview on the exact resulting main SHA",
         "preserve the private containment checkpoint and production/staging environment fences until guarded workflows and authorized predecessors are live",
         "obtain a reviewed decision that pins distinct per-target broker URL, custodyRef, responseKeyId and Ed25519 SPKI before provisioning broker endpoints, credentials or keys",
         "provision staging secret names only through an approved source/process without reading or exposing values",
         "after complete staging evidence and separate pre-production authorization, provision distinct and separately custodied production secrets",
-        "select the then-current exact main GITHUB_SHA only after the pnpm successor and its evidence update are integrated",
+        "select the then-current exact main GITHUB_SHA only after the Corepack successor and its evidence update are integrated",
         "run preview/staging and synthetic teardown only after all staging guards pass"
       ],
       "prohibited_actions": [
-        "dispatch staging before the pnpm successor is merged and a complete replacement preview succeeds on the exact selected SHA",
+        "dispatch staging before the Corepack successor is merged and a complete replacement preview succeeds on the exact selected SHA",
         "restore removed D1 identifiers, disabled deploy flags or fenced Pages project variables before the permanent legacy-run control is merged and authorized",
         "use can_admins_bypass or PR code review state as deployment/pilot approval",
         "ask the sole owner, GITHUB_TOKEN or an unproved app/bot to manufacture an invalid approval",
@@ -670,9 +703,9 @@
       ],
       "done_definition": "All technical controls and authorized inputs required to begin the governed single-SHA release sequence are present and fail-closed defaults remain intact.",
       "next_item": "p0-workforce-timekeeping-current-main-release",
-      "last_verified": "2026-07-30T16:50:51Z",
+      "last_verified": "2026-07-30T17:23:36Z",
       "evidence": {
-        "origin_main_boundary": "15ac662e0c3b01317d48270cd211d7910000ca5a",
+        "origin_main_boundary": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
         "origin_main_boundary_state": "verified",
         "selected_release_sha": null,
         "technical_controls_branch": "codex/admin/ponto-progressive-release",
@@ -683,6 +716,20 @@
         "post_merge_corrective_commit_sha": "c35aaf6892fea8ad5ae5745a82be55f24bd5a342",
         "post_merge_corrective_pr": 924,
         "post_merge_corrective_state": "integrated-as-91f6e9033fed8a186ef2e93be070db3ed896fdd3",
+        "pnpm_bootstrap_pr": 929,
+        "pnpm_bootstrap_final_head": "019a34367f3e2e40387b3f50da74b35149ff5981",
+        "pnpm_bootstrap_merge_sha": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
+        "pnpm_bootstrap_state": "integrated-all-14-checks-green-exact-head-codex-review-clean",
+        "corepack_signing_key_successor": {
+          "branch": "codex/admin/ponto-preview-corepack",
+          "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T142303-19-corepack-preview-failure.md",
+          "failed_preview_run": 30564873785,
+          "successful_timekeeping_child_run": 30564915304,
+          "failed_identity_child_run": 30565019029,
+          "failed_identity_job": 90947405936,
+          "state": "local-bounded-pr-merge-and-complete-preview-pending",
+          "selected_release_sha": null
+        },
         "local_freeze": {
           "observed_at": "2026-07-30T15:29:06Z",
           "state": "frozen-and-integrated-pr-924",

@@ -189,16 +189,29 @@ jornada autenticada atual continue válida.
   próprio head. A PR integrou sem bypass em
   `15ac662e0c3b01317d48270cd211d7910000ca5a`, incluindo a proteção live dos
   environments contra reaplicação do payload histórico mais fraco.
-- [ ] Integrar a correção de bootstrap pnpm e repetir o `preview` no SHA exato
-  resultante. O replacement preview `30562834119` usou o merge #927
-  `15ac662e...`; Timekeeping child `30562866947` passou e publicou os artefatos
-  `8767637805`/`8767637318`, mas Identity/Inventory child `30562970927` falhou
-  antes de testes ou dry-run porque `actions/setup-node` pediu cache pnpm antes
-  de o executável existir no runner. A correção remove apenas o cache inválido
-  dos jobs Identity preview/staging e executa o `corepack pnpm` dentro de
-  `inventory` nos três jobs Identity, onde o `packageManager` fixa
-  `pnpm@9.15.4`. Testes impedem reintroduzir cache prematuro, cwd incorreto ou
-  versão não fixada.
+- [x] Integrar a correção de bootstrap pnpm pela PR #929. O replacement preview
+  anterior `30562834119` usou o merge #927 `15ac662e...`; Timekeeping child
+  `30562866947` passou e publicou os artefatos `8767637805`/`8767637318`, mas
+  Identity/Inventory child `30562970927` falhou antes de testes ou dry-run
+  porque `actions/setup-node` pediu cache pnpm antes de o executável existir no
+  runner. A PR removeu o cache inválido e passou todos os 14 checks; Codex não
+  encontrou major issue no head exato
+  `019a34367f3e2e40387b3f50da74b35149ff5981`, que integrou sem bypass como
+  `77f241ec20f8956fc7e9b20dd2b373518dafa7be`.
+- [ ] Integrar a sucessora de ativação Corepack e repetir o `preview` no SHA
+  exato resultante. O segundo replacement preview `30564873785` selecionou o
+  merge #929 `77f241ec...`; Timekeeping child `30564915304` passou e publicou
+  os artefatos `8768441812`
+  (`sha256:541edf288b8cb62ded320c08d3dfb71d28e219164e19bac834966a7b8fd95604`)
+  e `8768441200`
+  (`sha256:6a7b0a45628672aa57acc8a00a4ba6195407ef4bcb1bc4bc69639f02b702f044`).
+  Identity/Inventory child `30565019029` falhou no job `90947405936` antes de
+  testes ou dry-run porque o Corepack incluído no Node 22.12 tentou resolver
+  metadata de pnpm com uma signing key desatualizada (`Cannot find matching
+  keyid`). Core API e CRM Pages foram pulados e nenhuma superfície live,
+  migration ou controle foi alterado. A sucessora lê o `packageManager` exato
+  de `inventory/package.json`, executa `corepack prepare` para essa versão e
+  confirma `pnpm --version` antes do primeiro uso nos três jobs Identity.
   `selected_release_sha` continua nulo até a sucessora integrar e um preview
   completo das quatro superfícies terminar verde.
 - [ ] Provisionar e atestar separadamente o broker de fechamento externo nos

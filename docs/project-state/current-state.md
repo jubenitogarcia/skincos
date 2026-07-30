@@ -1,6 +1,6 @@
 # Current state
 
-## Workforce Timekeeping — REST successor #927 integrated; pnpm preview successor pending; release fail-closed — 2026-07-30T16:50:51Z
+## Workforce Timekeeping — pnpm successor #929 integrated; Corepack signing-key successor pending; release fail-closed — 2026-07-30T17:23:36Z
 
 This is the authoritative Ponto entry and supersedes the older local-successor
 entries below. PR #924 integrated the post-#921 corrective package as
@@ -48,16 +48,32 @@ surface artifact `8767637805`
 and promotion artifact `8767637318`
 (`sha256:a42e0bdd3056cc16c06c6662bde2e2a9cbb77fb9d626e12774ffd7e07eb31ea1`).
 Identity/Inventory child `30562970927` then failed in job `90940563185` before
-tests or dry-run: `actions/setup-node` requested the pnpm cache before a `pnpm`
-executable existed on the runner. The bounded successor removes that invalid
-cache configuration from both Identity preview and staging; dependency
-installation now invokes `corepack pnpm` from `inventory` in all three
-Identity jobs, where `inventory/package.json` pins `pnpm@9.15.4`. The local
-version readback was exactly 9.15.4; its frozen install and 17/17 Inventory
-tests passed. Focused tests pass 15/15, the governed Ponto set passes 212/212,
-actionlint 1.7.12 and `git diff --check` are green. A complete replacement
-preview has not yet passed, so
-`selected_release_sha` remains null.
+tests or dry-run because `actions/setup-node` requested pnpm caching before a
+`pnpm` executable existed. PR #929 removed that invalid cache request. Its
+final head `019a34367f3e2e40387b3f50da74b35149ff5981` passed all 14 hosted checks,
+Codex found no major issue on that exact head, and protected `main` merged it
+without bypass as `77f241ec20f8956fc7e9b20dd2b373518dafa7be`.
+
+Second replacement preview `30564873785` selected that exact #929 merge.
+Source admission and Timekeeping child `30564915304` succeeded, producing
+surface artifact `8768441812`
+(`sha256:541edf288b8cb62ded320c08d3dfb71d28e219164e19bac834966a7b8fd95604`)
+and promotion artifact `8768441200`
+(`sha256:6a7b0a45628672aa57acc8a00a4ba6195407ef4bcb1bc4bc69639f02b702f044`).
+Identity/Inventory child `30565019029` failed in job `90947405936` before tests
+or dry-run: the Corepack bundled with Node 22.12 attempted direct pnpm metadata
+resolution with a stale signing key and returned `Cannot find matching keyid`.
+Core API and CRM Pages were skipped; no Worker/Pages deployment, migration,
+D1/KV write, module transition or other live mutation occurred. The coordinator
+retained sanitized ledger artifact `8768476655`
+(`sha256:90dc7777a40570b7c823344b876415727ae82d77812e7b32baec96b8ffc5eb02`);
+the failed Identity child produced zero artifacts.
+
+The bounded successor reads the exact `packageManager` from
+`inventory/package.json`, requires an exact pnpm version, runs
+`corepack prepare "$pnpm_spec" --activate`, and verifies `pnpm --version`
+before the first package-manager use in all three Identity jobs. A complete
+replacement preview has not yet passed, so `selected_release_sha` remains null.
 
 Live Cloudflare remains unchanged and deliberately closed. Both
 `module-control:timekeeping` values are `maintenance`; the emergency-latch key
@@ -80,7 +96,7 @@ broker URL/credential/custody, pilot credentials/cohort, runner selector/key,
 canary percentage, Ponto resource variables and four enable flags are absent
 at their governed scopes. No secret values were read. Identity/Workforce still
 provides no authorized eligible pilot. Therefore preview may resume only after
-the pnpm successor merges; staging, pilot, canary and production remain
+the Corepack successor merges; staging, pilot, canary and production remain
 ineligible.
 
 ## Codex Windows native / PowerShell gateway — integrated and validated locally — 2026-07-30T16:21Z

@@ -172,6 +172,13 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: 22.12.0
+      - name: Activate the Inventory-pinned pnpm
+        run: |
+          set -euo pipefail
+          pnpm_spec="$(node -p "require('./inventory/package.json').packageManager")"
+          [[ "$pnpm_spec" =~ ^pnpm@[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Inventory packageManager must pin an exact pnpm version'; exit 1; }
+          corepack prepare "$pnpm_spec" --activate
+          [[ "pnpm@$(cd inventory && corepack pnpm --version)" == "$pnpm_spec" ]] || { echo 'Prepared pnpm differs from the Inventory pin'; exit 1; }
       - name: Test the v2 Identity caller and dry-run the immutable Inventory source
         env:
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -262,6 +269,13 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: 22.12.0
+      - name: Activate the Inventory-pinned pnpm
+        run: |
+          set -euo pipefail
+          pnpm_spec="$(node -p "require('./inventory/package.json').packageManager")"
+          [[ "$pnpm_spec" =~ ^pnpm@[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Inventory packageManager must pin an exact pnpm version'; exit 1; }
+          corepack prepare "$pnpm_spec" --activate
+          [[ "pnpm@$(cd inventory && corepack pnpm --version)" == "$pnpm_spec" ]] || { echo 'Prepared pnpm differs from the Inventory pin'; exit 1; }
       - name: Test v2 Identity caller and attest remote secret custody
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -1446,6 +1460,13 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: 22.12.0
+      - name: Activate the Inventory-pinned pnpm
+        run: |
+          set -euo pipefail
+          pnpm_spec="$(node -p "require('./inventory/package.json').packageManager")"
+          [[ "$pnpm_spec" =~ ^pnpm@[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Inventory packageManager must pin an exact pnpm version'; exit 1; }
+          corepack prepare "$pnpm_spec" --activate
+          [[ "pnpm@$(cd inventory && corepack pnpm --version)" == "$pnpm_spec" ]] || { echo 'Prepared pnpm differs from the Inventory pin'; exit 1; }
       - name: Test v2 Identity caller and attest remote secret custody
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
