@@ -1225,6 +1225,17 @@ preview `30507517010`, staging `30507543078` e produção `30507710641`.
 somente `META_ACCESS_TOKEN`, `META_PIXEL_ID` e
 `NEXT_PUBLIC_META_PIXEL_ID`; `META_CAPI_TEST_EVENT_CODE` está ausente.
 
+A PR #893 consolidou a suíte de regressão e a evidência de fechamento e foi
+integrada como `122ea0523b4dab0916ee00d347da1c200a3909d8`. A promoção final
+desse SHA passou por preview `30508783523`, staging `30508812469` e produção
+`30508993966`. Depois da promoção, `/`, `/doutores` e
+`/api/booking/services` responderam HTTP 200 com
+`x-app-build=122ea0523b4dab0916ee00d347da1c200a3909d8` e
+`x-app-build-time=30508993966`; o Worker está 100% na versão
+`aec842a3-1fee-4bdf-bbea-86f33f6ee087`. A versão
+`7c3d2cdd-1c1f-4edb-91b3-2dd4489b084c` permanece como rollback
+pós-minimização conhecido e validado.
+
 A prova final `contact_4f32b56c-cb57-4b5a-9bb0-66929f6c228c` gerou
 exatamente uma requisição de redirect, preservou a mensagem original e o token
 `EF-*`, enviou `Contact` pelo Pixel `1055784516710042` com objeto Meta vazio e
