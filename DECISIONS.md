@@ -13,14 +13,18 @@
   workflow name/path/ID and all run provenance.
 - Decision: the versioned staging/production environment payloads reproduce
   the live custom `main` policy, sole owner reviewer and
-  `prevent_self_review=true`. This is an intentional lockout baseline, not
-  independent approval. The remote and versioned reviewer must be updated
-  together when an independent human/app identity is authorized.
+  `prevent_self_review=true`, with `can_admins_bypass=false` explicit and
+  validator-enforced. This is an intentional lockout baseline, not independent
+  approval. The remote and versioned reviewer must be updated together when an
+  independent human/app identity is authorized.
 - Evidence: preview run `30556924556` on PR #924's merge SHA observed successful
   Timekeeping child `30556988335`, then timed out in job `90919728697` because
   it expected the undocumented ref suffix. Watchdog run `30558653559` exposed
-  the separate dynamic-name defect. PR #927 contains both fixes; security
-  review found and verified the watchdog P1, with no remaining P0/P1/P2.
+  the separate dynamic-name defect. PR #927 contains both fixes. Its initial
+  head passed 14 hosted checks; Codex review then found the omitted
+  administrator-bypass field and remaining static `run.name` comparisons.
+  Commit `c3131eb8` fixes both, 219/219 governed tests pass and the independent
+  follow-up review reports no remaining P0/P1/P2.
 - Impact: no environment, secret, deployment or module-control value is changed
   by this decision. Staging and production remain fail-closed until #927 is
   integrated and every external predecessor is independently satisfied.

@@ -176,10 +176,17 @@ jornada autenticada atual continue válida.
   `@refs/heads/main`. A sucessora preserva checks independentes de workflow ID,
   branch, SHA, repositório, evento, attempt, título/nonce e capability; também
   corrige o watchdog para validar o nome estático em workflow metadata, pois
-  `run.name` recebe o `run-name` dinâmico. A revisão de segurança encontrou
-  esse P1 do watchdog, ele foi corrigido e a re-revisão não encontrou P0/P1/P2
-  remanescente. O mesmo PR versiona a proteção live dos environments para não
-  permitir reaplicação do payload histórico mais fraco.
+  `run.name` recebe o `run-name` dinâmico. O primeiro head publicado
+  `5b8447a70c30e7011a9a48099d8e1222b72e5992` passou 14 checks; o Codex review
+  encontrou dois P1s adicionais: `can_admins_bypass` ausente do payload e
+  comparações estáticas de `run.name` em outros validadores. O commit corretivo
+  `c3131eb8` define/valida o bypass como `false`, usa `workflow.name` canônico
+  em todas as superfícies e adiciona regressão contra reintrodução. A suíte
+  passou 219/219, actionlint/sintaxe/validadores ficaram verdes e duas revisões
+  locais independentes retornaram zero P0/P1/P2. O PR ainda precisa de checks
+  finais, re-review, resolução das duas conversas e merge canônico. O mesmo PR
+  versiona a proteção live dos environments para não permitir reaplicação do
+  payload histórico mais fraco.
 - [ ] Provisionar e atestar separadamente o broker de fechamento externo nos
   environments `ponto-emergency-staging` e `ponto-emergency-production`:
   secret `PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL` e variables

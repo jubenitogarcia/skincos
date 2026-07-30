@@ -177,8 +177,9 @@ A trava `timekeeping_period_guards` é adquirida por data antes do cálculo e im
 > mutex/watchdog e os nomes Ponto-only foram integrados pela PR #924 em
 > `91f6e9033fed8a186ef2e93be070db3ed896fdd3`. O primeiro preview
 > `30556924556` falhou no contrato REST de observação depois que o child
-> Timekeeping `30556988335` passou; PR #927 corrige path e nome dinâmico do
-> watchdog, mas ainda precisa de checks/review/merge e novo preview. Não há SHA
+> Timekeeping `30556988335` passou; PR #927 corrige path e nome dinâmico em
+> todas as validações REST, fixa `can_admins_bypass=false` no payload e está
+> com checks finais/re-review/merge e novo preview pendentes. Não há SHA
 > selecionado, provisioning externo nem prova live. Staging e produção continuam
 > `module-control:timekeeping=maintenance`; staging foi fechado pela execução
 > canônica `30527767707`, que é somente evidência fail-close, e os fences

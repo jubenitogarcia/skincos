@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-30T16:08:11Z",
-  "source_main_sha": "abe56a171e5a0ad3b79885ca0fda9bfae819b011",
-  "source_main_state": "verified-current-main-after-pr-924-925-926",
+  "authoritative_at": "2026-07-30T16:34:46Z",
+  "source_main_sha": "46b97519adc056d31553531cf3f90ad5a324fc88",
+  "source_main_state": "verified-current-main-after-pr-924-925-926-928",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
@@ -13,7 +13,7 @@
         "ponto-release-prerequisites"
       ],
       "blockers": [
-        "PR #924 integrated the corrective package, but first preview 30556924556 failed after successful Timekeeping child 30556988335 on the GitHub REST path contract; PR #927 is open at first commit 4c895a4b and still needs hosted checks, review closure and canonical merge before a replacement preview",
+        "PR #924 integrated the corrective package, but first preview 30556924556 failed after successful Timekeeping child 30556988335 on the GitHub REST path contract; PR #927 initial head 5b8447a70c passed 14 hosted checks and review-fix c3131eb8 closes two Codex P1s, but final checks, re-review, thread closure and canonical merge remain before a replacement preview",
         "the release-probe and Identity-session contracts are integrated by PR #924 but not live; HMAC-before-login, pilot/canary v2 provenance, atomic UNIQUE D1 nonce acceptance, Core-owned affinity and stale-cookie 401 teardown remain unexercised without authorized staging inputs",
         "the watchdog source is integrated, but run 30558653559 exposed a REST dynamic-name P1 fixed in PR #927; broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI, broker endpoint/credential/keys, clinic runner and independent external recovery proof remain absent",
         "seven historical Timekeeping child runs and CRM Pages attempt-2 run 30491926800 retain their old definitions; live dispatch fences and both disabled legacy Ponto smokes must remain through expiry or reviewed replacement",
@@ -111,13 +111,15 @@
           "branch": "codex/admin/ponto-run-path-contract",
           "pr": 927,
           "first_commit_sha": "4c895a4b",
-          "state": "open-hosted-checks-review-merge-and-replacement-preview-pending",
+          "review_fix_commit_sha": "c3131eb8",
+          "state": "open-final-checks-rereview-merge-and-replacement-preview-pending",
           "failed_preview_run": 30556924556,
           "failed_preview_job": 90919728697,
           "successful_timekeeping_child_run": 30556988335,
           "failed_watchdog_run": 30558653559,
-          "governed_tests": "217/217",
-          "security_review": "watchdog-p1-fixed-no-remaining-p0-p1-p2"
+          "governed_tests": "219/219",
+          "initial_hosted_checks": "14/14",
+          "security_review": "rest-path-dynamic-name-and-admin-bypass-p1s-fixed-zero-remaining-p0-p1-p2"
         },
         "post_merge_corrective_overlay": {
           "branch": "codex/admin/ponto-release-evidence",
@@ -606,7 +608,7 @@
       "state": "pr-924-integrated-pr-927-open-both-environments-maintenance-broker-policy-null-external-gates-open",
       "dependencies": [],
       "blockers": [
-        "PR #924 integrated the corrective overlay; PR #927 is the bounded REST path/dynamic-name correction and is open with hosted checks, review closure, merge and replacement preview still pending",
+        "PR #924 integrated the corrective overlay; PR #927 is the bounded REST path/dynamic-name correction, initial head 5b8447a70c passed 14 hosted checks and review-fix c3131eb8 closes the remaining admin-bypass/static-name P1s, but final checks, re-review, merge and replacement preview are pending",
         "the release-probe and Identity-session contracts are integrated but not live; authorized custody and staging predecessors required to exercise them are absent",
         "the watchdog source is integrated and its live REST P1 is fixed in PR #927, but broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI, endpoint/credential/keys, clinic runner and independent external recovery proof remain absent",
         "historical child runs remain rerunnable under their old definitions and therefore externally contained through expiry or reviewed replacement",

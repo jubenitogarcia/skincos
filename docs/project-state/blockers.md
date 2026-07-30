@@ -9,16 +9,20 @@ PR #921 integrated the missing progressive release controls at
 eight resolved review conversations. PR #924 integrated the complete
 post-#921 corrective package as
 `91f6e9033fed8a186ef2e93be070db3ed896fdd3`, with its required checks green
-and review conversations resolved. Unrelated PRs #925/#926 advanced `main` to
-`abe56a171e5a0ad3b79885ca0fda9bfae819b011`.
+and review conversations resolved. Unrelated PRs #925/#926/#928 advanced
+`main` to `46b97519adc056d31553531cf3f90ad5a324fc88`.
 
 The first post-merge preview (`30556924556`) proved its source and completed
 Timekeeping child `30556988335`, but coordinator job `90919728697` failed
 because the GitHub REST `run.path` contract was modeled with a nonexistent ref
 suffix. Watchdog run `30558653559` also exposed a dynamic `run.name` mismatch
 that prevented the emergency latch path. PR #927 fixes both live contracts and
-versions the stronger environment baseline. Its first commit is `4c895a4b`;
-hosted checks, review-thread closure and canonical merge are still pending.
+versions the stronger environment baseline. Its initial head `5b8447a70c...`
+passed 14 hosted checks. Codex review then found two P1s: omitted
+`can_admins_bypass=false` in the versioned environment payload and remaining
+static `run.name` comparisons. Commit `c3131eb8` fixes both; the governed suite
+passes 219/219 and independent review reports zero remaining P0/P1/P2. Final
+checks, re-review, review-thread closure and canonical merge are still pending.
 `selected_release_sha` remains null and no live surface runs the current main.
 
 Both module-control KVs are now maintenance. Timekeeping D1 journals contain

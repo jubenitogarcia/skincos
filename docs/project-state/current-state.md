@@ -1,14 +1,14 @@
 # Current state
 
-## Workforce Timekeeping — corrective source integrated; REST successor #927 open; release fail-closed — 2026-07-30T16:08:11Z
+## Workforce Timekeeping — corrective source integrated; REST successor #927 final review pending; release fail-closed — 2026-07-30T16:34:46Z
 
 This is the authoritative Ponto entry and supersedes the older local-successor
 entries below. PR #924 integrated the post-#921 corrective package as
 `91f6e9033fed8a186ef2e93be070db3ed896fdd3`; its final reviewed head was
 `c35aaf6892fea8ad5ae5745a82be55f24bd5a342`. The merge had all required checks
 green, 20/20 review conversations resolved and the sealed security scans
-reported zero surviving findings. Unrelated PRs #925 and #926 then advanced
-`main` to `abe56a171e5a0ad3b79885ca0fda9bfae819b011`.
+reported zero surviving findings. Unrelated PRs #925, #926 and #928 then
+advanced `main` to `46b97519adc056d31553531cf3f90ad5a324fc88`.
 
 The first canonical preview, run `30556924556` on `91f6e903...`, proved source
 admission and completed the Timekeeping child run `30556988335` successfully
@@ -24,13 +24,20 @@ PR #927 (`codex/admin/ponto-run-path-contract`, first corrective commit
 `main` branch, immutable SHA, repository, event, attempt, title/nonce,
 capability and predecessor checks. It also versions the stronger live
 staging/production environment baseline (custom `main`, owner reviewer,
-`prevent_self_review=true`) so the weaker historical payload cannot be
-reapplied. The full governed suite is 217/217; actionlint 1.7.12, syntax,
-architecture, topology, progressive policy, module, governance, security
-exception and diff checks are green. Independent security review found the
-watchdog P1, verified its live-shaped fix and found no remaining P0/P1/P2. PR
-#927 still requires hosted checks, review-thread closure and canonical merge;
-no replacement preview has run yet. `selected_release_sha` remains null.
+`prevent_self_review=true`, `can_admins_bypass=false`) so the weaker historical
+payload cannot be reapplied. Its initial published head
+`5b8447a70c30e7011a9a48099d8e1222b72e5992` passed all 14 hosted checks.
+Codex then found two P1s: the versioned environment payload omitted the
+administrator-bypass prohibition, and other REST validators still treated
+dynamic `run.name` as the static workflow name. Corrective commit `c3131eb8`
+sets and validates the non-bypassable environment payload, moves every static
+identity check to canonical workflow metadata and adds a regression guard.
+The full governed suite is now 219/219; actionlint 1.7.12, syntax, architecture,
+topology, progressive policy, module, governance, security exception and diff
+checks are green. Two independent read-only security reviews found no
+remaining P0/P1/P2 after the fixes. PR #927 still requires final hosted checks,
+Codex re-review, review-thread closure and canonical merge; no replacement
+preview has run yet. `selected_release_sha` remains null.
 
 Live Cloudflare remains unchanged and deliberately closed. Both
 `module-control:timekeeping` values are `maintenance`; the emergency-latch key
@@ -55,44 +62,57 @@ at their governed scopes. No secret values were read. Identity/Workforce still
 provides no authorized eligible pilot. Therefore preview may resume only after
 #927 merges; staging, pilot, canary and production remain ineligible.
 
-## Codex Windows native / PowerShell gateway — delivery candidate validated — 2026-07-30T15:26Z
+## Codex Windows native / PowerShell gateway — integrated and validated locally — 2026-07-30T16:21Z
 
-The isolated branch `codex/admin/native-codex-wsl-gateway` is based on
-`origin/main` `c96caa4fec6fc0c33cc3b3904792905c6f38eda7`. Candidate
-`ed8c20b109137a39d35345341ef04dc89b5eff86` centralizes Windows-to-Linux
-project operations in the typed `invoke-skincos-wsl.ps1` gateway. Codex
-continues to run natively on Windows with PowerShell as the integrated shell;
-Ubuntu-24.04 remains the encapsulated owner of SKINCOS Node, npm, Python,
-Playwright, Wrangler, PostgreSQL and systemd work. Windows-native Node and
-Python are available for general Codex tooling, but the project rules and
-boundary tests prohibit Windows-side project installs, builds and tests.
+The Windows-native delivery is integrated through PR #925. Technical commit
+`ed8c20b109137a39d35345341ef04dc89b5eff86` and the current-main reconciliation
+`72036d433ca64578359774e82db0eb57207a5294` merged without bypass at
+`076bf6e3bc09cbd7ce55a6d79d036a09f4c1ce56`. All 19 hosted checks passed;
+the ready PR was `CLEAN` and `MERGEABLE`, with no review or comment pending.
+The typed `invoke-skincos-wsl.ps1` gateway keeps Codex, authentication, plugins,
+browser and the integrated terminal native on Windows/PowerShell, while
+Ubuntu-24.04 owns SKINCOS Node, npm, Python, Playwright, Wrangler, PostgreSQL
+and systemd execution. Windows-native Node and Python remain available only
+for general Codex tooling.
 
-The direct `CRM – Local` action was exercised from an immutable private
-preview of the exact candidate. Its first final run rebuilt the CRM after the
-input fingerprint changed, started local Insumos, Workforce/Timekeeping and
-the WhatsApp adapter, and passed the strict Pages shell gate for all 14
-modules. The gate report is privately retained at
-`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\instances\gestor\full\logs\crm-local-gate-20260730-122147.json`.
-The browser opened only after the green gate. A consecutive invocation
-revalidated release-affine Timekeeping readiness and explicitly reused the
-same ready runtime without rebuild.
+Post-merge application exposed a Finance stop regression: its nested CRM stop
+inherited the default `gestor/full` manifest root. Commit
+`3260b98cff6ce440b97cb00d19ab5fa9529975cb` isolates both Finance start and stop
+under `FINANCE_LOCAL_RUNTIME_ROOT/crm`; PR #926 passed all 13 hosted checks and
+merged without bypass at `abe56a171e5a0ad3b79885ca0fda9bfae819b011`.
+The real stop path now leaves the canonical full manifest on the same target
+commit and writes the Finance `finance-local--crm` manifest separately.
 
-Validation is green for all 56 launcher/build/boundary tests, the typed gateway
-PowerShell harness, 13 changed PowerShell parsers, four changed Bash parsers,
-both changed TOML files and `git diff --check`. The clean Windows worktree
-contains zero `node_modules`. The WSL-unavailable harness fails before starting
-any service. Private CRM bindings are owner-only and are consumed from
-`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\ponto-private`;
-values are neither printed nor stored in Git. The pre-existing Timekeeping
-dependency audit remains tracked as three high and zero critical findings;
-no `--force` remediation was used.
+The machine is applied from canonical `origin/main`
+`abe56a171e5a0ad3b79885ca0fda9bfae819b011`, not a selected preview.
+`active-source.json` is absent. The exact merged source performed a clean
+frontend build, started local Insumos, Workforce/Timekeeping and the WhatsApp
+adapter, passed the strict Pages shell gate for all 14 modules and opened
+Chrome only after approval. The final gate report is
+`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\instances\gestor\full\logs\crm-local-gate-20260730-131800.json`.
+The final consecutive action explicitly reused the ready runtime in 7.68
+seconds. Its manifest is `ready`, release-affine to the merge, and all five
+recorded PID/start-tick identities are live. Pages health/auth,
+release-affine Timekeeping readiness, WhatsApp and the Pages Insumos proxy
+return 200; the direct Insumos adapter returns the expected fail-closed 401.
+
+The user Start Menu shortcut is `CRM – Local` / `CrmLocal`, targets the
+PowerShell launcher in `C:\CodexShared\Projetos\skincos`, and the inaccessible
+shared Start Menu root contains zero `.lnk` files, so it exposes no stale
+duplicate. The persistent Playwright cache remains under
+`C:\CodexRuntime\operator\admin\skincos\cache\playwright`. All 56
+launcher/build/boundary tests, both gateway PowerShell harnesses, PowerShell,
+Bash and TOML parsing, architecture validation and `git diff --check` passed;
+the Windows delivery worktrees contain zero `node_modules`, and the
+WSL-unavailable harness fails before service start. Private bindings stay
+owner-only and outside Git.
 
 This is local operator tooling only. No deployment workflow, production
-service, Cloudflare resource, database or remote configuration was changed.
-At this observation the candidate is published in PR #925 but not yet
-integrated; hosted checks, automated review and merge evidence remain required
-before the private preview selection can be removed and the canonical
-`origin/main` source validated.
+service, Cloudflare resource, database or remote configuration changed. The
+pre-existing Timekeeping dependency audit remains tracked as three high and
+zero critical findings; no `--force` remediation was used. The only remaining
+external gate is the supported Codex application restart and same-task UI
+reproduction; no repository setting can substitute for that client test.
 
 ## Workforce Timekeeping — both environments in maintenance; local successor evolving and uncommitted — 2026-07-30T11:14Z
 
