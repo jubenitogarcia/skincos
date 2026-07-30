@@ -77,22 +77,35 @@ valores sintéticos independentes pelo processo privado do operador nos caminhos
 padrão abaixo, ou informe caminhos privados alternativos por
 `CRM_TIMEKEEPING_ENV_FILE` e `PONTO_PAGES_ENV_FILE`:
 
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\initialize-local-crm-private-bindings.ps1
+```
+
+O inicializador é idempotente: não exibe nem rotaciona valores existentes,
+acrescenta somente bindings ausentes de um contrato legado íntegro e falha se
+encontrar um conjunto parcial.
+
 - `C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\ponto-private\timekeeping.worker.env`
   contém exatamente `PONTO_ACTOR_HMAC_KEY`, `PONTO_IDEMPOTENCY_KEY`,
   `PONTO_TEMPLATES_KEY`, `PONTO_PROFILE_DATA_KEY`,
   `PONTO_NETWORK_CONTEXT_KEY` e `IDENTITY_WORKFORCE_HMAC_KEY`;
 - `C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\ponto-private\ponto.pages.env`
-  contém somente `PONTO_ACTOR_HMAC_KEY` e `PONTO_NETWORK_CONTEXT_KEY`.
+  contém `PONTO_ACTOR_HMAC_KEY`, `PONTO_NETWORK_CONTEXT_KEY` e
+  `PONTO_RELEASE_PROBE_HMAC_KEY`, derivada localmente da chave de idempotência;
+- `C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\ponto-private\inventory.identity.env`
+  contém `IDENTITY_WORKFORCE_HMAC_KEY`, `INSUMOS_SEED_TOKEN` e
+  `SESSION_SECRET`.
 
 Actor e network precisam coincidir entre os dois arquivos; todos os bindings
-do Worker devem ser distintos. Arquivo ausente, dentro da árvore compartilhada,
-com placeholder, binding extra ou valor divergente interrompe o launcher antes
-de iniciar serviços. Os valores são carregados por `--env-file`, não aparecem
-na linha de comando e nunca devem ser copiados para `.dev.vars`. Em filesystem
+do Worker devem ser distintos; a chave de identidade precisa coincidir entre
+Worker e Inventory. Arquivo ausente, dentro da árvore compartilhada, com
+placeholder, binding extra ou valor divergente interrompe o launcher antes de
+iniciar serviços. Os valores são carregados por `--env-file`, não aparecem na
+linha de comando e nunca devem ser copiados para `.dev.vars`. Em filesystem
 POSIX, o validador exige owner igual ao operador, arquivo `0600` e diretório
-`0700`. Em caminho Windows/DrvFS ele classifica a custódia como
-`windows-acl-external`; o ACL do diretório privado deve permanecer restrito à
-conta `admin`, pois bits POSIX não atestam essa fronteira.
+`0700`. Em caminho Windows/DrvFS ele exige proprietário e DACL explícita
+restritos à conta atual, pois bits POSIX não atestam essa fronteira.
 
 Para cada início, o launcher usa o SHA completo do snapshot selecionado como
 `APP_VERSION`, configura `ENVIRONMENT=local`, grava explicitamente

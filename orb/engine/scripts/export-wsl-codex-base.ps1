@@ -1,3 +1,5 @@
+# WSL_BOUNDARY_EXCEPTION: infrastructure export tooling must control the WSL
+# distribution itself and therefore cannot be routed through that distro.
 $ErrorActionPreference = "Stop"
 
 $DistroName = "Ubuntu-24.04"
