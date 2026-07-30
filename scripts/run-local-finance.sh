@@ -143,7 +143,9 @@ if [[ "$STOP_ONLY" == 1 ]]; then
   gateway_pid="$(state_value gateway_pid)"
   if [[ "$gateway_pid" =~ ^[0-9]+$ ]] && belongs_to_finance_gateway "$gateway_pid"; then terminate_tree "$gateway_pid"; fi
   rm -f "$STATE_FILE"
-  CRM_VITE_PORT="${CRM_VITE_PORT}" CRM_PAGES_PORT="${CRM_PAGES_PORT}" CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 CRM_PID_FILE="$CRM_PID_FILE" CRM_LOG_FILE="$CRM_LOG_FILE" "$ROOT_DIR/scripts/run-local-crm.sh" --stop || true
+  CRM_PERSONA=GESTOR CRM_RUNTIME_MODULE=finance CRM_RUNTIME_ID=finance-local--crm CRM_RUNTIME_ROOT="$RUNTIME_ROOT/crm" \
+    CRM_VITE_PORT="${CRM_VITE_PORT}" CRM_PAGES_PORT="${CRM_PAGES_PORT}" CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_WITH_WHATSAPP=0 \
+    CRM_PID_FILE="$CRM_PID_FILE" CRM_LOG_FILE="$CRM_LOG_FILE" "$ROOT_DIR/scripts/run-local-crm.sh" --stop || true
   echo 'Financeiro local finalizado.'
   exit 0
 fi
@@ -293,6 +295,7 @@ echo "[finance-local] Iniciando CRM Pages local para cenário $SCENARIO"
   CRM_WITH_WHATSAPP=0 CRM_WITH_INSUMOS=0 CRM_WITH_TIMEKEEPING=0 CRM_GATE_STRICT=0 CRM_BUILD_BEFORE_START="${FINANCE_CRM_BUILD_BEFORE_START:-1}" \
   LOCAL_AUTH_TEST_USER_ADMIN=false LOCAL_AUTH_USERNAME="$LOCAL_FINANCE_ACTOR" LOCAL_AUTH_EMAIL="${LOCAL_FINANCE_ACTOR}@localhost" LOCAL_AUTH_NAME='Finance Local' \
   LOCAL_AUTH_ALLOWED_MODULES="$LOCAL_MODULES" LOCAL_AUTH_ALLOWED_UNITS="$LOCAL_UNITS" \
+  CRM_PERSONA=GESTOR CRM_RUNTIME_MODULE=finance CRM_RUNTIME_ID=finance-local--crm CRM_RUNTIME_ROOT="$RUNTIME_ROOT/crm" \
   LOCAL_FINANCE_API_TARGET="http://127.0.0.1:${GATEWAY_PORT}" LOCAL_FINANCE_ACTOR="$LOCAL_FINANCE_ACTOR" LOCAL_FINANCE_CSRF_TOKEN=finance-local-csrf \
   setsid "$ROOT_DIR/scripts/run-local-crm.sh" --module finance --without-whatsapp --no-browser
 ) >>"$CRM_LOG_FILE" 2>&1 &

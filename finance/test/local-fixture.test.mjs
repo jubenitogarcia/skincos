@@ -65,3 +65,10 @@ test('local Finance launcher preserves the module grant when exercising only the
   assert.doesNotMatch(source, /disabled\|no-module\) LOCAL_MODULES='' ;;/);
   assert.match(source, /curl -sS --connect-timeout 1 --max-time 1/);
 });
+
+test('local Finance launcher isolates its CRM manifest from the full Gestor runtime', async () => {
+  const source = await readFile(launcher, 'utf8');
+  assert.equal((source.match(/CRM_RUNTIME_ROOT="\$RUNTIME_ROOT\/crm"/g) || []).length, 2);
+  assert.equal((source.match(/CRM_RUNTIME_MODULE=finance/g) || []).length, 2);
+  assert.equal((source.match(/CRM_RUNTIME_ID=finance-local--crm/g) || []).length, 2);
+});
