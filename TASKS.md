@@ -169,7 +169,7 @@ jornada autenticada atual continue válida.
   teardown indeterminado mantém o probe fail-closed e preserva o erro primário.
   A integração e os hosted checks estão comprovados no merge #924; a jornada
   real continua bloqueada até identidade/runner/custódia autorizados existirem.
-- [ ] Integrar a PR #927 antes de repetir o `preview`. O primeiro `preview`
+- [x] Integrar a PR #927 antes de repetir o `preview`. O primeiro `preview`
   pós-#924, run `30556924556` no SHA `91f6e903...`, publicou e atestou
   Timekeeping no child run `30556988335`, mas o coordenador falhou no job
   `90919728697` porque a API REST retorna `run.path` canônico sem
@@ -183,10 +183,56 @@ jornada autenticada atual continue válida.
   `c3131eb8` define/valida o bypass como `false`, usa `workflow.name` canônico
   em todas as superfícies e adiciona regressão contra reintrodução. A suíte
   passou 219/219, actionlint/sintaxe/validadores ficaram verdes e duas revisões
-  locais independentes retornaram zero P0/P1/P2. O PR ainda precisa de checks
-  finais, re-review, resolução das duas conversas e merge canônico. O mesmo PR
-  versiona a proteção live dos environments para não permitir reaplicação do
-  payload histórico mais fraco.
+  locais independentes retornaram zero P0/P1/P2. O head final
+  `7d8945300903847167c0ba55234ab8458cfb240d` passou todos os 14 checks,
+  teve as duas conversas resolvidas e recebeu Codex re-review sem finding no
+  próprio head. A PR integrou sem bypass em
+  `15ac662e0c3b01317d48270cd211d7910000ca5a`, incluindo a proteção live dos
+  environments contra reaplicação do payload histórico mais fraco.
+- [x] Integrar a correção de bootstrap pnpm pela PR #929. O replacement preview
+  anterior `30562834119` usou o merge #927 `15ac662e...`; Timekeeping child
+  `30562866947` passou e publicou os artefatos `8767637805`/`8767637318`, mas
+  Identity/Inventory child `30562970927` falhou antes de testes ou dry-run
+  porque `actions/setup-node` pediu cache pnpm antes de o executável existir no
+  runner. A PR removeu o cache inválido e passou todos os 14 checks; Codex não
+  encontrou major issue no head exato
+  `019a34367f3e2e40387b3f50da74b35149ff5981`, que integrou sem bypass como
+  `77f241ec20f8956fc7e9b20dd2b373518dafa7be`.
+- [x] Integrar a sucessora de ativação Corepack e repetir o `preview` no SHA
+  exato resultante. O segundo replacement preview `30564873785` selecionou o
+  merge #929 `77f241ec...`; Timekeeping child `30564915304` passou e publicou
+  os artefatos `8768441812`
+  (`sha256:541edf288b8cb62ded320c08d3dfb71d28e219164e19bac834966a7b8fd95604`)
+  e `8768441200`
+  (`sha256:6a7b0a45628672aa57acc8a00a4ba6195407ef4bcb1bc4bc69639f02b702f044`).
+  Identity/Inventory child `30565019029` falhou no job `90947405936` antes de
+  testes ou dry-run porque o Corepack incluído no Node 22.12 tentou resolver
+  metadata de pnpm com uma signing key desatualizada (`Cannot find matching
+  keyid`). Core API e CRM Pages foram pulados e nenhuma superfície live,
+  migration ou controle foi alterado. A PR #930 lê o `packageManager` exato
+  de `inventory/package.json`, executa `corepack prepare` para essa versão e
+  confirma `pnpm --version` antes do primeiro uso nos três jobs Identity. Seu
+  head `872f1b10c9bd64e1768fa0e8777d992e2658240b` passou 14/14 checks,
+  exact-head Codex review sem major issue e integrou sem bypass como
+  `71c54b1d406317c614dc33e48ced170458fbd707`. O preview completo
+  `30566547605` selecionou exatamente esse SHA; Timekeeping
+  `30566594811`, Identity/Inventory `30566729991`, Core API `30566806246` e
+  CRM Pages `30566905155` passaram. Artifacts `8769249449` e `8769249808`
+  retêm evidência combinada e ledger sanitizado; o checkpoint privado
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T144137-20-complete-preview.md`
+  fixa todos os digests. Foi dry-run: nenhuma superfície live, migration,
+  escrita D1/KV ou module-control mudou. Staging continua bloqueado pelos
+  predecessores externos abaixo; qualquer avanço de `main` exige novo preview.
+- [ ] Integrar pela PR #931 a correção bounded de admissão do watchdog e
+  repetir o preview no SHA exato do merge.
+  O coordenador bem-sucedido `30566547605` disparou automaticamente o watchdog
+  `30567091382`; o context job `90954219518` falhou porque o job admitiu um
+  first attempt `success` que o validador corretamente recusa. Todos os jobs de
+  emergência foram pulados e nenhuma mutation ocorreu. A correção faz skip
+  somente de first-attempt success e continua admitindo failure, cancelled,
+  timed_out e qualquer rerun; o teste focado passa 9/9. O merge avançará
+  `main`, portanto o novo SHA exato precisa de preview completo antes de
+  staging.
 - [ ] Provisionar e atestar separadamente o broker de fechamento externo nos
   environments `ponto-emergency-staging` e `ponto-emergency-production`:
   secret `PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL` e variables
@@ -223,14 +269,13 @@ jornada autenticada atual continue válida.
   `CLOUDFLARE_ZONE_ID` foram criados como sete variables não secretas do
   repositório e lidos de volta individualmente. Eles estavam ausentes antes e
   foram conferidos contra os recursos Cloudflare live; valores ficam apenas no
-  checkpoint privado. A reconsulta live posterior não encontrou hoje os nomes
-  Ponto-only no repositório; as quatro flags `ENABLE_PONTO_*` também continuam
-  ausentes. O código consumidor está no `main`, mas ausência de qualquer nome
-  necessário falha fechada. Esses IDs não
-  selecionam candidato, não desfazem os fences legados, não implantam nem
-  habilitam o módulo. Pages geral continua usando `CRM_PAGES_PROJECT` /
+  checkpoint privado. A reconsulta live mais recente confirmou presentes por
+  nome os seis selectors Ponto-only e `CLOUDFLARE_ZONE_ID`; as quatro flags
+  `ENABLE_PONTO_*` continuam ausentes. Esses IDs não selecionam candidato, não
+  desfazem os fences legados, não implantam nem habilitam o módulo. Pages geral
+  continua usando `CRM_PAGES_PROJECT` /
   `CRM_PAGES_PROJECT_STAGING` nas definições antigas. A configuração deve ser
-  reprovisionada somente por custódia aprovada para o estágio autorizado.
+  alterada somente por custódia aprovada para o estágio autorizado.
 - [x] Revisar e integrar pela PR #924 o overlay
   `module-control:timekeeping:emergency-latch`: missing/unreadable/malformed ou
   `latched=true` nega; somente schema v1 explícito `latched=false` abre; o
@@ -273,7 +318,7 @@ jornada autenticada atual continue válida.
   CRM Pages deploy, sete module-control e um production baseline. O watchdog
   integrado fecha um rerun do coordenador canônico e a suíte cobre a
   invalidação terminal de capability emitida tardiamente; a correção REST da
-  PR #927 é necessária para esse caminho observar nomes e paths como a API os
+  PR #927 está integrada para esse caminho observar nomes e paths como a API os
   entrega. Um child run
   histórico, porém, continua executando sua definição antiga; por isso esses
   runs permanecem contidos pelos fences externos até expirar. Manter a
@@ -363,12 +408,11 @@ jornada autenticada atual continue válida.
   `CLOUDFLARE_ZONE_ID` já está presente por nome como variable não secreta do
   repositório e teve readback no checkpoint 14; os três IDs das regras continuam
   ausentes e nenhuma regra foi criada ou alterada.
-  A listagem Cloudflare da zona mostrou somente rulesets managed; o GET do
-  custom entrypoint não foi autorizado. Tanto o browser interno do Codex quanto
-  o perfil Chrome existente chegaram somente ao login Cloudflare, sem sessão
-  autenticada; nenhuma credencial foi inserida e nenhuma mutação ocorreu. O
-  estado das regras continua não comprovado; o workflow com security token após
-  o merge deve atestá-lo, sem bypass no Worker. O secret
+  A listagem autenticada mais recente da zona mostrou somente rulesets managed
+  e nenhum `http_request_firewall_custom`; 12/12 probes externas falharam, logo
+  o enforcement necessário está funcionalmente ausente. O endpoint custom
+  ainda precisa do principal split-custody canônico para aplicar e reatestar as
+  regras sem bypass no Worker. O secret
   `PONTO_WAF_READ_API_TOKEN` deve ser somente do repositório e
   `PONTO_WAF_WRITE_API_TOKEN` somente do environment `production`; ambos estão
   não provisionados e não podem usar `CLOUDFLARE_SECURITY_API_TOKEN` como

@@ -138,6 +138,29 @@ test("watchdog rejects first-attempt success, non-main source, and event/API dri
   })));
 });
 
+test("watchdog workflow skips a successful first-attempt coordinator before provenance validation", () => {
+  const workflowText = fs.readFileSync(
+    new URL("../workflows/ponto-release-watchdog.yml", import.meta.url),
+    "utf8",
+  );
+  const contextJob = workflowText.slice(
+    workflowText.indexOf("  context:"),
+    workflowText.indexOf("  latch:"),
+  );
+  assert.match(contextJob, /github\.run_attempt == 1/);
+  assert.match(contextJob, /github\.event\.workflow_run\.run_attempt > 1/);
+  for (const conclusion of ["failure", "cancelled", "timed_out"]) {
+    assert.match(
+      contextJob,
+      new RegExp(`github\\.event\\.workflow_run\\.conclusion == '${conclusion}'`),
+    );
+  }
+  assert.doesNotMatch(
+    contextJob,
+    /github\.event\.workflow_run\.conclusion == 'success'/,
+  );
+});
+
 test("watchdog never rolls back after failed child reconciliation", () => {
   const workflowText = fs.readFileSync(
     new URL("../workflows/ponto-release-watchdog.yml", import.meta.url),

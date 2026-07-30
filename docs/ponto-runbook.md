@@ -173,17 +173,22 @@ A trava `timekeeping_period_guards` é adquirida por data antes do cálculo e im
 
 ## Deploy e rollback
 
-> Estado em 2026-07-30: os controles de replay, overlay de emergência,
-> mutex/watchdog e os nomes Ponto-only foram integrados pela PR #924 em
-> `91f6e9033fed8a186ef2e93be070db3ed896fdd3`. O primeiro preview
-> `30556924556` falhou no contrato REST de observação depois que o child
-> Timekeeping `30556988335` passou; PR #927 corrige path e nome dinâmico em
-> todas as validações REST, fixa `can_admins_bypass=false` no payload e está
-> com checks finais/re-review/merge e novo preview pendentes. Não há SHA
-> selecionado, provisioning externo nem prova live. Staging e produção continuam
-> `module-control:timekeeping=maintenance`; staging foi fechado pela execução
-> canônica `30527767707`, que é somente evidência fail-close, e os fences
-> externos registrados no checkpoint privado devem permanecer.
+> Estado em 2026-07-30: PRs #924/#927/#929/#930 integraram os controles e as
+> correções observadas sem bypass. O preview completo `30566547605` selecionou
+> exatamente o merge #930
+> `71c54b1d406317c614dc33e48ced170458fbd707`; Timekeeping
+> `30566594811`, Identity/Inventory `30566729991`, Core API `30566806246` e CRM
+> Pages `30566905155` passaram. Artifacts `8769249449` e `8769249808`
+> preservam a evidência combinada e o ledger sanitizado. Isso é dry-run, não
+> prova live nem autorização de staging. Staging e produção continuam
+> `module-control:timekeeping=maintenance`; a execução canônica
+> `30527767707` é somente evidência fail-close. Mantenha os fences externos e
+> não despache staging antes de reviewer independente, custódia, broker, WAF,
+> runner/coorte e SLO externos. Watchdog `30567091382` expôs que first-attempt
+> success também entrava no job de contexto e gerava false-red; a PR #931 pula
+> somente esse caso e preserva failure/cancelled/timed-out e
+> reruns. Como o merge dessa correção avança `main`, execute novo preview no
+> SHA exato antes de usar qualquer predecessor.
 
 Use somente `.github/workflows/ponto-progressive-release.yml` para a composição
 de release. O coordenador não publica por conta própria: ele despacha e atesta
