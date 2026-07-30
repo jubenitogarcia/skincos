@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import { validateOnboardingInput } from '../../../identity/policy/employeeOnboarding.js';
+import { validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
 
 const script = new URL('./ponto-staging-journey-fixtures.mjs', import.meta.url);
 const inventoryMigrations = new URL('../../../inventory/migrations/', import.meta.url);
