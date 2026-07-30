@@ -1,5 +1,30 @@
 # DECISIONS
 
+## 2026-07-30 - Use canonical REST workflow paths and static workflow metadata
+
+- Decision: GitHub REST workflow-run provenance compares `run.path` with the
+  canonical workflow file path, without a ref suffix. The branch (`main`),
+  immutable head SHA, workflow ID, repository, event, run attempt,
+  title/nonce, signed capability and predecessor/artifact identity remain
+  independently mandatory.
+- Decision: a workflow's static identity comes from workflow metadata.
+  `run.name` is not a static name when the workflow declares `run-name`; the
+  watchdog accepts the live dynamic value while still pinning the exact
+  workflow name/path/ID and all run provenance.
+- Decision: the versioned staging/production environment payloads reproduce
+  the live custom `main` policy, sole owner reviewer and
+  `prevent_self_review=true`. This is an intentional lockout baseline, not
+  independent approval. The remote and versioned reviewer must be updated
+  together when an independent human/app identity is authorized.
+- Evidence: preview run `30556924556` on PR #924's merge SHA observed successful
+  Timekeeping child `30556988335`, then timed out in job `90919728697` because
+  it expected the undocumented ref suffix. Watchdog run `30558653559` exposed
+  the separate dynamic-name defect. PR #927 contains both fixes; security
+  review found and verified the watchdog P1, with no remaining P0/P1/P2.
+- Impact: no environment, secret, deployment or module-control value is changed
+  by this decision. Staging and production remain fail-closed until #927 is
+  integrated and every external predecessor is independently satisfied.
+
 ## 2026-07-30 - Keep Codex Windows-native and encapsulate the Linux backend
 
 - Decision: run the Codex agent natively on Windows with PowerShell as the
@@ -13,12 +38,12 @@
   tooling only. Project dependency trees and caches stay Linux-only; visible
   actions use typed gateway arguments, and direct WSL ownership is restricted
   to explicitly documented lifecycle infrastructure.
-## 2026-07-30 - Proposed atomic release probe and mandatory Identity session teardown
+## 2026-07-30 - Atomic release probe and mandatory Identity session teardown
 
-- Status: these contracts exist only in the evolving local successor. They have
-  targeted local validation but no immutable commit, PR, hosted checks, review,
-  merge or selected release SHA. Aggregate worktree/test counts remain pending
-  until the technical freeze.
+- Status: integrated by PR #924 at
+  `91f6e9033fed8a186ef2e93be070db3ed896fdd3`, with hosted checks and security
+  review green. No release SHA is selected and the external inputs needed to
+  execute the authenticated path remain absent.
 - Decision: the private release probe validates its external HMAC before parsing
   credentials or contacting Identity. Signature v2 is mandatory for `pilot` and
   `canary` and binds timestamp, nonce, method, path, exact body digest, release
@@ -40,7 +65,7 @@
   teardown. An indeterminate teardown fails the probe explicitly and preserves
   the primary contract error; credentials and PII remain absent from evidence.
 - Impact: these safeguards close replay and leaked-probe-session failure modes
-  in local source only. They do not authorize staging, identify a pilot, satisfy
+  in integrated source. They do not authorize staging, identify a pilot, satisfy
   deployment review or prove a live release.
 
 ## 2026-07-30 - Contain legacy Ponto UI smoke and harden environment admission
@@ -95,15 +120,15 @@
   independent approval or prove production use. Their rollback weakens
   security and cannot be used as a release bypass.
 
-## 2026-07-30 - Proposed Ponto emergency overlay and direct-surface custody
+## 2026-07-30 - Ponto emergency overlay and direct-surface custody
 
-- Status: the source implementation is local and unmerged. Only the explicitly
-  checkpointed fail-close environment admission/mode and seven non-secret
-  resource-identity variables are live; the broker, custody inputs, enable
-  gates and consuming workflow remain unprovisioned/non-operational. This
-  becomes operational release policy only after a reviewed PR is merged, the
-  exact required names are provisioned through authorized custody, hosted
-  checks pass and live behavior is attested. Until then, the checkpointed
+- Status: the source implementation was integrated by PR #924. The broker,
+  custody inputs, enable gates and runner remain
+  unprovisioned/non-operational; the latest name-only repository inventory also
+  found the Ponto-only resource variables absent. The controls become
+  operational release policy only after the exact required names are
+  provisioned through authorized custody and live behavior is attested. Until
+  then, the checkpointed
   GitHub environment fences remain in force and both staging and production
   stay `module-control:timekeeping=maintenance`.
   Staging was closed through canonical run `30527767707`; that run is
