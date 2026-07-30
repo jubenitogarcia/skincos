@@ -1,4 +1,5 @@
 name: Deploy Core Worker
+run-name: Core ${{ inputs.unit }} ${{ inputs.target }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
 
 on:
   workflow_dispatch:
@@ -8,7 +9,7 @@ on:
         required: true
         default: staging
         type: choice
-        options: [preview, staging, production]
+        options: [preview, staging, pilot, canary, production, rollback]
       unit:
         description: "Operational unit to publish; use api for gateway-only routing changes"
         required: true
@@ -23,9 +24,28 @@ on:
       release_sha: { description: "Immutable commit SHA", required: false, type: string }
       preview_run_id: { description: "Required for staging", required: false, type: string }
       staging_run_id: { description: "Required for production", required: false, type: string }
+      release_scope:
+        description: General Core release or the governed Ponto composite release
+        required: true
+        default: general
+        type: choice
+        options: [general, ponto]
+      predecessor_run_id: { description: "Required for Ponto live stages", required: false, type: string }
+      baseline_run_id: { description: "Required for Ponto pilot; immutable production incumbent baseline", required: false, type: string }
+      rollback_from_stage:
+        description: Current live stage for Ponto rollback
+        required: false
+        default: production
+        type: choice
+        options: [pilot, canary, production]
+      timekeeping_candidate_version_id: { description: "Required for Ponto pilot Core upload", required: false, type: string }
+      timekeeping_version_id: { description: "Required for every general Core API deploy to prevent stale service affinity", required: false, type: string }
+      orchestrator_run_id: { description: "Ponto coordinator correlation ID", required: false, type: string }
+      orchestrator_lease_token: { description: "Masked single-use capability issued by the Ponto coordinator", required: false, type: string }
+      orchestrator_stage: { description: "Exact stage of the issuing Ponto coordinator", required: false, type: string }
 
 concurrency:
-  group: deploy-core-worker-${{ inputs.unit }}-${{ inputs.target }}
+  group: ${{ inputs.target == 'preview' && format('deploy-core-worker-{0}-preview', inputs.unit) || (inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '' && format('ponto-child-core-{0}-{1}', inputs.unit, inputs.orchestrator_run_id)) || 'ponto-release-custody' }}
   cancel-in-progress: false
 
 permissions:
@@ -33,7 +53,21 @@ permissions:
   contents: read
 
 jobs:
+  coordination:
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    with:
+      required: ${{ inputs.release_scope == 'ponto' && inputs.target != 'preview' }}
+      lease_key: core-${{ inputs.unit }}
+      stage: ${{ inputs.orchestrator_stage || inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
+      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
   promotion:
+    needs: coordination
+    if: ${{ inputs.release_scope != 'ponto' || inputs.target == 'preview' || inputs.target == 'staging' }}
     uses: ./.github/workflows/promotion-gate.yml
     with:
       unit: core-${{ inputs.unit }}
@@ -41,9 +75,425 @@ jobs:
       release_sha: ${{ inputs.release_sha }}
       preview_run_id: ${{ inputs.preview_run_id }}
       staging_run_id: ${{ inputs.staging_run_id }}
+      emit_preview_evidence: ${{ !(inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '') }}
+  progressive:
+    needs: coordination
+    if: ${{ inputs.release_scope == 'ponto' && contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
+    uses: ./.github/workflows/ponto-release-gate.yml
+    with:
+      stage: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      predecessor_run_id: ${{ inputs.predecessor_run_id }}
+      rollback_from_stage: ${{ inputs.rollback_from_stage }}
+      baseline_run_id: ${{ inputs.baseline_run_id }}
+  ponto-preview:
+    needs: promotion
+    if: ${{ inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'preview' }}
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - name: Test and dry-run the immutable Core gateway source
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
+        run: |
+          set -euo pipefail
+          npm --prefix api ci --ignore-scripts
+          npm --prefix api test
+          api/node_modules/.bin/wrangler versions upload \
+            --dry-run \
+            --outdir "$RUNNER_TEMP/core-api-preview" \
+            --config api/wrangler.ponto.toml \
+            --env staging \
+            --var "APP_VERSION:$RELEASE_SHA" \
+            --var "ENVIRONMENT:staging" \
+            --var "TIMEKEEPING_VERSION_ID:11111111-1111-4111-8111-111111111111"
+      - name: Write validated Core preview artifacts
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          PROMOTION_UNIT=core-api PROMOTION_TARGET=preview PROMOTION_SOURCE_SHA="$RELEASE_SHA" \
+          PROMOTION_SOURCE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")" \
+            node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/core-api-preview-evidence/promotion-evidence.json"
+          mkdir -p "$RUNNER_TEMP/core-api-surface"
+          node - "$RUNNER_TEMP/core-api-surface/surface.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "coreApi",
+            stage: "preview",
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            validation: "tests-and-wrangler-versions-upload-dry-run",
+          }, null, 2)}\n`);
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-core-api
+          path: ${{ runner.temp }}/core-api-preview-evidence/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-surface-core-api-preview-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/core-api-surface/surface.json
+          retention-days: 90
+          if-no-files-found: error
+  reject-unsupported-ponto-unit:
+    if: ${{ inputs.release_scope == 'ponto' && inputs.unit == 'all' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo 'Ponto composite releases must publish api and inventory as separately attested surfaces.'
+          exit 1
+  ponto-identity-preview:
+    needs: promotion
+    if: ${{ inputs.release_scope == 'ponto' && inputs.unit == 'inventory' && inputs.target == 'preview' }}
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+          cache-dependency-path: inventory/pnpm-lock.yaml
+      - name: Test the v2 Identity caller and dry-run the immutable Inventory source
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          corepack pnpm --dir inventory install --frozen-lockfile --ignore-scripts
+          corepack pnpm --dir inventory test
+          node --test shared/identity-runtime/workforce-onboarding.test.mjs inventory/tests/releaseHealth.test.mjs
+          inventory/node_modules/.bin/wrangler versions upload \
+            --dry-run \
+            --outdir "$RUNNER_TEMP/identity-workforce-preview" \
+            --config inventory/wrangler.toml \
+            --env staging \
+            --var "APP_VERSION:$RELEASE_SHA" \
+            --var "ENVIRONMENT:staging"
+      - name: Write validated Identity/Workforce preview surface
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          PROMOTION_UNIT=core-inventory PROMOTION_TARGET=preview PROMOTION_SOURCE_SHA="$RELEASE_SHA" \
+          PROMOTION_SOURCE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")" \
+            node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/identity-workforce-preview-evidence/promotion-evidence.json"
+          mkdir -p "$RUNNER_TEMP/identity-workforce-surface"
+          node - "$RUNNER_TEMP/identity-workforce-surface/surface.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "identityWorkforce",
+            stage: "preview",
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            validation: "inventory-tests-v2-caller-and-wrangler-versions-upload-dry-run",
+          }, null, 2)}\n`);
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-core-inventory
+          path: ${{ runner.temp }}/identity-workforce-preview-evidence/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-surface-identity-workforce-preview-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/identity-workforce-surface/surface.json
+          retention-days: 90
+          if-no-files-found: error
+  ponto-identity-staging:
+    needs: promotion
+    if: ${{ inputs.release_scope == 'ponto' && inputs.unit == 'inventory' && inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+    steps:
+      - name: Guard canonical staging Identity release
+        env:
+          ENABLE_CORE_WORKERS_DEPLOY: ${{ vars.ENABLE_CORE_WORKERS_DEPLOY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          IDENTITY_BACKUP_PASSPHRASE: ${{ secrets.IDENTITY_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLE_CORE_WORKERS_DEPLOY" == true ]] || { echo 'ENABLE_CORE_WORKERS_DEPLOY must be explicitly true'; exit 1; }
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID IDENTITY_BACKUP_PASSPHRASE; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required staging value: $name"; exit 1; }
+          done
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+          cache-dependency-path: inventory/pnpm-lock.yaml
+      - name: Test v2 Identity caller and attest remote secret custody
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          corepack pnpm --dir inventory install --frozen-lockfile --ignore-scripts
+          corepack pnpm --dir inventory test
+          node --test shared/identity-runtime/workforce-onboarding.test.mjs inventory/tests/releaseHealth.test.mjs
+          inventory/node_modules/.bin/wrangler secret list --config inventory/wrangler.toml --env staging > "$RUNNER_TEMP/identity-secret-list.json"
+          node - "$RUNNER_TEMP/identity-secret-list.json" <<'NODE'
+          const fs = require("fs");
+          const names = new Set(JSON.parse(fs.readFileSync(process.argv[2], "utf8")).map(item => item.name));
+          for (const name of ["IDENTITY_PII_KEY", "IDENTITY_WORKFORCE_HMAC_KEY"]) {
+            if (!names.has(name)) throw new Error(`remote Identity secret is absent: ${name}`);
+          }
+          NODE
+          rm -f "$RUNNER_TEMP/identity-secret-list.json"
+      - name: Resolve staging incumbent and capture encrypted D1 checkpoint
+        id: checkpoint
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          IDENTITY_BACKUP_PASSPHRASE: ${{ secrets.IDENTITY_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          inventory/node_modules/.bin/wrangler deployments status --json --config inventory/wrangler.toml --env staging > "$RUNNER_TEMP/identity-staging-incumbent.json"
+          incumbent="$(node - "$RUNNER_TEMP/identity-staging-incumbent.json" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versions = value.versions || value.latest?.versions || [];
+          const selected = [...versions].sort((a, b) => Number(b.percentage || 0) - Number(a.percentage || 0))[0];
+          process.stdout.write(String(selected?.version_id || selected?.id || ""));
+          NODE
+          )"
+          [[ "$incumbent" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve staging Identity incumbent'; exit 1; }
+          echo "IDENTITY_INCUMBENT_VERSION_ID=$incumbent" >> "$GITHUB_ENV"
+          checkpoint="$RUNNER_TEMP/identity-staging-pre-migration-$RELEASE_SHA"
+          mkdir -p "$checkpoint"
+          plain="$checkpoint/skincos-db-staging.sql"
+          encrypted="$checkpoint/skincos-db-staging.sql.gpg"
+          trap 'rm -f "$plain"' EXIT
+          inventory/node_modules/.bin/wrangler d1 export skincos-db-staging --remote --output "$plain" --config inventory/wrangler.toml --env staging
+          printf '%s' "$IDENTITY_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
+          digest="$(sha256sum "$encrypted" | cut -d' ' -f1)"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          printf '%s  %s\n' "$digest" "$(basename "$encrypted")" > "$checkpoint/skincos-db-staging.sql.gpg.sha256"
+          echo "path=$checkpoint" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Upload encrypted staging Identity migration checkpoint
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: identity-staging-pre-migration-${{ env.RELEASE_SHA }}
+          path: ${{ steps.checkpoint.outputs.path }}
+          retention-days: 90
+          if-no-files-found: error
+      - name: Apply additive migrations and publish exact staging Identity version
+        id: deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
+        run: |
+          set -euo pipefail
+          [[ "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Staging Identity requires the exact Timekeeping candidate'; exit 1; }
+          touch "$RUNNER_TEMP/identity-migration-started"
+          inventory/node_modules/.bin/wrangler d1 migrations apply skincos-db-staging --remote --config inventory/wrangler.toml --env staging
+          touch "$RUNNER_TEMP/identity-migration-completed"
+          WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/identity-staging-upload.ndjson" inventory/node_modules/.bin/wrangler versions upload \
+            --config inventory/wrangler.toml \
+            --env staging \
+            --keep-vars \
+            --strict \
+            --tag "ponto:identityWorkforce:$RELEASE_SHA" \
+            --message "ponto:identityWorkforce:$RELEASE_SHA" \
+            --var "APP_VERSION:$RELEASE_SHA" \
+            --var "ENVIRONMENT:staging" \
+            --var "TIMEKEEPING_VERSION_ID:$TIMEKEEPING_VERSION_ID"
+          PONTO_EXPECTED_WRANGLER_ENV=staging node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/identity-staging-upload.ndjson" version-upload skincos-insumos-staging >/dev/null
+          candidate="$(node -e "const fs=require('fs');const r=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).map(JSON.parse).filter(x=>x.type==='version-upload').at(-1);process.stdout.write(String(r?.version_id||''))" "$RUNNER_TEMP/identity-staging-upload.ndjson")"
+          [[ "$candidate" =~ ^[0-9a-fA-F-]{36}$ && "$candidate" != "$IDENTITY_INCUMBENT_VERSION_ID" ]] || { echo 'Invalid staging Identity candidate'; exit 1; }
+          echo "IDENTITY_CANDIDATE_VERSION_ID=$candidate" >> "$GITHUB_ENV"
+          touch "$RUNNER_TEMP/identity-mutation-started"
+          WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/identity-staging-deploy.ndjson" inventory/node_modules/.bin/wrangler versions deploy "$candidate@100%" --yes --config inventory/wrangler.toml --env staging --message "ponto:staging:$RELEASE_SHA"
+          PONTO_EXPECTED_WRANGLER_ENV=staging node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/identity-staging-deploy.ndjson" version-deploy skincos-insumos-staging >/dev/null
+          deployment="$(node -e "const fs=require('fs');const r=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).map(JSON.parse).filter(x=>x.type==='version-deploy').at(-1);process.stdout.write(String(r?.deployment_id||r?.id||''))" "$RUNNER_TEMP/identity-staging-deploy.ndjson")"
+          [[ "$deployment" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid staging Identity deployment'; exit 1; }
+          echo "IDENTITY_DEPLOYMENT_ID=$deployment" >> "$GITHUB_ENV"
+          touch "$RUNNER_TEMP/identity-mutation-completed"
+          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
+          echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
+      - name: Probe and attest exact staging Identity version
+        env:
+          CANDIDATE_ID: ${{ steps.deployment.outputs.candidate }}
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 4 https://api-staging.skincos.com.br/insumos/health > "$RUNNER_TEMP/identity-staging-health.json"
+          node - "$RUNNER_TEMP/identity-staging-health.json" <<'NODE'
+          const fs = require("fs"); const health = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (health.version !== process.env.RELEASE_SHA || health.environment !== "staging" || health.workerVersion?.id !== process.env.CANDIDATE_ID || health.workerVersion?.tag !== `ponto:identityWorkforce:${process.env.RELEASE_SHA}`) process.exit(1);
+          NODE
+      - name: Restore staging Identity incumbent after failure or cancellation
+        if: ${{ always() && (failure() || cancelled()) && env.IDENTITY_INCUMBENT_VERSION_ID != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$RUNNER_TEMP/identity-mutation-started" ]]; then
+            echo 'No staging Identity traffic mutation started; compensation is intentionally a no-op'
+            printf '%s\n' no-mutation > "$RUNNER_TEMP/identity-staging-compensation-disposition"
+            exit 0
+          fi
+          deployment_id="${IDENTITY_DEPLOYMENT_ID:-}"
+          if [[ ! "$deployment_id" =~ ^[0-9a-fA-F-]{36}$ && -f "$RUNNER_TEMP/identity-staging-deploy.ndjson" ]]; then
+            deployment_id="$(node -e "const fs=require('fs');const rows=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).filter(Boolean).map(JSON.parse);const r=rows.filter(x=>x.type==='version-deploy').at(-1);process.stdout.write(String(r?.deployment_id||r?.id||''))" "$RUNNER_TEMP/identity-staging-deploy.ndjson")"
+          fi
+          inventory/node_modules/.bin/wrangler deployments status --json --config inventory/wrangler.toml --env staging \
+            > "$RUNNER_TEMP/identity-staging-compensation-status.json"
+          ownership="$(node .github/scripts/ponto-rollback-ownership.mjs \
+            classify-worker-compensation \
+            "$RUNNER_TEMP/identity-staging-compensation-status.json" \
+            staging \
+            "$IDENTITY_CANDIDATE_VERSION_ID" \
+            "$IDENTITY_INCUMBENT_VERSION_ID" \
+            "$deployment_id" \
+            "$RUNNER_TEMP/identity-staging-compensation-ownership.json")"
+          case "$ownership" in
+            already-incumbent)
+              echo 'Staging Identity is already on the exact incumbent; compensation is a no-op'
+              printf '%s\n' already-incumbent > "$RUNNER_TEMP/identity-staging-compensation-disposition"
+              exit 0
+              ;;
+            candidate-owned)
+              printf '%s\n' candidate-owned > "$RUNNER_TEMP/identity-staging-compensation-disposition"
+              ;;
+            ownership-conflict)
+              echo 'Staging Identity compensation ownership conflict; refusing to mutate external state'
+              printf '%s\n' ownership-conflict > "$RUNNER_TEMP/identity-staging-compensation-disposition"
+              exit 1
+              ;;
+            *) echo 'Unexpected staging Identity compensation classification'; exit 1 ;;
+          esac
+          inventory/node_modules/.bin/wrangler rollback "$IDENTITY_INCUMBENT_VERSION_ID" \
+            --yes \
+            --message "ponto:staging-auto-abort:$RELEASE_SHA" \
+            --config inventory/wrangler.toml \
+            --env staging
+          inventory/node_modules/.bin/wrangler deployments status --json --config inventory/wrangler.toml --env staging > "$RUNNER_TEMP/identity-staging-restored.json"
+          node - "$RUNNER_TEMP/identity-staging-restored.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versions = payload?.versions || payload?.latest?.versions || [];
+          if (
+            versions.length !== 1
+            || Number(versions[0]?.percentage) !== 100
+            || String(versions[0]?.version_id || versions[0]?.id || "").toLowerCase() !== process.env.IDENTITY_INCUMBENT_VERSION_ID.toLowerCase()
+          ) throw new Error("staging Identity compensation did not restore the exact incumbent");
+          NODE
+          printf '%s\n' rolled-back > "$RUNNER_TEMP/identity-staging-compensation-disposition"
+          touch "$RUNNER_TEMP/identity-rollback-completed"
+      - name: Write staging Identity mutation journal
+        if: ${{ always() }}
+        env:
+          CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/identity-staging-mutation"
+          node - "$RUNNER_TEMP/identity-staging-mutation/mutation.json" <<'NODE'
+          const fs = require("fs");
+          const exists = (name) => fs.existsSync(`${process.env.RUNNER_TEMP}/${name}`);
+          const compensationOwnershipFile = `${process.env.RUNNER_TEMP}/identity-staging-compensation-ownership.json`;
+          const compensationDispositionFile = `${process.env.RUNNER_TEMP}/identity-staging-compensation-disposition`;
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "identityWorkforce",
+            stage: "staging",
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID || "",
+            incumbentVersionId: process.env.IDENTITY_INCUMBENT_VERSION_ID || "",
+            candidateVersionId: process.env.IDENTITY_CANDIDATE_VERSION_ID || "",
+            deploymentId: process.env.IDENTITY_DEPLOYMENT_ID || "",
+            migrationStarted: exists("identity-migration-started"),
+            migrationCompleted: exists("identity-migration-completed"),
+            migrationDisposition: exists("identity-migration-started") ? "retained-additive-schema" : "not-run",
+            checkpoint: process.env.CHECKPOINT_DIGEST ? {
+              artifactName: `identity-staging-pre-migration-${process.env.RELEASE_SHA}`,
+              sha256: process.env.CHECKPOINT_DIGEST,
+            } : null,
+            mutationStarted: exists("identity-mutation-started"),
+            mutationCompleted: exists("identity-mutation-completed"),
+            rollbackCompleted: exists("identity-rollback-completed"),
+            compensationOwnership: fs.existsSync(compensationOwnershipFile) ? JSON.parse(fs.readFileSync(compensationOwnershipFile, "utf8")) : null,
+            compensationDisposition: fs.existsSync(compensationDispositionFile) ? fs.readFileSync(compensationDispositionFile, "utf8").trim() : "not-run",
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Upload staging Identity mutation journal
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-mutation-identity-workforce-staging-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/identity-staging-mutation/mutation.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Write staging Identity surface manifest
+        env:
+          CANDIDATE_ID: ${{ steps.deployment.outputs.candidate }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment }}
+          CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
+          TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/identity-staging-surface"
+          node - "$RUNNER_TEMP/identity-staging-surface/surface.json" <<'NODE'
+          const crypto = require("crypto"); const fs = require("fs"); const path = require("path");
+          const migrations = fs.readdirSync("inventory/migrations").filter(name => /^\d+.*\.sql$/.test(name)).sort().map(name => ({
+            name, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join("inventory/migrations", name))).digest("hex"), status: "applied-or-preexisting",
+          }));
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1, surface: "identityWorkforce", stage: "staging", sourceSha: process.env.RELEASE_SHA, runId: process.env.GITHUB_RUN_ID,
+            candidateVersionId: process.env.CANDIDATE_ID, incumbentVersionId: process.env.IDENTITY_INCUMBENT_VERSION_ID, deploymentId: process.env.DEPLOYMENT_ID,
+            candidatePercent: 100, incumbentPercent: 0, candidateTag: `ponto:identityWorkforce:${process.env.RELEASE_SHA}`,
+            url: "https://api-staging.skincos.com.br/insumos/health",
+            checkpoint: { artifactName: `identity-staging-pre-migration-${process.env.RELEASE_SHA}`, sha256: process.env.CHECKPOINT_DIGEST, releaseSha: process.env.RELEASE_SHA },
+            timekeepingVersionId: process.env.TIMEKEEPING_VERSION_ID,
+            migrations,
+          }, null, 2)}\n`);
+          NODE
+          PROMOTION_UNIT=core-inventory PROMOTION_TARGET=staging PROMOTION_SOURCE_SHA="$RELEASE_SHA" \
+          PROMOTION_SOURCE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")" \
+            node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/identity-staging-promotion/promotion-evidence.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-core-inventory
+          path: ${{ runner.temp }}/identity-staging-promotion/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-surface-identity-workforce-staging-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/identity-staging-surface/surface.json
+          retention-days: 90
+          if-no-files-found: error
   deploy:
     needs: promotion
-    if: ${{ inputs.target != 'preview' }}
+    if: ${{ inputs.target != 'preview' && (inputs.release_scope != 'ponto' || (inputs.target == 'staging' && inputs.unit == 'api')) }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
     permissions:
@@ -58,16 +508,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          if [[ "${ENABLE:-true}" != "true" ]]; then
-            echo "Deploy flag not enabled; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare deploy secrets not configured; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          [[ "${ENABLE:-}" == "true" ]] || { echo "ENABLE_CORE_WORKERS_DEPLOY must be explicitly true."; exit 1; }
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "Missing CLOUDFLARE_API_TOKEN."; exit 1; }
+          [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo "Missing CLOUDFLARE_ACCOUNT_ID."; exit 1; }
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
@@ -140,6 +583,7 @@ jobs:
           TARGET: ${{ inputs.target }}
           UNIT: ${{ inputs.unit }}
           BOOTSTRAP_FINANCE_CONTEXT: ${{ inputs.bootstrap_finance_context }}
+          RELEASE_SCOPE: ${{ inputs.release_scope }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
@@ -183,14 +627,192 @@ jobs:
             npx --yes wrangler@3 deploy --config inventory/wrangler.toml --keep-vars "${env_args[@]}"
           fi
           if [[ "$UNIT" == "api" || "$UNIT" == "all" ]]; then
+            [[ "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Core API deploy requires an explicit Timekeeping version UUID'; exit 1; }
             if [[ "$BOOTSTRAP_FINANCE_CONTEXT" == "true" ]]; then
               [[ "$TARGET" == "staging" ]] || { echo 'Finance context bootstrap is staging-only.'; exit 1; }
               [[ -n "${FINANCE_SERVICE_AUTH_SECRET:-}" ]] || { echo 'Missing FINANCE_SERVICE_AUTH_SECRET.'; exit 1; }
               printf '%s' "$FINANCE_SERVICE_AUTH_SECRET" | npx --yes wrangler@3 secret put FINANCE_SERVICE_AUTH_SECRET --config api/wrangler.toml --env staging
             fi
-            npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars "${env_args[@]}" \
-              --var "APP_VERSION:$RELEASE_SHA" "${environment_var[@]}"
+            if [[ "$RELEASE_SCOPE" == ponto ]]; then
+              [[ "$TARGET" == staging && "$UNIT" == api ]] || { echo 'Ponto preview/live Core releases use their dedicated canonical stages'; exit 1; }
+              api/node_modules/.bin/wrangler deployments status --json --config api/wrangler.ponto.toml --env staging > "$RUNNER_TEMP/core-staging-incumbent.json"
+              incumbent_id="$(node - "$RUNNER_TEMP/core-staging-incumbent.json" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versions = value.versions || value.latest?.versions || [];
+          const selected = [...versions].sort((a, b) => Number(b.percentage || 0) - Number(a.percentage || 0))[0];
+          process.stdout.write(String(selected?.version_id || selected?.id || ""));
+          NODE
+              )"
+              [[ "$incumbent_id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve staging Core incumbent'; exit 1; }
+              echo "CORE_STAGING_INCUMBENT_VERSION_ID=$incumbent_id" >> "$GITHUB_ENV"
+              upload_output="$RUNNER_TEMP/core-staging-upload.ndjson"
+              WRANGLER_OUTPUT_FILE_PATH="$upload_output" api/node_modules/.bin/wrangler versions upload \
+                --config api/wrangler.ponto.toml \
+                --env staging \
+                --keep-vars \
+                --strict \
+                --tag "ponto:coreApi:$RELEASE_SHA" \
+                --message "ponto:coreApi:$RELEASE_SHA" \
+                --var "APP_VERSION:$RELEASE_SHA" \
+                --var "ENVIRONMENT:staging" \
+                --var "TIMEKEEPING_VERSION_ID:$TIMEKEEPING_VERSION_ID"
+              PONTO_EXPECTED_WRANGLER_ENV=staging node .github/scripts/ponto-wrangler-output.mjs "$upload_output" version-upload skincos-ponto-core-staging > "$RUNNER_TEMP/core-staging-upload.txt"
+              candidate_id="$(node - "$upload_output" <<'NODE'
+          const fs = require("fs");
+          const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).map(JSON.parse);
+          process.stdout.write(String(rows.filter(row => row.type === "version-upload").at(-1)?.version_id || ""));
+          NODE
+              )"
+              [[ "$candidate_id" =~ ^[0-9a-fA-F-]{36}$ && "$candidate_id" != "$incumbent_id" ]] || { echo 'Invalid Core staging candidate identity'; exit 1; }
+              echo "CORE_STAGING_CANDIDATE_VERSION_ID=$candidate_id" >> "$GITHUB_ENV"
+              touch "$RUNNER_TEMP/core-staging-mutation-started"
+              deploy_output="$RUNNER_TEMP/core-staging-deploy.ndjson"
+              WRANGLER_OUTPUT_FILE_PATH="$deploy_output" api/node_modules/.bin/wrangler versions deploy "$candidate_id@100%" \
+                --yes \
+                --config api/wrangler.ponto.toml \
+                --env staging \
+                --message "ponto:staging:$RELEASE_SHA"
+              PONTO_EXPECTED_WRANGLER_ENV=staging node .github/scripts/ponto-wrangler-output.mjs "$deploy_output" version-deploy skincos-ponto-core-staging > "$RUNNER_TEMP/core-staging-deploy.txt"
+              deployment_id="$(node - "$deploy_output" <<'NODE'
+          const fs = require("fs");
+          const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).map(JSON.parse);
+          const row = rows.filter(item => item.type === "version-deploy").at(-1);
+          process.stdout.write(String(row?.deployment_id || row?.id || ""));
+          NODE
+              )"
+              [[ "$deployment_id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid Core staging deployment identity'; exit 1; }
+              echo "CORE_STAGING_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
+              touch "$RUNNER_TEMP/core-staging-mutation-completed"
+              mkdir -p "$RUNNER_TEMP/core-staging-surface"
+              CANDIDATE_ID="$candidate_id" INCUMBENT_ID="$incumbent_id" DEPLOYMENT_ID="$deployment_id" node - "$RUNNER_TEMP/core-staging-surface/surface.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "coreApi",
+            stage: "staging",
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            candidateVersionId: process.env.CANDIDATE_ID,
+            incumbentVersionId: process.env.INCUMBENT_ID,
+            deploymentId: process.env.DEPLOYMENT_ID,
+            candidatePercent: 100,
+            incumbentPercent: 0,
+            candidateTag: `ponto:coreApi:${process.env.RELEASE_SHA}`,
+            serviceName: "skincos-ponto-core-staging",
+            routeIsolated: true,
+            url: "https://crm-staging.skincos.com.br/api/ponto/health",
+          }, null, 2)}\n`);
+          NODE
+              rm -f "$upload_output" "$deploy_output" "$RUNNER_TEMP/core-staging-incumbent.json"
+            else
+              npx --yes wrangler@3 deploy --config api/wrangler.toml --keep-vars "${env_args[@]}" \
+                --var "APP_VERSION:$RELEASE_SHA" \
+                --var "TIMEKEEPING_VERSION_ID:$TIMEKEEPING_VERSION_ID" \
+                "${environment_var[@]}"
+            fi
           fi
+
+      - name: Restore Ponto Core staging incumbent after failure or cancellation
+        if: ${{ always() && (failure() || cancelled()) && inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'staging' && env.CORE_STAGING_INCUMBENT_VERSION_ID != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$RUNNER_TEMP/core-staging-mutation-started" ]]; then
+            echo 'No Ponto Core staging mutation started; compensation is intentionally a no-op'
+            printf '%s\n' no-mutation > "$RUNNER_TEMP/core-staging-compensation-disposition"
+            exit 0
+          fi
+          deployment_id="${CORE_STAGING_DEPLOYMENT_ID:-}"
+          if [[ ! "$deployment_id" =~ ^[0-9a-fA-F-]{36}$ && -f "$RUNNER_TEMP/core-staging-deploy.ndjson" ]]; then
+            deployment_id="$(node -e "const fs=require('fs');const rows=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).filter(Boolean).map(JSON.parse);const r=rows.filter(x=>x.type==='version-deploy').at(-1);process.stdout.write(String(r?.deployment_id||r?.id||''))" "$RUNNER_TEMP/core-staging-deploy.ndjson")"
+          fi
+          api/node_modules/.bin/wrangler deployments status --json --config api/wrangler.ponto.toml --env staging \
+            > "$RUNNER_TEMP/core-staging-compensation-status.json"
+          ownership="$(node .github/scripts/ponto-rollback-ownership.mjs \
+            classify-worker-compensation \
+            "$RUNNER_TEMP/core-staging-compensation-status.json" \
+            staging \
+            "$CORE_STAGING_CANDIDATE_VERSION_ID" \
+            "$CORE_STAGING_INCUMBENT_VERSION_ID" \
+            "$deployment_id" \
+            "$RUNNER_TEMP/core-staging-compensation-ownership.json")"
+          case "$ownership" in
+            already-incumbent)
+              echo 'Ponto Core staging is already on the exact incumbent; compensation is a no-op'
+              printf '%s\n' already-incumbent > "$RUNNER_TEMP/core-staging-compensation-disposition"
+              exit 0
+              ;;
+            candidate-owned)
+              printf '%s\n' candidate-owned > "$RUNNER_TEMP/core-staging-compensation-disposition"
+              ;;
+            ownership-conflict)
+              echo 'Ponto Core staging compensation ownership conflict; refusing to mutate external state'
+              printf '%s\n' ownership-conflict > "$RUNNER_TEMP/core-staging-compensation-disposition"
+              exit 1
+              ;;
+            *) echo 'Unexpected Ponto Core staging compensation classification'; exit 1 ;;
+          esac
+          api/node_modules/.bin/wrangler rollback "$CORE_STAGING_INCUMBENT_VERSION_ID" \
+            --yes \
+            --message "ponto:staging-auto-abort:$RELEASE_SHA" \
+            --config api/wrangler.ponto.toml \
+            --env staging
+          api/node_modules/.bin/wrangler deployments status --json --config api/wrangler.ponto.toml --env staging > "$RUNNER_TEMP/core-staging-restored.json"
+          node - "$RUNNER_TEMP/core-staging-restored.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versions = payload?.versions || payload?.latest?.versions || [];
+          if (
+            versions.length !== 1
+            || Number(versions[0]?.percentage) !== 100
+            || String(versions[0]?.version_id || versions[0]?.id || "").toLowerCase() !== process.env.CORE_STAGING_INCUMBENT_VERSION_ID.toLowerCase()
+          ) throw new Error("Ponto Core staging compensation did not restore the exact incumbent");
+          NODE
+          printf '%s\n' rolled-back > "$RUNNER_TEMP/core-staging-compensation-disposition"
+          touch "$RUNNER_TEMP/core-staging-rollback-completed"
+      - name: Write Ponto Core staging mutation journal
+        if: ${{ always() && inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'staging' }}
+        env:
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/core-staging-mutation"
+          node - "$RUNNER_TEMP/core-staging-mutation/mutation.json" <<'NODE'
+          const fs = require("fs");
+          const exists = (name) => fs.existsSync(`${process.env.RUNNER_TEMP}/${name}`);
+          const compensationOwnershipFile = `${process.env.RUNNER_TEMP}/core-staging-compensation-ownership.json`;
+          const compensationDispositionFile = `${process.env.RUNNER_TEMP}/core-staging-compensation-disposition`;
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "coreApi",
+            stage: "staging",
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID || "",
+            incumbentVersionId: process.env.CORE_STAGING_INCUMBENT_VERSION_ID || "",
+            candidateVersionId: process.env.CORE_STAGING_CANDIDATE_VERSION_ID || "",
+            deploymentId: process.env.CORE_STAGING_DEPLOYMENT_ID || "",
+            mutationStarted: exists("core-staging-mutation-started"),
+            mutationCompleted: exists("core-staging-mutation-completed"),
+            rollbackCompleted: exists("core-staging-rollback-completed"),
+            compensationOwnership: fs.existsSync(compensationOwnershipFile) ? JSON.parse(fs.readFileSync(compensationOwnershipFile, "utf8")) : null,
+            compensationDisposition: fs.existsSync(compensationDispositionFile) ? fs.readFileSync(compensationDispositionFile, "utf8").trim() : "not-run",
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Upload Ponto Core staging mutation journal
+        if: ${{ always() && inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'staging' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-mutation-core-api-staging-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/core-staging-mutation/mutation.json
+          retention-days: 90
+          if-no-files-found: error
 
       - name: Smoke selected core Worker (production)
         if: ${{ steps.guard.outputs.skip != 'true' && inputs.target == 'production' }}
@@ -221,4 +843,845 @@ jobs:
           name: promotion-evidence-core-${{ inputs.unit }}
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
           retention-days: 14
+          if-no-files-found: error
+      - name: Upload Ponto Core staging surface manifest
+        if: ${{ steps.guard.outputs.skip != 'true' && inputs.release_scope == 'ponto' && inputs.unit == 'api' && inputs.target == 'staging' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-surface-core-api-staging-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/core-staging-surface/surface.json
+          retention-days: 90
+          if-no-files-found: error
+
+  ponto-progressive-release:
+    needs: progressive
+    if: ${{ inputs.release_scope == 'ponto' && inputs.unit == 'api' && contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      RELEASE_SHA: ${{ needs.progressive.outputs.source_sha }}
+      TARGET: ${{ inputs.target }}
+    steps:
+      - name: Guard canonical Ponto Core release
+        env:
+          ENABLE_CORE_WORKERS_DEPLOY: ${{ vars.ENABLE_CORE_WORKERS_DEPLOY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLE_CORE_WORKERS_DEPLOY" == true ]] || { echo 'ENABLE_CORE_WORKERS_DEPLOY must be explicitly true'; exit 1; }
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'Cloudflare credentials are required'; exit 1; }
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - name: Test and select the route-isolated Ponto Core candidate
+        run: |
+          set -euo pipefail
+          npm --prefix api ci --ignore-scripts
+          npm --prefix api test
+          node - api/wrangler.ponto.toml <<'NODE'
+          const fs = require("fs");
+          const source = fs.readFileSync(process.argv[2], "utf8");
+          if (!/^name\s*=\s*"skincos-ponto-core"\s*$/m.test(source)) throw new Error("Ponto Core production service name is not isolated");
+          if (!/^main\s*=\s*"workers\/ponto\.js"\s*$/m.test(source)) throw new Error("Ponto Core must use the narrow workers/ponto.js entrypoint");
+          if (!/PONTO_ROUTE_ONLY\s*=\s*"true"/m.test(source)) throw new Error("Ponto Core route-only guard is absent");
+          if (!/^workers_dev\s*=\s*false\s*$/m.test(source) || !/^preview_urls\s*=\s*false\s*$/m.test(source)) throw new Error("Ponto Core private ingress is not disabled");
+          if (/^routes?\s*=/m.test(source)) throw new Error("Ponto Core private service must not own a public route");
+          if (/\[\[(?:d1_databases|kv_namespaces|r2_buckets|queues|durable_objects\.bindings)\]\]/m.test(source)) throw new Error("Ponto Core acquired an unrelated stateful binding");
+          const services = [...source.matchAll(/\[\[(?:env\.staging\.)?services\]\]\s*\r?\nbinding\s*=\s*"([^"]+)"\s*\r?\nservice\s*=\s*"([^"]+)"/g)]
+            .map(match => [match[1], match[2]]);
+          const expected = [["TIMEKEEPING", "skincos-timekeeping"], ["TIMEKEEPING", "skincos-timekeeping-staging"]];
+          if (JSON.stringify(services) !== JSON.stringify(expected)) throw new Error("Ponto Core service bindings differ from the exact Timekeeping-only contract");
+          const entrypoint = fs.readFileSync("api/workers/ponto.js", "utf8");
+          if (
+            entrypoint.includes("workers/index")
+            || /export\s+(?:class|\{)[\s\S]*(?:DurableObject|RateLimiter|Inventory)/i.test(entrypoint)
+            || !entrypoint.includes("createGatewayHandler")
+            || !entrypoint.includes("fetchBoundService")
+          ) throw new Error("Ponto Core entrypoint is not the reviewed narrow adapter");
+          NODE
+          rm -rf "$RUNNER_TEMP/ponto-core-dry-run"
+          api/node_modules/.bin/wrangler deploy --dry-run --outdir "$RUNNER_TEMP/ponto-core-dry-run" --config api/wrangler.ponto.toml
+          config_digest="$(sha256sum api/wrangler.ponto.toml api/workers/ponto.js api/src/router.js api/src/gateway.js shared/service-adapters/cloudflare-service-binding.js | sha256sum | cut -d' ' -f1)"
+          bundle_digest="$(find "$RUNNER_TEMP/ponto-core-dry-run" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+          [[ "$config_digest" =~ ^[0-9a-f]{64}$ && "$bundle_digest" =~ ^[0-9a-f]{64}$ ]] || { echo 'Ponto Core config/bundle digest failed'; exit 1; }
+          echo "PONTO_CORE_CONFIG_DIGEST=$config_digest" >> "$GITHUB_ENV"
+          echo "PONTO_CORE_BUNDLE_DIGEST=$bundle_digest" >> "$GITHUB_ENV"
+          echo "PONTO_CORE_CONFIG=api/wrangler.ponto.toml" >> "$GITHUB_ENV"
+          api/node_modules/.bin/wrangler deployments status --name skincos-api --json > "$RUNNER_TEMP/general-core-before.json"
+      - name: Resolve incumbent Core version before pilot
+        if: inputs.target == 'pilot'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BASELINE_INCUMBENT_ID: ${{ needs.progressive.outputs.baseline_core_version_id }}
+          BASELINE_INCUMBENT_DEPLOYMENT_ID: ${{ needs.progressive.outputs.baseline_core_deployment_id }}
+        run: |
+          set -euo pipefail
+          api/node_modules/.bin/wrangler deployments status --json --config "$PONTO_CORE_CONFIG" > "$RUNNER_TEMP/core-incumbent.json"
+          PONTO_BASELINE_DEPLOYMENT_ID="$BASELINE_INCUMBENT_DEPLOYMENT_ID" \
+          PONTO_BASELINE_VERSION_ID="$BASELINE_INCUMBENT_ID" \
+            node .github/scripts/ponto-live-deployment-precondition.mjs \
+              pilot-baseline \
+              "$RUNNER_TEMP/core-incumbent.json" \
+              coreApi \
+              "$RUNNER_TEMP/core-pilot-baseline-precondition.json"
+          id="$BASELINE_INCUMBENT_ID"
+          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve incumbent Core version'; exit 1; }
+          echo "CORE_INCUMBENT_VERSION_ID=$id" >> "$GITHUB_ENV"
+      - name: Select predecessor Core versions
+        if: ${{ inputs.target == 'canary' || inputs.target == 'production' || inputs.target == 'rollback' }}
+        env:
+          CANDIDATE_ID: ${{ needs.progressive.outputs.core_candidate_version_id }}
+          INCUMBENT_ID: ${{ needs.progressive.outputs.core_incumbent_version_id }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_ID" =~ ^[0-9a-fA-F-]{36}$ && "$INCUMBENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Predecessor Core version IDs are invalid'; exit 1; }
+          echo "CORE_CANDIDATE_VERSION_ID=$CANDIDATE_ID" >> "$GITHUB_ENV"
+          echo "CORE_INCUMBENT_VERSION_ID=$INCUMBENT_ID" >> "$GITHUB_ENV"
+      - name: Fail closed on live Ponto Core drift from governed predecessor
+        if: ${{ inputs.target == 'canary' || inputs.target == 'production' || inputs.target == 'rollback' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+          PREDECESSOR_STAGE: ${{ needs.progressive.outputs.predecessor_stage }}
+          EXPECTED_CANDIDATE_ID: ${{ needs.progressive.outputs.core_candidate_version_id }}
+          EXPECTED_INCUMBENT_ID: ${{ needs.progressive.outputs.core_incumbent_version_id }}
+          ROLLBACK_FROM_STAGE: ${{ inputs.rollback_from_stage }}
+        run: |
+          set -euo pipefail
+          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'Core precondition requires numeric predecessor_run_id'; exit 1; }
+          predecessor_dir="$RUNNER_TEMP/core-live-predecessor"
+          predecessor_file="$predecessor_dir/ponto-release-evidence.json"
+          mkdir -p "$predecessor_dir"
+          gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-release-evidence-${PREDECESSOR_STAGE}-${RELEASE_SHA}" \
+            --dir "$predecessor_dir"
+          PONTO_EXPECTED_STAGE="$PREDECESSOR_STAGE" \
+          PONTO_EXPECTED_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-release-evidence.mjs verify "$predecessor_file"
+          api/node_modules/.bin/wrangler deployments status --json --config "$PONTO_CORE_CONFIG" \
+            > "$RUNNER_TEMP/core-live-deployment.json"
+          PONTO_LIVE_TARGET="$TARGET" \
+          PONTO_LIVE_PREDECESSOR_STAGE="$PREDECESSOR_STAGE" \
+          PONTO_LIVE_ROLLBACK_FROM_STAGE="$ROLLBACK_FROM_STAGE" \
+          PONTO_LIVE_RELEASE_SHA="$RELEASE_SHA" \
+          PONTO_LIVE_CANDIDATE_VERSION_ID="$EXPECTED_CANDIDATE_ID" \
+          PONTO_LIVE_INCUMBENT_VERSION_ID="$EXPECTED_INCUMBENT_ID" \
+            node .github/scripts/ponto-live-deployment-precondition.mjs \
+              "$RUNNER_TEMP/core-live-deployment.json" \
+              "$predecessor_file" \
+              coreApi \
+              "$RUNNER_TEMP/core-live-precondition.json"
+      - name: Select explicit Timekeeping affinity for this Core stage
+        env:
+          PILOT_TIMEKEEPING_ID: ${{ inputs.timekeeping_candidate_version_id }}
+          PREDECESSOR_CANDIDATE_ID: ${{ needs.progressive.outputs.timekeeping_candidate_version_id }}
+          PREDECESSOR_INCUMBENT_ID: ${{ needs.progressive.outputs.timekeeping_incumbent_version_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == pilot ]]; then id="$PILOT_TIMEKEEPING_ID"; elif [[ "$TARGET" == rollback ]]; then id="$PREDECESSOR_INCUMBENT_ID"; else id="$PREDECESSOR_CANDIDATE_ID"; fi
+          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Core stage requires an explicit Timekeeping affinity UUID'; exit 1; }
+          echo "CORE_TIMEKEEPING_VERSION_ID=$id" >> "$GITHUB_ENV"
+      - name: Upload immutable Core candidate with Timekeeping affinity
+        if: inputs.target == 'pilot'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_candidate_version_id }}
+        run: |
+          set -euo pipefail
+          [[ "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'pilot requires the Timekeeping candidate version ID'; exit 1; }
+          output_file="$RUNNER_TEMP/core-version-upload.ndjson"
+          WRANGLER_OUTPUT_FILE_PATH="$output_file" api/node_modules/.bin/wrangler versions upload \
+            --config "$PONTO_CORE_CONFIG" \
+            --keep-vars \
+            --strict \
+            --tag "ponto:coreApi:$RELEASE_SHA" \
+            --message "ponto:coreApi:$RELEASE_SHA" \
+            --var "APP_VERSION:$RELEASE_SHA" \
+            --var "ENVIRONMENT:production" \
+            --var "TIMEKEEPING_VERSION_ID:$CORE_TIMEKEEPING_VERSION_ID"
+          PONTO_EXPECTED_WRANGLER_ENV=production node .github/scripts/ponto-wrangler-output.mjs "$output_file" version-upload skincos-ponto-core > "$RUNNER_TEMP/core-upload-verified.txt"
+          id="$(node - "$output_file" <<'NODE'
+          const fs = require("fs"); const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).map(JSON.parse); process.stdout.write(String(rows.filter(row => row.type === "version-upload").at(-1)?.version_id || ""));
+          NODE
+          )"
+          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ && "$id" != "$CORE_INCUMBENT_VERSION_ID" ]] || { echo 'Invalid or non-distinct Core candidate version'; exit 1; }
+          echo "CORE_CANDIDATE_VERSION_ID=$id" >> "$GITHUB_ENV"
+          rm -f "$output_file"
+      - name: Deploy exact Core weights or execute rollback
+        id: deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            pilot) candidate=0; incumbent=100 ;;
+            canary) candidate=0; incumbent=100 ;;
+            production) candidate=100; incumbent=0 ;;
+            rollback) candidate=0; incumbent=100 ;;
+            *) exit 1 ;;
+          esac
+          touch "$RUNNER_TEMP/core-mutation-started"
+          if [[ "$TARGET" == rollback ]]; then
+            api/node_modules/.bin/wrangler rollback "$CORE_INCUMBENT_VERSION_ID" --yes --message "ponto:rollback:$RELEASE_SHA" --config "$PONTO_CORE_CONFIG"
+          elif [[ "$candidate" == 100 ]]; then
+            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/core-version-deploy.ndjson" api/node_modules/.bin/wrangler versions deploy "$CORE_CANDIDATE_VERSION_ID@100%" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config "$PONTO_CORE_CONFIG"
+          else
+            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/core-version-deploy.ndjson" api/node_modules/.bin/wrangler versions deploy "$CORE_INCUMBENT_VERSION_ID@${incumbent}%" "$CORE_CANDIDATE_VERSION_ID@${candidate}%" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config "$PONTO_CORE_CONFIG"
+          fi
+          if [[ "$TARGET" == rollback ]]; then
+            api/node_modules/.bin/wrangler deployments status --json --config "$PONTO_CORE_CONFIG" > "$RUNNER_TEMP/core-deployment.json"
+            deployment_id="$(node - "$RUNNER_TEMP/core-deployment.json" <<'NODE'
+          const fs = require("fs"); const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8")); process.stdout.write(String(value.id || value.deployment_id || value.latest?.id || ""));
+          NODE
+            )"
+          else
+            PONTO_EXPECTED_WRANGLER_ENV=production node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/core-version-deploy.ndjson" version-deploy skincos-ponto-core > "$RUNNER_TEMP/core-deploy-verified.txt"
+            deployment_id="$(node - "$RUNNER_TEMP/core-version-deploy.ndjson" <<'NODE'
+          const fs = require("fs"); const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).map(JSON.parse); const row = rows.filter(item => item.type === "version-deploy").at(-1); process.stdout.write(String(row?.deployment_id || row?.id || ""));
+          NODE
+            )"
+          fi
+          [[ "$deployment_id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to attest Core deployment ID'; exit 1; }
+          touch "$RUNNER_TEMP/core-mutation-completed"
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+          echo "candidate_percent=$candidate" >> "$GITHUB_OUTPUT"
+          echo "incumbent_percent=$incumbent" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/core-version-deploy.ndjson" "$RUNNER_TEMP/core-deployment.json"
+      - name: Prove route-isolated Ponto mutation left general Core and sibling modules intact
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          api/node_modules/.bin/wrangler deployments status --name skincos-api --json > "$RUNNER_TEMP/general-core-after.json"
+          node - "$RUNNER_TEMP/general-core-before.json" "$RUNNER_TEMP/general-core-after.json" <<'NODE'
+          const fs = require("fs");
+          const normalized = file => {
+            const value = JSON.parse(fs.readFileSync(file, "utf8"));
+            const versions = value.versions || value.latest?.versions || [];
+            return versions.map(item => ({
+              id: String(item?.version_id || item?.id || "").toLowerCase(),
+              percentage: Number(item?.percentage),
+            })).sort((a, b) => a.id.localeCompare(b.id));
+          };
+          if (JSON.stringify(normalized(process.argv[2])) !== JSON.stringify(normalized(process.argv[3]))) {
+            throw new Error("general skincos-api traffic changed during the route-isolated Ponto release");
+          }
+          NODE
+          for endpoint in health finance/health insumos/health; do
+            slug="$(tr '/' '-' <<<"$endpoint")"
+            curl --fail --silent --show-error --retry 5 --retry-delay 4 "https://api.skincos.com.br/$endpoint" > "$RUNNER_TEMP/general-$slug.json"
+          done
+      - name: Roll back Core after a failed mutation
+        if: ${{ always() && (failure() || cancelled()) && env.CORE_INCUMBENT_VERSION_ID != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$RUNNER_TEMP/core-mutation-started" ]]; then
+            echo 'No Core mutation started; compensation is intentionally a no-op'
+            printf '%s\n' not-started > "$RUNNER_TEMP/core-compensation-disposition"
+            exit 0
+          fi
+          api/node_modules/.bin/wrangler deployments status --json --config "$PONTO_CORE_CONFIG" \
+            > "$RUNNER_TEMP/core-compensation-status.json"
+          ownership="$(node .github/scripts/ponto-rollback-ownership.mjs \
+            classify-worker-compensation \
+            "$RUNNER_TEMP/core-compensation-status.json" \
+            "$TARGET" \
+            "$CORE_CANDIDATE_VERSION_ID" \
+            "$CORE_INCUMBENT_VERSION_ID" \
+            "$DEPLOYMENT_ID" \
+            "$RUNNER_TEMP/core-compensation-ownership.json")"
+          case "$ownership" in
+            already-incumbent)
+              echo 'Core is already on the exact incumbent; compensation is a no-op'
+              printf '%s\n' already-incumbent > "$RUNNER_TEMP/core-compensation-disposition"
+              exit 0
+              ;;
+            candidate-owned)
+              printf '%s\n' rollback-attempted > "$RUNNER_TEMP/core-compensation-disposition"
+              ;;
+            ownership-conflict)
+              echo 'Core compensation ownership conflict; refusing to mutate external state'
+              printf '%s\n' ownership-conflict > "$RUNNER_TEMP/core-compensation-disposition"
+              exit 1
+              ;;
+            *) echo 'Unexpected Core compensation classification'; exit 1 ;;
+          esac
+          api/node_modules/.bin/wrangler rollback "$CORE_INCUMBENT_VERSION_ID" --yes --message "ponto:auto-abort:$RELEASE_SHA" --config "$PONTO_CORE_CONFIG"
+          api/node_modules/.bin/wrangler deployments status --json --config "$PONTO_CORE_CONFIG" \
+            > "$RUNNER_TEMP/core-compensation-after.json"
+          node - "$RUNNER_TEMP/core-compensation-after.json" "$CORE_INCUMBENT_VERSION_ID" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versions = value.versions || value.latest?.versions || [];
+          const deploymentId = String(value.id || value.deployment_id || value.latest?.id || "");
+          if (
+            !/^[0-9a-f-]{36}$/i.test(deploymentId)
+            || versions.length !== 1
+            || Number(versions[0]?.percentage) !== 100
+            || String(versions[0]?.version_id || versions[0]?.id || "").toLowerCase() !== process.argv[3].toLowerCase()
+          ) throw new Error("Core compensation did not restore the exact incumbent");
+          NODE
+          printf '%s\n' rolled-back > "$RUNNER_TEMP/core-compensation-disposition"
+          touch "$RUNNER_TEMP/core-rollback-completed"
+      - name: Write sanitized Core mutation journal
+        if: always()
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/core-mutation"
+          node - "$RUNNER_TEMP/core-mutation/mutation.json" <<'NODE'
+          const fs = require("fs");
+          const exists = name => fs.existsSync(`${process.env.RUNNER_TEMP}/${name}`);
+          const livePreconditionFile = `${process.env.RUNNER_TEMP}/core-live-precondition.json`;
+          const pilotBaselinePreconditionFile = `${process.env.RUNNER_TEMP}/core-pilot-baseline-precondition.json`;
+          const compensationOwnershipFile = `${process.env.RUNNER_TEMP}/core-compensation-ownership.json`;
+          const compensationDispositionFile = `${process.env.RUNNER_TEMP}/core-compensation-disposition`;
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "coreApi",
+            stage: process.env.TARGET,
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID || "",
+            baselineRunId: process.env.BASELINE_RUN_ID || "",
+            incumbentVersionId: process.env.CORE_INCUMBENT_VERSION_ID || "",
+            candidateVersionId: process.env.CORE_CANDIDATE_VERSION_ID || "",
+            deploymentId: process.env.DEPLOYMENT_ID || "",
+            mutationStarted: exists("core-mutation-started"),
+            mutationCompleted: exists("core-mutation-completed"),
+            rollbackCompleted: exists("core-rollback-completed"),
+            configDigest: process.env.PONTO_CORE_CONFIG_DIGEST || "",
+            bundleDigest: process.env.PONTO_CORE_BUNDLE_DIGEST || "",
+            livePrecondition: fs.existsSync(livePreconditionFile) ? JSON.parse(fs.readFileSync(livePreconditionFile, "utf8")) : null,
+            pilotBaselinePrecondition: fs.existsSync(pilotBaselinePreconditionFile) ? JSON.parse(fs.readFileSync(pilotBaselinePreconditionFile, "utf8")) : null,
+            compensationOwnership: fs.existsSync(compensationOwnershipFile) ? JSON.parse(fs.readFileSync(compensationOwnershipFile, "utf8")) : null,
+            compensationDisposition: fs.existsSync(compensationDispositionFile) ? fs.readFileSync(compensationDispositionFile, "utf8").trim() : "not-required",
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Upload Core mutation journal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-mutation-core-api-${{ inputs.target }}-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/core-mutation/mutation.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Write sanitized Core surface manifest
+        if: success()
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          CANDIDATE_PERCENT: ${{ steps.deployment.outputs.candidate_percent }}
+          INCUMBENT_PERCENT: ${{ steps.deployment.outputs.incumbent_percent }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/core-surface"
+          node - "$RUNNER_TEMP/core-surface/surface.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "coreApi",
+            stage: process.env.TARGET,
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            baselineRunId: process.env.BASELINE_RUN_ID || "",
+            candidateVersionId: process.env.CORE_CANDIDATE_VERSION_ID,
+            incumbentVersionId: process.env.CORE_INCUMBENT_VERSION_ID,
+            deploymentId: process.env.DEPLOYMENT_ID,
+            candidatePercent: Number(process.env.CANDIDATE_PERCENT),
+            incumbentPercent: Number(process.env.INCUMBENT_PERCENT),
+            candidateTag: `ponto:coreApi:${process.env.RELEASE_SHA}`,
+            timekeepingVersionId: process.env.CORE_TIMEKEEPING_VERSION_ID,
+            serviceName: "skincos-ponto-core",
+            routeIsolated: true,
+            generalCoreUnchanged: true,
+            configDigest: process.env.PONTO_CORE_CONFIG_DIGEST,
+            bundleDigest: process.env.PONTO_CORE_BUNDLE_DIGEST,
+            url: "https://crm.skincos.com.br/api/ponto/health",
+          }, null, 2)}\n`);
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: success()
+        with:
+          name: ponto-surface-core-api-${{ inputs.target }}-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/core-surface/surface.json
+          retention-days: 90
+          if-no-files-found: error
+  ponto-identity-progressive-release:
+    needs: progressive
+    if: ${{ inputs.release_scope == 'ponto' && inputs.unit == 'inventory' && contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      RELEASE_SHA: ${{ needs.progressive.outputs.source_sha }}
+      TARGET: ${{ inputs.target }}
+    steps:
+      - name: Guard canonical Ponto Identity release
+        env:
+          ENABLE_CORE_WORKERS_DEPLOY: ${{ vars.ENABLE_CORE_WORKERS_DEPLOY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          IDENTITY_BACKUP_PASSPHRASE: ${{ secrets.IDENTITY_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLE_CORE_WORKERS_DEPLOY" == true ]] || { echo 'ENABLE_CORE_WORKERS_DEPLOY must be explicitly true'; exit 1; }
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'Cloudflare credentials are required'; exit 1; }
+          if [[ "$TARGET" == pilot ]]; then
+            [[ -n "${IDENTITY_BACKUP_PASSPHRASE:-}" ]] || { echo 'Production Identity checkpoint passphrase is required'; exit 1; }
+          fi
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
+      - name: Test v2 Identity caller and attest remote secret custody
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          corepack pnpm --dir inventory install --frozen-lockfile --ignore-scripts
+          corepack pnpm --dir inventory test
+          node --test shared/identity-runtime/workforce-onboarding.test.mjs inventory/tests/releaseHealth.test.mjs
+          inventory/node_modules/.bin/wrangler secret list --config inventory/wrangler.toml > "$RUNNER_TEMP/identity-secret-list.json"
+          node - "$RUNNER_TEMP/identity-secret-list.json" <<'NODE'
+          const fs = require("fs");
+          const names = new Set(JSON.parse(fs.readFileSync(process.argv[2], "utf8")).map(item => item.name));
+          for (const name of ["IDENTITY_PII_KEY", "IDENTITY_WORKFORCE_HMAC_KEY"]) {
+            if (!names.has(name)) throw new Error(`remote Identity secret is absent: ${name}`);
+          }
+          NODE
+          rm -f "$RUNNER_TEMP/identity-secret-list.json"
+      - name: Resolve incumbent Identity version before pilot
+        if: inputs.target == 'pilot'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BASELINE_INCUMBENT_ID: ${{ needs.progressive.outputs.baseline_identity_version_id }}
+          BASELINE_INCUMBENT_DEPLOYMENT_ID: ${{ needs.progressive.outputs.baseline_identity_deployment_id }}
+        run: |
+          set -euo pipefail
+          inventory/node_modules/.bin/wrangler deployments status --json --config inventory/wrangler.toml > "$RUNNER_TEMP/identity-incumbent.json"
+          PONTO_BASELINE_DEPLOYMENT_ID="$BASELINE_INCUMBENT_DEPLOYMENT_ID" \
+          PONTO_BASELINE_VERSION_ID="$BASELINE_INCUMBENT_ID" \
+            node .github/scripts/ponto-live-deployment-precondition.mjs \
+              pilot-baseline \
+              "$RUNNER_TEMP/identity-incumbent.json" \
+              identityWorkforce \
+              "$RUNNER_TEMP/identity-pilot-baseline-precondition.json"
+          id="$BASELINE_INCUMBENT_ID"
+          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve incumbent Identity version'; exit 1; }
+          echo "IDENTITY_INCUMBENT_VERSION_ID=$id" >> "$GITHUB_ENV"
+      - name: Select predecessor Identity versions
+        if: ${{ inputs.target == 'canary' || inputs.target == 'production' || inputs.target == 'rollback' }}
+        env:
+          CANDIDATE_ID: ${{ needs.progressive.outputs.identity_candidate_version_id }}
+          INCUMBENT_ID: ${{ needs.progressive.outputs.identity_incumbent_version_id }}
+          CHECKPOINT_ARTIFACT: ${{ needs.progressive.outputs.identity_checkpoint_artifact }}
+          CHECKPOINT_SHA256: ${{ needs.progressive.outputs.identity_checkpoint_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_ID" =~ ^[0-9a-fA-F-]{36}$ && "$INCUMBENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Predecessor Identity version IDs are invalid'; exit 1; }
+          echo "IDENTITY_CANDIDATE_VERSION_ID=$CANDIDATE_ID" >> "$GITHUB_ENV"
+          echo "IDENTITY_INCUMBENT_VERSION_ID=$INCUMBENT_ID" >> "$GITHUB_ENV"
+          if [[ -n "$CHECKPOINT_SHA256" ]]; then
+            [[ "$CHECKPOINT_SHA256" =~ ^[0-9a-f]{64}$ && -n "$CHECKPOINT_ARTIFACT" ]] || { echo 'Predecessor Identity checkpoint is invalid'; exit 1; }
+            echo "IDENTITY_CHECKPOINT_ARTIFACT=$CHECKPOINT_ARTIFACT" >> "$GITHUB_ENV"
+            echo "IDENTITY_CHECKPOINT_SHA256=$CHECKPOINT_SHA256" >> "$GITHUB_ENV"
+          fi
+      - name: Fail closed on live Identity drift from governed predecessor
+        if: ${{ inputs.target == 'canary' || inputs.target == 'production' || inputs.target == 'rollback' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+          PREDECESSOR_STAGE: ${{ needs.progressive.outputs.predecessor_stage }}
+          EXPECTED_CANDIDATE_ID: ${{ needs.progressive.outputs.identity_candidate_version_id }}
+          EXPECTED_INCUMBENT_ID: ${{ needs.progressive.outputs.identity_incumbent_version_id }}
+          ROLLBACK_FROM_STAGE: ${{ inputs.rollback_from_stage }}
+        run: |
+          set -euo pipefail
+          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'Identity precondition requires numeric predecessor_run_id'; exit 1; }
+          predecessor_dir="$RUNNER_TEMP/identity-live-predecessor"
+          predecessor_file="$predecessor_dir/ponto-release-evidence.json"
+          mkdir -p "$predecessor_dir"
+          gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-release-evidence-${PREDECESSOR_STAGE}-${RELEASE_SHA}" \
+            --dir "$predecessor_dir"
+          PONTO_EXPECTED_STAGE="$PREDECESSOR_STAGE" \
+          PONTO_EXPECTED_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-release-evidence.mjs verify "$predecessor_file"
+          inventory/node_modules/.bin/wrangler deployments status --json --config inventory/wrangler.toml \
+            > "$RUNNER_TEMP/identity-live-deployment.json"
+          PONTO_LIVE_TARGET="$TARGET" \
+          PONTO_LIVE_PREDECESSOR_STAGE="$PREDECESSOR_STAGE" \
+          PONTO_LIVE_ROLLBACK_FROM_STAGE="$ROLLBACK_FROM_STAGE" \
+          PONTO_LIVE_RELEASE_SHA="$RELEASE_SHA" \
+          PONTO_LIVE_CANDIDATE_VERSION_ID="$EXPECTED_CANDIDATE_ID" \
+          PONTO_LIVE_INCUMBENT_VERSION_ID="$EXPECTED_INCUMBENT_ID" \
+            node .github/scripts/ponto-live-deployment-precondition.mjs \
+              "$RUNNER_TEMP/identity-live-deployment.json" \
+              "$predecessor_file" \
+              identityWorkforce \
+              "$RUNNER_TEMP/identity-live-precondition.json"
+      - name: Select exact Timekeeping version for the Identity caller
+        env:
+          PILOT_TIMEKEEPING_ID: ${{ inputs.timekeeping_version_id }}
+          PREDECESSOR_CANDIDATE_ID: ${{ needs.progressive.outputs.timekeeping_candidate_version_id }}
+          PREDECESSOR_INCUMBENT_ID: ${{ needs.progressive.outputs.timekeeping_incumbent_version_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == pilot ]]; then id="$PILOT_TIMEKEEPING_ID"; elif [[ "$TARGET" == rollback ]]; then id="$PREDECESSOR_INCUMBENT_ID"; else id="$PREDECESSOR_CANDIDATE_ID"; fi
+          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Identity stage requires an explicit Timekeeping affinity UUID'; exit 1; }
+          echo "IDENTITY_TIMEKEEPING_VERSION_ID=$id" >> "$GITHUB_ENV"
+      - name: Upload immutable production Identity candidate at zero traffic
+        if: inputs.target == 'pilot'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/identity-version-upload.ndjson" inventory/node_modules/.bin/wrangler versions upload \
+            --config inventory/wrangler.toml \
+            --keep-vars \
+            --strict \
+            --tag "ponto:identityWorkforce:$RELEASE_SHA" \
+            --message "ponto:identityWorkforce:$RELEASE_SHA" \
+            --var "APP_VERSION:$RELEASE_SHA" \
+            --var "ENVIRONMENT:production" \
+            --var "TIMEKEEPING_VERSION_ID:$IDENTITY_TIMEKEEPING_VERSION_ID"
+          PONTO_EXPECTED_WRANGLER_ENV=production node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/identity-version-upload.ndjson" version-upload skincos-insumos >/dev/null
+          id="$(node -e "const fs=require('fs');const r=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).map(JSON.parse).filter(x=>x.type==='version-upload').at(-1);process.stdout.write(String(r?.version_id||''))" "$RUNNER_TEMP/identity-version-upload.ndjson")"
+          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ && "$id" != "$IDENTITY_INCUMBENT_VERSION_ID" ]] || { echo 'Invalid or non-distinct Identity candidate'; exit 1; }
+          echo "IDENTITY_CANDIDATE_VERSION_ID=$id" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/identity-version-upload.ndjson"
+      - name: Capture encrypted pre-pilot production Identity checkpoint
+        id: checkpoint
+        if: inputs.target == 'pilot'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          IDENTITY_BACKUP_PASSPHRASE: ${{ secrets.IDENTITY_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          checkpoint="$RUNNER_TEMP/identity-pilot-pre-migration-$RELEASE_SHA"
+          mkdir -p "$checkpoint"
+          plain="$checkpoint/skincos-db.sql"
+          encrypted="$checkpoint/skincos-db.sql.gpg"
+          trap 'rm -f "$plain"' EXIT
+          inventory/node_modules/.bin/wrangler d1 export skincos-db --remote --output "$plain" --config inventory/wrangler.toml
+          printf '%s' "$IDENTITY_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
+          digest="$(sha256sum "$encrypted" | cut -d' ' -f1)"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          printf '%s  %s\n' "$digest" "$(basename "$encrypted")" > "$checkpoint/skincos-db.sql.gpg.sha256"
+          echo "path=$checkpoint" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Upload encrypted pre-pilot production Identity checkpoint
+        if: inputs.target == 'pilot'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: identity-pilot-pre-migration-${{ env.RELEASE_SHA }}
+          path: ${{ steps.checkpoint.outputs.path }}
+          retention-days: 90
+          if-no-files-found: error
+      - name: Apply additive production Identity migrations before pilot
+        if: inputs.target == 'pilot'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          touch "$RUNNER_TEMP/identity-migration-started"
+          inventory/node_modules/.bin/wrangler d1 migrations apply skincos-db --remote --config inventory/wrangler.toml
+          touch "$RUNNER_TEMP/identity-migration-completed"
+      - name: Deploy exact Identity weights or execute rollback
+        id: deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            pilot|canary|rollback) candidate=0; incumbent=100 ;;
+            production) candidate=100; incumbent=0 ;;
+            *) exit 1 ;;
+          esac
+          touch "$RUNNER_TEMP/identity-mutation-started"
+          if [[ "$TARGET" == rollback ]]; then
+            inventory/node_modules/.bin/wrangler rollback "$IDENTITY_INCUMBENT_VERSION_ID" --yes --message "ponto:rollback:$RELEASE_SHA" --config inventory/wrangler.toml
+            inventory/node_modules/.bin/wrangler deployments status --json --config inventory/wrangler.toml > "$RUNNER_TEMP/identity-deployment.json"
+            deployment="$(node - "$RUNNER_TEMP/identity-deployment.json" "$IDENTITY_INCUMBENT_VERSION_ID" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versions = value.versions || value.latest?.versions || [];
+          const expected = process.argv[3].toLowerCase();
+          if (versions.length !== 1 || Number(versions[0]?.percentage) !== 100 || String(versions[0]?.version_id || versions[0]?.id || "").toLowerCase() !== expected) {
+            throw new Error("Identity rollback control-plane weight does not match the exact incumbent");
+          }
+          process.stdout.write(String(value.id || value.deployment_id || value.latest?.id || ""));
+          NODE
+            )"
+          else
+            if [[ "$candidate" == 100 ]]; then versions=("$IDENTITY_CANDIDATE_VERSION_ID@100%"); else versions=("$IDENTITY_INCUMBENT_VERSION_ID@100%" "$IDENTITY_CANDIDATE_VERSION_ID@0%"); fi
+            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/identity-version-deploy.ndjson" inventory/node_modules/.bin/wrangler versions deploy "${versions[@]}" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config inventory/wrangler.toml
+            PONTO_EXPECTED_WRANGLER_ENV=production node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/identity-version-deploy.ndjson" version-deploy skincos-insumos >/dev/null
+            deployment="$(node -e "const fs=require('fs');const r=fs.readFileSync(process.argv[1],'utf8').trim().split(/\\r?\\n/).map(JSON.parse).filter(x=>x.type==='version-deploy').at(-1);process.stdout.write(String(r?.deployment_id||r?.id||''))" "$RUNNER_TEMP/identity-version-deploy.ndjson")"
+          fi
+          [[ "$deployment" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to attest Identity deployment'; exit 1; }
+          touch "$RUNNER_TEMP/identity-mutation-completed"
+          echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
+          echo "candidate_percent=$candidate" >> "$GITHUB_OUTPUT"
+          echo "incumbent_percent=$incumbent" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/identity-version-deploy.ndjson" "$RUNNER_TEMP/identity-deployment.json"
+      - name: Attest Identity publication boundary without a public version override
+        env:
+          CANDIDATE_ID: ${{ env.IDENTITY_CANDIDATE_VERSION_ID }}
+          INCUMBENT_ID: ${{ env.IDENTITY_INCUMBENT_VERSION_ID }}
+          TIMEKEEPING_VERSION_ID: ${{ env.IDENTITY_TIMEKEEPING_VERSION_ID }}
+          CANDIDATE_PERCENT: ${{ steps.deployment.outputs.candidate_percent }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == rollback ]]; then
+            curl --fail --silent --show-error --retry 5 --retry-delay 4 \
+              https://api.skincos.com.br/insumos/health > "$RUNNER_TEMP/identity-health.json"
+            node - "$RUNNER_TEMP/identity-health.json" "$RUNNER_TEMP/identity-contract-proof.json" <<'NODE'
+          const fs = require("fs");
+          const health = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versionId = String(health?.workerVersion?.id || "").toLowerCase();
+          if (health?.ok !== true || health?.ready !== true || health?.environment !== "production" || versionId !== process.env.INCUMBENT_ID.toLowerCase()) {
+            throw new Error("Identity rollback health does not attest the exact incumbent");
+          }
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            passed: true,
+            mode: "rollback-health",
+            identityVersionId: process.env.INCUMBENT_ID,
+            writes: 0,
+            piiIncluded: false,
+          }, null, 2)}\n`);
+          NODE
+          elif [[ "$TARGET" == production ]]; then
+            curl --fail --silent --show-error --retry 5 --retry-delay 4 \
+              https://api.skincos.com.br/insumos/health > "$RUNNER_TEMP/identity-health.json"
+            node - "$RUNNER_TEMP/identity-health.json" "$RUNNER_TEMP/identity-contract-proof.json" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const health = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versionId = String(health?.workerVersion?.id || "").toLowerCase();
+          const valid = health?.ok === true
+            && health?.ready === true
+            && health?.version === process.env.RELEASE_SHA
+            && health?.environment === "production"
+            && versionId === process.env.CANDIDATE_ID.toLowerCase();
+          if (!valid) throw new Error("active production Identity health did not match the exact candidate");
+          const proof = {
+            passed: true,
+            mode: "active-identity-health",
+            sourceSha: process.env.RELEASE_SHA,
+            identityVersionId: process.env.CANDIDATE_ID,
+            timekeepingVersionId: process.env.TIMEKEEPING_VERSION_ID,
+            writes: 0,
+            piiIncluded: false,
+          };
+          proof.digest = crypto.createHash("sha256").update(JSON.stringify(proof)).digest("hex");
+          fs.writeFileSync(process.argv[3], `${JSON.stringify(proof, null, 2)}\n`);
+          NODE
+          else
+            node - "$RUNNER_TEMP/identity-contract-proof.json" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          if (!["pilot", "canary"].includes(process.env.TARGET) || Number(process.env.CANDIDATE_PERCENT) !== 0) {
+            throw new Error("only a zero-traffic Identity candidate may defer its functional contract to Pages");
+          }
+          const proof = {
+            passed: false,
+            mode: "protected-pages-contract-required",
+            requiredEndpoint: "/api/ponto/_release-contract",
+            sourceSha: process.env.RELEASE_SHA,
+            identityVersionId: process.env.CANDIDATE_ID,
+            timekeepingVersionId: process.env.TIMEKEEPING_VERSION_ID,
+            candidatePercent: 0,
+            publicVersionOverrideUsed: false,
+            writes: 0,
+            piiIncluded: false,
+          };
+          proof.digest = crypto.createHash("sha256").update(JSON.stringify(proof)).digest("hex");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify(proof, null, 2)}\n`);
+          NODE
+          fi
+          rm -f "$RUNNER_TEMP/identity-health.json"
+      - name: Roll back Identity after a failed mutation
+        if: ${{ always() && (failure() || cancelled()) && env.IDENTITY_INCUMBENT_VERSION_ID != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$RUNNER_TEMP/identity-mutation-started" ]]; then
+            echo 'No Identity mutation started; compensation is intentionally a no-op'
+            printf '%s\n' not-started > "$RUNNER_TEMP/identity-compensation-disposition"
+            exit 0
+          fi
+          inventory/node_modules/.bin/wrangler deployments status --json --config inventory/wrangler.toml \
+            > "$RUNNER_TEMP/identity-compensation-status.json"
+          ownership="$(node .github/scripts/ponto-rollback-ownership.mjs \
+            classify-worker-compensation \
+            "$RUNNER_TEMP/identity-compensation-status.json" \
+            "$TARGET" \
+            "$IDENTITY_CANDIDATE_VERSION_ID" \
+            "$IDENTITY_INCUMBENT_VERSION_ID" \
+            "$DEPLOYMENT_ID" \
+            "$RUNNER_TEMP/identity-compensation-ownership.json")"
+          case "$ownership" in
+            already-incumbent)
+              echo 'Identity is already on the exact incumbent; compensation is a no-op'
+              printf '%s\n' already-incumbent > "$RUNNER_TEMP/identity-compensation-disposition"
+              exit 0
+              ;;
+            candidate-owned)
+              printf '%s\n' rollback-attempted > "$RUNNER_TEMP/identity-compensation-disposition"
+              ;;
+            ownership-conflict)
+              echo 'Identity compensation ownership conflict; refusing to mutate external state'
+              printf '%s\n' ownership-conflict > "$RUNNER_TEMP/identity-compensation-disposition"
+              exit 1
+              ;;
+            *) echo 'Unexpected Identity compensation classification'; exit 1 ;;
+          esac
+          inventory/node_modules/.bin/wrangler rollback "$IDENTITY_INCUMBENT_VERSION_ID" --yes --message "ponto:auto-abort:$RELEASE_SHA" --config inventory/wrangler.toml
+          inventory/node_modules/.bin/wrangler deployments status --json --config inventory/wrangler.toml \
+            > "$RUNNER_TEMP/identity-compensation-after.json"
+          node - "$RUNNER_TEMP/identity-compensation-after.json" "$IDENTITY_INCUMBENT_VERSION_ID" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versions = value.versions || value.latest?.versions || [];
+          const deploymentId = String(value.id || value.deployment_id || value.latest?.id || "");
+          if (
+            !/^[0-9a-f-]{36}$/i.test(deploymentId)
+            || versions.length !== 1
+            || Number(versions[0]?.percentage) !== 100
+            || String(versions[0]?.version_id || versions[0]?.id || "").toLowerCase() !== process.argv[3].toLowerCase()
+          ) throw new Error("Identity compensation did not restore the exact incumbent");
+          NODE
+          printf '%s\n' rolled-back > "$RUNNER_TEMP/identity-compensation-disposition"
+          touch "$RUNNER_TEMP/identity-rollback-completed"
+      - name: Write sanitized Identity/Workforce mutation journal
+        if: always()
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/identity-mutation"
+          node - "$RUNNER_TEMP/identity-mutation/mutation.json" <<'NODE'
+          const fs = require("fs");
+          const exists = name => fs.existsSync(`${process.env.RUNNER_TEMP}/${name}`);
+          const livePreconditionFile = `${process.env.RUNNER_TEMP}/identity-live-precondition.json`;
+          const pilotBaselinePreconditionFile = `${process.env.RUNNER_TEMP}/identity-pilot-baseline-precondition.json`;
+          const compensationOwnershipFile = `${process.env.RUNNER_TEMP}/identity-compensation-ownership.json`;
+          const compensationDispositionFile = `${process.env.RUNNER_TEMP}/identity-compensation-disposition`;
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "identityWorkforce",
+            stage: process.env.TARGET,
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID || "",
+            baselineRunId: process.env.BASELINE_RUN_ID || "",
+            incumbentVersionId: process.env.IDENTITY_INCUMBENT_VERSION_ID || "",
+            candidateVersionId: process.env.IDENTITY_CANDIDATE_VERSION_ID || "",
+            deploymentId: process.env.DEPLOYMENT_ID || "",
+            migrationStarted: exists("identity-migration-started"),
+            migrationCompleted: exists("identity-migration-completed"),
+            migrationDisposition: exists("identity-migration-started") ? "retained-additive-schema" : "not-run",
+            checkpoint: process.env.CHECKPOINT_DIGEST ? {
+              artifactName: `identity-pilot-pre-migration-${process.env.RELEASE_SHA}`,
+              sha256: process.env.CHECKPOINT_DIGEST,
+            } : null,
+            mutationStarted: exists("identity-mutation-started"),
+            mutationCompleted: exists("identity-mutation-completed"),
+            rollbackCompleted: exists("identity-rollback-completed"),
+            livePrecondition: fs.existsSync(livePreconditionFile) ? JSON.parse(fs.readFileSync(livePreconditionFile, "utf8")) : null,
+            pilotBaselinePrecondition: fs.existsSync(pilotBaselinePreconditionFile) ? JSON.parse(fs.readFileSync(pilotBaselinePreconditionFile, "utf8")) : null,
+            compensationOwnership: fs.existsSync(compensationOwnershipFile) ? JSON.parse(fs.readFileSync(compensationOwnershipFile, "utf8")) : null,
+            compensationDisposition: fs.existsSync(compensationDispositionFile) ? fs.readFileSync(compensationDispositionFile, "utf8").trim() : "not-required",
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Upload Identity/Workforce mutation journal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-mutation-identity-workforce-${{ inputs.target }}-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/identity-mutation/mutation.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Write sanitized Identity/Workforce surface manifest
+        if: success()
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment }}
+          CANDIDATE_PERCENT: ${{ steps.deployment.outputs.candidate_percent }}
+          INCUMBENT_PERCENT: ${{ steps.deployment.outputs.incumbent_percent }}
+          CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
+          CHECKPOINT_ARTIFACT: ${{ inputs.target == 'pilot' && format('identity-pilot-pre-migration-{0}', env.RELEASE_SHA) || env.IDENTITY_CHECKPOINT_ARTIFACT }}
+          PREDECESSOR_CHECKPOINT_DIGEST: ${{ env.IDENTITY_CHECKPOINT_SHA256 }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/identity-surface"
+          node - "$RUNNER_TEMP/identity-surface/surface.json" <<'NODE'
+          const crypto = require("crypto"); const fs = require("fs"); const path = require("path");
+          const migrations = ["pilot", "canary", "production"].includes(process.env.TARGET)
+            ? fs.readdirSync("inventory/migrations").filter(name => /^\d+.*\.sql$/.test(name)).sort().map(name => ({
+              name, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join("inventory/migrations", name))).digest("hex"), status: "applied-or-preexisting",
+            })) : [];
+          const contractProof = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, "identity-contract-proof.json"), "utf8"));
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1, surface: "identityWorkforce", stage: process.env.TARGET, sourceSha: process.env.RELEASE_SHA, runId: process.env.GITHUB_RUN_ID,
+            baselineRunId: process.env.BASELINE_RUN_ID || "",
+            candidateVersionId: process.env.IDENTITY_CANDIDATE_VERSION_ID, incumbentVersionId: process.env.IDENTITY_INCUMBENT_VERSION_ID, deploymentId: process.env.DEPLOYMENT_ID,
+            candidatePercent: Number(process.env.CANDIDATE_PERCENT), incumbentPercent: Number(process.env.INCUMBENT_PERCENT),
+            candidateTag: `ponto:identityWorkforce:${process.env.RELEASE_SHA}`, url: "https://api.skincos.com.br/insumos/health",
+            timekeepingVersionId: process.env.IDENTITY_TIMEKEEPING_VERSION_ID,
+            checkpoint: (process.env.CHECKPOINT_DIGEST || process.env.PREDECESSOR_CHECKPOINT_DIGEST) ? {
+              artifactName: process.env.CHECKPOINT_ARTIFACT,
+              sha256: process.env.CHECKPOINT_DIGEST || process.env.PREDECESSOR_CHECKPOINT_DIGEST,
+              releaseSha: process.env.RELEASE_SHA,
+            } : null,
+            contractProof,
+            migrations,
+          }, null, 2)}\n`);
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: success()
+        with:
+          name: ponto-surface-identity-workforce-${{ inputs.target }}-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/identity-surface/surface.json
+          retention-days: 90
           if-no-files-found: error

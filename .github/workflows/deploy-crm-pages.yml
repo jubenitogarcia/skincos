@@ -1,4 +1,5 @@
 name: Deploy CRM (Cloudflare Pages)
+run-name: CRM Pages ${{ inputs.target }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
 
 on:
   workflow_dispatch:
@@ -8,13 +9,32 @@ on:
         required: true
         default: staging
         type: choice
-        options: [preview, staging, production]
+        options: [preview, staging, pilot, canary, production, rollback]
       release_sha: { description: "Immutable commit SHA", required: false, type: string }
       preview_run_id: { description: "Required for staging", required: false, type: string }
       staging_run_id: { description: "Required for production", required: false, type: string }
+      release_scope:
+        description: General CRM release or the governed Ponto composite release
+        required: true
+        default: general
+        type: choice
+        options: [general, ponto]
+      predecessor_run_id: { description: "Required for Ponto live stages", required: false, type: string }
+      baseline_run_id: { description: "Required for Ponto pilot; immutable production incumbent baseline", required: false, type: string }
+      rollback_from_stage:
+        description: Current live stage for Ponto rollback
+        required: false
+        default: production
+        type: choice
+        options: [pilot, canary, production]
+      core_candidate_version_id: { description: "Required for Ponto staging, pilot and canary", required: false, type: string }
+      identity_candidate_version_id: { description: "Required for Ponto staging, pilot and canary", required: false, type: string }
+      orchestrator_run_id: { description: "Ponto coordinator correlation ID", required: false, type: string }
+      orchestrator_lease_token: { description: "Masked single-use capability issued by the Ponto coordinator", required: false, type: string }
+      orchestrator_stage: { description: "Exact stage of the issuing Ponto coordinator", required: false, type: string }
 
 concurrency:
-  group: deploy-crm-pages-${{ inputs.target }}
+  group: ${{ inputs.target == 'preview' && 'deploy-crm-pages-preview' || (inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '') && format('ponto-child-crm-pages-{0}', inputs.orchestrator_run_id) || 'ponto-release-custody' }}
   cancel-in-progress: false
 
 permissions:
@@ -22,7 +42,21 @@ permissions:
   contents: read
 
 jobs:
+  coordination:
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    with:
+      required: ${{ inputs.release_scope == 'ponto' && inputs.target != 'preview' }}
+      lease_key: pages
+      stage: ${{ inputs.orchestrator_stage || inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
+      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
   promotion:
+    needs: coordination
+    if: ${{ inputs.release_scope != 'ponto' || inputs.target == 'preview' || inputs.target == 'staging' }}
     uses: ./.github/workflows/promotion-gate.yml
     with:
       unit: crm-pages
@@ -30,10 +64,80 @@ jobs:
       release_sha: ${{ inputs.release_sha }}
       preview_run_id: ${{ inputs.preview_run_id }}
       staging_run_id: ${{ inputs.staging_run_id }}
+      emit_preview_evidence: ${{ !(inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '') }}
     secrets: inherit
+  progressive:
+    needs: coordination
+    if: ${{ inputs.release_scope == 'ponto' && contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
+    uses: ./.github/workflows/ponto-release-gate.yml
+    with:
+      stage: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      predecessor_run_id: ${{ inputs.predecessor_run_id }}
+      rollback_from_stage: ${{ inputs.rollback_from_stage }}
+      baseline_run_id: ${{ inputs.baseline_run_id }}
+  ponto-preview:
+    needs: promotion
+    if: ${{ inputs.release_scope == 'ponto' && inputs.target == 'preview' }}
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ needs.promotion.outputs.source_sha }}
+          fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: crm/console/package-lock.json
+      - name: Test and build the immutable CRM Pages source
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          npm --prefix crm/console ci
+          npm --prefix crm/console run typecheck
+          npm --prefix crm/console test
+          npm --prefix crm/console run fetch-face-models
+          sed -i "s/__RELEASE_SHA__/$RELEASE_SHA/g" crm/console/wrangler.toml crm/console/.wrangler-staging/wrangler.toml
+          ! grep -R '__RELEASE_SHA__' crm/console/wrangler.toml crm/console/.wrangler-staging/wrangler.toml
+          VITE_BUILD_SHA="$RELEASE_SHA" npm --prefix crm/console run build
+      - name: Write validated CRM Pages preview artifacts
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          PROMOTION_UNIT=crm-pages PROMOTION_TARGET=preview PROMOTION_SOURCE_SHA="$RELEASE_SHA" \
+          PROMOTION_SOURCE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")" \
+            node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/crm-pages-preview-evidence/promotion-evidence.json"
+          mkdir -p "$RUNNER_TEMP/crm-pages-surface"
+          node - "$RUNNER_TEMP/crm-pages-surface/surface.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "crmPages",
+            stage: "preview",
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            validation: "typecheck-tests-and-production-build",
+          }, null, 2)}\n`);
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-crm-pages
+          path: ${{ runner.temp }}/crm-pages-preview-evidence/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-surface-crm-pages-preview-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/crm-pages-surface/surface.json
+          retention-days: 90
+          if-no-files-found: error
   deploy:
     needs: promotion
-    if: ${{ inputs.target != 'preview' }}
+    if: ${{ inputs.target != 'preview' && (inputs.release_scope != 'ponto' || inputs.target == 'staging') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
     permissions:
@@ -49,6 +153,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT_PROD: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
           PROJECT_STAGING: ${{ vars.CLOUDFLARE_PAGES_PROJECT_STAGING }}
+          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
           DEPLOY_TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
@@ -62,24 +167,23 @@ jobs:
             BRANCH_NAME=main
           fi
           if [[ "$DEPLOY_TARGET" == staging ]]; then
-            [[ "$PROJECT" == skincos-staging ]] || { echo 'Staging requires the exact skincos-staging Pages project'; exit 1; }
+            [[ "$PROJECT" == skincos-staging ]] || { echo 'Staging Pages release requires the exact skincos-staging project'; exit 1; }
           else
-            [[ "$PROJECT" == skincos ]] || { echo 'Production requires the exact skincos Pages project'; exit 1; }
+            [[ "$PROJECT" == skincos ]] || { echo 'Production Pages release requires the exact skincos project'; exit 1; }
           fi
           if [[ "${ENABLE:-}" != "true" ]]; then
-            echo "Deploy flag not enabled; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "Cloudflare Pages deploy flag must be explicitly true."
+            exit 1
           fi
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare deploy secrets not configured; skipping deploy."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "Cloudflare Pages credentials are required."
+            exit 1
           fi
+          [[ "$MODULE_CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Selected Pages environment requires a valid module-control KV namespace ID.'; exit 1; }
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
-      - name: Attest exact Pages project and production branch
+      - name: Attest exact isolated Pages project and production branch
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -96,17 +200,25 @@ jobs:
           node - "$RUNNER_TEMP/pages-project.json" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const expected = process.env.DEPLOY_TARGET === "staging" ? "skincos-staging" : "skincos";
+          const expectedName = process.env.DEPLOY_TARGET === "staging" ? "skincos-staging" : "skincos";
+          const expectedSubdomain = `${expectedName}.pages.dev`;
           const expectedBranch = process.env.DEPLOY_TARGET === "staging" ? "staging" : "main";
+          const expectedApiTarget = process.env.DEPLOY_TARGET === "staging"
+            ? { type: "plain_text", value: "https://api-staging.skincos.com.br" }
+            : { type: "secret_text" };
           const project = payload?.result;
+          const apiTarget = project?.deployment_configs?.production?.env_vars?.PONTO_API_TARGET;
           if (
             payload?.success !== true
-            || project?.name !== expected
-            || project?.subdomain !== `${expected}.pages.dev`
+            || project?.name !== expectedName
+            || project?.subdomain !== expectedSubdomain
             || project?.production_branch !== expectedBranch
             || process.env.BRANCH_NAME !== expectedBranch
-          ) throw new Error("Pages project identity or production branch differs");
+            || apiTarget?.type !== expectedApiTarget.type
+            || (expectedApiTarget.value && apiTarget?.value !== expectedApiTarget.value)
+          ) throw new Error("Pages project identity or production branch differs from the reviewed isolated target");
           NODE
+          rm -f "$RUNNER_TEMP/pages-project.json"
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -122,6 +234,17 @@ jobs:
           node-version: "22.12.0"
           cache: "npm"
           cache-dependency-path: crm/console/package-lock.json
+
+      - name: Render fail-closed Ponto identity for every general Pages deploy
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid promoted release SHA'; exit 1; }
+          sed -i "s/__RELEASE_SHA__/$RELEASE_SHA/g" crm/console/wrangler.toml crm/console/.wrangler-staging/wrangler.toml
+          ! grep -R '__RELEASE_SHA__' crm/console/wrangler.toml crm/console/.wrangler-staging/wrangler.toml || { echo 'PONTO_RELEASE_SHA placeholder remains'; exit 1; }
+          ! grep -RE '^PONTO_(CORE|IDENTITY)_VERSION_ID' crm/console/wrangler.toml crm/console/.wrangler-staging/wrangler.toml || { echo 'General Pages deploy refuses stale Ponto pilot overrides'; exit 1; }
 
       - name: Hold Finance UI from production until an explicit release
         id: finance_production_gate
@@ -162,6 +285,55 @@ jobs:
         run: npm run build
         working-directory: crm/console
 
+      - name: Attest remote Ponto Pages values before deployment
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAGES_PROJECT: ${{ steps.guard.outputs.project }}
+          DEPLOY_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          secret_list="$RUNNER_TEMP/pages-ponto-secret-list.json"
+          npx --yes wrangler@4.112.0 pages secret list --project-name "$PAGES_PROJECT" --env production > "$secret_list"
+          node - "$secret_list" <<'NODE'
+          const fs = require("fs");
+          const listed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const names = new Set(listed.map(item => item.name));
+          const required = ["PONTO_ACTOR_HMAC_KEY", "PONTO_NETWORK_CONTEXT_KEY", "PONTO_RELEASE_PROBE_HMAC_KEY"];
+          if (process.env.DEPLOY_TARGET !== "staging") required.push("PONTO_API_TARGET");
+          for (const name of required) {
+            if (!names.has(name)) throw new Error(`remote Pages value must be provisioned before release: ${name}`);
+          }
+          NODE
+          rm -f "$secret_list"
+
+      - name: Capture Ponto staging Pages rollback deployment
+        if: ${{ inputs.release_scope == 'ponto' && inputs.target == 'staging' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.guard.outputs.project }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
+            > "$RUNNER_TEMP/pages-staging-incumbent.json"
+          IFS=$'\t' read -r id commit_sha < <(node - "$RUNNER_TEMP/pages-staging-incumbent.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const deployments = (payload.result || []).filter(item => item.environment === "production").sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
+          const selected = deployments[0];
+          process.stdout.write(`${selected?.id || ""}\t${selected?.deployment_trigger?.metadata?.commit_hash || ""}`);
+          NODE
+          )
+          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve staging Pages rollback deployment'; exit 1; }
+          [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Staging Pages rollback deployment lacks immutable source provenance'; exit 1; }
+          echo "PAGES_STAGING_ROLLBACK_DEPLOYMENT_ID=$id" >> "$GITHUB_ENV"
+          echo "PAGES_STAGING_ROLLBACK_COMMIT_SHA=$commit_sha" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/pages-staging-incumbent.json"
+
       - name: Deploy to Cloudflare Pages (wrangler)
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         env:
@@ -174,6 +346,11 @@ jobs:
           # passed the promotion gate, not the workflow-dispatch ref.
           GIT_SHA: ${{ needs.promotion.outputs.source_sha }}
           GIT_MESSAGE: ${{ needs.promotion.outputs.source_sha }}
+          RELEASE_SCOPE: ${{ inputs.release_scope }}
+          CORE_CANDIDATE_VERSION_ID: ${{ inputs.core_candidate_version_id }}
+          IDENTITY_CANDIDATE_VERSION_ID: ${{ inputs.identity_candidate_version_id }}
+          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/crm-pages-deploy.ndjson
         run: |
           set -euo pipefail
           PROJECT="${PAGES_PROJECT:-skincos}"
@@ -183,10 +360,277 @@ jobs:
             # rather than letting the staging project inherit production
             # proxy targets from the repository default.
             cp .wrangler-staging/wrangler.toml wrangler.toml
+            if [[ "$RELEASE_SCOPE" == ponto ]]; then
+              node - wrangler.toml "$GIT_SHA" "$CORE_CANDIDATE_VERSION_ID" "$IDENTITY_CANDIDATE_VERSION_ID" <<'NODE'
+          const fs = require("fs");
+          const file = process.argv[2];
+          const releaseSha = process.argv[3];
+          const coreVersionId = process.argv[4];
+          const identityVersionId = process.argv[5];
+          const uuid = /^[0-9a-f-]{36}$/i;
+          if (!uuid.test(coreVersionId) || !uuid.test(identityVersionId)) throw new Error("Ponto staging requires exact Core and Identity candidate UUIDs");
+          let source = fs.readFileSync(file, "utf8");
+          source = source.replace(/^PONTO_(?:CORE|IDENTITY)_VERSION_ID\s*=.*\r?\n/gm, "");
+          source = source.replace(/^PONTO_ROLLOUT_STAGE\s*=\s*"[^"]*"/gm, 'PONTO_ROLLOUT_STAGE = "staging"');
+          let inserted = false;
+          source = source.replace(/^PONTO_ROLLOUT_STAGE\s*=\s*"staging"\s*$/m, line => {
+            inserted = true;
+            return `${line}\nPONTO_CORE_VERSION_ID = "${coreVersionId}"\nPONTO_IDENTITY_VERSION_ID = "${identityVersionId}"`;
+          });
+          if (!inserted) throw new Error("Ponto staging rollout stage field was not found");
+          if (!/^PONTO_ROLLOUT_STAGE\s*=\s*"staging"\s*$/m.test(source)) throw new Error("Ponto staging rollout stage was not rendered");
+          if (!new RegExp(`^PONTO_RELEASE_SHA\\s*=\\s*"${releaseSha}"\\s*$`, "m").test(source)) throw new Error("Ponto staging release SHA was not rendered");
+          if (!new RegExp(`^PONTO_CORE_VERSION_ID\\s*=\\s*"${coreVersionId}"\\s*$`, "m").test(source)) throw new Error("Ponto staging Core version was not rendered");
+          if (!new RegExp(`^PONTO_IDENTITY_VERSION_ID\\s*=\\s*"${identityVersionId}"\\s*$`, "m").test(source)) throw new Error("Ponto staging Identity version was not rendered");
+          fs.writeFileSync(file, source);
+          NODE
+            fi
+          fi
+          node - wrangler.toml "$MODULE_CONTROL_KV_ID" <<'NODE'
+          const fs = require("fs");
+          const file = process.argv[2];
+          const expected = process.argv[3];
+          if (!/^[0-9a-f]{32}$/i.test(expected)) throw new Error("module-control KV namespace is invalid");
+          let source = fs.readFileSync(file, "utf8").replace(/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/g, expected);
+          const block = source.match(/\[\[env\.production\.kv_namespaces\]\]\s*\r?\nbinding\s*=\s*"MODULE_CONTROL"\s*\r?\nid\s*=\s*"([0-9a-f]{32})"/i);
+          if (!block || block[1].toLowerCase() !== expected.toLowerCase()) throw new Error("selected Pages config is not bound to the approved module-control namespace");
+          if (source.includes("__CONFIGURE_")) throw new Error("selected Pages config contains an unresolved binding placeholder");
+          fs.writeFileSync(file, source);
+          NODE
+          if [[ "$RELEASE_SCOPE" == ponto ]]; then GIT_MESSAGE="ponto:crmPages:$GIT_SHA"; fi
+          if [[ "$RELEASE_SCOPE" == ponto && "$DEPLOY_TARGET" == staging ]]; then
+            echo "PAGES_STAGING_MUTATION_STARTED=true" >> "$GITHUB_ENV"
+            touch "$RUNNER_TEMP/pages-staging-mutation-started"
           fi
           echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
-          npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
+          npx --yes wrangler@4.112.0 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
         working-directory: crm/console
+
+      - name: Resolve immutable Ponto staging Pages deployment
+        id: ponto_staging
+        if: ${{ inputs.release_scope == 'ponto' && inputs.target == 'staging' }}
+        env:
+          PROJECT: ${{ steps.guard.outputs.project }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          PONTO_EXPECTED_WRANGLER_ENV=production node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/crm-pages-deploy.ndjson" pages-deploy "$PROJECT" > "$RUNNER_TEMP/pages-deploy-verified.txt"
+          IFS=$'\t' read -r deployment_id deployment_url < <(node - "$RUNNER_TEMP/crm-pages-deploy.ndjson" <<'NODE'
+          const fs = require("fs");
+          const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).map(JSON.parse);
+          const row = rows.filter(item => item.type === "pages-deploy").at(-1);
+          process.stdout.write(`${row?.deployment_id || row?.id || ""}\t${row?.url || row?.deployment_url || row?.targets?.[0] || ""}`);
+          NODE
+          )
+          echo "PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
+          [[ "$deployment_url" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'Structured Pages output returned an unexpected staging URL'; exit 1; }
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$deployment_id" \
+            > "$RUNNER_TEMP/pages-staging-deployment.json"
+          node - "$RUNNER_TEMP/pages-staging-deployment.json" "$deployment_id" "$deployment_url" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const deployment = payload?.result;
+          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          const metadata = deployment?.deployment_trigger?.metadata || {};
+          if (
+            payload?.success !== true
+            || deployment?.id !== process.argv[3]
+            || deployment?.project_name !== "skincos-staging"
+            || deployment?.environment !== "production"
+            || deployment?.url !== process.argv[4]
+            || metadata.branch !== "staging"
+            || String(metadata.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA
+            || !["success", "idle"].includes(status)
+            || !(deployment?.aliases || []).includes("https://crm-staging.skincos.com.br")
+          ) throw new Error("staging Pages deployment metadata or production alias differs from the exact candidate");
+          NODE
+          curl --fail --silent --show-error --retry 5 --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-proxy.headers" \
+            "${deployment_url%/}/api/ponto/_proxy-status" > "$RUNNER_TEMP/pages-staging-proxy.json"
+          node - "$RUNNER_TEMP/pages-staging-proxy.json" "$RUNNER_TEMP/pages-staging-proxy.headers" <<'NODE'
+          const fs = require("fs");
+          const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const headers = fs.readFileSync(process.argv[3], "utf8").toLowerCase();
+          if (body.ok !== true || body.ready !== true) throw new Error("staging Pages proxy status is not ready");
+          if (!headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)) throw new Error("staging Pages release header is absent");
+          if (!headers.includes("x-skincos-pages-environment: staging")) throw new Error("staging Pages environment header is absent");
+          NODE
+          curl --fail --silent --show-error --retry 5 --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-alias.headers" \
+            "https://skincos-staging.pages.dev/api/ponto/_proxy-status" > "$RUNNER_TEMP/pages-staging-alias.json"
+          node - "$RUNNER_TEMP/pages-staging-alias.json" "$RUNNER_TEMP/pages-staging-alias.headers" <<'NODE'
+          const fs = require("fs");
+          const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const headers = fs.readFileSync(process.argv[3], "utf8").toLowerCase();
+          if (
+            body?.ok !== true
+            || body?.ready !== true
+            || !headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)
+            || !headers.includes("x-skincos-pages-environment: staging")
+          ) throw new Error("staging Pages production alias is not linked to the exact candidate deployment");
+          NODE
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
+          touch "$RUNNER_TEMP/pages-staging-mutation-completed"
+          mkdir -p "$RUNNER_TEMP/crm-pages-staging-surface"
+          DEPLOYMENT_ID="$deployment_id" DEPLOYMENT_URL="$deployment_url" \
+            node - "$RUNNER_TEMP/crm-pages-staging-surface/surface.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "crmPages",
+            stage: "staging",
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            deploymentId: process.env.DEPLOYMENT_ID,
+            rollbackDeploymentId: process.env.PAGES_STAGING_ROLLBACK_DEPLOYMENT_ID,
+            candidateTag: `ponto:crmPages:${process.env.RELEASE_SHA}`,
+            url: process.env.DEPLOYMENT_URL,
+            validation: "staging-deploy",
+          }, null, 2)}\n`);
+          NODE
+          rm -f "$RUNNER_TEMP/crm-pages-deploy.ndjson" "$RUNNER_TEMP/pages-staging-deployment.json" "$RUNNER_TEMP/pages-staging-proxy.headers" "$RUNNER_TEMP/pages-staging-proxy.json" "$RUNNER_TEMP/pages-staging-alias.headers" "$RUNNER_TEMP/pages-staging-alias.json"
+      - name: Restore Ponto staging Pages incumbent after failure or cancellation
+        if: ${{ always() && (failure() || cancelled()) && inputs.release_scope == 'ponto' && inputs.target == 'staging' && env.PAGES_STAGING_MUTATION_STARTED == 'true' }}
+        env:
+          PROJECT: ${{ steps.guard.outputs.project }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || {
+            echo 'Staging Pages compensation has no exact owned candidate; refusing to overwrite current state'
+            exit 1
+          }
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
+            > "$RUNNER_TEMP/pages-staging-current.json"
+          node - "$RUNNER_TEMP/pages-staging-current.json" "$PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const latest = (payload?.result || [])
+            .filter(item => item?.environment === "production")
+            .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0];
+          const status = String(latest?.latest_stage?.status || latest?.stage?.status || "").toLowerCase();
+          if (
+            payload?.success !== true
+            || latest?.id !== process.argv[3]
+            || latest?.project_name !== "skincos-staging"
+            || latest?.deployment_trigger?.metadata?.branch !== "staging"
+            || String(latest?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA
+            || status !== "success"
+          ) throw new Error("staging Pages compensation lost exact ownership of the active candidate");
+          NODE
+          curl --fail --silent --show-error --request POST \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$PAGES_STAGING_ROLLBACK_DEPLOYMENT_ID/rollback" \
+            > "$RUNNER_TEMP/pages-staging-rollback-result.json"
+          restored_id="$(node - "$RUNNER_TEMP/pages-staging-rollback-result.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const id = String(payload?.result?.id || "");
+          if (payload?.success !== true || !/^[0-9a-f-]{36}$/i.test(id)) throw new Error("staging Pages rollback response is invalid");
+          process.stdout.write(id);
+          NODE
+          )"
+          restored=false
+          for attempt in {1..36}; do
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$restored_id" \
+              > "$RUNNER_TEMP/pages-staging-restored.json"
+            status_code=0
+            node - "$RUNNER_TEMP/pages-staging-restored.json" "$restored_id" <<'NODE' || status_code=$?
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const deployment = payload?.result;
+          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
+            try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
+          }));
+          if (
+            payload?.success === true
+            && deployment?.id === process.argv[3]
+            && deployment?.project_name === "skincos-staging"
+            && deployment?.environment === "production"
+            && deployment?.deployment_trigger?.metadata?.branch === "staging"
+            && String(deployment?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() === process.env.PAGES_STAGING_ROLLBACK_COMMIT_SHA
+            && ["success", "idle"].includes(status)
+            && aliasHosts.has("crm-staging.skincos.com.br")
+          ) process.exit(0);
+          if (["active", "queued", "waiting", "pending", "building", "initializing"].includes(status)) process.exit(2);
+          process.exit(3);
+          NODE
+            if [[ "$status_code" == 0 ]]; then restored=true; break; fi
+            [[ "$status_code" == 2 ]] || { echo 'staging Pages compensation entered a failed or invalid state'; exit 1; }
+            sleep 5
+          done
+          [[ "$restored" == true ]] || { echo 'staging Pages compensation did not reach terminal success'; exit 1; }
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
+            > "$RUNNER_TEMP/pages-staging-restored-list.json"
+          node - "$RUNNER_TEMP/pages-staging-restored-list.json" "$restored_id" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const latest = (payload?.result || [])
+            .filter((item) => item?.environment === "production")
+            .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0];
+          if (payload?.success !== true || latest?.id !== process.argv[3]) throw new Error("restored staging Pages deployment is not latest");
+          NODE
+          echo "PAGES_STAGING_RESTORED_DEPLOYMENT_ID=$restored_id" >> "$GITHUB_ENV"
+          touch "$RUNNER_TEMP/pages-staging-rollback-completed"
+      - name: Write Ponto staging Pages mutation journal
+        if: ${{ always() && inputs.release_scope == 'ponto' && inputs.target == 'staging' }}
+        env:
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pages-staging-mutation"
+          node - "$RUNNER_TEMP/pages-staging-mutation/mutation.json" <<'NODE'
+          const fs = require("fs");
+          const exists = (name) => fs.existsSync(`${process.env.RUNNER_TEMP}/${name}`);
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "crmPages",
+            stage: "staging",
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID || "",
+            incumbentDeploymentId: process.env.PAGES_STAGING_ROLLBACK_DEPLOYMENT_ID || "",
+            incumbentCommitSha: process.env.PAGES_STAGING_ROLLBACK_COMMIT_SHA || "",
+            candidateDeploymentId: process.env.PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID || "",
+            restoredDeploymentId: process.env.PAGES_STAGING_RESTORED_DEPLOYMENT_ID || "",
+            mutationStarted: exists("pages-staging-mutation-started"),
+            mutationCompleted: exists("pages-staging-mutation-completed"),
+            rollbackCompleted: exists("pages-staging-rollback-completed"),
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Upload Ponto staging Pages mutation journal
+        if: ${{ always() && inputs.release_scope == 'ponto' && inputs.target == 'staging' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-mutation-crm-pages-staging-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/pages-staging-mutation/mutation.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.release_scope == 'ponto' && inputs.target == 'staging' }}
+        with:
+          name: ponto-surface-crm-pages-staging-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/crm-pages-staging-surface/surface.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Remove raw structured Pages output
+        if: always()
+        run: rm -f "$RUNNER_TEMP/crm-pages-deploy.ndjson"
 
       - name: Smoke check Ponto (production)
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && inputs.target == 'production' }}
@@ -215,4 +659,492 @@ jobs:
           name: promotion-evidence-crm-pages
           path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
           retention-days: 14
+          if-no-files-found: error
+
+  ponto-progressive-release:
+    needs: progressive
+    if: ${{ inputs.release_scope == 'ponto' && contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      RELEASE_SHA: ${{ needs.progressive.outputs.source_sha }}
+      TARGET: ${{ inputs.target }}
+      PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
+    steps:
+      - name: Guard canonical Ponto Pages release
+        env:
+          ENABLE_CRM_PAGES_DEPLOY: ${{ vars.ENABLE_CRM_PAGES_DEPLOY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MODULE_CONTROL_KV_ID: ${{ vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLE_CRM_PAGES_DEPLOY" == true ]] || { echo 'ENABLE_CRM_PAGES_DEPLOY must be explicitly true'; exit 1; }
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'Cloudflare credentials are required'; exit 1; }
+          [[ "$MODULE_CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Production Pages module-control KV namespace ID is invalid'; exit 1; }
+          [[ "$PROJECT" == skincos ]] || { echo 'Production Ponto release requires the exact skincos Pages project'; exit 1; }
+      - name: Attest exact production Pages project metadata
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/skincos" \
+            > "$RUNNER_TEMP/pages-project.json"
+          node - "$RUNNER_TEMP/pages-project.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const project = payload?.result;
+          if (
+            payload?.success !== true
+            || project?.name !== "skincos"
+            || project?.subdomain !== "skincos.pages.dev"
+            || project?.production_branch !== "main"
+            || !(project?.domains || []).includes("crm.skincos.com.br")
+          ) throw new Error("production Pages project identity, branch, or CRM domain differs");
+          NODE
+          rm -f "$RUNNER_TEMP/pages-project.json"
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: crm/console/package-lock.json
+      - name: Attest remote Ponto Pages secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/pages-secret-list.json"
+          npx --yes wrangler@4.112.0 pages secret list --project-name "$PROJECT" --env production > "$list"
+          node - "$list" <<'NODE'
+          const fs = require("fs");
+          const names = new Set(JSON.parse(fs.readFileSync(process.argv[2], "utf8")).map(item => item.name));
+          for (const name of ["PONTO_API_TARGET", "PONTO_ACTOR_HMAC_KEY", "PONTO_NETWORK_CONTEXT_KEY", "PONTO_RELEASE_PROBE_HMAC_KEY"]) {
+            if (!names.has(name)) throw new Error(`remote Pages value is absent: ${name}`);
+          }
+          NODE
+          rm -f "$list"
+      - name: Select Pages rollback deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREDECESSOR_CURRENT_ID: ${{ needs.progressive.outputs.pages_deployment_id }}
+          PREDECESSOR_ROLLBACK_ID: ${{ needs.progressive.outputs.pages_rollback_deployment_id }}
+          BASELINE_ROLLBACK_ID: ${{ needs.progressive.outputs.baseline_pages_deployment_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == pilot ]]; then
+            [[ "$BASELINE_ROLLBACK_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Pilot requires an immutable Pages baseline'; exit 1; }
+            current_id="$BASELINE_ROLLBACK_ID"
+            id="$BASELINE_ROLLBACK_ID"
+          else
+            current_id="$PREDECESSOR_CURRENT_ID"
+            id="$PREDECESSOR_ROLLBACK_ID"
+          fi
+          uuid='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+          [[ "$current_id" =~ $uuid && "$id" =~ $uuid ]] || {
+            echo 'Pages predecessor ownership or rollback deployment is invalid'
+            exit 1
+          }
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
+            > "$RUNNER_TEMP/pages-incumbent.json"
+          node - "$RUNNER_TEMP/pages-incumbent.json" "$current_id" "$TARGET" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          const deployments = (payload.result || [])
+            .filter(item => item.environment === "production")
+            .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
+          const expected = String(process.argv[3] || "").toLowerCase();
+          const target = process.argv[4];
+          const latest = deployments[0];
+          const status = String(latest?.latest_stage?.status || latest?.stage?.status || "").toLowerCase();
+          if (
+            payload?.success !== true
+            || !uuid.test(expected)
+            || String(latest?.id || "").toLowerCase() !== expected
+            || latest?.project_name !== "skincos"
+            || latest?.environment !== "production"
+            || latest?.deployment_trigger?.metadata?.branch !== "main"
+            || status !== "success"
+          ) throw new Error(`production Pages no longer equals the exact ${target} predecessor state`);
+          NODE
+          echo "PAGES_ROLLBACK_DEPLOYMENT_ID=$id" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/pages-incumbent.json"
+      - name: Render exact Ponto Pages rollout identity
+        if: inputs.target != 'rollback'
+        env:
+          CORE_CANDIDATE_VERSION_ID: ${{ inputs.core_candidate_version_id }}
+          IDENTITY_CANDIDATE_VERSION_ID: ${{ inputs.identity_candidate_version_id }}
+          MODULE_CONTROL_KV_ID: ${{ vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+        run: |
+          set -euo pipefail
+          npm --prefix crm/console ci
+          npm --prefix crm/console run typecheck
+          npm --prefix crm/console test
+          npm --prefix crm/console run fetch-face-models
+          node - crm/console/wrangler.toml "$TARGET" "$RELEASE_SHA" "$CORE_CANDIDATE_VERSION_ID" "$IDENTITY_CANDIDATE_VERSION_ID" <<'NODE'
+          const fs = require("fs");
+          const file = process.argv[2];
+          const stage = process.argv[3];
+          const releaseSha = process.argv[4];
+          const coreVersionId = process.argv[5];
+          const identityVersionId = process.argv[6];
+          const uuid = /^[0-9a-f-]{36}$/i;
+          let source = fs.readFileSync(file, "utf8");
+          source = source.replace(/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/g, process.env.MODULE_CONTROL_KV_ID);
+          source = source.replace(/^PONTO_CORE_VERSION_ID\s*=.*\r?\n/gm, "");
+          source = source.replace(/^PONTO_IDENTITY_VERSION_ID\s*=.*\r?\n/gm, "");
+          source = source.replace(/__RELEASE_SHA__/g, releaseSha);
+          source = source.replace(/^PONTO_ROLLOUT_STAGE\s*=\s*"[^"]*"/gm, `PONTO_ROLLOUT_STAGE = "${stage}"`);
+          if (stage === "pilot" || stage === "canary") {
+            if (!uuid.test(coreVersionId)) throw new Error(`${stage} requires a Core candidate UUID`);
+            if (!uuid.test(identityVersionId)) throw new Error(`${stage} requires an Identity candidate UUID`);
+            let inserted = false;
+            source = source.replace(new RegExp(`^PONTO_ROLLOUT_STAGE\\s*=\\s*"${stage}"\\s*$`, "m"), line => {
+              if (inserted) return line;
+              inserted = true;
+              return `${line}\nPONTO_CORE_VERSION_ID = "${coreVersionId}"\nPONTO_IDENTITY_VERSION_ID = "${identityVersionId}"`;
+            });
+            if (!inserted) throw new Error("production rollout stage field was not found");
+          } else if (coreVersionId || identityVersionId) {
+            throw new Error("Ponto version overrides are forbidden outside pilot/canary");
+          }
+          if (source.includes("__RELEASE_SHA__")) throw new Error("PONTO_RELEASE_SHA placeholder remains");
+          if (source.includes("__CONFIGURE_")) throw new Error("Ponto Pages config contains an unresolved binding placeholder");
+          const moduleControl = source.match(/\[\[env\.production\.kv_namespaces\]\]\s*\r?\nbinding\s*=\s*"MODULE_CONTROL"\s*\r?\nid\s*=\s*"([0-9a-f]{32})"/i);
+          if (!moduleControl || moduleControl[1].toLowerCase() !== process.env.MODULE_CONTROL_KV_ID.toLowerCase()) throw new Error("Ponto Pages module-control KV binding differs from the production namespace");
+          if (!["pilot", "canary"].includes(stage) && /^PONTO_(?:CORE|IDENTITY)_VERSION_ID/m.test(source)) throw new Error("stale Ponto version override remains");
+          fs.writeFileSync(file, source);
+          NODE
+          VITE_BUILD_SHA="$RELEASE_SHA" npm --prefix crm/console run build
+      - name: Deploy or roll back the exact Pages release
+        id: deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          touch "$RUNNER_TEMP/pages-mutation-started"
+          if [[ "$TARGET" == rollback ]]; then
+            curl --fail --silent --show-error --request POST \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$PAGES_ROLLBACK_DEPLOYMENT_ID/rollback" \
+              > "$RUNNER_TEMP/pages-release-result.json"
+          else
+            (
+              cd crm/console
+              WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/pages-release-result.ndjson" npx --yes wrangler@4.112.0 pages deploy dist \
+                --project-name "$PROJECT" \
+                --branch main \
+                --commit-hash "$RELEASE_SHA" \
+                --commit-message "ponto:$TARGET:$RELEASE_SHA"
+            )
+            PONTO_EXPECTED_WRANGLER_ENV=production node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/pages-release-result.ndjson" pages-deploy "$PROJECT" > "$RUNNER_TEMP/pages-release-verified.txt"
+          fi
+          if [[ "$TARGET" == rollback ]]; then result_file="$RUNNER_TEMP/pages-release-result.json"; result_type=api; else result_file="$RUNNER_TEMP/pages-release-result.ndjson"; result_type=ndjson; fi
+          IFS=$'\t' read -r deployment_id deployment_url < <(RESULT_TYPE="$result_type" node - "$result_file" <<'NODE'
+          const fs = require("fs");
+          let result;
+          if (process.env.RESULT_TYPE === "ndjson") {
+            const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).map(JSON.parse);
+            const row = rows.filter(item => item.type === "pages-deploy").at(-1);
+            result = { id: row?.deployment_id || row?.id, url: row?.url || row?.deployment_url || row?.targets?.[0] };
+          } else {
+            const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+            if (!payload.success) throw new Error("Pages rollback failed");
+            result = payload.result;
+          }
+          if (!/^[0-9a-f-]{36}$/i.test(result?.id || "") || !/^https:\/\//.test(result?.url || "")) throw new Error("Pages deployment identity missing");
+          process.stdout.write(`${result.id}\t${result.url}`);
+          NODE
+          )
+          deployment_ready=false
+          for attempt in {1..36}; do
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$deployment_id" \
+              > "$RUNNER_TEMP/pages-active-deployment.json"
+            status_code=0
+            node - "$RUNNER_TEMP/pages-active-deployment.json" "$deployment_id" <<'NODE' || status_code=$?
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const deployment = payload?.result;
+          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          if (payload?.success !== true || deployment?.id !== process.argv[3]) process.exit(3);
+          if (["success", "idle"].includes(status)) process.exit(0);
+          if (["active", "queued", "waiting", "pending", "building", "initializing"].includes(status)) process.exit(2);
+          process.exit(3);
+          NODE
+            if [[ "$status_code" == 0 ]]; then deployment_ready=true; break; fi
+            [[ "$status_code" == 2 ]] || { echo 'Pages deployment entered a failed or invalid state'; exit 1; }
+            sleep 5
+          done
+          [[ "$deployment_ready" == true ]] || { echo 'Pages deployment did not reach terminal success before timeout'; exit 1; }
+          node - "$RUNNER_TEMP/pages-active-deployment.json" "$deployment_id" "$deployment_url" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const deployment = payload?.result;
+          const metadata = deployment?.deployment_trigger?.metadata || {};
+          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
+            try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
+          }));
+          if (
+            payload?.success !== true
+            || deployment?.id !== process.argv[3]
+            || deployment?.project_name !== "skincos"
+            || deployment?.environment !== "production"
+            || deployment?.url !== process.argv[4]
+            || metadata.branch !== "main"
+            || !["success", "idle"].includes(status)
+            || !aliasHosts.has("crm.skincos.com.br")
+          ) throw new Error("production Pages control-plane identity or aliases differ");
+          if (process.env.TARGET !== "rollback" && String(metadata.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA) {
+            throw new Error("production Pages commit SHA differs from the exact release");
+          }
+          NODE
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
+            > "$RUNNER_TEMP/pages-production-deployments.json"
+          node - "$RUNNER_TEMP/pages-production-deployments.json" "$deployment_id" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const latest = (payload?.result || [])
+            .filter((item) => item?.environment === "production")
+            .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0];
+          if (payload?.success !== true || latest?.id !== process.argv[3]) {
+            throw new Error("terminal Pages deployment is not the latest production deployment");
+          }
+          NODE
+          access_args=()
+          if [[ -n "${CF_ACCESS_CLIENT_ID:-}" || -n "${CF_ACCESS_CLIENT_SECRET:-}" ]]; then
+            [[ -n "${CF_ACCESS_CLIENT_ID:-}" && -n "${CF_ACCESS_CLIENT_SECRET:-}" ]] || { echo 'Partial Cloudflare Access service credential'; exit 1; }
+            access_args=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+          fi
+          curl --fail --silent --show-error --retry 5 --retry-delay 4 \
+            "${access_args[@]}" \
+            --dump-header "$RUNNER_TEMP/pages-public-alias.headers" \
+            "https://crm.skincos.com.br/api/ponto/_proxy-status" \
+            > "$RUNNER_TEMP/pages-public-alias.json"
+          if [[ "$TARGET" != rollback ]]; then
+            node - "$RUNNER_TEMP/pages-public-alias.json" "$RUNNER_TEMP/pages-public-alias.headers" <<'NODE'
+          const fs = require("fs");
+          const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const headers = fs.readFileSync(process.argv[3], "utf8").toLowerCase();
+          if (
+            body?.ok !== true
+            || body?.ready !== true
+            || !headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)
+            || !headers.includes("x-skincos-pages-environment: production")
+          ) throw new Error("public CRM alias is not linked to the exact production Pages candidate");
+          NODE
+          fi
+          touch "$RUNNER_TEMP/pages-mutation-completed"
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/pages-release-result.ndjson" "$RUNNER_TEMP/pages-release-result.json" "$RUNNER_TEMP/pages-active-deployment.json" "$RUNNER_TEMP/pages-public-alias.headers" "$RUNNER_TEMP/pages-public-alias.json"
+      - name: Roll back Pages after a failed mutation
+        if: ${{ always() && (failure() || cancelled()) && env.PAGES_ROLLBACK_DEPLOYMENT_ID != '' && inputs.target != 'rollback' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_CANDIDATE_DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          candidate_id="$EXPECTED_CANDIDATE_DEPLOYMENT_ID"
+          if [[ ! "$candidate_id" =~ ^[0-9a-fA-F-]{36}$ && -f "$RUNNER_TEMP/pages-release-result.ndjson" ]]; then
+            candidate_id="$(node - "$RUNNER_TEMP/pages-release-result.ndjson" <<'NODE'
+          const fs = require("fs");
+          const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).filter(Boolean).map(JSON.parse);
+          const row = rows.filter(item => item?.type === "pages-deploy").at(-1);
+          process.stdout.write(String(row?.deployment_id || row?.id || ""));
+          NODE
+            )"
+          fi
+          [[ "$candidate_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || {
+            echo 'Pages failure rollback has no exact owned candidate deployment; refusing to overwrite current state'
+            exit 1
+          }
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
+            > "$RUNNER_TEMP/pages-failure-current.json"
+          CANDIDATE_ID="$candidate_id" node - "$RUNNER_TEMP/pages-failure-current.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const latest = (payload?.result || [])
+            .filter(item => item?.environment === "production")
+            .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0];
+          const status = String(latest?.latest_stage?.status || latest?.stage?.status || "").toLowerCase();
+          if (
+            payload?.success !== true
+            || latest?.id !== process.env.CANDIDATE_ID
+            || latest?.project_name !== "skincos"
+            || latest?.deployment_trigger?.metadata?.branch !== "main"
+            || String(latest?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA
+            || status !== "success"
+          ) throw new Error("Pages failure rollback lost exact ownership of the active candidate");
+          NODE
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$PAGES_ROLLBACK_DEPLOYMENT_ID" \
+            > "$RUNNER_TEMP/pages-failure-incumbent.json"
+          incumbent_commit="$(node - "$RUNNER_TEMP/pages-failure-incumbent.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const deployment = payload?.result;
+          const commit = String(deployment?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase();
+          if (
+            payload?.success !== true
+            || deployment?.id !== process.env.PAGES_ROLLBACK_DEPLOYMENT_ID
+            || deployment?.project_name !== "skincos"
+            || deployment?.environment !== "production"
+            || deployment?.deployment_trigger?.metadata?.branch !== "main"
+            || !/^[0-9a-f]{40}$/.test(commit)
+          ) throw new Error("Pages failure rollback incumbent is invalid");
+          process.stdout.write(commit);
+          NODE
+          )"
+          curl --fail --silent --show-error --request POST \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$PAGES_ROLLBACK_DEPLOYMENT_ID/rollback" \
+            > "$RUNNER_TEMP/pages-failure-rollback-result.json"
+          restored_id="$(node - "$RUNNER_TEMP/pages-failure-rollback-result.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const id = String(payload?.result?.id || "");
+          if (payload?.success !== true || !/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Pages failure rollback response is invalid");
+          process.stdout.write(id);
+          NODE
+          )"
+          restored=false
+          for attempt in {1..36}; do
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$restored_id" \
+              > "$RUNNER_TEMP/pages-failure-restored.json"
+            status_code=0
+            INCUMBENT_COMMIT="$incumbent_commit" node - "$RUNNER_TEMP/pages-failure-restored.json" "$restored_id" <<'NODE' || status_code=$?
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const deployment = payload?.result;
+          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
+            try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
+          }));
+          if (
+            payload?.success === true
+            && deployment?.id === process.argv[3]
+            && deployment?.project_name === "skincos"
+            && deployment?.environment === "production"
+            && deployment?.deployment_trigger?.metadata?.branch === "main"
+            && String(deployment?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() === process.env.INCUMBENT_COMMIT
+            && ["success", "idle"].includes(status)
+            && aliasHosts.has("crm.skincos.com.br")
+          ) process.exit(0);
+          if (["active", "queued", "waiting", "pending", "building", "initializing"].includes(status)) process.exit(2);
+          process.exit(3);
+          NODE
+            if [[ "$status_code" == 0 ]]; then restored=true; break; fi
+            [[ "$status_code" == 2 ]] || { echo 'Pages failure rollback entered a failed or invalid state'; exit 1; }
+            sleep 5
+          done
+          [[ "$restored" == true ]] || { echo 'Pages failure rollback did not reach terminal success'; exit 1; }
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
+            > "$RUNNER_TEMP/pages-failure-restored-list.json"
+          node - "$RUNNER_TEMP/pages-failure-restored-list.json" "$restored_id" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const latest = (payload?.result || [])
+            .filter((item) => item?.environment === "production")
+            .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0];
+          if (payload?.success !== true || latest?.id !== process.argv[3]) throw new Error("restored Pages deployment is not latest");
+          NODE
+          echo "PAGES_RESTORED_DEPLOYMENT_ID=$restored_id" >> "$GITHUB_ENV"
+          touch "$RUNNER_TEMP/pages-rollback-completed"
+      - name: Write sanitized CRM Pages mutation journal
+        if: always()
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pages-mutation"
+          node - "$RUNNER_TEMP/pages-mutation/mutation.json" <<'NODE'
+          const fs = require("fs");
+          const exists = name => fs.existsSync(`${process.env.RUNNER_TEMP}/${name}`);
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "crmPages",
+            stage: process.env.TARGET,
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID || "",
+            baselineRunId: process.env.BASELINE_RUN_ID || "",
+            incumbentDeploymentId: process.env.PAGES_ROLLBACK_DEPLOYMENT_ID || "",
+            candidateDeploymentId: process.env.DEPLOYMENT_ID || "",
+            restoredDeploymentId: process.env.PAGES_RESTORED_DEPLOYMENT_ID || "",
+            mutationStarted: exists("pages-mutation-started"),
+            mutationCompleted: exists("pages-mutation-completed"),
+            rollbackCompleted: exists("pages-rollback-completed"),
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Upload CRM Pages mutation journal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-mutation-crm-pages-${{ inputs.target }}-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/pages-mutation/mutation.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Write sanitized CRM Pages surface manifest
+        if: success()
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          DEPLOYMENT_URL: ${{ steps.deployment.outputs.url }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pages-surface"
+          node - "$RUNNER_TEMP/pages-surface/surface.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "crmPages",
+            stage: process.env.TARGET,
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            baselineRunId: process.env.BASELINE_RUN_ID || "",
+            deploymentId: process.env.DEPLOYMENT_ID,
+            rollbackDeploymentId: process.env.PAGES_ROLLBACK_DEPLOYMENT_ID,
+            candidateTag: `ponto:crmPages:${process.env.RELEASE_SHA}`,
+            url: process.env.DEPLOYMENT_URL,
+          }, null, 2)}\n`);
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: success()
+        with:
+          name: ponto-surface-crm-pages-${{ inputs.target }}-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/pages-surface/surface.json
+          retention-days: 90
           if-no-files-found: error

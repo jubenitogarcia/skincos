@@ -5,12 +5,19 @@
       "id": "core-workers",
       "workflow": ".github/workflows/deploy-core-workers.yml",
       "concurrencyPrefix": "deploy-core-worker-",
-      "publishes": ["Worker:skincos-api", "Worker:skincos-insumos"],
-      "resources": ["api gateway Worker", "inventory Worker", "skincos-db", "skincos-db-staging"],
+      "publishes": ["Worker:skincos-api", "Worker:skincos-insumos", "Worker:skincos-ponto-core", "Worker:skincos-ponto-core-staging"],
+      "resources": ["general api gateway Worker (Ponto invariant)", "route-isolated private Ponto Core Workers", "inventory Worker", "skincos-db", "skincos-db-staging", "Ponto Core-to-Timekeeping version affinity"],
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
       "migrationPaths": ["inventory/migrations"],
       "environments": ["preview", "staging", "production"],
-      "promotion": {"stagingSupported": true, "financeIncluded": true}
+      "promotion": {
+        "stagingSupported": true,
+        "financeIncluded": true,
+        "pontoProgressiveCoordinator": ".github/workflows/ponto-progressive-release.yml",
+        "pontoPrivateServiceNames": {"staging": "skincos-ponto-core-staging", "production": "skincos-ponto-core"},
+        "pontoWeights": {"pilot": 0, "canary": 0, "production": 100},
+        "generalCoreInvariant": "skincos-api versions and Finance/Inventory probes must remain unchanged"
+      }
     },
     {
       "id": "ponto-core-baseline",
@@ -54,7 +61,15 @@
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
       "migrationPaths": [],
       "environments": ["preview", "staging", "production"],
-      "promotion": {"stagingSupported": true, "financeIncluded": true}
+      "promotion": {
+        "stagingSupported": true,
+        "financeIncluded": true,
+        "pontoProgressiveCoordinator": ".github/workflows/ponto-progressive-release.yml",
+        "pontoAffinityVariable": "PONTO_CORE_VERSION_ID",
+        "pontoAffinityStages": ["pilot", "canary"],
+        "pontoRolloutVariable": "PONTO_ROLLOUT_STAGE",
+        "pontoPrivateServiceBinding": "PONTO_CORE"
+      }
     },
     {
       "id": "escala-api",
@@ -73,10 +88,15 @@
       "concurrencyPrefix": "deploy-timekeeping-",
       "publishes": ["Worker:skincos-timekeeping", "Worker:skincos-timekeeping-staging"],
       "resources": ["Timekeeping Worker", "skincos-timekeeping", "skincos-timekeeping-staging"],
-      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "PONTO_ACTOR_HMAC_KEY", "PONTO_IDEMPOTENCY_KEY", "PONTO_TEMPLATES_KEY", "PONTO_NETWORK_CONTEXT_KEY"],
+      "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "PONTO_ACTOR_HMAC_KEY", "PONTO_IDEMPOTENCY_KEY", "PONTO_TEMPLATES_KEY", "PONTO_PROFILE_DATA_KEY", "PONTO_NETWORK_CONTEXT_KEY", "ESCALA_ACTOR_HMAC_KEY", "IDENTITY_WORKFORCE_HMAC_KEY"],
       "migrationPaths": ["workforce/timekeeping/migrations"],
       "environments": ["preview", "staging", "production"],
-      "promotion": {"stagingSupported": true}
+      "promotion": {
+        "stagingSupported": true,
+        "pontoProgressiveCoordinator": ".github/workflows/ponto-progressive-release.yml",
+        "pontoWeights": {"pilot": 0, "canary": 0, "production": 100},
+        "cohortControl": "module-control:timekeeping"
+      }
     },
     {
       "id": "social-publisher",

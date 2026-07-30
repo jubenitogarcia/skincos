@@ -1,5 +1,66 @@
 # DECISIONS
 
+## 2026-07-29 - Govern Ponto as a four-surface progressive release
+
+- Decision: one Ponto release selects a single full Git SHA that is reachable
+  from `main` and uses that immutable source on Timekeeping,
+  Identity/Inventory, Core API and CRM Pages. A successful health check or a
+  source merge on only one surface is not a release.
+- Decision: `.github/workflows/ponto-progressive-release.yml` is the sole
+  coordinator. It may dispatch and attest the canonical publishers, but it may
+  not run Wrangler or mutate a deployment directly. The ordered chain is
+  `preview → staging → pilot → canary → production`; every stage requires the
+  exact successful predecessor artifact for the same SHA.
+- Decision: preview is non-mutating. Staging first closes Timekeeping, captures
+  encrypted checkpoints, applies only additive migrations, publishes all four
+  surfaces, writes an active schema-v2 control bound to the release SHA, runs
+  an authenticated synthetic CONSULTOR journey, and tears down only its
+  run-scoped data while retaining audit evidence.
+- Decision: pilot and canary use explicit Cloudflare Worker version affinity.
+  Timekeeping remains at zero-percent general traffic; Core starts at zero
+  percent for the exact pilot and five percent for canary; the signed network
+  context supplies the stable version key, and the selected Core version pins
+  the selected Timekeeping version. Identity/Inventory stays at zero-percent
+  general traffic until production. Exact version overrides must exercise its
+  candidate auth/session path, a representative authorized read and the
+  Identity → Workforce HMAC v2 contract during both pilot and canary.
+- Decision: production may open `active` only after the same Identity/Inventory
+  candidate is published, all four candidates are attested, the authorized
+  pilot identity and network-bound cohort have passed, and the external
+  authenticated SLO has met its minimum window, sample count and thresholds.
+  Any publisher, journey, or SLO failure puts Timekeeping in maintenance first
+  and restores all four surfaces to the immutable incumbent baseline captured
+  and proved before pilot. A retry may reuse that baseline but may not recapture
+  a partially promoted candidate as its rollback source.
+- Decision: Identity → Workforce requests use signature contract v2, binding
+  timestamp, nonce, HTTP method, canonical path/query and body digest. Active
+  Timekeeping requires schema-v2 module control whose release SHA exactly
+  matches its artifact; no v1 compatibility or unversioned active control is
+  accepted.
+- Decision: rollback closes the module first and restores the independently
+  attested incumbent on Timekeeping, Identity/Inventory, Core API and CRM
+  Pages before any reopening. Additive database migrations are not reversed
+  during application rollback.
+- Decision: staging and production secret custody is independent. The
+  environment-owned `PONTO_PROFILE_DATA_KEY` may enter only the new
+  Timekeeping candidate via `wrangler versions upload --secrets-file`; it may
+  not be applied with `wrangler secret put`, because that creates and deploys a
+  100-percent version. The environment-owned `PONTO_IDEMPOTENCY_KEY` is also
+  supplied only with that immutable candidate. Cross-surface actor,
+  network-context and release-probe keys are deterministic, domain-separated
+  HMAC derivations of that environment root; only the derived values are sent
+  to Timekeeping and Pages, after the coordinator has placed Ponto in
+  maintenance. This proves equality without exposing a value, copying a value
+  between environments, or adding another durable root secret. Other existing
+  Worker-only secrets are inherited remotely and proved by name/presence plus
+  functional contracts. Repository-scoped fallback, cross-environment
+  copying, ad hoc generated production roots and secret values in evidence are
+  forbidden.
+- Impact: missing environment custody, an authorized Identity/Workforce pilot,
+  the approved clinic-network runner, a required review, or a production
+  enable flag blocks the next mutation while the live module stays
+  fail-closed; none of those controls may be bypassed by the coordinator.
+
 ## 2026-07-15 - Keep the Windows WSL anchor on a native Linux working directory
 
 - Decision: launch the single WSL keepalive client with `--cd /` and only reuse

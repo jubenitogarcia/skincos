@@ -10,7 +10,7 @@ const workflowDirectory = path.join(root, ".github/workflows");
 const workflowFiles = fs.readdirSync(workflowDirectory).filter((name) => /\.ya?ml$/i.test(name));
 const canonicalPaths = new Set();
 const publishers = new Map();
-const publishPattern = /(wrangler(?:@[^\s]+)?\s+(?:pages\s+)?deploy|wrangler[^\n]*\sd1 migrations apply|cloudflare-workers\.sh\s+deploy|appleboy\/ssh-action|npm run deploy(?::[^\s]+)?)/i;
+const publishPattern = /(wrangler(?:@[^\s]+)?\s+(?:pages\s+)?deploy\b|wrangler[^\n]*\sd1 migrations apply\b|cloudflare-workers\.sh\s+deploy\b|appleboy\/ssh-action|npm run deploy(?::[^\s]+)?\b)/i;
 
 if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.units)) fail("deployment catalog must declare schemaVersion 1 and units");
 if (!Array.isArray(catalog.externalPublisherControls)) fail("deployment catalog must declare externalPublisherControls");

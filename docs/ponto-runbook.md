@@ -56,6 +56,43 @@ uma chave ad hoc em CI.
 
 Nunca registrar PIN, token de dispositivo, cookie, template, vetor, foto, score ou chave. A UI nunca recebe template/score.
 
+## Composição local
+
+O launcher local usa deliberadamente o caminho reduzido
+`Pages → Timekeeping`; ele não é prova do gateway Core nem da composição
+remota. Esse modo direto de desenvolvimento é aceito somente pelo guard local:
+loopback, `LOCAL_AUTH_BYPASS=true`, `SKINCOS_DEPLOYMENT_ENV=local`, SHA Git
+completo e `PONTO_ALLOW_LOCAL_DIRECT_TIMEKEEPING=true`. Nenhuma dessas
+condições existe em staging ou produção.
+
+O launcher não contém nem gera chaves. Antes de iniciar Ponto local, provisione
+valores sintéticos independentes pelo processo privado do operador nos caminhos
+padrão abaixo, ou informe caminhos privados alternativos por
+`CRM_TIMEKEEPING_ENV_FILE` e `PONTO_PAGES_ENV_FILE`:
+
+- `C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\ponto-private\timekeeping.worker.env`
+  contém exatamente `PONTO_ACTOR_HMAC_KEY`, `PONTO_IDEMPOTENCY_KEY`,
+  `PONTO_TEMPLATES_KEY`, `PONTO_PROFILE_DATA_KEY`,
+  `PONTO_NETWORK_CONTEXT_KEY` e `IDENTITY_WORKFORCE_HMAC_KEY`;
+- `C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\ponto-private\ponto.pages.env`
+  contém somente `PONTO_ACTOR_HMAC_KEY` e `PONTO_NETWORK_CONTEXT_KEY`.
+
+Actor e network precisam coincidir entre os dois arquivos; todos os bindings
+do Worker devem ser distintos. Arquivo ausente, dentro da árvore compartilhada,
+com placeholder, binding extra ou valor divergente interrompe o launcher antes
+de iniciar serviços. Os valores são carregados por `--env-file`, não aparecem
+na linha de comando e nunca devem ser copiados para `.dev.vars`. Em filesystem
+POSIX, o validador exige owner igual ao operador, arquivo `0600` e diretório
+`0700`. Em caminho Windows/DrvFS ele classifica a custódia como
+`windows-acl-external`; o ACL do diretório privado deve permanecer restrito à
+conta `admin`, pois bits POSIX não atestam essa fronteira.
+
+Para cada início, o launcher usa o SHA completo do snapshot selecionado como
+`APP_VERSION`, configura `ENVIRONMENT=local`, grava explicitamente
+`module-control:timekeeping=active` somente no KV local persistido no runtime
+privado e exige readiness com a mesma afinidade de SHA/ambiente. Isso não altera
+o controle KV nem qualquer secret remoto.
+
 ## Fechamento mensal
 
 1. Sincronizar Escala e resolver conflitos de identidade.
@@ -70,20 +107,65 @@ A trava `timekeeping_period_guards` é adquirida por data antes do cálculo e im
 
 ## Deploy e rollback
 
-Executar `.github/workflows/deploy-timekeeping.yml` primeiro em `staging`. O workflow exporta e cifra um checkpoint D1, aplica migrations, configura secrets, publica somente o Worker de Ponto e faz smoke read-only. O smoke exige `version` igual ao SHA promovido, `environment` igual ao target e `availability.state=active`. O gateway/API é publicado exclusivamente pelo publisher canônico `.github/workflows/deploy-core-workers.yml`. Produção exige o `staging_run_id` numérico de uma execução verde para o mesmo SHA e o environment protegido `production`.
+Use somente `.github/workflows/ponto-progressive-release.yml` para a composição
+de release. O coordenador não publica por conta própria: ele despacha e atesta
+os publishers canônicos de Timekeeping, Identity/Inventory, Core API e CRM
+Pages. Cada execução exige um SHA completo alcançável a partir de `main`; de
+staging em diante, exige também o run bem-sucedido do predecessor para o mesmo
+SHA.
 
-Para uma liberação de Workforce, promover **o mesmo SHA** por três superfícies
-de staging: Timekeeping, Core API (`unit=api`) e CRM Pages. Em seguida executar
-`.github/workflows/timekeeping-staging-journey.yml` com os três artefatos de
-promoção e o URL imutável `*.skincos-staging.pages.dev`. A jornada cria apenas
+`preview` executa testes e dry-runs sem deploy, migration, KV, secret ou dado.
+`staging` põe Ponto em manutenção antes da primeira mutação, captura checkpoints
+cifrados, aplica migrations aditivas e publica **o mesmo SHA** nas quatro
+superfícies. Somente depois grava o controle `active` schema v2 vinculado ao
+SHA e executa `.github/workflows/timekeeping-staging-journey.yml` com os quatro
+artefatos e o URL imutável `*.skincos-staging.pages.dev`. A jornada cria apenas
 um CONSULTOR sintético efêmero com os módulos `atendimento` e `ponto`, verifica
 navegação, vínculo, PIN inválido, batida/idempotência, escopo de unidade,
-correção própria e negação administrativa; ela remove apenas os registros
-sintéticos daquele run e nunca apaga a auditoria.
+correção própria e negação administrativa; remove somente os registros
+sintéticos daquele run e preserva a auditoria.
 
-Configure secrets e variables separadamente nos environments GitHub `staging` e `production`. O Pages environment `preview` usa `https://api-staging.skincos.com.br`; nunca compartilhe o upstream ou a chave HMAC de produção com preview. O smoke produtivo permanece somente leitura e não aceita opção para criar marcações.
+`pilot` mantém Timekeeping e Identity/Inventory fora da distribuição geral e
+seleciona Core, Timekeeping e Identity/Inventory exatos somente dentro dos
+service bindings privados de CRM Pages. O edge público bloqueia
+incondicionalmente os headers de seleção de versão e a rota
+`/insumos/health/workforce-contract` em produção e staging; nem clientes nem
+Workers externos podem usá-los para escolher um candidato.
+A coorte exige uma identidade autorizada, uma unidade e um contexto de rede
+opaco. `canary` mantém a mesma afinidade, abre somente o percentual aprovado do
+Core e interrompe automaticamente em falha de publisher, jornada ou SLO. Nos
+dois estágios, Identity/Inventory precisa provar auth/session, uma leitura
+autorizada representativa e o contrato HMAC v2 com Workforce. `production` só
+torna as quatro versões candidatas correntes e grava `active` depois da cadeia
+verde.
+Os artefatos registram SHA/tree, runs, versões candidatas e incumbentes,
+deployment IDs, percentuais, migrations, checkpoint, coorte, SLO e rollback,
+sem PII nem valores de secrets.
 
-Rollback de aplicação: publicar a versão anterior do Worker de Ponto; se o gateway/API também exigir rollback, usar seu publisher canônico em execução separada. Migrations são expansivas; não remover colunas/tabelas em incidente. Para interromper tráfego antes de rollback de artefato, executar `.github/workflows/module-availability.yml` com `module=timekeeping`, target correto e `state=maintenance` (ou `disabled`); validar health, corrigir/rollback e restaurar `active` pelo mesmo workflow. Registrar os dois run IDs e a versão anterior. Rollback de importação segue `docs/ponto-migration.md`. Backups e evidências ficam em `C:\CodexRuntime\operator\admin\skincos\timekeeping`, nunca no repositório.
+Configure secrets e variables separadamente nos environments GitHub `staging`
+e `production`. `PONTO_PROFILE_DATA_KEY` é injetado somente no upload da nova
+versão candidata de Timekeeping por `wrangler versions upload --secrets-file`;
+`wrangler secret put` é proibido nesta cadeia porque implantaria imediatamente
+uma nova versão em 100%. Bindings remotos omitidos são herdados, verificados
+por nome/presença e exercitados por contratos funcionais; não são copiados para
+o runner. Alterar secret de Pages exige uma release de manutenção separada. O
+Pages environment `preview` usa `https://api-staging.skincos.com.br`; nunca
+compartilhe upstream ou chave HMAC de produção com preview. O smoke produtivo
+permanece somente leitura e não aceita opção para criar marcações.
+
+Rollback é um estágio do mesmo coordenador. Ele grava manutenção primeiro,
+restaura somente o baseline imutável de incumbentes capturado e provado antes
+do pilot para Timekeeping, Identity/Inventory, Core API e CRM Pages e mantém o
+módulo fechado até a validação externa. Uma nova tentativa reutiliza esse
+baseline; nunca elege um candidato parcialmente promovido como incumbente.
+Migrations são
+expansivas e não são revertidas durante o incidente. O kill switch isolado
+continua disponível em `.github/workflows/module-availability.yml` com
+`module=timekeeping` e `state=maintenance` ou `disabled`; `active` exige
+schema v2 e o SHA completo da versão já atestada. Registrar todos os run IDs e
+IDs de versão/deployment. Rollback de importação segue
+`docs/ponto-migration.md`. Backups e evidências ficam em
+`C:\CodexRuntime\operator\admin\skincos\timekeeping`, nunca no repositório.
 
 ## Incidentes
 

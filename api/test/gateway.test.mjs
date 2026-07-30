@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createGatewayHandler } from '../src/router.js';
-import { createApiGateway, forwardFinanceProbe, forwardFinanceToService, handleGatewayRequest } from '../src/gateway.js';
+import { createApiGateway, forwardFinanceProbe, forwardFinanceToService, handleGatewayRequest, prepareTimekeepingRequest } from '../src/gateway.js';
 import pontoCoreWorker from '../workers/ponto.js';
 import { verifySignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
 import { resetBoundServiceResilienceForTest } from '../../shared/service-adapters/cloudflare-service-binding.js';
@@ -197,11 +197,161 @@ test('workforce owns the canonical public Ponto mount', async () => {
     assert.equal(response.headers.get('x-request-id'), 'ponto-1');
 });
 
+test('private Ponto Core exposes only Ponto plus operational probes', async () => {
+    resetBoundServiceResilienceForTest();
+    const env = {
+        PONTO_ROUTE_ONLY: 'true',
+        TIMEKEEPING: {
+            fetch: async () => new Response(JSON.stringify({ ok: true, service: 'workforce-timekeeping' }), {
+                headers: { 'content-type': 'application/json' },
+            }),
+        },
+    };
+
+    for (const path of ['/inventory/insumos', '/finance/health', '/internal/orb/dispatch', '/unknown']) {
+        const response = await handleGatewayRequest(new Request(`https://ponto-core.invalid${path}`), env, {});
+        assert.equal(response.status, 404, path);
+        assert.equal((await response.json()).error, 'ponto_route_only', path);
+    }
+
+    const ponto = await handleGatewayRequest(new Request('https://ponto-core.invalid/api/ponto/health'), env, {});
+    assert.equal(ponto.status, 200);
+    assert.equal((await ponto.json()).service, 'workforce-timekeeping');
+    assert.equal((await handleGatewayRequest(new Request('https://ponto-core.invalid/health'), env, {})).status, 200);
+});
+
+test('Core replaces browser release and version overrides with deployment-owned Timekeeping routing', async () => {
+    let received = null;
+    const securedGateway = createApiGateway({
+        inventoryHandler: async () => new Response('inventory'),
+        timekeepingHandler: async (request) => {
+            received = request;
+            return new Response('ponto-ok', {
+                headers: {
+                    'x-skincos-gateway-release-sha': 'spoofed-by-upstream',
+                    'x-skincos-gateway-environment': 'spoofed-by-upstream',
+                    'x-skincos-gateway-version-id': 'spoofed-by-upstream',
+                },
+            });
+        },
+    });
+    const releaseSha = 'a'.repeat(40);
+    const coreVersionId = '22222222-2222-4222-8222-222222222222';
+    const timekeepingVersionId = '33333333-3333-4333-8333-333333333333';
+    const networkContext = `v1:${'b'.repeat(43)}`;
+    const response = await securedGateway(new Request('https://api-staging.skincos.com.br/api/ponto/me/records', {
+        headers: {
+            'cloudflare-workers-version-key': networkContext,
+            'cloudflare-workers-version-overrides': `skincos-api-staging="${coreVersionId}"`,
+            'x-skincos-gateway-release-sha': 'browser-release',
+            'x-skincos-gateway-environment': 'production',
+            'x-skincos-actor': 'eyJpZCI6InBpbG90In0',
+            'x-skincos-actor-sig': 'c'.repeat(43),
+            'x-skincos-network-context': networkContext,
+            'x-skincos-network-ts': '1785355200000',
+            'x-skincos-network-sig': 'd'.repeat(43),
+            'x-skincos-network-signature-version': '2',
+        },
+    }), {
+        APP_VERSION: releaseSha,
+        ENVIRONMENT: 'staging',
+        TIMEKEEPING_VERSION_ID: timekeepingVersionId,
+        CF_VERSION_METADATA: { id: coreVersionId, tag: 'ponto-candidate' },
+    }, {});
+
+    assert.equal(response.status, 200);
+    assert.equal(received.headers.get('x-skincos-gateway-release-sha'), releaseSha);
+    assert.equal(received.headers.get('x-skincos-gateway-environment'), 'staging');
+    assert.equal(received.headers.get('x-skincos-gateway-version-id'), coreVersionId);
+    assert.equal(received.headers.get('cloudflare-workers-version-key'), networkContext);
+    assert.equal(
+        received.headers.get('cloudflare-workers-version-overrides'),
+        `skincos-timekeeping-staging="${timekeepingVersionId}"`,
+    );
+    assert.equal(response.headers.get('x-skincos-gateway-release-sha'), releaseSha);
+    assert.equal(response.headers.get('x-skincos-gateway-environment'), 'staging');
+    assert.equal(response.headers.get('x-skincos-gateway-version-id'), coreVersionId);
+    assert.equal(response.headers.get('x-skincos-gateway-version-tag'), 'ponto-candidate');
+});
+
+test('Core rejects standalone browser affinity and never forwards a browser-selected override', () => {
+    const request = prepareTimekeepingRequest(new Request('https://api.skincos.com.br/api/ponto/health', {
+        headers: {
+            'cloudflare-workers-version-key': 'browser-affinity',
+            'cloudflare-workers-version-overrides': 'skincos-timekeeping="browser-version"',
+            'x-skincos-gateway-release-sha': 'browser-release',
+        },
+    }), { APP_VERSION: 'e'.repeat(40), ENVIRONMENT: 'production' });
+
+    assert.equal(request.headers.get('cloudflare-workers-version-key'), null);
+    assert.equal(request.headers.get('cloudflare-workers-version-overrides'), null);
+    assert.equal(request.headers.get('x-skincos-gateway-release-sha'), 'e'.repeat(40));
+    assert.equal(request.headers.get('x-skincos-gateway-environment'), 'production');
+});
+
+test('Core strips external version-routing and gateway headers from non-Ponto domain calls', async () => {
+    let received = null;
+    const sanitizedGateway = createGatewayHandler({
+        inventoryHandler: async (request) => {
+            received = request;
+            return new Response('inventory-ok');
+        },
+    });
+    const response = await sanitizedGateway(new Request('https://api.skincos.com.br/inventory/insumos', {
+        headers: {
+            'cloudflare-workers-version-key': 'browser-affinity',
+            'cloudflare-workers-version-overrides': 'skincos-insumos="browser-version"',
+            'x-skincos-gateway-release-sha': 'browser-release',
+            'x-skincos-gateway-environment': 'browser-environment',
+        },
+    }), {}, {});
+
+    assert.equal(response.status, 200);
+    assert.equal(received.headers.get('cloudflare-workers-version-key'), null);
+    assert.equal(received.headers.get('cloudflare-workers-version-overrides'), null);
+    assert.equal(received.headers.get('x-skincos-gateway-release-sha'), null);
+    assert.equal(received.headers.get('x-skincos-gateway-environment'), null);
+});
+
+test('gateway health exposes immutable release and Cloudflare Worker version metadata', async () => {
+    const releaseSha = 'f'.repeat(40);
+    const response = await gateway(new Request('https://api.skincos.com.br/health'), {
+        APP_VERSION: releaseSha,
+        ENVIRONMENT: 'production',
+        CF_VERSION_METADATA: { id: '44444444-4444-4444-8444-444444444444', tag: 'ponto-release' },
+    }, {});
+    const body = await response.json();
+    assert.equal(body.version, releaseSha);
+    assert.equal(body.release_sha, releaseSha);
+    assert.deepEqual(body.worker_version, {
+        id: '44444444-4444-4444-8444-444444444444',
+        tag: 'ponto-release',
+    });
+});
+
 test('finance is mounted by the gateway without taking ownership of domain rules', async () => {
     const response = await gateway(new Request('https://api.skincos.com.br/finance/overview', { headers: { 'x-request-id': 'finance-1' } }), {}, {});
     assert.equal(response.status, 200);
     assert.equal(await response.text(), 'finance-ok');
     assert.equal(response.headers.get('x-request-id'), 'finance-1');
+});
+
+test('missing production Finance binding stays isolated while Ponto remains available', async () => {
+    resetBoundServiceResilienceForTest();
+    const finance = await handleGatewayRequest(new Request('https://api.skincos.com.br/finance/health'), {
+        APP_VERSION: 'a'.repeat(40),
+        ENVIRONMENT: 'production',
+    }, {});
+    assert.equal(finance.status, 503);
+    assert.equal(finance.headers.get('x-skincos-dependency-status'), 'unavailable');
+
+    const ponto = await handleGatewayRequest(new Request('https://api.skincos.com.br/api/ponto/health'), {
+        APP_VERSION: 'a'.repeat(40),
+        ENVIRONMENT: 'production',
+        TIMEKEEPING: { fetch: async () => new Response(JSON.stringify({ ok: true, service: 'workforce-timekeeping' }), { headers: { 'content-type': 'application/json' } }) },
+    }, {});
+    assert.equal(ponto.status, 200);
+    assert.equal((await ponto.json()).service, 'workforce-timekeeping');
 });
 
 test('internal paths require a private service identity', async () => {

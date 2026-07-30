@@ -9,6 +9,7 @@ on:
       preview_run_id: { required: false, type: string, default: "" }
       staging_run_id: { required: false, type: string, default: "" }
       staging_supported: { required: false, type: boolean, default: true }
+      emit_preview_evidence: { required: false, type: boolean, default: true }
     outputs:
       source_sha:
         value: ${{ jobs.gate.outputs.source_sha }}
@@ -69,7 +70,7 @@ jobs:
           gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "promotion-evidence-${PROMOTION_UNIT}" --dir "$RUNNER_TEMP/promotion-evidence"
           node .github/scripts/promotion-evidence.mjs verify "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
       - name: Write preview evidence
-        if: ${{ inputs.target == 'preview' }}
+        if: ${{ inputs.target == 'preview' && inputs.emit_preview_evidence }}
         env:
           PROMOTION_UNIT: ${{ inputs.unit }}
           PROMOTION_TARGET: preview
@@ -80,7 +81,7 @@ jobs:
           tree="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")"
           PROMOTION_SOURCE_TREE="$tree" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
       - name: Upload preview evidence
-        if: ${{ inputs.target == 'preview' }}
+        if: ${{ inputs.target == 'preview' && inputs.emit_preview_evidence }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: promotion-evidence-${{ inputs.unit }}

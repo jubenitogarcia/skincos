@@ -12,6 +12,18 @@ INSUMOS_SEEDER="$ROOT_DIR/backend/scripts/insumos-seed.sh"
 WHATSAPP_ORCHESTRATOR_HELPER="$ROOT_DIR/scripts/run-local-whatsapp-orchestrator.sh"
 BUILD_STATE_HELPER="$ROOT_DIR/scripts/crm-local-build-state.mjs"
 
+crm_source_git() {
+  if git -C "$ROOT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$ROOT_DIR" "$@"
+    return
+  fi
+  if command -v git.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
+    git.exe -C "$(wslpath -w "$ROOT_DIR")" "$@"
+    return
+  fi
+  return 1
+}
+
 CRM_HOST="${CRM_HOST:-127.0.0.1}"
 if [[ -n "${CRM_VITE_PORT+x}" ]]; then
   CRM_VITE_PORT_EXPLICIT=1
@@ -76,17 +88,20 @@ else
   CRM_WITH_TIMEKEEPING=0
 fi
 CRM_TIMEKEEPING_PORT="${CRM_TIMEKEEPING_PORT:-8801}"
-# Local-only values. Production uses separate Pages and Worker secrets.
-CRM_TIMEKEEPING_ACTOR_KEY="${CRM_TIMEKEEPING_ACTOR_KEY:-test-actor-key-not-secret}"
-CRM_TIMEKEEPING_IDEMPOTENCY_KEY="${CRM_TIMEKEEPING_IDEMPOTENCY_KEY:-test-idempotency-key-not-secret}"
-CRM_TIMEKEEPING_TEMPLATES_KEY="${CRM_TIMEKEEPING_TEMPLATES_KEY:-test-template-key-not-secret}"
+CRM_TIMEKEEPING_ENV_FILE="${CRM_TIMEKEEPING_ENV_FILE:-}"
+PONTO_PAGES_ENV_FILE="${PONTO_PAGES_ENV_FILE:-}"
+CRM_INVENTORY_IDENTITY_ENV_FILE="${CRM_INVENTORY_IDENTITY_ENV_FILE:-}"
+CRM_TIMEKEEPING_RELEASE_SHA="${CRM_TIMEKEEPING_RELEASE_SHA:-}"
 CRM_INSUMOS_SNAPSHOT="${CRM_INSUMOS_SNAPSHOT:-}"
 CRM_REFRESH_INSUMOS_SNAPSHOT="${CRM_REFRESH_INSUMOS_SNAPSHOT:-0}"
-CRM_INSUMOS_SEED_TOKEN="${CRM_INSUMOS_SEED_TOKEN:-dev-seed-token}"
 CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
+readonly CRM_LOCAL_IDENTITY_VERSION_ID="00000000-0000-4000-8000-000000000001"
 PID_FILE="${CRM_PID_FILE:-$ROOT_DIR/.crm-local-dev.pid}"
 LOG_FILE="${CRM_LOG_FILE:-$ROOT_DIR/.crm-local-dev.log}"
 SNAPSHOT_DEFAULT_PATH="${CRM_INSUMOS_SNAPSHOT_DEFAULT:-$ROOT_DIR/backend/var/local/insumos-snapshot.latest.json}"
+if [[ -z "${CRM_TARGET_COMMIT:-}" ]]; then
+  CRM_TARGET_COMMIT="$(crm_source_git rev-parse HEAD 2>/dev/null || true)"
+fi
 crm_persona_runtime_init
 CRM_BUILD_LOCK_DIR="${CRM_BUILD_LOCK_DIR:-$CRM_RUNTIME_ROOT/build.lock}"
 CRM_DEPENDENCY_STATE_ROOT="${CRM_DEPENDENCY_STATE_ROOT:-$(dirname "$CRM_BUILD_LOCK_DIR")/dependencies}"
@@ -105,6 +120,11 @@ export WRANGLER_REGISTRY_PATH="$CRM_WRANGLER_REGISTRY_PATH"
 export CRM_INSUMOS_DEPENDENCY_STATE_FILE
 export CRM_INSUMOS_DEPENDENCY_LOCK_FILE
 export CRM_INSUMOS_DEPENDENCY_CACHE_ROOT
+CRM_TIMEKEEPING_RELEASE_SHA="${CRM_TIMEKEEPING_RELEASE_SHA:-$CRM_TARGET_COMMIT}"
+CRM_TIMEKEEPING_PRIVATE_ROOT="${CRM_TIMEKEEPING_PRIVATE_ROOT:-$(dirname "$CRM_RUNTIME_ROOT")/ponto-private}"
+CRM_TIMEKEEPING_ENV_FILE="${CRM_TIMEKEEPING_ENV_FILE:-$CRM_TIMEKEEPING_PRIVATE_ROOT/timekeeping.worker.env}"
+PONTO_PAGES_ENV_FILE="${PONTO_PAGES_ENV_FILE:-$CRM_TIMEKEEPING_PRIVATE_ROOT/ponto.pages.env}"
+CRM_INVENTORY_IDENTITY_ENV_FILE="${CRM_INVENTORY_IDENTITY_ENV_FILE:-$CRM_TIMEKEEPING_PRIVATE_ROOT/inventory.identity.env}"
 
 report_timestamp() {
   date +%Y%m%d-%H%M%S
@@ -135,12 +155,13 @@ Opções:
   --insumos-port PORT            Porta do Worker local de Insumos (default: 8787)
   --insumos-snapshot FILE        Faz seed local do Insumos com este snapshot JSON
   --refresh-insumos-snapshot     Exporta um snapshot novo do D1 remoto antes do seed
-  --insumos-seed-token TOKEN     Token local usado para /admin/seed (default: dev-seed-token)
   --with-whatsapp                Inicia o adaptador local do WhatsApp
   --without-whatsapp             Não inicia o adaptador local do WhatsApp (default)
   --whatsapp-port PORT           Porta do adaptador WhatsApp local (default: 8110)
   CRM_LOCAL_LOG_LEVEL=LEVEL      Nível dos runtimes locais: warn (default), info, debug, error ou none
   CRM_BROWSER_DIAGNOSTICS_LOG=FILE Arquivo privado para diagnósticos conhecidos do Chromium durante smokes
+  CRM_TIMEKEEPING_ENV_FILE=FILE Arquivo privado do Worker com todos os bindings críticos do Ponto
+  PONTO_PAGES_ENV_FILE=FILE      Arquivo privado com actor/network e a release-probe key derivada para Pages
   --smoke                        Roda uma smoke local do módulo após subir o CRM
   --exit-after-smoke             Encerra o CRM local depois da smoke
   --headed-smoke                 Roda a smoke com janela visível para debug
@@ -180,7 +201,6 @@ while [[ $# -gt 0 ]]; do
     --insumos-port) shift; CRM_INSUMOS_PORT="$1" ;;
     --insumos-snapshot) shift; CRM_INSUMOS_SNAPSHOT="$1" ;;
     --refresh-insumos-snapshot) CRM_REFRESH_INSUMOS_SNAPSHOT=1 ;;
-    --insumos-seed-token) shift; CRM_INSUMOS_SEED_TOKEN="$1" ;;
     --with-whatsapp) CRM_WITH_WHATSAPP=1 ;;
     --without-whatsapp) CRM_WITH_WHATSAPP=0 ;;
     --whatsapp-port) shift; CRM_WA_ORCHESTRATOR_PORT="$1" ;;
@@ -456,6 +476,107 @@ wait_for_crm_api() {
     retries=$((retries - 1))
   done
   return 1
+}
+
+wait_for_timekeeping_readiness() {
+  local retries="${1:-90}"
+  local body
+  while [[ "$retries" -gt 0 ]]; do
+    body="$(curl -fsS --max-time 5 \
+      -H "x-skincos-gateway-release-sha: $CRM_TIMEKEEPING_RELEASE_SHA" \
+      -H 'x-skincos-gateway-environment: local' \
+      "http://127.0.0.1:${CRM_TIMEKEEPING_PORT}/api/ponto/readiness" 2>/dev/null || true)"
+    if [[ -n "$body" ]] && PONTO_EXPECTED_SHA="$CRM_TIMEKEEPING_RELEASE_SHA" node -e '
+      const payload = JSON.parse(process.argv[1])
+      if (
+        payload.ok !== true
+        || payload.ready !== true
+        || payload.version !== process.env.PONTO_EXPECTED_SHA
+        || payload.environment !== "local"
+        || payload.availability?.state !== "active"
+      ) process.exit(1)
+    ' "$body" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    retries=$((retries - 1))
+  done
+  return 1
+}
+
+local_timekeeping_requested() {
+  [[ "$CRM_WITH_TIMEKEEPING" == "1" ]] && return 0
+  [[ "${PONTO_API_TARGET:-}" =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]+/?$ ]]
+}
+
+validate_local_timekeeping_configuration() {
+  if ! local_timekeeping_requested; then
+    return 0
+  fi
+  if [[ "$CRM_PROFILE" != "realistic" ]]; then
+    echo "[crm-local] Ponto local direto exige profile realistic e LOCAL_AUTH_BYPASS explícito." >&2
+    exit 1
+  fi
+  if [[ ! "$CRM_TIMEKEEPING_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "[crm-local] CRM_TIMEKEEPING_RELEASE_SHA deve ser um SHA Git completo de 40 caracteres." >&2
+    exit 1
+  fi
+  if [[ "$CRM_TIMEKEEPING_RELEASE_SHA" != "$CRM_TARGET_COMMIT" ]]; then
+    echo "[crm-local] O release local do Ponto deve coincidir exatamente com CRM_TARGET_COMMIT." >&2
+    exit 1
+  fi
+  if [[ "$CRM_SOURCE_FINGERPRINT" != "commit:$CRM_TARGET_COMMIT" ]]; then
+    echo "[crm-local] Ponto local recusou snapshot ou fonte mutável; use um worktree limpo no commit-alvo." >&2
+    exit 1
+  fi
+  local source_head
+  source_head="$(crm_source_git rev-parse HEAD 2>/dev/null || true)"
+  if [[ "$source_head" != "$CRM_TARGET_COMMIT" ]]; then
+    echo "[crm-local] CRM_TARGET_COMMIT não corresponde ao HEAD da fonte local." >&2
+    exit 1
+  fi
+
+  local validator_args=(
+    "$CRM_TIMEKEEPING_ENV_FILE"
+    "$PONTO_PAGES_ENV_FILE"
+    "$ROOT_DIR"
+  )
+  if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+    validator_args+=("$CRM_INVENTORY_IDENTITY_ENV_FILE")
+  fi
+  node "$ROOT_DIR/scripts/validate-local-timekeeping-env.mjs" "${validator_args[@]}" >/dev/null
+
+  if [[ -n "$(crm_source_git status --porcelain --untracked-files=all 2>/dev/null || printf source-unavailable)" ]]; then
+    echo "[crm-local] Ponto local exige uma fonte limpa para preservar afinidade imutável com o SHA." >&2
+    exit 1
+  fi
+  CRM_TIMEKEEPING_ENV_FILE="$(realpath "$CRM_TIMEKEEPING_ENV_FILE")"
+  PONTO_PAGES_ENV_FILE="$(realpath "$PONTO_PAGES_ENV_FILE")"
+  if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
+    CRM_INVENTORY_IDENTITY_ENV_FILE="$(realpath "$CRM_INVENTORY_IDENTITY_ENV_FILE")"
+  fi
+  export CRM_TIMEKEEPING_ENV_FILE PONTO_PAGES_ENV_FILE CRM_INVENTORY_IDENTITY_ENV_FILE
+}
+
+reject_shared_dev_vars() {
+  local shared_dev_vars
+  for shared_dev_vars in "$ROOT_DIR/inventory/.dev.vars" "$FRONTEND_DIR/.dev.vars"; do
+    if [[ -e "$shared_dev_vars" ]]; then
+      echo "[crm-local] Arquivo .dev.vars proibido na árvore compartilhada: $shared_dev_vars" >&2
+      echo "[crm-local] Use os env-files privados validados fora de C:\\CodexShared." >&2
+      exit 1
+    fi
+  done
+}
+
+validate_local_inventory_configuration() {
+  if [[ "$CRM_WITH_INSUMOS" != "1" ]] || local_timekeeping_requested; then
+    return 0
+  fi
+  node "$ROOT_DIR/scripts/validate-local-timekeeping-env.mjs" \
+    --inventory-only "$CRM_INVENTORY_IDENTITY_ENV_FILE" "$ROOT_DIR" >/dev/null
+  CRM_INVENTORY_IDENTITY_ENV_FILE="$(realpath "$CRM_INVENTORY_IDENTITY_ENV_FILE")"
+  export CRM_INVENTORY_IDENTITY_ENV_FILE
 }
 
 open_browser() {
@@ -806,18 +927,38 @@ start_timekeeping_local() {
       --persist-to "$CRM_TIMEKEEPING_PERSIST_DIR"
   ) >>"$LOG_FILE" 2>&1
 
+  local control_payload
+  control_payload="$(PONTO_RELEASE_SHA="$CRM_TIMEKEEPING_RELEASE_SHA" node -e '
+    process.stdout.write(JSON.stringify({
+      schemaVersion: 2,
+      state: "active",
+      message: "Controle local explícito",
+      changedAt: new Date().toISOString(),
+      changedBy: "crm-local-launcher",
+      rolloutStage: "local",
+      releaseSha: process.env.PONTO_RELEASE_SHA,
+    }))
+  ')"
+  echo "[crm-local] Gravando module-control:timekeeping=active apenas no KV local privado..."
+  (
+    cd "$TIMEKEEPING_DIR"
+    ./node_modules/.bin/wrangler kv key put "module-control:timekeeping" "$control_payload" \
+      --binding MODULE_CONTROL --local --persist-to "$CRM_TIMEKEEPING_PERSIST_DIR" \
+      --config=wrangler.toml
+  ) >>"$LOG_FILE" 2>&1
+
   echo "[crm-local] Iniciando Workforce/Timekeeping local em :$CRM_TIMEKEEPING_PORT"
   (
     cd "$TIMEKEEPING_DIR"
     ./node_modules/.bin/wrangler dev --local --port "$CRM_TIMEKEEPING_PORT" --config=wrangler.toml \
       --persist-to "$CRM_TIMEKEEPING_PERSIST_DIR" \
-      --var "PONTO_ACTOR_HMAC_KEY:$CRM_TIMEKEEPING_ACTOR_KEY" \
-      --var "PONTO_IDEMPOTENCY_KEY:$CRM_TIMEKEEPING_IDEMPOTENCY_KEY" \
-      --var "PONTO_TEMPLATES_KEY:$CRM_TIMEKEEPING_TEMPLATES_KEY"
+      --env-file "$CRM_TIMEKEEPING_ENV_FILE" \
+      --var "APP_VERSION:$CRM_TIMEKEEPING_RELEASE_SHA" \
+      --var "ENVIRONMENT:local"
   ) >>"$LOG_FILE" 2>&1 &
   TIMEKEEPING_PID=$!
 
-  if ! wait_for_http "http://127.0.0.1:${CRM_TIMEKEEPING_PORT}/api/ponto/readiness" 90; then
+  if ! wait_for_timekeeping_readiness 90; then
     echo "[crm-local] Workforce/Timekeeping não respondeu em tempo hábil." >&2
     exit 1
   fi
@@ -829,31 +970,6 @@ ensure_frontend_dist_ready() {
   fi
   echo "[crm-local] Build local do frontend ausente; gerando dist inicial para o Pages local..."
   npm --prefix "$FRONTEND_DIR" run build
-}
-
-ensure_insumos_seed_config() {
-  if [[ "${CRM_ISOLATED_RUNTIME:-0}" == "1" ]]; then
-    # Isolated runtimes pass local-only values directly to their Wrangler
-    # process. Never rewrite the immutable source tree or a shared .dev.vars.
-    return 0
-  fi
-  local insumos_dev_vars="$ROOT_DIR/inventory/.dev.vars"
-  if [[ ! -f "$insumos_dev_vars" && -f "$ROOT_DIR/inventory/.dev.vars.example" ]]; then
-    cp "$ROOT_DIR/inventory/.dev.vars.example" "$insumos_dev_vars"
-  fi
-  touch "$insumos_dev_vars"
-  if ! grep -qE '^ALLOW_DEV_SEED=' "$insumos_dev_vars"; then
-    printf '\nALLOW_DEV_SEED=true\n' >> "$insumos_dev_vars"
-  fi
-  if ! grep -qE '^INSUMOS_SEED_TOKEN=' "$insumos_dev_vars"; then
-    printf 'INSUMOS_SEED_TOKEN=%s\n' "$CRM_INSUMOS_SEED_TOKEN" >> "$insumos_dev_vars"
-  fi
-  if [[ "$CRM_PROFILE" == "realistic" ]] && ! grep -qE '^ALLOW_DEV_AUTH_BYPASS=' "$insumos_dev_vars"; then
-    printf 'ALLOW_DEV_AUTH_BYPASS=true\n' >> "$insumos_dev_vars"
-  fi
-  if [[ "$CRM_PROFILE" == "realistic" ]] && ! grep -qE '^SESSION_SECRET=' "$insumos_dev_vars"; then
-    printf 'SESSION_SECRET=skincos-local-dev-only-session-secret\n' >> "$insumos_dev_vars"
-  fi
 }
 
 refresh_insumos_snapshot_if_needed() {
@@ -877,7 +993,6 @@ ensure_insumos_local_schema() {
 }
 
 start_insumos_local() {
-  ensure_insumos_seed_config
   ensure_insumos_local_schema
   echo "[crm-local] Iniciando Worker local do Insumos em :$CRM_INSUMOS_PORT"
   # The local Worker reads this flag at process start. Export it before
@@ -887,21 +1002,28 @@ start_insumos_local() {
   if [[ "$CRM_PROFILE" == "realistic" ]]; then
     auth_bypass=true
   fi
+  local insumos_args=(
+    --log-level "$CRM_LOCAL_LOG_LEVEL"
+    --show-interactive-dev-session false
+    --test-scheduled
+    --persist-to "$CRM_INSUMOS_PERSIST_DIR"
+    --env-file "$CRM_INVENTORY_IDENTITY_ENV_FILE"
+    --var "ALLOW_DEV_SEED:true"
+    --var "ALLOW_DEV_AUTH_BYPASS:$auth_bypass"
+  )
+  if local_timekeeping_requested; then
+    insumos_args+=(
+      --var "APP_VERSION:$CRM_TIMEKEEPING_RELEASE_SHA"
+      --var "ENVIRONMENT:local"
+      --var "LOCAL_IDENTITY_VERSION_ID:$CRM_LOCAL_IDENTITY_VERSION_ID"
+    )
+  fi
   (
     cd "$ROOT_DIR"
     ALLOW_DEV_AUTH_BYPASS="$auth_bypass" ./backend/scripts/insumos.sh dev \
       --ip 127.0.0.1 \
       --port "$CRM_INSUMOS_PORT" \
-      --persist-to "$CRM_INSUMOS_PERSIST_DIR" \
-      --var "APP_ORIGIN:http://localhost:${CRM_PAGES_PORT}" \
-      --var "APP_ORIGINS:http://localhost:${CRM_PAGES_PORT}" \
-      --var "SESSION_SECRET:skincos-${CRM_RUNTIME_ID}-local-session" \
-      --var "ALLOW_DEV_SEED:true" \
-      --var "INSUMOS_SEED_TOKEN:${CRM_INSUMOS_SEED_TOKEN}" \
-      --var "ALLOW_DEV_AUTH_BYPASS:${auth_bypass}" \
-      --log-level "$CRM_LOCAL_LOG_LEVEL" \
-      --show-interactive-dev-session false \
-      --test-scheduled
+      "${insumos_args[@]}"
   ) >>"$LOG_FILE" 2>&1 &
   INSUMOS_PID=$!
 
@@ -916,7 +1038,18 @@ start_insumos_local() {
       exit 1
     fi
     echo "[crm-local] Aplicando seed de Insumos com $CRM_INSUMOS_SNAPSHOT"
-    INSUMOS_SEED_TOKEN="$CRM_INSUMOS_SEED_TOKEN" \
+    local seed_token
+    seed_token="$(sed -nE 's/^[[:space:]]*INSUMOS_SEED_TOKEN[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$/\1/p' "$CRM_INVENTORY_IDENTITY_ENV_FILE" | head -n 1)"
+    if [[ "$seed_token" == \"*\" && "$seed_token" == *\" ]]; then
+      seed_token="${seed_token:1:${#seed_token}-2}"
+    elif [[ "$seed_token" == \'*\' && "$seed_token" == *\' ]]; then
+      seed_token="${seed_token:1:${#seed_token}-2}"
+    fi
+    if [[ -z "$seed_token" ]]; then
+      echo "[crm-local] INSUMOS_SEED_TOKEN ausente no env-file privado validado." >&2
+      exit 1
+    fi
+    INSUMOS_SEED_TOKEN="$seed_token" \
       INSUMOS_API_URL="http://127.0.0.1:${CRM_INSUMOS_PORT}/insumos" \
       "$INSUMOS_SEEDER" "$CRM_INSUMOS_SNAPSHOT" >>"$LOG_FILE" 2>&1
   fi
@@ -1072,6 +1205,10 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
+reject_shared_dev_vars
+validate_local_timekeeping_configuration
+validate_local_inventory_configuration
+
 mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
 runtime_lock_status=0
 crm_persona_runtime_acquire_lock || runtime_lock_status=$?
@@ -1178,9 +1315,14 @@ if [[ "$CRM_PROFILE" == "realistic" ]]; then
   export LOCAL_AUTH_TEST_USER_ADMIN="${LOCAL_AUTH_TEST_USER_ADMIN:-true}"
   export LOCAL_AUTH_EMAIL="${LOCAL_AUTH_EMAIL:-dev@local.test}"
   export LOCAL_AUTH_NAME="${LOCAL_AUTH_NAME:-Teste CRM Local}"
-  if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
-    export PONTO_API_TARGET="http://127.0.0.1:${CRM_TIMEKEEPING_PORT}"
-    export PONTO_ACTOR_HMAC_KEY="$CRM_TIMEKEEPING_ACTOR_KEY"
+  if local_timekeeping_requested; then
+    if [[ "$CRM_WITH_TIMEKEEPING" == "1" ]]; then
+      export PONTO_API_TARGET="http://127.0.0.1:${CRM_TIMEKEEPING_PORT}"
+    fi
+    export SKINCOS_DEPLOYMENT_ENV=local
+    export PONTO_RELEASE_SHA="$CRM_TIMEKEEPING_RELEASE_SHA"
+    export PONTO_ROLLOUT_STAGE=local
+    export PONTO_ALLOW_LOCAL_DIRECT_TIMEKEEPING=true
   fi
   if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
     export ALLOW_DEV_AUTH_BYPASS=true
@@ -1400,7 +1542,7 @@ fi
 if [[ "$CRM_WITH_INSUMOS" == "1" ]]; then
   echo "  - Insumos está apontando para o worker local, sem risco de gravar na produção."
 else
-  echo "  - Insumos continua usando o target definido em crm/console/.dev.vars ou crm/console/wrangler.toml."
+  echo "  - Insumos continua usando o target não sensível definido no runtime ou em crm/console/wrangler.toml."
 fi
 if [[ -n "$CRM_META_ADS_SCENARIO" && "$CRM_META_ADS_SCENARIO" != "live" ]]; then
   echo "  - Meta Ads/tracking está em cenário local controlado; o fluxo é simulado só em localhost."

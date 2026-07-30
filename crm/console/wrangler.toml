@@ -7,10 +7,33 @@ compatibility_date = "2026-01-13"
 binding = "SHARE_BUCKET"
 bucket_name = "skincos-share"
 
+[[env.production.services]]
+binding = "PONTO_CORE"
+service = "skincos-ponto-core"
+
+[[env.production.services]]
+binding = "PONTO_IDENTITY"
+service = "skincos-insumos"
+
+[[env.production.kv_namespaces]]
+binding = "MODULE_CONTROL"
+id = "__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__"
+
+[env.production.secrets]
+required = [
+  "PONTO_ACTOR_HMAC_KEY",
+  "PONTO_NETWORK_CONTEXT_KEY",
+  "PONTO_RELEASE_PROBE_HMAC_KEY",
+]
+
 [env.production.vars]
 ATENDIMENTO_API_TARGET = "https://cs-api.skincos.com.br"
 INSUMOS_API_TARGET = "https://api.skincos.com.br"
 ESCALA_API_TARGET = "https://escala-api.skincos.com.br"
+PONTO_API_TARGET = "https://api.skincos.com.br"
+PONTO_RELEASE_SHA = "__RELEASE_SHA__"
+PONTO_ROLLOUT_STAGE = "maintenance"
+SKINCOS_DEPLOYMENT_ENV = "production"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "true"
 R2_KEY_PREFIX = ""
 R2_PRODUCTION_BRANCH = "main"
@@ -23,9 +46,32 @@ META_ADS_REPORT_WORKER_AUTH_SCHEME = "Bearer"
 binding = "SHARE_BUCKET"
 bucket_name = "skincos-share"
 
+[[env.preview.services]]
+binding = "PONTO_CORE"
+service = "skincos-ponto-core-staging"
+
+[[env.preview.services]]
+binding = "PONTO_IDENTITY"
+service = "skincos-insumos-staging"
+
+[[env.preview.kv_namespaces]]
+binding = "MODULE_CONTROL"
+id = "e69fe06b6abc46eca4f4c00198d078f2"
+
+[env.preview.secrets]
+required = [
+  "PONTO_ACTOR_HMAC_KEY",
+  "PONTO_NETWORK_CONTEXT_KEY",
+  "PONTO_RELEASE_PROBE_HMAC_KEY",
+]
+
 [env.preview.vars]
 INSUMOS_API_TARGET = "https://api.skincos.com.br"
 ESCALA_API_TARGET = "https://escala-api-staging.skincos.com.br"
+PONTO_API_TARGET = "https://api-staging.skincos.com.br"
+PONTO_RELEASE_SHA = "__RELEASE_SHA__"
+PONTO_ROLLOUT_STAGE = "maintenance"
+SKINCOS_DEPLOYMENT_ENV = "staging"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "false"
 R2_KEY_PREFIX = "preview/"
 R2_PRODUCTION_BRANCH = "main"

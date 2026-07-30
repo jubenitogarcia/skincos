@@ -1,4 +1,5 @@
 name: Set module availability
+run-name: Module ${{ inputs.module }} ${{ inputs.target }} ${{ inputs.state }} orchestrator=${{ inputs.orchestrator_run_id }}
 
 on:
   workflow_dispatch:
@@ -14,24 +15,113 @@ on:
         type: choice
         options: [staging, production]
       state:
-        description: Runtime state; no artifact is published
+        description: Runtime state; Ponto canary is restricted to an approved private cohort
         required: true
         type: choice
-        options: [active, maintenance, disabled]
+        options: [active, canary, maintenance, disabled]
       message:
         description: User-visible maintenance reason (optional)
         required: false
         type: string
+      release_sha:
+        description: Required for Timekeeping canary/active
+        required: false
+        type: string
+      timekeeping_candidate_version_id:
+        description: Required for Timekeeping canary/active
+        required: false
+        type: string
+      timekeeping_incumbent_version_id:
+        description: Required for Timekeeping canary
+        required: false
+        type: string
+      core_candidate_version_id:
+        description: Required for Timekeeping canary/active
+        required: false
+        type: string
+      core_incumbent_version_id:
+        description: Required for Timekeeping canary
+        required: false
+        type: string
+      identity_candidate_version_id:
+        description: Required for Timekeeping canary/active
+        required: false
+        type: string
+      identity_incumbent_version_id:
+        description: Required for Timekeeping canary
+        required: false
+        type: string
+      rollout_stage:
+        description: Required when state=canary
+        required: false
+        default: pilot
+        type: choice
+        options: [pilot, canary]
+      worker_percentage:
+        description: Public Worker traffic weight; route-isolated Ponto pilot/canary require 0
+        required: false
+        default: "0"
+        type: string
+      cohort_percentage:
+        description: Percentage inside the already-authorized cohort; pilot is 100
+        required: false
+        default: "100"
+        type: string
+      expires_at:
+        description: ISO-8601 expiry required for a Timekeeping canary
+        required: false
+        type: string
+      synthetic_only:
+        description: Required for active Timekeeping in staging; forbids real identities
+        required: false
+        default: false
+        type: boolean
+      orchestrator_run_id:
+        description: Ponto coordinator correlation ID
+        required: false
+        type: string
+      orchestrator_lease_token:
+        description: Masked single-use capability issued by the Ponto coordinator
+        required: false
+        type: string
+      orchestrator_stage:
+        description: Exact stage of the issuing Ponto coordinator
+        required: false
+        type: string
+      orchestrator_release_sha:
+        description: Immutable SHA of the issuing coordinator, distinct from a rollback incumbent SHA
+        required: false
+        type: string
+      orchestrator_lease_key:
+        description: Exact single-use transition capability class
+        required: false
+        default: module-open
+        type: choice
+        options: [module-open, rollback-incumbent-open, rollback-candidate-open]
 
 concurrency:
-  group: module-availability-${{ inputs.module }}-${{ inputs.target }}
+  group: ${{ inputs.orchestrator_run_id != '' && format('ponto-child-module-{0}-{1}-{2}', inputs.module, inputs.target, inputs.orchestrator_run_id) || 'ponto-release-custody' }}
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
+  coordination:
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    with:
+      required: ${{ inputs.module == 'timekeeping' && contains(fromJSON('["canary","active"]'), inputs.state) }}
+      lease_key: ${{ inputs.orchestrator_lease_key }}
+      stage: ${{ inputs.orchestrator_stage }}
+      release_sha: ${{ inputs.orchestrator_release_sha || inputs.release_sha }}
+      orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
+      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
   set-state:
+    needs: coordination
     runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
     steps:
@@ -53,14 +143,171 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           NAMESPACE_ID: ${{ inputs.module == 'finance' && (inputs.target == 'production' && vars.FINANCE_CONTROL_PRODUCTION_KV_ID || vars.FINANCE_CONTROL_STAGING_KV_ID) || (inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID) }}
           MODULE: ${{ inputs.module }}
+          TARGET: ${{ inputs.target }}
           STATE: ${{ inputs.state }}
           MESSAGE: ${{ inputs.message }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          TIMEKEEPING_CANDIDATE_VERSION_ID: ${{ inputs.timekeeping_candidate_version_id }}
+          TIMEKEEPING_INCUMBENT_VERSION_ID: ${{ inputs.timekeeping_incumbent_version_id }}
+          CORE_CANDIDATE_VERSION_ID: ${{ inputs.core_candidate_version_id }}
+          CORE_INCUMBENT_VERSION_ID: ${{ inputs.core_incumbent_version_id }}
+          IDENTITY_CANDIDATE_VERSION_ID: ${{ inputs.identity_candidate_version_id }}
+          IDENTITY_INCUMBENT_VERSION_ID: ${{ inputs.identity_incumbent_version_id }}
+          ROLLOUT_STAGE: ${{ inputs.rollout_stage }}
+          WORKER_PERCENTAGE: ${{ inputs.worker_percentage }}
+          COHORT_PERCENTAGE: ${{ inputs.cohort_percentage }}
+          EXPIRES_AT: ${{ inputs.expires_at }}
+          SYNTHETIC_ONLY: ${{ inputs.synthetic_only }}
+          PONTO_PILOT_COHORT_JSON: ${{ secrets.PONTO_PILOT_COHORT_JSON }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          # Canary is intentionally absent here: only finance-staging-canary.yml
-          # can open it after immutable staging evidence and synthetic-only guards.
-          payload="$(node -e "process.stdout.write(JSON.stringify({state:process.env.STATE,message:process.env.MESSAGE||'',changedAt:new Date().toISOString(),changedBy:process.env.GITHUB_ACTOR}))")"
+          payload="$RUNNER_TEMP/module-control.json"
+          umask 077
+          node - "$payload" <<'NODE'
+          const fs = require("fs");
+          const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          const sha = /^[0-9a-f]{40}$/i;
+          const fail = message => { throw new Error(message); };
+          const payload = {
+            schemaVersion: 2,
+            state: process.env.STATE,
+            message: process.env.MESSAGE || "",
+            changedAt: new Date().toISOString(),
+            changedBy: process.env.GITHUB_ACTOR,
+          };
+          if (payload.state === "canary") {
+            if (process.env.MODULE !== "timekeeping" || process.env.PONTO_PILOT_COHORT_JSON === "") {
+              fail("Timekeeping canary requires the environment-scoped PONTO_PILOT_COHORT_JSON secret");
+            }
+            const cohort = JSON.parse(process.env.PONTO_PILOT_COHORT_JSON);
+            const allowedKeys = ["pilotEmployeeRefs", "pilotIdentityLoginRefs", "pilotIdentityRefs", "pilotNetworkContexts", "pilotUnits"];
+            if (JSON.stringify(Object.keys(cohort).sort()) !== JSON.stringify([...allowedKeys].sort())) {
+              fail("cohort secret contains unapproved fields");
+            }
+            const limits = {
+              pilotEmployeeRefs: 100,
+              pilotIdentityLoginRefs: 100,
+              pilotIdentityRefs: 100,
+              pilotUnits: 20,
+              pilotNetworkContexts: 20,
+            };
+            for (const key of allowedKeys) {
+              if (!Array.isArray(cohort[key])) fail(`cohort.${key} must be an array`);
+              if (!cohort[key].length || cohort[key].length > limits[key]) fail(`cohort.${key} length is outside policy`);
+              if (new Set(cohort[key]).size !== cohort[key].length) fail(`cohort.${key} contains duplicates`);
+            }
+            const opaque = /^v1:[A-Za-z0-9_-]{43}$/;
+            if (cohort.pilotEmployeeRefs.some(value => !opaque.test(value))) fail("pilotEmployeeRefs must contain opaque v1 references");
+            if (cohort.pilotIdentityRefs.some(value => !opaque.test(value))) fail("pilotIdentityRefs must contain opaque v1 references");
+            if (cohort.pilotIdentityLoginRefs.some(value => !opaque.test(value))) fail("pilotIdentityLoginRefs must contain opaque v1 references");
+            if (cohort.pilotNetworkContexts.some(value => !opaque.test(value))) fail("pilotNetworkContexts must contain opaque v1 references");
+            if (cohort.pilotUnits.some(value => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(value))) fail("pilotUnits contains an invalid unit key");
+            if (!["pilot", "canary"].includes(process.env.ROLLOUT_STAGE)) fail("rollout_stage must be pilot or canary");
+            const workerPercent = Number(process.env.WORKER_PERCENTAGE);
+            const cohortPercent = Number(process.env.COHORT_PERCENTAGE);
+            if (!Number.isInteger(workerPercent) || workerPercent < 0 || workerPercent > 99) fail("worker percentage must be 0..99");
+            if (!Number.isInteger(cohortPercent) || cohortPercent < 1 || cohortPercent > 100) fail("cohort percentage must be 1..100");
+            if (process.env.ROLLOUT_STAGE === "pilot") {
+              if (cohort.pilotEmployeeRefs.length !== 1 || cohort.pilotIdentityRefs.length !== 1 || cohort.pilotIdentityLoginRefs.length !== 1 || cohort.pilotUnits.length !== 1 || cohort.pilotNetworkContexts.length !== 1 || cohortPercent !== 100 || workerPercent !== 0) {
+                fail("pilot requires one approved employee, Identity, Identity login, unit and network context, 100% cohort authorization and 0% public Worker traffic");
+              }
+            } else if (workerPercent !== 0) {
+              fail("route-isolated canary requires 0% public Worker candidate traffic");
+            }
+            if (!sha.test(process.env.RELEASE_SHA)) fail("release_sha must be a full SHA");
+            for (const name of [
+              "TIMEKEEPING_CANDIDATE_VERSION_ID",
+              "TIMEKEEPING_INCUMBENT_VERSION_ID",
+              "CORE_CANDIDATE_VERSION_ID",
+              "CORE_INCUMBENT_VERSION_ID",
+              "IDENTITY_CANDIDATE_VERSION_ID",
+              "IDENTITY_INCUMBENT_VERSION_ID",
+            ]) if (!uuid.test(process.env[name] || "")) fail(`${name} must be a UUID`);
+            const expiresAt = Date.parse(process.env.EXPIRES_AT);
+            if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) fail("expires_at must be in the future");
+            Object.assign(payload, cohort, {
+              rolloutStage: process.env.ROLLOUT_STAGE,
+              releaseSha: process.env.RELEASE_SHA.toLowerCase(),
+              percentage: cohortPercent,
+              workerPercentage: workerPercent,
+              expiresAt: new Date(expiresAt).toISOString(),
+              versions: {
+                timekeeping: {
+                  candidate: process.env.TIMEKEEPING_CANDIDATE_VERSION_ID,
+                  incumbent: process.env.TIMEKEEPING_INCUMBENT_VERSION_ID,
+                },
+                coreApi: {
+                  candidate: process.env.CORE_CANDIDATE_VERSION_ID,
+                  incumbent: process.env.CORE_INCUMBENT_VERSION_ID,
+                },
+                identityWorkforce: {
+                  candidate: process.env.IDENTITY_CANDIDATE_VERSION_ID,
+                  incumbent: process.env.IDENTITY_INCUMBENT_VERSION_ID,
+                },
+              },
+            });
+          } else if (payload.state === "active" && process.env.MODULE === "timekeeping") {
+            if (!sha.test(process.env.RELEASE_SHA)) fail("active Timekeeping requires a full release_sha");
+            for (const name of ["TIMEKEEPING_CANDIDATE_VERSION_ID", "CORE_CANDIDATE_VERSION_ID", "IDENTITY_CANDIDATE_VERSION_ID"]) {
+              if (!uuid.test(process.env[name] || "")) fail(`${name} must be a UUID`);
+            }
+            payload.releaseSha = process.env.RELEASE_SHA.toLowerCase();
+            if (process.env.TARGET === "staging") {
+              if (process.env.SYNTHETIC_ONLY !== "true") fail("active staging Timekeeping must be synthetic-only");
+              payload.syntheticOnly = true;
+            } else if (process.env.SYNTHETIC_ONLY === "true") {
+              fail("synthetic_only is forbidden for production Timekeeping");
+            }
+            payload.versions = {
+              timekeeping: { candidate: process.env.TIMEKEEPING_CANDIDATE_VERSION_ID },
+              coreApi: { candidate: process.env.CORE_CANDIDATE_VERSION_ID },
+              identityWorkforce: { candidate: process.env.IDENTITY_CANDIDATE_VERSION_ID },
+            };
+          }
+          fs.writeFileSync(process.argv[2], `${JSON.stringify(payload)}\n`, { mode: 0o600 });
+          NODE
           # The control plane is the remote staging/production KV. Omitting
           # --remote silently writes only the runner's ephemeral local KV and
           # makes a successful kill-switch run a false positive.
-          npx --yes wrangler@4.112.0 kv key put "module-control:$MODULE" "$payload" --namespace-id "$NAMESPACE_ID" --remote
+          npx --yes wrangler@4.112.0 kv key put "module-control:$MODULE" --path "$payload" --namespace-id "$NAMESPACE_ID" --remote
+          readback="$RUNNER_TEMP/module-control-readback.json"
+          npx --yes wrangler@4.112.0 kv key get "module-control:$MODULE" --namespace-id "$NAMESPACE_ID" --remote > "$readback"
+          EXPECTED_STATE="$STATE" EXPECTED_SHA="$RELEASE_SHA" EXPECTED_TARGET="$TARGET" node - "$readback" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (value.state !== process.env.EXPECTED_STATE) process.exit(1);
+          if (["canary", "active"].includes(value.state) && value.releaseSha !== process.env.EXPECTED_SHA.toLowerCase()) process.exit(1);
+          if (value.state === "active" && process.env.EXPECTED_TARGET === "staging" && value.syntheticOnly !== true) process.exit(1);
+          NODE
+          if [[ "$MODULE" == timekeeping ]]; then
+            PONTO_MODULE_EXPECTATION_FILE="$readback" \
+            PONTO_MODULE_PROPAGATION_REPORT="$RUNNER_TEMP/module-transition.json" \
+            PONTO_MODULE_HEALTH_URL="${{ inputs.target == 'production' && 'https://api.skincos.com.br/api/ponto/health' || 'https://api-staging.skincos.com.br/api/ponto/health' }}" \
+              node .github/scripts/ponto-module-propagation.mjs
+          else
+            node - "$readback" "$RUNNER_TEMP/module-transition.json" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            schemaVersion: 1,
+            module: process.env.MODULE,
+            environment: "${{ inputs.target }}",
+            state: value.state,
+            changedAt: value.changedAt,
+            passed: true,
+            observation: "remote-kv-readback",
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`);
+          NODE
+          fi
+          rm -f "$payload" "$readback"
+      - name: Upload sanitized module transition and propagation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: module-transition-${{ inputs.module }}-${{ inputs.target }}-${{ inputs.state }}-${{ inputs.orchestrator_run_id || github.run_id }}
+          path: ${{ runner.temp }}/module-transition.json
+          retention-days: 90
+          if-no-files-found: error

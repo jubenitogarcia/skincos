@@ -1,0 +1,148 @@
+name: Ponto staging rollback drill
+run-name: Ponto staging rollback drill ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha: { description: "Immutable SHA restored after the drill", required: true, type: string }
+      orchestrator_run_id: { description: "Ponto coordinator correlation ID", required: true, type: string }
+      orchestrator_lease_token: { description: "Single-use coordinator capability", required: false, type: string }
+      orchestrator_stage: { description: "Exact coordinator stage", required: false, type: string }
+      rollback_incumbent_open_lease_token: { description: "Single-use capability for opening the exact incumbent", required: true, type: string }
+      rollback_candidate_open_lease_token: { description: "Single-use capability for reopening the restored candidate", required: true, type: string }
+      staging_journey_run_id: { description: "Successful authenticated staging journey predecessor", required: true, type: string }
+      timekeeping_candidate_version_id: { description: "Exact Timekeeping staging candidate", required: true, type: string }
+      timekeeping_incumbent_version_id: { description: "Exact Timekeeping staging incumbent", required: true, type: string }
+      core_candidate_version_id: { description: "Exact route-isolated Ponto Core staging candidate", required: true, type: string }
+      core_incumbent_version_id: { description: "Exact route-isolated Ponto Core staging incumbent", required: true, type: string }
+      identity_candidate_version_id: { description: "Exact Identity staging candidate", required: true, type: string }
+      identity_incumbent_version_id: { description: "Exact Identity staging incumbent", required: true, type: string }
+      pages_candidate_deployment_id: { description: "Exact CRM Pages staging candidate deployment", required: true, type: string }
+      pages_incumbent_deployment_id: { description: "Exact CRM Pages staging incumbent deployment", required: true, type: string }
+
+concurrency:
+  group: ponto-staging-release
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  coordination:
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    with:
+      required: true
+      lease_key: staging-rollback
+      stage: ${{ inputs.orchestrator_stage }}
+      release_sha: ${{ inputs.release_sha }}
+      orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
+      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
+
+  drill:
+    needs: coordination
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Verify immutable source and authenticated journey predecessor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          STAGING_JOURNEY_RUN_ID: ${{ inputs.staging_journey_run_id }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && "$STAGING_JOURNEY_RUN_ID" =~ ^[0-9]+$ && "$ORCHESTRATOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'Invalid rollback drill provenance'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'Rollback drill checkout differs from release_sha'; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/timekeeping-staging-journey.yml" > "$RUNNER_TEMP/journey-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_JOURNEY_RUN_ID" > "$RUNNER_TEMP/journey-run.json"
+          node - "$RUNNER_TEMP/journey-workflow.json" "$RUNNER_TEMP/journey-run.json" <<'NODE'
+          const fs = require("fs");
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (
+            workflow.state !== "active"
+            || workflow.path !== ".github/workflows/timekeeping-staging-journey.yml"
+            || run.workflow_id !== workflow.id
+            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.status !== "completed"
+            || run.conclusion !== "success"
+            || run.event !== "workflow_dispatch"
+            || run.head_branch !== "main"
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || !String(run.display_title || "").includes(`orchestrator=${process.env.ORCHESTRATOR_RUN_ID}`)
+          ) throw new Error("staging journey predecessor provenance is invalid");
+          NODE
+          mkdir -p "$RUNNER_TEMP/journey"
+          gh run download "$STAGING_JOURNEY_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "timekeeping-staging-journey-$RELEASE_SHA" \
+            --dir "$RUNNER_TEMP/journey"
+          node - "$RUNNER_TEMP/journey/ponto-staging-report.json" "$RUNNER_TEMP/journey/ponto-staging-contract.json" <<'NODE'
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const contract = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (contract.sourceSha !== process.env.RELEASE_SHA || contract.passed !== true || report.environment !== "staging" || report.credentialsIncluded !== false || report.piiIncluded !== false) {
+            throw new Error("staging journey artifact is not the exact sanitized predecessor");
+          }
+          NODE
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: crm/console/package-lock.json
+      - name: Install authenticated browser harness
+        run: npm ci
+        working-directory: crm/console
+      - name: Install Playwright Chromium
+        run: npx --yes playwright install --with-deps chromium
+        working-directory: crm/console
+      - name: Exercise exact incumbents and restore every exact staging candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage }}
+          ROLLBACK_INCUMBENT_OPEN_LEASE_TOKEN: ${{ inputs.rollback_incumbent_open_lease_token }}
+          ROLLBACK_CANDIDATE_OPEN_LEASE_TOKEN: ${{ inputs.rollback_candidate_open_lease_token }}
+          STAGING_JOURNEY_RUN_ID: ${{ inputs.staging_journey_run_id }}
+          TIMEKEEPING_CANDIDATE_VERSION_ID: ${{ inputs.timekeeping_candidate_version_id }}
+          TIMEKEEPING_INCUMBENT_VERSION_ID: ${{ inputs.timekeeping_incumbent_version_id }}
+          CORE_CANDIDATE_VERSION_ID: ${{ inputs.core_candidate_version_id }}
+          CORE_INCUMBENT_VERSION_ID: ${{ inputs.core_incumbent_version_id }}
+          IDENTITY_CANDIDATE_VERSION_ID: ${{ inputs.identity_candidate_version_id }}
+          IDENTITY_INCUMBENT_VERSION_ID: ${{ inputs.identity_incumbent_version_id }}
+          PAGES_CANDIDATE_DEPLOYMENT_ID: ${{ inputs.pages_candidate_deployment_id }}
+          PAGES_INCUMBENT_DEPLOYMENT_ID: ${{ inputs.pages_incumbent_deployment_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+          CLOUDFLARE_PAGES_PROJECT_STAGING: ${{ vars.CLOUDFLARE_PAGES_PROJECT_STAGING || 'skincos-staging' }}
+          MODULE_CONTROL_STAGING_KV_ID: ${{ vars.MODULE_CONTROL_STAGING_KV_ID }}
+          STAGING_CORE_D1_DATABASE: skincos-db-staging
+          STAGING_TIMEKEEPING_D1_DATABASE: skincos-timekeeping-staging
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          echo "::add-mask::$ROLLBACK_INCUMBENT_OPEN_LEASE_TOKEN"
+          echo "::add-mask::$ROLLBACK_CANDIDATE_OPEN_LEASE_TOKEN"
+          node .github/scripts/ponto-staging-rollback-drill.mjs "$RUNNER_TEMP/ponto-staging-rollback-drill.json"
+      - name: Upload immutable staging rollback drill evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-staging-rollback-drill-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/ponto-staging-rollback-drill.json
+          retention-days: 90
+          if-no-files-found: error

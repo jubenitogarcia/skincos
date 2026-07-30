@@ -1,0 +1,1130 @@
+name: Ponto progressive release
+run-name: Ponto ${{ inputs.stage }} ${{ inputs.release_sha }} orchestrator=${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Ordered Ponto release stage
+        required: true
+        default: preview
+        type: choice
+        options: [preview, staging, pilot, canary, production, rollback]
+      release_sha:
+        description: Exact immutable coordinator SHA at main for every surface
+        required: true
+        type: string
+      predecessor_run_id:
+        description: Required after preview; completed Ponto progressive run for the exact predecessor
+        required: false
+        type: string
+      rollback_from_stage:
+        description: Current live stage when stage=rollback
+        required: false
+        default: production
+        type: choice
+        options: [pilot, canary, production]
+
+concurrency:
+  group: ${{ inputs.stage == 'preview' && 'ponto-preview-release-custody' || 'ponto-release-custody' }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  orchestrate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.stage == 'preview' && 'preview' || inputs.stage == 'staging' && 'staging' || 'production' }}
+    timeout-minutes: 360
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      STAGE: ${{ inputs.stage }}
+      PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+      ROLLBACK_FROM_STAGE: ${{ inputs.rollback_from_stage }}
+      # 20-minute default child custody, with script-enforced 35/65-minute
+      # journey/drill budgets, leaves at least 50 minutes for fail-close,
+      # reconciliation, rollback, and evidence before the 330-minute job cap.
+      PONTO_DISPATCH_TIMEOUT_MS: "1200000"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Initialize private release artifact directory
+        run: |
+          echo "PONTO_ARTIFACT_DIR=$RUNNER_TEMP/ponto-release" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/ponto-release"
+      - name: Verify immutable source and ordered predecessor provenance
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
+          [[ "$GITHUB_SHA" == "$RELEASE_SHA" ]] || { echo 'release_sha must equal the immutable main coordinator SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checkout differs from release_sha'; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
+          tree="$(git rev-parse "${RELEASE_SHA}^{tree}")"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          mkdir -p "$PONTO_ARTIFACT_DIR/predecessor" "$PONTO_ARTIFACT_DIR/runs" "$PONTO_ARTIFACT_DIR/surfaces" "$PONTO_ARTIFACT_DIR/module-transitions"
+          case "$STAGE" in
+            preview) predecessor='' ;;
+            staging) predecessor=preview ;;
+            pilot) predecessor=staging ;;
+            canary) predecessor=pilot ;;
+            production) predecessor=canary ;;
+            rollback) predecessor="$ROLLBACK_FROM_STAGE" ;;
+            *) exit 1 ;;
+          esac
+          echo "predecessor=$predecessor" >> "$GITHUB_OUTPUT"
+          [[ "$STAGE" == preview ]] && exit 0
+          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'numeric predecessor_run_id is required'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-progressive-release.yml" > "$RUNNER_TEMP/ponto-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREDECESSOR_RUN_ID" > "$RUNNER_TEMP/predecessor-run.json"
+          node - "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json" <<'NODE'
+          const fs = require("fs");
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (
+            run.workflow_id !== workflow.id
+            || !String(run.path || "").startsWith(".github/workflows/ponto-progressive-release.yml@refs/heads/main")
+            || run.status !== "completed"
+            || run.conclusion !== "success"
+            || run.event !== "workflow_dispatch"
+            || run.head_branch !== "main"
+            || run.name !== "Ponto progressive release"
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) throw new Error("predecessor run provenance is invalid");
+          NODE
+          artifact="ponto-release-evidence-${predecessor}-${RELEASE_SHA}"
+          gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir "$PONTO_ARTIFACT_DIR/predecessor"
+          PONTO_EXPECTED_STAGE="$predecessor" PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-release-evidence.mjs verify "$PONTO_ARTIFACT_DIR/predecessor/ponto-release-evidence.json"
+          rm -f "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json"
+      - name: Issue masked single-use capabilities for every governed child mutation
+        if: ${{ inputs.stage != 'preview' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "PONTO_LEASE_TOKENS_FILE=$RUNNER_TEMP/ponto-orchestrator-lease-tokens.json" >> "$GITHUB_ENV"
+          node .github/scripts/ponto-orchestrator-lease.mjs issue \
+            "$RUNNER_TEMP/ponto-orchestrator-leases" \
+            "$RUNNER_TEMP/ponto-orchestrator-lease-tokens.json" \
+            workers-secrets pages-secrets timekeeping core-inventory core-api pages staging-journey staging-rollback module-open rollback-incumbent-open rollback-candidate-open
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage != 'preview' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-workers-secrets
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/workers-secrets.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage != 'preview' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-pages-secrets
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/pages-secrets.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage != 'preview' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-timekeeping
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/timekeeping.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage != 'preview' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-core-inventory
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/core-inventory.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage != 'preview' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-core-api
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/core-api.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage != 'preview' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-pages
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/pages.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage != 'preview' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-staging-journey
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/staging-journey.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage != 'preview' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-staging-rollback
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/staging-rollback.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage != 'preview' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-module-open
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/module-open.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage == 'staging' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-rollback-incumbent-open
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/rollback-incumbent-open.json
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.stage == 'staging' }}
+        with:
+          name: ponto-orchestrator-lease-${{ github.run_id }}-rollback-candidate-open
+          path: ${{ runner.temp }}/ponto-orchestrator-leases/rollback-candidate-open.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Preflight selected environment secret-root custody
+        if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for custody attestation'; exit 1; }
+          target=production
+          [[ "$STAGE" == staging ]] && target=staging
+          gh api "repos/$GITHUB_REPOSITORY/environments/$target/secrets" > "$RUNNER_TEMP/ponto-root-secret-names.json"
+          node - "$RUNNER_TEMP/ponto-root-secret-names.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const names = new Set((payload.secrets || []).map(item => item.name));
+          for (const name of ["PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
+            if (!names.has(name)) throw new Error(`${name} must be owned by the selected GitHub environment; repository fallback is refused`);
+          }
+          NODE
+          rm -f "$RUNNER_TEMP/ponto-root-secret-names.json"
+      - name: Preflight production custody, approved cohort, and online pilot runner
+        if: ${{ contains(fromJSON('["pilot","canary","production"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_PILOT_LOGIN: ${{ secrets.PONTO_PILOT_LOGIN }}
+          PONTO_PILOT_PASSWORD: ${{ secrets.PONTO_PILOT_PASSWORD }}
+          PONTO_PILOT_COHORT_JSON: ${{ secrets.PONTO_PILOT_COHORT_JSON }}
+          REQUIRED_RUNNER_LABELS_JSON: ${{ vars.PONTO_PILOT_RUNNER_LABELS_JSON }}
+          CANARY_COHORT_PERCENTAGE: ${{ vars.PONTO_CANARY_COHORT_PERCENTAGE }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments and Actions read is required'; exit 1; }
+          [[ -n "${PONTO_PILOT_LOGIN:-}" && -n "${PONTO_PILOT_PASSWORD:-}" && -n "${PONTO_PILOT_COHORT_JSON:-}" ]] || { echo 'Approved pilot identity/cohort values are absent'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/environments/production/secrets" > "$RUNNER_TEMP/production-secret-names.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runners" > "$RUNNER_TEMP/repository-runners.json"
+          node - "$RUNNER_TEMP/production-secret-names.json" "$RUNNER_TEMP/repository-runners.json" "$PONTO_ARTIFACT_DIR/cohort-summary.json" <<'NODE'
+          const fs = require("fs");
+          const secretPayload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const names = new Set((secretPayload.secrets || []).map(item => item.name));
+          for (const name of ["PONTO_PILOT_LOGIN", "PONTO_PILOT_PASSWORD", "PONTO_PILOT_COHORT_JSON", "PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
+            if (!names.has(name)) throw new Error(`${name} must be owned by the production environment`);
+          }
+          const cohort = JSON.parse(process.env.PONTO_PILOT_COHORT_JSON);
+          const keys = ["pilotEmployeeRefs", "pilotIdentityLoginRefs", "pilotIdentityRefs", "pilotNetworkContexts", "pilotUnits"];
+          if (JSON.stringify(Object.keys(cohort).sort()) !== JSON.stringify([...keys].sort())) throw new Error("cohort contains unapproved fields");
+          const opaque = /^v1:[A-Za-z0-9_-]{43}$/;
+          const limits = { pilotEmployeeRefs: 100, pilotIdentityLoginRefs: 100, pilotIdentityRefs: 100, pilotNetworkContexts: 20, pilotUnits: 20 };
+          for (const key of keys) {
+            if (!Array.isArray(cohort[key]) || !cohort[key].length || cohort[key].length > limits[key] || new Set(cohort[key]).size !== cohort[key].length) throw new Error(`invalid ${key}`);
+          }
+          for (const key of ["pilotEmployeeRefs", "pilotIdentityLoginRefs", "pilotIdentityRefs", "pilotNetworkContexts"]) {
+            if (cohort[key].some(value => !opaque.test(value))) throw new Error(`${key} references are not opaque`);
+          }
+          if (cohort.pilotUnits.some(value => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(value))) throw new Error("pilotUnits contains an invalid unit key");
+          const requiredLabels = JSON.parse(process.env.REQUIRED_RUNNER_LABELS_JSON || "[]");
+          if (!Array.isArray(requiredLabels) || !requiredLabels.length || requiredLabels.some(value => typeof value !== "string" || !value)) throw new Error("PONTO_PILOT_RUNNER_LABELS_JSON is absent or invalid");
+          const runners = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).runners || [];
+          const ready = runners.some(runner => runner.status === "online" && !runner.busy && requiredLabels.every(label => (runner.labels || []).some(item => item.name === label)));
+          if (!ready) throw new Error("no online idle runner has the exact approved pilot labels");
+          if (process.env.STAGE === "pilot" && (cohort.pilotEmployeeRefs.length !== 1 || cohort.pilotIdentityRefs.length !== 1 || cohort.pilotIdentityLoginRefs.length !== 1 || cohort.pilotNetworkContexts.length !== 1 || cohort.pilotUnits.length !== 1)) throw new Error("pilot cohort must contain exactly one employee, Identity, Identity login, network context and unit");
+          if (process.env.STAGE === "canary") {
+            const percentage = Number(process.env.CANARY_COHORT_PERCENTAGE);
+            if (!Number.isInteger(percentage) || percentage < 1 || percentage > 100) throw new Error("PONTO_CANARY_COHORT_PERCENTAGE must be 1..100");
+          }
+          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+            configured: true,
+            grants: cohort.pilotEmployeeRefs.length,
+            identityGrants: cohort.pilotIdentityRefs.length,
+            loginGrants: cohort.pilotIdentityLoginRefs.length,
+            units: cohort.pilotUnits.length,
+            contexts: cohort.pilotNetworkContexts.length,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -f "$RUNNER_TEMP/production-secret-names.json" "$RUNNER_TEMP/repository-runners.json"
+      - name: Attest unconditional edge blocks before any candidate mutation
+        if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          PONTO_WAF_RULESET_ID: ${{ vars.PONTO_WAF_RULESET_ID }}
+          PONTO_WAF_HEADER_RULE_ID: ${{ vars.PONTO_WAF_HEADER_RULE_ID }}
+          PONTO_WAF_CONTRACT_RULE_ID: ${{ vars.PONTO_WAF_CONTRACT_RULE_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo 'Cloudflare API token is required for the WAF precondition'; exit 1; }
+          [[ "$CLOUDFLARE_ZONE_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'CLOUDFLARE_ZONE_ID is absent or invalid'; exit 1; }
+          ruleset="$RUNNER_TEMP/ponto-edge-ruleset.json"
+          mkdir -p "$PONTO_ARTIFACT_DIR/edge-guard"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/rulesets/phases/http_request_firewall_custom/entrypoint" \
+            > "$ruleset"
+          node .github/scripts/ponto-edge-override-guard.mjs \
+            "$ruleset" \
+            "$PONTO_ARTIFACT_DIR/edge-guard/ponto-edge-override-guard.json"
+          rm -f "$ruleset"
+      - name: Put Ponto in maintenance before staging or live mutation
+        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node - "$RUNNER_TEMP/module-maintenance.json" <<'NODE'
+          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({
+            module: "timekeeping",
+            target: process.env.STAGE === "staging" ? "staging" : "production",
+            state: "maintenance",
+            message: "Ponto release in progress.",
+            orchestrator_run_id: process.env.GITHUB_RUN_ID,
+          }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-maintenance.json" "$PONTO_ARTIFACT_DIR/runs/module-maintenance.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-maintenance.json")"
+          target="$STAGE"; [[ "$target" == staging ]] || target=production
+          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/pre-mutation-maintenance"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "module-transition-timekeeping-$target-maintenance-$GITHUB_RUN_ID" \
+            --dir "$PONTO_ARTIFACT_DIR/module-transitions/pre-mutation-maintenance"
+      - name: Provision isolated target values before staging or first pilot
+        if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
+        id: provision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          target="$STAGE"
+          [[ "$target" == pilot ]] && target=production
+          staging_run=''
+          [[ "$target" == production ]] && staging_run="$PREDECESSOR_RUN_ID"
+          node - "$RUNNER_TEMP/provision-workers.json" "$target" "$staging_run" <<'NODE'
+          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ target: process.argv[3], release_sha: process.env.RELEASE_SHA, staging_run_id: process.argv[4] }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs cloudflare-workers-sync-ponto-secrets.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/provision-workers.json" "$PONTO_ARTIFACT_DIR/runs/provision-workers.json"
+          node - "$RUNNER_TEMP/provision-pages.json" "$target" "$staging_run" <<'NODE'
+          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ target: process.argv[3], release_sha: process.env.RELEASE_SHA, staging_run_id: process.argv[4] }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs cloudflare-pages-sync-ponto.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/provision-pages.json" "$PONTO_ARTIFACT_DIR/runs/provision-pages.json"
+          pages_provision_run_id="$(node -e "process.stdout.write(String(require(process.argv[1]).runId||''))" "$PONTO_ARTIFACT_DIR/runs/provision-pages.json")"
+          mkdir -p "$PONTO_ARTIFACT_DIR/provisioning/pages"
+          gh run download "$pages_provision_run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-pages-secret-attestation-$target-$RELEASE_SHA" \
+            --dir "$PONTO_ARTIFACT_DIR/provisioning/pages"
+      - name: Resolve once and reuse the immutable pre-pilot production baseline
+        if: inputs.stage == 'pilot'
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-production-baseline.yml" > "$RUNNER_TEMP/baseline-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-production-baseline.yml/runs?event=workflow_dispatch&branch=main&per_page=100" > "$RUNNER_TEMP/baseline-runs.json"
+          baseline_run_id="$(node - "$RUNNER_TEMP/baseline-workflow.json" "$RUNNER_TEMP/baseline-runs.json" <<'NODE'
+          const fs = require("fs");
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const runs = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).workflow_runs || [];
+          if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-production-baseline.yml") throw new Error("canonical baseline workflow is unavailable");
+          const prefix = `Ponto baseline ${process.env.RELEASE_SHA} staging=${process.env.PREDECESSOR_RUN_ID} orchestrator=`;
+          const reusable = runs
+            .filter(run => run.workflow_id === workflow.id
+              && run.path === `${workflow.path}@refs/heads/main`
+              && run.status === "completed"
+              && run.conclusion === "success"
+              && run.event === "workflow_dispatch"
+              && run.head_branch === "main"
+              && run.name === "Ponto production baseline"
+              && run.repository?.full_name === process.env.GITHUB_REPOSITORY
+              && run.head_repository?.full_name === process.env.GITHUB_REPOSITORY
+              && String(run.display_title || "").startsWith(prefix))
+            .sort((a, b) => Number(a.id) - Number(b.id))[0];
+          process.stdout.write(String(reusable?.id || ""));
+          NODE
+          )"
+          if [[ -z "$baseline_run_id" ]]; then
+            node - "$RUNNER_TEMP/baseline-inputs.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], JSON.stringify({
+            release_sha: process.env.RELEASE_SHA,
+            staging_run_id: process.env.PREDECESSOR_RUN_ID,
+          }));
+          NODE
+            node .github/scripts/ponto-dispatch-workflow.mjs ponto-production-baseline.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/baseline-inputs.json" "$PONTO_ARTIFACT_DIR/runs/production-baseline.json"
+            baseline_run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/production-baseline.json")"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$baseline_run_id" > "$RUNNER_TEMP/reused-baseline-run.json"
+            node - "$RUNNER_TEMP/reused-baseline-run.json" "$PONTO_ARTIFACT_DIR/runs/production-baseline.json" <<'NODE'
+          const fs = require("fs");
+          const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            schemaVersion: 1,
+            workflow: "ponto-production-baseline.yml",
+            runId: String(run.id),
+            status: run.status,
+            conclusion: run.conclusion,
+            event: run.event,
+            headBranch: run.head_branch,
+            headSha: run.head_sha,
+            repository: process.env.GITHUB_REPOSITORY,
+            url: run.html_url,
+            reused: true,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          fi
+          mkdir -p "$PONTO_ARTIFACT_DIR/baseline"
+          gh run download "$baseline_run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-production-baseline-$RELEASE_SHA-$PREDECESSOR_RUN_ID" \
+            --dir "$PONTO_ARTIFACT_DIR/baseline"
+          PONTO_EXPECTED_BASELINE_RELEASE_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_BASELINE_STAGING_RUN_ID="$PREDECESSOR_RUN_ID" \
+          PONTO_EXPECTED_BASELINE_RUN_ID="$baseline_run_id" \
+          PONTO_EXPECTED_BASELINE_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-production-baseline.mjs verify "$PONTO_ARTIFACT_DIR/baseline/ponto-production-baseline.json"
+          echo "PONTO_BASELINE_RUN_ID=$baseline_run_id" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/baseline-workflow.json" "$RUNNER_TEMP/baseline-runs.json" "$RUNNER_TEMP/reused-baseline-run.json"
+      - name: Pin exported Worker deployment and version identities for every pilot publisher
+        if: inputs.stage == 'pilot'
+        env:
+          BASELINE_RUN_ID: ${{ steps.baseline.outputs.baseline_run_id }}
+          BASELINE_SHA256: ${{ steps.baseline.outputs.baseline_sha256 }}
+          TIMEKEEPING_VERSION_ID: ${{ steps.baseline.outputs.baseline_timekeeping_version_id }}
+          TIMEKEEPING_DEPLOYMENT_ID: ${{ steps.baseline.outputs.baseline_timekeeping_deployment_id }}
+          CORE_VERSION_ID: ${{ steps.baseline.outputs.baseline_core_version_id }}
+          CORE_DEPLOYMENT_ID: ${{ steps.baseline.outputs.baseline_core_deployment_id }}
+          IDENTITY_VERSION_ID: ${{ steps.baseline.outputs.baseline_identity_version_id }}
+          IDENTITY_DEPLOYMENT_ID: ${{ steps.baseline.outputs.baseline_identity_deployment_id }}
+        run: |
+          set -euo pipefail
+          node - "$PONTO_ARTIFACT_DIR/baseline/ponto-production-baseline-selection.json" <<'NODE'
+          const fs = require("fs");
+          const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          const workers = {
+            timekeeping: { versionId: process.env.TIMEKEEPING_VERSION_ID, deploymentId: process.env.TIMEKEEPING_DEPLOYMENT_ID },
+            coreApi: { versionId: process.env.CORE_VERSION_ID, deploymentId: process.env.CORE_DEPLOYMENT_ID },
+            identityWorkforce: { versionId: process.env.IDENTITY_VERSION_ID, deploymentId: process.env.IDENTITY_DEPLOYMENT_ID },
+          };
+          if (
+            process.env.BASELINE_RUN_ID !== process.env.PONTO_BASELINE_RUN_ID
+            || !/^[0-9a-f]{64}$/.test(process.env.BASELINE_SHA256 || "")
+            || Object.values(workers).some(item => !uuid.test(item.versionId || "") || !uuid.test(item.deploymentId || ""))
+          ) throw new Error("coordinator did not receive every immutable Worker baseline identity");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            baselineRunId: process.env.BASELINE_RUN_ID,
+            baselineSha256: process.env.BASELINE_SHA256,
+            workers,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Publish and attest canonical Timekeeping surface
+        id: timekeeping
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node - "$RUNNER_TEMP/timekeeping-inputs.json" <<'NODE'
+          const fs = require("fs");
+          const inputs = { target: process.env.STAGE, release_scope: "ponto", release_sha: process.env.RELEASE_SHA, orchestrator_run_id: process.env.GITHUB_RUN_ID };
+          if (process.env.STAGE === "staging") inputs.preview_run_id = process.env.PREDECESSOR_RUN_ID;
+          if (["pilot", "canary", "production", "rollback"].includes(process.env.STAGE)) {
+            inputs.predecessor_run_id = process.env.PREDECESSOR_RUN_ID;
+            inputs.rollback_from_stage = process.env.ROLLBACK_FROM_STAGE;
+            if (process.env.STAGE === "pilot") inputs.baseline_run_id = process.env.PONTO_BASELINE_RUN_ID;
+          }
+          fs.writeFileSync(process.argv[2], JSON.stringify(inputs));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs deploy-timekeeping.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/timekeeping-inputs.json" "$PONTO_ARTIFACT_DIR/runs/timekeeping.json"
+          run_id="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1])).runId)" "$PONTO_ARTIFACT_DIR/runs/timekeeping.json")"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "ponto-surface-timekeeping-${STAGE}-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/surfaces/timekeeping"
+          node -e "const s=require(process.argv[1]);if(s.surface!=='timekeeping'||s.stage!==process.env.STAGE||s.sourceSha!==process.env.RELEASE_SHA)process.exit(1)" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json"
+          if [[ "$STAGE" == preview ]]; then
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-timekeeping --dir "$PONTO_ARTIFACT_DIR/promotion/timekeeping"
+          fi
+      - name: Publish and attest canonical Identity/Workforce surface
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          timekeeping_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId||'')" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
+          node - "$RUNNER_TEMP/identity-inputs.json" "$timekeeping_id" <<'NODE'
+          const fs = require("fs");
+          const inputs = { target: process.env.STAGE, unit: "inventory", release_scope: "ponto", release_sha: process.env.RELEASE_SHA, bootstrap_finance_context: false, orchestrator_run_id: process.env.GITHUB_RUN_ID };
+          if (process.env.STAGE === "staging") {
+            inputs.preview_run_id = process.env.PREDECESSOR_RUN_ID;
+            inputs.timekeeping_version_id = process.argv[3];
+          }
+          if (["pilot", "canary", "production", "rollback"].includes(process.env.STAGE)) {
+            inputs.predecessor_run_id = process.env.PREDECESSOR_RUN_ID;
+            inputs.rollback_from_stage = process.env.ROLLBACK_FROM_STAGE;
+            if (process.env.STAGE === "pilot") {
+              inputs.timekeeping_version_id = process.argv[3];
+              inputs.baseline_run_id = process.env.PONTO_BASELINE_RUN_ID;
+            }
+          }
+          fs.writeFileSync(process.argv[2], JSON.stringify(inputs));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs deploy-core-workers.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/identity-inputs.json" "$PONTO_ARTIFACT_DIR/runs/identity.json"
+          run_id="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1])).runId)" "$PONTO_ARTIFACT_DIR/runs/identity.json")"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "ponto-surface-identity-workforce-${STAGE}-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/surfaces/identity"
+          node -e "const s=require(process.argv[1]);if(s.surface!=='identityWorkforce'||s.stage!==process.env.STAGE||s.sourceSha!==process.env.RELEASE_SHA)process.exit(1)" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json"
+          if [[ "$STAGE" == preview ]]; then
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-inventory --dir "$PONTO_ARTIFACT_DIR/promotion/identity"
+          fi
+      - name: Publish and attest canonical Core API surface
+        id: core
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          timekeeping_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId||'')" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
+          node - "$RUNNER_TEMP/core-inputs.json" "$timekeeping_id" <<'NODE'
+          const fs = require("fs");
+          const inputs = { target: process.env.STAGE, unit: "api", release_scope: "ponto", release_sha: process.env.RELEASE_SHA, bootstrap_finance_context: false, orchestrator_run_id: process.env.GITHUB_RUN_ID };
+          if (process.env.STAGE === "staging") {
+            inputs.preview_run_id = process.env.PREDECESSOR_RUN_ID;
+            inputs.timekeeping_version_id = process.argv[3];
+          }
+          if (["pilot", "canary", "production", "rollback"].includes(process.env.STAGE)) {
+            inputs.predecessor_run_id = process.env.PREDECESSOR_RUN_ID;
+            inputs.rollback_from_stage = process.env.ROLLBACK_FROM_STAGE;
+            if (process.env.STAGE === "pilot") {
+              inputs.timekeeping_candidate_version_id = process.argv[3];
+              inputs.baseline_run_id = process.env.PONTO_BASELINE_RUN_ID;
+            }
+          }
+          fs.writeFileSync(process.argv[2], JSON.stringify(inputs));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs deploy-core-workers.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/core-inputs.json" "$PONTO_ARTIFACT_DIR/runs/core.json"
+          run_id="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1])).runId)" "$PONTO_ARTIFACT_DIR/runs/core.json")"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "ponto-surface-core-api-${STAGE}-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/surfaces/core"
+          node -e "const s=require(process.argv[1]);if(s.surface!=='coreApi'||s.stage!==process.env.STAGE||s.sourceSha!==process.env.RELEASE_SHA)process.exit(1)" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json"
+          if [[ "$STAGE" == preview ]]; then
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-api --dir "$PONTO_ARTIFACT_DIR/promotion/core"
+          fi
+      - name: Publish and attest canonical CRM Pages surface
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          core_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId||'')" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json")"
+          identity_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId||'')" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json")"
+          node - "$RUNNER_TEMP/pages-inputs.json" "$core_id" "$identity_id" <<'NODE'
+          const fs = require("fs");
+          const inputs = { target: process.env.STAGE, release_scope: "ponto", release_sha: process.env.RELEASE_SHA, orchestrator_run_id: process.env.GITHUB_RUN_ID };
+          if (process.env.STAGE === "staging") {
+            inputs.preview_run_id = process.env.PREDECESSOR_RUN_ID;
+            inputs.core_candidate_version_id = process.argv[3];
+            inputs.identity_candidate_version_id = process.argv[4];
+          }
+          if (["pilot", "canary", "production", "rollback"].includes(process.env.STAGE)) {
+            inputs.predecessor_run_id = process.env.PREDECESSOR_RUN_ID;
+            inputs.rollback_from_stage = process.env.ROLLBACK_FROM_STAGE;
+            if (process.env.STAGE === "pilot") inputs.baseline_run_id = process.env.PONTO_BASELINE_RUN_ID;
+            if (["pilot", "canary"].includes(process.env.STAGE)) {
+              inputs.core_candidate_version_id = process.argv[3];
+              inputs.identity_candidate_version_id = process.argv[4];
+            }
+          }
+          fs.writeFileSync(process.argv[2], JSON.stringify(inputs));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs deploy-crm-pages.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/pages-inputs.json" "$PONTO_ARTIFACT_DIR/runs/pages.json"
+          run_id="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1])).runId)" "$PONTO_ARTIFACT_DIR/runs/pages.json")"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "ponto-surface-crm-pages-${STAGE}-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/surfaces/pages"
+          node -e "const s=require(process.argv[1]);if(s.surface!=='crmPages'||s.stage!==process.env.STAGE||s.sourceSha!==process.env.RELEASE_SHA)process.exit(1)" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json"
+          if [[ "$STAGE" == preview ]]; then
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-crm-pages --dir "$PONTO_ARTIFACT_DIR/promotion/pages"
+          fi
+      - name: Activate exact staging release for the synthetic journey
+        if: inputs.stage == 'staging'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tk_candidate="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
+          core_candidate="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json")"
+          identity_candidate="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json")"
+          node - "$RUNNER_TEMP/module-staging-active.json" "$tk_candidate" "$core_candidate" "$identity_candidate" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], JSON.stringify({
+            module: "timekeeping",
+            target: "staging",
+            state: "active",
+            release_sha: process.env.RELEASE_SHA,
+            timekeeping_candidate_version_id: process.argv[3],
+            core_candidate_version_id: process.argv[4],
+            identity_candidate_version_id: process.argv[5],
+            synthetic_only: true,
+            orchestrator_run_id: process.env.GITHUB_RUN_ID,
+          }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-staging-active.json" "$PONTO_ARTIFACT_DIR/runs/module-staging-active.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-staging-active.json")"
+          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/staging-active"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "module-transition-timekeeping-staging-active-$GITHUB_RUN_ID" \
+            --dir "$PONTO_ARTIFACT_DIR/module-transitions/staging-active"
+      - name: Execute authenticated synthetic staging journey
+        id: staging_journey
+        if: inputs.stage == 'staging'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TIMEKEEPING_RUN: ${{ steps.timekeeping.outputs.run_id }}
+          CORE_RUN: ${{ steps.core.outputs.run_id }}
+          IDENTITY_RUN: ${{ steps.identity.outputs.run_id }}
+          PAGES_RUN: ${{ steps.pages.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          pages_url="$(node -e "process.stdout.write(require(process.argv[1]).url)" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json")"
+          timekeeping_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
+          identity_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json")"
+          node - "$RUNNER_TEMP/staging-journey-inputs.json" "$pages_url" "$timekeeping_id" "$identity_id" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], JSON.stringify({
+            release_sha: process.env.RELEASE_SHA,
+            timekeeping_staging_run_id: process.env.TIMEKEEPING_RUN,
+            core_api_staging_run_id: process.env.CORE_RUN,
+            identity_staging_run_id: process.env.IDENTITY_RUN,
+            crm_pages_staging_run_id: process.env.PAGES_RUN,
+            pages_url: process.argv[3],
+            timekeeping_version_id: process.argv[4],
+            identity_version_id: process.argv[5],
+          }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs timekeeping-staging-journey.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/staging-journey-inputs.json" "$PONTO_ARTIFACT_DIR/runs/staging-journey.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/staging-journey.json")"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "timekeeping-staging-journey-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/staging-slo"
+      - name: Restore staging Ponto to maintenance after the journey
+        if: ${{ always() && inputs.stage == 'staging' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node - "$RUNNER_TEMP/module-staging-restore.json" <<'NODE'
+          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ module: "timekeeping", target: "staging", state: "maintenance", message: "Staging Ponto journey complete; awaiting the next governed release.", orchestrator_run_id: process.env.GITHUB_RUN_ID }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-staging-restore.json" "$PONTO_ARTIFACT_DIR/runs/module-staging-restore.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-staging-restore.json")"
+          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/staging-restore"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "module-transition-timekeeping-staging-maintenance-$GITHUB_RUN_ID" \
+            --dir "$PONTO_ARTIFACT_DIR/module-transitions/staging-restore"
+      - name: Exercise staging rollback and restore the exact candidates
+        if: inputs.stage == 'staging'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node - "$RUNNER_TEMP/staging-rollback-drill-inputs.json" \
+            "$PONTO_ARTIFACT_DIR/runs/staging-journey.json" \
+            "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json" \
+            "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json" \
+            "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json" \
+            "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json" <<'NODE'
+          const fs = require("fs");
+          const journey = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const timekeeping = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+          const core = JSON.parse(fs.readFileSync(process.argv[5], "utf8"));
+          const identity = JSON.parse(fs.readFileSync(process.argv[6], "utf8"));
+          const pages = JSON.parse(fs.readFileSync(process.argv[7], "utf8"));
+          fs.writeFileSync(process.argv[2], JSON.stringify({
+            release_sha: process.env.RELEASE_SHA,
+            orchestrator_run_id: process.env.GITHUB_RUN_ID,
+            staging_journey_run_id: String(journey.runId),
+            timekeeping_candidate_version_id: timekeeping.candidateVersionId,
+            timekeeping_incumbent_version_id: timekeeping.incumbentVersionId,
+            core_candidate_version_id: core.candidateVersionId,
+            core_incumbent_version_id: core.incumbentVersionId,
+            identity_candidate_version_id: identity.candidateVersionId,
+            identity_incumbent_version_id: identity.incumbentVersionId,
+            pages_candidate_deployment_id: pages.deploymentId,
+            pages_incumbent_deployment_id: pages.rollbackDeploymentId,
+          }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs ponto-staging-rollback-drill.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/staging-rollback-drill-inputs.json" "$PONTO_ARTIFACT_DIR/runs/staging-rollback-drill.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/staging-rollback-drill.json")"
+          mkdir -p "$PONTO_ARTIFACT_DIR/staging-rollback-drill"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-staging-rollback-drill-$RELEASE_SHA" \
+            --dir "$PONTO_ARTIFACT_DIR/staging-rollback-drill"
+          node - "$PONTO_ARTIFACT_DIR/staging-rollback-drill/ponto-staging-rollback-drill.json" \
+            "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json" \
+            "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json" \
+            "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json" \
+            "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            value.releaseSha !== process.env.RELEASE_SHA
+            || value.orchestratorRunId !== process.env.GITHUB_RUN_ID
+            || value.passed !== true
+            || value.credentialsIncluded !== false
+            || value.piiIncluded !== false
+            || value.recovery?.disposition !== "candidate-restored-under-maintenance"
+          ) {
+            throw new Error("staging rollback drill evidence is invalid");
+          }
+          const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          const entries = [
+            ["timekeeping", process.argv[3]],
+            ["coreApi", process.argv[4]],
+            ["identityWorkforce", process.argv[5]],
+          ];
+          for (const [surface, file] of entries) {
+            const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+            const proof = value.restoration?.surfaces?.[surface];
+            if (
+              manifest.surface !== surface
+              || proof?.passed !== true
+              || !uuid.test(proof.deploymentId)
+              || String(proof.versionId || "").toLowerCase() !== String(manifest.candidateVersionId || "").toLowerCase()
+            ) throw new Error(`${surface} rollback-drill restoration identity is invalid`);
+            fs.writeFileSync(file, `${JSON.stringify({
+              ...manifest,
+              preRollbackDrillDeploymentId: manifest.deploymentId,
+              deploymentId: proof.deploymentId,
+              rollbackDrillRunId: value.runId,
+            }, null, 2)}\n`, { mode: 0o600 });
+          }
+          const pagesFile = process.argv[6];
+          const pages = JSON.parse(fs.readFileSync(pagesFile, "utf8"));
+          const pagesProof = value.restoration?.surfaces?.crmPages;
+          if (
+            pages.surface !== "crmPages"
+            || pagesProof?.passed !== true
+            || !uuid.test(pagesProof.activeDeploymentId)
+            || pagesProof.sourceDeploymentId !== pages.deploymentId
+            || String(pagesProof.commitHash || "").toLowerCase() !== process.env.RELEASE_SHA
+          ) throw new Error("CRM Pages rollback-drill restoration identity is invalid");
+          fs.writeFileSync(pagesFile, `${JSON.stringify({
+            ...pages,
+            preRollbackDrillDeploymentId: pages.deploymentId,
+            deploymentId: pagesProof.activeDeploymentId,
+            rollbackDrillRunId: value.runId,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Open the approved live cohort or activate production
+        if: ${{ contains(fromJSON('["pilot","canary","production"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANARY_COHORT_PERCENTAGE: ${{ vars.PONTO_CANARY_COHORT_PERCENTAGE }}
+        run: |
+          set -euo pipefail
+          tk_candidate="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
+          tk_incumbent="$(node -e "process.stdout.write(require(process.argv[1]).incumbentVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
+          core_candidate="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json")"
+          core_incumbent="$(node -e "process.stdout.write(require(process.argv[1]).incumbentVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json")"
+          identity_candidate="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json")"
+          identity_incumbent="$(node -e "process.stdout.write(require(process.argv[1]).incumbentVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json")"
+          expires_at="$(node -e "process.stdout.write(new Date(Date.now()+2*60*60*1000).toISOString())")"
+          node - "$RUNNER_TEMP/module-open.json" "$tk_candidate" "$tk_incumbent" "$core_candidate" "$core_incumbent" "$identity_candidate" "$identity_incumbent" "$expires_at" <<'NODE'
+          const fs = require("fs");
+          const stage = process.env.STAGE;
+          const inputs = {
+            module: "timekeeping",
+            target: "production",
+            state: stage === "production" ? "active" : "canary",
+            release_sha: process.env.RELEASE_SHA,
+            timekeeping_candidate_version_id: process.argv[3],
+            timekeeping_incumbent_version_id: process.argv[4],
+            core_candidate_version_id: process.argv[5],
+            core_incumbent_version_id: process.argv[6],
+            identity_candidate_version_id: process.argv[7],
+            identity_incumbent_version_id: process.argv[8],
+            message: "",
+            orchestrator_run_id: process.env.GITHUB_RUN_ID,
+          };
+          if (stage !== "production") Object.assign(inputs, {
+            rollout_stage: stage,
+            worker_percentage: "0",
+            cohort_percentage: stage === "pilot" ? "100" : process.env.CANARY_COHORT_PERCENTAGE,
+            expires_at: process.argv[9],
+          });
+          fs.writeFileSync(process.argv[2], JSON.stringify(inputs));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-open.json" "$PONTO_ARTIFACT_DIR/runs/module-open.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-open.json")"
+          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/live-open"
+          state="$([[ "$STAGE" == production ]] && echo active || echo canary)"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "module-transition-timekeeping-production-$state-$GITHUB_RUN_ID" \
+            --dir "$PONTO_ARTIFACT_DIR/module-transitions/live-open"
+      - name: Observe external authenticated production SLO
+        if: ${{ contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.stage) }}
+        id: slo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node - "$RUNNER_TEMP/slo-inputs.json" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json" <<'NODE'
+          const fs = require("fs");
+          const core = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const timekeeping = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+          const identity = JSON.parse(fs.readFileSync(process.argv[5], "utf8"));
+          const pages = JSON.parse(fs.readFileSync(process.argv[6], "utf8"));
+          const rollback = process.env.STAGE === "rollback";
+          fs.writeFileSync(process.argv[2], JSON.stringify({
+            stage: process.env.STAGE,
+            release_sha: process.env.RELEASE_SHA,
+            core_version_id: rollback ? core.incumbentVersionId : core.candidateVersionId,
+            timekeeping_version_id: rollback ? timekeeping.incumbentVersionId : timekeeping.candidateVersionId,
+            identity_version_id: rollback ? identity.incumbentVersionId : identity.candidateVersionId,
+            pages_deployment_id: pages.deploymentId,
+          }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs ponto-production-slo.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/slo-inputs.json" "$PONTO_ARTIFACT_DIR/runs/slo.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/slo.json")"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "ponto-slo-${STAGE}-${RELEASE_SHA}" --dir "$PONTO_ARTIFACT_DIR/slo"
+      - name: Consolidate sanitized schema v2 evidence
+        if: success()
+        env:
+          SOURCE_TREE: ${{ steps.source.outputs.tree }}
+          PREDECESSOR_STAGE: ${{ steps.source.outputs.predecessor }}
+        run: |
+          set -euo pipefail
+          node - "$PONTO_ARTIFACT_DIR" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const path = require("path");
+          const root = process.argv[2];
+          const read = file => JSON.parse(fs.readFileSync(file, "utf8"));
+          const surfaces = {
+            timekeeping: read(path.join(root, "surfaces/timekeeping/surface.json")),
+            coreApi: read(path.join(root, "surfaces/core/surface.json")),
+            identityWorkforce: read(path.join(root, "surfaces/identity/surface.json")),
+            crmPages: read(path.join(root, "surfaces/pages/surface.json")),
+          };
+          fs.writeFileSync(path.join(root, "surfaces.json"), JSON.stringify(surfaces));
+          const checkpoints = Object.fromEntries([
+            ["timekeeping", surfaces.timekeeping.checkpoint],
+            ["identityWorkforce", surfaces.identityWorkforce.checkpoint],
+          ].filter(([, value]) => value));
+          fs.writeFileSync(path.join(root, "checkpoint.json"), JSON.stringify(Object.keys(checkpoints).length ? checkpoints : null));
+          const migrations = [
+            ...(surfaces.timekeeping.migrations || []).map(migration => ({ unit: "timekeeping", ...migration })),
+            ...(surfaces.identityWorkforce.migrations || []).map(migration => ({ unit: "identityWorkforce", ...migration })),
+          ];
+          fs.writeFileSync(path.join(root, "migrations.json"), JSON.stringify(migrations));
+          const stagingDrill = process.env.STAGE === "staging"
+            ? read(path.join(root, "staging-rollback-drill/ponto-staging-rollback-drill.json"))
+            : null;
+          fs.writeFileSync(path.join(root, "rollback.json"), JSON.stringify({
+            executed: process.env.STAGE === "rollback" || stagingDrill?.passed === true,
+            mode: stagingDrill ? "staging-drill-restored-candidate" : (process.env.STAGE === "rollback" ? "live-rollback" : "not-executed"),
+            evidenceRunId: stagingDrill?.runId || "",
+            predecessorRunId: stagingDrill?.predecessor?.runId || "",
+            restoredCandidate: stagingDrill?.passed === true,
+            timekeepingVersionId: surfaces.timekeeping.incumbentVersionId,
+            coreVersionId: surfaces.coreApi.incumbentVersionId,
+            identityVersionId: surfaces.identityWorkforce.incumbentVersionId,
+            pagesDeploymentId: surfaces.crmPages.rollbackDeploymentId,
+          }));
+          if (process.env.STAGE === "staging") {
+            const reportFile = path.join(root, "staging-slo/ponto-staging-report.json");
+            const contractFile = path.join(root, "staging-slo/ponto-staging-contract.json");
+            const report = read(reportFile);
+            const contract = read(contractFile);
+            const expectedStatuses = {
+              auth: 200,
+              me: 200,
+              profile: 200,
+              presence: 200,
+              invalidPin: 401,
+              punch: 201,
+              idempotentRetry: 200,
+              crossUnitDenied: 403,
+              correction: 201,
+              adminDenied: 403,
+            };
+            const statusChecks = Object.entries(expectedStatuses).map(([key, expected]) => ({
+              key,
+              expected,
+              actual: Number(report.journey?.[key]?.status || 0),
+            }));
+            const navigationPassed = report.environment === "staging"
+              && report.role === "CONSULTOR"
+              && report.navigation?.atendimentoVisible === true
+              && report.navigation?.pontoVisible === true
+              && report.navigation?.administrativeNavigationHidden === true
+              && JSON.stringify(report.navigation?.visibleModuleKeys) === JSON.stringify(["atendimento", "ponto"])
+              && report.credentialsIncluded === false
+              && report.piiIncluded === false;
+            const statusErrors = statusChecks.filter(check => check.actual !== check.expected).length;
+            const identityOnboarding = report.identityOnboarding || {};
+            const identityStatusPassed = Number(identityOnboarding.adminAuth?.status) === 200
+              && [200, 201].includes(Number(identityOnboarding.create?.status))
+              && Number(identityOnboarding.terminate?.status) === 200
+              && Number(identityOnboarding.ledger?.status) === 200
+              && identityOnboarding.hmacContract === "v2"
+              && identityOnboarding.inviteIssued === false
+              && identityOnboarding.auditPreserved === true
+              && identityOnboarding.actorRole === "GESTOR"
+              && JSON.stringify(identityOnboarding.actorModuleKeys) === JSON.stringify(["insumos"])
+              && Number(identityOnboarding.actorUnitCount) === 1;
+            const digest = crypto.createHash("sha256").update(fs.readFileSync(reportFile)).update(fs.readFileSync(contractFile)).digest("hex");
+            fs.writeFileSync(path.join(root, "slo-summary.json"), JSON.stringify({
+              passed: contract.passed === true && navigationPassed && identityStatusPassed && statusErrors === 0,
+              samples: statusChecks.length + 7,
+              errors: statusErrors + (contract.passed === true ? 0 : 1) + (navigationPassed ? 0 : 1) + (identityStatusPassed ? 0 : 1),
+              p95Ms: 0,
+              windowSeconds: 1,
+              navigation: {
+                visibleModuleKeys: navigationPassed ? ["atendimento", "ponto"] : [],
+                administrativeNavigationHidden: report.navigation?.administrativeNavigationHidden === true,
+              },
+              identityOnboarding: {
+                passed: identityStatusPassed,
+                hmacContract: identityStatusPassed ? "v2" : "",
+                inviteIssued: identityOnboarding.inviteIssued === false ? false : null,
+                auditPreserved: identityOnboarding.auditPreserved === true,
+                administrativeRole: identityStatusPassed ? "GESTOR" : "",
+                moduleKeys: identityStatusPassed ? ["insumos"] : [],
+                unitCount: identityStatusPassed ? 1 : 0,
+              },
+              digest,
+            }));
+          } else if (process.env.STAGE === "preview") {
+            fs.writeFileSync(path.join(root, "slo-summary.json"), JSON.stringify({ passed: true }));
+          } else {
+            fs.copyFileSync(path.join(root, "slo/ponto-production-slo.json"), path.join(root, "slo-summary.json"));
+          }
+          NODE
+          predecessor_args=()
+          if [[ "$STAGE" != preview ]]; then
+            predecessor_args=(
+              PONTO_PREDECESSOR_STAGE="$PREDECESSOR_STAGE"
+              PONTO_PREDECESSOR_RUN_ID="$PREDECESSOR_RUN_ID"
+              PONTO_PREDECESSOR_SHA="$RELEASE_SHA"
+              PONTO_PREDECESSOR_ARTIFACT="ponto-release-evidence-${PREDECESSOR_STAGE}-${RELEASE_SHA}"
+              PONTO_PREDECESSOR_FILE="$PONTO_ARTIFACT_DIR/predecessor/ponto-release-evidence.json"
+            )
+          fi
+          cohort="$PONTO_ARTIFACT_DIR/cohort-summary.json"
+          [[ -f "$cohort" ]] || echo '{"configured":false,"grants":0,"units":0,"contexts":0}' > "$cohort"
+          edge_guard='null'
+          [[ ! -f "$PONTO_ARTIFACT_DIR/edge-guard/ponto-edge-override-guard.json" ]] || edge_guard="$(cat "$PONTO_ARTIFACT_DIR/edge-guard/ponto-edge-override-guard.json")"
+          env \
+            PONTO_RELEASE_STAGE="$STAGE" \
+            PONTO_RELEASE_SHA="$RELEASE_SHA" \
+            PONTO_RELEASE_TREE="$SOURCE_TREE" \
+            PONTO_RELEASE_SURFACES_JSON="$(cat "$PONTO_ARTIFACT_DIR/surfaces.json")" \
+            PONTO_RELEASE_EDGE_GUARD_JSON="$edge_guard" \
+            PONTO_RELEASE_CHECKPOINT_JSON="$(cat "$PONTO_ARTIFACT_DIR/checkpoint.json")" \
+            PONTO_RELEASE_MIGRATIONS_JSON="$(cat "$PONTO_ARTIFACT_DIR/migrations.json")" \
+            PONTO_RELEASE_COHORT_SUMMARY_JSON="$(cat "$cohort")" \
+            PONTO_RELEASE_SLO_JSON="$(cat "$PONTO_ARTIFACT_DIR/slo-summary.json")" \
+            PONTO_RELEASE_ROLLBACK_JSON="$(cat "$PONTO_ARTIFACT_DIR/rollback.json")" \
+            "${predecessor_args[@]}" \
+            node .github/scripts/ponto-release-evidence.mjs write "$PONTO_ARTIFACT_DIR/ponto-release-evidence.json"
+      - name: Keep the selected environment fail-closed on any mutation-stage failure
+        if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          abort_target=production
+          [[ "$STAGE" == staging ]] && abort_target=staging
+          node - "$RUNNER_TEMP/module-abort.json" "$abort_target" <<'NODE'
+          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ module: "timekeeping", target: process.argv[3], state: "maintenance", message: "Ponto automatic stop limit or release failure.", orchestrator_run_id: process.env.GITHUB_RUN_ID }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-abort.json" "$PONTO_ARTIFACT_DIR/runs/module-abort.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-abort.json")"
+          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "module-transition-timekeeping-$abort_target-maintenance-$GITHUB_RUN_ID" \
+            --dir "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
+      - name: Cancel and reconcile every governed non-terminal child before rollback
+        if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_RECONCILIATION_TIMEOUT_SECONDS: "600"
+        run: |
+          set -euo pipefail
+          mkdir -p "$PONTO_ARTIFACT_DIR/automatic-rollback"
+          node .github/scripts/ponto-reconcile-children.mjs \
+            "$PONTO_ARTIFACT_DIR" \
+            "$PONTO_ARTIFACT_DIR/automatic-rollback/ponto-child-reconciliation.json"
+      - name: Reassert maintenance after every governed child is terminal
+        if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          abort_target=production
+          [[ "$STAGE" == staging ]] && abort_target=staging
+          node - "$RUNNER_TEMP/module-abort-final.json" "$abort_target" <<'NODE'
+          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ module: "timekeeping", target: process.argv[3], state: "maintenance", message: "Ponto automatic stop limit or release failure; maintenance reasserted after child reconciliation.", orchestrator_run_id: process.env.GITHUB_RUN_ID }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-abort-final.json" "$PONTO_ARTIFACT_DIR/runs/module-abort.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-abort.json")"
+          rm -rf "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
+          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "module-transition-timekeeping-$abort_target-maintenance-$GITHUB_RUN_ID" \
+            --dir "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
+      - name: Roll back every successfully mutated surface to its attested incumbent
+        if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ inputs.stage == 'staging' && (vars.CLOUDFLARE_PAGES_PROJECT_STAGING || 'skincos-staging') || (vars.CLOUDFLARE_PAGES_PROJECT || 'skincos') }}
+          MODULE_CONTROL_KV_ID: ${{ inputs.stage == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          recover_surface() {
+            local run_file="$1" artifact="$2" destination="$3" surface_file="$4"
+            [[ -f "$surface_file" || ! -f "$run_file" ]] || {
+              local conclusion run_id
+              conclusion="$(node -e "process.stdout.write(String(require(process.argv[1]).conclusion||''))" "$run_file")"
+              run_id="$(node -e "process.stdout.write(String(require(process.argv[1]).runId||''))" "$run_file")"
+              if [[ "$conclusion" == success && "$run_id" =~ ^[0-9]+$ ]]; then
+                mkdir -p "$destination"
+                gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir "$destination" || true
+              fi
+            }
+          }
+          recover_journal() {
+            local run_file="$1" artifact="$2" destination="$3"
+            [[ -f "$run_file" ]] || return 0
+            local run_id
+            run_id="$(node -e "process.stdout.write(String(require(process.argv[1]).runId||''))" "$run_file")"
+            [[ "$run_id" =~ ^[0-9]+$ ]] || return 0
+            mkdir -p "$destination"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir "$destination" || true
+          }
+          recover_surface "$PONTO_ARTIFACT_DIR/runs/timekeeping.json" "ponto-surface-timekeeping-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json"
+          recover_surface "$PONTO_ARTIFACT_DIR/runs/identity.json" "ponto-surface-identity-workforce-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/surfaces/identity" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json"
+          recover_surface "$PONTO_ARTIFACT_DIR/runs/core.json" "ponto-surface-core-api-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/surfaces/core" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json"
+          recover_surface "$PONTO_ARTIFACT_DIR/runs/pages.json" "ponto-surface-crm-pages-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/surfaces/pages" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json"
+          recover_journal "$PONTO_ARTIFACT_DIR/runs/timekeeping.json" "ponto-mutation-timekeeping-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/mutations/timekeeping"
+          recover_journal "$PONTO_ARTIFACT_DIR/runs/identity.json" "ponto-mutation-identity-workforce-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/mutations/identity"
+          recover_journal "$PONTO_ARTIFACT_DIR/runs/core.json" "ponto-mutation-core-api-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/mutations/core"
+          recover_journal "$PONTO_ARTIFACT_DIR/runs/pages.json" "ponto-mutation-crm-pages-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/mutations/pages"
+          if [[ "$STAGE" == staging ]]; then
+            recover_journal "$PONTO_ARTIFACT_DIR/runs/staging-rollback-drill.json" \
+              "ponto-staging-rollback-drill-$RELEASE_SHA" \
+              "$PONTO_ARTIFACT_DIR/staging-rollback-drill"
+          fi
+          secret_target=production
+          [[ "$STAGE" == staging ]] && secret_target=staging
+          recover_journal "$PONTO_ARTIFACT_DIR/runs/provision-pages.json" "ponto-pages-secret-attestation-$secret_target-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/provisioning/pages"
+          mkdir -p "$PONTO_ARTIFACT_DIR/automatic-rollback"
+          status=0
+          node .github/scripts/ponto-automatic-rollback.mjs \
+            "$PONTO_ARTIFACT_DIR" \
+            "$PONTO_ARTIFACT_DIR/automatic-rollback/ponto-automatic-rollback.json" || status=$?
+          if [[ ! -f "$PONTO_ARTIFACT_DIR/automatic-rollback/ponto-automatic-rollback.json" ]]; then
+            node - "$PONTO_ARTIFACT_DIR/automatic-rollback/ponto-automatic-rollback.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            automaticInterruption: true,
+            sourceSha: process.env.RELEASE_SHA,
+            failedStage: process.env.STAGE,
+            orchestratorRunId: process.env.GITHUB_RUN_ID,
+            passed: false,
+            unresolved: [{ surface: "release", reason: "rollback-runner-failed-before-complete-attestation" }],
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          fi
+          exit "$status"
+      - name: Upload automatic interruption and rollback evidence
+        if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-automatic-rollback-${{ inputs.stage }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/ponto-release/automatic-rollback/ponto-automatic-rollback.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ success() && inputs.stage == 'preview' }}
+        with:
+          name: promotion-evidence-timekeeping
+          path: ${{ runner.temp }}/ponto-release/promotion/timekeeping/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ success() && inputs.stage == 'preview' }}
+        with:
+          name: promotion-evidence-core-inventory
+          path: ${{ runner.temp }}/ponto-release/promotion/identity/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ success() && inputs.stage == 'preview' }}
+        with:
+          name: promotion-evidence-core-api
+          path: ${{ runner.temp }}/ponto-release/promotion/core/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ success() && inputs.stage == 'preview' }}
+        with:
+          name: promotion-evidence-crm-pages
+          path: ${{ runner.temp }}/ponto-release/promotion/pages/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Upload combined release evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-release-evidence-${{ inputs.stage }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/ponto-release/ponto-release-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Upload edge guard evidence
+        if: ${{ success() && contains(fromJSON('["pilot","canary","production"]'), inputs.stage) }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-edge-guard-${{ inputs.stage }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/ponto-release/edge-guard/ponto-edge-override-guard.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Upload module transition evidence
+        if: ${{ always() && inputs.stage != 'preview' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-module-transitions-${{ inputs.stage }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/ponto-release/module-transitions
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Upload sanitized orchestration run ledger
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-release-runs-${{ inputs.stage }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/ponto-release/runs
+          retention-days: 90
+          if-no-files-found: warn

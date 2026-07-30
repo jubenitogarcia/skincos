@@ -1,73 +1,295 @@
-name: Sync CRM Pages env (Timekeeping)
+name: Attest CRM Pages env (Timekeeping)
+run-name: Attest CRM Pages ${{ inputs.target }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Explicit isolated target; values come only from this GitHub environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      release_sha:
+        description: Immutable main SHA that owns this provisioning change
+        required: true
+        type: string
+      staging_run_id:
+        description: Required for production; successful Ponto staging evidence for this SHA
+        required: false
+        type: string
+      orchestrator_run_id:
+        description: Ponto coordinator correlation ID
+        required: false
+        type: string
+      orchestrator_lease_token:
+        description: Masked single-use capability issued by the Ponto coordinator
+        required: false
+        type: string
+      orchestrator_stage:
+        description: Exact stage of the issuing Ponto coordinator
+        required: false
+        type: string
 
 permissions:
+  actions: read
   contents: read
-  actions: write
+
+concurrency:
+  group: ${{ inputs.orchestrator_run_id != '' && format('ponto-child-pages-secrets-{0}', inputs.orchestrator_run_id) || 'ponto-release-custody' }}
+  cancel-in-progress: false
 
 jobs:
-  production:
+  coordination:
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    with:
+      required: true
+      lease_key: pages-secrets
+      stage: ${{ inputs.orchestrator_stage }}
+      release_sha: ${{ inputs.release_sha }}
+      orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
+      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
+  provision:
+    needs: coordination
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ inputs.target }}
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: 22.12.0
-      - name: Sync production proxy configuration
+      - name: Verify immutable source and production predecessor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checkout differs from release_sha'; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
+          if [[ "$TARGET" == production ]]; then
+            [[ "$STAGING_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'production provisioning requires staging_run_id'; exit 1; }
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_RUN_ID" > "$RUNNER_TEMP/staging-run.json"
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-progressive-release.yml" > "$RUNNER_TEMP/staging-workflow.json"
+            node - "$RUNNER_TEMP/staging-run.json" "$RUNNER_TEMP/staging-workflow.json" <<'NODE'
+          const fs = require("fs");
+          const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-progressive-release.yml") {
+            throw new Error("canonical Ponto coordinator is not active at the expected path");
+          }
+          const expectedPath = `${workflow.path}@refs/heads/main`;
+          if (
+            run.workflow_id !== workflow.id
+            || run.path !== expectedPath
+            || run.status !== "completed"
+            || run.conclusion !== "success"
+            || run.event !== "workflow_dispatch"
+            || run.head_branch !== "main"
+            || run.name !== "Ponto progressive release"
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) {
+            throw new Error("staging predecessor provenance is not the canonical completed main coordinator");
+          }
+          NODE
+            mkdir -p "$RUNNER_TEMP/staging-evidence"
+            gh run download "$STAGING_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "ponto-release-evidence-staging-$RELEASE_SHA" --dir "$RUNNER_TEMP/staging-evidence"
+            PONTO_EXPECTED_STAGE=staging PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+              node .github/scripts/ponto-release-evidence.mjs verify "$RUNNER_TEMP/staging-evidence/ponto-release-evidence.json"
+            rm -f "$RUNNER_TEMP/staging-run.json" "$RUNNER_TEMP/staging-workflow.json"
+          fi
+      - name: Attest environment-owned derivation root
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for custody attestation'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET/secrets" > "$RUNNER_TEMP/environment-secrets.json"
+          node - "$RUNNER_TEMP/environment-secrets.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const names = new Set((payload.secrets || []).map(item => item.name));
+          if (!names.has("PONTO_IDEMPOTENCY_KEY")) {
+            throw new Error("PONTO_IDEMPOTENCY_KEY must exist in the selected GitHub environment; repository fallback is refused");
+          }
+          NODE
+          rm -f "$RUNNER_TEMP/environment-secrets.json"
+      - name: Derive and provision environment-scoped Ponto Pages keys
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
-          PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
-          PONTO_NETWORK_CONTEXT_KEY: ${{ secrets.PONTO_NETWORK_CONTEXT_KEY }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+          TARGET: ${{ inputs.target }}
+          PROJECT: ${{ inputs.target == 'production' && (vars.CLOUDFLARE_PAGES_PROJECT || 'skincos') || (vars.CLOUDFLARE_PAGES_PROJECT_STAGING || 'skincos-staging') }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
         run: |
           set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID PONTO_ACTOR_HMAC_KEY PONTO_NETWORK_CONTEXT_KEY; do
-            [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID PONTO_IDEMPOTENCY_KEY PROJECT; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required $TARGET environment value: $name"; exit 1; }
           done
-          printf '%s' 'https://api.skincos.com.br' | npx --yes wrangler@4.112.0 pages secret put PONTO_API_TARGET --project-name "$PROJECT" --env production >/dev/null
-          printf '%s' "$PONTO_ACTOR_HMAC_KEY" | npx --yes wrangler@4.112.0 pages secret put PONTO_ACTOR_HMAC_KEY --project-name "$PROJECT" --env production >/dev/null
-          printf '%s' "$PONTO_NETWORK_CONTEXT_KEY" | npx --yes wrangler@4.112.0 pages secret put PONTO_NETWORK_CONTEXT_KEY --project-name "$PROJECT" --env production >/dev/null
-
-      - name: Force redeploy CRM Pages after production secret sync
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
+          node <<'NODE'
+          const value = String(process.env.PONTO_IDEMPOTENCY_KEY || "");
+          if (
+            Buffer.byteLength(value, "utf8") < 32
+            || value !== value.trim()
+            || /[\r\n\0]/.test(value)
+          ) throw new Error("PONTO_IDEMPOTENCY_KEY must contain at least 32 UTF-8 bytes and no surrounding/control whitespace");
+          NODE
+          if [[ "$TARGET" == production ]]; then
+            [[ "$PROJECT" != "skincos-staging" ]] || exit 1
+          else
+            [[ "$PROJECT" == "skincos-staging" ]] || exit 1
+          fi
+          before_list="$RUNNER_TEMP/pages-secret-list-before.json"
+          after_list="$RUNNER_TEMP/pages-secret-list-after.json"
+          project_file="$RUNNER_TEMP/pages-project-before.json"
+          secret_file="$RUNNER_TEMP/pages-release-probe-secret.json"
+          evidence_file="$RUNNER_TEMP/pages-release-probe-evidence.json"
+          trap 'rm -f "$before_list" "$after_list" "$project_file" "$secret_file"' EXIT
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
+            > "$project_file"
+          npx --yes wrangler@4.112.0 pages secret list --project-name "$PROJECT" --env production > "$before_list"
+          node - "$project_file" "$before_list" "$secret_file" "$evidence_file" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const projectPayload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const project = projectPayload?.result;
+          const expected = process.env.TARGET === "production"
+            ? { name: "skincos", branch: "main", subdomain: "skincos.pages.dev", apiType: "secret_text" }
+            : {
+                name: "skincos-staging",
+                branch: "staging",
+                subdomain: "skincos-staging.pages.dev",
+                apiType: "plain_text",
+                apiValue: "https://api-staging.skincos.com.br",
+              };
+          const apiTarget = project?.deployment_configs?.production?.env_vars?.PONTO_API_TARGET;
+          if (
+            projectPayload?.success !== true
+            || project?.name !== expected.name
+            || project?.production_branch !== expected.branch
+            || project?.subdomain !== expected.subdomain
+            || apiTarget?.type !== expected.apiType
+            || (expected.apiValue && apiTarget?.value !== expected.apiValue)
+          ) throw new Error("PONTO_API_TARGET or isolated Pages project metadata differs from policy");
+          const listed = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const names = new Set(listed.map(item => item.name));
+          if (process.env.TARGET === "production" && !names.has("PONTO_API_TARGET")) {
+            throw new Error("production PONTO_API_TARGET secret is absent");
+          }
+          const derive = (domain) => crypto.createHmac("sha256", process.env.PONTO_IDEMPOTENCY_KEY)
+            .update(domain)
+            .digest("base64url");
+          fs.writeFileSync(
+            process.argv[4],
+            `${JSON.stringify({
+              PONTO_ACTOR_HMAC_KEY: derive("skincos/ponto/actor/v1"),
+              PONTO_NETWORK_CONTEXT_KEY: derive("skincos/ponto/network-context/v1"),
+              PONTO_RELEASE_PROBE_HMAC_KEY: derive("skincos/ponto/release-probe/v1"),
+            })}\n`,
+            { mode: 0o600 },
+          );
+          fs.writeFileSync(process.argv[5], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "pagesEnvironmentSecrets",
+            target: process.env.TARGET,
+            project: process.env.PROJECT,
+            releaseSha: process.env.RELEASE_SHA,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID,
+            mutationStarted: false,
+            mutationCompleted: false,
+            remoteAttestationCompleted: false,
+            retentionPolicy: "environment-scoped-deterministic-prerequisite",
+            beforeSecretPresence: Object.fromEntries([
+              "PONTO_API_TARGET",
+              "PONTO_ACTOR_HMAC_KEY",
+              "PONTO_NETWORK_CONTEXT_KEY",
+              "PONTO_RELEASE_PROBE_HMAC_KEY",
+            ].map((name) => [name, names.has(name)])),
+            valuesIncluded: false,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          node - "$evidence_file" <<'NODE'
+          const fs = require("fs");
+          const file = process.argv[2];
+          const journal = JSON.parse(fs.readFileSync(file, "utf8"));
+          journal.mutationStarted = true;
+          journal.mutationRequestStartedAt = new Date().toISOString();
+          fs.writeFileSync(file, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          npx --yes wrangler@4.112.0 pages secret bulk "$secret_file" \
+            --project-name "$PROJECT" \
+            --env production
+          node - "$evidence_file" <<'NODE'
+          const fs = require("fs");
+          const file = process.argv[2];
+          const journal = JSON.parse(fs.readFileSync(file, "utf8"));
+          journal.mutationCompleted = true;
+          journal.mutationCompletedAt = new Date().toISOString();
+          fs.writeFileSync(file, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -f "$secret_file"
+          npx --yes wrangler@4.112.0 pages secret list --project-name "$PROJECT" --env production > "$after_list"
+          node - "$after_list" "$evidence_file" <<'NODE'
+          const fs = require("fs");
+          const listed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const journal = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const names = new Set(listed.map(item => item.name));
+          const required = [
+            "PONTO_ACTOR_HMAC_KEY",
+            "PONTO_NETWORK_CONTEXT_KEY",
+            "PONTO_RELEASE_PROBE_HMAC_KEY",
+          ];
+          if (process.env.TARGET === "production") required.push("PONTO_API_TARGET");
+          for (const name of required) {
+            if (!names.has(name)) throw new Error(`remote Pages value missing after provisioning: ${name}`);
+          }
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            ...journal,
+            remoteAttestationCompleted: true,
+            remoteAttestedAt: new Date().toISOString(),
+            derivations: {
+              PONTO_ACTOR_HMAC_KEY: "hmac-sha256:PONTO_IDEMPOTENCY_KEY:skincos/ponto/actor/v1",
+              PONTO_NETWORK_CONTEXT_KEY: "hmac-sha256:PONTO_IDEMPOTENCY_KEY:skincos/ponto/network-context/v1",
+              PONTO_RELEASE_PROBE_HMAC_KEY: "hmac-sha256:PONTO_IDEMPOTENCY_KEY:skincos/ponto/release-probe/v1",
+            },
+            requiredSecretNames: required,
+            apiTargetBinding: process.env.TARGET === "production"
+              ? { type: "secret_text", valueIncluded: false }
+              : { type: "plain_text", expectedOrigin: "api-staging.skincos.com.br", valueIncluded: false },
+            mutationSafety: {
+              maintenanceRequired: true,
+              deterministicRerun: true,
+              priorSecretValuesReadable: false,
+              retainedOnCodeRollback: true,
+            },
+            valuesIncluded: false,
+            deploymentChanged: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          echo "Derived Ponto Pages bindings provisioned for $TARGET/$PROJECT; no deployment was changed."
+      - name: Upload sanitised Pages secret attestation
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: "deploy-crm-pages-reconcile.yml",
-              ref: "main",
-              inputs: { force: "true" },
-            })
-            core.info("Dispatched deploy-crm-pages-reconcile.yml with force=true")
-
-  preview:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: staging
-    steps:
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
-        with:
-          node-version: 22.12.0
-      - name: Sync isolated preview proxy configuration
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
-          PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
-          PONTO_NETWORK_CONTEXT_KEY: ${{ secrets.PONTO_NETWORK_CONTEXT_KEY }}
-        run: |
-          set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID PONTO_ACTOR_HMAC_KEY PONTO_NETWORK_CONTEXT_KEY; do
-            [[ -n "${!name:-}" ]] || { echo "Missing required staging value: $name"; exit 1; }
-          done
-          printf '%s' 'https://api-staging.skincos.com.br' | npx --yes wrangler@4.112.0 pages secret put PONTO_API_TARGET --project-name "$PROJECT" --env preview >/dev/null
-          printf '%s' "$PONTO_ACTOR_HMAC_KEY" | npx --yes wrangler@4.112.0 pages secret put PONTO_ACTOR_HMAC_KEY --project-name "$PROJECT" --env preview >/dev/null
-          printf '%s' "$PONTO_NETWORK_CONTEXT_KEY" | npx --yes wrangler@4.112.0 pages secret put PONTO_NETWORK_CONTEXT_KEY --project-name "$PROJECT" --env preview >/dev/null
+          name: ponto-pages-secret-attestation-${{ inputs.target }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/pages-release-probe-evidence.json
+          retention-days: 90
+          if-no-files-found: error
