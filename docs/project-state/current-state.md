@@ -1197,3 +1197,49 @@ HTTP 200 em `/`, `/doutores` e `/api/booking/services` e
 `x-app-build=5878279e…`. A versão pré-minimização
 `affdc496-a0f4-4177-93e8-79ffa19e04f4`/release `0d73eba1…` é explicitamente
 proibida como rollback, pois restauraria o vazamento de `custom_data`.
+
+### Adendo: fechamento de `Contact` e transporte do redirect — 2026-07-30
+
+A revalidação indispensável de `Contact` encontrou dois defeitos reais que os
+testes puramente locais não reproduziam. O uso de `next/link` no link rastreado
+disparava duas navegações concorrentes; a PR #910, integrada como
+`790070968160eb5606225396ec35b65e8aca4651`, restaurou uma única navegação com
+âncora nativa. Em seguida, a normalização da query pelo runtime
+Cloudflare/OpenNext consumia uma camada de percent-encoding antes da rota,
+fazendo os `&` internos de `dest` e `ctx` virarem separadores externos. Isso
+truncava a mensagem do WhatsApp e descartava consentimento/atribuição no
+servidor. As PRs #913 e #915, integradas como
+`74b88b4f39fb07ae19eb01219093bd742d5c7a64` e
+`6272becdfba7fc4ef82956ceeda6ab72fbab467b`, canonizaram o contexto compacto e
+adicionaram um envelope URI versionado, com leitura retrocompatível antes e
+depois da normalização do edge. A PR #904
+(`225a94115afb974bc5f2b63140f1066a291aca42`) preservou o transporte do
+contexto completo até a rota.
+
+O release imutável `6272becdfba7fc4ef82956ceeda6ab72fbab467b` passou por
+preview `30507517010`, staging `30507543078` e produção `30507710641`.
+`/`, `/doutores` e `/api/booking/services` responderam HTTP 200 com esse
+`x-app-build` e `x-app-build-time=30507710641`. O Worker
+`espacofacial-site` está 100% na versão
+`7c3d2cdd-1c1f-4edb-91b3-2dd4489b084c`. A listagem de secrets continua com
+somente `META_ACCESS_TOKEN`, `META_PIXEL_ID` e
+`NEXT_PUBLIC_META_PIXEL_ID`; `META_CAPI_TEST_EVENT_CODE` está ausente.
+
+A prova final `contact_4f32b56c-cb57-4b5a-9bb0-66929f6c228c` gerou
+exatamente uma requisição de redirect, preservou a mensagem original e o token
+`EF-*`, enviou `Contact` pelo Pixel `1055784516710042` com objeto Meta vazio e
+reutilizou o mesmo `event_id` no servidor. O D1 registrou consentimentos
+analytics/marketing, URL e path completos, UTMs, `fbclid`, `fbp`, `fbc`,
+first/last touch e a mensagem íntegra. A CAPI respondeu Graph HTTP 200,
+`events_received=1`, sem erro. A linha de clique sintética foi removida e a
+auditoria de entrega foi retida.
+
+Após a limpeza exata dos diagnósticos, os agregados de 30 dias têm 187
+`Contact` CAPI OK, 7 `Schedule` CAPI OK e 0 falhas retryable; as recusas de
+consentimento históricas permanecem como auditoria fail-closed. A prova
+positiva `schedule_capi_postdeploy_19faff74937` continua Graph 200/
+`events_received=1`; a negativa `schedule_capi_negative_1785356808845`
+continua pré-Graph por `marketing_consent_denied`. Não restam booking nem
+clique sintético. O destino live de Google Ads para `Contact` não está
+configurado; a preservação de seus parâmetros foi comprovada no contrato de
+regressão, não por uma conversão Google live.
