@@ -195,12 +195,9 @@ if (leaseKey) {
 }
 const workflowMetadata = await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}`);
 const expectedPath = `.github/workflows/${workflow}`;
-const expectedWorkflowName = canonicalWorkflowNameByFile[workflow];
 if (
-  !expectedWorkflowName
-  || workflowMetadata?.state !== "active"
+  workflowMetadata?.state !== "active"
   || workflowMetadata?.path !== expectedPath
-  || workflowMetadata?.name !== expectedWorkflowName
   || !Number.isInteger(workflowMetadata?.id)
 ) {
   throw new Error(`${workflow} is not the active canonical workflow at ${expectedPath}`);
