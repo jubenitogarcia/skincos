@@ -3,6 +3,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const NON_TERMINAL = new Set(["queued", "in_progress", "waiting", "pending", "requested"]);
+const CORRELATED_TITLE_SUFFIX =
+  /orchestrator=([1-9][0-9]*)(?: nonce=([0-9a-f]{32}))?$/;
 
 export const isBodylessResponseStatus = (status) => status === 202 || status === 204;
 export const readGitHubResponse = (response) => (
@@ -14,14 +16,13 @@ export function isCorrelatedChild(run, {
   orchestratorRunId,
   orchestratorHeadSha,
 }) {
+  const titleMatch = CORRELATED_TITLE_SUFFIX.exec(String(run?.display_title || ""));
   return String(run?.id || "") !== String(orchestratorRunId)
     && run?.event === "workflow_dispatch"
     && run?.head_branch === "main"
     && String(run?.head_sha || "").toLowerCase() === orchestratorHeadSha
     && run?.repository?.full_name === repository
-    && new RegExp(`orchestrator=${orchestratorRunId}(?: nonce=[0-9a-f]{32})?$`).test(
-      String(run?.display_title || ""),
-    )
+    && titleMatch?.[1] === String(orchestratorRunId)
     && String(run?.path || "").startsWith(".github/workflows/");
 }
 

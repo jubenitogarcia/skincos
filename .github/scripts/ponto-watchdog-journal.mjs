@@ -11,10 +11,20 @@ import {
   verifyCapabilityDocument,
 } from "./ponto-orchestrator-lease.mjs";
 
+const DISPATCH_NONCE = /^[0-9a-f]{32}$/;
+const hasExactNonceTitle = (title, expectedPrefix) => {
+  if (!expectedPrefix) return false;
+  const marker = `${expectedPrefix} nonce=`;
+  const actual = String(title || "");
+  return actual.startsWith(marker)
+    && DISPATCH_NONCE.test(actual.slice(marker.length));
+};
+
 const SURFACES = Object.freeze({
   timekeeping: {
     workflowPath: ".github/workflows/deploy-timekeeping.yml",
-    title: (stage, sha, runId) => new RegExp(`^Timekeeping ${stage} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
+    titlePrefix: (stage, sha, runId) =>
+      `Timekeeping ${stage} ${sha} orchestrator=${runId}`,
     runFile: "runs/timekeeping.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-timekeeping-${stage}-${sha}`, "surfaces/timekeeping"],
@@ -23,7 +33,8 @@ const SURFACES = Object.freeze({
   },
   identityWorkforce: {
     workflowPath: ".github/workflows/deploy-core-workers.yml",
-    title: (stage, sha, runId) => new RegExp(`^Core inventory ${stage} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
+    titlePrefix: (stage, sha, runId) =>
+      `Core inventory ${stage} ${sha} orchestrator=${runId}`,
     runFile: "runs/identity.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-identity-workforce-${stage}-${sha}`, "surfaces/identity"],
@@ -32,7 +43,8 @@ const SURFACES = Object.freeze({
   },
   coreApi: {
     workflowPath: ".github/workflows/deploy-core-workers.yml",
-    title: (stage, sha, runId) => new RegExp(`^Core api ${stage} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
+    titlePrefix: (stage, sha, runId) =>
+      `Core api ${stage} ${sha} orchestrator=${runId}`,
     runFile: "runs/core.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-core-api-${stage}-${sha}`, "surfaces/core"],
@@ -41,7 +53,8 @@ const SURFACES = Object.freeze({
   },
   crmPages: {
     workflowPath: ".github/workflows/deploy-crm-pages.yml",
-    title: (stage, sha, runId) => new RegExp(`^CRM Pages ${stage} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
+    titlePrefix: (stage, sha, runId) =>
+      `CRM Pages ${stage} ${sha} orchestrator=${runId}`,
     runFile: "runs/pages.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-crm-pages-${stage}-${sha}`, "surfaces/pages"],
@@ -50,7 +63,8 @@ const SURFACES = Object.freeze({
   },
   pagesEnvironmentSecrets: {
     workflowPath: ".github/workflows/cloudflare-pages-sync-ponto.yml",
-    title: (stage, sha, runId) => new RegExp(`^Attest CRM Pages ${stage === "staging" ? "staging" : "production"} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
+    titlePrefix: (stage, sha, runId) =>
+      `Attest CRM Pages ${stage === "staging" ? "staging" : "production"} ${sha} orchestrator=${runId}`,
     runFile: "runs/provision-pages.json",
     artifacts: (stage, sha) => [
       [`ponto-pages-secret-attestation-${stage === "staging" ? "staging" : "production"}-${sha}`, "provisioning/pages"],
@@ -58,9 +72,9 @@ const SURFACES = Object.freeze({
   },
   stagingRollbackDrill: {
     workflowPath: ".github/workflows/ponto-staging-rollback-drill.yml",
-    title: (stage, sha, runId) => stage === "staging"
-      ? new RegExp(`^Ponto staging rollback drill ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`)
-      : /a^/,
+    titlePrefix: (stage, sha, runId) => stage === "staging"
+      ? `Ponto staging rollback drill ${sha} orchestrator=${runId}`
+      : null,
     runFile: "runs/staging-rollback-drill.json",
     artifacts: (_stage, sha) => [
       [`ponto-staging-rollback-drill-${sha}`, "staging-rollback-drill"],
@@ -389,9 +403,14 @@ export async function reconstructWatchdogJournal({
   fs.mkdirSync(path.join(artifactRoot, "runs"), { recursive: true });
   for (const [surface, specification] of applicableSurfaces) {
     const saved = savedBySurface.get(surface);
+    const expectedTitlePrefix = specification.titlePrefix(
+      stage,
+      releaseSha,
+      coordinatorRunId,
+    );
     const candidates = discovered.filter((run) =>
       String(run.path || "").split("@")[0] === specification.workflowPath
-      && specification.title(stage, releaseSha, coordinatorRunId).test(String(run.display_title || "")));
+      && hasExactNonceTitle(run.display_title, expectedTitlePrefix));
     let matches = saved
       ? candidates.filter((run) => isJournalAuthorizedRun(run, [saved]))
       : [];

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,9 +19,10 @@ const contract = {
   allowedOperations: ["latch-true", "maintenance"],
   deniedOperations: ["active", "arbitrary-kv-write", "canary", "delete", "disabled", "latch-false"],
 };
+const syntheticBrokerCredential = randomBytes(32).toString("base64url");
 const baseEnv = (reportFile) => ({
   PONTO_EMERGENCY_CLOSE_BROKER_URL: "https://close.example.invalid/v1/ponto",
-  PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: "dedicated-close-broker-credential",
+  PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: syntheticBrokerCredential,
   PONTO_EMERGENCY_CLOSE_CUSTODY_REF: contract.custodyRef,
   PONTO_EMERGENCY_TARGET: "staging",
   PONTO_EMERGENCY_TRIGGER_RUN_ID: "101",
@@ -42,11 +43,11 @@ test("emergency latch writer uses only the exact target-bound close-only broker"
   const fetchImpl = async (url, init) => {
     assert.equal(url, "https://close.example.invalid/v1/ponto");
     assert.equal(init.method, "POST");
-    assert.equal(init.headers.authorization, "Bearer dedicated-close-broker-credential");
+    assert.equal(init.headers.authorization, `Bearer ${syntheticBrokerCredential}`);
     requestBody = JSON.parse(init.body);
     const expectedRequestSignature = createHmac(
       "sha256",
-      "dedicated-close-broker-credential",
+      syntheticBrokerCredential,
     ).update(canonicalJson({
       schemaVersion: 1,
       contractId: "skincos/ponto/emergency-close/v1",
@@ -108,7 +109,7 @@ test("emergency latch writer uses only the exact target-bound close-only broker"
   assert.equal(result.passed, true);
   assert.equal(result.observations.length, 3);
   assert.equal(result.latched, true);
-  assert.equal(JSON.stringify(result).includes("dedicated-close-broker-credential"), false);
+  assert.equal(JSON.stringify(result).includes(syntheticBrokerCredential), false);
   assert.equal(JSON.stringify(result).includes("close.example.invalid"), false);
 });
 
