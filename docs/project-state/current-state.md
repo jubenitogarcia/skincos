@@ -1,5 +1,43 @@
 # Current state
 
+## Codex Windows native / PowerShell gateway — delivery candidate validated — 2026-07-30T15:26Z
+
+The isolated branch `codex/admin/native-codex-wsl-gateway` is based on
+`origin/main` `c96caa4fec6fc0c33cc3b3904792905c6f38eda7`. Candidate
+`ed8c20b109137a39d35345341ef04dc89b5eff86` centralizes Windows-to-Linux
+project operations in the typed `invoke-skincos-wsl.ps1` gateway. Codex
+continues to run natively on Windows with PowerShell as the integrated shell;
+Ubuntu-24.04 remains the encapsulated owner of SKINCOS Node, npm, Python,
+Playwright, Wrangler, PostgreSQL and systemd work. Windows-native Node and
+Python are available for general Codex tooling, but the project rules and
+boundary tests prohibit Windows-side project installs, builds and tests.
+
+The direct `CRM – Local` action was exercised from an immutable private
+preview of the exact candidate. Its first final run rebuilt the CRM after the
+input fingerprint changed, started local Insumos, Workforce/Timekeeping and
+the WhatsApp adapter, and passed the strict Pages shell gate for all 14
+modules. The gate report is privately retained at
+`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\instances\gestor\full\logs\crm-local-gate-20260730-122147.json`.
+The browser opened only after the green gate. A consecutive invocation
+revalidated release-affine Timekeeping readiness and explicitly reused the
+same ready runtime without rebuild.
+
+Validation is green for all 56 launcher/build/boundary tests, the typed gateway
+PowerShell harness, 13 changed PowerShell parsers, four changed Bash parsers,
+both changed TOML files and `git diff --check`. The clean Windows worktree
+contains zero `node_modules`. The WSL-unavailable harness fails before starting
+any service. Private CRM bindings are owner-only and are consumed from
+`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\ponto-private`;
+values are neither printed nor stored in Git. The pre-existing Timekeeping
+dependency audit remains tracked as three high and zero critical findings;
+no `--force` remediation was used.
+
+This is local operator tooling only. No deployment workflow, production
+service, Cloudflare resource, database or remote configuration was changed.
+At this observation the candidate is not yet integrated; GitHub PR/check/merge
+evidence remains required before the private preview selection can be removed
+and the canonical `origin/main` source validated.
+
 ## Workforce Timekeeping — controls reconstructed; production remains fail-closed — 2026-07-30
 
 This entry supersedes the 2026-07-29 Ponto section below. The reconstruction
