@@ -1,5 +1,3 @@
-# WSL_BOUNDARY_EXCEPTION: infrastructure export tooling must control the WSL
-# distribution itself and therefore cannot be routed through that distro.
 $ErrorActionPreference = "Stop"
 
 $DistroName = "Ubuntu-24.04"
@@ -39,6 +37,9 @@ $pathsToDelete = @(
 Remove-Item -LiteralPath $TempTar -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $TargetTar -Force -ErrorAction SilentlyContinue
 
+## WSL_BOUNDARY_EXCEPTION: bootstrap/export infrastructure for native runtime packaging.
+## This script is not a Codex action; it intentionally invokes wsl.exe directly to
+## export a distro snapshot used by offline provisioning.
 wsl.exe --export $DistroName $TempTar
 
 $archiveUnixPath = ($TempTar -replace '\\', '/').Replace('C:', '/mnt/c')
@@ -100,6 +101,9 @@ rm -rf "\$stage"
 "@
 
 $encodedDeleteScript = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($deleteScript))
+
+## WSL_BOUNDARY_EXCEPTION: bootstrap infrastructure step to execute a sanitized
+## archive post-processing script inside the target distro before publishing it.
 wsl.exe -d $DistroName -- bash -lc "echo $encodedDeleteScript | base64 -d | bash"
 
 Move-Item -LiteralPath $TempTar -Destination $TargetTar -Force

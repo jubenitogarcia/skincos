@@ -8,8 +8,6 @@ param(
     [switch]$SkipGenerate
 )
 
-# WSL_BOUNDARY_EXCEPTION: this backup publication bridge starts the governed
-# native systemd unit and copies its verified artifact into Windows.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -69,6 +67,8 @@ function Test-BackupPayload {
 
 $DestinationRoot = Assert-AllowedDestination -Path $DestinationRoot
 if (-not $SkipGenerate) {
+    # WSL_BOUNDARY_EXCEPTION: Windows owns publication of the native systemd
+    # backup and must trigger that infrastructure unit before copying via UNC.
     & wsl.exe -d $Distribution -u $LinuxUser -- sudo -n systemctl start orb-backup.service
     if ($LASTEXITCODE -ne 0) {
         throw "Native Orb backup failed with exit code $LASTEXITCODE."

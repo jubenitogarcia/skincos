@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Atendimento must use the same isolated Pages/proxy/adapter runtime as the
-# Gestor shell.  Keeping a second standalone Vite + API launcher here allowed
+# Gestor shell. Keeping a second standalone Vite + API launcher here allowed
 # the shortcut to bypass the local proxy and PostgreSQL-backed adapter, which
 # produced unauthenticated 401 responses and stale readiness failures.
 
@@ -10,10 +10,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # A snapshot selected by the Windows shortcut lives on DrvFS. Node's package
 # install and the local adapter are not reliable there under concurrent file
-# watchers, so materialize the *entire selected snapshot* once in the private
-# native WSL runtime before starting it. The source fingerprint is propagated
-# unchanged by the shortcut and recorded by run-local-crm; this is a transport
-# step, not a fallback to another checkout or an allowlisted copy of files.
+# watchers, so materialize the entire selected snapshot once in the private
+# native WSL runtime before starting it.
 if [[ -n "${CRM_LOCAL_NATIVE_SOURCE_ROOT:-}" && "${CRM_LOCAL_NATIVE_SOURCE_ROOT}" != "$ROOT_DIR" ]]; then
   native_source_root="$CRM_LOCAL_NATIVE_SOURCE_ROOT"
   case "$native_source_root" in
@@ -43,9 +41,8 @@ if [[ -z "${CRM_ROUTE:-}" ]]; then
   export CRM_ROUTE='/?module=atendimento'
 fi
 if [[ -z "${CRM_WITH_WHATSAPP+x}" ]]; then
-  # The isolated WhatsApp adapter also owns the Atendimento API.  It is the
-  # only valid local target for this module; do not fall back to a shared or
-  # native CRM endpoint.
+  # The isolated WhatsApp adapter also owns the Atendimento API. It is the
+  # only valid local target for this module; never fall back to a shared CRM.
   export CRM_WITH_WHATSAPP=1
 fi
 

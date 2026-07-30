@@ -24,10 +24,6 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
   ficam fora do repositório compartilhado, em `%LOCALAPPDATA%\Codex\skincos\`.
   Logs, relatórios, checkpoints, evidências e backups locais ficam no runtime
   privado `C:\CodexRuntime\operator\admin\skincos\`.
-- O agente Codex roda nativamente no Windows, com terminal PowerShell. Node e
-  Python do Windows servem às ferramentas gerais do agente; operações do
-  projeto passam pelo gateway tipado para Ubuntu descrito em
-  [codex-windows-native.md](codex-windows-native.md).
 
 ## Fluxo de primeira execução do operador
 
@@ -61,15 +57,16 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
    `C:\ProgramData`, o instalador cai automaticamente para o Menu Iniciar do
    usuario atual em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Skincos Codex`.
 
-5. Pelo PowerShell, rodar o bootstrap da conta humana no backend Ubuntu:
+5. No PowerShell, rodar o bootstrap da conta humana pelo gateway:
 
    ```powershell
    .\scripts\invoke-skincos-wsl.ps1 `
-     -ScriptPath orb/engine/scripts/bootstrap-imported-wsl-account.sh `
+     -WorkingDirectory orb/engine `
+     -ScriptPath scripts/bootstrap-imported-wsl-account.sh `
      -SkipBootstrapCheck
    ```
 
-6. Para este workspace, autenticar o GitHub CLI do backend pelo gateway:
+6. Para este workspace, o GitHub CLI canônico é o do WSL. Autenticar por ele:
 
    ```powershell
    .\scripts\invoke-skincos-wsl.ps1 `
@@ -90,7 +87,7 @@ Os atalhos ficam no Menu Iniciar compartilhado:
 
 - `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Skincos Codex`
 
-O layout principal expõe seis atalhos de topo:
+O layout principal agora passa a seis atalhos de topo:
 
 - `Workspace`
 - `Contexto`
@@ -99,8 +96,7 @@ O layout principal expõe seis atalhos de topo:
 - `EF App`
 - `Orb`
 
-`CRM – Local` é uma ação direta e não pede variáveis técnicas. Os demais
-atalhos de agrupamento abrem menus curtos por domínio.
+Todos eles abrem menus interativos por dominio.
 
 ### Workspace
 
@@ -120,18 +116,11 @@ atalhos de agrupamento abrem menus curtos por domínio.
 - `Thread Bootstrap`
 - `New Worktree`
 
-### CRM – Local
-
-Inicia o CRM completo como Gestor, com build automático por impressão,
-Insumos, Timekeeping, adaptador do WhatsApp, Pages Functions, gate dos 14
-módulos e navegador somente depois da aprovação.
-
 ### CRM – Módulos
 
-Permite escolher somente papel e módulo. O instalador também cria 16 atalhos
-diretos na subpasta `CRM – Módulos`: 14 módulos para Gestor e Atendimento/Ponto
-para Consultor. Portas, PIDs, logs, estado, autenticação e perfil de navegador
-são privados por combinação.
+- `Website -> Start | Stop | Site Check | Release Check`
+- `CRM -> Local | Site EF | Meta Ads | Atendimento | Stop | Memory | Site Smoke | Meta Ads Smoke | Atendimento Smoke`
+- `Platform Local -> Start`
 
 ### EF App
 
@@ -188,8 +177,8 @@ Limites importantes:
   Windows pode aparecer deslogado ou com `hosts.yml` vazio sem bloquear o fluxo;
 - os atalhos do Menu Iniciar e os botões do topo são complementares: o primeiro
   é compartilhamento no Windows, o segundo é compartilhamento por projeto;
-- a barra principal do Codex App usa as mesmas seis ações de topo do Menu
-  Iniciar.
+ - a barra principal do Codex App agora foi condensada para os mesmos seis
+  atalhos de topo do Menu Iniciar.
 
 ## Local vs runtime live
 
@@ -199,8 +188,7 @@ Os atalhos seguem dois modelos operacionais diferentes.
 
 Usado para edição, QA e iteração dos projetos locais como website e CRM.
 
-- seleciona o código no clone compartilhado ou worktree atual; o CRM materializa
-  uma cópia imutável no runtime privado antes de executar;
+- roda a partir do código em `C:\CodexShared\Projetos\skincos`;
 - guarda PID e estado temporário em `%LOCALAPPDATA%\Codex\skincos\`, e logs
   persistentes em `C:\CodexRuntime\operator\admin\skincos\logs\`;
 - não deve gravar artefatos operacionais novos no clone compartilhado nem no
@@ -261,7 +249,8 @@ Exemplo de saída esperada:
 
 1. Rodar bootstrap, validação e instalação dos atalhos uma vez por usuário.
 2. Abrir `C:\CodexShared\Projetos\skincos` no Codex App para entender o contexto.
-3. Usar `Codex Context` ou rodar `bash ./scripts/codex-context.sh` via WSL.
+3. Usar `Codex Context` ou rodar
+   `.\scripts\invoke-skincos-wsl.ps1 -NpmScript codex:context` no PowerShell.
 4. Para qualquer tarefa paralela ou mais longa, criar um worktree por usuário/tarefa.
 5. Abrir o worktree no Codex App e trabalhar só nele.
 6. Rodar apps locais com perfil, autenticação, temporários e overrides em
@@ -292,8 +281,9 @@ compartilhado por hardcode de path.
 
 ## Sobre a integração com o Codex App
 
-Os atalhos desta pasta são operacionais: eles chamam scripts PowerShell e WSL do
-próprio workspace. Eles não dependem de um executável interno estável do Codex
+Os atalhos desta pasta são operacionais: todos começam em PowerShell e usam o
+gateway tipado `scripts/invoke-skincos-wsl.ps1` quando precisam do backend
+Linux. Eles não dependem de um executável interno estável do Codex
 App instalado no mini-PC, porque não foi encontrada uma instalação local
 canônica do aplicativo para usar como alvo suportado.
 

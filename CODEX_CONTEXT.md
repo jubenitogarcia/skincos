@@ -6,12 +6,20 @@
 - Durable operator evidence: `C:\CodexRuntime\operator\admin\skincos`; secrets and mutable runtime state never belong in Git or `C:\CodexShared`.
 - Human operator: Windows/WSL `admin`. Linux `skincos` is non-interactive and owns system services.
 - Product roots are `ads`, `api`, `booking`, `crm`, `finance`, `integration`, `inventory`, `messaging`, `orb`, `service`, `social`, `website` and `workforce`; neutral code belongs in `shared`, infrastructure in `platform`/`ops`, and executable commands in `scripts`.
-- Codex runs natively on Windows with PowerShell as its integrated terminal.
-  Windows Node/Python support general agent tools; SKINCOS dependencies,
-  builds, tests, Playwright, Wrangler and runtime operations remain in
-  `Ubuntu-24.04` behind `scripts/invoke-skincos-wsl.ps1`.
-- Do not create Windows project `node_modules` or `.venv` trees. The visible
-  operator interface is PowerShell; Linux is an encapsulated backend.
+
+## Codex client and Linux backend
+
+- Codex runs natively on Windows with PowerShell as the integrated terminal.
+  Windows owns its tasks, authentication, plugins, MCPs, browser and desktop
+  integrations.
+- Git, GitHub CLI, Node LTS and Python are installed natively for general Codex
+  tooling. Windows Node/Python must not install or execute SKINCOS project
+  dependencies.
+- `Ubuntu-24.04`, operator `admin`, remains the single project toolchain for
+  Node/npm, Python environments, Playwright, Wrangler, PostgreSQL and systemd.
+  `scripts/invoke-skincos-wsl.ps1` is the supported PowerShell gateway.
+- Project `node_modules`, Python environments and build caches are Linux-owned.
+  Do not create a parallel Windows dependency tree in this checkout.
 
 ## Native runtime — validated 2026-07-15
 
@@ -46,23 +54,9 @@
 
 ## Preserved independent work
 
-- The canonical `Meta Ads – Publish` contract was integrated by PR #840
-  (`11417df9e362f82337882a4b57e87c98b1a21547`). Its tracked workflow export,
-  Code-node sources, Token Vault gateway, migration, preflight and tests are
-  the source of truth. The older `meta-ads-*` worktrees remain operator-owned
-  historical worktrees and are not cleanup targets for unrelated tasks.
-- The production workflow is intentionally inactive/manual. Its current live
-  version is `830` (`b22ba74a-4fc9-428e-aa4e-41aebfd5b3f0`); the Token Vault
-  production deployment is `beba53d9-67f3-495b-a002-5dc579463c29`. A current
-  isolated Evolution test reached `DELIVERY_ACK`; Telegram remains independent.
-  The historical journal has 110 terminal runs and zero active locks or
-  `reconciliation_required` rows; see
-  `orb/engine/docs/meta-ads-publish-historical-run-audit-2026-07-29.md`.
-- The native Orb source release resolves to the current `main` merge
-  `a32cf1a9034ccd4872cfbde1ae089e56355300c4` (PR #854). Its immutable archive,
-  verified descendant lineage from `0c0a4fa0f4c2d0b432d449c0ba154e093b3ffe89`,
-  and rollback evidence are private under
-  `C:\CodexRuntime\operator\admin\skincos\native-promotions\`.
+- `codex/admin/meta-ads-publish-production-audit` contains uncommitted product
+  work for the Meta Ads publish journal. It is intentionally isolated from the
+  completed architecture/runtime program and must be reviewed in its own task.
 - PR #674 (`codex/admin/github-codex-autonomy`) remains a deliberate draft for
   the optional GitHub autonomy broker; it is not part of the production
   runtime and has no deployment dependency.
@@ -78,11 +72,13 @@
 
 ## Validation commands
 
-- Context: `npm run codex:context:online`
-- Architecture/security: `npm run architecture:test`, `npm run quality:security`
+- Context: `.\scripts\invoke-skincos-wsl.ps1 -NpmScript codex:context:online`
+- Architecture/security: `.\scripts\invoke-skincos-wsl.ps1 -NpmScript architecture:test`,
+  `.\scripts\invoke-skincos-wsl.ps1 -NpmScript quality:security`
 - Runtime: `backend/scripts/e2e.sh health` and `backend/scripts/e2e.sh smoke`
 - Native cutover/recovery: `docs/runbooks/lifecycle-runtime-cutover.md`
-- Shared workspace: `npm run codex:shared:validate`
+- Shared workspace:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-shared-codex-workspace.ps1`
 
 ## Remaining business-only follow-up
 
