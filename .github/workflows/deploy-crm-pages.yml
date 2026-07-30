@@ -50,15 +50,16 @@ jobs:
           PROJECT_PROD: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
           PROJECT_STAGING: ${{ vars.CLOUDFLARE_PAGES_PROJECT_STAGING }}
           DEPLOY_TARGET: ${{ inputs.target }}
-          BRANCH_NAME: main
         run: |
           set -euo pipefail
           if [[ "$DEPLOY_TARGET" == "staging" ]]; then
             ENABLE="$ENABLE_STAGING"
             PROJECT="${PROJECT_STAGING:-skincos-staging}"
+            BRANCH_NAME=staging
           else
             ENABLE="$ENABLE_PROD"
             PROJECT="${PROJECT_PROD:-skincos}"
+            BRANCH_NAME=main
           fi
           if [[ "$DEPLOY_TARGET" == staging ]]; then
             [[ "$PROJECT" == skincos-staging ]] || { echo 'Staging requires the exact skincos-staging Pages project'; exit 1; }
@@ -84,6 +85,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ steps.guard.outputs.project }}
+          BRANCH_NAME: ${{ steps.guard.outputs.branch }}
           DEPLOY_TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
@@ -95,12 +97,14 @@ jobs:
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const expected = process.env.DEPLOY_TARGET === "staging" ? "skincos-staging" : "skincos";
+          const expectedBranch = process.env.DEPLOY_TARGET === "staging" ? "staging" : "main";
           const project = payload?.result;
           if (
             payload?.success !== true
             || project?.name !== expected
             || project?.subdomain !== `${expected}.pages.dev`
-            || project?.source?.config?.production_branch !== "main"
+            || project?.production_branch !== expectedBranch
+            || process.env.BRANCH_NAME !== expectedBranch
           ) throw new Error("Pages project identity or production branch differs");
           NODE
 
