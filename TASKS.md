@@ -31,9 +31,12 @@
   preview/staging paths. The synthetic authenticated import/UI canary passed in
   run `30500922386` with zero threshold breaches; the workflow restored the
   non-enabled staging baseline and synthetic grant.
-- [ ] Obtain an authorized streaming/provider path for fresh PostgreSQL
-  offsite retrieval, verify integrity, and perform the isolated scratch
-  restore. D1/runtime-config evidence does not close this PostgreSQL gate.
+- [x] Obtain a fresh provider-separated PostgreSQL ciphertext, verify
+  integrity and restore it in isolated scratch. Drill
+  `20260729T2255Z-postgresql-fresh` downloaded 90,908,667 bytes from the
+  private Google Drive vault, matched the offsite manifest, verified HMAC and
+  restored PostgreSQL 16.14 in 55.43 s; plaintext and scratch were destroyed.
+  This closes the recovery gate without activating Finance.
 - [ ] Keep Finance `experimental`; do not enable the module, change grants or
   start a production pilot until the two preceding gates and named pilot
   approval are recorded.

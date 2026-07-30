@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "authoritative_at": "2026-07-30T00:13:34Z",
-  "source_main_sha": "3868c79ac3bfb9fd98f8bf90be16648e35728c59",
+  "source_main_sha": "309172306369cd8f3d9f1d2b0a6325185f830aa4",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
@@ -233,35 +233,29 @@
       "id": "finance-offsite-postgresql-recovery",
       "objective": "Prove fresh provider-separated PostgreSQL retrieval and isolated scratch restoration for the Finance recovery gate.",
       "priority": 99,
-      "state": "blocked-external-provider-access",
+      "state": "completed",
       "dependencies": ["finance-current-main-staging-evidence"],
-      "blockers": [
-        "large PostgreSQL object exceeds the current connector IPC frame limit",
-        "alternate provider path is not authorized"
-      ],
+      "blockers": [],
       "environment": "isolated-scratch",
-      "permitted_actions": [
-        "read-only provider metadata and authorization checks",
-        "authorized streaming download, integrity verification and scratch restore after access is supplied"
-      ],
-      "prohibited_actions": [
-        "treat local manifest-matched ciphertext as a new offsite restore",
-        "production restore or Finance pilot activation"
-      ],
+      "permitted_actions": ["preserve encrypted checkpoint and sanitised recovery evidence"],
+      "prohibited_actions": ["production restore or Finance pilot activation"],
       "required_evidence": [
         "fresh offsite PostgreSQL ciphertext retrieval",
         "integrity verification",
         "isolated PostgreSQL scratch restore with sanitized count/checksum and functional evidence",
         "scratch teardown"
       ],
-      "done_definition": "The provider-separated PostgreSQL object is freshly retrieved, verified and restored in isolation; D1 and runtime-config evidence are retained separately.",
+      "done_definition": "The provider-separated PostgreSQL object was freshly retrieved, verified and restored in isolation; D1 and runtime-config evidence are retained separately.",
       "next_item": "finance-pilot-approval",
-      "last_verified": "2026-07-29T23:54:22Z",
+      "last_verified": "2026-07-30T00:13:34Z",
       "evidence": {
         "d1_offsite_restore": "proven",
         "runtime_config_fresh_retrieval": "proven",
-        "postgresql_fresh_retrieval": "unproven",
-        "last_retry": "2026-07-25T04:55:00Z"
+        "postgresql_fresh_retrieval": "proven",
+        "drill_id": "20260729T2255Z-postgresql-fresh",
+        "ciphertext_sha256": "fe11d31fbf0d0ef9d8f78dcc4bff31bb3b2621fc9a92779dc5e018283e884f4a",
+        "restore_seconds": 55.43,
+        "scratch_destroyed": true
       }
     },
     {
@@ -270,10 +264,7 @@
       "priority": 90,
       "state": "blocked",
       "dependencies": ["finance-current-main-staging-evidence", "finance-offsite-postgresql-recovery"],
-      "blockers": [
-        "fresh PostgreSQL offsite restore evidence",
-        "named human approval"
-      ],
+      "blockers": ["named human approval"],
       "environment": "production",
       "permitted_actions": ["read-only package review and evidence reconciliation"],
       "prohibited_actions": ["module activation", "grant changes", "cohort activation", "global release"],
