@@ -453,4 +453,9 @@ test("clinic workflow receives only encrypted delegation and non-secret bindings
     "ponto-jit-credential-attestation.mjs cleanup",
     "if: ${{ always() }}",
   ]) assert.equal(clinic.includes(required), true, `clinic job misses JIT guard: ${required}`);
+  assert.equal(
+    clinic.includes("runs-on: ${{ fromJSON(needs.control-plane-preflight.outputs.runner_labels_json"),
+    true,
+    "clinic job must use the exact selector emitted by the protected inventory attestation",
+  );
 });

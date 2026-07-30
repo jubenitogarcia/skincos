@@ -248,8 +248,12 @@ if (
   || !runnerInventoryStep.includes('GH_TOKEN with Administration:read and Variables:read is required')
   || !runnerInventoryStep.includes('actions/runners?per_page=100')
   || !runnerInventoryStep.includes('actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON')
+  || !runnerInventoryStep.includes('actions/variables/PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM')
   || !runnerInventoryStep.includes('environments/production/variables?per_page=100')
-  || !runnerInventoryStep.includes('PONTO_PILOT_RUNNER_LABELS_JSON environment shadowing is forbidden')
+  || !runnerInventoryStep.includes('Ponto pilot runner repository variables may not be shadowed by the production environment')
+  || !runnerInventoryStep.includes('matching.length !== 1')
+  || !runnerInventoryStep.includes('runner_labels_json=')
+  || !productionSlo.includes("runs-on: ${{ fromJSON(needs.control-plane-preflight.outputs.runner_labels_json || '[\"ponto-unavailable\"]') }}")
   || runnerInventoryStep.includes('CONFIGURED_RUNNER_LABELS_JSON: ${{ vars.')
 ) {
   fail('Ponto runner inventory must use protected read-only custody and prove the unshadowed repository runs-on selector');
