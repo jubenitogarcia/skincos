@@ -150,12 +150,9 @@
       "id": "finance-current-main-staging-evidence",
       "objective": "Create one immutable Finance staging release from current main and prove its synthetic authenticated import/UI journey.",
       "priority": 100,
-      "state": "ready-for-authorized-staging-operation",
+      "state": "completed",
       "dependencies": [],
-      "blockers": [
-        "current staging Finance Worker/UI attest 32bf3ebb rather than source_main_sha",
-        "no synthetic authenticated import/UI journey attested for a current-main single-SHA artifact"
-      ],
+      "blockers": [],
       "environment": "staging",
       "permitted_actions": [
         "build a candidate from an explicit current main SHA",
@@ -176,16 +173,22 @@
       ],
       "done_definition": "A single immutable current-main Finance artifact lineage is healthy in staging and has passed the controlled synthetic authenticated journey; Finance remains experimental and disabled.",
       "next_item": "finance-offsite-postgresql-recovery",
-      "last_verified": "2026-07-29T14:02:00Z",
+      "last_verified": "2026-07-29T23:54:22Z",
       "evidence": {
-        "current_staging_sha": "32bf3ebb296ca95e3273bb4fed664480eb5642e5",
-        "worker_preview_run": 30168426616,
-        "worker_staging_run": 30168445270,
-        "ui_preview_run": 30168426575,
-        "ui_staging_run": 30168445288,
-        "worker_version": "51bd6fa4-d775-43e4-96c3-6fbe0cec8513",
+        "current_staging_sha": "c277032db96ba96484522a19994a66cbb323a46d",
+        "candidate_run": 30500613099,
+        "worker_preview_run": 30500694945,
+        "worker_staging_run": 30500732310,
+        "ui_preview_run": 30500696857,
+        "ui_staging_run": 30500734160,
+        "crm_pages_preview_run": 30500698417,
+        "crm_pages_staging_run": 30500735957,
+        "synthetic_canary_run": 30500922386,
+        "canary_artifact": 8743464166,
         "module_enabled": false,
-        "migration_journal": "0001 through 0012"
+        "migration_journal": "canonical staging migration step completed; journal is retained in promotion evidence",
+        "canary_p95_latency_ms": 426,
+        "canary_threshold_breaches": []
       }
     },
     {
@@ -215,7 +218,7 @@
       ],
       "done_definition": "The provider-separated PostgreSQL object is freshly retrieved, verified and restored in isolation; D1 and runtime-config evidence are retained separately.",
       "next_item": "finance-pilot-approval",
-      "last_verified": "2026-07-29T14:02:00Z",
+      "last_verified": "2026-07-29T23:54:22Z",
       "evidence": {
         "d1_offsite_restore": "proven",
         "runtime_config_fresh_retrieval": "proven",
@@ -230,7 +233,6 @@
       "state": "blocked",
       "dependencies": ["finance-current-main-staging-evidence", "finance-offsite-postgresql-recovery"],
       "blockers": [
-        "current-main staging journey evidence",
         "fresh PostgreSQL offsite restore evidence",
         "named human approval"
       ],

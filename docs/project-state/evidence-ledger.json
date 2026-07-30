@@ -641,6 +641,18 @@
       "rollback_checkpoint_sha256": "a2a03f4223167bda6f6a4753b7b0073b7d014ca74100980d1cb99be1c996f5a9"
     },
     {
+      "observed_at": "2026-07-29T23:54:22Z",
+      "surface": "github-actions-cloudflare-staging-and-private-sanitized-artifact",
+      "scope": "Finance current-main immutable staging lineage and synthetic canary",
+      "state": "staging-gate-closed-experimental-production-unprovisioned",
+      "method": "Explicit origin/main SHA candidate; canonical Finance Worker, independent Finance UI and CRM Pages preview/staging workflows; synthetic-only authenticated import/UI canary with baseline/grant restoration and sanitized artifact capture.",
+      "result": "SHA c277032db96ba96484522a19994a66cbb323a46d completed candidate 30500613099; previews 30500694945 (Worker), 30500696857 (Finance UI) and 30500698417 (CRM Pages); and staging 30500732310, 30500734160 and 30500735957. Worker staging recorded its encrypted checkpoint, additive migrations, immutable version deployment and smoke. Canary 30500922386 passed login/session, authorization, health/readiness, state-machine import, idempotent replay/conflict, audit, compensating undo and isolated Finance-shell smoke. Its decision had p95 426 ms against 1000 ms and zero errors, authentication, journey, data-divergence, audit or dependency failures. The finalizer restored the non-enabled baseline and synthetic grant; artifact 8743464166 is retained privately in sanitized form.",
+      "limitation": "The browser smoke observed a non-Finance 503 at /api/instagram/status, while all Finance responses and shell isolation passed. This does not establish production Finance. module_enabled remains false; no production resource, flag, grant, user, secret or data changed. Fresh provider-separated PostgreSQL retrieval and scratch restoration, named pilot approval and separately authorized production provisioning remain open.",
+      "sha": "c277032db96ba96484522a19994a66cbb323a46d",
+      "runs": [30500613099, 30500694945, 30500696857, 30500698417, 30500732310, 30500734160, 30500735957, 30500922386],
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\finance-canary-retry\\canary-30500922386"
+    },
+    {
       "observed_at": "2026-07-29T17:54:03.7415409Z",
       "surface": "isolated-worktree-local-postgresql-isolated-n8n-and-production-readonly",
       "scope": "Music Composition Studio unified source integrated in main",
