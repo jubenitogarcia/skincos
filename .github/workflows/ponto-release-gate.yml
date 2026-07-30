@@ -1,0 +1,213 @@
+name: Ponto progressive predecessor gate
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        required: true
+        type: string
+      release_sha:
+        required: true
+        type: string
+      predecessor_run_id:
+        required: true
+        type: string
+      rollback_from_stage:
+        required: false
+        type: string
+      baseline_run_id:
+        required: false
+        type: string
+    outputs:
+      source_sha:
+        value: ${{ jobs.verify.outputs.source_sha }}
+      source_tree:
+        value: ${{ jobs.verify.outputs.source_tree }}
+      predecessor_stage:
+        value: ${{ jobs.verify.outputs.predecessor_stage }}
+      timekeeping_candidate_version_id:
+        value: ${{ jobs.verify.outputs.timekeeping_candidate_version_id }}
+      timekeeping_incumbent_version_id:
+        value: ${{ jobs.verify.outputs.timekeeping_incumbent_version_id }}
+      core_candidate_version_id:
+        value: ${{ jobs.verify.outputs.core_candidate_version_id }}
+      core_incumbent_version_id:
+        value: ${{ jobs.verify.outputs.core_incumbent_version_id }}
+      identity_candidate_version_id:
+        value: ${{ jobs.verify.outputs.identity_candidate_version_id }}
+      identity_incumbent_version_id:
+        value: ${{ jobs.verify.outputs.identity_incumbent_version_id }}
+      identity_checkpoint_artifact:
+        value: ${{ jobs.verify.outputs.identity_checkpoint_artifact }}
+      identity_checkpoint_sha256:
+        value: ${{ jobs.verify.outputs.identity_checkpoint_sha256 }}
+      pages_deployment_id:
+        value: ${{ jobs.verify.outputs.pages_deployment_id }}
+      pages_rollback_deployment_id:
+        value: ${{ jobs.verify.outputs.pages_rollback_deployment_id }}
+      baseline_run_id:
+        value: ${{ jobs.verify.outputs.baseline_run_id }}
+      baseline_sha256:
+        value: ${{ jobs.verify.outputs.baseline_sha256 }}
+      baseline_timekeeping_version_id:
+        value: ${{ jobs.verify.outputs.baseline_timekeeping_version_id }}
+      baseline_timekeeping_deployment_id:
+        value: ${{ jobs.verify.outputs.baseline_timekeeping_deployment_id }}
+      baseline_core_version_id:
+        value: ${{ jobs.verify.outputs.baseline_core_version_id }}
+      baseline_core_deployment_id:
+        value: ${{ jobs.verify.outputs.baseline_core_deployment_id }}
+      baseline_identity_version_id:
+        value: ${{ jobs.verify.outputs.baseline_identity_version_id }}
+      baseline_identity_deployment_id:
+        value: ${{ jobs.verify.outputs.baseline_identity_deployment_id }}
+      baseline_pages_deployment_id:
+        value: ${{ jobs.verify.outputs.baseline_pages_deployment_id }}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.evidence.outputs.source_sha }}
+      source_tree: ${{ steps.evidence.outputs.source_tree }}
+      predecessor_stage: ${{ steps.stage.outputs.predecessor }}
+      timekeeping_candidate_version_id: ${{ steps.evidence.outputs.timekeeping_candidate_version_id }}
+      timekeeping_incumbent_version_id: ${{ steps.evidence.outputs.timekeeping_incumbent_version_id }}
+      core_candidate_version_id: ${{ steps.evidence.outputs.core_candidate_version_id }}
+      core_incumbent_version_id: ${{ steps.evidence.outputs.core_incumbent_version_id }}
+      identity_candidate_version_id: ${{ steps.evidence.outputs.identity_candidate_version_id }}
+      identity_incumbent_version_id: ${{ steps.evidence.outputs.identity_incumbent_version_id }}
+      identity_checkpoint_artifact: ${{ steps.evidence.outputs.identity_checkpoint_artifact }}
+      identity_checkpoint_sha256: ${{ steps.evidence.outputs.identity_checkpoint_sha256 }}
+      pages_deployment_id: ${{ steps.evidence.outputs.pages_deployment_id }}
+      pages_rollback_deployment_id: ${{ steps.evidence.outputs.pages_rollback_deployment_id }}
+      baseline_run_id: ${{ steps.baseline.outputs.baseline_run_id }}
+      baseline_sha256: ${{ steps.baseline.outputs.baseline_sha256 }}
+      baseline_timekeeping_version_id: ${{ steps.baseline.outputs.baseline_timekeeping_version_id }}
+      baseline_timekeeping_deployment_id: ${{ steps.baseline.outputs.baseline_timekeeping_deployment_id }}
+      baseline_core_version_id: ${{ steps.baseline.outputs.baseline_core_version_id }}
+      baseline_core_deployment_id: ${{ steps.baseline.outputs.baseline_core_deployment_id }}
+      baseline_identity_version_id: ${{ steps.baseline.outputs.baseline_identity_version_id }}
+      baseline_identity_deployment_id: ${{ steps.baseline.outputs.baseline_identity_deployment_id }}
+      baseline_pages_deployment_id: ${{ steps.baseline.outputs.baseline_pages_deployment_id }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Resolve required predecessor
+        id: stage
+        env:
+          STAGE: ${{ inputs.stage }}
+          ROLLBACK_FROM_STAGE: ${{ inputs.rollback_from_stage }}
+        run: |
+          set -euo pipefail
+          case "$STAGE" in
+            pilot) predecessor=staging ;;
+            canary) predecessor=pilot ;;
+            production) predecessor=canary ;;
+            rollback)
+              [[ "$ROLLBACK_FROM_STAGE" =~ ^(pilot|canary|production)$ ]] || { echo 'rollback_from_stage must identify the current live stage'; exit 1; }
+              predecessor="$ROLLBACK_FROM_STAGE"
+              ;;
+            *) echo 'Ponto progressive gate accepts only pilot, canary, production, or rollback'; exit 1 ;;
+          esac
+          echo "predecessor=$predecessor" >> "$GITHUB_OUTPUT"
+      - name: Verify source ancestry and predecessor run provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
+          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'predecessor_run_id must be numeric'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'checkout differs from release_sha'; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'release_sha is not reachable from main'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREDECESSOR_RUN_ID" > "$RUNNER_TEMP/predecessor-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-progressive-release.yml" > "$RUNNER_TEMP/predecessor-workflow.json"
+          node - "$RUNNER_TEMP/predecessor-run.json" "$RUNNER_TEMP/predecessor-workflow.json" <<'NODE'
+          const fs = require("fs");
+          const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const expected = {
+            status: "completed",
+            conclusion: "success",
+            event: "workflow_dispatch",
+            head_branch: "main",
+            name: "Ponto progressive release",
+          };
+          for (const [key, value] of Object.entries(expected)) {
+            if (run[key] !== value) throw new Error(`invalid predecessor ${key}`);
+          }
+          if (run.repository?.full_name !== process.env.GITHUB_REPOSITORY || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY) {
+            throw new Error("predecessor repository differs");
+          }
+          if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-progressive-release.yml") {
+            throw new Error("canonical predecessor workflow is not active at the expected path");
+          }
+          if (run.workflow_id !== workflow.id) throw new Error("predecessor workflow id differs");
+          if (run.path !== `${workflow.path}@refs/heads/main`) throw new Error("predecessor workflow path/ref differs");
+          NODE
+      - name: Download and verify immutable predecessor artifact
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+          PREDECESSOR_STAGE: ${{ steps.stage.outputs.predecessor }}
+        run: |
+          set -euo pipefail
+          artifact="ponto-release-evidence-${PREDECESSOR_STAGE}-${RELEASE_SHA}"
+          mkdir -p "$RUNNER_TEMP/ponto-predecessor"
+          gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir "$RUNNER_TEMP/ponto-predecessor"
+          PONTO_EXPECTED_STAGE="$PREDECESSOR_STAGE" \
+          PONTO_EXPECTED_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-release-evidence.mjs verify "$RUNNER_TEMP/ponto-predecessor/ponto-release-evidence.json"
+      - name: Verify immutable pre-pilot production baseline
+        id: baseline
+        if: inputs.stage == 'pilot'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$BASELINE_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'pilot requires baseline_run_id'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-production-baseline.yml" > "$RUNNER_TEMP/baseline-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BASELINE_RUN_ID" > "$RUNNER_TEMP/baseline-run.json"
+          node - "$RUNNER_TEMP/baseline-workflow.json" "$RUNNER_TEMP/baseline-run.json" <<'NODE'
+          const fs = require("fs");
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (
+            workflow.state !== "active"
+            || workflow.path !== ".github/workflows/ponto-production-baseline.yml"
+            || run.workflow_id !== workflow.id
+            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.status !== "completed"
+            || run.conclusion !== "success"
+            || run.event !== "workflow_dispatch"
+            || run.head_branch !== "main"
+            || run.name !== "Ponto production baseline"
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) throw new Error("production baseline run provenance is invalid");
+          NODE
+          mkdir -p "$RUNNER_TEMP/ponto-baseline"
+          gh run download "$BASELINE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-production-baseline-$RELEASE_SHA-$PREDECESSOR_RUN_ID" \
+            --dir "$RUNNER_TEMP/ponto-baseline"
+          PONTO_EXPECTED_BASELINE_RELEASE_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_BASELINE_STAGING_RUN_ID="$PREDECESSOR_RUN_ID" \
+          PONTO_EXPECTED_BASELINE_RUN_ID="$BASELINE_RUN_ID" \
+          PONTO_EXPECTED_BASELINE_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-production-baseline.mjs verify "$RUNNER_TEMP/ponto-baseline/ponto-production-baseline.json"
+          rm -f "$RUNNER_TEMP/baseline-workflow.json" "$RUNNER_TEMP/baseline-run.json"

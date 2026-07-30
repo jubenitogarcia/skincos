@@ -5,6 +5,11 @@ on:
     paths:
       - 'workforce/timekeeping/**'
       - 'api/**'
+      - 'inventory/src/worker.js'
+      - 'inventory/tests/releaseHealth.test.mjs'
+      - 'inventory/wrangler.toml'
+      - 'shared/identity-runtime/**'
+      - 'shared/module-availability/**'
       - 'crm/console/functions/api/ponto/**'
       - 'crm/console/PontoModule.tsx'
       - 'crm/console/crmRoleAccess.ts'
@@ -17,12 +22,25 @@ on:
       - 'crm/console/scripts/ponto-staging-journey.cjs'
       - 'workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs'
       - '.github/workflows/timekeeping-staging-journey.yml'
+      - '.github/workflows/deploy-timekeeping.yml'
+      - '.github/workflows/deploy-core-workers.yml'
+      - '.github/workflows/deploy-crm-pages.yml'
+      - '.github/workflows/module-availability.yml'
+      - '.github/workflows/ponto-*.yml'
+      - '.github/scripts/ponto-*.mjs'
+      - '.github/governance/progressive-release-policy.json'
+      - 'platform/deploy/operational-units.json'
       - '.github/workflows/timekeeping-ci.yml'
   push:
     branches: [main]
     paths:
       - 'workforce/timekeeping/**'
       - 'api/**'
+      - 'inventory/src/worker.js'
+      - 'inventory/tests/releaseHealth.test.mjs'
+      - 'inventory/wrangler.toml'
+      - 'shared/identity-runtime/**'
+      - 'shared/module-availability/**'
       - 'crm/console/functions/api/ponto/**'
       - 'crm/console/PontoModule.tsx'
       - 'crm/console/crmRoleAccess.ts'
@@ -35,6 +53,14 @@ on:
       - 'crm/console/scripts/ponto-staging-journey.cjs'
       - 'workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs'
       - '.github/workflows/timekeeping-staging-journey.yml'
+      - '.github/workflows/deploy-timekeeping.yml'
+      - '.github/workflows/deploy-core-workers.yml'
+      - '.github/workflows/deploy-crm-pages.yml'
+      - '.github/workflows/module-availability.yml'
+      - '.github/workflows/ponto-*.yml'
+      - '.github/scripts/ponto-*.mjs'
+      - '.github/governance/progressive-release-policy.json'
+      - 'platform/deploy/operational-units.json'
 
 permissions:
   contents: read
@@ -85,6 +111,21 @@ jobs:
           (cd inventory && corepack pnpm install --frozen-lockfile --ignore-scripts)
           npm --prefix api test
           api/node_modules/.bin/wrangler deploy --dry-run --config api/wrangler.toml --env="" --outdir "$RUNNER_TEMP/api-dry-run"
+          api/node_modules/.bin/wrangler deploy --dry-run --config api/wrangler.ponto.toml --env="" --outdir "$RUNNER_TEMP/ponto-core-dry-run"
+          api/node_modules/.bin/wrangler deploy --dry-run --config api/wrangler.ponto.toml --env staging --outdir "$RUNNER_TEMP/ponto-core-staging-dry-run"
+      - name: Test governed Ponto release contracts
+        run: |
+          set -euo pipefail
+          node --test \
+            .github/scripts/ponto-production-journey.test.mjs \
+            .github/scripts/ponto-release-evidence.test.mjs \
+            .github/scripts/ponto-staging-rollback-drill.test.mjs \
+            .github/scripts/ponto-wrangler-output.test.mjs \
+            workforce/timekeeping/scripts/ponto-staging-journey-fixtures.test.mjs \
+            shared/identity-runtime/workforce-onboarding.test.mjs \
+            inventory/tests/releaseHealth.test.mjs
+          for script in .github/scripts/ponto-*.mjs; do node --check "$script"; done
+          node .github/scripts/validate-progressive-release.mjs
       - name: Typecheck and test CRM proxy
         run: |
           set -euo pipefail

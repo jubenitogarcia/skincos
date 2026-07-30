@@ -316,12 +316,13 @@ async function main() {
       /Cannot\s+GET\s+\/api\/ponto\/_proxy-status/i.test(String(diag.proxyText || ''))
 
     if (!proxyMissing) {
-      if (!diag.proxy || diag.proxy.ok !== true) {
+      if (!diag.proxy || diag.proxy.ok !== true || diag.proxy.ready !== true) {
         throw new Error(`Proxy status failed: HTTP ${diag.proxyStatus} body=${String(diag.proxyText || '').slice(0, 260)}`)
       }
       if (diag.proxy.localDirect) {
         // Local direct backend mode: no proxy-layer config to validate.
-      } else {
+      } else if ('targetConfigured' in diag.proxy || 'actorKeyConfigured' in diag.proxy) {
+        // Detailed posture is returned only to an authenticated ADMIN.
         if (!diag.proxy.targetConfigured) throw new Error('Proxy status: targetConfigured=false')
         if (!diag.proxy.actorKeyConfigured) throw new Error('Proxy status: actorKeyConfigured=false')
       }

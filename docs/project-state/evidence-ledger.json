@@ -2,6 +2,81 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-30T04:29:35Z",
+      "surface": "github-actions-cloudflare-private-workers",
+      "scope": "Private Ponto Core rollback bootstrap baseline",
+      "state": "published-attested-private-zero-public-exposure",
+      "method": "Verified the canonical GitHub Actions run and its three immutable artifacts, then reconciled the exact active Cloudflare deployment and version identifiers for both private Workers. Only deployment metadata and secret names were inspected; no secret value, credential or PII was read.",
+      "result": "Run 30512105626 completed successfully from main control SHA e50385144408c96fbcf919bbe1f3fdc7da4b9e1d and validated the exact four-file PR #912 baseline source 0f3480dce1a170ac0f862fa392a95456af292a88. Artifacts 8747502455, 8747521765 and 8747532031 preserve validation, staging and production attestations. skincos-ponto-core-staging is 100% on deployment d88aa85e-a90b-4fd0-b03b-14bf4c6fc248 / version 0ee7a2fe-deff-4f37-bcda-c35ad54b68f3; skincos-ponto-core is 100% on deployment 96aba9e3-fb02-48b4-bc38-ef6a7187328a / version 487f3c03-0159-4914-8d79-470fd1ef209d. Both Workers remain private with workers.dev and previews disabled and zero routes or custom domains; the authorized workflow inspected all three account zones.",
+      "limitation": "This is an immutable private rollback bootstrap, not the Ponto application candidate or a preview, staging, pilot, canary or production release. It does not satisfy the missing distinct and separately custodied PONTO_PROFILE_DATA_KEY values, repository-only root-attestation key/version reference, environment custody references, WAF rules/identifiers, authorized pilot/cohort, clinic runner or authenticated journey gates. Production Timekeeping remains in maintenance and ENABLE_CORE_WORKERS_DEPLOY remains false.",
+      "sha": "e50385144408c96fbcf919bbe1f3fdc7da4b9e1d",
+      "release_sha": "0f3480dce1a170ac0f862fa392a95456af292a88",
+      "pr": 919,
+      "related_prs": [912, 919],
+      "runs": [30512105626],
+      "artifacts": {
+        "validation": 8747502455,
+        "staging": 8747521765,
+        "production": 8747532031
+      },
+      "deployments": {
+        "staging": {
+          "worker": "skincos-ponto-core-staging",
+          "deployment_id": "d88aa85e-a90b-4fd0-b03b-14bf4c6fc248",
+          "version_id": "0ee7a2fe-deff-4f37-bcda-c35ad54b68f3",
+          "traffic_percentage": 100
+        },
+        "production": {
+          "worker": "skincos-ponto-core",
+          "deployment_id": "96aba9e3-fb02-48b4-bc38-ef6a7187328a",
+          "version_id": "487f3c03-0159-4914-8d79-470fd1ef209d",
+          "traffic_percentage": 100
+        }
+      },
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\timekeeping\\baseline-publisher\\30512105626"
+    },
+    {
+      "observed_at": "2026-07-30T05:29:58Z",
+      "surface": "github-main-pr-894-pr-921-and-isolated-ponto-controls-worktree",
+      "scope": "Ponto blocker-ledger integration, post-PR-886 delta and current candidate boundary",
+      "state": "blocker-ledger-merged-review-threads-resolved-technical-controls-pr-open-production-fail-closed",
+      "method": "Verified PR #894 and its required checks, replied to and resolved each residual review conversation, re-queried GraphQL for zero unresolved threads, fetched origin/main, enumerated the full name-status delta from PR #886 through the current main boundary, pushed PR #921 and reproduced its initial hosted failures locally before applying minimal fixes.",
+      "result": "PR #894 merged at 4a6d0cfced901c5297f76d141f5f7f1c18ea4a93 with all required checks successful. Its three residual conversations—production-maintenance authorization, the production module-activation gate and the Finance handoff—were answered by replies 3680219970, 3680220047 and 3680220164 with the superseding PR #921 evidence, resolved, and independently re-counted as zero unresolved. At boundary 0a2117904ba58eb45e1163fb0971c31e6b2a7d1e, the post-PR-886 interval contains 58 commits, 30 first-parent commits and 109 unique paths (33 added, 76 modified, zero deleted), including eight Ponto-exclusive paths; it is not a Finance-only delta. The exact path-level inventory is docs/project-state/ponto-post-886-delta.json. PR #921 is open and carries published technical commits b3632455, 7011b319, 98361799 and 5f0cb631. The Pages concurrency contract and the exact GitHub-Actions-mode Timekeeping tests now pass locally together with the progressive validator and actionlint. These controls remain unmerged and are not yet a release candidate. The governed selector must use the coordinator workflow's exact GITHUB_SHA after merge; an arbitrary ancestral SHA is not acceptable.",
+      "limitation": "PR #921 still requires hosted checks, review and merge. No final candidate SHA is selected. After integration, release execution still requires distinct and separately custodied PONTO_PROFILE_DATA_KEY values, repository-only PONTO_ROOT_ATTESTATION_KEY_SHARED and PONTO_ROOT_ATTESTATION_KEY_ID, per-environment PONTO_PROFILE_DATA_KEY_CUSTODY_REF and PONTO_IDEMPOTENCY_KEY_CUSTODY_REF values, the two required WAF deny rules and their three identifiers, an Identity/Workforce-authorized pilot plus cohort credentials, PONTO_PILOT_RUNNER_LABELS_JSON with an online clinic-context self-hosted runner, and the governed canary percentage. None may be invented or bypassed. Production remains fail-closed with Timekeeping in maintenance and ENABLE_CORE_WORKERS_DEPLOY=false; no candidate preview, staging, pilot, canary or production dispatch is claimed.",
+      "sha": "0a2117904ba58eb45e1163fb0971c31e6b2a7d1e",
+      "origin_main": "0a2117904ba58eb45e1163fb0971c31e6b2a7d1e",
+      "pr": 894,
+      "technical_controls_pr": 921,
+      "merge_sha": "4a6d0cfced901c5297f76d141f5f7f1c18ea4a93",
+      "related_pr": 886,
+      "delta": {
+        "base_sha": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
+        "target_sha": "0a2117904ba58eb45e1163fb0971c31e6b2a7d1e",
+        "commits": 58,
+        "first_parent_commits": 30,
+        "unique_paths": 109,
+        "added_paths": 33,
+        "modified_paths": 76,
+        "deleted_paths": 0,
+        "ponto_exclusive_paths": 8,
+        "evidence_ref": "docs/project-state/ponto-post-886-delta.json"
+      },
+      "pending_branch": {
+        "name": "codex/admin/ponto-progressive-release",
+        "commits": [
+          "b3632455",
+          "7011b319",
+          "98361799",
+          "5f0cb631"
+        ],
+        "state": "remote-pr-open-hosted-checks-and-merge-pending"
+      },
+      "supersedes": [
+        "2026-07-29T22:29:04Z post-PR-886 29-file delta and ancestor-only promotion rule"
+      ],
+      "next_action": "Review, validate and merge the technical controls against the current main boundary; select the resulting exact main GITHUB_SHA only after merge, then close the external staging gates before any release dispatch."
+    },
+    {
       "observed_at": "2026-07-30T00:13:34Z",
       "surface": "private-google-drive-offsite-vault-and-isolated-postgresql-scratch",
       "scope": "Finance fresh offsite PostgreSQL recovery gate",

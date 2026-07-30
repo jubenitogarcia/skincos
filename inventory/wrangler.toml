@@ -2,6 +2,14 @@ name = "skincos-insumos"
 main = "workers/index.js"
 compatibility_date = "2024-11-20"
 routes = ["api.skincos.com.br/insumos/*"]
+workers_dev = false
+preview_urls = false
+
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[secrets]
+required = ["IDENTITY_WORKFORCE_HMAC_KEY"]
 
 [triggers]
 crons = ["0 * * * *"]
@@ -37,10 +45,20 @@ service = "skincos-timekeeping"
 
 [vars]
 APP_ORIGIN = "https://crm.skincos.com.br"
+APP_VERSION = "unreleased"
+ENVIRONMENT = "production"
 
 [env.staging]
 name = "skincos-insumos-staging"
 routes = ["api-staging.skincos.com.br/insumos/*"]
+workers_dev = false
+preview_urls = false
+
+[env.staging.version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[env.staging.secrets]
+required = ["IDENTITY_WORKFORCE_HMAC_KEY"]
 
 [[env.staging.durable_objects.bindings]]
 name = "RATE_LIMITER"
@@ -65,6 +83,8 @@ service = "skincos-timekeeping-staging"
 
 [env.staging.vars]
 APP_ORIGIN = "https://crm-staging.skincos.com.br"
+APP_VERSION = "unreleased"
+ENVIRONMENT = "staging"
 
 # Optional:
 # UNIDADES = "novo-hamburgo,barra-shopping-sul"
