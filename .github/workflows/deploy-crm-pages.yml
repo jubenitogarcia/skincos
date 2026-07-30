@@ -34,7 +34,7 @@ on:
       orchestrator_stage: { description: "Exact stage of the issuing Ponto coordinator", required: false, type: string }
 
 concurrency:
-  group: ${{ inputs.target == 'preview' && 'deploy-crm-pages-preview' || (inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '') && format('ponto-child-crm-pages-{0}', inputs.orchestrator_run_id) || 'ponto-release-custody' }}
+  group: deploy-crm-pages-${{ inputs.target }}
   cancel-in-progress: false
 
 permissions:

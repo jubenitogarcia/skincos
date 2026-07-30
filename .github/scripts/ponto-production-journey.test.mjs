@@ -95,6 +95,7 @@ globalThis.fetch = async (input, init = {}) => {
     encoding: "utf8",
     env: {
       ...process.env,
+      GITHUB_ACTIONS: "",
       PONTO_JOURNEY_MOCK_MODE: mode,
       PONTO_JOURNEY_MOCK_EVENTS: events,
       PONTO_SLO_TEST_MODE: "true",
