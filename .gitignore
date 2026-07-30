@@ -213,3 +213,10 @@ artifacts/
 !.codex/environments/
 .codex/environments/*
 !.codex/environments/environment.toml
+!.codex/hooks.json
+!.codex/supervisor.json
+!.codex/hooks/
+!.codex/hooks/**
+.codex/hooks/**/__pycache__/
+.codex/hooks/**/*.py[co]
+.codex/runtime/
