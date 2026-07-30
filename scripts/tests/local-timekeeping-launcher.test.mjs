@@ -186,6 +186,8 @@ test('local launcher uses private env files, explicit KV control and exact relea
   assert.match(runner, /--var "ALLOW_DEV_SEED:true"/)
   assert.match(runner, /--var "ALLOW_DEV_AUTH_BYPASS:\$auth_bypass"/)
   assert.match(runner, /module-control:timekeeping/)
+  assert.match(runner, /module-control:timekeeping:emergency-latch/)
+  assert.match(runner, /syntheticLocalOnly: true/)
   assert.match(runner, /--binding MODULE_CONTROL --local/)
   assert.match(runner, /--var "APP_VERSION:\$CRM_TIMEKEEPING_RELEASE_SHA"/)
   assert.match(runner, /--var "ENVIRONMENT:local"/)

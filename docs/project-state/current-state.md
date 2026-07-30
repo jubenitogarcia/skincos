@@ -39,38 +39,255 @@ integrated; hosted checks, automated review and merge evidence remain required
 before the private preview selection can be removed and the canonical
 `origin/main` source validated.
 
-## Workforce Timekeeping — controls reconstructed; production remains fail-closed — 2026-07-30
+## Workforce Timekeeping — both environments in maintenance; local successor evolving and uncommitted — 2026-07-30T11:14Z
 
 This entry supersedes the 2026-07-29 Ponto section below. The reconstruction
-started from fetched `origin/main`
-`0a2117904ba58eb45e1163fb0971c31e6b2a7d1e` (through PR #920), GitHub
+started from `origin/main` through PR #920 and was repeated read-only after PR
+#921 at fetched `origin/main`
+`aa9bfa6595b9cb12e7228f67f9606527bb375de2`, using GitHub
 rules/environments/runs, Cloudflare Pages and Workers control-plane metadata,
-Identity/Workforce evidence and live endpoints. PR #894 is merged as
+Timekeeping D1 journals, Identity/Workforce aggregate eligibility and live
+endpoints. PR #894 is merged as
 `4a6d0cfced901c5297f76d141f5f7f1c18ea4a93`; PRs #912, #914, #916, #917 and
 #919 are also integrated. The old statement that #894 remained open and the
 old 29-path post-#886 inventory are revoked. Its three residual review
 conversations were answered with the superseding technical-control evidence
 in PR #921 and resolved; the fresh GraphQL count is zero unresolved.
 
-PR #921 is open and ready for review on the exact observed `main` boundary.
-Its technical commits through
-`5f0cb631a22362d2ec631d868783fbf8bcfcabc0` are pushed but not integrated.
-The initial hosted runs exposed a Pages target-mutex regression and a
-CI-test-only `GITHUB_ACTIONS` inheritance; both were corrected without
-loosening the release guards. Local reproduction now passes the architecture
-contract, the progressive policy validator, actionlint and the exact
-GitHub-Actions-mode Timekeeping test command. Hosted checks and merge remain
-required.
+PR #921 merged without bypass at
+`aa9bfa6595b9cb12e7228f67f9606527bb375de2` on 2026-07-30T05:50:50Z.
+Its final head `46cf79db11720a2fc05c62ef4b5b84c7015820e9` had all 19 observed
+checks green, including required CI Smoke `30517538777`, Central E2E
+`30517538830`, JS/TS `30517538808`, Dependency Audit and Gitleaks
+`30517538755`, and Architecture `30517538750`, plus Timekeeping CI
+`30517538752`, CodeQL and Semgrep. All eight review conversations were
+answered and resolved. Six hardcoded synthetic test keys, one dynamic regex,
+two unnecessary `secrets: inherit` edges and one direct workflow-input
+interpolation were corrected; Semgrep alerts 4513–4515 became fixed. CodeQL
+4519 was dismissed as a documented false positive because SHA-256
+canonicalizes an HTTP body inside a one-time HMAC rather than storing or
+verifying a password.
+
+That merge is not currently dispatchable. The post-merge review found a
+candidate-controlled checkout boundary in the reusable lease gate, privileged
+production baseline/SLO workflows without their own single-use capabilities,
+six omitted baseline provenance outputs, a physical CRM Pages concurrency race
+and no immediate persistent emergency latch outside the long release-custody
+queue. A corrective package is local on
+`codex/admin/ponto-release-evidence`: trusted-main execution and exact SHA
+verification precede lease consumption; production baseline/SLO have
+independent leases; all seven baseline outputs are written; Pages mutations
+serialize on the physical target; and manual fail-close gains a separate
+emergency mutex, persistent latch, lease invalidation, run
+cancellation/reconciliation, final `always()` reassertion and a governed reset
+that stays in maintenance. The expanded package refuses coordinator and
+privileged child reruns through `run_attempt==1`, revalidates the exact live
+first-attempt coordinator immediately before every governed job hydrates
+secrets or mutates, handles bodyless GitHub 202/204 acknowledgements in the
+dispatch/cancellation helpers, serializes the three scheduled CRM Pages secret
+writers under `ponto-release-custody`, and removes their dispatches to the
+retired auxiliary Pages publisher. It introduces exact Ponto-only fail-closed
+controls `ENABLE_PONTO_CRM_PAGES_DEPLOY`,
+`ENABLE_PONTO_CRM_PAGES_DEPLOY_STAGING`,
+`PONTO_CLOUDFLARE_PAGES_PROJECT`,
+`PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING`,
+`ENABLE_PONTO_CORE_WORKERS_DEPLOY`,
+`ENABLE_PONTO_TIMEKEEPING_PRODUCTION_DEPLOY`,
+`PONTO_TIMEKEEPING_D1_STAGING_ID`,
+`PONTO_TIMEKEEPING_D1_PRODUCTION_ID`,
+`PONTO_MODULE_CONTROL_STAGING_KV_ID` and
+`PONTO_MODULE_CONTROL_PRODUCTION_KV_ID`; they are local and unprovisioned.
+General Pages still uses `CRM_PAGES_PROJECT` /
+`CRM_PAGES_PROJECT_STAGING`.
+
+The proposed emergency state is a separate
+`module-control:timekeeping:emergency-latch` overlay. Missing, unreadable,
+malformed or `latched=true` denies; only exact schema-v1 `latched=false`
+permits progression. The governed reset is the sole false writer and leaves
+ordinary module-control in maintenance. Direct mutations share
+`ponto-surface-mutation`; a terminal coordinator watchdog writes the monotonic
+true latch before that mutex with narrow emergency custody, then reconciles and
+reattests regular maintenance. Because it still depends on terminal
+`workflow_run` delivery, GitHub Actions, the external broker and its downstream
+Cloudflare control plane, it is not an independent external recovery system.
+
+The current local design replaces direct Cloudflare/KV emergency credentials
+with a target-specific external close-only broker. Each
+`ponto-emergency-{staging,production}` environment requires
+`PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL`,
+`PONTO_EMERGENCY_CLOSE_BROKER_URL`,
+`PONTO_EMERGENCY_CLOSE_CUSTODY_REF` and
+`PONTO_EMERGENCY_CLOSE_MODE=external-close-only-broker-v1`, with distinct
+custody references. The emergency environments are live but contain only the
+mode variable; broker URL, custody reference and credential are unprovisioned,
+so emergency mutation remains fail-closed.
+
+The broker source now requires more than environment variables: the exact HTTPS
+URL, custody reference, response key ID and Ed25519 SPKI PEM public key must be
+pinned per target in
+`.github/governance/progressive-release-policy.json`. Requests are authenticated
+with a fresh policy-bound HMAC over request identity, nonce, time and digest;
+responses require a fresh Ed25519 attestation bound to that request and the
+response digest. However, all four policy fields are `null` for both staging and
+production. There is no reviewed broker endpoint or response key for either
+target. Staging remains blocked until a reviewed decision fixes those identities
+and authorized custody provisions the endpoints, credentials and keys.
+
+The evolving local successor also adds two fail-closed contracts. First, Pages
+validates the release-probe HMAC before Identity access; v2 binds pilot/canary to
+stage, coordinator run and workflow run, while v1 is staging-only. Pages then
+uses a server-signed actor through private Ponto Core to consume the external
+nonce once at Timekeeping using a single UNIQUE D1 insert. The unique key is
+target + release + SHA-256(nonce), so another body or concurrent PoP cannot
+select a second acceptance. Core supplies the exact Timekeeping affinity.
+Second, receipt of a login cookie marks a possible Identity session: teardown
+always revokes the known current session or falls back to logout, then requires
+the stale cookie to receive the canonical 401 from `/auth/me`. An indeterminate
+teardown fails and preserves the primary probe error without including
+credentials or PII.
+
+These contracts passed targeted local tests and an independent local security
+read found no residual P0/P1 in that six-file scope, but the worktree continues
+to change. No final path/test-count freeze is recorded. Corrective `commit_sha`,
+successor PR, hosted checks, valid review, merge and `selected_release_sha`
+remain `null`/pending. The emergency overlay, watchdog, automatic rollback and
+manual broker kill switch are explicitly non-operational: broker policy and
+keys, a clinic runner and independent external freeze/recovery proof are absent.
+
+The local watchdog is intended to close a rerun of the canonical coordinator
+only after integration and broker provisioning; it is not current automatic
+recovery. Historical child workflow reruns still execute their original
+definitions, so new source guards cannot retroactively rewrite them. The seven
+exact rerunnable
+Timekeeping production runs are `30420024733`, `30132172442`, `30132009676`,
+`29966286110`, `29959858249`, `29757475250` and `29700295125`; run
+`30420024733` predates the guard. CRM Pages run `30491926800` is already
+`run_attempt=2`; and the repository inventory found zero Ponto progressive
+coordinator runs. The 30-day Actions inventory found 835 Pages secret-sync
+runs, 121 Workers secret-sync runs, 35 Timekeeping runs, 83 Core runs, 113 CRM
+Pages deploy runs, seven module-control runs and one production-baseline run.
+The proposed reconciliation covers correlated children even if their coordinator
+became terminal and is designed to rescan/inactivate a late-issued capability,
+but that behavior is not hosted or live evidence. Historical child
+definitions must remain externally fenced through expiry. The new protections
+remain local/pending until commit, reviewed PR, hosted checks and merge.
+
+The checkpointed GitHub environment-variable containment and staging fence were
+complete at
+2026-07-30T06:57:00Z after
+private checkpoint
+`C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T035009-03-production-replay-containment.md`.
+The production environment now overrides `ENABLE_CRM_PAGES_DEPLOY=false`,
+omits `TIMEKEEPING_D1_PRODUCTION_ID`, and preserves
+`ENABLE_CORE_WORKERS_DEPLOY=false`; `CLOUDFLARE_PAGES_PROJECT` points to
+deliberately nonexistent `skincos-ponto-fenced-production-20260730`. Staging
+now overrides `ENABLE_CORE_WORKERS_DEPLOY=false` and
+`ENABLE_CRM_PAGES_DEPLOY_STAGING=false`, omits
+`TIMEKEEPING_D1_STAGING_ID`, and points `CLOUDFLARE_PAGES_PROJECT` plus
+`CLOUDFLARE_PAGES_PROJECT_STAGING` to deliberately nonexistent
+`skincos-ponto-fenced-staging-20260730`. Both module-control KV variables were
+intentionally preserved. No Cloudflare Worker, Pages deployment, D1 database,
+binding or live runtime changed. The post-change recheck still found production
+in maintenance, staging active and Pages health HTTP 200. The checkpoint
+contains the exact conditional rollback, which is forbidden until
+first-attempt protections and the permanent legacy-run control are integrated
+and authorized.
+This fence blocks known dispatch inputs; it is not an independent external
+automatic freeze or recovery service.
+
+The subsequent scheduled external production Ponto Smoke, run `30521686413` at
+2026-07-30T07:04:44Z, failed on all five attempts: proxy target and actor
+configuration were visible, but every observation remained `ready=false`.
+That confirms the external monitor detects the intended fail-closed
+non-readiness; it is not a successful production SLO. Earlier Ponto UI Smoke
+run `30518888970` succeeded, but it is neither an authenticated authorized-user
+journey nor proof that consultants can use Ponto.
+
+The legacy hourly Ponto UI smoke is now externally contained. Checkpoint
+`C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T072614-11-legacy-ponto-ui-smoke-disable.md`
+records workflow `Ponto UI Smoke (prod)` id `231059578` moving from active to
+`disabled_manually`, with no in-progress run. Repository secrets
+`PONTO_SMOKE_EMAIL` and `PONTO_SMOKE_PASSWORD` and variable
+`ENABLE_PONTO_UI_SMOKE` were removed by name without reading their values. This
+stops scheduled reuse, but does not identify or revoke the historical CRM
+GESTOR account; that identity remains an external reconciliation blocker.
+
+The legacy backend smoke is now contained separately. Checkpoint
+`C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T075100-15-legacy-ponto-smoke-disable.md`
+records `Ponto Smoke (prod)` id `230950805` moving from active to
+`disabled_manually`. Scheduled run `30536124024` on
+`aa9bfa6595b9cb12e7228f67f9606527bb375de2` had correctly waited at the
+hardened production environment and was cancelled, reaching
+`completed/cancelled` at 2026-07-30T10:54:19Z. The current-main workflow still
+declares that protected environment for a read-only unauthenticated health
+probe; the local successor removes it. Re-enable only after that successor is
+reviewed and merged. No secret, identity, flag, deployment or database changed.
+
+GitHub environment admission is also hardened after checkpoint
+`C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T073000-12-environment-protection-before.md`.
+Staging required-reviewer rule `61302994` / custom branch policy `56015291`
+and production rule `61303000` / policy `56015293` enforce
+`can_admins_bypass=false`, `prevent_self_review=true`, zero wait and branch
+`main` only. The sole reviewer is repository owner `jubenitogarcia`
+(`199169872`), which blocks the current owner actor and historical credential
+hydration but does not create an independent reviewer or valid release
+approval. Repository collaborator inventory contains only that owner. The
+observed `GITHUB_TOKEN` has
+`can_approve_pull_request_reviews=false`, and no authorized GitHub App, bot or
+automation approver was proved.
+
+Checkpoint
+`C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T073300-13-emergency-environments-before.md`
+records creation/readback of `ponto-emergency-staging` and
+`ponto-emergency-production`: protected branches only,
+`can_admins_bypass=false`, no reviewers/timer/custom rule, branch-policy rule
+IDs `61303367` / `61303369`. GitHub returned 422 only when
+`prevent_self_review=false` was sent without a reviewer; the safe base exists.
+Each has zero secrets and only
+`PONTO_EMERGENCY_CLOSE_MODE=external-close-only-broker-v1`; URL, custody ref and
+credential are absent. The reviewed-policy identity fields URL, custody ref,
+response key ID and Ed25519 SPKI PEM are also all `null` for staging and
+production, so the broker path and staging progression are fail-closed.
+
+Checkpoint
+`C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T074500-14-ponto-resource-variables-before.md`
+then recorded that all seven dedicated non-secret repository resource variables
+were absent before creation. The six Ponto-specific KV, Pages and D1 identifiers
+plus `CLOUDFLARE_ZONE_ID` were independently verified against live Cloudflare,
+created and individually read back by name. Their exact values remain in the
+private checkpoint. This is configuration metadata only: it did not enable an
+`ENABLE_PONTO_*` flag, select a release SHA, restore a legacy fence, deploy a
+surface, mutate D1/KV or satisfy any missing secret/WAF-rule/pilot/reviewer gate.
+
+Staging was then closed through canonical main workflow run `30527767707` on
+`aa9bfa6595b9cb12e7228f67f9606527bb375de2`; jobs `90822614084` and
+`90822665436` succeeded. Artifact `8753392021`,
+`module-transition-timekeeping-staging-maintenance-30527767707`, is retained
+until 2026-10-28 with digest
+`sha256:09de66aad85d0df5fec416917becd87a5aa3004542af8a4ed4bf34ef74244612`.
+Private checkpoint
+`C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T084146-06-staging-maintenance-before.json`
+records the prior staging control as absent. At
+2026-07-30T08:43:14.511Z the remote KV readback was schema v2
+`maintenance`; edge health returned `ok=false/ready=false`,
+`source=control`, and `/me` returned 503. Production remained maintenance.
+This proves canonical fail-close, not candidate lineage, staging success or
+authorized use.
 
 The complete upstream delta after PR #886
 `10b2197731d0210cf8fc8cd961f7a787d73bf650` through the observed main contains
-58 commits, 30 first-parent commits and 109 unique net paths: 33 added, 76
-modified and none deleted. It includes eight Ponto-exclusive paths, five
+58 commits, 30 first-parent commits and 109 unique pre-control paths: 33 added,
+76 modified and none deleted. It includes eight Ponto-exclusive paths, five
 ledgers, 27 Finance, six shared/multidomain, eight Orb/n8n, five
 Livia/native, 13 website/Meta/WhatsApp, one observability and 36 CRM Local
 paths. The path-by-path source of truth is
 `docs/project-state/ponto-post-886-delta.json`; some shared files have multiple
-labels even though every path has one primary classification.
+labels even though every path has one primary classification. Its
+deterministic PR #921 supplement adds 85 classified paths (72 governed Ponto
+release controls, eight ledgers/runbook and five local operator safeguards),
+with 15 overlaps. The union through merge `aa9bfa65` covers the complete
+current post-#886 interval: 59 commits, 31 first-parent commits and 179 net
+paths (77 added, 102 modified, none deleted).
 
 Private Ponto Core bootstrap publication is complete and independently
 attested. PR #919 workflow run `30512105626` executed on control SHA
@@ -90,7 +307,7 @@ staging run `30508502488` succeeded for source
 `https://ee5ab6dd.skincos-staging.pages.dev` deployment in project
 `skincos-staging` and aliases `https://crm-staging.skincos.com.br`.
 
-PR #921 implements the missing technical release
+PR #921 integrates an initial set of technical release
 controls across Timekeeping, private Ponto Core, Identity/Inventory and CRM
 Pages: exact current-main `GITHUB_SHA`, ordered predecessor evidence, version
 affinity, zero-default-traffic pilot/canary with protected Pages bucketing,
@@ -104,13 +321,65 @@ complete production rollback baseline are consumed, verified and pinned before
 the first staging/pilot mutation; an arbitrary active incumbent no longer
 satisfies the gate.
 
+The historical 2026-07-30T05:57:00Z live snapshot was split and none of its surfaces ran
+`aa9bfa6595b9cb12e7228f67f9606527bb375de2`:
+
+- staging is `module-control:timekeeping=active`; Timekeeping is deployment
+  `0447e8a9-77fd-4ef0-b858-705110738fff` / version
+  `d6e60024-bb67-48da-91b1-4d7e16ee31ba`, Core API is
+  `2bcb5e4a-0d84-46c5-b59a-9c6d2114d310` /
+  `20e271ba-4130-46f1-9176-d7ca18891a38`, Identity/Inventory is
+  `767bd21d-47b5-48de-b26e-80f55e2b113d` /
+  `3f39463a-927c-4f16-96d2-b8f376fce816`, and CRM Pages is deployment
+  `ee5ab6dd-4bba-48da-96ea-38fa686f8691` from
+  `32d5de056788761893aa4025282f0cfa3bcde66c`;
+- production is `module-control:timekeeping=maintenance`; Timekeeping is
+  deployment `ff33f1a3-8de6-4879-8a6a-2c65f3f7fa9f` / version
+  `0da32d7c-6d6f-4b54-a538-6b7c642e57de`, Core API is
+  `a4d62169-10af-4a9b-8960-bc785ccd37a4` /
+  `a1d6ddb0-905d-4784-9e77-d1231cd75e90`, Identity/Inventory is
+  `1aadfff5-de94-4e7d-a7e4-8d781328a038` /
+  `4bb6a932-05ba-44a9-aea3-5f139b31abca`, and CRM Pages is deployment
+  `a77cf500-f272-4d37-87c2-c02f78352c4e` from
+  `f30f66e70e0dc949adde5120378509a1c95fe557`.
+
+The listed deployments/versions remain the last observed split, but the
+current module state supersedes that snapshot: canonical run `30527767707`
+closed staging, so both staging and production are now maintenance.
+
+Both remote Timekeeping D1 journals contain exactly `0001`–`0008` (8/8), the
+same complete named set present in the repository, so no named migration is
+pending in this snapshot. This is schema-state evidence, not candidate lineage.
+The live Timekeeping `workers.dev` endpoint is still public despite the current
+source declaring it disabled. Production `/api/ponto/readiness` still returns
+`200/ready=true` during maintenance. Public probes using each forbidden Worker
+version-selection header returned 200, while
+`/insumos/health/workforce-contract` returned 401 rather than the required
+edge-generated 403; therefore the required WAF enforcement was not observed.
+This does not establish whether an inaccessible custom rule object exists. The
+zone ruleset listing exposed only managed rulesets, and the custom entrypoint
+GET was not authorized for the available principal.
+The Codex in-app browser and the existing Chrome profile both reached only the
+Cloudflare login screen, with no authenticated dashboard session; no credential
+was entered and no mutation was attempted. Rule inspection/attestation remains
+blocked for the current principal; the post-merge security-token workflow must
+prove the state. Aggregate Identity/Workforce reconciliation found zero
+eligible production pilots.
+
 No final candidate `preview`, complete staging journey, pilot, canary or
 production release has run. The coordinator accepts only its exact
 `GITHUB_SHA` on the then-current `main`; if main advances between stages, the
-chain must restart at preview. Production remains explicitly
+chain must restart at preview. `selected_release_sha` remains null, and no
+preview may start until the local P1/P2 package is reviewed and merged.
+Production remains explicitly
 `module-control:timekeeping=maintenance` from run `30496220685`, with
-`ENABLE_CORE_WORKERS_DEPLOY=false`; this is containment, not a completed
-release.
+`ENABLE_CORE_WORKERS_DEPLOY=false`, the production CRM Pages override false and
+the Timekeeping production D1 variable absent. Staging is now module-control
+`maintenance` from run `30527767707`; Core and CRM Pages deploy are disabled,
+its Timekeeping D1
+variable is absent and both Pages project variables are fenced to the
+deliberately nonexistent staging project. This is containment/freeze, not a
+completed release.
 
 Run `30496220685` changed only the production Timekeeping module-control target
 to `maintenance` as an emergency fail-close containment. The contemporaneous
@@ -118,27 +387,49 @@ ledger does not contain a separate pre-production approval package for that
 configuration mutation, so it is recorded as a policy exception rather than
 normal release authorization. Its validation was the externally observed
 `503/MODULE_MAINTENANCE` on the authenticated module path; residual risk was
-the then-incomplete readiness contract, which is corrected in the changeset
-containing this entry. The decision is to preserve—not repeat or broaden—that
-safe state under the current explicit instruction. This exception cannot
-authorize `active`, a deploy, a grant, a secret change or any later production
-mutation.
+the incomplete readiness contract. Although the source fix is present in
+`main`, it is not on the split live Timekeeping deployment: production
+readiness still reports ready during maintenance. The decision is to
+preserve—not repeat or broaden—that safe state under the current explicit
+instruction. This exception cannot authorize `active`, a deploy, a grant, a
+secret change or any later production mutation.
 
-The first remaining blocker is integration of PR #921 after hosted checks.
-The subsequent blockers are external authorization/configuration, not a reason
-to loosen source guards: `PONTO_PROFILE_DATA_KEY` is absent by name from both
-GitHub environments. The repository-only
-`PONTO_ROOT_ATTESTATION_KEY_SHARED`/`PONTO_ROOT_ATTESTATION_KEY_ID` pair and the
-per-environment `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` /
-`PONTO_IDEMPOTENCY_KEY_CUSTODY_REF` variables are also absent. The keyed
+The first remaining blocker is the reviewed integration of the local P1/P2
+corrective package described above. The subsequent blockers are external
+authorization/configuration, not a reason to loosen source guards:
+`PONTO_PROFILE_DATA_KEY` is absent by name from both
+GitHub environments. The required target-environment secrets
+`PONTO_ROOT_ATTESTATION_KEY_SHARED`,
+`PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY` (distinct Ed25519 signer per
+target), `PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY`, and per-environment
+`PONTO_PROFILE_DATA_KEY_CUSTODY_REF` /
+`PONTO_IDEMPOTENCY_KEY_CUSTODY_REF` inputs are also absent. The repository must
+hold only public/non-secret `PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON` and
+`PONTO_ROOT_ATTESTATION_KEY_ID`; no private capability, root-attestation or
+Pages-intent secret may fall back to repository/emergency scope. The keyed
 attestation proves exact-byte non-reuse under one effective audit-key version
 and carries producer run/artifact provenance, but cannot replace approved vault
-custody or prove entropy/correlation. The required WAF rule IDs/variables are absent; production
+custody or prove entropy/correlation. Repository-only
+`PONTO_WAF_READ_API_TOKEN` and production-environment-only
+`PONTO_WAF_WRITE_API_TOKEN` are unprovisioned; no
+`CLOUDFLARE_SECURITY_API_TOKEN` fallback is allowed. Repository variable
+`CLOUDFLARE_ZONE_ID` is present by name after checkpoint 14, but
+`PONTO_WAF_RULESET_ID`, `PONTO_WAF_HEADER_RULE_ID` and
+`PONTO_WAF_CONTRACT_RULE_ID` remain absent and the custom rule state is
+unverified; production
 lacks the approved pilot login/password/cohort and runner/canary variables;
 the repository has zero self-hosted runners; and no Identity/Workforce pilot
-designation is evidenced. `PONTO_IDEMPOTENCY_KEY` exists by name in both
-environments. Secret values were not read. Until those prerequisites are
-provided through their approved processes and the ordered chain passes,
+designation is evidenced. The GitHub `staging` and `production` protections now
+fail closed as described above, but their sole owner reviewer cannot self-review
+and no independent collaborator/reviewer is available. The only collaborator is
+that owner, `GITHUB_TOKEN` cannot approve pull-request reviews, and no authorized
+app/bot approver was evidenced. PR #921's
+`required_approvals=0` is code governance only, not deployment or pilot
+approval; no administrator bypass may substitute for separation of
+responsibility. `PONTO_IDEMPOTENCY_KEY` exists by name in both environments.
+Secret values were not read. Until those prerequisites are provided through
+their approved processes, the successor PR is created/reviewed/merged and the
+ordered chain passes,
 consultants are not authorized to use Ponto in production.
 
 ## Finance — fresh PostgreSQL offsite restore proven; pilot still disabled — 2026-07-30T00:13Z

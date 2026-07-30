@@ -268,7 +268,22 @@ function canaryBucket(identityRef: string): number {
 
 async function readPontoControl(env: any): Promise<any | null> {
   if (!env?.MODULE_CONTROL || typeof env.MODULE_CONTROL.get !== 'function') return null
+  const runtimeTarget = String(env?.SKINCOS_DEPLOYMENT_ENV || '').trim().toLowerCase()
+  if (!['production', 'staging', 'local'].includes(runtimeTarget)) return null
   try {
+    const latch = await env.MODULE_CONTROL.get('module-control:timekeeping:emergency-latch', 'json')
+    if (
+      !latch
+      || typeof latch !== 'object'
+      || Array.isArray(latch)
+      || Number(latch.schemaVersion) !== 1
+      || latch.module !== 'timekeeping'
+      || typeof latch.target !== 'string'
+      || latch.target.trim().toLowerCase() !== runtimeTarget
+      || latch.latched !== false
+      || !Number.isFinite(Date.parse(String(latch.changedAt || '')))
+      || !String(latch.changedBy || '').trim()
+    ) return null
     const control = await env.MODULE_CONTROL.get('module-control:timekeeping', 'json')
     return control && typeof control === 'object' && !Array.isArray(control) ? control : null
   } catch {
@@ -340,7 +355,9 @@ async function canRoutePontoCandidate(
 }
 
 const RELEASE_PROBE_NONCE_RE = /^[A-Za-z0-9_-]{20,120}$/
+const RELEASE_PROBE_RUN_ID_RE = /^[1-9][0-9]{0,19}$/
 const RELEASE_PROBE_MAX_AGE_MS = 5 * 60 * 1000
+const RELEASE_PROBE_RESERVATION_PATH = '/api/ponto/internal/release-probe-nonce'
 
 function constantTimeTextEqual(leftValue: string, rightValue: string): boolean {
   const left = new TextEncoder().encode(String(leftValue || ''))
@@ -351,11 +368,103 @@ function constantTimeTextEqual(leftValue: string, rightValue: string): boolean {
   return mismatch === 0
 }
 
+async function reserveReleaseProbeNonce(
+  env: any,
+  configuration: PontoProxyConfiguration,
+  nonceDigest: string,
+  bodyDigest: string,
+  requestId: string,
+): Promise<boolean> {
+  const actorKey = String(env?.PONTO_ACTOR_HMAC_KEY || '').trim()
+  if (
+    !actorKey
+    || !configuration.coreServiceConfigured
+    || !CLOUDFLARE_VERSION_ID_RE.test(configuration.coreVersionId)
+    || !/^[0-9a-f]{64}$/.test(nonceDigest)
+    || !/^[0-9a-f]{64}$/.test(bodyDigest)
+    || !['staging', 'production'].includes(configuration.environment)
+  ) return false
+
+  const reservationNonce = [
+    'ponto-release-probe',
+    configuration.environment,
+    configuration.releaseSha,
+    nonceDigest,
+  ].join(':')
+  const reservationBody = JSON.stringify({
+    schemaVersion: 1,
+    target: configuration.environment,
+    releaseSha: configuration.releaseSha,
+    nonceDigest,
+    bodyDigest,
+  })
+  const actor = {
+    id: `release-probe:${configuration.environment}`,
+    email: `release-probe@${configuration.environment}.internal.invalid`,
+    role: 'ADMIN',
+    allowedUnits: [],
+    releaseSha: configuration.releaseSha,
+  }
+  const actorB64 = b64UrlEncodeString(JSON.stringify(actor))
+  const actorTimestamp = String(Date.now())
+  const reservationBodyBytes = new TextEncoder().encode(reservationBody)
+  const reservationBodyHash = await sha256Hex(reservationBodyBytes.buffer)
+  const actorSignature = await signHmacSha256B64Url(
+    actorKey,
+    [
+      actorTimestamp,
+      actorB64,
+      'POST',
+      RELEASE_PROBE_RESERVATION_PATH,
+      reservationNonce,
+      reservationBodyHash,
+    ].join('.'),
+  )
+  const coreService = configuration.environment === 'staging'
+    ? 'skincos-ponto-core-staging'
+    : 'skincos-ponto-core'
+
+  try {
+    const response = await env.PONTO_CORE.fetch(new Request(
+      `https://ponto-core.internal${RELEASE_PROBE_RESERVATION_PATH}`,
+      {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'cache-control': 'no-store',
+          'x-request-id': requestId,
+          'x-request-nonce': reservationNonce,
+          'x-skincos-actor': actorB64,
+          'x-skincos-actor-ts': actorTimestamp,
+          'x-skincos-actor-sig': actorSignature,
+          'x-skincos-signature-version': '2',
+          'cloudflare-workers-version-overrides': `${coreService}="${configuration.coreVersionId}"`,
+          'content-type': 'application/json',
+        },
+        body: reservationBodyBytes,
+        redirect: 'manual',
+      },
+    ))
+    const body = await responseJson(response.clone())
+    return response.status === 201
+      && body?.ok === true
+      && body?.consumed === true
+      && String(body?.releaseSha || '').trim().toLowerCase() === configuration.releaseSha
+      && String(body?.environment || '').trim().toLowerCase() === configuration.environment
+      && String(response.headers.get('x-skincos-gateway-release-sha') || '').trim().toLowerCase() === configuration.releaseSha
+      && String(response.headers.get('x-skincos-gateway-version-id') || '').trim().toLowerCase() === configuration.coreVersionId.toLowerCase()
+      && String(response.headers.get('x-skincos-timekeeping-release-sha') || '').trim().toLowerCase() === configuration.releaseSha
+  } catch {
+    return false
+  }
+}
+
 async function authorizeOneTimeReleaseProbe(
   env: any,
   configuration: PontoProxyConfiguration,
   request: Request,
   rawBody: ArrayBuffer,
+  requestId: string,
 ): Promise<boolean> {
   const secret = String(env?.PONTO_RELEASE_PROBE_HMAC_KEY || '').trim()
   const timestamp = String(request.headers.get('x-skincos-release-probe-ts') || '').trim()
@@ -363,27 +472,90 @@ async function authorizeOneTimeReleaseProbe(
   const signatureVersion = String(request.headers.get('x-skincos-release-probe-signature-version') || '').trim()
   const signature = String(request.headers.get('x-skincos-release-probe-sig') || '').trim()
   if (!secret || !/^\d{13}$/.test(timestamp) || !RELEASE_PROBE_NONCE_RE.test(nonce)) return false
-  if (signatureVersion !== '1' || !/^[A-Za-z0-9_-]{43}$/.test(signature)) return false
+  if (!/^[A-Za-z0-9_-]{43}$/.test(signature)) return false
   const timestampMs = Number(timestamp)
   if (!Number.isSafeInteger(timestampMs) || Math.abs(Date.now() - timestampMs) > RELEASE_PROBE_MAX_AGE_MS) return false
-  if (!env?.MODULE_CONTROL || typeof env.MODULE_CONTROL.get !== 'function' || typeof env.MODULE_CONTROL.put !== 'function') return false
 
   const method = String(request.method || 'GET').toUpperCase()
   const pathname = new URL(request.url).pathname
   const bodyHash = await sha256Hex(rawBody)
-  const message = `ponto-release-probe/v1.${timestamp}.${nonce}.${method}.${pathname}.${bodyHash}.${configuration.releaseSha}`
-  const expected = await signHmacSha256B64Url(secret, message)
-  if (!constantTimeTextEqual(signature, expected)) return false
-
-  const nonceDigest = await sha256Hex(new TextEncoder().encode(nonce).buffer)
-  const nonceKey = `ponto-release-probe-nonce:${configuration.releaseSha}:${nonceDigest}`
-  try {
-    if (await env.MODULE_CONTROL.get(nonceKey)) return false
-    await env.MODULE_CONTROL.put(nonceKey, 'used', { expirationTtl: 600 })
-    return true
-  } catch {
+  let message = ''
+  if (signatureVersion === '1') {
+    // v1 is retained only for the isolated synthetic staging drill. Pilot and
+    // canary require workflow-run provenance bound into the signed capability.
+    if (configuration.rolloutStage !== 'staging') return false
+    message = `ponto-release-probe/v1.${timestamp}.${nonce}.${method}.${pathname}.${bodyHash}.${configuration.releaseSha}`
+    const expected = await signHmacSha256B64Url(secret, message)
+    if (!constantTimeTextEqual(signature, expected)) return false
+  } else if (signatureVersion === '2') {
+    const stage = String(request.headers.get('x-skincos-release-probe-stage') || '').trim().toLowerCase()
+    const coordinatorRunId = String(request.headers.get('x-skincos-release-probe-coordinator-run-id') || '').trim()
+    const workflowRunId = String(request.headers.get('x-skincos-release-probe-workflow-run-id') || '').trim()
+    const delegationVersion = String(request.headers.get('x-skincos-release-probe-delegation-version') || '').trim()
+    const delegatedKey = String(request.headers.get('x-skincos-release-probe-delegation-key') || '').trim()
+    const delegatedKeyCommitment = String(request.headers.get('x-skincos-release-probe-delegation-key-commitment') || '').trim().toLowerCase()
+    const delegationTimestamp = String(request.headers.get('x-skincos-release-probe-delegation-ts') || '').trim()
+    const delegationExpiresAt = String(request.headers.get('x-skincos-release-probe-delegation-exp') || '').trim()
+    const delegationSignature = String(request.headers.get('x-skincos-release-probe-delegation-sig') || '').trim()
+    if (
+      !['pilot', 'canary'].includes(stage)
+      || stage !== configuration.rolloutStage
+      || !RELEASE_PROBE_RUN_ID_RE.test(coordinatorRunId)
+      || !RELEASE_PROBE_RUN_ID_RE.test(workflowRunId)
+      || delegationVersion !== '1'
+      || !/^[A-Za-z0-9_-]{43}$/.test(delegatedKey)
+      || !/^[0-9a-f]{64}$/.test(delegatedKeyCommitment)
+      || !RELEASE_PROBE_RUN_ID_RE.test(delegationTimestamp)
+      || !RELEASE_PROBE_RUN_ID_RE.test(delegationExpiresAt)
+      || !/^[A-Za-z0-9_-]{43}$/.test(delegationSignature)
+    ) return false
+    const delegationIssuedSeconds = Number(delegationTimestamp)
+    const delegationExpiresSeconds = Number(delegationExpiresAt)
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    if (
+      !Number.isSafeInteger(delegationIssuedSeconds)
+      || !Number.isSafeInteger(delegationExpiresSeconds)
+      || delegationIssuedSeconds > nowSeconds
+      || delegationExpiresSeconds <= nowSeconds
+      || delegationExpiresSeconds - delegationIssuedSeconds > 2 * 60 * 60
+    ) return false
+    const actualKeyCommitment = await sha256Hex(new TextEncoder().encode(delegatedKey).buffer)
+    if (!constantTimeTextEqual(actualKeyCommitment, delegatedKeyCommitment)) return false
+    const delegationMessage = [
+      'ponto-release-probe-delegation/v1',
+      delegationTimestamp,
+      delegationExpiresAt,
+      nonce,
+      method,
+      pathname,
+      configuration.releaseSha,
+      stage,
+      coordinatorRunId,
+      workflowRunId,
+      delegatedKeyCommitment,
+    ].join('.')
+    const expectedDelegationSignature = await signHmacSha256B64Url(secret, delegationMessage)
+    if (!constantTimeTextEqual(delegationSignature, expectedDelegationSignature)) return false
+    message = [
+      'ponto-release-probe/v2',
+      timestamp,
+      nonce,
+      method,
+      pathname,
+      bodyHash,
+      configuration.releaseSha,
+      stage,
+      coordinatorRunId,
+      workflowRunId,
+    ].join('.')
+    const expected = await signHmacSha256B64Url(delegatedKey, message)
+    if (!constantTimeTextEqual(signature, expected)) return false
+  } else {
     return false
   }
+
+  const nonceDigest = await sha256Hex(new TextEncoder().encode(nonce).buffer)
+  return reserveReleaseProbeNonce(env, configuration, nonceDigest, bodyHash, requestId)
 }
 
 function cookiePairs(headers: Headers): string[] {
@@ -442,7 +614,7 @@ async function authorizedIdentityReleaseProbe(
   let body: any
   try {
     rawBody = (await readBodyLimited(request, 16 * 1024)) || new ArrayBuffer(0)
-    if (!(await authorizeOneTimeReleaseProbe(env, configuration, request, rawBody))) {
+    if (!(await authorizeOneTimeReleaseProbe(env, configuration, request, rawBody, requestId))) {
       return json(403, { ok: false, error: 'RELEASE_PROBE_NOT_AUTHORIZED' }, releaseHeaders)
     }
     body = rawBody.byteLength ? JSON.parse(new TextDecoder().decode(rawBody)) : null
@@ -490,10 +662,16 @@ async function authorizedIdentityReleaseProbe(
   }
   const jar = new Map<string, string>()
   let currentSessionId = ''
-  let sessionRevoked = false
-  const callIdentity = async (pathname: string, init: RequestInit = {}) => {
+  let sessionMayExist = false
+  let lastSessionCookie = ''
+  let sessionTeardownAttempted = false
+  let sessionTeardownProven = false
+  let sessionTeardownMethod = ''
+  let primaryError = ''
+  let successReport: Record<string, unknown> | null = null
+  const callIdentity = async (pathname: string, init: RequestInit = {}, cookieOverride?: string) => {
     const headers = new Headers({ ...baseHeaders, ...(init.headers || {}) })
-    const cookies = cookieHeader(jar)
+    const cookies = cookieOverride === undefined ? cookieHeader(jar) : cookieOverride
     if (cookies) headers.set('cookie', cookies)
     const csrf = jar.get('csrfToken')
     if (csrf) headers.set('x-csrf-token', csrf)
@@ -503,6 +681,10 @@ async function authorizedIdentityReleaseProbe(
       redirect: 'manual',
     }))
     updateCookieJar(jar, response.headers)
+    if (jar.has('session')) {
+      sessionMayExist = true
+      lastSessionCookie = cookieHeader(jar)
+    }
     return { response, json: await responseJson(response.clone()) }
   }
 
@@ -524,7 +706,9 @@ async function authorizedIdentityReleaseProbe(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: login, password }),
     })
-    if (loginResponse.response.status !== 200 || !jar.get('session')) throw new Error('IDENTITY_LOGIN_FAILED')
+    if (loginResponse.response.status !== 200 || loginResponse.json?.success !== true || !jar.get('session')) {
+      throw new Error('IDENTITY_LOGIN_FAILED')
+    }
 
     const me = await callIdentity('/auth/me')
     const role = String(me.json?.user?.role || '').trim().toUpperCase()
@@ -541,11 +725,7 @@ async function authorizedIdentityReleaseProbe(
     if (sessions.response.status !== 200 || sessions.json?.success !== true || !current) throw new Error('IDENTITY_SESSION_READ_FAILED')
     currentSessionId = current.id
 
-    const revoke = await callIdentity(`/auth/sessions/${encodeURIComponent(currentSessionId)}/revoke`, { method: 'POST' })
-    sessionRevoked = revoke.response.status === 200 && revoke.json?.success === true
-    if (!sessionRevoked) throw new Error('IDENTITY_SESSION_REVOKE_FAILED')
-
-    return json(200, {
+    successReport = {
       ok: true,
       ready: true,
       releaseSha: configuration.releaseSha,
@@ -557,19 +737,59 @@ async function authorizedIdentityReleaseProbe(
       sessionRevoked: true,
       credentialsIncluded: false,
       piiIncluded: false,
-    }, releaseHeaders)
-  } catch {
-    if (currentSessionId && !sessionRevoked) {
-      await callIdentity(`/auth/sessions/${encodeURIComponent(currentSessionId)}/revoke`, { method: 'POST' }).catch(() => {})
     }
+  } catch (error) {
+    const code = String((error as Error)?.message || '')
+    primaryError = new Set([
+      'IDENTITY_CONTRACT_MISMATCH',
+      'IDENTITY_LOGIN_FAILED',
+      'IDENTITY_ROLE_MISMATCH',
+      'IDENTITY_GRANTS_MISMATCH',
+      'IDENTITY_SESSION_READ_FAILED',
+    ]).has(code) ? code : 'IDENTITY_RELEASE_CONTRACT_FAILED'
+  } finally {
+    if (sessionMayExist) {
+      sessionTeardownAttempted = true
+      const staleCookie = lastSessionCookie || cookieHeader(jar)
+      sessionTeardownMethod = currentSessionId ? 'session-revoke' : 'logout-fallback'
+      try {
+        if (currentSessionId) {
+          await callIdentity(`/auth/sessions/${encodeURIComponent(currentSessionId)}/revoke`, { method: 'POST' })
+        } else {
+          await callIdentity('/auth/logout', { method: 'POST' })
+        }
+      } catch {
+        // The replay below is authoritative even when the mutation response is
+        // lost after the server may already have committed the teardown.
+      }
+      if (staleCookie) {
+        try {
+          const replay = await callIdentity('/auth/me', {}, staleCookie)
+          sessionTeardownProven = replay.response.status === 401
+            && replay.json?.error === 'Not authenticated'
+        } catch {
+          sessionTeardownProven = false
+        }
+      }
+    }
+  }
+
+  if (!successReport || primaryError || (sessionMayExist && !sessionTeardownProven)) {
+    const teardownUnproven = sessionMayExist && !sessionTeardownProven
     return json(503, {
       ok: false,
-      error: 'IDENTITY_RELEASE_CONTRACT_FAILED',
-      sessionTeardownAttempted: Boolean(currentSessionId),
+      error: teardownUnproven
+        ? 'IDENTITY_SESSION_TEARDOWN_UNPROVEN'
+        : 'IDENTITY_RELEASE_CONTRACT_FAILED',
+      ...(primaryError ? { primaryError } : {}),
+      sessionTeardownAttempted,
+      sessionTeardownProven,
+      ...(sessionTeardownMethod ? { sessionTeardownMethod } : {}),
       credentialsIncluded: false,
       piiIncluded: false,
     }, releaseHeaders)
   }
+  return json(200, successReport, releaseHeaders)
 }
 
 async function authorizedReleaseReadinessProbe(
@@ -585,7 +805,7 @@ async function authorizedReleaseReadinessProbe(
   if (!configuration.coreServiceConfigured || !CLOUDFLARE_VERSION_ID_RE.test(configuration.coreVersionId)) {
     return json(503, { ok: false, error: 'CORE_RELEASE_BINDING_UNAVAILABLE' }, releaseHeaders)
   }
-  if (!(await authorizeOneTimeReleaseProbe(env, configuration, request, new ArrayBuffer(0)))) {
+  if (!(await authorizeOneTimeReleaseProbe(env, configuration, request, new ArrayBuffer(0), requestId))) {
     return json(403, { ok: false, error: 'RELEASE_PROBE_NOT_AUTHORIZED' }, releaseHeaders)
   }
 
@@ -676,6 +896,7 @@ export async function onRequest(context: any): Promise<Response> {
       configuration.ok ? 200 : 503,
       {
         ok: configuration.ok,
+        ready: configuration.ok,
         environment: configuration.environment || undefined,
         rolloutStage: PONTO_ROLLOUT_STAGES.has(configuration.rolloutStage) ? configuration.rolloutStage : undefined,
         releaseSha: RELEASE_SHA_RE.test(configuration.releaseSha) ? configuration.releaseSha : undefined,

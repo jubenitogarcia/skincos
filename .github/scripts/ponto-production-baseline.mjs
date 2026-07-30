@@ -33,6 +33,30 @@ const validate = (baseline) => {
   }
   assert(UUID.test(baseline.surfaces?.crmPages?.deploymentId), "Pages baseline deployment is invalid");
   assert(SHA.test(baseline.surfaces?.crmPages?.commitHash), "Pages baseline commit hash is invalid");
+  assert(
+    baseline.surfaces?.crmPages?.commitHash.toLowerCase() !== baseline.releaseSha.toLowerCase(),
+    "Pages baseline incumbent cannot already be the release candidate",
+  );
+  assert(
+    baseline.surfaces?.crmPages?.status === "success"
+      && baseline.surfaces?.crmPages?.latestStage?.name === "deploy"
+      && Number.isFinite(Date.parse(String(baseline.surfaces?.crmPages?.latestStage?.endedOn || "")))
+      && baseline.surfaces?.crmPages?.isSkipped === false,
+    "Pages baseline must be an unskipped completed deploy success",
+  );
+  assert(baseline.surfaces?.crmPages?.project === "skincos", "Pages baseline project is not canonical production");
+  assert(baseline.surfaces?.crmPages?.environment === "production", "Pages baseline environment is not production");
+  assert(baseline.surfaces?.crmPages?.canonical === true, "Pages baseline deployment is not canonical");
+  assert(
+    baseline.surfaces?.crmPages?.alias === "https://crm.skincos.com.br",
+    "Pages baseline canonical alias is invalid",
+  );
+  assert(
+    baseline.surfaces?.crmPages?.sourceControl?.deploymentsEnabled === false
+      && baseline.surfaces?.crmPages?.sourceControl?.productionDeploymentsEnabled === false
+      && baseline.surfaces?.crmPages?.sourceControl?.previewDeploymentSetting === "none",
+    "Pages source auto-deploy controls are not fully disabled",
+  );
   assert(/^[0-9]+$/.test(String(baseline.bootstrapCore?.workflowRunId || "")), "Core bootstrap workflow run is invalid");
   assert(/^[0-9]+$/.test(String(baseline.bootstrapCore?.artifactId || "")), "Core bootstrap artifact ID is invalid");
   assert(/^sha256:[0-9a-f]{64}$/.test(String(baseline.bootstrapCore?.artifactDigest || "")), "Core bootstrap artifact digest is invalid");
@@ -66,9 +90,9 @@ if (mode === "capture") {
   const repository = required("GITHUB_REPOSITORY");
   const accountId = required("CLOUDFLARE_ACCOUNT_ID");
   const apiToken = required("CLOUDFLARE_API_TOKEN");
-  const pagesProject = String(process.env.CLOUDFLARE_PAGES_PROJECT || "skincos");
+  const pagesProject = required("CLOUDFLARE_PAGES_PROJECT");
   assert(SHA.test(releaseSha) && /^[0-9]+$/.test(stagingRunId) && /^[0-9]+$/.test(runId) && /^[0-9]+$/.test(orchestratorRunId), "invalid baseline provenance");
-  assert(/^[0-9a-f]{32}$/.test(accountId) && pagesProject !== "skincos-staging", "invalid production Cloudflare target");
+  assert(/^[0-9a-f]{32}$/.test(accountId) && pagesProject === "skincos", "invalid production Cloudflare target");
 
   const runWranglerJson = (args) => {
     const result = spawnSync("npx", ["--yes", "wrangler@4.112.0", ...args], {
@@ -106,14 +130,35 @@ if (mode === "capture") {
     if (!response.ok || payload?.success !== true) throw new Error(`Cloudflare API returned ${response.status}`);
     return payload;
   };
-  const pagesPayload = await cloudflare(`/accounts/${accountId}/pages/projects/${encodeURIComponent(pagesProject)}/deployments`);
-  const productionPages = (pagesPayload.result || [])
-    .filter((item) => item.environment === "production")
-    .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
-  const pages = productionPages[0];
-  const pagesStatus = String(pages?.latest_stage?.status || pages?.stage?.status || "").toLowerCase();
+  const pagesPayload = await cloudflare(`/accounts/${accountId}/pages/projects/${encodeURIComponent(pagesProject)}`);
+  const project = pagesPayload.result;
+  const pages = project?.canonical_deployment;
+  const pagesStatus = String(pages?.latest_stage?.status || "").toLowerCase();
+  const pagesStageName = String(pages?.latest_stage?.name || "").toLowerCase();
+  const pagesStageEndedOn = String(pages?.latest_stage?.ended_on || "");
   const commitHash = String(pages?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase();
-  assert(UUID.test(pages?.id) && SHA.test(commitHash) && (!pagesStatus || ["success", "idle"].includes(pagesStatus)), "production Pages incumbent is not an attested successful deployment");
+  const aliases = Array.isArray(pages?.aliases) ? pages.aliases.map(value => String(value)) : [];
+  const sourceConfig = project?.source?.config;
+  const canonicalAlias = aliases.find(value =>
+    value === "https://crm.skincos.com.br" || value === "crm.skincos.com.br");
+  assert(
+    project?.name === pagesProject
+      && project?.subdomain === "skincos.pages.dev"
+      && project?.production_branch === "main"
+      && UUID.test(pages?.id)
+      && pages?.environment === "production"
+      && SHA.test(commitHash)
+      && commitHash !== releaseSha
+      && pagesStatus === "success"
+      && pagesStageName === "deploy"
+      && Number.isFinite(Date.parse(pagesStageEndedOn))
+      && pages?.is_skipped === false
+      && sourceConfig?.deployments_enabled === false
+      && sourceConfig?.production_deployments_enabled === false
+      && sourceConfig?.preview_deployment_setting === "none"
+      && Boolean(canonicalAlias),
+    "production Pages canonical deployment/provenance or source freeze is not attested",
+  );
 
   const accessHeaders = {};
   if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
@@ -191,8 +236,21 @@ if (mode === "capture") {
         deploymentId: pages.id,
         commitHash,
         createdOn: String(pages.created_on || ""),
-        status: pagesStatus || "success",
+        status: pagesStatus,
+        latestStage: {
+          name: pagesStageName,
+          endedOn: pagesStageEndedOn,
+        },
+        isSkipped: pages.is_skipped,
         project: pagesProject,
+        environment: pages.environment,
+        canonical: true,
+        alias: canonicalAlias.startsWith("https://") ? canonicalAlias : `https://${canonicalAlias}`,
+        sourceControl: {
+          deploymentsEnabled: sourceConfig.deployments_enabled,
+          productionDeploymentsEnabled: sourceConfig.production_deployments_enabled,
+          previewDeploymentSetting: sourceConfig.preview_deployment_setting,
+        },
       },
     },
     bootstrapCore,

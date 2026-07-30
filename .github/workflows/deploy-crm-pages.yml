@@ -1,5 +1,5 @@
 name: Deploy CRM (Cloudflare Pages)
-run-name: CRM Pages ${{ inputs.target }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
+run-name: CRM Pages ${{ inputs.target }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }} nonce=${{ inputs.orchestrator_nonce }}
 
 on:
   workflow_dispatch:
@@ -30,11 +30,12 @@ on:
       core_candidate_version_id: { description: "Required for Ponto staging, pilot and canary", required: false, type: string }
       identity_candidate_version_id: { description: "Required for Ponto staging, pilot and canary", required: false, type: string }
       orchestrator_run_id: { description: "Ponto coordinator correlation ID", required: false, type: string }
-      orchestrator_lease_token: { description: "Masked single-use capability issued by the Ponto coordinator", required: false, type: string }
       orchestrator_stage: { description: "Exact stage of the issuing Ponto coordinator", required: false, type: string }
+      orchestrator_issuer_run_id: { description: "Exact direct issuer run", required: false, type: string }
+      orchestrator_nonce: { description: "Non-secret per-dispatch correlation nonce", required: false, type: string }
 
 concurrency:
-  group: deploy-crm-pages-${{ inputs.target }}
+  group: ponto-surface-mutation
   cancel-in-progress: false
 
 permissions:
@@ -44,16 +45,18 @@ permissions:
 jobs:
   coordination:
     permissions:
-      actions: write
+      actions: read
+      checks: write
       contents: read
+      deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     with:
       required: ${{ inputs.release_scope == 'ponto' && inputs.target != 'preview' }}
       lease_key: pages
       stage: ${{ inputs.orchestrator_stage || inputs.target }}
+      target: ${{ inputs.target == 'staging' && 'staging' || 'production' }}
       release_sha: ${{ inputs.release_sha }}
       orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
-      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
   promotion:
     needs: coordination
     if: ${{ inputs.release_scope != 'ponto' || inputs.target == 'preview' || inputs.target == 'staging' }}
@@ -136,33 +139,78 @@ jobs:
           if-no-files-found: error
   deploy:
     needs: promotion
-    if: ${{ inputs.target != 'preview' && (inputs.release_scope != 'ponto' || inputs.target == 'staging') }}
+    if: ${{ inputs.target != 'preview' && (inputs.release_scope != 'ponto' || github.run_attempt == 1) && (inputs.release_scope != 'ponto' || inputs.target == 'staging') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: ${{ inputs.target }}
     permissions:
       contents: read
 
     steps:
+      - name: Checkout trusted Ponto custody guard
+        if: ${{ inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Revalidate the exact active coordinator before CRM Pages staging secrets or mutation
+        if: ${{ inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage || inputs.target }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-orchestrator-lease.mjs assert-active \
+            "$ORCHESTRATOR_STAGE" \
+            "$PONTO_RELEASE_SHA" \
+            "$ORCHESTRATOR_RUN_ID"
       - name: Guard Cloudflare Pages deploy
         id: guard
         env:
-          ENABLE_PROD: ${{ vars.ENABLE_CRM_PAGES_DEPLOY }}
-          ENABLE_STAGING: ${{ vars.ENABLE_CRM_PAGES_DEPLOY_STAGING }}
+          GENERAL_ENABLE_PROD: ${{ vars.ENABLE_CRM_PAGES_DEPLOY }}
+          GENERAL_ENABLE_STAGING: ${{ vars.ENABLE_CRM_PAGES_DEPLOY_STAGING }}
+          PONTO_ENABLE_PROD: ${{ vars.ENABLE_PONTO_CRM_PAGES_DEPLOY }}
+          PONTO_ENABLE_STAGING: ${{ vars.ENABLE_PONTO_CRM_PAGES_DEPLOY_STAGING }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT_PROD: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
-          PROJECT_STAGING: ${{ vars.CLOUDFLARE_PAGES_PROJECT_STAGING }}
-          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+          GENERAL_PROJECT_PROD: ${{ vars.CRM_PAGES_PROJECT }}
+          GENERAL_PROJECT_STAGING: ${{ vars.CRM_PAGES_PROJECT_STAGING }}
+          PONTO_PROJECT_PROD: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
+          PONTO_PROJECT_STAGING: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING }}
+          GENERAL_MODULE_CONTROL_PROD: ${{ vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+          GENERAL_MODULE_CONTROL_STAGING: ${{ vars.MODULE_CONTROL_STAGING_KV_ID }}
+          PONTO_MODULE_CONTROL_PROD: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          PONTO_MODULE_CONTROL_STAGING: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
           DEPLOY_TARGET: ${{ inputs.target }}
+          RELEASE_SCOPE: ${{ inputs.release_scope }}
         run: |
           set -euo pipefail
+          if [[ "$RELEASE_SCOPE" == ponto ]]; then
+            ENABLE_PROD="$PONTO_ENABLE_PROD"
+            ENABLE_STAGING="$PONTO_ENABLE_STAGING"
+            PROJECT_PROD="$PONTO_PROJECT_PROD"
+            PROJECT_STAGING="$PONTO_PROJECT_STAGING"
+            MODULE_CONTROL_PROD="$PONTO_MODULE_CONTROL_PROD"
+            MODULE_CONTROL_STAGING="$PONTO_MODULE_CONTROL_STAGING"
+          else
+            ENABLE_PROD="$GENERAL_ENABLE_PROD"
+            ENABLE_STAGING="$GENERAL_ENABLE_STAGING"
+            PROJECT_PROD="$GENERAL_PROJECT_PROD"
+            PROJECT_STAGING="$GENERAL_PROJECT_STAGING"
+            MODULE_CONTROL_PROD="$GENERAL_MODULE_CONTROL_PROD"
+            MODULE_CONTROL_STAGING="$GENERAL_MODULE_CONTROL_STAGING"
+          fi
           if [[ "$DEPLOY_TARGET" == "staging" ]]; then
             ENABLE="$ENABLE_STAGING"
-            PROJECT="${PROJECT_STAGING:-skincos-staging}"
+            PROJECT="$PROJECT_STAGING"
+            MODULE_CONTROL_KV_ID="$MODULE_CONTROL_STAGING"
             BRANCH_NAME=staging
           else
             ENABLE="$ENABLE_PROD"
-            PROJECT="${PROJECT_PROD:-skincos}"
+            PROJECT="$PROJECT_PROD"
+            MODULE_CONTROL_KV_ID="$MODULE_CONTROL_PROD"
             BRANCH_NAME=main
           fi
           if [[ "$DEPLOY_TARGET" == staging ]]; then
@@ -181,6 +229,7 @@ jobs:
           [[ "$MODULE_CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Selected Pages environment requires a valid module-control KV namespace ID.'; exit 1; }
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          echo "module_control_kv_id=$MODULE_CONTROL_KV_ID" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
       - name: Attest exact isolated Pages project and production branch
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -348,7 +397,7 @@ jobs:
           RELEASE_SCOPE: ${{ inputs.release_scope }}
           CORE_CANDIDATE_VERSION_ID: ${{ inputs.core_candidate_version_id }}
           IDENTITY_CANDIDATE_VERSION_ID: ${{ inputs.identity_candidate_version_id }}
-          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+          MODULE_CONTROL_KV_ID: ${{ steps.guard.outputs.module_control_kv_id }}
           WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/crm-pages-deploy.ndjson
         run: |
           set -euo pipefail
@@ -433,7 +482,11 @@ jobs:
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const deployment = payload?.result;
-          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          const stage = deployment?.latest_stage;
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && deployment?.is_skipped === false;
           const metadata = deployment?.deployment_trigger?.metadata || {};
           if (
             payload?.success !== true
@@ -443,7 +496,7 @@ jobs:
             || deployment?.url !== process.argv[4]
             || metadata.branch !== "staging"
             || String(metadata.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA
-            || !["success", "idle"].includes(status)
+            || !terminal
             || !(deployment?.aliases || []).includes("https://crm-staging.skincos.com.br")
           ) throw new Error("staging Pages deployment metadata or production alias differs from the exact candidate");
           NODE
@@ -514,14 +567,18 @@ jobs:
           const latest = (payload?.result || [])
             .filter(item => item?.environment === "production")
             .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0];
-          const status = String(latest?.latest_stage?.status || latest?.stage?.status || "").toLowerCase();
+          const stage = latest?.latest_stage;
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && latest?.is_skipped === false;
           if (
             payload?.success !== true
             || latest?.id !== process.argv[3]
             || latest?.project_name !== "skincos-staging"
             || latest?.deployment_trigger?.metadata?.branch !== "staging"
             || String(latest?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA
-            || status !== "success"
+            || !terminal
           ) throw new Error("staging Pages compensation lost exact ownership of the active candidate");
           NODE
           curl --fail --silent --show-error --request POST \
@@ -548,7 +605,12 @@ jobs:
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const deployment = payload?.result;
-          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          const stage = deployment?.latest_stage;
+          const status = String(stage?.status || "").toLowerCase();
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && deployment?.is_skipped === false;
           const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
             try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
           }));
@@ -559,7 +621,7 @@ jobs:
             && deployment?.environment === "production"
             && deployment?.deployment_trigger?.metadata?.branch === "staging"
             && String(deployment?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() === process.env.PAGES_STAGING_ROLLBACK_COMMIT_SHA
-            && ["success", "idle"].includes(status)
+            && terminal
             && aliasHosts.has("crm-staging.skincos.com.br")
           ) process.exit(0);
           if (["active", "queued", "waiting", "pending", "building", "initializing"].includes(status)) process.exit(2);
@@ -662,23 +724,40 @@ jobs:
 
   ponto-progressive-release:
     needs: progressive
-    if: ${{ inputs.release_scope == 'ponto' && contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
+    if: ${{ github.run_attempt == 1 && inputs.release_scope == 'ponto' && contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: production
     env:
       RELEASE_SHA: ${{ needs.progressive.outputs.source_sha }}
       TARGET: ${{ inputs.target }}
-      PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
+      PROJECT: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
     steps:
-      - name: Guard canonical Ponto Pages release
+      - name: Checkout trusted Ponto custody guard
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Revalidate the exact active coordinator before CRM Pages production secrets or mutation
         env:
-          ENABLE_CRM_PAGES_DEPLOY: ${{ vars.ENABLE_CRM_PAGES_DEPLOY }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          MODULE_CONTROL_KV_ID: ${{ vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+          GH_TOKEN: ${{ github.token }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage || inputs.target }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
         run: |
           set -euo pipefail
-          [[ "$ENABLE_CRM_PAGES_DEPLOY" == true ]] || { echo 'ENABLE_CRM_PAGES_DEPLOY must be explicitly true'; exit 1; }
+          node .github/scripts/ponto-orchestrator-lease.mjs assert-active \
+            "$ORCHESTRATOR_STAGE" \
+            "$RELEASE_SHA" \
+            "$ORCHESTRATOR_RUN_ID"
+      - name: Guard canonical Ponto Pages release
+        env:
+          ENABLE_PONTO_CRM_PAGES_DEPLOY: ${{ vars.ENABLE_PONTO_CRM_PAGES_DEPLOY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLE_PONTO_CRM_PAGES_DEPLOY" == true ]] || { echo 'ENABLE_PONTO_CRM_PAGES_DEPLOY must be explicitly true'; exit 1; }
           [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'Cloudflare credentials are required'; exit 1; }
           [[ "$MODULE_CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Production Pages module-control KV namespace ID is invalid'; exit 1; }
           [[ "$PROJECT" == skincos ]] || { echo 'Production Ponto release requires the exact skincos Pages project'; exit 1; }
@@ -768,7 +847,11 @@ jobs:
           const expected = String(process.argv[3] || "").toLowerCase();
           const target = process.argv[4];
           const latest = deployments[0];
-          const status = String(latest?.latest_stage?.status || latest?.stage?.status || "").toLowerCase();
+          const stage = latest?.latest_stage;
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && latest?.is_skipped === false;
           if (
             payload?.success !== true
             || !uuid.test(expected)
@@ -776,7 +859,7 @@ jobs:
             || latest?.project_name !== "skincos"
             || latest?.environment !== "production"
             || latest?.deployment_trigger?.metadata?.branch !== "main"
-            || status !== "success"
+            || !terminal
           ) throw new Error(`production Pages no longer equals the exact ${target} predecessor state`);
           NODE
           echo "PAGES_ROLLBACK_DEPLOYMENT_ID=$id" >> "$GITHUB_ENV"
@@ -786,7 +869,7 @@ jobs:
         env:
           CORE_CANDIDATE_VERSION_ID: ${{ inputs.core_candidate_version_id }}
           IDENTITY_CANDIDATE_VERSION_ID: ${{ inputs.identity_candidate_version_id }}
-          MODULE_CONTROL_KV_ID: ${{ vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+          MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
         run: |
           set -euo pipefail
           npm --prefix crm/console ci
@@ -883,9 +966,14 @@ jobs:
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const deployment = payload?.result;
-          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          const stage = deployment?.latest_stage;
+          const status = String(stage?.status || "").toLowerCase();
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && deployment?.is_skipped === false;
           if (payload?.success !== true || deployment?.id !== process.argv[3]) process.exit(3);
-          if (["success", "idle"].includes(status)) process.exit(0);
+          if (terminal) process.exit(0);
           if (["active", "queued", "waiting", "pending", "building", "initializing"].includes(status)) process.exit(2);
           process.exit(3);
           NODE
@@ -899,7 +987,11 @@ jobs:
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const deployment = payload?.result;
           const metadata = deployment?.deployment_trigger?.metadata || {};
-          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          const stage = deployment?.latest_stage;
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && deployment?.is_skipped === false;
           const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
             try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
           }));
@@ -910,7 +1002,7 @@ jobs:
             || deployment?.environment !== "production"
             || deployment?.url !== process.argv[4]
             || metadata.branch !== "main"
-            || !["success", "idle"].includes(status)
+            || !terminal
             || !aliasHosts.has("crm.skincos.com.br")
           ) throw new Error("production Pages control-plane identity or aliases differ");
           if (process.env.TARGET !== "rollback" && String(metadata.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA) {
@@ -990,14 +1082,18 @@ jobs:
           const latest = (payload?.result || [])
             .filter(item => item?.environment === "production")
             .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0];
-          const status = String(latest?.latest_stage?.status || latest?.stage?.status || "").toLowerCase();
+          const stage = latest?.latest_stage;
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && latest?.is_skipped === false;
           if (
             payload?.success !== true
             || latest?.id !== process.env.CANDIDATE_ID
             || latest?.project_name !== "skincos"
             || latest?.deployment_trigger?.metadata?.branch !== "main"
             || String(latest?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA
-            || status !== "success"
+            || !terminal
           ) throw new Error("Pages failure rollback lost exact ownership of the active candidate");
           NODE
           curl --fail --silent --show-error \
@@ -1044,7 +1140,12 @@ jobs:
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const deployment = payload?.result;
-          const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+          const stage = deployment?.latest_stage;
+          const status = String(stage?.status || "").toLowerCase();
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && deployment?.is_skipped === false;
           const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
             try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
           }));
@@ -1055,7 +1156,7 @@ jobs:
             && deployment?.environment === "production"
             && deployment?.deployment_trigger?.metadata?.branch === "main"
             && String(deployment?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() === process.env.INCUMBENT_COMMIT
-            && ["success", "idle"].includes(status)
+            && terminal
             && aliasHosts.has("crm.skincos.com.br")
           ) process.exit(0);
           if (["active", "queued", "waiting", "pending", "building", "initializing"].includes(status)) process.exit(2);

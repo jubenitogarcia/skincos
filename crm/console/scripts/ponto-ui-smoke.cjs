@@ -13,7 +13,9 @@
  * - complete login manually in the opened browser window
  * - the script continues automatically
  *
- * Artifacts are written to: output/playwright/
+ * Diagnostic media is disabled in CI because authenticated Ponto views may
+ * contain personal data. The session is revoked and independently rechecked
+ * before the browser closes.
  */
 
 const fs = require('fs')
@@ -94,7 +96,6 @@ async function main() {
     browser = await chromium.launch(launchOpts)
     context = await browser.newContext({
       viewport,
-      ...(fs.existsSync(storageStatePath) ? { storageState: storageStatePath } : {}),
     })
   }
 
@@ -139,9 +140,10 @@ async function main() {
         const text = await res.text()
         let json = null
         try { json = text ? JSON.parse(text) : null } catch { json = null }
-        return { ok: res.ok, status: res.status, json, text: String(text || '').slice(0, 240) }
+        const code = String(json?.error || json?.code || '').trim().toUpperCase()
+        return { ok: res.ok, status: res.status, code }
       } catch (e) {
-        return { ok: false, status: 0, json: null, text: String(e && e.message ? e.message : e).slice(0, 240) }
+        return { ok: false, status: 0, code: 'NETWORK_ERROR' }
       }
     }, { email: SMOKE_EMAIL, password: SMOKE_PASSWORD })
 
@@ -159,7 +161,7 @@ async function main() {
     await submitButton.click({ timeout: 30_000 })
 
     // Expose the API failure as context (no credentials included).
-    console.log(`[ponto-ui-smoke] API login failed: HTTP ${api.status}${api.text ? ` • ${api.text}` : ''}`)
+    console.log(`[ponto-ui-smoke] API login failed: HTTP ${api.status}${api.code ? ` • ${api.code}` : ''}`)
     return true
   }
 
@@ -170,10 +172,17 @@ async function main() {
         const text = await res.text()
         let json = null
         try { json = text ? JSON.parse(text) : null } catch { json = null }
-        const username = json?.user?.username ? String(json.user.username) : ''
-        return { ok: res.ok && !!username, status: res.status, username, text: String(text || '').slice(0, 240) }
+        const authenticated = !!json?.user?.username
+        const code = String(json?.error || json?.code || '').trim().toUpperCase()
+        const role = String(json?.user?.role || '').trim().toUpperCase()
+        const allowedModules = [...new Set(
+          (Array.isArray(json?.user?.allowedModules) ? json.user.allowedModules : [])
+            .map((value) => String(value || '').trim().toLowerCase())
+            .filter(Boolean),
+        )].sort()
+        return { ok: res.ok && authenticated, status: res.status, code, role, allowedModules }
       } catch (e) {
-        return { ok: false, status: 0, username: '', text: String(e && e.message ? e.message : e).slice(0, 240) }
+        return { ok: false, status: 0, code: 'NETWORK_ERROR', role: '', allowedModules: [] }
       }
     })
   }
@@ -196,17 +205,18 @@ async function main() {
     }
 
     const state = await authState()
-    throw new Error(`Login timeout after ${Math.ceil(timeoutMs / 1000)}s • /api/auth/me HTTP ${state.status} ${state.text ? `• ${state.text}` : ''}`)
+    throw new Error(`Login timeout after ${Math.ceil(timeoutMs / 1000)}s • /api/auth/me HTTP ${state.status}${state.code ? ` • ${state.code}` : ''}`)
   }
 
   // Tracing is extremely useful when debugging failures, but it can slow down the browser significantly.
   // Keep it opt-in for routine smoke runs.
   if (TRACE) await context.tracing.start({ screenshots: true, snapshots: true, sources: false })
 
-  const consoleLines = []
-  page.on('console', (msg) => consoleLines.push(`[${msg.type()}] ${msg.text()}`))
-  page.on('pageerror', (err) => consoleLines.push(`[pageerror] ${String((err && err.stack) || err)}`))
-
+  let sessionMayExist = false
+  let authenticatedSessionObserved = false
+  let authenticatedCookieHeader = ''
+  let primaryError = null
+  let teardownError = null
   try {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
@@ -225,7 +235,9 @@ async function main() {
 
     // We use API auth state as source of truth; UI text is prone to false-positives.
     const preAuth = await authState()
+    let authenticatedState = preAuth
     const isLogin = !preAuth.ok
+    if (preAuth.ok) sessionMayExist = true
     if (isLogin) {
       console.log('[ponto-ui-smoke] Not authenticated yet.')
       if (AUTO_LOGIN) console.log('[ponto-ui-smoke] AUTO_LOGIN enabled: attempting login.')
@@ -235,12 +247,32 @@ async function main() {
 
     if (isLogin) {
       if (AUTO_LOGIN) {
+        sessionMayExist = true
         await tryAutoLogin()
       }
-      await waitForAuthOrError(LOGIN_WAIT_MS)
+      authenticatedState = await waitForAuthOrError(LOGIN_WAIT_MS)
     }
-    // Persist auth for the next run without needing a persistent profile.
-    if (!IS_CI) await context.storageState({ path: storageStatePath }).catch(() => {})
+    sessionMayExist = true
+    authenticatedSessionObserved = true
+    const roleClass = authenticatedState.role === 'EMPLOYEE'
+      ? 'CONSULTOR'
+      : authenticatedState.role
+    if (roleClass !== 'CONSULTOR') {
+      throw new Error('Authenticated Ponto UI smoke identity is not CONSULTOR/EMPLOYEE')
+    }
+    if (
+      JSON.stringify(authenticatedState.allowedModules)
+      !== JSON.stringify(['atendimento', 'ponto'])
+    ) {
+      throw new Error('Authenticated Ponto UI smoke grants are not exactly Atendimento and Ponto')
+    }
+    const authenticatedCookies = await context.cookies(URL)
+    authenticatedCookieHeader = authenticatedCookies
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join('; ')
+    if (!authenticatedCookieHeader) {
+      throw new Error('Authenticated CRM session did not expose a revocable cookie')
+    }
     await page.waitForTimeout(1500)
     await maybeScreenshot('after-auth')
 
@@ -255,8 +287,20 @@ async function main() {
     const moduleVisible = await moduleTitle.isVisible().catch(() => false)
     if (!moduleVisible) {
       const fallbackTitle = await page.locator('header h1').first().textContent().catch(() => '')
-      console.log(`[ponto-ui-smoke] Ponto module not available (current title: ${fallbackTitle || 'unknown'}). Skipping.`)
-      return
+      throw new Error(
+        `Ponto module is not available to the authenticated smoke identity `
+        + `(current title: ${fallbackTitle || 'unknown'})`,
+      )
+    }
+    const visibleModuleKeys = await page
+      .locator('[data-module-nav="true"]')
+      .evaluateAll((nodes) => [...new Set(
+        nodes
+          .map((node) => String(node.getAttribute('data-module-key') || '').trim().toLowerCase())
+          .filter(Boolean),
+      )].sort())
+    if (JSON.stringify(visibleModuleKeys) !== JSON.stringify(['atendimento', 'ponto'])) {
+      throw new Error('CRM navigation does not expose exactly Atendimento and Ponto')
     }
 
     const buildBadge = page
@@ -285,7 +329,7 @@ async function main() {
           )
         }
       } else {
-        console.log('[ponto-ui-smoke] Build badge not present; skipping EXPECT_BUILD_SHA check.')
+        throw new Error('Build badge is absent while EXPECT_BUILD_SHA is required')
       }
     }
     await maybeScreenshot('ponto-open')
@@ -608,13 +652,76 @@ async function main() {
       }
     }
 
-    fs.writeFileSync(path.join(ARTIFACT_DIR, `ponto-ui-${stamp}-console.txt`), consoleLines.join('\n'))
     console.log('OK')
+  } catch (error) {
+    primaryError = error instanceof Error ? error : new Error(String(error))
   } finally {
+    if (sessionMayExist) {
+      const teardownFailures = []
+      try {
+        const logout = await page.evaluate(async () => {
+          try {
+            const response = await fetch('/api/auth/logout', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { accept: 'application/json' },
+            })
+            return { status: response.status }
+          } catch {
+            return { status: 0 }
+          }
+        })
+        if (logout.status < 200 || logout.status >= 300) {
+          teardownFailures.push(`logout returned HTTP ${logout.status}`)
+        }
+      } catch {
+        teardownFailures.push('logout request failed')
+      }
+
+      if (authenticatedCookieHeader) {
+        try {
+          const revoked = await fetch(new URL('/api/auth/me', URL), {
+            redirect: 'manual',
+            headers: {
+              accept: 'application/json',
+              cookie: authenticatedCookieHeader,
+            },
+          })
+          const body = await revoked.json().catch(() => null)
+          const code = String(body?.error || body?.code || '').trim().toUpperCase()
+          if (revoked.status !== 401 || body?.ok !== false || code !== 'UNAUTHORIZED') {
+            teardownFailures.push(
+              `old authenticated cookie remained usable or returned a non-canonical response (HTTP ${revoked.status})`,
+            )
+          }
+        } catch {
+          teardownFailures.push('session revocation check failed')
+        }
+      } else if (authenticatedSessionObserved) {
+        teardownFailures.push('authenticated cookie was unavailable for revocation proof')
+      }
+      if (teardownFailures.length) teardownError = new Error(teardownFailures.join('; '))
+    }
+    try {
+      await context.clearCookies()
+    } catch {
+      teardownError ||= new Error('browser cookie cleanup failed')
+    }
+    try {
+      fs.rmSync(storageStatePath, { force: true })
+    } catch {
+      teardownError ||= new Error('legacy local session-state cleanup failed')
+    }
     if (TRACE) await context.tracing.stop({ path: tracePath }).catch(() => {})
     await context.close().catch(() => {})
     if (browser) await browser.close().catch(() => {})
   }
+
+  if (primaryError && teardownError) {
+    throw new AggregateError([primaryError, teardownError], 'Ponto UI smoke and session teardown both failed')
+  }
+  if (primaryError) throw primaryError
+  if (teardownError) throw teardownError
 }
 
 main().catch((err) => {
