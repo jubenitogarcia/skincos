@@ -15,6 +15,7 @@ import { handleShareRoutes } from './routes/share.js';
 import { handleCategoriasRoutes } from './routes/categorias.js';
 import { handlePrefsRoutes } from './routes/prefs.js';
 import { handlePontoRoutes } from './routes/ponto.js';
+import { probeIdentityWorkforceContract } from '../../shared/identity-runtime/workforce-onboarding.js';
 import {
     d1ListInsumos,
     d1ListInsumosLite,
@@ -692,7 +693,7 @@ async function hmacSign(secret, data) {
     return base64UrlEncodeBytes(new Uint8Array(sig));
 }
 
-async function encodeSessionV2(sessionObj, secret) {
+export async function encodeSessionV2(sessionObj, secret) {
     const payload = base64UrlEncodeJson(sessionObj);
     const sig = await hmacSign(secret, payload);
     return `${payload}.${sig}`;
@@ -718,6 +719,64 @@ async function decodeSessionCookie(token, secret) {
     } catch {
         return null;
     }
+}
+
+async function sha256HexValue(value) {
+    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value || '')));
+    return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function issueTrackedSessionCookies({
+    env,
+    request,
+    sessionPayload,
+    sessionSecret,
+    secure,
+}) {
+    const username = String(sessionPayload?.username || '').trim();
+    if (!env?.DB?.prepare || !username || !sessionSecret) throw new Error('SESSION_INVENTORY_UNAVAILABLE');
+    const csrf = crypto.randomUUID();
+    const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    const sid = crypto.randomUUID();
+    const payload = { ...sessionPayload, sid, csrf, exp };
+    const at = new Date().toISOString();
+    try {
+        await env.DB.prepare('INSERT INTO crm_identity_sessions (id, username, session_version, device_label, user_agent_hash, ip_hash, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(
+                sid,
+                username,
+                Number(sessionPayload?.sv || 0),
+                String(request.headers.get('sec-ch-ua-platform') || '').slice(0, 80) || null,
+                await sha256HexValue(request.headers.get('user-agent')),
+                await sha256HexValue(request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for')),
+                at,
+                at,
+            )
+            .run();
+    } catch {
+        throw new Error('SESSION_INVENTORY_UNAVAILABLE');
+    }
+    const token = await encodeSessionV2(payload, sessionSecret);
+    const sameSite = secure ? 'None' : 'Lax';
+    const secureAttr = secure ? '; Secure' : '';
+    const cookieDomain = String(env.SESSION_COOKIE_DOMAIN || '').trim();
+    const domainAttr = cookieDomain ? `; Domain=${cookieDomain}` : '';
+    const headers = new Headers();
+    headers.append('Set-Cookie', `session=${token}; Path=/; HttpOnly${secureAttr}${domainAttr}; SameSite=${sameSite}; Max-Age=604800`);
+    headers.append('Set-Cookie', `csrfToken=${csrf}; Path=/${domainAttr}${secureAttr}; SameSite=${sameSite}; Max-Age=604800`);
+    return { headers, csrf, sid };
+}
+
+export async function touchTrackedSession(db, { sid, username, sessionVersion }) {
+    if (!db?.prepare) throw new Error('SESSION_INVENTORY_UNAVAILABLE');
+    const stored = await db.prepare('SELECT id FROM crm_identity_sessions WHERE id=? AND username=? AND session_version=? AND revoked_at IS NULL LIMIT 1')
+        .bind(String(sid), String(username), Number(sessionVersion || 0))
+        .first();
+    if (!stored?.id) return false;
+    await db.prepare('UPDATE crm_identity_sessions SET last_seen_at=? WHERE id=?')
+        .bind(new Date().toISOString(), String(sid))
+        .run();
+    return true;
 }
 
 function deleteAuthCookies({ secure } = {}) {
@@ -1099,9 +1158,17 @@ export default {
             );
         };
         const readBypassActive = (devBypassActive && isDevBypassPath(url.pathname)) || (auditBypassActive && isAuditBypassPath(url.pathname));
+        let sessionInventoryIssuanceUnavailable = false;
 
         const withCORS = (body, init = {}) => {
-            const res = withCORSBase(body, init, appOrigin);
+            const sessionIssuanceFailure = sessionInventoryIssuanceUnavailable && url.pathname.startsWith('/auth/');
+            const responseBody = sessionIssuanceFailure
+                ? JSON.stringify({ success: false, error: 'Inventário de sessões indisponível', code: 'SESSION_INVENTORY_UNAVAILABLE' })
+                : body;
+            const responseInit = sessionIssuanceFailure
+                ? { status: 503, headers: { 'cache-control': 'no-store' } }
+                : init;
+            const res = withCORSBase(responseBody, responseInit, appOrigin);
             res.headers.set('x-request-id', requestId);
             const durationMs = Date.now() - startedAt;
             const status = res.status || 200;
@@ -1132,7 +1199,11 @@ export default {
         }
 
         const enforceRateLimit = async (kind) => {
-            if (!env.RATE_LIMITER) return { allowed: true };
+            const securityCritical = kind === 'auth' || kind === 'password_reset';
+            if (!env.RATE_LIMITER) {
+                if (securityCritical) throw new Error('RATE_LIMITER_UNAVAILABLE');
+                return { allowed: true };
+            }
             const windowSec = 60;
             const cfg = {
                 auth: { limit: 20 },
@@ -1171,6 +1242,12 @@ export default {
                     ready,
                     service: "insumos",
                     runtime: "cloudflare-workers",
+                    version: String(env?.APP_VERSION || "unknown"),
+                    environment: String(env?.ENVIRONMENT || "unknown"),
+                    workerVersion: {
+                        id: String(env?.CF_VERSION_METADATA?.id || "") || null,
+                        tag: String(env?.CF_VERSION_METADATA?.tag || "") || null,
+                    },
                     storage: storageMode,
                     dbConfigured: d1Enabled,
                     unidades: UNIDADES,
@@ -1178,6 +1255,43 @@ export default {
                 { status: 200 },
                 appOrigin
             );
+        }
+        if (url.pathname === "/health/workforce-contract" && request.method === "GET") {
+            const releaseProbeMarker = String(request.headers.get("x-skincos-release-probe") || "").trim();
+            if (releaseProbeMarker !== "ponto-v1") {
+                return withCORS(
+                    JSON.stringify({ ok: false, ready: false, code: "NOT_FOUND" }),
+                    { status: 404, headers: { "cache-control": "no-store" } },
+                    appOrigin
+                );
+            }
+            try {
+                const data = await probeIdentityWorkforceContract(env, requestId);
+                return withCORS(
+                    JSON.stringify({
+                        ok: true,
+                        ready: true,
+                        version: String(env?.APP_VERSION || "unknown"),
+                        workerVersionId: String(env?.CF_VERSION_METADATA?.id || "") || null,
+                        data: {
+                            contract: data.contract,
+                            matched: data.matched === true,
+                        },
+                    }),
+                    { status: 200, headers: { "cache-control": "no-store" } },
+                    appOrigin
+                );
+            } catch {
+                return withCORS(
+                    JSON.stringify({
+                        ok: false,
+                        ready: false,
+                        code: "IDENTITY_WORKFORCE_CONTRACT_UNAVAILABLE",
+                    }),
+                    { status: 503, headers: { "cache-control": "no-store" } },
+                    appOrigin
+                );
+            }
         }
         if (url.pathname === "/api/metrics" || url.pathname === "/metrics") {
             return withCORS(JSON.stringify({ success: true }), { status: 200 }, appOrigin);
@@ -1223,31 +1337,39 @@ export default {
             );
         }
 
-        // Basic rate limiting (Durable Object)
+        // Authentication and password recovery fail closed when their abuse
+        // control is absent or unavailable. Lower-risk reads/writes preserve
+        // the historical availability behavior during a limiter outage.
+        const isRateLimitedMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method);
+        const authSensitive = [
+            '/auth/login',
+            '/auth/register',
+            '/auth/signup',
+            '/auth/invite/preview',
+            '/auth/password/request',
+            '/auth/password/verify',
+            '/auth/password/reset',
+        ];
+        const isAuthSensitive = authSensitive.includes(url.pathname);
+        const isPasswordRecovery = [
+            '/auth/password/request',
+            '/auth/password/verify',
+            '/auth/password/reset',
+        ].includes(url.pathname);
+        const rateLimitKind = isPasswordRecovery ? 'password_reset' : (isAuthSensitive ? 'auth' : (isRateLimitedMutation ? 'write' : 'read'));
         try {
-            const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method);
-            const authSensitive = [
-                '/auth/login',
-                '/auth/register',
-                '/auth/signup',
-                '/auth/invite/preview',
-                '/auth/password/request',
-                '/auth/password/verify',
-                '/auth/password/reset',
-            ];
-            const isAuthSensitive = authSensitive.includes(url.pathname);
-            const isPasswordRecovery = [
-                '/auth/password/request',
-                '/auth/password/verify',
-                '/auth/password/reset',
-            ].includes(url.pathname);
-            const kind = isPasswordRecovery ? 'password_reset' : (isAuthSensitive ? 'auth' : (isMutating ? 'write' : 'read'));
-            const rl = await enforceRateLimit(kind);
+            const rl = await enforceRateLimit(rateLimitKind);
             if (!rl.allowed) {
                 return withCORS(JSON.stringify({ success: false, error: 'Rate limit excedido', code: 'RATE_LIMITED' }), { status: 429 }, appOrigin);
             }
         } catch {
-            // If rate limiting fails, continue without blocking
+            if (rateLimitKind === 'auth' || rateLimitKind === 'password_reset') {
+                return withCORS(
+                    JSON.stringify({ success: false, error: 'Controle de abuso indisponível', code: 'RATE_LIMITER_UNAVAILABLE' }),
+                    { status: 503, headers: { 'cache-control': 'no-store' } },
+                    appOrigin
+                );
+            }
         }
 
         // D1-only: legacy Sheets credentials/ranges are intentionally not loaded.
@@ -1259,40 +1381,46 @@ export default {
         }
 
         const issueAuthCookies = async (sessionPayload) => {
-            const csrf = crypto.randomUUID();
-            const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
-            const sid = crypto.randomUUID();
-            const payload = { ...sessionPayload, sid, csrf, exp };
-            // Best-effort only while the additive migration rolls out. A cookie
-            // remains compatible with existing valid sessions, while all new
-            // sessions gain a durable revocation inventory.
             try {
-                const digest = async (value) => {
-                    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value || '')));
-                    return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('');
-                };
-                const at = new Date().toISOString();
-                await env.DB.prepare('INSERT INTO crm_identity_sessions (id, username, session_version, device_label, user_agent_hash, ip_hash, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-                    .bind(sid, String(sessionPayload?.username || ''), Number(sessionPayload?.sv || 0), String(request.headers.get('sec-ch-ua-platform') || '').slice(0, 80) || null, await digest(request.headers.get('user-agent')), await digest(request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for')), at, at)
-                    .run();
-            } catch { /* migration may not yet be deployed; signed session remains valid */ }
-            const token = await encodeSessionV2(payload, sessionSecret);
-
-            // Dev (http) cannot set Secure cookies; SameSite=None also requires Secure.
-            const sameSite = isSecureContext ? 'None' : 'Lax';
-            const secureAttr = isSecureContext ? '; Secure' : '';
-            const cookieDomain = String(env.SESSION_COOKIE_DOMAIN || '').trim();
-            const domainAttr = cookieDomain ? `; Domain=${cookieDomain}` : '';
-            const headers = new Headers();
-            headers.append('Set-Cookie', `session=${token}; Path=/; HttpOnly${secureAttr}${domainAttr}; SameSite=${sameSite}; Max-Age=604800`);
-            headers.append('Set-Cookie', `csrfToken=${csrf}; Path=/${domainAttr}${secureAttr}; SameSite=${sameSite}; Max-Age=604800`);
-            return { headers, csrf };
+                return await issueTrackedSessionCookies({
+                    env,
+                    request,
+                    sessionPayload,
+                    sessionSecret,
+                    secure: isSecureContext,
+                });
+            } catch {
+                sessionInventoryIssuanceUnavailable = true;
+                throw new Error('SESSION_INVENTORY_UNAVAILABLE');
+            }
         };
 
-        const session = cookies.session ? await decodeSessionCookie(cookies.session, sessionSecret) : null;
-        const sessionUsername = session?.username ? String(session.username).trim() : null;
-        const sessionVersion = Number.isFinite(Number(session?.sv)) ? Number(session.sv) : 0;
-        const sessionCsrf = session?.csrf ? String(session.csrf) : null;
+        let session = cookies.session ? await decodeSessionCookie(cookies.session, sessionSecret) : null;
+        let sessionUsername = session?.username ? String(session.username).trim() : null;
+        let sessionVersion = Number.isFinite(Number(session?.sv)) ? Number(session.sv) : 0;
+        let sessionCsrf = session?.csrf ? String(session.csrf) : null;
+        if (session?.sid && sessionUsername) {
+            let tracked = false;
+            try {
+                tracked = await touchTrackedSession(env.DB, {
+                    sid: session.sid,
+                    username: sessionUsername,
+                    sessionVersion,
+                });
+            } catch {
+                return withCORS(
+                    JSON.stringify({ success: false, error: 'Inventário de sessões indisponível', code: 'SESSION_INVENTORY_UNAVAILABLE' }),
+                    { status: 503, headers: { 'cache-control': 'no-store' } },
+                    appOrigin
+                );
+            }
+            if (!tracked) {
+                session = null;
+                sessionUsername = null;
+                sessionVersion = 0;
+                sessionCsrf = null;
+            }
+        }
         // CSRF protection for mutating calls (requires header token matching session/cookie)
         const methodUpper = (request.method || 'GET').toUpperCase();
         const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(methodUpper);
@@ -1321,17 +1449,6 @@ export default {
             const userDb = await identityD1.getUserByUsername(sessionUsername);
             if (!userDb || !userDb.ativo) return null;
             if (Number(userDb.sessionVersion || 0) !== sessionVersion) return null;
-            if (session?.sid) {
-                try {
-                    const stored = await env.DB.prepare('SELECT id FROM crm_identity_sessions WHERE id=? AND username=? AND session_version=? AND revoked_at IS NULL LIMIT 1')
-                        .bind(String(session.sid), sessionUsername, sessionVersion).first();
-                    if (!stored?.id) return null;
-                    await env.DB.prepare('UPDATE crm_identity_sessions SET last_seen_at=? WHERE id=?').bind(new Date().toISOString(), String(session.sid)).run();
-                } catch {
-                    // Do not invalidate legacy sessions just because the additive
-                    // session migration has not reached this environment.
-                }
-            }
             sessionUser = { ...userDb, role: normalizeRole(userDb.role || 'CONSULTOR') };
             return sessionUser;
         };
@@ -1462,6 +1579,13 @@ export default {
             ip,
             userAgent,
         });
+        if (sessionInventoryIssuanceUnavailable && !authResp) {
+            return withCORS(
+                JSON.stringify({ success: false, error: 'Inventário de sessões indisponível', code: 'SESSION_INVENTORY_UNAVAILABLE' }),
+                { status: 503, headers: { 'cache-control': 'no-store' } },
+                appOrigin
+            );
+        }
         if (authResp) return authResp;
 
         const adminResp = await handleAdminRoutes({

@@ -54,8 +54,12 @@ def require_true(payload: dict, key: str, context: str) -> None:
 def check_once(args: argparse.Namespace) -> str:
     proxy = fetch_json(args.base_url, "/api/ponto/_proxy-status", args.timeout, args.user_agent)
     require_true(proxy, "ok", "proxy-status")
-    require_true(proxy, "targetConfigured", "proxy-status")
-    if args.require_actor_key_configured:
+    require_true(proxy, "ready", "proxy-status")
+    # Older/admin-authenticated responses may contain additional non-secret
+    # posture. The public release probe intentionally exposes only readiness.
+    if "targetConfigured" in proxy:
+        require_true(proxy, "targetConfigured", "proxy-status")
+    if args.require_actor_key_configured and "actorKeyConfigured" in proxy:
         require_true(proxy, "actorKeyConfigured", "proxy-status")
 
     health = fetch_json(args.base_url, "/api/ponto/health", args.timeout, args.user_agent)
