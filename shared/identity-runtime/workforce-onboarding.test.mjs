@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import test from 'node:test';
 import { probeIdentityWorkforceContract, syncIdentityWorkforceOnboarding } from './workforce-onboarding.js';
 
+const testHmacKey = randomBytes(32).toString('base64url');
+
 test('Identity signs Workforce onboarding with the v2 nonce, method, path and body contract', async () => {
-  const secret = 'synthetic-identity-workforce-contract-key';
+  const secret = testHmacKey;
   const releaseSha = 'a'.repeat(40);
   const identityVersionId = '33333333-3333-4333-8333-333333333333';
   const payload = { onboardingId: 'synthetic-onboarding', accountStatus: 'ACTIVE' };
@@ -48,7 +50,7 @@ test('Identity uses a deliberate local-only version identity when Cloudflare met
   const localIdentityVersionId = '00000000-0000-4000-8000-000000000001';
   let captured;
   const env = {
-    IDENTITY_WORKFORCE_HMAC_KEY: 'synthetic-identity-workforce-contract-key',
+    IDENTITY_WORKFORCE_HMAC_KEY: testHmacKey,
     APP_VERSION: releaseSha,
     ENVIRONMENT: 'local',
     LOCAL_IDENTITY_VERSION_ID: localIdentityVersionId,
@@ -76,7 +78,7 @@ test('Identity uses a deliberate local-only version identity when Cloudflare met
 test('Identity never accepts the local version identity in a hosted environment', async () => {
   await assert.rejects(
     syncIdentityWorkforceOnboarding({
-      IDENTITY_WORKFORCE_HMAC_KEY: 'synthetic-identity-workforce-contract-key',
+      IDENTITY_WORKFORCE_HMAC_KEY: testHmacKey,
       APP_VERSION: 'a'.repeat(40),
       ENVIRONMENT: 'staging',
       LOCAL_IDENTITY_VERSION_ID: '00000000-0000-4000-8000-000000000001',
@@ -94,7 +96,7 @@ test('Identity never accepts the local version identity in a hosted environment'
 });
 
 test('Identity contract probe pins the exact Timekeeping candidate and authenticates the read-only request', async () => {
-  const secret = 'synthetic-identity-workforce-contract-key';
+  const secret = testHmacKey;
   const releaseSha = 'a'.repeat(40);
   const identityVersionId = '33333333-3333-4333-8333-333333333333';
   const timekeepingVersionId = '11111111-1111-4111-8111-111111111111';

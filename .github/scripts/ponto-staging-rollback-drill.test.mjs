@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import test from "node:test";
 
@@ -32,6 +32,7 @@ const ids = {
   },
 };
 
+const testCapabilityRoot = randomBytes(32);
 const config = {
   releaseSha: "a".repeat(40),
   runId: "12345",
@@ -39,10 +40,10 @@ const config = {
   predecessorRunId: "24680",
   repository: "skincos/skincos",
   rollbackOpenLeases: {
-    incumbent: createHmac("sha256", "test-capability-root").update("incumbent").digest("base64url"),
-    candidate: createHmac("sha256", "test-capability-root").update("candidate").digest("base64url"),
+    incumbent: createHmac("sha256", testCapabilityRoot).update("incumbent").digest("base64url"),
+    candidate: createHmac("sha256", testCapabilityRoot).update("candidate").digest("base64url"),
   },
-  releaseProbeKey: createHmac("sha256", "test-capability-root").update("probe").digest("base64url"),
+  releaseProbeKey: createHmac("sha256", testCapabilityRoot).update("probe").digest("base64url"),
   ids,
 };
 

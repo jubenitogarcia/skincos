@@ -8,10 +8,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SHA = /^[0-9a-f]{40}$/i;
 const LEASE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const WORKER_SURFACES = ["timekeeping", "identityWorkforce", "coreApi"];
-const SURFACE_TAGS = {
-  timekeeping: "timekeeping",
-  identityWorkforce: "identityWorkforce",
-  coreApi: "coreApi",
+const SURFACE_SOURCE_PATTERNS = {
+  timekeeping: /ponto:timekeeping:([0-9a-f]{40})/i,
+  identityWorkforce: /ponto:identityWorkforce:([0-9a-f]{40})/i,
+  coreApi: /ponto:coreApi:([0-9a-f]{40})/i,
 };
 
 class DrillFailure extends Error {
@@ -622,7 +622,7 @@ function createRealRuntime(config, env = process.env) {
   };
   const collectVersionShas = (value, surface, output = new Set()) => {
     if (typeof value === "string") {
-      const match = value.match(new RegExp(`ponto:${SURFACE_TAGS[surface]}:([0-9a-f]{40})`, "i"));
+      const match = value.match(SURFACE_SOURCE_PATTERNS[surface]);
       if (match) output.add(match[1].toLowerCase());
       return output;
     }
@@ -1017,6 +1017,8 @@ function createRealRuntime(config, env = process.env) {
     });
     const timestamp = String(Date.now());
     const nonce = crypto.randomBytes(32).toString("base64url");
+    // This is request canonicalization inside a keyed HMAC, not a stored
+    // password verifier. The receiver computes the same SHA-256 body digest.
     const bodyHash = digest(rawBody);
     const signature = crypto.createHmac("sha256", config.releaseProbeKey)
       .update(`ponto-release-probe/v1.${timestamp}.${nonce}.POST.${pathname}.${bodyHash}.${expected.releaseSha}`)
