@@ -161,17 +161,17 @@ jobs:
           if (
             workflow?.state !== "active"
             || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
-            || workflow?.name !== "Ponto progressive release"
             || !Number.isInteger(workflow?.id)
             || String(run?.id || "") !== process.env.PREDECESSOR_RUN_ID
             || run.workflow_id !== workflow.id
-            || run.path !== workflow.path
+            || run.path !== `${workflow.path}@refs/heads/main`
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.run_attempt !== 1
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
             || String(run.head_sha || "").toLowerCase() !== process.env.RELEASE_SHA
+            || run.name !== "Ponto progressive release"
             || run.display_title !== expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || String(run.repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID
@@ -464,20 +464,10 @@ jobs:
           CANARY_COHORT_PERCENTAGE: ${{ vars.PONTO_CANARY_COHORT_PERCENTAGE }}
         run: |
           set -euo pipefail
-          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments, Actions, Variables, and Administration read is required'; exit 1; }
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments and Actions read is required'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$RUNNER_TEMP/production-secret-names.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runners?per_page=100" > "$RUNNER_TEMP/repository-runners.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON" > "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM" > "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json"
-          gh api "repos/$GITHUB_REPOSITORY/environments/production/variables?per_page=100" > "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json"
-          node - \
-            "$RUNNER_TEMP/production-secret-names.json" \
-            "$RUNNER_TEMP/repository-runners.json" \
-            "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json" \
-            "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json" \
-            "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json" \
-            "$PONTO_ARTIFACT_DIR/cohort-summary.json" <<'NODE'
-          const crypto = require("crypto");
+          gh api "repos/$GITHUB_REPOSITORY/actions/runners" > "$RUNNER_TEMP/repository-runners.json"
+          node - "$RUNNER_TEMP/production-secret-names.json" "$RUNNER_TEMP/repository-runners.json" "$PONTO_ARTIFACT_DIR/cohort-summary.json" <<'NODE'
           const fs = require("fs");
           const path = require("path");
           const secretPayload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));

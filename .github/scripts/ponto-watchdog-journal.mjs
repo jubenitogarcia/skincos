@@ -11,20 +11,10 @@ import {
   verifyCapabilityDocument,
 } from "./ponto-orchestrator-lease.mjs";
 
-const DISPATCH_NONCE = /^[0-9a-f]{32}$/;
-const hasExactNonceTitle = (title, expectedPrefix) => {
-  if (!expectedPrefix) return false;
-  const marker = `${expectedPrefix} nonce=`;
-  const actual = String(title || "");
-  return actual.startsWith(marker)
-    && DISPATCH_NONCE.test(actual.slice(marker.length));
-};
-
 const SURFACES = Object.freeze({
   timekeeping: {
     workflowPath: ".github/workflows/deploy-timekeeping.yml",
-    titlePrefix: (stage, sha, runId) =>
-      `Timekeeping ${stage} ${sha} orchestrator=${runId}`,
+    title: (stage, sha, runId) => new RegExp(`^Timekeeping ${stage} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
     runFile: "runs/timekeeping.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-timekeeping-${stage}-${sha}`, "surfaces/timekeeping"],
@@ -33,8 +23,7 @@ const SURFACES = Object.freeze({
   },
   identityWorkforce: {
     workflowPath: ".github/workflows/deploy-core-workers.yml",
-    titlePrefix: (stage, sha, runId) =>
-      `Core inventory ${stage} ${sha} orchestrator=${runId}`,
+    title: (stage, sha, runId) => new RegExp(`^Core inventory ${stage} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
     runFile: "runs/identity.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-identity-workforce-${stage}-${sha}`, "surfaces/identity"],
@@ -43,8 +32,7 @@ const SURFACES = Object.freeze({
   },
   coreApi: {
     workflowPath: ".github/workflows/deploy-core-workers.yml",
-    titlePrefix: (stage, sha, runId) =>
-      `Core api ${stage} ${sha} orchestrator=${runId}`,
+    title: (stage, sha, runId) => new RegExp(`^Core api ${stage} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
     runFile: "runs/core.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-core-api-${stage}-${sha}`, "surfaces/core"],
@@ -53,8 +41,7 @@ const SURFACES = Object.freeze({
   },
   crmPages: {
     workflowPath: ".github/workflows/deploy-crm-pages.yml",
-    titlePrefix: (stage, sha, runId) =>
-      `CRM Pages ${stage} ${sha} orchestrator=${runId}`,
+    title: (stage, sha, runId) => new RegExp(`^CRM Pages ${stage} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
     runFile: "runs/pages.json",
     artifacts: (stage, sha) => [
       [`ponto-surface-crm-pages-${stage}-${sha}`, "surfaces/pages"],
@@ -63,8 +50,7 @@ const SURFACES = Object.freeze({
   },
   pagesEnvironmentSecrets: {
     workflowPath: ".github/workflows/cloudflare-pages-sync-ponto.yml",
-    titlePrefix: (stage, sha, runId) =>
-      `Attest CRM Pages ${stage === "staging" ? "staging" : "production"} ${sha} orchestrator=${runId}`,
+    title: (stage, sha, runId) => new RegExp(`^Attest CRM Pages ${stage === "staging" ? "staging" : "production"} ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`),
     runFile: "runs/provision-pages.json",
     artifacts: (stage, sha) => [
       [`ponto-pages-secret-attestation-${stage === "staging" ? "staging" : "production"}-${sha}`, "provisioning/pages"],
@@ -72,9 +58,9 @@ const SURFACES = Object.freeze({
   },
   stagingRollbackDrill: {
     workflowPath: ".github/workflows/ponto-staging-rollback-drill.yml",
-    titlePrefix: (stage, sha, runId) => stage === "staging"
-      ? `Ponto staging rollback drill ${sha} orchestrator=${runId}`
-      : null,
+    title: (stage, sha, runId) => stage === "staging"
+      ? new RegExp(`^Ponto staging rollback drill ${sha} orchestrator=${runId} nonce=[0-9a-f]{32}$`)
+      : /a^/,
     runFile: "runs/staging-rollback-drill.json",
     artifacts: (_stage, sha) => [
       [`ponto-staging-rollback-drill-${sha}`, "staging-rollback-drill"],
@@ -236,7 +222,7 @@ export async function reconstructWatchdogJournal({
   );
   if (
     String(coordinator?.id || "") !== String(coordinatorRunId)
-    || coordinator?.path !== ".github/workflows/ponto-progressive-release.yml"
+    || coordinator?.path !== ".github/workflows/ponto-progressive-release.yml@refs/heads/main"
     || coordinator?.event !== "workflow_dispatch"
     || coordinator?.head_branch !== "main"
     || String(coordinator?.head_sha || "").toLowerCase() !== releaseSha
@@ -377,7 +363,6 @@ export async function reconstructWatchdogJournal({
       if (
         !Number.isInteger(workflow?.id)
         || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
-        || workflow?.name !== "Ponto progressive release"
         || !["active", "disabled_manually", "disabled_inactivity"].includes(workflow?.state)
       ) throw new Error("canonical Ponto coordinator workflow is unavailable");
       coordinatorWorkflowId = workflow.id;
@@ -404,14 +389,9 @@ export async function reconstructWatchdogJournal({
   fs.mkdirSync(path.join(artifactRoot, "runs"), { recursive: true });
   for (const [surface, specification] of applicableSurfaces) {
     const saved = savedBySurface.get(surface);
-    const expectedTitlePrefix = specification.titlePrefix(
-      stage,
-      releaseSha,
-      coordinatorRunId,
-    );
     const candidates = discovered.filter((run) =>
       String(run.path || "").split("@")[0] === specification.workflowPath
-      && hasExactNonceTitle(run.display_title, expectedTitlePrefix));
+      && specification.title(stage, releaseSha, coordinatorRunId).test(String(run.display_title || "")));
     let matches = saved
       ? candidates.filter((run) => isJournalAuthorizedRun(run, [saved]))
       : [];

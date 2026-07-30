@@ -5,10 +5,7 @@ import { pathToFileURL } from "node:url";
 const TITLE = /^Ponto (preview|staging|pilot|canary|production|rollback) ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/;
 const FAILURE_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out"]);
 
-export const targetForStage = (stage) => {
-  if (stage === "preview") return null;
-  return stage === "staging" ? "staging" : "production";
-};
+export const targetForStage = (stage) => stage === "staging" ? "staging" : "production";
 
 export async function validateWatchdogContext({
   event,
@@ -59,18 +56,18 @@ export async function validateWatchdogContext({
       workflow?.state === "active"
       || /^disabled_(?:fork|inactivity|manually)$/.test(String(workflow?.state || ""))
     )
-    || workflow?.name !== "Ponto progressive release"
     || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
     || !Number.isInteger(workflow?.id)
     || run?.id !== eventRun.id
     || run?.workflow_id !== workflow.id
-    || run?.path !== workflow.path
+    || run?.path !== `${workflow.path}@refs/heads/main`
     || run?.status !== "completed"
     || !Number.isInteger(runAttempt)
     || runAttempt < 1
     || !validConclusion
     || run?.event !== "workflow_dispatch"
     || run?.head_branch !== "main"
+    || run?.name !== "Ponto progressive release"
     || run?.repository?.full_name !== repository
     || String(run?.repository?.id || "") !== String(repositoryId)
     || run?.head_repository?.full_name !== repository
@@ -95,7 +92,7 @@ export async function validateWatchdogContext({
     conclusion: run.conclusion,
     runAttempt,
     unauthorizedReplay,
-    requiresClose: stage !== "preview",
+    requiresClose: unauthorizedReplay || stage !== "preview",
     passed: true,
   };
 }
@@ -117,7 +114,7 @@ if (invokedPath === import.meta.url) {
   fs.appendFileSync(process.env.GITHUB_OUTPUT, [
     `coordinator_run_id=${context.coordinatorRunId}`,
     `stage=${context.stage}`,
-    `target=${context.target || ""}`,
+    `target=${context.target}`,
     `release_sha=${context.releaseSha}`,
     `requires_close=${context.requiresClose ? "true" : "false"}`,
     "",

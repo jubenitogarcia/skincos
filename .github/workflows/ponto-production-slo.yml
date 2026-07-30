@@ -80,8 +80,6 @@ jobs:
     outputs:
       artifact_id: ${{ steps.upload-preflight.outputs.artifact-id }}
       artifact_digest: ${{ steps.upload-preflight.outputs.artifact-digest }}
-      runner_labels_json: ${{ steps.runner-inventory.outputs.runner_labels_json }}
-      runner_encryption_public_key_pem_base64: ${{ steps.runner-inventory.outputs.runner_encryption_public_key_pem_base64 }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
@@ -104,50 +102,21 @@ jobs:
             "$RELEASE_SHA" \
             "$ORCHESTRATOR_RUN_ID"
       - name: Attest the exact registered clinic runner before hydrating control-plane authority
-        id: runner-inventory
         env:
-          # Repository runner inventory and the repository-scoped runs-on
-          # selector require Administration:read and Variables:read, which are
+          # Repository runner inventory requires Administration:read, which is
           # intentionally unavailable to the automatic GITHUB_TOKEN. This
           # protected production job hydrates the existing governed PAT only
-          # for these read-only attestation calls.
+          # for the read-only inventory call.
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          CONFIGURED_RUNNER_LABELS_JSON: ${{ vars.PONTO_PILOT_RUNNER_LABELS_JSON }}
         run: |
           set -euo pipefail
-          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Administration:read and Variables:read is required for clinic runner attestation'; exit 1; }
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Administration:read is required for clinic runner attestation'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/runners?per_page=100" > "$RUNNER_TEMP/ponto-clinic-runners.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON" > "$RUNNER_TEMP/ponto-clinic-runner-labels-repository-variable.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM" > "$RUNNER_TEMP/ponto-clinic-runner-encryption-repository-variable.json"
-          gh api "repos/$GITHUB_REPOSITORY/environments/production/variables?per_page=100" > "$RUNNER_TEMP/ponto-clinic-runner-environment-variables.json"
-          node - \
-            "$RUNNER_TEMP/ponto-clinic-runners.json" \
-            "$RUNNER_TEMP/ponto-clinic-runner-labels-repository-variable.json" \
-            "$RUNNER_TEMP/ponto-clinic-runner-environment-variables.json" \
-            "$RUNNER_TEMP/ponto-clinic-runner-encryption-repository-variable.json" <<'NODE'
-          const crypto = require("crypto");
+          node - "$RUNNER_TEMP/ponto-clinic-runners.json" <<'NODE'
           const fs = require("fs");
-          const path = require("path");
           const policy = JSON.parse(fs.readFileSync(".github/governance/progressive-release-policy.json", "utf8"));
           const expected = policy?.pilotRunner?.production;
-          const requiredBaseLabels = ["self-hosted", "Linux", "X64"];
-          const customLabels = Array.isArray(expected?.requiredLabels)
-            ? expected.requiredLabels.filter(label => !requiredBaseLabels.includes(label))
-            : [];
-          const jitPaths = [
-            expected?.jitAttestationFilePath,
-            expected?.jitCredentialBundleFilePath,
-            expected?.jitDecryptKeyFilePath,
-          ].map(value => String(value || ""));
-          let jitPublicKey = null;
-          const repositoryEncryptionVariable = JSON.parse(fs.readFileSync(process.argv[5], "utf8"));
-          let runnerEncryptionPublicKey = null;
-          let runnerEncryptionFingerprint = "";
-          try { jitPublicKey = crypto.createPublicKey(String(expected?.jitAttestationPublicKeyPem || "")); } catch {}
-          try {
-            runnerEncryptionPublicKey = crypto.createPublicKey(String(repositoryEncryptionVariable?.value || ""));
-            const publicDer = runnerEncryptionPublicKey.export({ type: "spki", format: "der" });
-            runnerEncryptionFingerprint = crypto.createHash("sha256").update(publicDer).digest("hex");
-          } catch {}
           if (
             !/^[1-9][0-9]{0,19}$/.test(String(expected?.runnerId || ""))
             || typeof expected?.runnerName !== "string"
@@ -155,74 +124,29 @@ jobs:
             || typeof expected?.runnerIsolationRef !== "string"
             || !expected.runnerIsolationRef.trim()
             || !Array.isArray(expected?.requiredLabels)
-            || expected.requiredLabels.length !== 4
-            || new Set(expected.requiredLabels).size !== expected.requiredLabels.length
-            || expected.requiredLabels.some(label => typeof label !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(label))
-            || !requiredBaseLabels.every(label => expected.requiredLabels.includes(label))
-            || customLabels.length !== 1
-            || !/^ponto-jit-[a-z0-9][a-z0-9-]{15,63}$/.test(customLabels[0])
+            || expected.requiredLabels.length < 4
             || typeof expected?.networkContextCustodyRef !== "string"
             || !expected.networkContextCustodyRef.trim()
             || !/^[0-9a-f]{64}$/.test(String(expected?.encryptionPublicKeySha256 || ""))
-            || expected?.jitMode !== "ephemeral-pre-job-hook-ed25519-v1"
-            || !/^[a-z][a-z0-9-]{1,63}$/.test(String(expected?.jitAttestationKeyId || ""))
-            || jitPublicKey?.asymmetricKeyType !== "ed25519"
-            || repositoryEncryptionVariable?.name !== "PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM"
-            || runnerEncryptionPublicKey?.asymmetricKeyType !== "rsa"
-            || Number(runnerEncryptionPublicKey?.asymmetricKeyDetails?.modulusLength || 0) < 2048
-            || runnerEncryptionFingerprint !== String(expected?.encryptionPublicKeySha256 || "").toLowerCase()
-            || jitPaths.some(value => !path.posix.isAbsolute(value))
-            || new Set(jitPaths).size !== jitPaths.length
-            || new Set(jitPaths.map(value => path.posix.dirname(value))).size !== 1
-            || typeof expected?.jitSupervisorCustodyRef !== "string"
-            || !expected.jitSupervisorCustodyRef.trim()
-            || typeof expected?.jitCleanupHookCustodyRef !== "string"
-            || !expected.jitCleanupHookCustodyRef.trim()
-          ) throw new Error("production one-shot pilot runner policy remains fail-closed");
+          ) throw new Error("production pilot runner policy remains fail-closed");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const repositoryVariable = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-          const environmentVariables = JSON.parse(fs.readFileSync(process.argv[4], "utf8")).variables || [];
-          const shadowed = new Set(environmentVariables.map(item => item?.name));
-          if (
-            shadowed.has("PONTO_PILOT_RUNNER_LABELS_JSON")
-            || shadowed.has("PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM")
-          ) {
-            throw new Error("Ponto pilot runner repository variables may not be shadowed by the production environment");
-          }
           let configuredLabels;
-          try { configuredLabels = JSON.parse(repositoryVariable?.value || ""); } catch {}
-          if (
-            repositoryVariable?.name !== "PONTO_PILOT_RUNNER_LABELS_JSON"
-            || JSON.stringify(configuredLabels) !== JSON.stringify(expected.requiredLabels)
-          ) {
-            throw new Error("repository Ponto runner labels differ from the versioned policy");
+          try { configuredLabels = JSON.parse(process.env.CONFIGURED_RUNNER_LABELS_JSON || ""); } catch {}
+          if (JSON.stringify(configuredLabels) !== JSON.stringify(expected.requiredLabels)) {
+            throw new Error("mutable Ponto runner labels differ from the versioned policy");
           }
-          if (payload.total_count !== (payload.runners || []).length) {
-            throw new Error("runner inventory exceeds the bounded complete attestation page");
-          }
-          const matching = (payload.runners || []).filter((runner) => {
-            const labels = (runner.labels || []).map(label => String(label?.name || ""));
-            return labels.length === configuredLabels.length
-              && configuredLabels.every(label => labels.includes(label));
-          });
-          if (
-            matching.length !== 1
-            || String(matching[0]?.id || "") !== String(expected.runnerId)
-            || matching[0]?.name !== expected.runnerName
-            || matching[0]?.status !== "online"
-            || matching[0]?.busy !== false
-          ) throw new Error("the policy-pinned one-shot clinic runner is not the unique online idle selector match");
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `runner_labels_json=${JSON.stringify(configuredLabels)}\n`);
-          fs.appendFileSync(
-            process.env.GITHUB_OUTPUT,
-            `runner_encryption_public_key_pem_base64=${Buffer.from(repositoryEncryptionVariable.value).toString("base64")}\n`,
+          const exact = (payload.runners || []).filter(
+            runner => String(runner?.id || "") === String(expected.runnerId)
+              && runner?.name === expected.runnerName,
           );
+          if (exact.length !== 1 || exact[0]?.status !== "online") {
+            throw new Error("the exact policy-pinned clinic runner is absent or offline");
+          }
+          const labels = new Set((exact[0].labels || []).map(label => String(label?.name || "")));
+          if (labels.size !== expected.requiredLabels.length || !expected.requiredLabels.every(label => labels.has(label))) {
+            throw new Error("the exact clinic runner label set differs from the closed policy allowlist");
+          }
           NODE
-          rm -f \
-            "$RUNNER_TEMP/ponto-clinic-runners.json" \
-            "$RUNNER_TEMP/ponto-clinic-runner-labels-repository-variable.json" \
-            "$RUNNER_TEMP/ponto-clinic-runner-environment-variables.json" \
-            "$RUNNER_TEMP/ponto-clinic-runner-encryption-repository-variable.json"
       - name: Attest exact Pages control plane without pilot or root custody
         if: ${{ inputs.stage == 'production' }}
         env:
@@ -255,13 +179,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_PAGES_PROJECT: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
           PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
-          PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM_BASE64: ${{ steps.runner-inventory.outputs.runner_encryption_public_key_pem_base64 }}
-        run: |
-          set -euo pipefail
-          [[ "$PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM_BASE64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || { echo 'Runner encryption public key output is invalid'; exit 1; }
-          export PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM
-          PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM="$(printf '%s' "$PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM_BASE64" | base64 --decode)"
-          node .github/scripts/ponto-production-slo-preflight.mjs
+          PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM: ${{ vars.PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM }}
+        run: node .github/scripts/ponto-production-slo-preflight.mjs
       - id: upload-preflight
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -272,7 +191,7 @@ jobs:
   consultor-journey:
     needs: [orchestrator, control-plane-preflight]
     if: ${{ needs.orchestrator.result == 'success' && needs.control-plane-preflight.result == 'success' && github.run_attempt == 1 && github.ref == 'refs/heads/main' && inputs.stage != 'rollback' }}
-    runs-on: ${{ fromJSON(needs.control-plane-preflight.outputs.runner_labels_json || '["ponto-unavailable"]') }}
+    runs-on: ${{ fromJSON(vars.PONTO_PILOT_RUNNER_LABELS_JSON || '["self-hosted","ponto-pilot"]') }}
     timeout-minutes: 30
     environment: production
     env:

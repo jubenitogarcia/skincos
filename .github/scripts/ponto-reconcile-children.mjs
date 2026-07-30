@@ -11,6 +11,11 @@ export const readGitHubResponse = (response) => (
   isBodylessResponseStatus(response.status) ? null : response.json()
 );
 
+export const isBodylessResponseStatus = (status) => status === 202 || status === 204;
+export const readGitHubResponse = (response) => (
+  isBodylessResponseStatus(response.status) ? null : response.json()
+);
+
 export function isCorrelatedChild(run, {
   repository,
   orchestratorRunId,
@@ -22,7 +27,9 @@ export function isCorrelatedChild(run, {
     && run?.head_branch === "main"
     && String(run?.head_sha || "").toLowerCase() === orchestratorHeadSha
     && run?.repository?.full_name === repository
-    && titleMatch?.[1] === String(orchestratorRunId)
+    && new RegExp(`orchestrator=${orchestratorRunId}(?: nonce=[0-9a-f]{32})?$`).test(
+      String(run?.display_title || ""),
+    )
     && String(run?.path || "").startsWith(".github/workflows/");
 }
 
