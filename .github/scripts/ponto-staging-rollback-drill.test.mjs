@@ -39,10 +39,9 @@ const config = {
   orchestratorRunId: "67890",
   predecessorRunId: "24680",
   repository: "skincos/skincos",
-  rollbackOpenLeases: {
-    incumbent: createHmac("sha256", testCapabilityRoot).update("incumbent").digest("base64url"),
-    candidate: createHmac("sha256", testCapabilityRoot).update("candidate").digest("base64url"),
-  },
+  repositoryId: "42",
+  incumbentDispatchNonce: "1".repeat(32),
+  candidateDispatchNonce: "2".repeat(32),
   releaseProbeKey: createHmac("sha256", testCapabilityRoot).update("probe").digest("base64url"),
   ids,
 };
@@ -74,22 +73,22 @@ const incumbentEvidence = {
   },
 };
 
-test("configuration derives the transient release-probe key and requires distinct delegated opens", () => {
+test("configuration derives the transient release-probe key without delegated child correlations", () => {
   const idempotencyKey = "staging-idempotency-root-".repeat(2);
   const env = {
     RELEASE_SHA: config.releaseSha,
     GITHUB_RUN_ID: config.runId,
     GITHUB_REPOSITORY: config.repository,
+    GITHUB_REPOSITORY_ID: config.repositoryId,
     ORCHESTRATOR_RUN_ID: config.orchestratorRunId,
     ORCHESTRATOR_STAGE: "staging",
-    ROLLBACK_INCUMBENT_OPEN_LEASE_TOKEN: config.rollbackOpenLeases.incumbent,
-    ROLLBACK_CANDIDATE_OPEN_LEASE_TOKEN: config.rollbackOpenLeases.candidate,
     STAGING_JOURNEY_RUN_ID: config.predecessorRunId,
     CLOUDFLARE_ACCOUNT_ID: "d".repeat(32),
     CLOUDFLARE_API_TOKEN: "cloudflare-token",
     GH_TOKEN: "github-token",
     PONTO_IDEMPOTENCY_KEY: idempotencyKey,
-    MODULE_CONTROL_STAGING_KV_ID: "e".repeat(32),
+    PONTO_MODULE_CONTROL_STAGING_KV_ID: "e".repeat(32),
+    PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING: "skincos-staging",
     RUNNER_TEMP: "/tmp",
     TIMEKEEPING_CANDIDATE_VERSION_ID: ids.timekeeping.candidate,
     TIMEKEEPING_INCUMBENT_VERSION_ID: ids.timekeeping.incumbent,
@@ -107,13 +106,8 @@ test("configuration derives the transient release-probe key and requires distinc
 
   assert.equal(loaded.releaseProbeKey, expected);
   assert.equal(Object.hasOwn(loaded, "idempotencyKey"), false);
-  assert.throws(
-    () => loadConfig({
-      ...env,
-      ROLLBACK_CANDIDATE_OPEN_LEASE_TOKEN: env.ROLLBACK_INCUMBENT_OPEN_LEASE_TOKEN,
-    }, ["/tmp/report.json"]),
-    /MODULE_OPEN_CAPABILITIES_INVALID/,
-  );
+  assert.equal(Object.hasOwn(loaded, "incumbentDispatchNonce"), false);
+  assert.equal(Object.hasOwn(loaded, "candidateDispatchNonce"), false);
 });
 
 test("incumbent provenance accepts heterogeneous and absent source SHAs with exact immutable identities", () => {
@@ -292,8 +286,8 @@ test("drill exercises two fresh fixtures and restores every exact candidate", as
   assert.equal(report.credentialsIncluded, false);
   assert.equal(report.piiIncluded, false);
   const serialized = JSON.stringify(report);
-  assert.equal(serialized.includes(config.rollbackOpenLeases.incumbent), false);
-  assert.equal(serialized.includes(config.rollbackOpenLeases.candidate), false);
+  assert.equal(serialized.includes(config.incumbentDispatchNonce), false);
+  assert.equal(serialized.includes(config.candidateDispatchNonce), false);
   assert.equal(serialized.includes(config.releaseProbeKey), false);
   assert.deepEqual(runtime.calls, [
     "preflight",
@@ -405,16 +399,30 @@ test("the executable and workflow retain no unimplemented hard-stop and require 
   const workflow = fs.readFileSync(new URL("../workflows/ponto-staging-rollback-drill.yml", import.meta.url), "utf8");
 
   assert.doesNotMatch(script, /authenticated-incumbent-rollback-harness-not-implemented|implemented:\s*false/);
-  assert.match(workflow, /actions:\s*write/);
+  assert.match(workflow, /actions:\s*read/);
+  assert.match(workflow, /checks:\s*write/);
   assert.match(workflow, /playwright install --with-deps chromium/);
   assert.match(workflow, /if-no-files-found:\s*error/);
   assert.match(workflow, /if:\s*always\(\)/);
-  assert.match(workflow, /rollback_incumbent_open_lease_token:[^\n]+required:\s*true/);
-  assert.match(workflow, /rollback_candidate_open_lease_token:[^\n]+required:\s*true/);
-  assert.match(script, /orchestrator_release_sha:\s*config\.releaseSha/);
-  assert.match(script, /orchestrator_lease_key:\s*delegatedCapability\.leaseKey/);
-  assert.match(script, /"incumbent-active":\s*\{[\s\S]*leaseKey:\s*"rollback-incumbent-open"/);
-  assert.match(script, /"candidate-active":\s*\{[\s\S]*leaseKey:\s*"rollback-candidate-open"/);
+  assert.match(workflow, /group:\s*ponto-surface-mutation/);
+  assert.doesNotMatch(workflow, /delegated-capability-broker:|INCUMBENT_DISPATCH_NONCE:|CANDIDATE_DISPATCH_NONCE:/);
+  assert.doesNotMatch(workflow, /rollback_(?:incumbent|candidate)_open_lease_token/i);
+  const exercise = workflow.slice(
+    workflow.indexOf("- name: Exercise exact incumbents"),
+    workflow.indexOf("- name: Upload immutable staging rollback"),
+  );
+  assert.doesNotMatch(exercise, /PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY/);
+  assert.match(script, /delete childEnv\.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY/);
+  assert.doesNotMatch(
+    script.replace(/delete childEnv\.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY;/, ""),
+    /delegatedCapability|PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY/,
+  );
+  assert.match(script, /mutation:\s*"direct-signed-drill"/);
+  assert.match(script, /module-control:timekeeping:emergency-latch/);
+  assert.match(script, /value\?\.latched !== false/);
+  assert.match(script, /const latchBefore = readEmergencyLatch\(\)/);
+  assert.match(script, /const latchAfter = readEmergencyLatch\(\)/);
+  assert.doesNotMatch(script, /createCapabilityCheck|capabilityExternalId/);
   assert.match(script, /ponto-release-probe\/v1\./);
   assert.match(script, /"x-skincos-release-probe-sig":\s*signature/);
   assert.match(script, /createHmac\("sha256", idempotencyKey\)[\s\S]*skincos\/ponto\/release-probe\/v1[\s\S]*digest\("base64url"\)/);

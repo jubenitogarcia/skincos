@@ -1,0 +1,374 @@
+name: Ponto progressive release watchdog
+run-name: Ponto watchdog source=${{ github.event.workflow_run.id }}
+
+on:
+  workflow_run:
+    workflows: ["Ponto progressive release"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  context:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      coordinator_run_id: ${{ steps.context.outputs.coordinator_run_id }}
+      stage: ${{ steps.context.outputs.stage }}
+      target: ${{ steps.context.outputs.target }}
+      release_sha: ${{ steps.context.outputs.release_sha }}
+      requires_close: ${{ steps.context.outputs.requires_close }}
+    steps:
+      - name: Checkout trusted default-branch watchdog
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Validate exact failed coordinator provenance
+        id: context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_WATCHDOG_CONTEXT_FILE: ${{ runner.temp }}/ponto-watchdog/context.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ponto-watchdog"
+          node .github/scripts/ponto-watchdog-context.mjs
+      - name: Upload sanitized watchdog context
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-watchdog-context-${{ github.event.workflow_run.id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-watchdog/context.json
+          retention-days: 90
+          if-no-files-found: error
+
+  latch:
+    needs: context
+    if: ${{ needs.context.outputs.requires_close == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: ponto-emergency-latch-${{ needs.context.outputs.target }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+    # This dedicated environment must be reviewer-free and contain only the
+    # emergency close credential contract. It must never fall back to the
+    # broad release CLOUDFLARE_API_TOKEN.
+    environment: ${{ format('ponto-emergency-{0}', needs.context.outputs.target) }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Monotonically latch Ponto closed before waiting on any mutex
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: ${{ needs.context.outputs.target }}
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
+          PONTO_EMERGENCY_LATCH_REPORT: ${{ runner.temp }}/ponto-watchdog-latch/latch.json
+        run: node .github/scripts/ponto-emergency-latch-write.mjs
+      - name: Attempt external overlay propagation before reconciliation
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_MODULE_HEALTH_URL: ${{ needs.context.outputs.target == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/ponto-watchdog-latch"
+          node - "$directory/latch.json" "$directory/overlay-expectation.json" <<'NODE'
+          const fs = require("fs");
+          const latch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: latch.changedAt,
+          })}\n`, { mode: 0o600 });
+          NODE
+          status=0
+          PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+          PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+          PONTO_MODULE_PROPAGATION_REPORT="$directory/overlay-propagation.json" \
+            node .github/scripts/ponto-module-propagation.mjs || status=$?
+          PONTO_PROPAGATION_STATUS="$status" node - \
+            "$directory/overlay-propagation.json" \
+            "$directory/overlay-propagation-attempt.json" <<'NODE'
+          const fs = require("fs");
+          const propagation = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            schemaVersion: 1,
+            passed: propagation.passed === true,
+            pendingPrimaryClose: propagation.passed !== true,
+            disposition: propagation.passed === true
+              ? "emergency-overlay-observed"
+              : "overlay-unavailable-primary-close-required",
+            lastObservedState: String(propagation.lastObserved?.state || ""),
+            probeExitStatus: Number(process.env.PONTO_PROPAGATION_STATUS),
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -f "$directory/overlay-expectation.json"
+      - name: Upload immutable latch evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-watchdog-latch-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-watchdog-latch
+          retention-days: 90
+          if-no-files-found: error
+
+  reconcile:
+    needs: [context, latch]
+    if: ${{ always() && needs.context.result == 'success' && needs.context.outputs.requires_close == 'true' && needs.latch.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: write
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Cancel, force-cancel, invalidate, and reconcile without the surface mutex
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
+          PONTO_EMERGENCY_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
+          PONTO_EMERGENCY_TARGET: ${{ needs.context.outputs.target }}
+          PONTO_EMERGENCY_REPORT: ${{ runner.temp }}/ponto-watchdog-reconciliation/reconciliation.json
+          PONTO_EMERGENCY_TIMEOUT_SECONDS: "900"
+        run: node .github/scripts/ponto-emergency-stop.mjs
+      - name: Upload immutable reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-watchdog-reconciliation-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-watchdog-reconciliation
+          retention-days: 90
+          if-no-files-found: warn
+
+  fail-close:
+    needs: [context, latch, reconcile]
+    if: ${{ always() && needs.context.result == 'success' && needs.context.outputs.requires_close == 'true' && needs.latch.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    environment: ${{ format('ponto-emergency-{0}', needs.context.outputs.target) }}
+    concurrency:
+      # A completed coordinator may have left a current mutator running. The
+      # already-true overlay remains closed while exact child reconciliation
+      # finishes and this job waits without cancelling unrelated mutations.
+      group: ponto-surface-mutation
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Write regular maintenance under the still-closed latch
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: ${{ needs.context.outputs.target }}
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
+          PONTO_EMERGENCY_MAINTENANCE_REPORT: ${{ runner.temp }}/ponto-watchdog-close/maintenance.json
+        run: node .github/scripts/ponto-emergency-maintenance-write.mjs
+      - name: Prove external fail-close through overlay or exact incumbent control
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_MODULE_HEALTH_URL: ${{ needs.context.outputs.target == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/ponto-watchdog-close"
+          node - "$directory/maintenance.json" \
+            "$directory/overlay-expectation.json" \
+            "$directory/control-fallback-expectation.json" <<'NODE'
+          const fs = require("fs");
+          const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: maintenance.latchChangedAt,
+          })}\n`, { mode: 0o600 });
+          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: maintenance.controlChangedAt,
+            source: "control",
+          })}\n`, { mode: 0o600 });
+          NODE
+          PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+          PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+          PONTO_MODULE_ALTERNATE_EXPECTATION_FILE="$directory/control-fallback-expectation.json" \
+          PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+            node .github/scripts/ponto-module-propagation.mjs
+          rm -f "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json"
+      - name: Upload immutable fail-close evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-watchdog-close-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-watchdog-close
+          retention-days: 90
+          if-no-files-found: error
+
+  rollback:
+    needs: [context, latch, reconcile, fail-close]
+    if: ${{ always() && needs.reconcile.result == 'success' && needs.fail-close.result == 'success' && contains(fromJSON('["staging","pilot","canary","production"]'), needs.context.outputs.stage) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+    environment: ${{ needs.context.outputs.target }}
+    concurrency:
+      group: ponto-surface-mutation
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Revalidate protected target environment before watchdog rollback
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_ENVIRONMENT_TARGET: ${{ needs.context.outputs.target }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for watchdog rollback protection attestation'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/environments/$PONTO_ENVIRONMENT_TARGET" \
+            > "$RUNNER_TEMP/ponto-watchdog-environment.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$PONTO_ENVIRONMENT_TARGET/deployment-branch-policies?per_page=100" \
+            > "$RUNNER_TEMP/ponto-watchdog-environment-branch-policies.json"
+          mkdir -p "$RUNNER_TEMP/ponto-watchdog-rollback/automatic-rollback"
+          node .github/scripts/ponto-environment-protection.mjs \
+            "$RUNNER_TEMP/ponto-watchdog-environment.json" \
+            "$RUNNER_TEMP/ponto-watchdog-environment-branch-policies.json" \
+            "$RUNNER_TEMP/ponto-watchdog-rollback/automatic-rollback/ponto-environment-protection.json"
+          rm -f \
+            "$RUNNER_TEMP/ponto-watchdog-environment.json" \
+            "$RUNNER_TEMP/ponto-watchdog-environment-branch-policies.json"
+      - name: Recover the coordinator journal when ordinary failure uploaded it
+        continue-on-error: true
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-recovery-journal-${{ needs.context.outputs.coordinator_run_id }}
+          path: ${{ runner.temp }}/ponto-watchdog-rollback
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.context.outputs.coordinator_run_id }}
+      - name: Download exact watchdog child reconciliation
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-watchdog-reconciliation-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-watchdog-evidence/reconciliation
+      - name: Download exact watchdog broker fail-close evidence
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-watchdog-close-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-watchdog-evidence/fail-close
+      - name: Normalize exact watchdog recovery custody for automatic rollback
+        env:
+          PONTO_RECOVERY_SOURCE_MODE: watchdog
+          PONTO_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          RELEASE_SHA: ${{ needs.context.outputs.release_sha }}
+          STAGE: ${{ needs.context.outputs.stage }}
+          PONTO_RECOVERY_TARGET: ${{ needs.context.outputs.target }}
+        run: |
+          node .github/scripts/ponto-recovery-evidence.mjs \
+            "$RUNNER_TEMP/ponto-watchdog-evidence/reconciliation/reconciliation.json" \
+            "$RUNNER_TEMP/ponto-watchdog-evidence/fail-close/maintenance.json" \
+            "$RUNNER_TEMP/ponto-watchdog-evidence/fail-close/final-propagation.json" \
+            "$RUNNER_TEMP/ponto-watchdog-rollback"
+      - name: Reconstruct exact child provenance and download immutable rollback journals
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
+          PONTO_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
+          PONTO_COORDINATOR_SHA: ${{ needs.context.outputs.release_sha }}
+          PONTO_COORDINATOR_STAGE: ${{ needs.context.outputs.stage }}
+          PONTO_RECOVERY_ARTIFACT_ROOT: ${{ runner.temp }}/ponto-watchdog-rollback
+        run: |
+          set -euo pipefail
+          mkdir -p "$PONTO_RECOVERY_ARTIFACT_ROOT"
+          node .github/scripts/ponto-watchdog-journal.mjs
+          node - "$PONTO_RECOVERY_ARTIFACT_ROOT/watchdog-journal.json" <<'NODE' |
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          for (const item of report.downloads || []) {
+            if (
+              !/^[1-9][0-9]*$/.test(item.runId)
+              || !/^[A-Za-z0-9._-]{1,200}$/.test(item.artifact)
+              || !/^[A-Za-z0-9._/-]{1,200}$/.test(item.destination)
+            ) throw new Error("unsafe artifact manifest entry");
+            process.stdout.write(`${item.runId}\t${item.artifact}\t${item.destination}\n`);
+          }
+          NODE
+          while IFS=$'\t' read -r run_id artifact destination; do
+            mkdir -p "$PONTO_RECOVERY_ARTIFACT_ROOT/$destination"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name "$artifact" --dir "$PONTO_RECOVERY_ARTIFACT_ROOT/$destination" || true
+          done
+      - name: Restore every independently attested incumbent and keep the latch true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY: ${{ secrets.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY }}
+          PONTO_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
+          RELEASE_SHA: ${{ needs.context.outputs.release_sha }}
+          STAGE: ${{ needs.context.outputs.stage }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_PAGES_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING }}
+          PRODUCTION_PAGES_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
+          STAGING_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PRODUCTION_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          case "$STAGE" in
+            staging)
+              CLOUDFLARE_PAGES_PROJECT="$STAGING_PAGES_PROJECT_RAW"
+              OPPOSITE_PAGES_PROJECT="$PRODUCTION_PAGES_PROJECT_RAW"
+              MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
+              OPPOSITE_MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            pilot|canary|production)
+              CLOUDFLARE_PAGES_PROJECT="$PRODUCTION_PAGES_PROJECT_RAW"
+              OPPOSITE_PAGES_PROJECT="$STAGING_PAGES_PROJECT_RAW"
+              MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
+              OPPOSITE_MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            *) echo 'Unsupported watchdog rollback stage'; exit 1 ;;
+          esac
+          for name in CLOUDFLARE_PAGES_PROJECT MODULE_CONTROL_KV_ID; do
+            [[ -n "${!name:-}" ]] || { echo "Missing selected watchdog rollback value: $name"; exit 1; }
+          done
+          [[ -z "${OPPOSITE_PAGES_PROJECT:-}" || "$CLOUDFLARE_PAGES_PROJECT" != "$OPPOSITE_PAGES_PROJECT" ]] || { echo 'Pages projects are not isolated'; exit 1; }
+          [[ -z "${OPPOSITE_MODULE_CONTROL_KV_ID:-}" || "$MODULE_CONTROL_KV_ID" != "$OPPOSITE_MODULE_CONTROL_KV_ID" ]] || { echo 'Module-control namespaces are not isolated'; exit 1; }
+          export CLOUDFLARE_PAGES_PROJECT MODULE_CONTROL_KV_ID
+          export PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$OPPOSITE_MODULE_CONTROL_KV_ID"
+          root="$RUNNER_TEMP/ponto-watchdog-rollback"
+          mkdir -p "$root/automatic-rollback"
+          status=0
+          node .github/scripts/ponto-automatic-rollback.mjs \
+            "$root" "$root/automatic-rollback/ponto-automatic-rollback.json" || status=$?
+          exit "$status"
+      - name: Upload immutable watchdog rollback evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-watchdog-rollback-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-watchdog-rollback
+          retention-days: 90
+          if-no-files-found: warn

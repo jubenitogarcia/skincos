@@ -20,3 +20,10 @@ paths = [
   '''^whatsapp-official-module/''',
   '''^\.config/\.semgrep/''',
 ]
+regexTarget = "secret"
+regexes = [
+  # Exact non-secret, temporary Pages fence project names captured in the
+  # Ponto replay-containment ledgers. The Cloudflare default rule otherwise
+  # mistakes these public resource names for API keys.
+  '''^skincos-ponto-fenced-(production|staging)-20260730$''',
+]

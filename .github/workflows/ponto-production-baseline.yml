@@ -1,5 +1,5 @@
 name: Ponto production baseline
-run-name: Ponto baseline ${{ inputs.release_sha }} staging=${{ inputs.staging_run_id }} orchestrator=${{ inputs.orchestrator_run_id }}
+run-name: Ponto baseline ${{ inputs.release_sha }} staging=${{ inputs.staging_run_id }} orchestrator=${{ inputs.orchestrator_run_id }} nonce=${{ inputs.orchestrator_nonce }}
 
 on:
   workflow_dispatch:
@@ -16,6 +16,18 @@ on:
         description: Pilot coordinator correlation ID
         required: true
         type: string
+      orchestrator_stage:
+        description: Exact coordinator stage bound to the single-use capability
+        required: true
+        type: string
+      orchestrator_issuer_run_id:
+        description: Exact direct issuer run
+        required: false
+        type: string
+      orchestrator_nonce:
+        description: Non-secret per-dispatch correlation nonce
+        required: false
+        type: string
 
 concurrency:
   group: ponto-production-baseline-${{ inputs.release_sha }}-${{ inputs.staging_run_id }}
@@ -26,8 +38,23 @@ permissions:
   contents: read
 
 jobs:
+  orchestrator:
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      deployments: read
+    uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    with:
+      required: true
+      lease_key: production-baseline
+      stage: ${{ inputs.orchestrator_stage }}
+      target: production
+      release_sha: ${{ inputs.release_sha }}
+      orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
   capture:
-    if: github.ref == 'refs/heads/main'
+    needs: orchestrator
+    if: ${{ needs.orchestrator.result == 'success' && github.run_attempt == 1 && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: production
     outputs:
@@ -43,8 +70,60 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: Verify immutable source and exact staging predecessor before hydrating secrets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && "$STAGING_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'Invalid baseline source/predecessor'; exit 1; }
+          [[ "$ORCHESTRATOR_STAGE" == pilot ]] || { echo 'Production baseline is valid only inside the pilot coordinator'; exit 1; }
+          [[ "$GITHUB_SHA" == "$RELEASE_SHA" ]] || { echo 'Baseline workflow revision differs'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'Baseline checkout differs'; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'Baseline SHA is not reachable from main'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-progressive-release.yml" > "$RUNNER_TEMP/staging-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_RUN_ID" > "$RUNNER_TEMP/staging-run.json"
+          node - "$RUNNER_TEMP/staging-workflow.json" "$RUNNER_TEMP/staging-run.json" <<'NODE'
+          const fs = require("fs");
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (
+            workflow.state !== "active"
+            || workflow.path !== ".github/workflows/ponto-progressive-release.yml"
+            || run.workflow_id !== workflow.id
+            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.status !== "completed"
+            || run.conclusion !== "success"
+            || run.event !== "workflow_dispatch"
+            || run.head_branch !== "main"
+            || run.head_sha !== process.env.RELEASE_SHA
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) throw new Error("baseline staging predecessor provenance is invalid");
+          NODE
+          mkdir -p "$RUNNER_TEMP/staging-evidence"
+          gh run download "$STAGING_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "ponto-release-evidence-staging-$RELEASE_SHA" --dir "$RUNNER_TEMP/staging-evidence"
+          PONTO_EXPECTED_STAGE=staging PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-release-evidence.mjs verify "$RUNNER_TEMP/staging-evidence/ponto-release-evidence.json"
+          rm -rf "$RUNNER_TEMP/staging-evidence"
+          rm -f "$RUNNER_TEMP/staging-workflow.json" "$RUNNER_TEMP/staging-run.json"
+      - name: Revalidate the exact active coordinator before production baseline secrets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-orchestrator-lease.mjs assert-active \
+            "$ORCHESTRATOR_STAGE" \
+            "$RELEASE_SHA" \
+            "$ORCHESTRATOR_RUN_ID"
       - name: Verify exact cataloged production Ponto Core bootstrap predecessor
         id: core_bootstrap
         env:
@@ -114,44 +193,16 @@ jobs:
             || live?.attestation?.activeVersionId !== process.argv[4]
           ) throw new Error("live production Ponto Core differs from the exact cataloged bootstrap predecessor");
           NODE
-          echo "bootstrap_live_attested=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "bootstrap_workflow_run_id=$run_id"
+            echo "bootstrap_artifact_id=$artifact_id"
+            echo "bootstrap_artifact_digest=$artifact_digest"
+            echo "bootstrap_source_sha=$source_sha"
+            echo "bootstrap_deployment_id=$deployment_id"
+            echo "bootstrap_version_id=$version_id"
+            echo "bootstrap_live_attested=true"
+          } >> "$GITHUB_OUTPUT"
           rm -f "$evidence_dir/artifact.zip"
-      - name: Verify immutable source and exact staging predecessor
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ inputs.release_sha }}
-          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
-        run: |
-          set -euo pipefail
-          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && "$STAGING_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'Invalid baseline source/predecessor'; exit 1; }
-          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'Baseline checkout differs'; exit 1; }
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'Baseline SHA is not reachable from main'; exit 1; }
-          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-progressive-release.yml" > "$RUNNER_TEMP/staging-workflow.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_RUN_ID" > "$RUNNER_TEMP/staging-run.json"
-          node - "$RUNNER_TEMP/staging-workflow.json" "$RUNNER_TEMP/staging-run.json" <<'NODE'
-          const fs = require("fs");
-          const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-          if (
-            workflow.state !== "active"
-            || workflow.path !== ".github/workflows/ponto-progressive-release.yml"
-            || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
-            || run.status !== "completed"
-            || run.conclusion !== "success"
-            || run.event !== "workflow_dispatch"
-            || run.head_branch !== "main"
-            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
-            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
-          ) throw new Error("baseline staging predecessor provenance is invalid");
-          NODE
-          mkdir -p "$RUNNER_TEMP/staging-evidence"
-          gh run download "$STAGING_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "ponto-release-evidence-staging-$RELEASE_SHA" --dir "$RUNNER_TEMP/staging-evidence"
-          PONTO_EXPECTED_STAGE=staging PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
-            node .github/scripts/ponto-release-evidence.mjs verify "$RUNNER_TEMP/staging-evidence/ponto-release-evidence.json"
-          rm -rf "$RUNNER_TEMP/staging-evidence"
-          rm -f "$RUNNER_TEMP/staging-workflow.json" "$RUNNER_TEMP/staging-run.json"
       - name: Capture exact incumbent control-plane identities and external maintenance health
         env:
           PONTO_BASELINE_RELEASE_SHA: ${{ inputs.release_sha }}
@@ -166,7 +217,7 @@ jobs:
           PONTO_CORE_BOOTSTRAP_LIVE_ATTESTED: ${{ steps.core_bootstrap.outputs.bootstrap_live_attested }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: node .github/scripts/ponto-production-baseline.mjs capture "$RUNNER_TEMP/ponto-production-baseline.json"

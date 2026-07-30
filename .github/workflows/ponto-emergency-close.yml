@@ -1,0 +1,122 @@
+name: Ponto emergency close
+run-name: Ponto emergency close ${{ inputs.target }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Isolated Ponto environment to close immediately
+        required: true
+        type: choice
+        options: [staging, production]
+      authorization_ref:
+        description: Opaque approved incident or change reference
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  close:
+    if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ format('ponto-emergency-{0}', inputs.target) }}
+    concurrency:
+      # This close-only path intentionally does not wait on
+      # ponto-surface-mutation. Only another brief mutation of the same
+      # monotonic latch may precede it.
+      group: ponto-emergency-latch-${{ inputs.target }}
+      # Never let an invalid later dispatch cancel a watchdog/manual writer
+      # before that writer reaches the close-only broker.
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Verify trusted one-shot emergency source and opaque authorization
+        env:
+          AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto emergency close must execute from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Historical emergency-close reruns are forbidden; dispatch a new close'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Emergency-close checkout differs from the trusted workflow revision'; exit 1; }
+          [[ "$AUTHORIZATION_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/#-]{2,119}$ ]] || { echo 'Authorization reference must be opaque'; exit 1; }
+          directory="$RUNNER_TEMP/ponto-manual-emergency-close"
+          mkdir -p "$directory"
+          umask 077
+          node - "$directory/authorization.json" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            target: process.env.TARGET,
+            emergencyRunId: process.env.GITHUB_RUN_ID,
+            sourceSha: process.env.GITHUB_SHA,
+            authorizationRefDigest: `sha256:${crypto.createHash("sha256")
+              .update(process.env.AUTHORIZATION_REF)
+              .digest("hex")}`,
+            passed: true,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Monotonically latch Ponto closed through the close-only broker
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: ${{ inputs.target }}
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ github.run_id }}
+          PONTO_EMERGENCY_LATCH_REPORT: ${{ runner.temp }}/ponto-manual-emergency-close/latch.json
+        run: node .github/scripts/ponto-emergency-latch-write.mjs
+      - name: Write maintenance under the still-closed latch through the broker
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: ${{ inputs.target }}
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ github.run_id }}
+          PONTO_EMERGENCY_MAINTENANCE_REPORT: ${{ runner.temp }}/ponto-manual-emergency-close/maintenance.json
+        run: node .github/scripts/ponto-emergency-maintenance-write.mjs
+      - name: Prove the externally observable fail-close
+        env:
+          PONTO_MODULE_HEALTH_URL: ${{ inputs.target == 'production' && 'https://api.skincos.com.br/api/ponto/health' || 'https://api-staging.skincos.com.br/api/ponto/health' }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/ponto-manual-emergency-close"
+          node - "$directory/maintenance.json" \
+            "$directory/overlay-expectation.json" \
+            "$directory/control-fallback-expectation.json" <<'NODE'
+          const fs = require("fs");
+          const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: maintenance.latchChangedAt,
+          })}\n`, { mode: 0o600 });
+          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: maintenance.controlChangedAt,
+            source: "control",
+          })}\n`, { mode: 0o600 });
+          NODE
+          PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+          PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+          PONTO_MODULE_ALTERNATE_EXPECTATION_FILE="$directory/control-fallback-expectation.json" \
+          PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+            node .github/scripts/ponto-module-propagation.mjs
+          rm -f "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json"
+      - name: Upload sanitized immutable emergency-close evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-emergency-close-${{ inputs.target }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-manual-emergency-close
+          retention-days: 90
+          if-no-files-found: error

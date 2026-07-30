@@ -10,8 +10,56 @@
     "rollback": "restore the exact previous attested Worker versions and Pages deployment through canonical publishers; migrations remain additive",
     "automaticInterruption": "a stage may not advance when error, latency, journey, cohort, route-isolation or sibling-module evidence exceeds policy; after the kill switch is externally observed, the coordinator may execute only exact compensating rollback to journaled incumbents, may not upload new code, and must attest every dispatched surface",
     "stagingRollbackDrill": "staging evidence is invalid until all four exact incumbents are exercised, compatible health is observed, all exact candidates are restored, and module-control remains maintenance",
-    "directVersionOverrideIngress": "before every pilot, canary or production mutation, an enabled zone-scoped WAF block must unconditionally reject both public API hosts when either cloudflare-workers-version-overrides or cloudflare-workers-version-key is present, and must unconditionally reject /insumos/health/workforce-contract. No cf.worker.upstream_zone exemption is allowed because an attacker-controlled Worker is still untrusted. Worker JavaScript and late transforms are defense-in-depth only; exact candidate proof is allowed only through protected Pages service bindings.",
+    "directVersionOverrideIngress": "before every pilot, canary or production mutation, the first two enabled rules in the zone-scoped custom WAF entrypoint must unconditionally block both public API hosts when either cloudflare-workers-version-overrides or cloudflare-workers-version-key is present or Cloudflare reports truncated request headers, and must unconditionally block recursively URL-decoded /insumos/health/workforce-contract path variants. The external matrix must prove plain, single-encoded, double-encoded and case-folded paths on both hosts, plus both forbidden headers and a negative control per host. No preceding skip rule and no cf.worker.upstream_zone exemption is allowed because an attacker-controlled Worker is still untrusted. Worker JavaScript and late transforms are defense-in-depth only; exact candidate proof is allowed only through protected Pages service bindings.",
     "privateCoreBootstrap": "The first governed application release must consume the exact immutable run, artifact digest, deployment, version, bindings and zero-exposure evidence cataloged for skincos-ponto-core and skincos-ponto-core-staging before any candidate mutation. The bootstrap source remains historical rollback evidence after that release; replacing this one-time predecessor requires an explicit reviewed policy decision. Mixed candidate config plus ancestral source, self-baselining, drifted incumbents and unreviewed service deletion are forbidden."
+  },
+  "emergencyBrokers": {
+    "staging": {
+      "url": null,
+      "custodyRef": null,
+      "responseKeyId": null,
+      "responsePublicKeyPem": null
+    },
+    "production": {
+      "url": null,
+      "custodyRef": null,
+      "responseKeyId": null,
+      "responsePublicKeyPem": null
+    }
+  },
+  "pilotRunner": {
+    "staging": {
+      "runnerId": null,
+      "runnerName": null,
+      "runnerIsolationRef": null,
+      "requiredLabels": null,
+      "networkContextCustodyRef": null,
+      "encryptionPublicKeySha256": null,
+      "jitMode": null,
+      "jitAttestationKeyId": null,
+      "jitAttestationPublicKeyPem": null,
+      "jitAttestationFilePath": null,
+      "jitCredentialBundleFilePath": null,
+      "jitDecryptKeyFilePath": null,
+      "jitSupervisorCustodyRef": null,
+      "jitCleanupHookCustodyRef": null
+    },
+    "production": {
+      "runnerId": null,
+      "runnerName": null,
+      "runnerIsolationRef": null,
+      "requiredLabels": null,
+      "networkContextCustodyRef": null,
+      "encryptionPublicKeySha256": null,
+      "jitMode": null,
+      "jitAttestationKeyId": null,
+      "jitAttestationPublicKeyPem": null,
+      "jitAttestationFilePath": null,
+      "jitCredentialBundleFilePath": null,
+      "jitDecryptKeyFilePath": null,
+      "jitSupervisorCustodyRef": null,
+      "jitCleanupHookCustodyRef": null
+    }
   },
   "criticalUnits": {
     "core-workers": {"featureFlag": "deployment gate ENABLE_CORE_WORKERS_DEPLOY plus module-control:timekeeping", "killSwitch": "module-control:timekeeping=maintenance or disabled for Ponto traffic", "rollback": "pre-pilot attested route-isolated Ponto Core and Identity/Inventory versions through deploy-core-workers.yml", "pilotCanary": "Ponto never split-deploys the shared skincos-api Worker. The private no-route skincos-ponto-core candidate is pinned to exact Timekeeping and remains at 0 percent default traffic for pilot and canary; Pages selects it only through an internal service binding for the conjunctively authorized cohort. Shared Core versions plus Finance and Inventory probes must remain unchanged. Identity/Inventory stays at 0 percent default traffic and its candidate contract is probed only through a protected internal binding."},

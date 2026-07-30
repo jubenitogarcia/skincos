@@ -5,20 +5,24 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch: {}
 
+concurrency:
+  group: ponto-surface-mutation
+  cancel-in-progress: false
+
 permissions:
   contents: read
-  actions: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Guard Cloudflare credentials + Escala secret
         id: guard
         env:
           TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+          PROJECT: ${{ vars.CRM_PAGES_PROJECT }}
           ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
         run: |
           set -euo pipefail
@@ -109,17 +113,3 @@ jobs:
             raise SystemExit(f"Escala env vars ausentes em: {', '.join(missing)}")
           print("ESCALA_ACTOR_HMAC_KEY presente em production/preview.")
           PY
-
-      - name: Force redeploy CRM Pages (apply escala secret)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
-        with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: "deploy-crm-pages-reconcile.yml",
-              ref: "main",
-              inputs: { force: "true" },
-            })
-            core.info("Dispatched deploy-crm-pages-reconcile.yml with force=true")

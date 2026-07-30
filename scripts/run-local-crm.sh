@@ -927,7 +927,7 @@ start_timekeeping_local() {
       --persist-to "$CRM_TIMEKEEPING_PERSIST_DIR"
   ) >>"$LOG_FILE" 2>&1
 
-  local control_payload
+  local control_payload emergency_latch_payload
   control_payload="$(PONTO_RELEASE_SHA="$CRM_TIMEKEEPING_RELEASE_SHA" node -e '
     process.stdout.write(JSON.stringify({
       schemaVersion: 2,
@@ -939,9 +939,23 @@ start_timekeeping_local() {
       releaseSha: process.env.PONTO_RELEASE_SHA,
     }))
   ')"
-  echo "[crm-local] Gravando module-control:timekeeping=active apenas no KV local privado..."
+  emergency_latch_payload="$(node -e '
+    process.stdout.write(JSON.stringify({
+      schemaVersion: 1,
+      module: "timekeeping",
+      target: "local",
+      latched: false,
+      changedAt: new Date().toISOString(),
+      changedBy: "crm-local-launcher",
+      syntheticLocalOnly: true,
+    }))
+  ')"
+  echo "[crm-local] Gravando controle e overlay explícitos apenas no KV local privado..."
   (
     cd "$TIMEKEEPING_DIR"
+    ./node_modules/.bin/wrangler kv key put "module-control:timekeeping:emergency-latch" "$emergency_latch_payload" \
+      --binding MODULE_CONTROL --local --persist-to "$CRM_TIMEKEEPING_PERSIST_DIR" \
+      --config=wrangler.toml
     ./node_modules/.bin/wrangler kv key put "module-control:timekeeping" "$control_payload" \
       --binding MODULE_CONTROL --local --persist-to "$CRM_TIMEKEEPING_PERSIST_DIR" \
       --config=wrangler.toml

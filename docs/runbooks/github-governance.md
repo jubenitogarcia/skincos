@@ -6,7 +6,14 @@
 - `.github/governance/rulesets/main-enterprise-baseline.json` é o payload canônico da ruleset da `main`.
 - `.github/governance/environments/{staging,production}.json` são os payloads dos environments; segredos não são versionados.
 
-Os arquivos representam a baseline ativa em 2026-07-23: bloqueio de force-push e exclusão, PR obrigatória, resolução de conversas e checks de CI. A aprovação obrigatória por CODEOWNER permanece desativada porque há apenas um owner humano; ativá-la antes de haver um revisor independente bloquearia o desenvolvimento sem aumentar a segregação real.
+Os arquivos representam a baseline histórica de 2026-07-23: bloqueio de
+force-push e exclusão, PR obrigatória, resolução de conversas e checks de CI.
+A aprovação obrigatória por CODEOWNER permanece desativada porque há apenas um
+owner humano; ativá-la antes de haver um revisor independente bloquearia o
+desenvolvimento sem aumentar a segregação real. Os payloads de environment com
+`reviewers: []` não satisfazem a governança de Ponto e não devem ser reaplicados
+até uma identidade ou equipe revisora independente ser explicitamente
+designada e revisada.
 
 ## Pré-checagem
 
@@ -17,6 +24,10 @@ node .github/scripts/validate-github-governance.mjs
 gh api repos/jubenitogarcia/skincos/actions/permissions
 gh api repos/jubenitogarcia/skincos/rulesets
 gh api repos/jubenitogarcia/skincos/environments
+gh api repos/jubenitogarcia/skincos/environments/staging
+gh api "repos/jubenitogarcia/skincos/environments/staging/deployment-branch-policies?per_page=100"
+gh api repos/jubenitogarcia/skincos/environments/production
+gh api "repos/jubenitogarcia/skincos/environments/production/deployment-branch-policies?per_page=100"
 ```
 
 Todo `uses:` externo deve apontar para SHA completo de 40 caracteres. Referências locais (`./`) são permitidas. Tags, branches e SHAs curtos bloqueiam CI e não podem ser promovidos à `main`.
@@ -32,7 +43,15 @@ gh api --method PUT repos/jubenitogarcia/skincos/environments/staging --input .g
 gh api --method PUT repos/jubenitogarcia/skincos/environments/production --input .github/governance/environments/production.json
 ```
 
-Depois, confirme que staging e produção aceitam somente branches protegidas, que secrets têm nomes e valores distintos por environment, e que nenhuma credencial de produção existe em staging. Nunca registre valores de secrets em Git, logs ou PRs.
+Para Ponto, não execute os dois `PUT` de environment acima enquanto os
+payloads ainda tiverem `reviewers: []`. O aceite remoto é mais estrito que
+"branch protegida": `deployment_branch_policy` deve usar custom policies e a
+listagem deve conter exatamente uma policy `main`; `can_admins_bypass` deve ser
+`false`; a regra `required_reviewers` deve conter reviewer independente e
+`prevent_self_review=true`. A ausência de qualquer atributo mantém a release
+fail-closed. Depois, confirme também que secrets têm a custódia por environment
+documentada e que nenhuma credencial de produção existe em staging. Nunca
+registre valores de secrets em Git, logs ou PRs.
 
 ## Exigir SHA completo para Actions
 

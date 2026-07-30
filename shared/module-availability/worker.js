@@ -1,4 +1,5 @@
 const CONTROL_KEY_PREFIX = 'module-control:';
+export const TIMEKEEPING_EMERGENCY_LATCH_KEY = 'module-control:timekeeping:emergency-latch';
 const VALID_STATES = new Set(['active', 'canary', 'maintenance', 'disabled']);
 const MAX_CANARY_ACTORS = 100;
 const MAX_CANARY_UNITS = 20;
@@ -6,6 +7,7 @@ const MAX_CANARY_EMPLOYEES = 100;
 const MAX_CANARY_IDENTITIES = 100;
 const MAX_CANARY_NETWORK_CONTEXTS = 20;
 const VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TIMEKEEPING_RUNTIME_TARGETS = new Set(['staging', 'production', 'local']);
 
 const list = (value, max) => Array.isArray(value)
   ? Array.from(new Set(value.map(String).map((item) => item.trim()).filter(Boolean))).slice(0, max)
@@ -53,14 +55,89 @@ function normalize(value) {
   };
 }
 
-function fallbackAvailability(state, source, message) {
+function fallbackAvailability(state, source, message, extra = {}) {
   return {
     ...normalize({
       state,
       message: state === 'active' ? '' : message,
+      ...extra,
     }),
     source,
   };
+}
+
+function validTimekeepingEmergencyLatch(value) {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && value.schemaVersion === 1
+    && value.module === 'timekeeping'
+    && typeof value.latched === 'boolean'
+    && Number.isFinite(Date.parse(String(value.changedAt || '')))
+    && String(value.changedBy || '').trim(),
+  );
+}
+
+async function requireOpenTimekeepingEmergencyLatch(store, runtimeTarget) {
+  const expectedTarget = String(runtimeTarget || '').trim().toLowerCase();
+  if (!TIMEKEEPING_RUNTIME_TARGETS.has(expectedTarget)) {
+    return fallbackAvailability(
+      'maintenance',
+      'emergency-latch-runtime-target-invalid',
+      'Ambiente da parada de emergência inválido.',
+    );
+  }
+  let latch;
+  try {
+    latch = await store.get(TIMEKEEPING_EMERGENCY_LATCH_KEY, 'json');
+  } catch {
+    return fallbackAvailability(
+      'maintenance',
+      'emergency-latch-unavailable',
+      'Parada de emergência temporariamente indisponível.',
+    );
+  }
+  if (latch === null || latch === undefined) {
+    return fallbackAvailability(
+      'maintenance',
+      'emergency-latch-missing',
+      'Parada de emergência não configurada.',
+    );
+  }
+  if (!validTimekeepingEmergencyLatch(latch)) {
+    return fallbackAvailability(
+      'maintenance',
+      'emergency-latch-malformed',
+      'Parada de emergência inválida.',
+    );
+  }
+  const latchTarget = typeof latch.target === 'string'
+    ? latch.target.trim().toLowerCase()
+    : '';
+  if (!TIMEKEEPING_RUNTIME_TARGETS.has(latchTarget)) {
+    return fallbackAvailability(
+      'maintenance',
+      'emergency-latch-target-malformed',
+      'Destino da parada de emergência inválido.',
+    );
+  }
+  if (latchTarget !== expectedTarget) {
+    return fallbackAvailability(
+      'maintenance',
+      'emergency-latch-target-mismatch',
+      'Parada de emergência pertence a outro ambiente.',
+    );
+  }
+  if (latch.latched) {
+    return fallbackAvailability(
+      'maintenance',
+      'emergency-latch-active',
+      'Ponto interrompido por parada de emergência.',
+      { changedAt: latch.changedAt },
+    );
+  }
+  return null;
 }
 
 /**
@@ -73,12 +150,17 @@ function fallbackAvailability(state, source, message) {
 export async function readModuleAvailability(env, moduleId, {
   missingState = 'active',
   malformedState = 'active',
+  runtimeTarget = env?.ENVIRONMENT,
 } = {}) {
   const safeMissingState = stateOr(missingState, 'active');
   const safeMalformedState = stateOr(malformedState, 'maintenance');
   const store = env?.MODULE_CONTROL;
   if (!store || typeof store.get !== 'function') {
     return fallbackAvailability(safeMissingState, 'binding-missing', 'Controle operacional não configurado.');
+  }
+  if (moduleId === 'timekeeping') {
+    const emergencyLatch = await requireOpenTimekeepingEmergencyLatch(store, runtimeTarget);
+    if (emergencyLatch) return emergencyLatch;
   }
   try {
     const raw = await store.get(`${CONTROL_KEY_PREFIX}${moduleId}`, 'json');

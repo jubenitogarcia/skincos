@@ -12,61 +12,85 @@ on:
       stage:
         required: true
         type: string
+      target:
+        required: true
+        type: string
       release_sha:
         required: true
         type: string
       orchestrator_run_id:
         required: false
         type: string
-      orchestrator_lease_token:
-        required: false
-        type: string
-
 permissions:
-  actions: write
+  actions: read
+  checks: write
   contents: read
+  deployments: read
 
 jobs:
   consume:
     runs-on: ubuntu-latest
     steps:
+      - name: Refuse replayed governed invocation
+        if: ${{ inputs.required }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Governed Ponto capabilities cannot be consumed from a workflow rerun'; exit 1; }
       - name: Allow only explicitly non-Ponto or preview publishers without a lease
         if: ${{ !inputs.required }}
         run: echo "Single-use Ponto orchestrator capability is not required for this invocation."
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         if: ${{ inputs.required }}
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
-      - name: Download exact lease issued by the active coordinator
+      - name: Refuse candidate-controlled gate code
         if: ${{ inputs.required }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
-          LEASE_KEY: ${{ inputs.lease_key }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
-          [[ "$ORCHESTRATOR_RUN_ID" =~ ^[0-9]+$ && "$LEASE_KEY" =~ ^[a-z][a-z0-9-]{1,63}$ ]] || { echo 'Ponto orchestrator lease identity is invalid'; exit 1; }
-          mkdir -p "$RUNNER_TEMP/ponto-orchestrator-lease"
-          gh run download "$ORCHESTRATOR_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name "ponto-orchestrator-lease-$ORCHESTRATOR_RUN_ID-$LEASE_KEY" \
-            --dir "$RUNNER_TEMP/ponto-orchestrator-lease"
-      - name: Validate and atomically consume the exact coordinator capability
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Ponto release SHA is invalid'; exit 1; }
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto gate must execute from main'; exit 1; }
+          [[ "$GITHUB_SHA" == "$RELEASE_SHA" ]] || { echo 'Ponto gate source differs from the coordinator SHA'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Ponto gate checkout is not the trusted workflow revision'; exit 1; }
+      - name: Revalidate protected target environment before consuming authority
         if: ${{ inputs.required }}
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ENVIRONMENT_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          [[ "$PONTO_ENVIRONMENT_TARGET" == staging || "$PONTO_ENVIRONMENT_TARGET" == production ]] || {
+            echo 'Governed Ponto capability target must be staging or production'
+            exit 1
+          }
+          gh api "repos/$GITHUB_REPOSITORY/environments/$PONTO_ENVIRONMENT_TARGET" \
+            > "$RUNNER_TEMP/ponto-environment.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$PONTO_ENVIRONMENT_TARGET/deployment-branch-policies?per_page=100" \
+            > "$RUNNER_TEMP/ponto-environment-branch-policies.json"
+          node .github/scripts/ponto-environment-protection.mjs \
+            "$RUNNER_TEMP/ponto-environment.json" \
+            "$RUNNER_TEMP/ponto-environment-branch-policies.json" \
+            "$RUNNER_TEMP/ponto-environment-protection.json"
+          rm -f \
+            "$RUNNER_TEMP/ponto-environment.json" \
+            "$RUNNER_TEMP/ponto-environment-branch-policies.json"
+      - name: Validate, transition, and confirm the exact child-bound coordinator capability
+        if: ${{ inputs.required }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
           LEASE_KEY: ${{ inputs.lease_key }}
           ORCHESTRATOR_STAGE: ${{ inputs.stage }}
+          ORCHESTRATOR_TARGET: ${{ inputs.target }}
           RELEASE_SHA: ${{ inputs.release_sha }}
           ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
-          ORCHESTRATOR_LEASE_TOKEN: ${{ inputs.orchestrator_lease_token }}
         run: |
           set -euo pipefail
-          echo "::add-mask::$ORCHESTRATOR_LEASE_TOKEN"
-          node .github/scripts/ponto-orchestrator-lease.mjs consume \
-            "$RUNNER_TEMP/ponto-orchestrator-lease/$LEASE_KEY.json" \
+          node .github/scripts/ponto-orchestrator-lease.mjs consume-check \
             "$LEASE_KEY" \
             "$ORCHESTRATOR_STAGE" \
+            "$ORCHESTRATOR_TARGET" \
             "$RELEASE_SHA" \
-            "$ORCHESTRATOR_RUN_ID" \
-            "$ORCHESTRATOR_LEASE_TOKEN"
+            "$ORCHESTRATOR_RUN_ID"

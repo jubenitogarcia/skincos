@@ -15,8 +15,8 @@ const expectedDescriptions = {
   contract: "ponto-release-block-public-workforce-contract-v1",
 };
 const expectedExpressions = {
-  header: '(http.host in {"api.skincos.com.br" "api-staging.skincos.com.br"} and (any(lower(http.request.headers.names[*])[*] eq "cloudflare-workers-version-overrides") or any(lower(http.request.headers.names[*])[*] eq "cloudflare-workers-version-key")))',
-  contract: '(http.host in {"api.skincos.com.br" "api-staging.skincos.com.br"} and lower(http.request.uri.path) eq "/insumos/health/workforce-contract")',
+  header: '(http.host in {"api.skincos.com.br" "api-staging.skincos.com.br"} and (http.request.headers.truncated or has_key(http.request.headers, "cloudflare-workers-version-overrides") or has_key(http.request.headers, "cloudflare-workers-version-key")))',
+  contract: '(http.host in {"api.skincos.com.br" "api-staging.skincos.com.br"} and lower(url_decode(http.request.uri.path, "r")) eq "/insumos/health/workforce-contract")',
 };
 
 if (!rulesetFile || !reportFile) throw new Error("ruleset and report paths are required");
@@ -39,7 +39,6 @@ if (String(payload.result.id || "").toLowerCase() !== expectedRulesetId) {
 const rules = Array.isArray(payload.result.rules) ? payload.result.rules : [];
 const normalizeExpression = value => String(value || "")
   .trim()
-  .toLowerCase()
   .replace(/\s+/g, " ");
 const exactRule = (id, description, expression) => {
   const matches = rules.filter(rule => String(rule?.id || "").toLowerCase() === id);
@@ -59,6 +58,12 @@ const exactRule = (id, description, expression) => {
 };
 const headerRule = exactRule(expectedHeaderRuleId, expectedDescriptions.header, expectedExpressions.header);
 const contractRule = exactRule(expectedContractRuleId, expectedDescriptions.contract, expectedExpressions.contract);
+if (
+  String(rules[0]?.id || "").toLowerCase() !== headerRule.id
+  || String(rules[1]?.id || "").toLowerCase() !== contractRule.id
+) {
+  throw new Error("Ponto WAF block rules must be the first two custom rules before any skip");
+}
 
 const probes = [];
 for (const host of allowedHosts) {
@@ -120,6 +125,31 @@ for (const host of allowedHosts) {
     passed,
   });
   if (!passed) throw new Error(`direct workforce contract path was not blocked on ${host}`);
+  for (const pathname of [
+    "/%69nsumos/health/workforce-contract",
+    "/%2569nsumos/health/workforce-contract",
+    "/INSUMOS/HEALTH/WORKFORCE-CONTRACT",
+  ]) {
+    const variant = await fetch(`https://${host}${pathname}?edge_guard_variant=${Date.now()}`, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+      headers: {
+        accept: "application/json",
+        "x-skincos-release-probe": "ponto-v1",
+      },
+    });
+    const variantPassed = variant.status === 403
+      && Boolean(variant.headers.get("cf-ray"))
+      && String(variant.headers.get("server") || "").toLowerCase() === "cloudflare";
+    probes.push({
+      host,
+      path: pathname,
+      status: variant.status,
+      cloudflareRayPresent: Boolean(variant.headers.get("cf-ray")),
+      passed: variantPassed,
+    });
+    if (!variantPassed) throw new Error(`direct workforce contract variant was not blocked on ${host}: ${pathname}`);
+  }
 }
 
 const ruleIds = [...new Set([headerRule.id, contractRule.id])];
@@ -137,7 +167,10 @@ const summary = {
   unconditional: true,
   upstreamZoneExemption: false,
   blockedHeaders: ["cloudflare-workers-version-overrides", "cloudflare-workers-version-key"],
+  blocksTruncatedHeaders: true,
   blockedPath: "/insumos/health/workforce-contract",
+  recursivelyDecodesBlockedPath: true,
+  firstRuleIds: rules.slice(0, 2).map(rule => String(rule.id || "").toLowerCase()),
   hosts: allowedHosts,
   probes,
   passed: probes.every(probe => probe.passed),

@@ -2,9 +2,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { consumeJitCredentials } from "./ponto-jit-credential-attestation.mjs";
+import { isTerminalPagesDeployment } from "./ponto-rollback-ownership.mjs";
 
-const pilotLogin = String(process.env.PONTO_PILOT_LOGIN || "");
-const pilotPassword = String(process.env.PONTO_PILOT_PASSWORD || "");
+let pilotLogin = "";
+let pilotPassword = "";
 const reportFile = String(process.env.PONTO_RELEASE_SLO_REPORT || "");
 const expectedSha = String(process.env.PONTO_RELEASE_SHA || "").trim().toLowerCase();
 const expectedStage = String(process.env.PONTO_RELEASE_STAGE || "").trim().toLowerCase();
@@ -14,7 +16,11 @@ const expectedIdentityVersionId = String(process.env.PONTO_EXPECTED_IDENTITY_VER
 const expectedPagesDeploymentId = String(process.env.PONTO_EXPECTED_PAGES_DEPLOYMENT_ID || "").trim().toLowerCase();
 const cloudflareAccountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim().toLowerCase();
 const cloudflareApiToken = String(process.env.CLOUDFLARE_API_TOKEN || "").trim();
-const pagesProject = String(process.env.CLOUDFLARE_PAGES_PROJECT || "skincos").trim();
+const pagesProject = String(process.env.CLOUDFLARE_PAGES_PROJECT || "").trim();
+const controlPlaneAttestationFile = String(process.env.PONTO_SLO_CONTROL_PLANE_ATTESTATION || "").trim();
+const releaseProbeCapabilityFile = String(process.env.PONTO_RELEASE_PROBE_CAPABILITY || "").trim();
+const orchestratorRunId = String(process.env.PONTO_ORCHESTRATOR_RUN_ID || "").trim();
+const workflowRunId = String(process.env.GITHUB_RUN_ID || "").trim();
 const base = new URL(String(process.env.PONTO_RELEASE_CRM_URL || "https://crm.skincos.com.br"));
 const identityBase = new URL(String(process.env.PONTO_RELEASE_IDENTITY_URL || "https://api.skincos.com.br"));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -27,11 +33,9 @@ const policy = {
 if ([base, identityBase].some((url) => url.protocol !== "https:" || url.username || url.password || url.search || url.hash)) throw new Error("invalid release origin");
 if (!/^[0-9a-f]{40}$/.test(expectedSha) || !policy[expectedStage]) throw new Error("invalid release identity");
 if (!reportFile) throw new Error("PONTO_RELEASE_SLO_REPORT is required");
+if (pagesProject !== "skincos") throw new Error("Ponto production Pages project custody is invalid");
 if (![expectedCoreVersionId, expectedTimekeepingVersionId, expectedIdentityVersionId, expectedPagesDeploymentId].every((value) => UUID.test(value))) {
   throw new Error("expected immutable surface version IDs are required");
-}
-if (expectedStage !== "rollback" && (!pilotLogin.includes("@") || pilotPassword.length < 12)) {
-  throw new Error("pilot credential secrets are invalid");
 }
 
 const testOverridesRequested = Boolean(
@@ -41,6 +45,10 @@ const testOverridesRequested = Boolean(
 );
 const testModeAllowed = process.env.PONTO_SLO_TEST_MODE === "true" && process.env.GITHUB_ACTIONS !== "true";
 if (testOverridesRequested && !testModeAllowed) throw new Error("SLO test overrides are forbidden in GitHub Actions and production mode");
+const runnerPolicyDocument = testModeAllowed && process.env.PONTO_SLO_TEST_RUNNER_POLICY_JSON
+  ? JSON.parse(process.env.PONTO_SLO_TEST_RUNNER_POLICY_JSON)
+  : JSON.parse(fs.readFileSync(path.resolve(".github/governance/progressive-release-policy.json"), "utf8"));
+const runnerPolicy = runnerPolicyDocument?.pilotRunner?.production;
 const selectedPolicy = {
   ...policy[expectedStage],
   ...(testModeAllowed && testOverridesRequested ? {
@@ -51,10 +59,12 @@ const selectedPolicy = {
 };
 let pagesControlPlaneMatched = false;
 let pagesControlPlaneCommitSha = "";
+let pagesControlPlaneDigest = "";
 if (testModeAllowed) {
   pagesControlPlaneMatched = true;
   pagesControlPlaneCommitSha = expectedSha;
-} else {
+  pagesControlPlaneDigest = crypto.createHash("sha256").update(`test:${expectedSha}`).digest("hex");
+} else if (expectedStage === "rollback") {
   if (!/^[0-9a-f]{32}$/.test(cloudflareAccountId) || !cloudflareApiToken || pagesProject !== "skincos") {
     throw new Error("production Pages control-plane custody is unavailable");
   }
@@ -72,7 +82,6 @@ if (testModeAllowed) {
   const payload = await response.json().catch(() => null);
   const deployment = payload?.result;
   const metadata = deployment?.deployment_trigger?.metadata || {};
-  const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
   const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
     try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
   }));
@@ -83,16 +92,102 @@ if (testModeAllowed) {
     && deployment?.project_name === "skincos"
     && deployment?.environment === "production"
     && metadata.branch === "main"
-    && ["success", "idle"].includes(status)
+    && isTerminalPagesDeployment(deployment)
     && aliasHosts.has("crm.skincos.com.br")
     && (expectedStage === "rollback" || pagesControlPlaneCommitSha === expectedSha);
   if (!pagesControlPlaneMatched) throw new Error("public CRM domain is not linked to the expected Pages deployment");
+  pagesControlPlaneDigest = crypto.createHash("sha256").update(JSON.stringify({
+    expectedPagesDeploymentId,
+    pagesControlPlaneCommitSha,
+    expectedStage,
+  })).digest("hex");
+} else {
+  if (
+    !controlPlaneAttestationFile
+    || !/^[1-9][0-9]{0,19}$/.test(orchestratorRunId)
+    || !/^[1-9][0-9]{0,19}$/.test(workflowRunId)
+  ) throw new Error("protected production SLO control-plane attestation is unavailable");
+  const controlPlane = JSON.parse(fs.readFileSync(controlPlaneAttestationFile, "utf8"));
+  const { digest, ...summary } = controlPlane || {};
+  const recomputedDigest = crypto.createHash("sha256").update(JSON.stringify(summary)).digest("hex");
+  pagesControlPlaneMatched = controlPlane?.schemaVersion === 1
+    && controlPlane?.domain === "skincos/ponto/production-slo-control-plane/v1"
+    && controlPlane?.passed === true
+    && controlPlane?.target === "production"
+    && controlPlane?.stage === expectedStage
+    && String(controlPlane?.sourceSha || "").toLowerCase() === expectedSha
+    && String(controlPlane?.coordinatorRunId || "") === orchestratorRunId
+    && String(controlPlane?.workflowRunId || "") === workflowRunId
+    && String(controlPlane?.coreVersionId || "").toLowerCase() === expectedCoreVersionId
+    && String(controlPlane?.timekeepingVersionId || "").toLowerCase() === expectedTimekeepingVersionId
+    && String(controlPlane?.identityVersionId || "").toLowerCase() === expectedIdentityVersionId
+    && String(controlPlane?.pagesDeploymentId || "").toLowerCase() === expectedPagesDeploymentId
+    && controlPlane?.pagesProject === "skincos"
+    && controlPlane?.pagesEnvironment === "production"
+    && controlPlane?.pagesBranch === "main"
+    && String(controlPlane?.pagesCommitSha || "").toLowerCase() === expectedSha
+    && controlPlane?.pagesTerminal === true
+    && controlPlane?.crmAliasMatched === true
+    && (
+      !["pilot", "canary"].includes(expectedStage)
+      || (
+        String(controlPlane?.pilotRunnerId || "") === String(runnerPolicy?.runnerId || "")
+        && controlPlane?.pilotRunnerName === runnerPolicy?.runnerName
+        && controlPlane?.pilotRunnerIsolationRef === runnerPolicy?.runnerIsolationRef
+        && JSON.stringify(controlPlane?.pilotRunnerRequiredLabels) === JSON.stringify(runnerPolicy?.requiredLabels)
+        && controlPlane?.pilotRunnerNetworkContextCustodyRef === runnerPolicy?.networkContextCustodyRef
+        && controlPlane?.pilotRunnerEncryptionPublicKeySha256 === runnerPolicy?.encryptionPublicKeySha256
+      )
+    )
+    && controlPlane?.credentialsIncluded === false
+    && controlPlane?.piiIncluded === false
+    && /^[0-9a-f]{64}$/.test(String(digest || ""))
+    && crypto.timingSafeEqual(Buffer.from(digest, "hex"), Buffer.from(recomputedDigest, "hex"));
+  if (!pagesControlPlaneMatched) throw new Error("protected production SLO control-plane attestation differs");
+  pagesControlPlaneCommitSha = String(controlPlane.pagesCommitSha).toLowerCase();
+  pagesControlPlaneDigest = String(digest);
 }
 const accessHeaders = {};
-if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
-  if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) throw new Error("partial Cloudflare Access credential");
-  accessHeaders["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
-  accessHeaders["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
+let jitCredentialAttestationDigest = "";
+let jitCredentialBundleDigest = "";
+let jitDecryptKeyDigest = "";
+let clinicRunnerAttestationDigest = "";
+let jitCredentialFilesDeleted = expectedStage === "rollback";
+let runnerEncryptionPrivateKeyPem = "";
+if (expectedStage === "rollback") {
+  if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
+    if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) throw new Error("partial Cloudflare Access credential");
+    accessHeaders["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
+    accessHeaders["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
+  }
+} else if (testModeAllowed) {
+  pilotLogin = String(process.env.PONTO_PILOT_LOGIN || "");
+  pilotPassword = String(process.env.PONTO_PILOT_PASSWORD || "");
+  runnerEncryptionPrivateKeyPem = String(process.env.PONTO_PILOT_RUNNER_ENCRYPTION_PRIVATE_KEY_PEM || "");
+  if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
+    if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) throw new Error("partial Cloudflare Access credential");
+    accessHeaders["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
+    accessHeaders["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
+  }
+  jitCredentialFilesDeleted = true;
+} else {
+  const jitCredentials = consumeJitCredentials();
+  pilotLogin = jitCredentials.pilotLogin;
+  pilotPassword = jitCredentials.pilotPassword;
+  jitCredentialAttestationDigest = jitCredentials.attestationDigest;
+  jitCredentialBundleDigest = jitCredentials.credentialBundleDigest;
+  jitDecryptKeyDigest = jitCredentials.decryptKeyDigest;
+  clinicRunnerAttestationDigest = jitCredentials.clinicRunnerAttestationDigest;
+  jitCredentialFilesDeleted = jitCredentials.filesDeleted;
+  runnerEncryptionPrivateKeyPem = jitCredentials.runnerEncryptionPrivateKeyPem;
+  if (jitCredentials.cfAccessClientId || jitCredentials.cfAccessClientSecret) {
+    if (!jitCredentials.cfAccessClientId || !jitCredentials.cfAccessClientSecret) throw new Error("partial JIT Cloudflare Access credential");
+    accessHeaders["CF-Access-Client-Id"] = jitCredentials.cfAccessClientId;
+    accessHeaders["CF-Access-Client-Secret"] = jitCredentials.cfAccessClientSecret;
+  }
+}
+if (expectedStage !== "rollback" && (!pilotLogin.includes("@") || pilotPassword.length < 12)) {
+  throw new Error("JIT pilot credentials are invalid");
 }
 let cookie = "";
 let csrf = "";
@@ -215,6 +310,7 @@ if (expectedStage === "rollback") {
       healthy: status === 200 && maintenance && versionAttested,
       latencyMs: Math.round(performance.now() - started),
     });
+    if (samples.filter((sample) => !sample.healthy).length > selectedPolicy.maximumErrors) break;
     const remaining = stopAt - Date.now();
     if (remaining > 0) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(selectedPolicy.cadenceSeconds * 1000, remaining)));
@@ -272,12 +368,119 @@ let identityContractMatched = false;
 let identityCandidateAuthMatched = false;
 let identityCandidateSessionRead = false;
 let identityCandidateSessionTeardown = false;
+let releaseProbeCapabilityMatched = false;
+let releaseProbeCapabilityDigest = "";
 if (expectedStage === "pilot" || expectedStage === "canary") {
-  const identityProbe = await request("/api/ponto/_release-contract", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email: pilotLogin, password: pilotPassword }),
-  });
+  if (!releaseProbeCapabilityFile) throw new Error("one-time release-probe capability is unavailable");
+  const capability = JSON.parse(fs.readFileSync(releaseProbeCapabilityFile, "utf8"));
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const runnerName = String(process.env.RUNNER_NAME || process.env.PONTO_RUNNER_NAME || "").trim();
+  const runnerIsolationRef = String(runnerPolicy?.runnerIsolationRef || "");
+  const runnerNetworkContextRef = String(runnerPolicy?.networkContextCustodyRef || "");
+  let runnerPrivateKey = null;
+  let runnerPublicKeyFingerprint = "";
+  try {
+    runnerPrivateKey = crypto.createPrivateKey(runnerEncryptionPrivateKeyPem);
+    const runnerPublicDer = crypto.createPublicKey(runnerPrivateKey).export({ type: "spki", format: "der" });
+    runnerPublicKeyFingerprint = crypto.createHash("sha256").update(runnerPublicDer).digest("hex");
+  } catch {
+    throw new Error("clinic runner proof-of-possession key is unavailable");
+  }
+  releaseProbeCapabilityMatched = capability?.schemaVersion === 2
+    && capability?.domain === "ponto-release-probe/v2"
+    && capability?.signatureVersion === "2"
+    && capability?.delegationVersion === "1"
+    && /^[1-9][0-9]{0,19}$/.test(String(capability?.delegationTimestamp || ""))
+    && /^[1-9][0-9]{0,19}$/.test(String(capability?.delegationExpiresAt || ""))
+    && Number(capability.delegationTimestamp) <= nowSeconds
+    && Number(capability.delegationExpiresAt) > nowSeconds
+    && Number(capability.delegationExpiresAt) - Number(capability.delegationTimestamp) <= 2 * 60 * 60
+    && /^[0-9a-f]{32}$/.test(String(capability?.nonce || ""))
+    && /^[0-9a-f]{64}$/.test(String(capability?.delegatedKeyCommitment || ""))
+    && /^[A-Za-z0-9_-]{43}$/.test(String(capability?.delegationSignature || ""))
+    && capability?.delegatedKeyEncryption === "rsa-oaep-sha256"
+    && typeof capability?.encryptedDelegatedKey === "string"
+    && capability.encryptedDelegatedKey.length >= 300
+    && capability?.runnerEncryptionPublicKeyFingerprint === runnerPublicKeyFingerprint
+    && runnerPublicKeyFingerprint === String(runnerPolicy?.encryptionPublicKeySha256 || "").toLowerCase()
+    && runnerName === runnerPolicy?.runnerName
+    && runnerIsolationRef === runnerPolicy?.runnerIsolationRef
+    && runnerNetworkContextRef === runnerPolicy?.networkContextCustodyRef
+    && capability?.method === "POST"
+    && capability?.pathname === "/api/ponto/_release-contract"
+    && capability?.releaseSha === expectedSha
+    && capability?.stage === expectedStage
+    && capability?.coordinatorRunId === orchestratorRunId
+    && capability?.workflowRunId === workflowRunId
+    && capability?.bodyDigestBoundAtUse === true
+    && capability?.singleUse === true
+    && capability?.piiIncluded === false
+    && capability?.credentialsIncluded === false
+    && capability?.bodyDigestIncluded === false
+    && capability?.rootKeyIncluded === false
+    && capability?.delegatedSigningKeyIncluded === false
+    && capability?.encryptedDelegatedSigningKeyIncluded === true
+    && !Object.hasOwn(capability, "bodyDigest")
+    && !Object.hasOwn(capability, "delegatedKey")
+    && !Object.hasOwn(capability, "rootKey");
+  if (!releaseProbeCapabilityMatched) throw new Error("one-time release-probe capability claims differ");
+  const delegatedKey = crypto.privateDecrypt({
+    key: runnerPrivateKey,
+    oaepHash: "sha256",
+    padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+  }, Buffer.from(capability.encryptedDelegatedKey, "base64")).toString("utf8");
+  if (
+    !/^[A-Za-z0-9_-]{43}$/.test(delegatedKey)
+    || crypto.createHash("sha256").update(delegatedKey).digest("hex") !== capability.delegatedKeyCommitment
+  ) throw new Error("clinic runner decrypted a mismatched delegated release-probe key");
+  releaseProbeCapabilityDigest = crypto.createHash("sha256").update(JSON.stringify(capability)).digest("hex");
+  const releaseContractBody = JSON.stringify({ email: pilotLogin, password: pilotPassword });
+  const requestTimestamp = String(Date.now());
+  // This digest binds the exact request body inside a delegated HMAC. It is
+  // neither stored nor used as a password verifier.
+  // lgtm[js/insufficient-password-hash]
+  const requestBodyDigest = crypto.createHash("sha256").update(releaseContractBody).digest("hex");
+  const requestMessage = [
+    "ponto-release-probe/v2",
+    requestTimestamp,
+    capability.nonce,
+    "POST",
+    "/api/ponto/_release-contract",
+    requestBodyDigest,
+    expectedSha,
+    expectedStage,
+    orchestratorRunId,
+    workflowRunId,
+  ].join(".");
+  const requestSignature = crypto
+    .createHmac("sha256", delegatedKey)
+    .update(requestMessage)
+    .digest("base64url");
+  let identityProbe;
+  try {
+    identityProbe = await request("/api/ponto/_release-contract", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-skincos-release-probe-ts": requestTimestamp,
+        "x-skincos-release-probe-nonce": capability.nonce,
+        "x-skincos-release-probe-signature-version": capability.signatureVersion,
+        "x-skincos-release-probe-sig": requestSignature,
+        "x-skincos-release-probe-stage": capability.stage,
+        "x-skincos-release-probe-coordinator-run-id": capability.coordinatorRunId,
+        "x-skincos-release-probe-workflow-run-id": capability.workflowRunId,
+        "x-skincos-release-probe-delegation-version": capability.delegationVersion,
+        "x-skincos-release-probe-delegation-key": delegatedKey,
+        "x-skincos-release-probe-delegation-key-commitment": capability.delegatedKeyCommitment,
+        "x-skincos-release-probe-delegation-ts": capability.delegationTimestamp,
+        "x-skincos-release-probe-delegation-exp": capability.delegationExpiresAt,
+        "x-skincos-release-probe-delegation-sig": capability.delegationSignature,
+      },
+      body: releaseContractBody,
+    });
+  } finally {
+    fs.rmSync(releaseProbeCapabilityFile, { force: true });
+  }
   const pagesSha = String(identityProbe.response.headers.get("x-skincos-pages-release-sha") || "").trim().toLowerCase();
   const pagesEnvironment = String(identityProbe.response.headers.get("x-skincos-pages-environment") || "").trim().toLowerCase();
   identityContractMatched = identityProbe.response.status === 200
@@ -368,6 +571,10 @@ try {
       status = 0;
     }
     samples.push({ status, linked, releaseMatched, latencyMs: Math.round(performance.now() - started) });
+    const observedErrors = samples.filter((sample) => sample.status !== 200 || !sample.linked || !sample.releaseMatched).length;
+    if (observedErrors > selectedPolicy.maximumErrors) {
+      throw new Error(`Ponto ${expectedStage} error budget was irrevocably exhausted after ${samples.length} sample(s)`);
+    }
     const remaining = stopAt - Date.now();
     if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(selectedPolicy.cadenceSeconds * 1000, remaining)));
   }
@@ -447,6 +654,7 @@ const summary = {
   pagesDeploymentId: expectedPagesDeploymentId,
   pagesControlPlaneMatched,
   pagesControlPlaneCommitSha,
+  pagesControlPlaneDigest,
   pagesReleaseSha: expectedSha,
   identityContract: "identity-workforce-hmac-v2",
   identityContractMode,
@@ -454,6 +662,14 @@ const summary = {
   identityCandidateAuthMatched,
   identityCandidateSessionRead,
   identityCandidateSessionTeardown,
+  releaseProbeCapabilityMatched,
+  releaseProbeCapabilityDigest,
+  errorBudgetExhausted: errors > selectedPolicy.maximumErrors,
+  jitCredentialAttestationDigest,
+  jitCredentialBundleDigest,
+  jitDecryptKeyDigest,
+  clinicRunnerAttestationDigest,
+  jitCredentialFilesDeleted,
   navigationGrantCount: modules.length,
   teardown,
   teardownPassed,
@@ -464,6 +680,9 @@ const digest = crypto.createHash("sha256").update(JSON.stringify(summary)).diges
 const report = { ...summary, digest };
 fs.mkdirSync(path.dirname(reportFile), { recursive: true });
 fs.writeFileSync(reportFile, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+pilotLogin = "";
+pilotPassword = "";
+runnerEncryptionPrivateKeyPem = "";
 const journeyError = primaryError || (!journeyThresholdsPassed ? new Error(`Ponto ${expectedStage} SLO thresholds were not met`) : null);
 if (journeyError && teardownError) {
   throw new AggregateError(

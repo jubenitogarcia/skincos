@@ -1,5 +1,5 @@
 name: Set module availability
-run-name: Module ${{ inputs.module }} ${{ inputs.target }} ${{ inputs.state }} orchestrator=${{ inputs.orchestrator_run_id }}
+run-name: Module ${{ inputs.module }} ${{ inputs.target }} ${{ inputs.state }} orchestrator=${{ inputs.orchestrator_run_id }} nonce=${{ inputs.orchestrator_nonce }}
 
 on:
   workflow_dispatch:
@@ -80,10 +80,6 @@ on:
         description: Ponto coordinator correlation ID
         required: false
         type: string
-      orchestrator_lease_token:
-        description: Masked single-use capability issued by the Ponto coordinator
-        required: false
-        type: string
       orchestrator_stage:
         description: Exact stage of the issuing Ponto coordinator
         required: false
@@ -98,9 +94,18 @@ on:
         default: module-open
         type: choice
         options: [module-open, rollback-incumbent-open, rollback-candidate-open]
-
+      orchestrator_issuer_run_id:
+        description: Exact direct issuer run
+        required: false
+        type: string
+      orchestrator_nonce:
+        description: Non-secret per-dispatch correlation nonce
+        required: false
+        type: string
 concurrency:
-  group: ${{ inputs.orchestrator_run_id != '' && format('ponto-child-module-{0}-{1}-{2}', inputs.module, inputs.target, inputs.orchestrator_run_id) || 'ponto-release-custody' }}
+  # The latch is the fail-closed overlay; every regular control mutation is
+  # serialized with all other current Ponto surface writers.
+  group: ponto-surface-mutation
   cancel-in-progress: false
 
 permissions:
@@ -108,40 +113,109 @@ permissions:
   contents: read
 
 jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse non-main module-control execution
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Module availability must execute from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Module availability reruns are forbidden; dispatch an explicit new transition'; exit 1; }
   coordination:
+    needs: source
     permissions:
-      actions: write
+      actions: read
+      checks: write
       contents: read
+      deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     with:
       required: ${{ inputs.module == 'timekeeping' && contains(fromJSON('["canary","active"]'), inputs.state) }}
       lease_key: ${{ inputs.orchestrator_lease_key }}
       stage: ${{ inputs.orchestrator_stage }}
+      target: ${{ inputs.target }}
       release_sha: ${{ inputs.orchestrator_release_sha || inputs.release_sha }}
       orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
-      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
   set-state:
     needs: coordination
-    runs-on: ${{ inputs.module == 'timekeeping' && contains(fromJSON('["canary","active"]'), inputs.state) && fromJSON(vars.PONTO_PILOT_RUNNER_LABELS_JSON || '["self-hosted","ponto-pilot"]') || 'ubuntu-latest' }}
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
+    timeout-minutes: 30
     steps:
+      - name: Checkout trusted Ponto custody guard
+        if: ${{ inputs.orchestrator_run_id != '' && contains(fromJSON('["canary","active"]'), inputs.state) }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Revalidate the exact active coordinator before module-control secrets or mutation
+        if: ${{ inputs.orchestrator_run_id != '' && contains(fromJSON('["canary","active"]'), inputs.state) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage }}
+          RELEASE_SHA: ${{ inputs.orchestrator_release_sha || inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-orchestrator-lease.mjs assert-active \
+            "$ORCHESTRATOR_STAGE" \
+            "$RELEASE_SHA" \
+            "$ORCHESTRATOR_RUN_ID"
       - name: Guard isolated control store
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          NAMESPACE_ID: ${{ inputs.module == 'finance' && (inputs.target == 'production' && vars.FINANCE_CONTROL_PRODUCTION_KV_ID || vars.FINANCE_CONTROL_STAGING_KV_ID) || (inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID) }}
+          MODULE: ${{ inputs.module }}
+          TARGET: ${{ inputs.target }}
+          FINANCE_STAGING_KV_ID_RAW: ${{ vars.FINANCE_CONTROL_STAGING_KV_ID }}
+          FINANCE_PRODUCTION_KV_ID_RAW: ${{ vars.FINANCE_CONTROL_PRODUCTION_KV_ID }}
+          PONTO_STAGING_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PONTO_PRODUCTION_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
         run: |
           set -euo pipefail
+          case "$MODULE:$TARGET" in
+            finance:staging) NAMESPACE_ID="$FINANCE_STAGING_KV_ID_RAW"; OPPOSITE_NAMESPACE_ID="$FINANCE_PRODUCTION_KV_ID_RAW" ;;
+            finance:production) NAMESPACE_ID="$FINANCE_PRODUCTION_KV_ID_RAW"; OPPOSITE_NAMESPACE_ID="$FINANCE_STAGING_KV_ID_RAW" ;;
+            timekeeping:staging) NAMESPACE_ID="$PONTO_STAGING_KV_ID_RAW"; OPPOSITE_NAMESPACE_ID="$PONTO_PRODUCTION_KV_ID_RAW" ;;
+            timekeeping:production) NAMESPACE_ID="$PONTO_PRODUCTION_KV_ID_RAW"; OPPOSITE_NAMESPACE_ID="$PONTO_STAGING_KV_ID_RAW" ;;
+            *) echo 'Unsupported module-control target'; exit 1 ;;
+          esac
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID NAMESPACE_ID; do [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }; done
+          if [[ -n "${OPPOSITE_NAMESPACE_ID:-}" && "$NAMESPACE_ID" == "$OPPOSITE_NAMESPACE_ID" ]]; then
+            echo 'Selected and opposite module-control namespaces must be independent'
+            exit 1
+          fi
           # Cloudflare KV namespace IDs are 32 hexadecimal characters, unlike
           # the 36-character UUID used by D1 databases.
           [[ "$NAMESPACE_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid module-control KV id'; exit 1; }
+          {
+            echo "NAMESPACE_ID=$NAMESPACE_ID"
+            echo "OPPOSITE_NAMESPACE_ID=$OPPOSITE_NAMESPACE_ID"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+      - name: Attest exact Ponto module-control identity before any state mutation
+        if: ${{ inputs.module == 'timekeeping' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_RESOURCE_TARGET: ${{ inputs.target }}
+          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-resource-identity.json
+        run: |
+          set -euo pipefail
+          export PONTO_MODULE_CONTROL_KV_ID="$NAMESPACE_ID"
+          export PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$OPPOSITE_NAMESPACE_ID"
+          node .github/scripts/ponto-cloudflare-resource-identity.mjs
+      - name: Emergency fail-close before reconciliation
+        if: ${{ inputs.module == 'timekeeping' && contains(fromJSON('["maintenance","disabled"]'), inputs.state) && inputs.orchestrator_run_id == '' }}
+        run: echo "Writing the persistent Ponto emergency latch before coordinator reconciliation."
       - name: Set isolated runtime state
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          NAMESPACE_ID: ${{ inputs.module == 'finance' && (inputs.target == 'production' && vars.FINANCE_CONTROL_PRODUCTION_KV_ID || vars.FINANCE_CONTROL_STAGING_KV_ID) || (inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID) }}
           MODULE: ${{ inputs.module }}
           TARGET: ${{ inputs.target }}
           STATE: ${{ inputs.state }}
@@ -158,6 +232,7 @@ jobs:
           COHORT_PERCENTAGE: ${{ inputs.cohort_percentage }}
           EXPIRES_AT: ${{ inputs.expires_at }}
           SYNTHETIC_ONLY: ${{ inputs.synthetic_only }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
           PONTO_PILOT_COHORT_JSON: ${{ inputs.module == 'timekeeping' && inputs.state == 'canary' && secrets.PONTO_PILOT_COHORT_JSON || '' }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
@@ -165,12 +240,81 @@ jobs:
         run: |
           set -euo pipefail
           payload="$RUNNER_TEMP/module-control.json"
+          prior="$RUNNER_TEMP/module-control-prior.json"
+          prior_keys="$RUNNER_TEMP/module-control-prior-keys.json"
+          emergency_latch="$RUNNER_TEMP/module-control-emergency-latch.json"
+          emergency_latch_readback="$RUNNER_TEMP/module-control-emergency-latch-readback.json"
           umask 077
-          node - "$payload" <<'NODE'
+          if ! npx --yes wrangler@4.112.0 kv key get "module-control:$MODULE" --namespace-id "$NAMESPACE_ID" --remote > "$prior" \
+            || ! node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$prior"; then
+            if [[ "$MODULE" == timekeeping && "$ORCHESTRATOR_RUN_ID" == '' && ( "$STATE" == maintenance || "$STATE" == disabled ) ]]; then
+              # A manual close remains safe when the previous value cannot be
+              # read: the new payload itself creates the persistent latch.
+              printf '{}\n' > "$prior"
+            else
+              npx --yes wrangler@4.112.0 kv key list --namespace-id "$NAMESPACE_ID" --prefix "module-control:$MODULE" --remote > "$prior_keys"
+              EXPECTED_KEY="module-control:$MODULE" node - "$prior_keys" <<'NODE'
+              const fs = require("fs");
+              const keys = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+              if (!Array.isArray(keys) || keys.some((entry) => entry?.name === process.env.EXPECTED_KEY)) {
+                throw new Error("module-control prior value exists but could not be read");
+              }
+              NODE
+              printf '{}\n' > "$prior"
+            fi
+          fi
+          if [[ "$MODULE" == timekeeping && ( "$STATE" == canary || "$STATE" == active ) ]]; then
+            npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping:emergency-latch" \
+              --namespace-id "$NAMESPACE_ID" --remote > "$emergency_latch_readback"
+            node - "$emergency_latch_readback" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            value?.schemaVersion !== 1
+            || value?.module !== "timekeeping"
+            || value?.latched !== false
+            || !Number.isFinite(Date.parse(String(value?.changedAt || "")))
+            || !String(value?.changedBy || "").trim()
+          ) throw new Error("Ponto emergency latch is missing, unreadable, malformed, or active");
+          NODE
+          fi
+          if [[ "$MODULE" == timekeeping && "$ORCHESTRATOR_RUN_ID" == '' && ( "$STATE" == maintenance || "$STATE" == disabled ) ]]; then
+            node - "$emergency_latch" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            module: "timekeeping",
+            target: process.env.TARGET,
+            latched: true,
+            changedAt: new Date().toISOString(),
+            changedBy: process.env.GITHUB_ACTOR,
+            stopRunId: String(process.env.GITHUB_RUN_ID),
+            requestedState: process.env.STATE,
+            reason: process.env.MESSAGE || "Ponto emergency stop.",
+          })}\n`, { mode: 0o600 });
+          NODE
+            npx --yes wrangler@4.112.0 kv key put "module-control:timekeeping:emergency-latch" \
+              --path "$emergency_latch" --namespace-id "$NAMESPACE_ID" --remote
+            npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping:emergency-latch" \
+              --namespace-id "$NAMESPACE_ID" --remote > "$emergency_latch_readback"
+            EXPECTED_RUN_ID="$GITHUB_RUN_ID" node - "$emergency_latch_readback" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            value?.schemaVersion !== 1
+            || value?.module !== "timekeeping"
+            || value?.latched !== true
+            || value?.stopRunId !== process.env.EXPECTED_RUN_ID
+          ) throw new Error("Ponto emergency latch readback differs");
+          NODE
+          fi
+          node - "$payload" "$prior" <<'NODE'
           const fs = require("fs");
           const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
           const sha = /^[0-9a-f]{40}$/i;
           const fail = message => { throw new Error(message); };
+          let prior = {};
+          try { prior = JSON.parse(fs.readFileSync(process.argv[3], "utf8")); } catch {}
           const payload = {
             schemaVersion: 2,
             state: process.env.STATE,
@@ -251,10 +395,12 @@ jobs:
             });
           } else if (payload.state === "active" && process.env.MODULE === "timekeeping") {
             if (!sha.test(process.env.RELEASE_SHA)) fail("active Timekeeping requires a full release_sha");
+            if (!["staging", "production"].includes(process.env.TARGET)) fail("active Timekeeping target must be staging or production");
             for (const name of ["TIMEKEEPING_CANDIDATE_VERSION_ID", "CORE_CANDIDATE_VERSION_ID", "IDENTITY_CANDIDATE_VERSION_ID"]) {
               if (!uuid.test(process.env[name] || "")) fail(`${name} must be a UUID`);
             }
             payload.releaseSha = process.env.RELEASE_SHA.toLowerCase();
+            payload.rolloutStage = process.env.TARGET;
             if (process.env.TARGET === "staging") {
               if (process.env.SYNTHETIC_ONLY !== "true") fail("active staging Timekeeping must be synthetic-only");
               payload.syntheticOnly = true;
@@ -275,15 +421,33 @@ jobs:
           npx --yes wrangler@4.112.0 kv key put "module-control:$MODULE" --path "$payload" --namespace-id "$NAMESPACE_ID" --remote
           readback="$RUNNER_TEMP/module-control-readback.json"
           npx --yes wrangler@4.112.0 kv key get "module-control:$MODULE" --namespace-id "$NAMESPACE_ID" --remote > "$readback"
-          EXPECTED_STATE="$STATE" EXPECTED_SHA="$RELEASE_SHA" EXPECTED_TARGET="$TARGET" node - "$readback" <<'NODE'
+          EXPECTED_STATE="$STATE" EXPECTED_SHA="$RELEASE_SHA" EXPECTED_TARGET="$TARGET" \
+          node - "$readback" <<'NODE'
           const fs = require("fs");
           const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           if (value.state !== process.env.EXPECTED_STATE) process.exit(1);
           if (["canary", "active"].includes(value.state) && value.releaseSha !== process.env.EXPECTED_SHA.toLowerCase()) process.exit(1);
+          if (value.state === "active" && value.rolloutStage !== process.env.EXPECTED_TARGET) process.exit(1);
           if (value.state === "active" && process.env.EXPECTED_TARGET === "staging" && value.syntheticOnly !== true) process.exit(1);
+          if (value.state === "active" && process.env.EXPECTED_TARGET === "production" && value.syntheticOnly === true) process.exit(1);
           NODE
           if [[ "$MODULE" == timekeeping ]]; then
-            PONTO_MODULE_EXPECTATION_FILE="$readback" \
+            propagation_expectation="$readback"
+            propagation_source=control
+            if [[ "$ORCHESTRATOR_RUN_ID" == '' && ( "$STATE" == maintenance || "$STATE" == disabled ) ]]; then
+              propagation_expectation="$RUNNER_TEMP/module-control-emergency-propagation.json"
+              node - "$emergency_latch_readback" "$propagation_expectation" <<'NODE'
+          const fs = require("fs");
+          const latch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: latch.changedAt,
+          })}\n`, { mode: 0o600 });
+          NODE
+              propagation_source=emergency-latch-active
+            fi
+            PONTO_MODULE_EXPECTED_SOURCE="$propagation_source" \
+            PONTO_MODULE_EXPECTATION_FILE="$propagation_expectation" \
             PONTO_MODULE_PROPAGATION_REPORT="$RUNNER_TEMP/module-transition.json" \
               node .github/scripts/ponto-module-propagation.mjs
           else
@@ -303,11 +467,162 @@ jobs:
           }, null, 2)}\n`);
           NODE
           fi
-          rm -f "$payload" "$readback"
+          rm -f "$payload" "$prior" "$prior_keys" "$readback" "$emergency_latch" "$emergency_latch_readback" "${propagation_expectation:-}"
       - name: Upload sanitized module transition and propagation evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: module-transition-${{ inputs.module }}-${{ inputs.target }}-${{ inputs.state }}-${{ inputs.orchestrator_run_id || github.run_id }}
-          path: ${{ runner.temp }}/module-transition.json
+          path: |
+            ${{ runner.temp }}/module-transition.json
+            ${{ runner.temp }}/ponto-resource-identity.json
+          retention-days: 90
+          if-no-files-found: error
+  emergency-reconciliation:
+    needs: set-state
+    if: ${{ always() && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.module == 'timekeeping' && contains(fromJSON('["maintenance","disabled"]'), inputs.state) && inputs.orchestrator_run_id == '' }}
+    permissions:
+      actions: write
+      checks: write
+      contents: read
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Verify trusted emergency workflow source
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Emergency stop must execute from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Historical emergency-stop reruns are forbidden; dispatch a new fail-close transition'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Emergency stop checkout differs from the trusted workflow revision'; exit 1; }
+      - name: Verify target-bound public emergency capability custody
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          TARGET: ${{ inputs.target }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'Repository/environment secret metadata access is required'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/ponto-emergency-repository-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/ponto-emergency-repository-variables.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET/secrets?per_page=100" > "$RUNNER_TEMP/ponto-emergency-environment-secrets.json"
+          node - "$RUNNER_TEMP/ponto-emergency-repository-secrets.json" "$RUNNER_TEMP/ponto-emergency-repository-variables.json" "$RUNNER_TEMP/ponto-emergency-environment-secrets.json" <<'NODE'
+          const fs = require("fs");
+          const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
+          if (
+            names(process.argv[2], "secrets").has("PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY")
+            || !names(process.argv[3], "variables").has("PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON")
+            || !names(process.argv[4], "secrets").has("PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY")
+          ) throw new Error("Emergency capability verifier must be target-bound and non-secret");
+          NODE
+          rm -f "$RUNNER_TEMP"/ponto-emergency-*-{secrets,variables}.json
+      - name: Invalidate capabilities and reconcile every governed Ponto run
+        id: reconcile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
+          PONTO_EMERGENCY_TARGET: ${{ inputs.target }}
+          PONTO_EMERGENCY_REPORT: ${{ runner.temp }}/ponto-emergency/ponto-emergency-reconciliation.json
+          PONTO_EMERGENCY_TIMEOUT_SECONDS: "900"
+        run: node .github/scripts/ponto-emergency-stop.mjs
+      - name: Reassert emergency fail-close after reconciliation
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_NAMESPACE_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PRODUCTION_NAMESPACE_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          TARGET: ${{ inputs.target }}
+          STATE: ${{ inputs.state }}
+          MESSAGE: ${{ inputs.message }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_MODULE_HEALTH_URL: ${{ inputs.target == 'production' && 'https://api.skincos.com.br/api/ponto/health' || 'https://api-staging.skincos.com.br/api/ponto/health' }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            staging) NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW"; OPPOSITE_NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW" ;;
+            production) NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW"; OPPOSITE_NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW" ;;
+            *) echo 'Unsupported emergency target'; exit 1 ;;
+          esac
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID NAMESPACE_ID; do
+            [[ -n "${!name:-}" ]] || { echo "Missing emergency fail-close value: $name"; exit 1; }
+          done
+          if [[ -n "${OPPOSITE_NAMESPACE_ID:-}" && "$NAMESPACE_ID" == "$OPPOSITE_NAMESPACE_ID" ]]; then
+            echo 'Selected and opposite Ponto namespaces must be independent'
+            exit 1
+          fi
+          [[ "$NAMESPACE_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid module-control KV id'; exit 1; }
+          PONTO_RESOURCE_TARGET="$TARGET" \
+          PONTO_MODULE_CONTROL_KV_ID="$NAMESPACE_ID" \
+          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$OPPOSITE_NAMESPACE_ID" \
+          PONTO_RESOURCE_IDENTITY_REPORT="$RUNNER_TEMP/ponto-emergency-module-control-identity.json" \
+            node .github/scripts/ponto-cloudflare-resource-identity.mjs
+          directory="$RUNNER_TEMP/ponto-emergency"
+          payload="$directory/final-module-control.json"
+          readback="$directory/final-module-control-readback.json"
+          latch_payload="$directory/final-emergency-latch.json"
+          latch_readback="$directory/final-emergency-latch-readback.json"
+          mkdir -p "$directory"
+          umask 077
+          node - "$payload" "$latch_payload" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 2,
+            state: process.env.STATE,
+            message: process.env.MESSAGE || "Ponto emergency stop.",
+            changedAt: new Date().toISOString(),
+            changedBy: process.env.GITHUB_ACTOR,
+          })}\n`, { mode: 0o600 });
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            schemaVersion: 1,
+            module: "timekeeping",
+            target: process.env.TARGET,
+            latched: true,
+            changedAt: new Date().toISOString(),
+            changedBy: process.env.GITHUB_ACTOR,
+            stopRunId: String(process.env.GITHUB_RUN_ID),
+            requestedState: process.env.STATE,
+            reason: process.env.MESSAGE || "Ponto emergency stop.",
+          })}\n`, { mode: 0o600 });
+          NODE
+          npx --yes wrangler@4.112.0 kv key put "module-control:timekeeping:emergency-latch" --path "$latch_payload" --namespace-id "$NAMESPACE_ID" --remote
+          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping:emergency-latch" --namespace-id "$NAMESPACE_ID" --remote > "$latch_readback"
+          npx --yes wrangler@4.112.0 kv key put "module-control:timekeeping" --path "$payload" --namespace-id "$NAMESPACE_ID" --remote
+          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping" --namespace-id "$NAMESPACE_ID" --remote > "$readback"
+          EXPECTED_STATE="$STATE" EXPECTED_RUN_ID="$GITHUB_RUN_ID" node - "$readback" "$latch_readback" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const latch = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (
+            value?.state !== process.env.EXPECTED_STATE
+            || latch?.schemaVersion !== 1
+            || latch?.module !== "timekeeping"
+            || latch?.latched !== true
+            || latch?.stopRunId !== process.env.EXPECTED_RUN_ID
+          ) throw new Error("final emergency fail-close readback differs");
+          NODE
+          node - "$latch_readback" "$directory/final-propagation-expectation.json" <<'NODE'
+          const fs = require("fs");
+          const latch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: latch.changedAt,
+          })}\n`, { mode: 0o600 });
+          NODE
+          PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+          PONTO_MODULE_EXPECTATION_FILE="$directory/final-propagation-expectation.json" \
+          PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+            node .github/scripts/ponto-module-propagation.mjs
+      - name: Upload emergency stop and final fail-close evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-emergency-stop-${{ inputs.target }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-emergency
           retention-days: 90
           if-no-files-found: error
