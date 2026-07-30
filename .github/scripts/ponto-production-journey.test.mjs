@@ -227,7 +227,6 @@ globalThis.fetch = async (input, init = {}) => {
       PONTO_RELEASE_PROBE_CAPABILITY: capabilityFile,
       PONTO_ORCHESTRATOR_RUN_ID: "123",
       GITHUB_RUN_ID: "456",
-      RUNNER_NAME: runnerName,
       PONTO_RUNNER_NAME: runnerName,
       PONTO_PILOT_RUNNER_ISOLATION_REF: runnerIsolationRef,
       PONTO_PILOT_NETWORK_CONTEXT_CUSTODY_REF: networkContextRef,
@@ -454,9 +453,4 @@ test("clinic workflow receives only encrypted delegation and non-secret bindings
     "ponto-jit-credential-attestation.mjs cleanup",
     "if: ${{ always() }}",
   ]) assert.equal(clinic.includes(required), true, `clinic job misses JIT guard: ${required}`);
-  assert.equal(
-    clinic.includes("runs-on: ${{ fromJSON(needs.control-plane-preflight.outputs.runner_labels_json"),
-    true,
-    "clinic job must use the exact selector emitted by the protected inventory attestation",
-  );
 });

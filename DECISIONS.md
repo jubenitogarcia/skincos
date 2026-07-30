@@ -1,84 +1,11 @@
 # DECISIONS
 
-## 2026-07-30 - Accept the complete preview but keep staging closed
+## 2026-07-30 - Proposed atomic release probe and mandatory Identity session teardown
 
-- Decision: PR #930's merge
-  `71c54b1d406317c614dc33e48ced170458fbd707` and coordinator run
-  `30566547605` are the first complete four-surface Ponto preview. The
-  Timekeeping, Identity/Inventory, Core API and CRM Pages children all used
-  that exact SHA and completed their non-mutating publishers. Combined evidence
-  artifact `8769249449` and sanitized run ledger `8769249808` are the canonical
-  hosted records; private checkpoint
-  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T144137-20-complete-preview.md`
-  retains every artifact digest.
-- Decision: the preview proves build/test/dry-run lineage only. It does not
-  authorize staging and does not prove a migration, live deployment,
-  module-control transition, authenticated journey, rollback, pilot, canary,
-  external SLO or production use.
-- Decision: the workflow-run watchdog must skip a successful first-attempt
-  coordinator before provenance validation. It continues to admit
-  failure/cancelled/timed-out first attempts and every rerun, including a
-  successful unauthorized rerun. Run `30567091382` proved the missing
-  admission predicate; all emergency jobs skipped and no mutation occurred.
-- Decision: staging remains fail-closed until independent deployment approval,
-  approved target-specific secret custody, the policy-pinned close-only broker,
-  split-custody WAF enforcement and external probes, Ponto resource selectors,
-  clinic JIT runner, Identity/Workforce-authorized cohort and external SLO
-  monitoring are all functional. Existing Cloudflare resources are not release
-  authority, and the four `ENABLE_PONTO_*` flags remain false/absent.
-- Impact: if `main` advances after this evidence, the coordinator contract
-  requires a fresh preview on the new exact `GITHUB_SHA`; the ancestral run
-  cannot become a staging predecessor. Both environments remain
-  `module-control:timekeeping=maintenance`.
-
-## 2026-07-30 - Use canonical REST workflow paths and static workflow metadata
-
-- Decision: GitHub REST workflow-run provenance compares `run.path` with the
-  canonical workflow file path, without a ref suffix. The branch (`main`),
-  immutable head SHA, workflow ID, repository, event, run attempt,
-  title/nonce, signed capability and predecessor/artifact identity remain
-  independently mandatory.
-- Decision: a workflow's static identity comes from workflow metadata.
-  `run.name` is not a static name when the workflow declares `run-name`; the
-  watchdog accepts the live dynamic value while still pinning the exact
-  workflow name/path/ID and all run provenance.
-- Decision: the versioned staging/production environment payloads reproduce
-  the live custom `main` policy, sole owner reviewer and
-  `prevent_self_review=true`, with `can_admins_bypass=false` explicit and
-  validator-enforced. This is an intentional lockout baseline, not independent
-  approval. The remote and versioned reviewer must be updated together when an
-  independent human/app identity is authorized.
-- Evidence: preview run `30556924556` on PR #924's merge SHA observed successful
-  Timekeeping child `30556988335`, then timed out in job `90919728697` because
-  it expected the undocumented ref suffix. Watchdog run `30558653559` exposed
-  the separate dynamic-name defect. PR #927 contains both fixes. Its initial
-  head passed 14 hosted checks; Codex review then found the omitted
-  administrator-bypass field and remaining static `run.name` comparisons.
-  Commit `c3131eb8` fixes both, 219/219 governed tests pass and the independent
-  follow-up review reports no remaining P0/P1/P2.
-- Impact: no environment, secret, deployment or module-control value is changed
-  by this decision. Staging and production remain fail-closed until #927 is
-  integrated and every external predecessor is independently satisfied.
-
-## 2026-07-30 - Keep Codex Windows-native and encapsulate the Linux backend
-
-- Decision: run the Codex agent natively on Windows with PowerShell as the
-  integrated terminal, while routing SKINCOS Node/npm/Python/build/test/runtime
-  operations through the typed `scripts/invoke-skincos-wsl.ps1` gateway to
-  `Ubuntu-24.04` as operator `admin`.
-- Why: Windows-native Codex preserves tasks, plugins, browser, Computer Use,
-  MCPs and authentication. Reimplementing the repository's Bash/systemd/Unix
-  contracts on Windows would duplicate production behavior and increase drift.
-- Impact: Windows Git, GitHub CLI, Node LTS and Python support general agent
-  tooling only. Project dependency trees and caches stay Linux-only; visible
-  actions use typed gateway arguments, and direct WSL ownership is restricted
-  to explicitly documented lifecycle infrastructure.
-## 2026-07-30 - Atomic release probe and mandatory Identity session teardown
-
-- Status: integrated by PR #924 at
-  `91f6e9033fed8a186ef2e93be070db3ed896fdd3`, with hosted checks and security
-  review green. No release SHA is selected and the external inputs needed to
-  execute the authenticated path remain absent.
+- Status: these contracts exist only in the evolving local successor. They have
+  targeted local validation but no immutable commit, PR, hosted checks, review,
+  merge or selected release SHA. Aggregate worktree/test counts remain pending
+  until the technical freeze.
 - Decision: the private release probe validates its external HMAC before parsing
   credentials or contacting Identity. Signature v2 is mandatory for `pilot` and
   `canary` and binds timestamp, nonce, method, path, exact body digest, release
@@ -100,7 +27,7 @@
   teardown. An indeterminate teardown fails the probe explicitly and preserves
   the primary contract error; credentials and PII remain absent from evidence.
 - Impact: these safeguards close replay and leaked-probe-session failure modes
-  in integrated source. They do not authorize staging, identify a pilot, satisfy
+  in local source only. They do not authorize staging, identify a pilot, satisfy
   deployment review or prove a live release.
 
 ## 2026-07-30 - Contain legacy Ponto UI smoke and harden environment admission
@@ -155,15 +82,15 @@
   independent approval or prove production use. Their rollback weakens
   security and cannot be used as a release bypass.
 
-## 2026-07-30 - Ponto emergency overlay and direct-surface custody
+## 2026-07-30 - Proposed Ponto emergency overlay and direct-surface custody
 
-- Status: the source implementation was integrated by PR #924. The broker,
-  custody inputs, enable gates and runner remain
-  unprovisioned/non-operational; the latest name-only repository inventory also
-  found the Ponto-only resource variables absent. The controls become
-  operational release policy only after the exact required names are
-  provisioned through authorized custody and live behavior is attested. Until
-  then, the checkpointed
+- Status: the source implementation is local and unmerged. Only the explicitly
+  checkpointed fail-close environment admission/mode and seven non-secret
+  resource-identity variables are live; the broker, custody inputs, enable
+  gates and consuming workflow remain unprovisioned/non-operational. This
+  becomes operational release policy only after a reviewed PR is merged, the
+  exact required names are provisioned through authorized custody, hosted
+  checks pass and live behavior is attested. Until then, the checkpointed
   GitHub environment fences remain in force and both staging and production
   stay `module-control:timekeeping=maintenance`.
   Staging was closed through canonical run `30527767707`; that run is
