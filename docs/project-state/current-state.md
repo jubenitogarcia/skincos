@@ -1134,3 +1134,112 @@ Composition Studio; o `n8n_runtime` também tem zero tabelas no schema
 `music_studio`. Nada foi importado, ativado ou migrado em produção e
 nenhuma credencial/provider pago foi configurado. Rollout live permanece uma
 ação separada que exige staging, backup/rollback e autorização explícita.
+
+## Meta CAPI — minimização de dados e fechamento de produção 2026-07-29
+
+A PR #887 foi integrada como `ebcbcba63324baa1f5ab5b2181da82784cb74f82`.
+Todos os checks obrigatórios e adicionais observados ficaram verdes. A cadeia
+governada promoveu o release imutável
+`5878279e21d7bcd84c18564663ed35f630737e60`, que contém esse merge, por
+preview `30492554875`, staging `30492612081` e produção `30492875522`.
+O deploy governado produziu a versão de código
+`556ea05f-d242-41ac-9b58-55ea51c9d2c8`. Depois da remoção dos dois secrets
+temporários de teste, o Worker `espacofacial-site` está 100% na versão
+`f351f770-58e2-4da9-94e0-1e6f46382fab`, ainda com o mesmo código: home,
+médicos e API de serviços responderam HTTP 200 com
+`x-app-build=5878279e…` e `x-app-build-time=30492875522`.
+
+No código desse release, `Schedule` envia ao Meta apenas
+`content_type=booking` e `currency=BRL` em `custom_data`; `Contact` não envia
+`custom_data` pelo servidor e usa objeto vazio no Pixel do navegador. Os
+parâmetros originais de `Contact` continuam disponíveis para Google Ads. O
+contrato preserva `event_id`, dados de correspondência com hash, IP/UA,
+`fbp`/`fbc`, persistência D1 e o bloqueio fail-closed sem consentimento de
+marketing. A suíte isolada passou com 88 testes, ESLint e TypeScript. Os testes
+de regressão fazem igualdade exata do `custom_data` de `Schedule`, confirmam
+ausência da propriedade em `Contact` CAPI e comprovam que os parâmetros
+originais de `Contact` continuam indo ao Google Ads enquanto o Pixel recebe
+objeto vazio. Dois testes adicionais executam requisições representativas
+contra as rotas de booking e redirect do WhatsApp com um spy no sender CAPI;
+assim, uma regressão nos call sites de servidor também falha a suíte.
+
+Uma jornada sintética indispensável foi executada no release já publicado, com
+consentimento de marketing, UTM e `fbclid`. Navegador e servidor usaram
+`schedule_capi_postdeploy_19faff74937`; o Events Manager marcou o Navegador
+como `Desduplicado` contra o evento processado do Servidor. O detalhe do
+Servidor mostrou somente `currency=BRL` e `content_type=booking`, além das
+chaves de matching esperadas. A lista de teste renderizou duas linhas idênticas
+do Servidor, porém o D1 comprova um único dispatch da aplicação: uma linha de
+auditoria, HTTP 200, `events_received=1` e nenhum erro. O booking preservou
+`meta_event_id`, os dois consentimentos, `fbp`, `fbc`, `fbclid` e a landing URL
+com UTM; booking e cliente fictícios foram removidos e somente a auditoria foi
+retida.
+
+A prova negativa anterior continua válida: o evento recusado por consentimento
+não chegou ao Events Manager e o D1 mantém
+`meta_capi_not_sent_without_marketing_consent`, sem tentativa Graph. O CRM
+Tracking confirma Meta Pixel/CAPI configurados: `capiScheduleOk` tem valor 7,
+`capiScheduleFailed` tem valor 0, `capiScheduleSkippedConsent` tem valor 1,
+`capiContactFailed` tem valor 0 e não há candidato retryable; o novo `event_id`
+não aparece em issues ou retries. O status agregado está `degraded` somente
+pelos alertas históricos de cobertura de tracking/identificadores dos bookings
+reais, não por falha da CAPI.
+
+A listagem de secrets do Worker contém apenas os três nomes Meta permanentes
+`META_ACCESS_TOKEN`, `META_PIXEL_ID` e `NEXT_PUBLIC_META_PIXEL_ID`.
+`META_CAPI_TEST_EVENT_CODE` e o guard de booking sintético estão ausentes; seus
+valores não foram persistidos no repositório nem nas evidências. O rollback
+seguro da alteração de bindings é a versão Worker pós-minimização
+`556ea05f-d242-41ac-9b58-55ea51c9d2c8`, do mesmo release
+`5878279e21d7bcd84c18564663ed35f630737e60`: criar um deployment 100% dessa
+versão e só aceitá-lo depois de confirmar ausência dos secrets temporários,
+HTTP 200 em `/`, `/doutores` e `/api/booking/services` e
+`x-app-build=5878279e…`. A versão pré-minimização
+`affdc496-a0f4-4177-93e8-79ffa19e04f4`/release `0d73eba1…` é explicitamente
+proibida como rollback, pois restauraria o vazamento de `custom_data`.
+
+### Adendo: fechamento de `Contact` e transporte do redirect — 2026-07-30
+
+A revalidação indispensável de `Contact` encontrou dois defeitos reais que os
+testes puramente locais não reproduziam. O uso de `next/link` no link rastreado
+disparava duas navegações concorrentes; a PR #910, integrada como
+`790070968160eb5606225396ec35b65e8aca4651`, restaurou uma única navegação com
+âncora nativa. Em seguida, a normalização da query pelo runtime
+Cloudflare/OpenNext consumia uma camada de percent-encoding antes da rota,
+fazendo os `&` internos de `dest` e `ctx` virarem separadores externos. Isso
+truncava a mensagem do WhatsApp e descartava consentimento/atribuição no
+servidor. As PRs #913 e #915, integradas como
+`74b88b4f39fb07ae19eb01219093bd742d5c7a64` e
+`6272becdfba7fc4ef82956ceeda6ab72fbab467b`, canonizaram o contexto compacto e
+adicionaram um envelope URI versionado, com leitura retrocompatível antes e
+depois da normalização do edge. A PR #904
+(`225a94115afb974bc5f2b63140f1066a291aca42`) preservou o transporte do
+contexto completo até a rota.
+
+O release imutável `6272becdfba7fc4ef82956ceeda6ab72fbab467b` passou por
+preview `30507517010`, staging `30507543078` e produção `30507710641`.
+`/`, `/doutores` e `/api/booking/services` responderam HTTP 200 com esse
+`x-app-build` e `x-app-build-time=30507710641`. O Worker
+`espacofacial-site` está 100% na versão
+`7c3d2cdd-1c1f-4edb-91b3-2dd4489b084c`. A listagem de secrets continua com
+somente `META_ACCESS_TOKEN`, `META_PIXEL_ID` e
+`NEXT_PUBLIC_META_PIXEL_ID`; `META_CAPI_TEST_EVENT_CODE` está ausente.
+
+A prova final `contact_4f32b56c-cb57-4b5a-9bb0-66929f6c228c` gerou
+exatamente uma requisição de redirect, preservou a mensagem original e o token
+`EF-*`, enviou `Contact` pelo Pixel `1055784516710042` com objeto Meta vazio e
+reutilizou o mesmo `event_id` no servidor. O D1 registrou consentimentos
+analytics/marketing, URL e path completos, UTMs, `fbclid`, `fbp`, `fbc`,
+first/last touch e a mensagem íntegra. A CAPI respondeu Graph HTTP 200,
+`events_received=1`, sem erro. A linha de clique sintética foi removida e a
+auditoria de entrega foi retida.
+
+Após a limpeza exata dos diagnósticos, os agregados de 30 dias têm 187
+`Contact` CAPI OK, 7 `Schedule` CAPI OK e 0 falhas retryable; as recusas de
+consentimento históricas permanecem como auditoria fail-closed. A prova
+positiva `schedule_capi_postdeploy_19faff74937` continua Graph 200/
+`events_received=1`; a negativa `schedule_capi_negative_1785356808845`
+continua pré-Graph por `marketing_consent_denied`. Não restam booking nem
+clique sintético. O destino live de Google Ads para `Contact` não está
+configurado; a preservação de seus parâmetros foi comprovada no contrato de
+regressão, não por uma conversão Google live.

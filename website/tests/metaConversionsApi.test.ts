@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { TrackingContext } from "../src/lib/attribution";
-import { META_SCHEDULE_CONTENT_TYPE } from "../src/lib/metaEventContracts";
+import { buildMetaScheduleCustomData } from "../src/lib/metaEventContracts";
 import {
     sendMetaServerEvent,
     type MetaServerEvent,
@@ -11,7 +11,7 @@ type CapturedMetaEvent = {
     event_name?: string;
     event_id?: string;
     action_source?: string;
-    custom_data: Record<string, unknown>;
+    custom_data?: Record<string, unknown>;
     user_data: {
         em?: string[];
         ph?: string[];
@@ -54,11 +54,7 @@ function scheduleEvent(overrides: Partial<MetaServerEvent> = {}): MetaServerEven
             fbp: "fb.1.1712345678.browser",
             fbc: "fb.1.1712345678.test-fbclid",
         },
-        customData: {
-            content_type: META_SCHEDULE_CONTENT_TYPE,
-            booking_id: "synthetic-booking-123",
-            currency: "BRL",
-        },
+        customData: buildMetaScheduleCustomData(),
         trackingContext: acceptedTrackingContext(),
         bookingId: "synthetic-booking-123",
         ...overrides,
@@ -144,12 +140,54 @@ test("accepted Schedule keeps booking content type and hashes identifiers before
         assert.equal(event.event_name, "Schedule");
         assert.equal(event.event_id, "schedule_test_event");
         assert.equal(event.action_source, "website");
-        assert.equal(event.custom_data.content_type, "booking");
+        assert.deepEqual(event.custom_data, {
+            content_type: "booking",
+            currency: "BRL",
+        });
         assert.equal(event.user_data.em?.[0], "9e2cd5cb82deac7da5447b32f731280f35152638f0a40312a90abf75f679fcec");
         assert.equal(event.user_data.ph?.[0], "e3acfc6021fc199bc664eda07074646e0c3505abee84dca49b011db7be878f1b");
         assert.equal(event.user_data.external_id?.[0], "b337b68d7c27dd68a6b3ff3056c30489871e232f6ebd54439b7e305a97902062");
         assert.equal(event.user_data.fbp, "fb.1.1712345678.browser");
         assert.equal(event.user_data.fbc, "fb.1.1712345678.test-fbclid");
+    } finally {
+        globalThis.fetch = originalFetch;
+        restoreSecrets();
+    }
+});
+
+test("Contact without custom data omits custom_data from the CAPI payload", async () => {
+    const restoreSecrets = setTestSecrets();
+    const originalFetch = globalThis.fetch;
+    let capturedPayload: Record<string, unknown> | null = null;
+
+    globalThis.fetch = (async (_input, init) => {
+        capturedPayload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response('{"events_received":1}', { status: 200 });
+    }) as typeof fetch;
+
+    try {
+        const result = await sendMetaServerEvent({
+            eventName: "Contact",
+            eventId: "contact_test_event",
+            eventTime: 1_712_345_678,
+            eventSourceUrl: "https://espacofacial.com/contato?fbclid=test-fbclid",
+            userData: {
+                clientIpAddress: "203.0.113.5",
+                clientUserAgent: "MetaCapiUnitTest/1.0",
+                fbp: "fb.1.1712345678.browser",
+                fbc: "fb.1.1712345678.test-fbclid",
+            },
+            trackingContext: acceptedTrackingContext(),
+        });
+
+        assert.equal(result.ok, true);
+        const payload = capturedPayload as Record<string, unknown> | null;
+        assert.ok(payload);
+
+        const event = (payload.data as CapturedMetaEvent[])[0];
+        assert.equal(event.event_name, "Contact");
+        assert.equal(event.event_id, "contact_test_event");
+        assert.equal(Object.hasOwn(event, "custom_data"), false);
     } finally {
         globalThis.fetch = originalFetch;
         restoreSecrets();

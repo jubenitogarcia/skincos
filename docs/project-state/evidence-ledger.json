@@ -689,6 +689,26 @@
       "pr": 870,
       "merge_sha": "8442bb840fa8f620ea7e8cb5b37beecd064a7987",
       "validated_candidate_sha": "925fec6d61201ef96079b47f634314f99e045ae1"
+    },
+    {
+      "observed_at": "2026-07-30T02:16:00Z",
+      "surface": "github-cloudflare-production-meta-events-manager-crm-d1",
+      "scope": "Meta CAPI data minimization, Contact transport, and production closeout",
+      "state": "closed-with-current-production-evidence",
+      "method": "PRs #887/#904/#910/#913/#915 and check audit; immutable preview/staging/production promotion chains; live build headers and Cloudflare Worker deployment/secret-name reads; exact serializer, one-normalization transport regression, and representative route-request tests; controlled Schedule and Contact journeys with UTM/fbclid and marketing consent; read-only D1/CRM queries; authenticated Events Manager Schedule deduplication read; scoped diagnostic, booking, click, customer, temporary-secret, branch and worktree cleanup",
+      "result": "Data minimization from PR #887 remains live. PRs #904/#910/#913/#915 closed the full Contact path, including one native-anchor navigation and a versioned opaque-query envelope resilient to the Cloudflare/OpenNext normalization. Release 6272becdfba7fc4ef82956ceeda6ab72fbab467b completed preview 30507517010, staging 30507543078 and production 30507710641; root, doctors and booking-services return HTTP 200 with that x-app-build, and Worker version 7c3d2cdd-1c1f-4edb-91b3-2dd4489b084c receives 100%. Schedule event schedule_capi_postdeploy_19faff74937 remains Browser/Server deduplicated with only content_type=booking and currency=BRL, Graph HTTP 200 and events_received=1; the negative Schedule remains pre-Graph on marketing_consent_denied. Final Contact contact_4f32b56c-cb57-4b5a-9bb0-66929f6c228c emitted exactly one browser redirect, preserved the original WhatsApp message and EF token, used Pixel 1055784516710042 with empty Meta custom data, reused the same event_id server-side, persisted consent/UTM/fbclid/fbp/fbc/first-last-touch, and received Graph HTTP 200 with events_received=1. The click was removed and its successful audit retained. Thirty-day D1 aggregate is Contact OK 187, Schedule OK 7 and retryable failures 0. No synthetic booking or click remains, and META_CAPI_TEST_EVENT_CODE is absent.",
+      "limitation": "Events Manager rendered two identical processed Server rows for the Schedule proof even though D1 proves one application dispatch and response; Browser is explicitly Desduplicado. Historical coverage alerts and historical consent-denied audits remain valid CRM context, not retryable CAPI failures. Google Ads Contact destination is not configured live; parameter preservation is covered by regression tests only. Pre-minimization Worker version affdc496-a0f4-4177-93e8-79ffa19e04f4 is prohibited as rollback because it would restore excessive Meta custom_data.",
+      "sha": "6272becdfba7fc4ef82956ceeda6ab72fbab467b",
+      "pr": 915,
+      "related_prs": [887, 893, 904, 910, 913, 915],
+      "merge_sha": "6272becdfba7fc4ef82956ceeda6ab72fbab467b",
+      "worker_version": "7c3d2cdd-1c1f-4edb-91b3-2dd4489b084c",
+      "deployment_code_version": "7c3d2cdd-1c1f-4edb-91b3-2dd4489b084c",
+      "deployment_run": 30507710641,
+      "rollback_worker_version": "7c3d2cdd-1c1f-4edb-91b3-2dd4489b084c",
+      "rollback_release": "6272becdfba7fc4ef82956ceeda6ab72fbab467b",
+      "prohibited_pre_minimization_worker_version": "affdc496-a0f4-4177-93e8-79ffa19e04f4",
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\evidence\\meta-capi-final-verification-20260729.md"
     }
   ]
 }

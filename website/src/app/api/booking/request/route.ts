@@ -7,7 +7,7 @@ import { sendBookingNotifications, type PatientGender } from "@/lib/bookingNotif
 import { doctorSlugMatchesQuery } from "@/lib/doctorSlug";
 import { fetchEscalaDaySchedule, personNameMatches } from "@/lib/escalaDb";
 import { issueBookingStatusToken } from "@/lib/bookingSecurity";
-import { META_SCHEDULE_CONTENT_TYPE } from "@/lib/metaEventContracts";
+import { buildMetaScheduleCustomData } from "@/lib/metaEventContracts";
 import { sendMetaServerEvent } from "@/lib/metaConversionsApi";
 import { getRuntimeSecret } from "@/lib/runtimeSecrets";
 import { isAuthorizedSyntheticBookingTest, SYNTHETIC_BOOKING_TEST_TOKEN_HEADER } from "@/lib/syntheticBookingTest";
@@ -568,10 +568,7 @@ export async function POST(request: Request) {
                     fbp: trackingContextResolved?.fbp ?? null,
                     fbc: trackingContextResolved?.fbc ?? null,
                 },
-                customData: {
-                    content_type: META_SCHEDULE_CONTENT_TYPE,
-                    currency: "BRL",
-                },
+                customData: buildMetaScheduleCustomData(),
                 trackingContext: trackingContextResolved,
                 bookingId: id,
             },

@@ -3,13 +3,16 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "npm run build --silent && tsc -p tsconfig.json --noEmit --incremental false",
     "lint": "eslint .",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "node --experimental-test-module-mocks --import tsx --test tests/*.test.ts",
     "smoke": "node scripts/smoke.mjs",
     "smoke:strict": "SMOKE_REQUIRE_AGENDA=1 node scripts/smoke.mjs",
     "custom-urls:migrate:esfa": "tsx scripts/migrate-esfa-redirects.ts",
