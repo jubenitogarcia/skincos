@@ -11,6 +11,16 @@
   de Atendimento também foi aprovada. Débitos de outros módulos seguem
   independentes deste P0.
 
+## P1 — custódia de `IDENTITY_PII_KEY`
+
+- [ ] Registrar, fora do repositório, o owner autorizado, a referência de
+  escrow e o procedimento de recuperação/rotação dual-key da chave ativa de
+  PII de onboarding. A reconciliação somente leitura de 2026-07-30 confirmou
+  três payloads de email, três de telefone e um token de convite cifrados no
+  D1 produtivo. Não gerar, copiar, substituir ou rotacionar a chave enquanto
+  essa evidência e o procedimento de recriptografia/rollback não existirem.
+  Isto não reabre o P0 de Insumos nem autoriza deploy.
+
 ## Finance — authoritative reconciliation follow-up (2026-07-29)
 
 - [x] Confirm continuous external observability, a controlled human-alert

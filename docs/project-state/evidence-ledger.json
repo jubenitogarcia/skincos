@@ -2,6 +2,20 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-30T00:13:34Z",
+      "surface": "origin-main-github-actions-cloudflare-worker-pages-d1-and-live-http",
+      "scope": "Inventory production provenance and IDENTITY_PII_KEY custody correction",
+      "state": "production-release-reconciled-key-custody-blocked",
+      "method": "Fetched origin/main; inspected PR #787 file scope; read canonical production workflow logs, Cloudflare deployment metadata, GitHub/Worker secret names and remote D1 migration/count queries; queried only aggregate counts and no secret values or PII.",
+      "result": "PR #787 is documentation-only. Canonical production runs 30420719000 (Core Inventory) and 30420793906 (CRM Pages) each accepted release_sha f30f66e70e0dc949adde5120378509a1c95fe557, verified its staging predecessor and checked out that SHA. The current Worker deployment is 4bb6a932-05ba-44a9-aea3-5f139b31abca and active Pages deployment a77cf500-f272-4d37-87c2-c02f78352c4e declares source f30f66e. Inventory health is ready, CRM health is 200 and remote D1 has no pending migration. Aggregate D1 counts are onboarding=3, encrypted_personal_email=3, encrypted_phone=3 and encrypted_invite_token=1. IDENTITY_PII_KEY exists by name in staging and production GitHub environments and on the active Inventory Worker.",
+      "limitation": "The key value was not read. No external escrow/custodian, rotation record or dual-key re-encryption/rollback procedure is evidenced. Because encrypted payloads now exist, the key must not be generated, copied, replaced or rotated. No workflow, secret, flag, user, grant or business-data mutation occurred.",
+      "sha": "3868c79ac3bfb9fd98f8bf90be16648e35728c59",
+      "release_sha": "f30f66e70e0dc949adde5120378509a1c95fe557",
+      "runs": [30420719000, 30420793906],
+      "checkpoint_artifact": 8711811875,
+      "supersedes": ["historical zero-payload assertions for production onboarding PII"]
+    },
+    {
       "observed_at": "2026-07-29T22:29:04Z",
       "surface": "github-main-pr-894-review-governance-github-environment-metadata",
       "scope": "Workforce Timekeeping blocker-ledger correction and production fail-closed restoration",
