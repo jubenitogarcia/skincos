@@ -132,7 +132,8 @@ describe('Finance transport helpers', () => {
 
   it('unlocks Finance navigation only after the server bootstrap authorizes it', () => {
     const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
-    expect(app).toContain("unlockedModuleKeys(financeEnabled ? 'finance' : DEFAULT_MODULE_KEY")
+    expect(app).toContain("financeEnabled ? 'finance' : DEFAULT_MODULE_KEY,")
+    expect(app).toContain("user?.localFocusModule || ''")
     expect(app).toContain('}, [financeEnabled, initializing])')
     expect(app).toContain('resolveFinanceBootstrapEnabled')
   })

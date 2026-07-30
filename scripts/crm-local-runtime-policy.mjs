@@ -31,6 +31,12 @@ export function sourceOriginsMatch(left, right) {
   return Boolean(a && b && a === b)
 }
 
+function exactOptionalMatch(actual, expected) {
+  const wanted = String(expected || '').trim()
+  if (!wanted) return true
+  return String(actual || '').trim() === wanted
+}
+
 function canReuseLegacyCanonicalFingerprint(builtFingerprint, expectedFingerprint, targetCommit) {
   // Older canonical runtimes recorded their exact built commit but not a source
   // fingerprint. That is equivalent to the current `commit:<sha>` contract
@@ -40,16 +46,41 @@ function canReuseLegacyCanonicalFingerprint(builtFingerprint, expectedFingerprin
     normalizeFingerprint(expectedFingerprint) === `commit:${normalizeCommit(targetCommit)}`
 }
 
-export function decideRuntimeAction({ manifest, buildState, targetCommit, sourceFingerprint, sourceOrigin, persona, pidAlive, healthy }) {
+export function decideRuntimeAction({
+  manifest,
+  buildState,
+  targetCommit,
+  sourceFingerprint,
+  sourceOrigin,
+  persona,
+  runtimeId,
+  module,
+  configFingerprint,
+  buildInputFingerprint,
+  lockfileFingerprint,
+  artifactFingerprint,
+  pidAlive,
+  healthy,
+}) {
   if (!manifest || typeof manifest !== 'object') return { action: 'start', reason: 'manifest_missing' }
   if (String(manifest.persona || '').toUpperCase() !== String(persona || '').toUpperCase()) {
     return { action: 'restart', reason: 'persona_mismatch' }
+  }
+  if (!exactOptionalMatch(manifest.runtimeId, runtimeId)) return { action: 'restart', reason: 'runtime_id_mismatch' }
+  if (!exactOptionalMatch(manifest.module, module)) return { action: 'restart', reason: 'module_mismatch' }
+  if (!exactOptionalMatch(manifest.configFingerprint, configFingerprint)) {
+    return { action: 'restart', reason: 'runtime_config_outdated' }
   }
   if (!pidAlive) return { action: 'restart', reason: 'launcher_dead' }
 
   const state = String(manifest.state || '').toLowerCase()
   const intendedCommit = manifest.targetCommit || manifest.buildCommit || buildState?.commit
-  if (state === 'starting' && commitsMatch(intendedCommit, targetCommit)) {
+  const intendedFingerprint = manifest.sourceFingerprint || buildState?.sourceFingerprint
+  const intendedOrigin = manifest.sourceOrigin || buildState?.sourceOrigin
+  if (state === 'starting' &&
+      commitsMatch(intendedCommit, targetCommit) &&
+      (!sourceFingerprint || fingerprintsMatch(intendedFingerprint, sourceFingerprint)) &&
+      (!sourceOrigin || sourceOriginsMatch(intendedOrigin, sourceOrigin))) {
     return { action: 'wait', reason: 'current_start_in_progress' }
   }
 
@@ -59,13 +90,29 @@ export function decideRuntimeAction({ manifest, buildState, targetCommit, source
   const sourceMatches = fingerprintsMatch(builtFingerprint, sourceFingerprint) ||
     canReuseLegacyCanonicalFingerprint(builtFingerprint, sourceFingerprint, targetCommit)
   const originMatches = sourceOriginsMatch(builtOrigin, sourceOrigin)
-  if (state === 'ready' && commitsMatch(builtCommit, targetCommit) && sourceMatches && originMatches && healthy) {
+  const buildInputMatches = exactOptionalMatch(
+    manifest?.build?.inputFingerprint || buildState?.inputFingerprint,
+    buildInputFingerprint,
+  )
+  const lockfileMatches = exactOptionalMatch(
+    manifest?.build?.lockfileFingerprint || buildState?.lockfileFingerprint,
+    lockfileFingerprint,
+  )
+  const artifactMatches = exactOptionalMatch(
+    manifest?.build?.artifactFingerprint || buildState?.artifactFingerprint,
+    artifactFingerprint,
+  )
+  if (state === 'ready' && commitsMatch(builtCommit, targetCommit) && sourceMatches && originMatches &&
+      buildInputMatches && lockfileMatches && artifactMatches && healthy) {
     return { action: 'reuse', reason: 'current_runtime_ready' }
   }
 
   if (!commitsMatch(builtCommit, targetCommit)) return { action: 'restart', reason: 'commit_outdated' }
   if (!sourceMatches) return { action: 'restart', reason: 'source_outdated' }
   if (!originMatches) return { action: 'restart', reason: 'source_origin_outdated' }
+  if (!buildInputMatches) return { action: 'restart', reason: 'build_inputs_outdated' }
+  if (!lockfileMatches) return { action: 'restart', reason: 'dependencies_outdated' }
+  if (!artifactMatches) return { action: 'restart', reason: 'artifact_outdated' }
   if (state !== 'ready') return { action: 'restart', reason: `state_${state || 'missing'}` }
   return { action: 'restart', reason: 'health_failed' }
 }
@@ -97,6 +144,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
     sourceFingerprint: args['source-fingerprint'],
     sourceOrigin: args['source-origin'],
     persona: args.persona,
+    runtimeId: args['runtime-id'],
+    module: args.module,
+    configFingerprint: args['config-fingerprint'],
+    buildInputFingerprint: args['build-input-fingerprint'],
+    lockfileFingerprint: args['lockfile-fingerprint'],
+    artifactFingerprint: args['artifact-fingerprint'],
     pidAlive: args['pid-alive'] === 'true',
     healthy: args.healthy === 'true',
   })
