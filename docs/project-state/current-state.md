@@ -1,6 +1,6 @@
 # Current state
 
-## Workforce Timekeeping — corrective source integrated; REST successor #927 final review pending; release fail-closed — 2026-07-30T16:34:46Z
+## Workforce Timekeeping — REST successor #927 integrated; pnpm preview successor pending; release fail-closed — 2026-07-30T16:50:51Z
 
 This is the authoritative Ponto entry and supersedes the older local-successor
 entries below. PR #924 integrated the post-#921 corrective package as
@@ -35,9 +35,29 @@ identity check to canonical workflow metadata and adds a regression guard.
 The full governed suite is now 219/219; actionlint 1.7.12, syntax, architecture,
 topology, progressive policy, module, governance, security exception and diff
 checks are green. Two independent read-only security reviews found no
-remaining P0/P1/P2 after the fixes. PR #927 still requires final hosted checks,
-Codex re-review, review-thread closure and canonical merge; no replacement
-preview has run yet. `selected_release_sha` remains null.
+remaining P0/P1/P2 after the fixes. Final head
+`7d8945300903847167c0ba55234ab8458cfb240d` passed all 14 hosted checks; both
+review threads were resolved, and Codex re-reviewed that exact head without a
+major issue. PR #927 merged through protected `main`, without bypass, as
+`15ac662e0c3b01317d48270cd211d7910000ca5a`.
+
+Replacement preview `30562834119` selected that exact merge SHA. Source
+admission succeeded and Timekeeping child `30562866947` completed, publishing
+surface artifact `8767637805`
+(`sha256:700a0e50241bd9272929cdcaf03166e0d800e24ebce1a7c0a81caab94df3c1fa`)
+and promotion artifact `8767637318`
+(`sha256:a42e0bdd3056cc16c06c6662bde2e2a9cbb77fb9d626e12774ffd7e07eb31ea1`).
+Identity/Inventory child `30562970927` then failed in job `90940563185` before
+tests or dry-run: `actions/setup-node` requested the pnpm cache before a `pnpm`
+executable existed on the runner. The bounded successor removes that invalid
+cache configuration from both Identity preview and staging; dependency
+installation now invokes `corepack pnpm` from `inventory` in all three
+Identity jobs, where `inventory/package.json` pins `pnpm@9.15.4`. The local
+version readback was exactly 9.15.4; its frozen install and 17/17 Inventory
+tests passed. Focused tests pass 15/15, the governed Ponto set passes 212/212,
+actionlint 1.7.12 and `git diff --check` are green. A complete replacement
+preview has not yet passed, so
+`selected_release_sha` remains null.
 
 Live Cloudflare remains unchanged and deliberately closed. Both
 `module-control:timekeeping` values are `maintenance`; the emergency-latch key
@@ -60,7 +80,8 @@ broker URL/credential/custody, pilot credentials/cohort, runner selector/key,
 canary percentage, Ponto resource variables and four enable flags are absent
 at their governed scopes. No secret values were read. Identity/Workforce still
 provides no authorized eligible pilot. Therefore preview may resume only after
-#927 merges; staging, pilot, canary and production remain ineligible.
+the pnpm successor merges; staging, pilot, canary and production remain
+ineligible.
 
 ## Codex Windows native / PowerShell gateway — integrated and validated locally — 2026-07-30T16:21Z
 

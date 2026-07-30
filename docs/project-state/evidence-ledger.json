@@ -2,6 +2,48 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-30T16:50:51Z",
+      "surface": "github-actions-cloudflare-workers-pages-d1-kv-environments-and-ponto-source",
+      "scope": "PR #927 integration, exact-main replacement preview and bounded Identity pnpm bootstrap successor",
+      "state": "pr-927-integrated-replacement-preview-failed-pnpm-successor-pending-both-environments-maintenance-external-gates-open",
+      "method": "Completed the protected PR #927 checks, exact-head Codex re-review and thread resolution; merged without bypass; dispatched preview on the exact merge SHA; inspected coordinator and child jobs/artifacts; reproduced the pnpm bootstrap ordering defect; removed only the invalid setup-node cache request from Identity preview/staging; ran focused and governed Ponto tests through the typed WSL gateway plus actionlint and diff checks.",
+      "result": "PR #927 final head 7d8945300903847167c0ba55234ab8458cfb240d passed all 14 hosted checks, both review threads were resolved and Codex reported no major issue on that exact head. It merged without bypass as 15ac662e0c3b01317d48270cd211d7910000ca5a. Replacement preview 30562834119 admitted that exact SHA. Timekeeping child 30562866947 succeeded and produced surface artifact 8767637805 (sha256:700a0e50241bd9272929cdcaf03166e0d800e24ebce1a7c0a81caab94df3c1fa) plus promotion artifact 8767637318 (sha256:a42e0bdd3056cc16c06c6662bde2e2a9cbb77fb9d626e12774ffd7e07eb31ea1). Identity/Inventory child 30562970927 failed in job 90940563185 before tests or dry-run with Unable to locate executable file: pnpm; Core API and CRM Pages were skipped, and no deployment, migration, D1/KV write or module transition occurred. The bounded successor removes that invalid cache request from both Identity preview and staging and invokes corepack pnpm from inventory in all three Identity jobs, where packageManager pins pnpm@9.15.4. Local readback resolved exactly 9.15.4; frozen install and Inventory tests passed 17/17. Focused tests passed 15/15, governed Ponto tests 212/212, actionlint 1.7.12 and git diff --check passed.",
+      "limitation": "The pnpm successor is not yet merged and no complete four-surface replacement preview has succeeded, so selected_release_sha is null. Both module-control values are maintenance; no live surface identifies current main 15ac662e0c3b01317d48270cd211d7910000ca5a. Emergency latch is absent, WAF block behavior failed 12/12 required probes, Timekeeping workers.dev/previews are public, readiness is a false-positive 200 during maintenance, staging Pages lacks its actor key, and no authenticated journey was executed. Independent deployment approval, approved secret custody, broker/WAF controls, pilot identity, JIT clinic runner and external SLO remain absent. No secret value or PII was read.",
+      "origin_main": "15ac662e0c3b01317d48270cd211d7910000ca5a",
+      "corrective_package_pr": 924,
+      "corrective_package_merge_sha": "91f6e9033fed8a186ef2e93be070db3ed896fdd3",
+      "rest_contract_pr": 927,
+      "rest_contract_first_commit": "4c895a4b",
+      "rest_contract_review_fix_commit": "c3131eb8",
+      "rest_contract_final_head": "7d8945300903847167c0ba55234ab8458cfb240d",
+      "rest_contract_merge_sha": "15ac662e0c3b01317d48270cd211d7910000ca5a",
+      "selected_release_sha": null,
+      "preview_run": 30556924556,
+      "preview_failed_job": 90919728697,
+      "timekeeping_preview_run": 30556988335,
+      "watchdog_run": 30558653559,
+      "replacement_preview_run": 30562834119,
+      "replacement_preview_failed_job": 90939975621,
+      "replacement_timekeeping_run": 30562866947,
+      "replacement_identity_run": 30562970927,
+      "replacement_identity_failed_job": 90940563185,
+      "replacement_timekeeping_surface_artifact": 8767637805,
+      "replacement_timekeeping_promotion_artifact": 8767637318,
+      "module_control": {
+        "staging": "maintenance",
+        "production": "maintenance",
+        "emergency_latch_staging": "absent",
+        "emergency_latch_production": "absent"
+      },
+      "migrations": {
+        "timekeeping_staging": "0001-0008",
+        "timekeeping_production": "0001-0008",
+        "identity_staging": "0001-0018",
+        "identity_production": "0001-0018"
+      },
+      "next_action": "Merge the bounded pnpm bootstrap successor without bypass, fetch its exact main merge SHA and rerun preview. Do not dispatch staging until that preview and independent approval, WAF, custody, broker and the remaining external predecessors are proved."
+    },
+    {
       "observed_at": "2026-07-30T16:34:46Z",
       "surface": "github-actions-cloudflare-workers-pages-d1-kv-environments-and-ponto-source",
       "scope": "Post-PR-924 corrective integration, first preview diagnosis and bounded REST-contract successor",

@@ -10,20 +10,28 @@ eight resolved review conversations. PR #924 integrated the complete
 post-#921 corrective package as
 `91f6e9033fed8a186ef2e93be070db3ed896fdd3`, with its required checks green
 and review conversations resolved. Unrelated PRs #925/#926/#928 advanced
-`main` to `46b97519adc056d31553531cf3f90ad5a324fc88`.
+`main` to `46b97519adc056d31553531cf3f90ad5a324fc88`. PR #927 then completed
+the REST path/dynamic-name and environment-payload correction: final head
+`7d8945300903847167c0ba55234ab8458cfb240d` passed all 14 hosted checks, both
+threads were resolved, Codex re-reviewed that exact head without a major issue,
+and protected `main` merged it without bypass as
+`15ac662e0c3b01317d48270cd211d7910000ca5a`.
 
 The first post-merge preview (`30556924556`) proved its source and completed
 Timekeeping child `30556988335`, but coordinator job `90919728697` failed
 because the GitHub REST `run.path` contract was modeled with a nonexistent ref
 suffix. Watchdog run `30558653559` also exposed a dynamic `run.name` mismatch
-that prevented the emergency latch path. PR #927 fixes both live contracts and
-versions the stronger environment baseline. Its initial head `5b8447a70c...`
-passed 14 hosted checks. Codex review then found two P1s: omitted
-`can_admins_bypass=false` in the versioned environment payload and remaining
-static `run.name` comparisons. Commit `c3131eb8` fixes both; the governed suite
-passes 219/219 and independent review reports zero remaining P0/P1/P2. Final
-checks, re-review, review-thread closure and canonical merge are still pending.
-`selected_release_sha` remains null and no live surface runs the current main.
+that prevented the emergency latch path. Those defects are integrated.
+Replacement preview `30562834119` selected `15ac662e...`; source admission and
+Timekeeping child `30562866947` passed, with surface/promotion artifacts
+`8767637805` and `8767637318`. Identity/Inventory child `30562970927` failed
+in job `90940563185` before tests or dry-run because `actions/setup-node`
+requested pnpm caching before the runner had a `pnpm` executable. The bounded
+successor removes that invalid cache request from both Identity preview and
+staging, executes `corepack pnpm` from `inventory` in all three Identity jobs
+so `pnpm@9.15.4` is pinned, and adds cache/cwd/pin regressions.
+`selected_release_sha` remains null until that successor and a
+complete four-surface preview succeed; no live surface runs current `main`.
 
 Both module-control KVs are now maintenance. Timekeeping D1 journals contain
 exactly `0001`–`0008` and Identity/Inventory exactly `0001`–`0018` in both
@@ -96,11 +104,10 @@ active external SLO evidence.
 
 The executable blockers, in required order, are:
 
-1. Complete PR #927 without bypass: obtain hosted checks, resolve every review
-   conversation and merge through the canonical protected-main flow. Then
-   repeat preview on the exact new `main` SHA; any subsequent main advancement
-   requires another preview. The source package from #924 is already
-   integrated. Historical child definitions cannot be rewritten, so the
+1. Integrate the bounded pnpm bootstrap successor without bypass, then repeat
+   preview on its exact protected-main merge SHA. The #924/#927 source package
+   is already integrated; only the observed preview/staging bootstrap order is
+   changing. Historical child definitions cannot be rewritten, so the
    checkpointed fences and disabled legacy smokes remain until their exposure
    expires or the governed release makes them irrelevant.
 2. An authorized Cloudflare security principal must inspect and attest the exact
@@ -222,9 +229,10 @@ interruption/rollback is not operational evidence.
 
 PR #921 closed the earlier Finance-coupling, wrong-target, fail-open default,
 version-affinity, predecessor, pilot-credential and key-separation defects; PR
-#924 integrated the post-merge P1/P2 package. PR #927 is the bounded REST
-contract correction required by item 1. None of these source merges is
-permission to skip items 2–10.
+#924 integrated the post-merge P1/P2 package, and PR #927 integrated the
+bounded REST contract correction. The pnpm bootstrap successor in item 1 does
+not change any external prerequisite. None of these source merges is permission
+to skip items 2–10.
 
 ## Resolved — Insumos unit access P0
 

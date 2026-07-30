@@ -169,7 +169,7 @@ jornada autenticada atual continue válida.
   teardown indeterminado mantém o probe fail-closed e preserva o erro primário.
   A integração e os hosted checks estão comprovados no merge #924; a jornada
   real continua bloqueada até identidade/runner/custódia autorizados existirem.
-- [ ] Integrar a PR #927 antes de repetir o `preview`. O primeiro `preview`
+- [x] Integrar a PR #927 antes de repetir o `preview`. O primeiro `preview`
   pós-#924, run `30556924556` no SHA `91f6e903...`, publicou e atestou
   Timekeeping no child run `30556988335`, mas o coordenador falhou no job
   `90919728697` porque a API REST retorna `run.path` canônico sem
@@ -183,10 +183,24 @@ jornada autenticada atual continue válida.
   `c3131eb8` define/valida o bypass como `false`, usa `workflow.name` canônico
   em todas as superfícies e adiciona regressão contra reintrodução. A suíte
   passou 219/219, actionlint/sintaxe/validadores ficaram verdes e duas revisões
-  locais independentes retornaram zero P0/P1/P2. O PR ainda precisa de checks
-  finais, re-review, resolução das duas conversas e merge canônico. O mesmo PR
-  versiona a proteção live dos environments para não permitir reaplicação do
-  payload histórico mais fraco.
+  locais independentes retornaram zero P0/P1/P2. O head final
+  `7d8945300903847167c0ba55234ab8458cfb240d` passou todos os 14 checks,
+  teve as duas conversas resolvidas e recebeu Codex re-review sem finding no
+  próprio head. A PR integrou sem bypass em
+  `15ac662e0c3b01317d48270cd211d7910000ca5a`, incluindo a proteção live dos
+  environments contra reaplicação do payload histórico mais fraco.
+- [ ] Integrar a correção de bootstrap pnpm e repetir o `preview` no SHA exato
+  resultante. O replacement preview `30562834119` usou o merge #927
+  `15ac662e...`; Timekeeping child `30562866947` passou e publicou os artefatos
+  `8767637805`/`8767637318`, mas Identity/Inventory child `30562970927` falhou
+  antes de testes ou dry-run porque `actions/setup-node` pediu cache pnpm antes
+  de o executável existir no runner. A correção remove apenas o cache inválido
+  dos jobs Identity preview/staging e executa o `corepack pnpm` dentro de
+  `inventory` nos três jobs Identity, onde o `packageManager` fixa
+  `pnpm@9.15.4`. Testes impedem reintroduzir cache prematuro, cwd incorreto ou
+  versão não fixada.
+  `selected_release_sha` continua nulo até a sucessora integrar e um preview
+  completo das quatro superfícies terminar verde.
 - [ ] Provisionar e atestar separadamente o broker de fechamento externo nos
   environments `ponto-emergency-staging` e `ponto-emergency-production`:
   secret `PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL` e variables
@@ -273,7 +287,7 @@ jornada autenticada atual continue válida.
   CRM Pages deploy, sete module-control e um production baseline. O watchdog
   integrado fecha um rerun do coordenador canônico e a suíte cobre a
   invalidação terminal de capability emitida tardiamente; a correção REST da
-  PR #927 é necessária para esse caminho observar nomes e paths como a API os
+  PR #927 está integrada para esse caminho observar nomes e paths como a API os
   entrega. Um child run
   histórico, porém, continua executando sua definição antiga; por isso esses
   runs permanecem contidos pelos fences externos até expirar. Manter a
