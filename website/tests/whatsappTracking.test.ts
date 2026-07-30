@@ -121,6 +121,8 @@ test("campaign-rich Contact redirect keeps consent and matching context within a
     assert.equal(redirectUrl.searchParams.has("page_path"), false);
 
     const compactContext = JSON.parse(redirectUrl.searchParams.get("ctx") ?? "null") as TrackingContext;
+    assert.equal(Object.hasOwn(compactContext, "l"), false);
+    assert.equal(Object.hasOwn(compactContext, "h"), false);
     const transportedContext = expandWhatsappTrackingContext(compactContext) as TrackingContext;
     assert.deepEqual(transportedContext.consent, { analytics: true, marketing: true });
     assert.deepEqual(transportedContext.params, trackingContext.params);
