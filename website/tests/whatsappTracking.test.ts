@@ -144,8 +144,9 @@ test("campaign-rich Contact redirect keeps consent and matching context within a
                 trackingContext,
             },
         });
+        assert.ok(prizeHref, `prize ${prize.id} did not produce a destination`);
         assert.ok(
-            prizeHref?.startsWith("/api/whatsapp/redirect?"),
+            prizeHref.startsWith("/api/whatsapp/redirect?"),
             `prize ${prize.id} unexpectedly used the direct fallback`,
         );
         assert.ok(prizeHref.length <= 2_000, `prize ${prize.id} redirect length: ${prizeHref.length}`);
