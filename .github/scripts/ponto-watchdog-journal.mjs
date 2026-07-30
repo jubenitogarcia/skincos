@@ -236,7 +236,7 @@ export async function reconstructWatchdogJournal({
   );
   if (
     String(coordinator?.id || "") !== String(coordinatorRunId)
-    || coordinator?.path !== ".github/workflows/ponto-progressive-release.yml@refs/heads/main"
+    || coordinator?.path !== ".github/workflows/ponto-progressive-release.yml"
     || coordinator?.event !== "workflow_dispatch"
     || coordinator?.head_branch !== "main"
     || String(coordinator?.head_sha || "").toLowerCase() !== releaseSha
@@ -377,6 +377,7 @@ export async function reconstructWatchdogJournal({
       if (
         !Number.isInteger(workflow?.id)
         || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
+        || workflow?.name !== "Ponto progressive release"
         || !["active", "disabled_manually", "disabled_inactivity"].includes(workflow?.state)
       ) throw new Error("canonical Ponto coordinator workflow is unavailable");
       coordinatorWorkflowId = workflow.id;

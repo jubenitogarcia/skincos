@@ -26,6 +26,19 @@ export const minimumDispatchTimeoutMsByWorkflow = Object.freeze({
   "ponto-production-slo.yml": 65 * 60 * 1000,
 });
 
+export const canonicalWorkflowNameByFile = Object.freeze({
+  "cloudflare-pages-sync-ponto.yml": "Attest CRM Pages env (Timekeeping)",
+  "cloudflare-workers-sync-ponto-secrets.yml": "Attest Ponto Worker secret custody",
+  "deploy-core-workers.yml": "Deploy Core Worker",
+  "deploy-crm-pages.yml": "Deploy CRM (Cloudflare Pages)",
+  "deploy-timekeeping.yml": "Deploy Workforce Timekeeping",
+  "module-availability.yml": "Set module availability",
+  "ponto-production-baseline.yml": "Ponto production baseline",
+  "ponto-production-slo.yml": "Ponto production SLO",
+  "ponto-staging-rollback-drill.yml": "Ponto staging rollback drill",
+  "timekeeping-staging-journey.yml": "Timekeeping authenticated staging journey",
+});
+
 export const dispatchTimeoutMsFor = (workflow, configuredTimeoutMs) => Math.max(
   configuredTimeoutMs,
   minimumDispatchTimeoutMsByWorkflow[workflow] || 0,
@@ -195,9 +208,12 @@ if (leaseKey) {
 }
 const workflowMetadata = await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}`);
 const expectedPath = `.github/workflows/${workflow}`;
+const expectedWorkflowName = canonicalWorkflowNameByFile[workflow];
 if (
-  workflowMetadata?.state !== "active"
+  !expectedWorkflowName
+  || workflowMetadata?.state !== "active"
   || workflowMetadata?.path !== expectedPath
+  || workflowMetadata?.name !== expectedWorkflowName
   || !Number.isInteger(workflowMetadata?.id)
 ) {
   throw new Error(`${workflow} is not the active canonical workflow at ${expectedPath}`);
@@ -213,9 +229,10 @@ if (leaseKey) {
   if (
     parentWorkflow?.state !== "active"
     || parentWorkflow?.path !== ".github/workflows/ponto-progressive-release.yml"
+    || parentWorkflow?.name !== "Ponto progressive release"
     || parentRun?.workflow_id !== parentWorkflow.id
     || String(parentRun?.id || "") !== correlation
-    || parentRun?.path !== `${parentWorkflow.path}@refs/heads/main`
+    || parentRun?.path !== parentWorkflow.path
     || parentRun?.run_attempt !== 1
     || parentRun?.status !== "in_progress"
     || parentRun?.conclusion != null
@@ -226,7 +243,6 @@ if (leaseKey) {
     || parentRun?.repository?.full_name !== repository
     || parentRun?.head_repository?.full_name !== repository
     || String(parentRun?.head_repository?.id || "") !== repositoryId
-    || parentRun?.name !== "Ponto progressive release"
     || parentRun?.display_title !== `Ponto ${process.env.STAGE} ${orchestratorHeadSha} orchestrator=${correlation}`
   ) throw new Error("active Ponto coordinator cannot issue a child-bound capability");
 }
@@ -291,14 +307,13 @@ while (Date.now() - startedAt < timeoutMs) {
     const expectedDisplayTitle = expectedGovernedRunName(expectedPath, normalizedIntent);
     if (
       run.workflow_id !== workflowMetadata.id
-      || run.path !== `${expectedPath}@refs/heads/main`
+      || run.path !== expectedPath
       || run.run_attempt !== 1
       || run.status === "completed"
       || run.conclusion != null
       || run.event !== "workflow_dispatch"
       || run.head_branch !== "main"
       || run.head_sha !== orchestratorHeadSha
-      || run.name !== workflowMetadata.name
       || run.display_title !== expectedDisplayTitle
       || String(run?.repository?.id || "") !== repositoryId
       || run?.repository?.full_name !== repository
@@ -447,7 +462,7 @@ if (run.status !== "completed") {
 }
 if (
   run.workflow_id !== workflowMetadata.id
-  || run.path !== `${expectedPath}@refs/heads/main`
+  || run.path !== expectedPath
   || run.run_attempt !== 1
   || run.head_sha !== orchestratorHeadSha
   || run.event !== "workflow_dispatch"
@@ -459,7 +474,6 @@ if (
 }
 if (leaseKey && (
   String(run.id) !== persistedRunId
-  || run.name !== workflowMetadata.name
   || run.display_title !== expectedGovernedRunName(expectedPath, normalizedIntent)
   || String(run?.repository?.id || "") !== repositoryId
   || run?.repository?.full_name !== repository

@@ -154,7 +154,8 @@ for (const required of [
 }
 const bootstrapVerifier = read('.github/scripts/ponto-core-bootstrap-evidence.mjs');
 for (const required of [
-  'workflow run path must be pinned to the publisher on refs/heads/main',
+  'workflow run path must equal the canonical publisher workflow',
+  'workflow run head_branch must be main',
   'artifact digest differs from catalog',
   'artifact has expired',
   'bootstrap attempted resource deletion',

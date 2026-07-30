@@ -2,6 +2,39 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-30T16:34:46Z",
+      "surface": "github-actions-cloudflare-workers-pages-d1-kv-environments-and-ponto-source",
+      "scope": "Post-PR-924 corrective integration, first preview diagnosis and bounded REST-contract successor",
+      "state": "pr-924-integrated-pr-927-open-preview-failed-both-environments-maintenance-external-gates-open",
+      "method": "Reconciled GitHub main, PRs, rulesets, environment protection, workflow runs, checks, collaborators, runners and name-only secret/variable inventories; queried Cloudflare Workers, Pages, D1 migrations, KV control/latch, WAF authorization and public endpoints read-only; reproduced the GitHub REST path/name contracts; ran governed tests, actionlint and architecture/topology/policy/security validators through the approved WSL gateway; completed an independent security diff review and re-review.",
+      "result": "PR #924 merged the post-#921 package as 91f6e9033fed8a186ef2e93be070db3ed896fdd3 with required checks green and review conversations resolved. Preview 30556924556 proved source and child Timekeeping run 30556988335 succeeded, producing artifacts 8765220008 (sha256:9f8e5b61c5ee4976639f52cacb8360b95966b325c7e2d178a85e67680460ebc6) and 8765219605 (sha256:b279a7634d3cf52bddd65c0913b11c391d81440a44b7cfa42848381c2624616c), but coordinator job 90919728697 failed because REST run.path is canonical without @refs/heads/main. Watchdog 30558653559 independently failed because run.name is dynamic under run-name. PR #927 initial head 5b8447a70c30e7011a9a48099d8e1222b72e5992 passed all 14 hosted checks. Codex review then found omitted can_admins_bypass=false environment payload metadata and remaining static run.name comparisons. Corrective commit c3131eb8 fixes both while retaining independent SHA/branch/workflow/repository/attempt/capability constraints and adding a regression guard. Governed tests passed 219/219; actionlint 1.7.12, syntax, architecture, topology, progressive policy, module, governance, JS security-exception and diff checks passed. Two independent follow-up reviews found no remaining P0/P1/P2.",
+      "limitation": "PR #927 is not yet merged and no replacement preview has run. selected_release_sha is null. Both module-control values are maintenance; no live surface identifies current main 46b97519adc056d31553531cf3f90ad5a324fc88. Emergency latch is absent, WAF block behavior failed 12/12 required probes, Timekeeping workers.dev/previews are public, readiness is a false-positive 200 during maintenance, staging Pages lacks its actor key, and no authenticated journey was executed. Independent deployment approval, approved secret custody, broker/WAF controls, pilot identity, JIT clinic runner and external SLO remain absent. No secret value or PII was read.",
+      "origin_main": "46b97519adc056d31553531cf3f90ad5a324fc88",
+      "corrective_package_pr": 924,
+      "corrective_package_merge_sha": "91f6e9033fed8a186ef2e93be070db3ed896fdd3",
+      "rest_contract_pr": 927,
+      "rest_contract_first_commit": "4c895a4b",
+      "rest_contract_review_fix_commit": "c3131eb8",
+      "selected_release_sha": null,
+      "preview_run": 30556924556,
+      "preview_failed_job": 90919728697,
+      "timekeeping_preview_run": 30556988335,
+      "watchdog_run": 30558653559,
+      "module_control": {
+        "staging": "maintenance",
+        "production": "maintenance",
+        "emergency_latch_staging": "absent",
+        "emergency_latch_production": "absent"
+      },
+      "migrations": {
+        "timekeeping_staging": "0001-0008",
+        "timekeeping_production": "0001-0008",
+        "identity_staging": "0001-0018",
+        "identity_production": "0001-0018"
+      },
+      "next_action": "Merge PR #927 without bypass after hosted checks and review closure, fetch the exact new main SHA and rerun preview. Do not dispatch staging until independent approval, WAF, custody, broker and the remaining external predecessors are proved."
+    },
+    {
       "observed_at": "2026-07-30T16:21:13Z",
       "surface": "windows-native-codex-powershell-typed-ubuntu-24.04-gateway-canonical-private-crm-runtime",
       "scope": "Integrated Windows-native Codex boundary, complete CRM Local action and post-merge Finance runtime isolation",

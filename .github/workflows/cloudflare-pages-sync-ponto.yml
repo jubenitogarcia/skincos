@@ -99,10 +99,14 @@ jobs:
           const fs = require("fs");
           const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-          if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-progressive-release.yml") {
+          if (
+            workflow.state !== "active"
+            || workflow.path !== ".github/workflows/ponto-progressive-release.yml"
+            || workflow.name !== "Ponto progressive release"
+          ) {
             throw new Error("canonical Ponto coordinator is not active at the expected path");
           }
-          const expectedPath = `${workflow.path}@refs/heads/main`;
+          const expectedPath = workflow.path;
           if (
             run.workflow_id !== workflow.id
             || run.path !== expectedPath
@@ -110,7 +114,6 @@ jobs:
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
-            || run.name !== "Ponto progressive release"
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
           ) {
@@ -135,16 +138,16 @@ jobs:
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"
+            || workflow.name !== "Attest Ponto Worker secret custody"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.path !== workflow.path
             || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
             || run.head_sha !== process.env.RELEASE_SHA
-            || run.name !== "Attest Ponto Worker secret custody"
             || !expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY

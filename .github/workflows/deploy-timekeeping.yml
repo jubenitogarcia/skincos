@@ -506,16 +506,16 @@ jobs:
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"
+            || workflow.name !== "Attest Ponto Worker secret custody"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.path !== workflow.path
             || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
             || run.head_sha !== process.env.RELEASE_SHA
-            || run.name !== "Attest Ponto Worker secret custody"
             || !expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY

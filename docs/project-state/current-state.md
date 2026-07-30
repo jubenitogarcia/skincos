@@ -1,5 +1,67 @@
 # Current state
 
+## Workforce Timekeeping — corrective source integrated; REST successor #927 final review pending; release fail-closed — 2026-07-30T16:34:46Z
+
+This is the authoritative Ponto entry and supersedes the older local-successor
+entries below. PR #924 integrated the post-#921 corrective package as
+`91f6e9033fed8a186ef2e93be070db3ed896fdd3`; its final reviewed head was
+`c35aaf6892fea8ad5ae5745a82be55f24bd5a342`. The merge had all required checks
+green, 20/20 review conversations resolved and the sealed security scans
+reported zero surviving findings. Unrelated PRs #925, #926 and #928 then
+advanced `main` to `46b97519adc056d31553531cf3f90ad5a324fc88`.
+
+The first canonical preview, run `30556924556` on `91f6e903...`, proved source
+admission and completed the Timekeeping child run `30556988335` successfully
+with preview artifacts, but coordinator job `90919728697` failed after a
+20-minute observation timeout. GitHub REST returns workflow-run `path` as the
+canonical file without `@refs/heads/main`; the merged code expected the suffix
+and did not recognize its own successful child. The same live evidence exposed
+a second P1: with `run-name`, REST `run.name` is dynamic, so watchdog run
+`30558653559` rejected the failed coordinator before its latch job.
+
+PR #927 (`codex/admin/ponto-run-path-contract`, first corrective commit
+`4c895a4b`) fixes both contracts while retaining independent workflow ID/path,
+`main` branch, immutable SHA, repository, event, attempt, title/nonce,
+capability and predecessor checks. It also versions the stronger live
+staging/production environment baseline (custom `main`, owner reviewer,
+`prevent_self_review=true`, `can_admins_bypass=false`) so the weaker historical
+payload cannot be reapplied. Its initial published head
+`5b8447a70c30e7011a9a48099d8e1222b72e5992` passed all 14 hosted checks.
+Codex then found two P1s: the versioned environment payload omitted the
+administrator-bypass prohibition, and other REST validators still treated
+dynamic `run.name` as the static workflow name. Corrective commit `c3131eb8`
+sets and validates the non-bypassable environment payload, moves every static
+identity check to canonical workflow metadata and adds a regression guard.
+The full governed suite is now 219/219; actionlint 1.7.12, syntax, architecture,
+topology, progressive policy, module, governance, security exception and diff
+checks are green. Two independent read-only security reviews found no
+remaining P0/P1/P2 after the fixes. PR #927 still requires final hosted checks,
+Codex re-review, review-thread closure and canonical merge; no replacement
+preview has run yet. `selected_release_sha` remains null.
+
+Live Cloudflare remains unchanged and deliberately closed. Both
+`module-control:timekeeping` values are `maintenance`; the emergency-latch key
+is absent in both namespaces, so new source would deny but the old deployments
+do not prove that overlay. Neither Worker/Pages surface identifies #924 or the
+current `main`. Timekeeping D1 journals are exactly `0001`–`0008` and
+Identity/Inventory exactly `0001`–`0018` in staging and production. Required
+WAF behavior is absent (12/12 block probes failed across the two API hosts),
+ruleset reads are unauthorized with Cloudflare 403/code 10000, Timekeeping
+workers.dev/previews remain public, and readiness incorrectly returns
+200/ready=true during maintenance. Staging Pages reports
+`actorKeyConfigured=false`; no authenticated journey was attempted.
+
+GitHub remains fail-closed for deployment: staging/production allow only
+custom branch policy `main`, admin bypass is false and the sole reviewer is the
+owner with self-review forbidden. There is no independent collaborator/app
+reviewer and zero self-hosted runners. Name-only inventory confirms the
+required profile/root/capability/Pages-intent custody, WAF tokens/IDs,
+broker URL/credential/custody, pilot credentials/cohort, runner selector/key,
+canary percentage, Ponto resource variables and four enable flags are absent
+at their governed scopes. No secret values were read. Identity/Workforce still
+provides no authorized eligible pilot. Therefore preview may resume only after
+#927 merges; staging, pilot, canary and production remain ineligible.
+
 ## Codex Windows native / PowerShell gateway — integrated and validated locally — 2026-07-30T16:21Z
 
 The Windows-native delivery is integrated through PR #925. Technical commit

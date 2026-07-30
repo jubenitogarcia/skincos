@@ -91,11 +91,12 @@ Mutações same-origin exigem o token CSRF da sessão. A Pages Function envia um
   account/KV ID ou credencial ampla; as custody refs dos dois targets devem ser
   diferentes.
 
-Os nomes Ponto-only acima pertencem ao pacote local ainda não mergeado nem
-provisionado; o broker também não está provisionado nem live. Os nomes
+Os nomes Ponto-only acima pertencem ao pacote integrado pela PR #924, mas o
+inventário remoto atual não os encontra provisionados; o broker também não
+está provisionado nem live. Os nomes
 gerais/legados usados na contenção externa atual
 continuam apenas como fences; não os trate como configuração do candidato nem
-os restaure antes do merge revisado e da autorização de release. Seleção de
+os restaure antes da autorização de release. Seleção de
 target não possui default: qualquer nome ausente, target fora de
 `staging|production` ou mistura entre os dois targets falha antes de hidratar
 credenciais ou mutar.
@@ -173,9 +174,13 @@ A trava `timekeeping_period_guards` é adquirida por data antes do cálculo e im
 ## Deploy e rollback
 
 > Estado em 2026-07-30: os controles de replay, overlay de emergência,
-> mutex/watchdog e os nomes Ponto-only descritos nesta seção existem apenas no
-> worktree local. Não há commit, PR, SHA candidato, hosted checks, merge,
-> provisioning ou prova live. Staging e produção continuam
+> mutex/watchdog e os nomes Ponto-only foram integrados pela PR #924 em
+> `91f6e9033fed8a186ef2e93be070db3ed896fdd3`. O primeiro preview
+> `30556924556` falhou no contrato REST de observação depois que o child
+> Timekeeping `30556988335` passou; PR #927 corrige path e nome dinâmico em
+> todas as validações REST, fixa `can_admins_bypass=false` no payload e está
+> com checks finais/re-review/merge e novo preview pendentes. Não há SHA
+> selecionado, provisioning externo nem prova live. Staging e produção continuam
 > `module-control:timekeeping=maintenance`; staging foi fechado pela execução
 > canônica `30527767707`, que é somente evidência fail-close, e os fences
 > externos registrados no checkpoint privado devem permanecer.
@@ -189,6 +194,14 @@ coordenador executado em `refs/heads/main` e o checkout atual. De staging em
 diante, exige também o run bem-sucedido do predecessor para o mesmo SHA. Se
 `main` avançar entre estágios, não continue com o ancestral: reinicie em
 `preview` usando o novo SHA.
+
+Para objetos `workflow run` da API REST, compare `run.path` com o path canônico
+do workflow sem sufixo de ref. Valide `main` por `head_branch`, o artefato por
+`head_sha` e a identidade estática por `workflow.name/path/id`; `run.name`
+recebe o `run-name` dinâmico e não pode substituir workflow metadata. Continue
+exigindo repositório, evento, attempt, título/nonce, capability e predecessor
+exatos. O contexto `github.workflow_ref` é um contrato diferente e conserva
+`@refs/heads/main`.
 
 Toda mutation direta de Worker, Pages, secret de Pages, D1, KV ou
 module-control na cadeia Ponto usa o mutex global
