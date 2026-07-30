@@ -12,6 +12,7 @@ const WORKFLOW_ID = 'WGXr4vYkv9UoJ8zc';
 const RELEASE = 'c525f5e1d68829fe4c93197f65d85429a2e0385c';
 const RELEASE_ROOT = `/opt/skincos/releases/${RELEASE}/source/orb/engine`;
 const PATCHER = path.resolve(__dirname, '..', 'scripts', 'patch-livia-runtime-isolation.js');
+const APPLIER = path.resolve(__dirname, '..', 'scripts', 'apply-livia-runtime-isolation.js');
 
 function commandNode(name, command) {
   return { name, type: 'n8n-nodes-base.executeCommand', parameters: { command } };
@@ -50,4 +51,11 @@ test('runtime isolation replaces a mutable verifier wrapper with the pinned entr
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test('runtime isolation reconciles a stale publish-history identity under a writer lock', () => {
+  const source = fs.readFileSync(APPLIER, 'utf8');
+  assert.match(source, /LOCK TABLE n8n_runtime\.workflow_publish_history IN SHARE ROW EXCLUSIVE MODE/);
+  assert.match(source, /pg_get_serial_sequence\('n8n_runtime\.workflow_publish_history', 'id'\)::regclass/);
+  assert.match(source, /COALESCE\(MAX\(id\), 0\)/);
 });
