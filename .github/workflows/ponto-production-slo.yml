@@ -103,17 +103,22 @@ jobs:
             "$ORCHESTRATOR_RUN_ID"
       - name: Attest the exact registered clinic runner before hydrating control-plane authority
         env:
-          # Repository runner inventory requires Administration:read, which is
+          # Repository runner inventory and the repository-scoped runs-on
+          # selector require Administration:read and Variables:read, which are
           # intentionally unavailable to the automatic GITHUB_TOKEN. This
           # protected production job hydrates the existing governed PAT only
-          # for the read-only inventory call.
+          # for these read-only attestation calls.
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          CONFIGURED_RUNNER_LABELS_JSON: ${{ vars.PONTO_PILOT_RUNNER_LABELS_JSON }}
         run: |
           set -euo pipefail
-          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Administration:read is required for clinic runner attestation'; exit 1; }
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Administration:read and Variables:read is required for clinic runner attestation'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/runners?per_page=100" > "$RUNNER_TEMP/ponto-clinic-runners.json"
-          node - "$RUNNER_TEMP/ponto-clinic-runners.json" <<'NODE'
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON" > "$RUNNER_TEMP/ponto-clinic-runner-labels-repository-variable.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/production/variables?per_page=100" > "$RUNNER_TEMP/ponto-clinic-runner-environment-variables.json"
+          node - \
+            "$RUNNER_TEMP/ponto-clinic-runners.json" \
+            "$RUNNER_TEMP/ponto-clinic-runner-labels-repository-variable.json" \
+            "$RUNNER_TEMP/ponto-clinic-runner-environment-variables.json" <<'NODE'
           const fs = require("fs");
           const policy = JSON.parse(fs.readFileSync(".github/governance/progressive-release-policy.json", "utf8"));
           const expected = policy?.pilotRunner?.production;
@@ -130,10 +135,15 @@ jobs:
             || !/^[0-9a-f]{64}$/.test(String(expected?.encryptionPublicKeySha256 || ""))
           ) throw new Error("production pilot runner policy remains fail-closed");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const repositoryVariable = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const environmentVariables = JSON.parse(fs.readFileSync(process.argv[4], "utf8")).variables || [];
+          if (environmentVariables.some(item => item?.name === "PONTO_PILOT_RUNNER_LABELS_JSON")) {
+            throw new Error("PONTO_PILOT_RUNNER_LABELS_JSON environment shadowing is forbidden");
+          }
           let configuredLabels;
-          try { configuredLabels = JSON.parse(process.env.CONFIGURED_RUNNER_LABELS_JSON || ""); } catch {}
+          try { configuredLabels = JSON.parse(repositoryVariable?.value || ""); } catch {}
           if (JSON.stringify(configuredLabels) !== JSON.stringify(expected.requiredLabels)) {
-            throw new Error("mutable Ponto runner labels differ from the versioned policy");
+            throw new Error("repository Ponto runner labels differ from the versioned policy");
           }
           const exact = (payload.runners || []).filter(
             runner => String(runner?.id || "") === String(expected.runnerId)
@@ -147,6 +157,10 @@ jobs:
             throw new Error("the exact clinic runner label set differs from the closed policy allowlist");
           }
           NODE
+          rm -f \
+            "$RUNNER_TEMP/ponto-clinic-runners.json" \
+            "$RUNNER_TEMP/ponto-clinic-runner-labels-repository-variable.json" \
+            "$RUNNER_TEMP/ponto-clinic-runner-environment-variables.json"
       - name: Attest exact Pages control plane without pilot or root custody
         if: ${{ inputs.stage == 'production' }}
         env:

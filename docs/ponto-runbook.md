@@ -275,6 +275,13 @@ nome; as credenciais são hidratadas apenas no runner self-hosted autorizado que
 executa a jornada externa, e a coorte opaca somente no transition de
 module-control que precisa validá-la. Alterar secret de Pages exige uma release
 de manutenção separada. O
+seletor `PONTO_PILOT_RUNNER_LABELS_JSON` deve existir como **repository
+variable**, porque `runs-on` é resolvido antes de o environment do job ficar
+disponível. O preflight lê esse valor pela API, exige igualdade exata com a
+allowlist versionada e rejeita uma variável homônima no environment
+`production`; não cadastre o seletor como environment variable. O token de
+inventário protegido precisa de `Administration:read`, `Variables:read`,
+`Actions:read` e `Environments:read` (ou equivalentes no tipo de token usado).
 Pages environment `preview` usa `https://api-staging.skincos.com.br`; nunca
 compartilhe upstream ou chave HMAC de produção com preview. O smoke produtivo
 permanece somente leitura e não aceita opção para criar marcações.

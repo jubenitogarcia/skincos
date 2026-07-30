@@ -5,7 +5,10 @@ import { pathToFileURL } from "node:url";
 const TITLE = /^Ponto (preview|staging|pilot|canary|production|rollback) ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/;
 const FAILURE_CONCLUSIONS = new Set(["failure", "cancelled", "timed_out"]);
 
-export const targetForStage = (stage) => stage === "staging" ? "staging" : "production";
+export const targetForStage = (stage) => {
+  if (stage === "preview") return null;
+  return stage === "staging" ? "staging" : "production";
+};
 
 export async function validateWatchdogContext({
   event,
@@ -92,7 +95,7 @@ export async function validateWatchdogContext({
     conclusion: run.conclusion,
     runAttempt,
     unauthorizedReplay,
-    requiresClose: unauthorizedReplay || stage !== "preview",
+    requiresClose: stage !== "preview",
     passed: true,
   };
 }
@@ -114,7 +117,7 @@ if (invokedPath === import.meta.url) {
   fs.appendFileSync(process.env.GITHUB_OUTPUT, [
     `coordinator_run_id=${context.coordinatorRunId}`,
     `stage=${context.stage}`,
-    `target=${context.target}`,
+    `target=${context.target || ""}`,
     `release_sha=${context.releaseSha}`,
     `requires_close=${context.requiresClose ? "true" : "false"}`,
     "",

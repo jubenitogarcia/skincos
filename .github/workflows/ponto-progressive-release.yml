@@ -459,21 +459,33 @@ jobs:
         if: ${{ contains(fromJSON('["pilot","canary","production"]'), inputs.stage) }}
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          REQUIRED_RUNNER_LABELS_JSON: ${{ vars.PONTO_PILOT_RUNNER_LABELS_JSON }}
           CANARY_COHORT_PERCENTAGE: ${{ vars.PONTO_CANARY_COHORT_PERCENTAGE }}
         run: |
           set -euo pipefail
-          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments and Actions read is required'; exit 1; }
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments, Actions, Variables, and Administration read is required'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$RUNNER_TEMP/production-secret-names.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runners" > "$RUNNER_TEMP/repository-runners.json"
-          node - "$RUNNER_TEMP/production-secret-names.json" "$RUNNER_TEMP/repository-runners.json" "$PONTO_ARTIFACT_DIR/cohort-summary.json" <<'NODE'
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON" > "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/production/variables?per_page=100" > "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json"
+          node - \
+            "$RUNNER_TEMP/production-secret-names.json" \
+            "$RUNNER_TEMP/repository-runners.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json" \
+            "$PONTO_ARTIFACT_DIR/cohort-summary.json" <<'NODE'
           const fs = require("fs");
           const secretPayload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const names = new Set((secretPayload.secrets || []).map(item => item.name));
           for (const name of ["PONTO_PILOT_LOGIN", "PONTO_PILOT_PASSWORD", "PONTO_PILOT_COHORT_JSON", "PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
             if (!names.has(name)) throw new Error(`${name} must be owned by the production environment`);
           }
-          const requiredLabels = JSON.parse(process.env.REQUIRED_RUNNER_LABELS_JSON || "[]");
+          const repositoryVariable = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+          const environmentVariables = JSON.parse(fs.readFileSync(process.argv[5], "utf8")).variables || [];
+          if (environmentVariables.some(item => item?.name === "PONTO_PILOT_RUNNER_LABELS_JSON")) {
+            throw new Error("PONTO_PILOT_RUNNER_LABELS_JSON environment shadowing is forbidden");
+          }
+          let requiredLabels;
+          try { requiredLabels = JSON.parse(repositoryVariable?.value || ""); } catch {}
           if (!Array.isArray(requiredLabels) || !requiredLabels.length || requiredLabels.some(value => typeof value !== "string" || !value)) throw new Error("PONTO_PILOT_RUNNER_LABELS_JSON is absent or invalid");
           const runners = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).runners || [];
           const ready = runners.some(runner => runner.status === "online" && !runner.busy && requiredLabels.every(label => (runner.labels || []).some(item => item.name === label)));
@@ -482,7 +494,7 @@ jobs:
             const percentage = Number(process.env.CANARY_COHORT_PERCENTAGE);
             if (!Number.isInteger(percentage) || percentage < 1 || percentage > 100) throw new Error("PONTO_CANARY_COHORT_PERCENTAGE must be 1..100");
           }
-          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+          fs.writeFileSync(process.argv[6], `${JSON.stringify({
             configured: true,
             valuesHydratedOnCoordinator: false,
             validatedByName: true,
@@ -492,7 +504,11 @@ jobs:
             runnerLabelCount: requiredLabels.length,
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
-          rm -f "$RUNNER_TEMP/production-secret-names.json" "$RUNNER_TEMP/repository-runners.json"
+          rm -f \
+            "$RUNNER_TEMP/production-secret-names.json" \
+            "$RUNNER_TEMP/repository-runners.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json"
       - name: Attest unconditional edge blocks before any candidate mutation
         if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
         env:
