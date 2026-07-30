@@ -67,6 +67,29 @@ const stagingRollbackSummary = () => ({
   predecessorRunId: "205",
   restoredCandidate: true,
 });
+const stagingBootstrapCore = () => ({
+  schemaVersion: 1,
+  target: "staging",
+  workflowRunId: "30512105626",
+  artifactId: "8747521765",
+  artifactDigest: `sha256:${digest}`,
+  sourceSha: "0f3480dce1a170ac0f862fa392a95456af292a88",
+  deploymentId: uuid3,
+  versionId: uuid2,
+  liveAttested: true,
+  liveAttestation: {
+    activeDeploymentId: uuid3,
+    activeVersionId: uuid2,
+    exposure: {
+      workerRouteCount: 0,
+      customDomainCount: 0,
+      workersDevEnabled: false,
+      previewUrlsEnabled: false,
+    },
+  },
+  credentialsIncluded: false,
+  piiIncluded: false,
+});
 const edgeGuard = (stage) => {
   const summary = {
     schemaVersion: 1,
@@ -133,6 +156,7 @@ function writePreviewAndStaging(dir) {
     PONTO_PREDECESSOR_FILE: preview,
     PONTO_RELEASE_SURFACES_JSON: JSON.stringify(liveSurfaces("staging")),
     PONTO_RELEASE_EDGE_GUARD_JSON: JSON.stringify(edgeGuard("staging")),
+    PONTO_RELEASE_BOOTSTRAP_CORE_JSON: JSON.stringify(stagingBootstrapCore()),
     PONTO_RELEASE_CHECKPOINT_JSON: JSON.stringify({
       timekeeping: { artifactName: `timekeeping-staging-pre-migration-${sha}`, sha256: digest, releaseSha: sha },
       identityWorkforce: { artifactName: `identity-staging-pre-migration-${sha}`, sha256: digest, releaseSha: sha },
@@ -147,6 +171,7 @@ function writePreviewAndStaging(dir) {
   const stagingEvidence = JSON.parse(fs.readFileSync(staging, "utf8"));
   assert.equal(stagingEvidence.edgeGuard.stage, "staging");
   assert.equal(stagingEvidence.edgeGuard.probes.length, 8);
+  assert.equal(stagingEvidence.bootstrapCore.workflowRunId, "30512105626");
   return { preview, staging };
 }
 
@@ -164,6 +189,22 @@ test("rejects staging edge evidence without the exact negative and block probe m
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /two negative controls and six external block probes/);
+});
+
+test("rejects staging evidence when the bootstrap predecessor differs from the exact incumbent", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-evidence-"));
+  const { preview, staging } = writePreviewAndStaging(dir);
+  const evidence = JSON.parse(fs.readFileSync(staging, "utf8"));
+  evidence.bootstrapCore.versionId = uuid;
+  fs.writeFileSync(staging, JSON.stringify(evidence));
+  const result = run("verify", staging, {
+    PONTO_EXPECTED_STAGE: "staging",
+    PONTO_EXPECTED_SHA: sha,
+    PONTO_EXPECTED_REPOSITORY: "skincos/skincos",
+    PONTO_PREDECESSOR_FILE: preview,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Core bootstrap version differs from the staging incumbent/);
 });
 
 test("writes and verifies schema v2 pilot evidence with a digested predecessor", () => {

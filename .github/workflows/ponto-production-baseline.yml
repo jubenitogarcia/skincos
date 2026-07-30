@@ -45,6 +45,77 @@ jobs:
         with:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 0
+      - name: Verify exact cataloged production Ponto Core bootstrap predecessor
+        id: core_bootstrap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          mapfile -t expected < <(node --input-type=module - <<'NODE'
+          import fs from "node:fs";
+          const catalog = JSON.parse(fs.readFileSync("platform/deploy/operational-units.json", "utf8"));
+          const bootstrap = catalog.units.find(unit => unit.id === "ponto-core-baseline")?.promotion?.bootstrapEvidence;
+          const artifact = bootstrap?.artifacts?.production;
+          for (const value of [
+            bootstrap?.workflowRunId,
+            artifact?.id,
+            bootstrap?.sourceSha,
+            artifact?.deploymentId,
+            artifact?.versionId,
+            artifact?.digest,
+            artifact?.worker,
+          ]) {
+            if (!value || /[\r\n]/.test(String(value))) throw new Error("production bootstrap catalog entry is invalid");
+            process.stdout.write(`${value}\n`);
+          }
+          NODE
+          )
+          [[ "${#expected[@]}" == 7 ]] || { echo 'Incomplete production bootstrap catalog entry'; exit 1; }
+          run_id="${expected[0]}"
+          artifact_id="${expected[1]}"
+          source_sha="${expected[2]}"
+          deployment_id="${expected[3]}"
+          version_id="${expected[4]}"
+          artifact_digest="${expected[5]}"
+          worker="${expected[6]}"
+          evidence_dir="$RUNNER_TEMP/ponto-core-bootstrap-production"
+          mkdir -p "$evidence_dir/unpacked"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$evidence_dir/run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" > "$evidence_dir/artifact.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$evidence_dir/artifact.zip"
+          unzip -q "$evidence_dir/artifact.zip" -d "$evidence_dir/unpacked"
+          mapfile -t evidence_files < <(find "$evidence_dir/unpacked" -type f -name evidence.json -print)
+          [[ "${#evidence_files[@]}" == 1 ]] || { echo 'Bootstrap artifact must contain exactly one evidence.json'; exit 1; }
+          node .github/scripts/ponto-core-bootstrap-evidence.mjs verify production \
+            "${evidence_files[0]}" "$evidence_dir/run.json" "$evidence_dir/artifact.json" \
+            platform/deploy/operational-units.json
+          PONTO_BOOTSTRAP_TARGET=production \
+          PONTO_BOOTSTRAP_SOURCE_SHA="$source_sha" \
+          PONTO_BOOTSTRAP_LIVE_FILE="$evidence_dir/live.json" \
+            node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import { remoteSnapshot } from "./.github/scripts/ponto-core-baseline-publisher.mjs";
+          const snapshot = await remoteSnapshot({
+            accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+            apiToken: process.env.CLOUDFLARE_API_TOKEN,
+            baselineSha: process.env.PONTO_BOOTSTRAP_SOURCE_SHA,
+            target: process.env.PONTO_BOOTSTRAP_TARGET,
+          });
+          fs.writeFileSync(process.env.PONTO_BOOTSTRAP_LIVE_FILE, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          node - "$evidence_dir/live.json" "$deployment_id" "$version_id" <<'NODE'
+          const fs = require("fs");
+          const live = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            live?.exists !== true
+            || live?.attestation?.activeDeploymentId !== process.argv[3]
+            || live?.attestation?.activeVersionId !== process.argv[4]
+          ) throw new Error("live production Ponto Core differs from the exact cataloged bootstrap predecessor");
+          NODE
+          echo "bootstrap_live_attested=true" >> "$GITHUB_OUTPUT"
+          rm -f "$evidence_dir/artifact.zip"
       - name: Verify immutable source and exact staging predecessor
         env:
           GH_TOKEN: ${{ github.token }}
@@ -86,6 +157,13 @@ jobs:
           PONTO_BASELINE_RELEASE_SHA: ${{ inputs.release_sha }}
           PONTO_BASELINE_STAGING_RUN_ID: ${{ inputs.staging_run_id }}
           PONTO_BASELINE_ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          PONTO_CORE_BOOTSTRAP_WORKFLOW_RUN_ID: ${{ steps.core_bootstrap.outputs.bootstrap_workflow_run_id }}
+          PONTO_CORE_BOOTSTRAP_ARTIFACT_ID: ${{ steps.core_bootstrap.outputs.bootstrap_artifact_id }}
+          PONTO_CORE_BOOTSTRAP_ARTIFACT_DIGEST: ${{ steps.core_bootstrap.outputs.bootstrap_artifact_digest }}
+          PONTO_CORE_BOOTSTRAP_SOURCE_SHA: ${{ steps.core_bootstrap.outputs.bootstrap_source_sha }}
+          PONTO_CORE_BOOTSTRAP_DEPLOYMENT_ID: ${{ steps.core_bootstrap.outputs.bootstrap_deployment_id }}
+          PONTO_CORE_BOOTSTRAP_VERSION_ID: ${{ steps.core_bootstrap.outputs.bootstrap_version_id }}
+          PONTO_CORE_BOOTSTRAP_LIVE_ATTESTED: ${{ steps.core_bootstrap.outputs.bootstrap_live_attested }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}

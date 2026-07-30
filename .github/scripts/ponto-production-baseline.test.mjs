@@ -47,6 +47,15 @@ test("baseline verification exports every immutable Worker deployment ID with it
           project: "skincos",
         },
       },
+      bootstrapCore: {
+        workflowRunId: "30512105626",
+        artifactId: "8747532031",
+        artifactDigest: `sha256:${"a".repeat(64)}`,
+        sourceSha: releaseSha,
+        deploymentId: coreDeploymentId,
+        versionId: coreVersionId,
+        liveAttested: true,
+      },
       health: {
         passed: true,
         state: "maintenance",
@@ -92,6 +101,8 @@ test("baseline verification exports every immutable Worker deployment ID with it
     assert.equal(outputs.baseline_core_deployment_id, coreDeploymentId);
     assert.equal(outputs.baseline_identity_version_id, identityVersionId);
     assert.equal(outputs.baseline_identity_deployment_id, identityDeploymentId);
+    assert.equal(outputs.baseline_core_bootstrap_workflow_run_id, "30512105626");
+    assert.equal(outputs.baseline_core_bootstrap_artifact_id, "8747532031");
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

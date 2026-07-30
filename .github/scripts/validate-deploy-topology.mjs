@@ -25,9 +25,9 @@ for (const unit of catalog.units ?? []) {
     continue;
   }
   for (const resource of unit.publishes) {
-    const owner = publishers.get(resource);
-    if (owner) fail(`${resource} has more than one publisher: ${owner} and ${unit.id}`);
-    publishers.set(resource, unit.id);
+    const owners = publishers.get(resource) ?? [];
+    owners.push({ id: unit.id, bootstrapOnly: unit.promotion.bootstrapOnly === true });
+    publishers.set(resource, owners);
   }
   if (!unit.workflow && !unit.canonicalRunbook) fail(`${unit.id} without a GitHub workflow needs a canonical runbook`);
   if (!unit.workflow) continue;
@@ -59,6 +59,15 @@ for (const unit of catalog.units ?? []) {
     if (source.includes('promotion-gate.yml')) fail(`${unit.id} bootstrap must not masquerade as a release promotion`);
   } else if (!source.includes("promotion-gate.yml") || !source.includes("release_sha") || !source.includes("staging_run_id")) {
     fail(`${unit.id} must use the immutable promotion gate`);
+  }
+}
+
+for (const [resource, owners] of publishers) {
+  if (owners.length <= 1) continue;
+  const bootstrapOwners = owners.filter((owner) => owner.bootstrapOnly);
+  const releaseOwners = owners.filter((owner) => !owner.bootstrapOnly);
+  if (owners.length !== 2 || bootstrapOwners.length !== 1 || releaseOwners.length !== 1) {
+    fail(`${resource} has invalid publisher ownership: ${owners.map((owner) => owner.id).join(" and ")}`);
   }
 }
 
@@ -122,6 +131,73 @@ for (const required of [
 }
 if (/['"]delete['"]\s*,|wrangler(?:@\S+)?\s+delete|workers\/scripts\/.+method:\s*['"]DELETE['"]/i.test(pontoBaselinePublisher)) {
   fail('Ponto Core baseline publisher must never delete a remote resource during rollback');
+}
+const pontoBaselineUnit = catalog.units.find((unit) => unit.id === 'ponto-core-baseline');
+const bootstrap = pontoBaselineUnit?.promotion?.bootstrapEvidence;
+for (const required of [
+  bootstrap?.state === 'published-and-attested',
+  /^[0-9a-f]{40}$/.test(String(bootstrap?.sourceSha || '')),
+  /^[0-9]+$/.test(String(bootstrap?.workflowRunId || '')),
+  /^[0-9a-f]{40}$/.test(String(bootstrap?.workflowControlSha || '')),
+  bootstrap?.workflowPath === '.github/workflows/ponto-core-baseline-publisher.yml',
+  bootstrap?.runAttempt === 1,
+  ['validation', 'staging', 'production'].every((target) =>
+    /^[0-9]+$/.test(String(bootstrap?.artifacts?.[target]?.id || '')) &&
+    /^sha256:[0-9a-f]{64}$/.test(String(bootstrap?.artifacts?.[target]?.digest || ''))
+  ),
+  ['staging', 'production'].every((target) =>
+    /^[0-9a-f-]{36}$/i.test(String(bootstrap?.artifacts?.[target]?.deploymentId || '')) &&
+    /^[0-9a-f-]{36}$/i.test(String(bootstrap?.artifacts?.[target]?.versionId || ''))
+  ),
+]) {
+  if (!required) fail('Ponto Core bootstrap catalog evidence is incomplete or malformed');
+}
+const bootstrapVerifier = read('.github/scripts/ponto-core-bootstrap-evidence.mjs');
+for (const required of [
+  'workflow run path must be pinned to the publisher on refs/heads/main',
+  'artifact digest differs from catalog',
+  'artifact has expired',
+  'bootstrap attempted resource deletion',
+  'attested Worker has public routes',
+  'attested Worker has custom domains',
+  'attestation did not inspect exactly three zones',
+]) {
+  if (!bootstrapVerifier.includes(required)) fail(`Ponto Core bootstrap verifier is missing: ${required}`);
+}
+const corePublisher = read('.github/workflows/deploy-core-workers.yml');
+const coordinator = read('.github/workflows/ponto-progressive-release.yml');
+const productionBaseline = read('.github/workflows/ponto-production-baseline.yml');
+for (const [source, label, gate, mutation] of [
+  [
+    corePublisher,
+    'Ponto Core staging publisher',
+    'Verify exact cataloged Ponto Core staging bootstrap predecessor',
+    'Deploy only the selected operational unit',
+  ],
+  [
+    coordinator,
+    'Ponto coordinator',
+    'Attest exact Ponto Core staging bootstrap before any candidate mutation',
+    'Put Ponto in maintenance before staging or live mutation',
+  ],
+  [
+    productionBaseline,
+    'Ponto production baseline',
+    'Verify exact cataloged production Ponto Core bootstrap predecessor',
+    'Capture exact incumbent control-plane identities and external maintenance health',
+  ],
+]) {
+  const gateIndex = source.indexOf(gate);
+  const mutationIndex = source.indexOf(mutation);
+  if (
+    gateIndex < 0
+    || mutationIndex < 0
+    || gateIndex >= mutationIndex
+    || !source.includes('ponto-core-bootstrap-evidence.mjs')
+    || !source.includes('remoteSnapshot')
+  ) {
+    fail(`${label} must consume and live-reattest the exact bootstrap evidence before mutation`);
+  }
 }
 
 if (failures.length) {

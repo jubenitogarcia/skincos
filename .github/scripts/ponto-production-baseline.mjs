@@ -32,6 +32,16 @@ const validate = (baseline) => {
   }
   assert(UUID.test(baseline.surfaces?.crmPages?.deploymentId), "Pages baseline deployment is invalid");
   assert(SHA.test(baseline.surfaces?.crmPages?.commitHash), "Pages baseline commit hash is invalid");
+  assert(/^[0-9]+$/.test(String(baseline.bootstrapCore?.workflowRunId || "")), "Core bootstrap workflow run is invalid");
+  assert(/^[0-9]+$/.test(String(baseline.bootstrapCore?.artifactId || "")), "Core bootstrap artifact ID is invalid");
+  assert(/^sha256:[0-9a-f]{64}$/.test(String(baseline.bootstrapCore?.artifactDigest || "")), "Core bootstrap artifact digest is invalid");
+  assert(SHA.test(baseline.bootstrapCore?.sourceSha), "Core bootstrap source SHA is invalid");
+  assert(
+    baseline.bootstrapCore?.liveAttested === true
+      && baseline.bootstrapCore?.deploymentId === baseline.surfaces.coreApi.deploymentId
+      && baseline.bootstrapCore?.versionId === baseline.surfaces.coreApi.versionId,
+    "Core bootstrap live predecessor differs from the captured Core incumbent",
+  );
   assert(baseline.health?.passed === true && baseline.health?.state === "maintenance", "baseline external maintenance health did not pass");
   assert(baseline.credentialsIncluded === false && baseline.piiIncluded === false, "baseline privacy attestation is invalid");
   const { sha256, ...unsigned } = baseline;
@@ -128,6 +138,26 @@ if (mode === "capture") {
   });
   assert(identityResponse.status === 200, "external Identity health failed");
 
+  const timekeeping = workerBaseline("skincos-timekeeping");
+  const coreApi = workerBaseline("skincos-ponto-core");
+  const identityWorkforce = workerBaseline("skincos-insumos");
+  const bootstrapCore = {
+    workflowRunId: required("PONTO_CORE_BOOTSTRAP_WORKFLOW_RUN_ID"),
+    artifactId: required("PONTO_CORE_BOOTSTRAP_ARTIFACT_ID"),
+    artifactDigest: required("PONTO_CORE_BOOTSTRAP_ARTIFACT_DIGEST"),
+    sourceSha: required("PONTO_CORE_BOOTSTRAP_SOURCE_SHA").toLowerCase(),
+    deploymentId: required("PONTO_CORE_BOOTSTRAP_DEPLOYMENT_ID").toLowerCase(),
+    versionId: required("PONTO_CORE_BOOTSTRAP_VERSION_ID").toLowerCase(),
+    liveAttested: required("PONTO_CORE_BOOTSTRAP_LIVE_ATTESTED") === "true",
+  };
+  assert(
+    coreApi.deploymentId.toLowerCase() === bootstrapCore.deploymentId
+      && coreApi.versionId.toLowerCase() === bootstrapCore.versionId
+      && coreApi.message === `ponto-core-baseline:${bootstrapCore.sourceSha}`
+      && bootstrapCore.liveAttested,
+    "production Ponto Core is not the exact live-attested immutable bootstrap predecessor",
+  );
+
   const unsigned = {
     schemaVersion: 1,
     releaseSha,
@@ -137,9 +167,9 @@ if (mode === "capture") {
     repository,
     capturedAt: new Date().toISOString(),
     surfaces: {
-      timekeeping: workerBaseline("skincos-timekeeping"),
-      coreApi: workerBaseline("skincos-ponto-core"),
-      identityWorkforce: workerBaseline("skincos-insumos"),
+      timekeeping,
+      coreApi,
+      identityWorkforce,
       crmPages: {
         deploymentId: pages.id,
         commitHash,
@@ -148,6 +178,7 @@ if (mode === "capture") {
         project: pagesProject,
       },
     },
+    bootstrapCore,
     health: {
       passed: true,
       state: "maintenance",
@@ -182,6 +213,9 @@ if (mode === "capture") {
       `baseline_identity_version_id=${baseline.surfaces.identityWorkforce.versionId}`,
       `baseline_identity_deployment_id=${baseline.surfaces.identityWorkforce.deploymentId}`,
       `baseline_pages_deployment_id=${baseline.surfaces.crmPages.deploymentId}`,
+      `baseline_core_bootstrap_workflow_run_id=${baseline.bootstrapCore.workflowRunId}`,
+      `baseline_core_bootstrap_artifact_id=${baseline.bootstrapCore.artifactId}`,
+      `baseline_core_bootstrap_artifact_digest=${baseline.bootstrapCore.artifactDigest}`,
       "",
     ].join("\n"));
   }

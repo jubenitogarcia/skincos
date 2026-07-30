@@ -155,6 +155,38 @@ function validateEdgeGuard(edgeGuard, stage, sourceSha) {
   );
 }
 
+function validateBootstrapCore(bootstrapCore, stage, surfaces) {
+  if (stage !== "staging") {
+    assert(bootstrapCore === null, `${stage} must not claim a direct staging Core bootstrap predecessor`);
+    return;
+  }
+  assert(bootstrapCore && typeof bootstrapCore === "object" && !Array.isArray(bootstrapCore), "staging requires Core bootstrap evidence");
+  assert(bootstrapCore.schemaVersion === 1 && bootstrapCore.target === "staging", "Core bootstrap target is invalid");
+  assert(/^[0-9]+$/.test(String(bootstrapCore.workflowRunId || "")), "Core bootstrap workflow run is invalid");
+  assert(/^[0-9]+$/.test(String(bootstrapCore.artifactId || "")), "Core bootstrap artifact ID is invalid");
+  assert(/^sha256:[0-9a-f]{64}$/.test(String(bootstrapCore.artifactDigest || "")), "Core bootstrap artifact digest is invalid");
+  assert(SHA.test(String(bootstrapCore.sourceSha || "")), "Core bootstrap source SHA is invalid");
+  assertUuid(bootstrapCore.deploymentId, "bootstrapCore.deploymentId");
+  assertUuid(bootstrapCore.versionId, "bootstrapCore.versionId");
+  assert(bootstrapCore.liveAttested === true, "Core bootstrap predecessor was not live-attested");
+  assert(
+    bootstrapCore.versionId === surfaces?.coreApi?.incumbentVersionId,
+    "Core bootstrap version differs from the staging incumbent",
+  );
+  assert(
+    bootstrapCore.liveAttestation?.activeDeploymentId === bootstrapCore.deploymentId
+      && bootstrapCore.liveAttestation?.activeVersionId === bootstrapCore.versionId,
+    "Core bootstrap live attestation differs from its immutable identities",
+  );
+  assert(
+    bootstrapCore.liveAttestation?.exposure?.workerRouteCount === 0
+      && bootstrapCore.liveAttestation?.exposure?.customDomainCount === 0
+      && bootstrapCore.liveAttestation?.exposure?.workersDevEnabled === false
+      && bootstrapCore.liveAttestation?.exposure?.previewUrlsEnabled === false,
+    "Core bootstrap live exposure is not private",
+  );
+}
+
 function validateEvidence(evidence) {
   assert(evidence?.schemaVersion === 2, "evidence schemaVersion must be 2");
   assert(evidence.unit === "ponto", "evidence unit must be ponto");
@@ -176,6 +208,7 @@ function validateEvidence(evidence) {
   }
   validateSurfaces(evidence.surfaces, evidence.stage, evidence.sourceSha);
   validateEdgeGuard(evidence.edgeGuard, evidence.stage, evidence.sourceSha);
+  validateBootstrapCore(evidence.bootstrapCore, evidence.stage, evidence.surfaces);
   assert(Array.isArray(evidence.migrations), "migrations must be an array");
   for (const migration of evidence.migrations) {
     assert(typeof migration?.name === "string" && /^\d+.*\.sql$/.test(migration.name), "migration name is invalid");
@@ -256,6 +289,7 @@ if (mode === "write") {
     predecessor,
     surfaces: optionalJson("PONTO_RELEASE_SURFACES_JSON", {}),
     edgeGuard: optionalJson("PONTO_RELEASE_EDGE_GUARD_JSON", null),
+    bootstrapCore: optionalJson("PONTO_RELEASE_BOOTSTRAP_CORE_JSON", null),
     checkpoint: optionalJson("PONTO_RELEASE_CHECKPOINT_JSON", null),
     migrations: optionalJson("PONTO_RELEASE_MIGRATIONS_JSON", []),
     cohort: optionalJson("PONTO_RELEASE_COHORT_SUMMARY_JSON", { configured: false, grants: 0, units: 0, contexts: 0 }),

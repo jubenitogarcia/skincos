@@ -28,7 +28,43 @@
       "secrets": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
       "migrationPaths": [],
       "environments": ["staging", "production"],
-      "promotion": {"stagingSupported": true, "bootstrapOnly": true, "immutableSourcePr": 912}
+      "promotion": {
+        "stagingSupported": true,
+        "bootstrapOnly": true,
+        "immutableSourcePr": 912,
+        "bootstrapEvidence": {
+          "state": "published-and-attested",
+          "repository": "jubenitogarcia/skincos",
+          "sourceSha": "0f3480dce1a170ac0f862fa392a95456af292a88",
+          "workflowRunId": "30512105626",
+          "workflowControlSha": "e50385144408c96fbcf919bbe1f3fdc7da4b9e1d",
+          "workflowPath": ".github/workflows/ponto-core-baseline-publisher.yml",
+          "runAttempt": 1,
+          "artifacts": {
+            "validation": {
+              "id": "8747502455",
+              "name": "ponto-core-baseline-validation-0f3480dce1a170ac0f862fa392a95456af292a88",
+              "digest": "sha256:4c3b78df08cd89bfcca8c3216a0c8c4dd95099c27380187b828884c442efb886"
+            },
+            "staging": {
+              "id": "8747521765",
+              "name": "ponto-core-baseline-staging-0f3480dce1a170ac0f862fa392a95456af292a88",
+              "digest": "sha256:382c6e208733c54184e94be0c8169cb266179d692b12e2b64803d4deebb0fab4",
+              "worker": "skincos-ponto-core-staging",
+              "deploymentId": "d88aa85e-a90b-4fd0-b03b-14bf4c6fc248",
+              "versionId": "0ee7a2fe-deff-4f37-bcda-c35ad54b68f3"
+            },
+            "production": {
+              "id": "8747532031",
+              "name": "ponto-core-baseline-production-0f3480dce1a170ac0f862fa392a95456af292a88",
+              "digest": "sha256:d6204c30364d0f084db90d0dcc84f655cc42003b7017530843512bff28fe0beb",
+              "worker": "skincos-ponto-core",
+              "deploymentId": "96aba9e3-fb02-48b4-bc38-ef6a7187328a",
+              "versionId": "487f3c03-0159-4914-8d79-470fd1ef209d"
+            }
+          }
+        }
+      }
     },
     {
       "id": "finance",
