@@ -26,6 +26,8 @@ test('staging Finance API smokes use the authenticated Pages transport', async (
   assert.match(canary, /String\(process\.env\[name\] \?\? ''\)/);
   assert.match(importer, /String\(process\.env\[name\] \?\? ''\)/);
   assert.match(importer, /const analyzePayload = \{[\s\S]*mapping: loaded\.batch\?\.mapping \|\| stagedBody\.analysis\?\.mapping \|\| \{\}/);
+  assert.match(importer, /retryTransientRequest\(`\$\{financePath\(`\/imports\/\$\{encodeURIComponent\(batchId\)\}\/analyze`\)\}/);
+  assert.match(importer, /response\.status < 500 \|\| attempt === attempts/);
   assert.match(importer, /body: JSON\.stringify\(analyzePayload\)/);
   assert.match(importer, /analysisBody\?\.ok !== true/);
   assert.doesNotMatch(importer, /analysisBody\.analysis\?\.rows/);

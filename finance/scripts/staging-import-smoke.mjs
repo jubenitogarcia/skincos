@@ -49,6 +49,14 @@ async function request(path, init = {}) {
   try { return await fetch(`${baseUrl}${path}`, { ...init, signal: timer.signal }); }
   finally { timer.done(); }
 }
+async function retryTransientRequest(path, init, attempts = 3) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const response = await request(path, init);
+    if (response.status < 500 || attempt === attempts) return response;
+    await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+  }
+  throw new Error('unreachable retry state');
+}
 const financePath = (path) => `/api/finance${path}`;
 const json = async (response) => {
   const body = await response.json().catch(() => null);
@@ -125,7 +133,7 @@ try {
       mapping: loaded.batch?.mapping || stagedBody.analysis?.mapping || {},
       encoding: payload.encoding || 'utf-8',
     };
-    const analyzed = await request(`${financePath(`/imports/${encodeURIComponent(batchId)}/analyze`)}?scopeId=${encodeURIComponent(scopeId)}`, {
+    const analyzed = await retryTransientRequest(`${financePath(`/imports/${encodeURIComponent(batchId)}/analyze`)}?scopeId=${encodeURIComponent(scopeId)}`, {
       method: 'POST', headers: authHeaders(`${key}:analyze`), body: JSON.stringify(analyzePayload),
     });
     const analysisBody = await json(analyzed);

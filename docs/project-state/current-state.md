@@ -1,5 +1,34 @@
 # Current state
 
+## Finance — current-main staging lineage and canary passed — 2026-07-29T23:54Z
+
+`origin/main` `c277032db96ba96484522a19994a66cbb323a46d` is the current
+Finance staging candidate. Candidate `30500613099`, Finance Worker/UI/CRM Pages
+preview `30500694945`/`30500696857`/`30500698417`, and staging
+`30500732310`/`30500734160`/`30500735957` all used that explicit SHA. Finance
+Worker staging completed its encrypted pre-migration checkpoint, additive
+migration step, immutable version deployment and Worker smoke through its
+canonical workflow.
+
+Synthetic canary `30500922386` passed against that lineage. The authenticated
+journey covered login/session, bootstrap, scope and negative authorization,
+Finance health/readiness, import stage/analyze/decision/preview/commit,
+idempotent replay, conflict, audit and compensating undo; the independent UI
+and shell smoke also passed. The canary decision recorded Finance p95 426 ms
+(limit 1000 ms), zero errors and zero authentication, journey, data,
+audit or dependency failures. Its finalizer restored the non-enabled staging
+baseline and the temporary synthetic grant. The standalone 503 from the prior
+canary did not recur. A non-Finance `/api/instagram/status` 503 was observed in
+the browser console but did not affect Finance responses or the shell result.
+
+Finance remains `experimental`, `module_enabled=false`, without production
+resources, user grants or pilot activation. The only technical gate before a
+pilot-package review is a fresh provider-separated PostgreSQL retrieval and
+isolated scratch restore; named human approval and separately authorized
+production provisioning remain subsequent gates. The older Finance section
+below is retained as historical audit trail and is superseded where it conflicts
+with this section.
+
 ## Workforce Timekeeping release — source integrated; production fail-closed — 2026-07-29T22:29Z
 
 PR #886 integrated the Ponto source remediation into `main` as
