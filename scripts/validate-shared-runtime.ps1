@@ -21,7 +21,16 @@ if ($latest) {
 $task = Get-ScheduledTask -TaskName 'SkincosOrbBackup' -ErrorAction SilentlyContinue
 $taskInfo = if ($task) { Get-ScheduledTaskInfo -TaskName 'SkincosOrbBackup' } else { $null }
 
-$native = & wsl.exe -d Ubuntu-24.04 -u admin -- systemctl --quiet is-active orb orb-proxy messaging-whatsapp crm booking cloudflare-orb cloudflare-runtime 2>&1
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$wslInvoker = Join-Path $PSScriptRoot 'invoke-skincos-wsl.ps1'
+$native = & $wslInvoker `
+    -ProjectRoot $projectRoot `
+    -Executable systemctl `
+    -ArgumentList @('--quiet', 'is-active', 'orb', 'orb-proxy', 'messaging-whatsapp', 'crm', 'booking', 'cloudflare-orb', 'cloudflare-runtime') `
+    -SkipBootstrapCheck `
+    -SkipNodeCheck `
+    -SkipNpmCheck `
+    -SkipGitCheck 2>&1
 $nativeOk = $LASTEXITCODE -eq 0
 
 $result = [pscustomobject]@{

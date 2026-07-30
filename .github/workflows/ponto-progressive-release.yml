@@ -26,16 +26,84 @@ on:
         options: [pilot, canary, production]
 
 concurrency:
-  group: ${{ inputs.stage == 'preview' && 'ponto-preview-release-custody' || 'ponto-release-custody' }}
+  # Coordination only. Every child that mutates a Cloudflare surface takes
+  # the direct ponto-surface-mutation lock in its own workflow.
+  group: ponto-release-coordinator
   cancel-in-progress: false
 
 permissions:
-  actions: write
   contents: read
 
 jobs:
+  source:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse non-main Ponto coordinator execution
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto coordinator must execute from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Ponto coordinator full reruns are forbidden; dispatch a new governed run'; exit 1; }
+  emergency-broker-staging:
+    needs: source
+    if: ${{ inputs.stage != 'preview' && github.run_attempt == 1 }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    environment: ponto-emergency-staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Functionally attest the staging close-only broker before release
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: staging
+        run: node .github/scripts/ponto-emergency-broker.mjs attest "$RUNNER_TEMP/ponto-emergency-broker-staging.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-emergency-broker-staging-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-emergency-broker-staging.json
+          retention-days: 90
+          if-no-files-found: error
+  emergency-broker-production:
+    needs: source
+    if: ${{ inputs.stage != 'preview' && github.run_attempt == 1 }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    environment: ponto-emergency-production
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Functionally attest the production close-only broker before release
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: production
+        run: node .github/scripts/ponto-emergency-broker.mjs attest "$RUNNER_TEMP/ponto-emergency-broker-production.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-emergency-broker-production-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-emergency-broker-production.json
+          retention-days: 90
+          if-no-files-found: error
   orchestrate:
-    if: github.ref == 'refs/heads/main'
+    needs: [source, emergency-broker-staging, emergency-broker-production]
+    if: ${{ always() && github.run_attempt == 1 && needs.source.result == 'success' && (inputs.stage == 'preview' || (needs.emergency-broker-staging.result == 'success' && needs.emergency-broker-production.result == 'success')) }}
+    permissions:
+      actions: write
+      checks: write
+      contents: read
     runs-on: ubuntu-latest
     environment: ${{ inputs.stage == 'preview' && 'preview' || inputs.stage == 'staging' && 'staging' || 'production' }}
     timeout-minutes: 360
@@ -85,20 +153,30 @@ jobs:
           [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'numeric predecessor_run_id is required'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-progressive-release.yml" > "$RUNNER_TEMP/ponto-workflow.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PREDECESSOR_RUN_ID" > "$RUNNER_TEMP/predecessor-run.json"
-          node - "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json" <<'NODE'
+          PREDECESSOR_STAGE="$predecessor" node - "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json" <<'NODE'
           const fs = require("fs");
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const expectedTitle = `Ponto ${process.env.PREDECESSOR_STAGE} ${process.env.RELEASE_SHA} orchestrator=${process.env.PREDECESSOR_RUN_ID}`;
           if (
-            run.workflow_id !== workflow.id
-            || !String(run.path || "").startsWith(".github/workflows/ponto-progressive-release.yml@refs/heads/main")
+            workflow?.state !== "active"
+            || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
+            || workflow?.name !== "Ponto progressive release"
+            || !Number.isInteger(workflow?.id)
+            || String(run?.id || "") !== process.env.PREDECESSOR_RUN_ID
+            || run.workflow_id !== workflow.id
+            || run.path !== workflow.path
             || run.status !== "completed"
             || run.conclusion !== "success"
+            || run.run_attempt !== 1
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
-            || run.name !== "Ponto progressive release"
+            || String(run.head_sha || "").toLowerCase() !== process.env.RELEASE_SHA
+            || run.display_title !== expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || String(run.repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || String(run.head_repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID
           ) throw new Error("predecessor run provenance is invalid");
           NODE
           artifact="ponto-release-evidence-${predecessor}-${RELEASE_SHA}"
@@ -106,96 +184,121 @@ jobs:
           PONTO_EXPECTED_STAGE="$predecessor" PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
             node .github/scripts/ponto-release-evidence.mjs verify "$PONTO_ARTIFACT_DIR/predecessor/ponto-release-evidence.json"
           rm -f "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json"
-      - name: Issue masked single-use capabilities for every governed child mutation
+      - name: Attest protected selected environment before issuing any capability
         if: ${{ inputs.stage != 'preview' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
-          echo "PONTO_LEASE_TOKENS_FILE=$RUNNER_TEMP/ponto-orchestrator-lease-tokens.json" >> "$GITHUB_ENV"
-          node .github/scripts/ponto-orchestrator-lease.mjs issue \
-            "$RUNNER_TEMP/ponto-orchestrator-leases" \
-            "$RUNNER_TEMP/ponto-orchestrator-lease-tokens.json" \
-            workers-secrets pages-secrets timekeeping core-inventory core-api pages staging-journey staging-rollback module-open rollback-incumbent-open rollback-candidate-open
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for protection attestation'; exit 1; }
+          target=production
+          [[ "$STAGE" == staging ]] && target=staging
+          mkdir -p "$PONTO_ARTIFACT_DIR/governance"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$target" \
+            > "$RUNNER_TEMP/ponto-environment.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$target/deployment-branch-policies?per_page=100" \
+            > "$RUNNER_TEMP/ponto-environment-branch-policies.json"
+          PONTO_ENVIRONMENT_TARGET="$target" \
+            node .github/scripts/ponto-environment-protection.mjs \
+              "$RUNNER_TEMP/ponto-environment.json" \
+              "$RUNNER_TEMP/ponto-environment-branch-policies.json" \
+              "$PONTO_ARTIFACT_DIR/governance/ponto-environment-protection.json"
+          rm -f \
+            "$RUNNER_TEMP/ponto-environment.json" \
+            "$RUNNER_TEMP/ponto-environment-branch-policies.json"
+      - name: Refuse a latched Ponto emergency stop before issuing capabilities
+        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_NAMESPACE_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PRODUCTION_NAMESPACE_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+        run: |
+          set -euo pipefail
+          case "$STAGE" in
+            staging) NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW"; OPPOSITE_NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW" ;;
+            pilot|canary|production|rollback) NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW"; OPPOSITE_NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW" ;;
+            *) echo 'Unsupported emergency-latch release stage'; exit 1 ;;
+          esac
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID NAMESPACE_ID; do
+            [[ -n "${!name:-}" ]] || { echo "Missing emergency-latch preflight value: $name"; exit 1; }
+          done
+          if [[ -n "${OPPOSITE_NAMESPACE_ID:-}" && "$NAMESPACE_ID" == "$OPPOSITE_NAMESPACE_ID" ]]; then
+            echo 'Selected and opposite Ponto namespaces must be independent'
+            exit 1
+          fi
+          [[ "$NAMESPACE_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid module-control KV id'; exit 1; }
+          resource_target=production
+          [[ "$STAGE" == staging ]] && resource_target=staging
+          PONTO_RESOURCE_TARGET="$resource_target" \
+          PONTO_MODULE_CONTROL_KV_ID="$NAMESPACE_ID" \
+          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$OPPOSITE_NAMESPACE_ID" \
+          PONTO_RESOURCE_IDENTITY_REPORT="$RUNNER_TEMP/ponto-root-module-control-identity.json" \
+            node .github/scripts/ponto-cloudflare-resource-identity.mjs
+          prior="$RUNNER_TEMP/ponto-emergency-latch.json"
+          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping:emergency-latch" --namespace-id "$NAMESPACE_ID" --remote > "$prior"
+          PONTO_EXPECTED_LATCH_TARGET="$resource_target" node - "$prior" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            value?.schemaVersion !== 1
+            || value?.module !== "timekeeping"
+            || value?.target !== process.env.PONTO_EXPECTED_LATCH_TARGET
+            || value?.latched !== false
+            || !Number.isFinite(Date.parse(String(value?.changedAt || "")))
+            || !String(value?.changedBy || "").trim()
+          ) throw new Error("Ponto emergency latch is missing, unreadable, malformed, or active; run a monotonic emergency close and the protected reset before release");
+          NODE
+          rm -f "$prior"
+      - name: Verify target-bound asymmetric child capability custody
         if: ${{ inputs.stage != 'preview' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-workers-secrets
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/workers-secrets.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage != 'preview' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-pages-secrets
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/pages-secrets.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage != 'preview' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-timekeeping
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/timekeeping.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage != 'preview' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-core-inventory
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/core-inventory.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage != 'preview' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-core-api
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/core-api.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage != 'preview' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-pages
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/pages.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage != 'preview' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-staging-journey
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/staging-journey.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage != 'preview' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-staging-rollback
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/staging-rollback.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage != 'preview' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-module-open
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/module-open.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage == 'staging' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-rollback-incumbent-open
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/rollback-incumbent-open.json
-          retention-days: 1
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.stage == 'staging' }}
-        with:
-          name: ponto-orchestrator-lease-${{ github.run_id }}-rollback-candidate-open
-          path: ${{ runner.temp }}/ponto-orchestrator-leases/rollback-candidate-open.json
-          retention-days: 1
-          if-no-files-found: error
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'Environment custody metadata access is required'; exit 1; }
+          target=production
+          [[ "$STAGE" == staging ]] && target=staging
+          gh api "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/ponto-capability-repository-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/ponto-capability-repository-variables.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$target/secrets?per_page=100" > "$RUNNER_TEMP/ponto-capability-environment-secrets.json"
+          node - \
+            "$RUNNER_TEMP/ponto-capability-repository-secrets.json" \
+            "$RUNNER_TEMP/ponto-capability-repository-variables.json" \
+            "$RUNNER_TEMP/ponto-capability-environment-secrets.json" <<'NODE'
+          const fs = require("fs");
+          const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
+          const repositorySecrets = names(process.argv[2], "secrets");
+          const repositoryVariables = names(process.argv[3], "variables");
+          const environmentSecrets = names(process.argv[4], "secrets");
+          const privateName = "PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY";
+          const publicMapName = "PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON";
+          if (
+            repositorySecrets.has(privateName)
+            || !repositoryVariables.has(publicMapName)
+            || !environmentSecrets.has(privateName)
+          ) throw new Error("Ponto Ed25519 signer must be target-environment-only and its verifier map repository-public");
+          NODE
+          PONTO_CAPABILITY_TARGET="$target" node --input-type=module <<'NODE'
+          import crypto from "node:crypto";
+          import { resolveCapabilityVerifier } from "./.github/scripts/ponto-orchestrator-lease.mjs";
+          const privateKey = crypto.createPrivateKey(process.env.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY || "");
+          const verifier = resolveCapabilityVerifier(
+            process.env.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON,
+            process.env.PONTO_CAPABILITY_TARGET,
+          );
+          const publicKey = crypto.createPublicKey(verifier.publicKey);
+          if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("Ponto capability signer is not Ed25519");
+          const probe = crypto.randomBytes(32);
+          if (!crypto.verify(null, probe, publicKey, crypto.sign(null, probe, privateKey))) {
+            throw new Error("Ponto capability private/public target pair does not match");
+          }
+          NODE
+          rm -f "$RUNNER_TEMP"/ponto-capability-*.json
       - name: Preflight selected environment secret-root custody
-        if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
@@ -203,28 +306,53 @@ jobs:
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for custody attestation'; exit 1; }
           target=production
           [[ "$STAGE" == staging ]] && target=staging
-          gh api "repos/$GITHUB_REPOSITORY/environments/$target/secrets" > "$RUNNER_TEMP/ponto-root-environment-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/secrets" > "$RUNNER_TEMP/ponto-root-repository-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/environments/$target/variables" > "$RUNNER_TEMP/ponto-root-environment-variables.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables" > "$RUNNER_TEMP/ponto-root-repository-variables.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$target/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-environment-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/staging/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-staging-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-production-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-repository-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$target/variables?per_page=100" > "$RUNNER_TEMP/ponto-root-environment-variables.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/ponto-root-repository-variables.json"
           node - \
             "$RUNNER_TEMP/ponto-root-environment-secrets.json" \
             "$RUNNER_TEMP/ponto-root-repository-secrets.json" \
             "$RUNNER_TEMP/ponto-root-environment-variables.json" \
-            "$RUNNER_TEMP/ponto-root-repository-variables.json" <<'NODE'
+            "$RUNNER_TEMP/ponto-root-repository-variables.json" \
+            "$RUNNER_TEMP/ponto-root-staging-secrets.json" \
+            "$RUNNER_TEMP/ponto-root-production-secrets.json" <<'NODE'
           const fs = require("fs");
           const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
           const environmentSecrets = names(process.argv[2], "secrets");
           const repositorySecrets = names(process.argv[3], "secrets");
           const environmentVariables = names(process.argv[4], "variables");
           const repositoryVariables = names(process.argv[5], "variables");
+          const stagingSecrets = names(process.argv[6], "secrets");
+          const productionSecrets = names(process.argv[7], "secrets");
           for (const name of ["PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
-            if (!environmentSecrets.has(name)) throw new Error(`${name} must be owned by the selected GitHub environment; repository fallback is refused`);
+            if (repositorySecrets.has(name) || !environmentSecrets.has(name)) {
+              throw new Error(`${name} must be owned only by the selected GitHub environment; repository fallback is refused`);
+            }
           }
           if (
-            !repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
-            || environmentSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
-          ) throw new Error("shared root attestation key must exist only at repository scope");
+            repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+            || !environmentSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+            || !stagingSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+            || !productionSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+          ) throw new Error("shared root attestation key must exist only in both protected target environments");
+          if (
+            repositorySecrets.has("PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY")
+            || !environmentSecrets.has("PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY")
+            || !stagingSecrets.has("PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY")
+            || !productionSecrets.has("PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY")
+          ) throw new Error("Pages rollback intent key must exist only in both protected target environments");
+          if (
+            !repositorySecrets.has("PONTO_WAF_READ_API_TOKEN")
+            || repositorySecrets.has("PONTO_WAF_WRITE_API_TOKEN")
+            || environmentSecrets.has("PONTO_WAF_READ_API_TOKEN")
+            || stagingSecrets.has("PONTO_WAF_READ_API_TOKEN")
+            || stagingSecrets.has("PONTO_WAF_WRITE_API_TOKEN")
+            || productionSecrets.has("PONTO_WAF_READ_API_TOKEN")
+            || !productionSecrets.has("PONTO_WAF_WRITE_API_TOKEN")
+          ) throw new Error("Ponto WAF read/write tokens are missing or violate repository/production custody separation");
           for (const name of ["PONTO_PROFILE_DATA_KEY_CUSTODY_REF", "PONTO_IDEMPOTENCY_KEY_CUSTODY_REF"]) {
             if (!environmentVariables.has(name)) throw new Error(`${name} must be owned by the selected GitHub environment`);
           }
@@ -237,63 +365,249 @@ jobs:
           NODE
           rm -f \
             "$RUNNER_TEMP/ponto-root-environment-secrets.json" \
+            "$RUNNER_TEMP/ponto-root-staging-secrets.json" \
+            "$RUNNER_TEMP/ponto-root-production-secrets.json" \
             "$RUNNER_TEMP/ponto-root-repository-secrets.json" \
             "$RUNNER_TEMP/ponto-root-environment-variables.json" \
             "$RUNNER_TEMP/ponto-root-repository-variables.json"
+      - name: Require the independent no-review true-only emergency close path
+        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments read is required for emergency custody'; exit 1; }
+          for target in staging production; do
+            environment="ponto-emergency-$target"
+            gh api "repos/$GITHUB_REPOSITORY/environments/$environment" > "$RUNNER_TEMP/$environment.json"
+            gh api "repos/$GITHUB_REPOSITORY/environments/$environment/secrets?per_page=100" > "$RUNNER_TEMP/$environment-secrets.json"
+            gh api "repos/$GITHUB_REPOSITORY/environments/$environment/variables?per_page=100" > "$RUNNER_TEMP/$environment-variables.json"
+          done
+          node - "$RUNNER_TEMP/ponto-emergency-staging.json" \
+            "$RUNNER_TEMP/ponto-emergency-staging-secrets.json" \
+            "$RUNNER_TEMP/ponto-emergency-staging-variables.json" \
+            "$RUNNER_TEMP/ponto-emergency-production.json" \
+            "$RUNNER_TEMP/ponto-emergency-production-secrets.json" \
+            "$RUNNER_TEMP/ponto-emergency-production-variables.json" <<'NODE'
+           const fs = require("fs");
+           const read = file => JSON.parse(fs.readFileSync(file, "utf8"));
+           const brokerPolicies = read(".github/governance/progressive-release-policy.json").emergencyBrokers || {};
+          const configurations = [
+            ["staging", read(process.argv[2]), read(process.argv[3]), read(process.argv[4])],
+            ["production", read(process.argv[5]), read(process.argv[6]), read(process.argv[7])],
+          ];
+          const custodyRefs = [];
+          for (const [target, environment, secretPayload, variablePayload] of configurations) {
+            const protectionRules = environment?.protection_rules || [];
+            if (
+              environment?.name !== `ponto-emergency-${target}`
+              || environment?.can_admins_bypass !== false
+              || protectionRules.length !== 1
+              || protectionRules[0]?.type !== "branch_policy"
+              || !Number.isInteger(Number(protectionRules[0]?.id))
+              || Number(protectionRules[0]?.id) <= 0
+              || environment?.deployment_branch_policy?.protected_branches !== true
+              || environment?.deployment_branch_policy?.custom_branch_policies !== false
+            ) throw new Error(`${target} emergency environment must disable admin bypass and contain only its protected-branch policy`);
+            const secretNames = new Set((secretPayload.secrets || []).map(item => item.name));
+            const forbiddenSecrets = [
+              "CLOUDFLARE_API_TOKEN",
+              "PONTO_EMERGENCY_CLOSE_API_TOKEN",
+              "PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY",
+              "PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY",
+              "PONTO_ROOT_ATTESTATION_KEY_SHARED",
+            ];
+            if (
+              !secretNames.has("PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL")
+              || forbiddenSecrets.some((name) => secretNames.has(name))
+            ) throw new Error(`${target} close-only broker credential is absent or a direct Cloudflare credential remains`);
+            const variables = Object.fromEntries((variablePayload.variables || []).map(item => [item.name, item.value]));
+            for (const name of [
+              "PONTO_EMERGENCY_CLOSE_BROKER_URL",
+              "PONTO_EMERGENCY_CLOSE_CUSTODY_REF",
+            ]) if (!String(variables[name] || "").trim()) throw new Error(`${target} emergency variable ${name} is absent`);
+             if (variables.PONTO_EMERGENCY_CLOSE_MODE !== "external-close-only-broker-v1") {
+               throw new Error(`${target} emergency credential is not bound to the close-only broker contract`);
+             }
+             const brokerPolicy = brokerPolicies[target];
+             if (
+               !brokerPolicy
+               || !String(brokerPolicy.url || "").trim()
+               || !String(brokerPolicy.custodyRef || "").trim()
+               || !String(brokerPolicy.responseKeyId || "").trim()
+               || !String(brokerPolicy.responsePublicKeyPem || "").trim()
+               || variables.PONTO_EMERGENCY_CLOSE_BROKER_URL !== brokerPolicy.url
+               || variables.PONTO_EMERGENCY_CLOSE_CUSTODY_REF !== brokerPolicy.custodyRef
+             ) {
+               throw new Error(`${target} close-only broker identity is absent from or differs from reviewed policy`);
+             }
+             const brokerUrl = new URL(variables.PONTO_EMERGENCY_CLOSE_BROKER_URL);
+            if (
+              brokerUrl.protocol !== "https:"
+              || brokerUrl.username
+              || brokerUrl.password
+              || brokerUrl.search
+              || brokerUrl.hash
+              || brokerUrl.pathname === "/"
+            ) {
+              throw new Error(`${target} close-only broker URL is invalid`);
+            }
+            custodyRefs.push(variables.PONTO_EMERGENCY_CLOSE_CUSTODY_REF);
+          }
+          if (custodyRefs[0] === custodyRefs[1]) throw new Error("staging and production close-only broker custody is not isolated");
+          NODE
+          rm -f "$RUNNER_TEMP"/ponto-emergency-*.json
       - name: Preflight production custody, approved cohort, and online pilot runner
         if: ${{ contains(fromJSON('["pilot","canary","production"]'), inputs.stage) }}
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          REQUIRED_RUNNER_LABELS_JSON: ${{ vars.PONTO_PILOT_RUNNER_LABELS_JSON }}
           CANARY_COHORT_PERCENTAGE: ${{ vars.PONTO_CANARY_COHORT_PERCENTAGE }}
         run: |
           set -euo pipefail
-          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments and Actions read is required'; exit 1; }
-          gh api "repos/$GITHUB_REPOSITORY/environments/production/secrets" > "$RUNNER_TEMP/production-secret-names.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runners" > "$RUNNER_TEMP/repository-runners.json"
-          node - "$RUNNER_TEMP/production-secret-names.json" "$RUNNER_TEMP/repository-runners.json" "$PONTO_ARTIFACT_DIR/cohort-summary.json" <<'NODE'
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments, Actions, Variables, and Administration read is required'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$RUNNER_TEMP/production-secret-names.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runners?per_page=100" > "$RUNNER_TEMP/repository-runners.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON" > "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM" > "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/production/variables?per_page=100" > "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json"
+          node - \
+            "$RUNNER_TEMP/production-secret-names.json" \
+            "$RUNNER_TEMP/repository-runners.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json" \
+            "$PONTO_ARTIFACT_DIR/cohort-summary.json" <<'NODE'
+          const crypto = require("crypto");
           const fs = require("fs");
+          const path = require("path");
           const secretPayload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const names = new Set((secretPayload.secrets || []).map(item => item.name));
           for (const name of ["PONTO_PILOT_LOGIN", "PONTO_PILOT_PASSWORD", "PONTO_PILOT_COHORT_JSON", "PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
             if (!names.has(name)) throw new Error(`${name} must be owned by the production environment`);
           }
-          const requiredLabels = JSON.parse(process.env.REQUIRED_RUNNER_LABELS_JSON || "[]");
-          if (!Array.isArray(requiredLabels) || !requiredLabels.length || requiredLabels.some(value => typeof value !== "string" || !value)) throw new Error("PONTO_PILOT_RUNNER_LABELS_JSON is absent or invalid");
-          const runners = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).runners || [];
-          const ready = runners.some(runner => runner.status === "online" && !runner.busy && requiredLabels.every(label => (runner.labels || []).some(item => item.name === label)));
-          if (!ready) throw new Error("no online idle runner has the exact approved pilot labels");
+          const policy = JSON.parse(fs.readFileSync(".github/governance/progressive-release-policy.json", "utf8"));
+          const expected = policy?.pilotRunner?.production;
+          const requiredBaseLabels = ["self-hosted", "Linux", "X64"];
+          const customLabels = Array.isArray(expected?.requiredLabels)
+            ? expected.requiredLabels.filter(label => !requiredBaseLabels.includes(label))
+            : [];
+          const jitPaths = [
+            expected?.jitAttestationFilePath,
+            expected?.jitCredentialBundleFilePath,
+            expected?.jitDecryptKeyFilePath,
+          ].map(value => String(value || ""));
+          const repositoryEncryptionVariable = JSON.parse(fs.readFileSync(process.argv[6], "utf8"));
+          let jitPublicKey = null;
+          let runnerEncryptionPublicKey = null;
+          let runnerEncryptionFingerprint = "";
+          try { jitPublicKey = crypto.createPublicKey(String(expected?.jitAttestationPublicKeyPem || "")); } catch {}
+          try {
+            runnerEncryptionPublicKey = crypto.createPublicKey(String(repositoryEncryptionVariable?.value || ""));
+            const publicDer = runnerEncryptionPublicKey.export({ type: "spki", format: "der" });
+            runnerEncryptionFingerprint = crypto.createHash("sha256").update(publicDer).digest("hex");
+          } catch {}
+          if (
+            !/^[1-9][0-9]{0,19}$/.test(String(expected?.runnerId || ""))
+            || typeof expected?.runnerName !== "string"
+            || !expected.runnerName.trim()
+            || typeof expected?.runnerIsolationRef !== "string"
+            || !expected.runnerIsolationRef.trim()
+            || !Array.isArray(expected?.requiredLabels)
+            || expected.requiredLabels.length !== 4
+            || new Set(expected.requiredLabels).size !== expected.requiredLabels.length
+            || expected.requiredLabels.some(label => typeof label !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(label))
+            || !requiredBaseLabels.every(label => expected.requiredLabels.includes(label))
+            || customLabels.length !== 1
+            || !/^ponto-jit-[a-z0-9][a-z0-9-]{15,63}$/.test(customLabels[0])
+            || typeof expected?.networkContextCustodyRef !== "string"
+            || !expected.networkContextCustodyRef.trim()
+            || !/^[0-9a-f]{64}$/.test(String(expected?.encryptionPublicKeySha256 || ""))
+            || expected?.jitMode !== "ephemeral-pre-job-hook-ed25519-v1"
+            || !/^[a-z][a-z0-9-]{1,63}$/.test(String(expected?.jitAttestationKeyId || ""))
+            || jitPublicKey?.asymmetricKeyType !== "ed25519"
+            || repositoryEncryptionVariable?.name !== "PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM"
+            || runnerEncryptionPublicKey?.asymmetricKeyType !== "rsa"
+            || Number(runnerEncryptionPublicKey?.asymmetricKeyDetails?.modulusLength || 0) < 2048
+            || runnerEncryptionFingerprint !== String(expected?.encryptionPublicKeySha256 || "").toLowerCase()
+            || jitPaths.some(value => !path.posix.isAbsolute(value))
+            || new Set(jitPaths).size !== jitPaths.length
+            || new Set(jitPaths.map(value => path.posix.dirname(value))).size !== 1
+            || typeof expected?.jitSupervisorCustodyRef !== "string"
+            || !expected.jitSupervisorCustodyRef.trim()
+            || typeof expected?.jitCleanupHookCustodyRef !== "string"
+            || !expected.jitCleanupHookCustodyRef.trim()
+          ) throw new Error("production one-shot pilot runner policy remains fail-closed");
+          const repositoryVariable = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+          const environmentVariables = JSON.parse(fs.readFileSync(process.argv[5], "utf8")).variables || [];
+          const shadowed = new Set(environmentVariables.map(item => item?.name));
+          if (
+            shadowed.has("PONTO_PILOT_RUNNER_LABELS_JSON")
+            || shadowed.has("PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM")
+          ) {
+            throw new Error("Ponto pilot runner repository variables may not be shadowed by the production environment");
+          }
+          let requiredLabels;
+          try { requiredLabels = JSON.parse(repositoryVariable?.value || ""); } catch {}
+          if (
+            repositoryVariable?.name !== "PONTO_PILOT_RUNNER_LABELS_JSON"
+            || JSON.stringify(requiredLabels) !== JSON.stringify(expected.requiredLabels)
+          ) throw new Error("repository runner selector differs from the versioned one-shot policy");
+          const runnerPayload = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const runners = runnerPayload.runners || [];
+          if (runnerPayload.total_count !== runners.length) {
+            throw new Error("runner inventory exceeds the bounded complete attestation page");
+          }
+          const matching = runners.filter((runner) => {
+            const labels = (runner.labels || []).map(item => String(item?.name || ""));
+            return labels.length === requiredLabels.length
+              && requiredLabels.every(label => labels.includes(label));
+          });
+          if (
+            matching.length !== 1
+            || String(matching[0]?.id || "") !== String(expected.runnerId)
+            || matching[0]?.name !== expected.runnerName
+            || matching[0]?.status !== "online"
+            || matching[0]?.busy !== false
+          ) throw new Error("exact policy-pinned one-shot clinic runner is not uniquely online and idle");
           if (process.env.STAGE === "canary") {
             const percentage = Number(process.env.CANARY_COHORT_PERCENTAGE);
             if (!Number.isInteger(percentage) || percentage < 1 || percentage > 100) throw new Error("PONTO_CANARY_COHORT_PERCENTAGE must be 1..100");
           }
-          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+          fs.writeFileSync(process.argv[7], `${JSON.stringify({
             configured: true,
             valuesHydratedOnCoordinator: false,
             validatedByName: true,
             validationDeferredToModuleTransition: true,
             validationDeferredToApprovedRunner: true,
             approvedRunnerAvailable: true,
+            runnerId: String(expected.runnerId),
+            runnerName: expected.runnerName,
+            oneShotSelectorValidated: true,
             runnerLabelCount: requiredLabels.length,
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
-          rm -f "$RUNNER_TEMP/production-secret-names.json" "$RUNNER_TEMP/repository-runners.json"
+          rm -f \
+            "$RUNNER_TEMP/production-secret-names.json" \
+            "$RUNNER_TEMP/repository-runners.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json"
       - name: Attest unconditional edge blocks before any candidate mutation
         if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PONTO_WAF_READ_API_TOKEN: ${{ secrets.PONTO_WAF_READ_API_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
           PONTO_WAF_RULESET_ID: ${{ vars.PONTO_WAF_RULESET_ID }}
           PONTO_WAF_HEADER_RULE_ID: ${{ vars.PONTO_WAF_HEADER_RULE_ID }}
           PONTO_WAF_CONTRACT_RULE_ID: ${{ vars.PONTO_WAF_CONTRACT_RULE_ID }}
         run: |
           set -euo pipefail
-          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo 'Cloudflare API token is required for the WAF precondition'; exit 1; }
+          [[ -n "${PONTO_WAF_READ_API_TOKEN:-}" ]] || { echo 'Repository-only Ponto WAF read token is required for the WAF precondition'; exit 1; }
           [[ "$CLOUDFLARE_ZONE_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'CLOUDFLARE_ZONE_ID is absent or invalid'; exit 1; }
           ruleset="$RUNNER_TEMP/ponto-edge-ruleset.json"
           mkdir -p "$PONTO_ARTIFACT_DIR/edge-guard"
           curl --fail --silent --show-error \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Authorization: Bearer $PONTO_WAF_READ_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/rulesets/phases/http_request_firewall_custom/entrypoint" \
             > "$ruleset"
           node .github/scripts/ponto-edge-override-guard.mjs \
@@ -390,6 +704,8 @@ jobs:
         if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           set -euo pipefail
           target="$STAGE"
@@ -426,6 +742,8 @@ jobs:
         id: baseline
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-production-baseline.yml" > "$RUNNER_TEMP/baseline-workflow.json"
@@ -434,20 +752,30 @@ jobs:
           const fs = require("fs");
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const runs = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).workflow_runs || [];
-          if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-production-baseline.yml") throw new Error("canonical baseline workflow is unavailable");
-          const prefix = `Ponto baseline ${process.env.RELEASE_SHA} staging=${process.env.PREDECESSOR_RUN_ID} orchestrator=`;
-          const reusable = runs
+          if (
+            workflow.state !== "active"
+            || workflow.path !== ".github/workflows/ponto-production-baseline.yml"
+            || workflow.name !== "Ponto production baseline"
+          ) throw new Error("canonical baseline workflow is unavailable");
+          const exactTitle = new RegExp(
+            `^Ponto baseline ${process.env.RELEASE_SHA} staging=${process.env.PREDECESSOR_RUN_ID} orchestrator=${process.env.GITHUB_RUN_ID} nonce=[0-9a-f]{32}$`,
+          );
+          const reusableRuns = runs
             .filter(run => run.workflow_id === workflow.id
-              && run.path === `${workflow.path}@refs/heads/main`
+              && run.path === workflow.path
               && run.status === "completed"
               && run.conclusion === "success"
               && run.event === "workflow_dispatch"
               && run.head_branch === "main"
-              && run.name === "Ponto production baseline"
+              && run.head_sha === process.env.RELEASE_SHA
+              && run.run_attempt === 1
               && run.repository?.full_name === process.env.GITHUB_REPOSITORY
+              && String(run.repository?.id || "") === process.env.GITHUB_REPOSITORY_ID
               && run.head_repository?.full_name === process.env.GITHUB_REPOSITORY
-              && String(run.display_title || "").startsWith(prefix))
-            .sort((a, b) => Number(a.id) - Number(b.id))[0];
+              && String(run.head_repository?.id || "") === process.env.GITHUB_REPOSITORY_ID
+              && exactTitle.test(String(run.display_title || "")));
+          if (reusableRuns.length > 1) throw new Error("multiple exact production baseline runs exist for this coordinator");
+          const reusable = reusableRuns[0];
           process.stdout.write(String(reusable?.id || ""));
           NODE
           )"
@@ -518,6 +846,8 @@ jobs:
         id: provision
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           set -euo pipefail
           target="$STAGE"
@@ -577,6 +907,8 @@ jobs:
         id: timekeeping
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           set -euo pipefail
           node - "$RUNNER_TEMP/timekeeping-inputs.json" <<'NODE'
@@ -608,6 +940,8 @@ jobs:
         id: identity
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           set -euo pipefail
           timekeeping_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId||'')" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
@@ -640,6 +974,8 @@ jobs:
         id: core
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           set -euo pipefail
           timekeeping_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId||'')" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
@@ -672,6 +1008,8 @@ jobs:
         id: pages
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           set -euo pipefail
           core_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId||'')" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json")"
@@ -707,6 +1045,8 @@ jobs:
         if: inputs.stage == 'staging'
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           tk_candidate="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
           core_candidate="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json")"
@@ -736,6 +1076,8 @@ jobs:
         if: inputs.stage == 'staging'
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
           TIMEKEEPING_RUN: ${{ steps.timekeeping.outputs.run_id }}
           CORE_RUN: ${{ steps.core.outputs.run_id }}
           IDENTITY_RUN: ${{ steps.identity.outputs.run_id }}
@@ -779,6 +1121,8 @@ jobs:
         if: inputs.stage == 'staging'
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           set -euo pipefail
           node - "$RUNNER_TEMP/staging-rollback-drill-inputs.json" \
@@ -873,6 +1217,8 @@ jobs:
         if: ${{ contains(fromJSON('["pilot","canary","production"]'), inputs.stage) }}
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
           CANARY_COHORT_PERCENTAGE: ${{ vars.PONTO_CANARY_COHORT_PERCENTAGE }}
         run: |
           set -euo pipefail
@@ -920,6 +1266,8 @@ jobs:
         id: slo
         env:
           GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
           node - "$RUNNER_TEMP/slo-inputs.json" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json" <<'NODE'
           const fs = require("fs");
@@ -1023,8 +1371,10 @@ jobs:
           if (process.env.STAGE === "staging") {
             const reportFile = path.join(root, "staging-slo/ponto-staging-report.json");
             const contractFile = path.join(root, "staging-slo/ponto-staging-contract.json");
+            const teardownFile = path.join(root, "staging-slo/ponto-staging-teardown-report.json");
             const report = read(reportFile);
             const contract = read(contractFile);
+            const teardown = read(teardownFile);
             const expectedStatuses = {
               auth: 200,
               me: 200,
@@ -1062,11 +1412,25 @@ jobs:
               && identityOnboarding.actorRole === "GESTOR"
               && JSON.stringify(identityOnboarding.actorModuleKeys) === JSON.stringify(["insumos"])
               && Number(identityOnboarding.actorUnitCount) === 1;
-            const digest = crypto.createHash("sha256").update(fs.readFileSync(reportFile)).update(fs.readFileSync(contractFile)).digest("hex");
+            const teardownPassed = teardown.schemaVersion === 1
+              && teardown.passed === true
+              && teardown.environment === "staging"
+              && Number(teardown.coreResidualCount) === 0
+              && Number(teardown.timekeepingResidualCount) === 0
+              && teardown.coreAuditPreserved === true
+              && teardown.timekeepingAuditPreserved === true
+              && teardown.credentialsIncluded === false
+              && teardown.piiIncluded === false;
+            const teardownDigest = crypto.createHash("sha256").update(fs.readFileSync(teardownFile)).digest("hex");
+            const digest = crypto.createHash("sha256")
+              .update(fs.readFileSync(reportFile))
+              .update(fs.readFileSync(contractFile))
+              .update(fs.readFileSync(teardownFile))
+              .digest("hex");
             fs.writeFileSync(path.join(root, "slo-summary.json"), JSON.stringify({
-              passed: contract.passed === true && navigationPassed && identityStatusPassed && statusErrors === 0,
-              samples: statusChecks.length + 7,
-              errors: statusErrors + (contract.passed === true ? 0 : 1) + (navigationPassed ? 0 : 1) + (identityStatusPassed ? 0 : 1),
+              passed: contract.passed === true && navigationPassed && identityStatusPassed && teardownPassed && statusErrors === 0,
+              samples: statusChecks.length + 13,
+              errors: statusErrors + (contract.passed === true ? 0 : 1) + (navigationPassed ? 0 : 1) + (identityStatusPassed ? 0 : 1) + (teardownPassed ? 0 : 1),
               p95Ms: 0,
               windowSeconds: 1,
               navigation: {
@@ -1081,6 +1445,17 @@ jobs:
                 administrativeRole: identityStatusPassed ? "GESTOR" : "",
                 moduleKeys: identityStatusPassed ? ["insumos"] : [],
                 unitCount: identityStatusPassed ? 1 : 0,
+              },
+              teardown: {
+                passed: teardownPassed,
+                environment: teardown.environment === "staging" ? "staging" : "",
+                coreResidualCount: Number(teardown.coreResidualCount),
+                timekeepingResidualCount: Number(teardown.timekeepingResidualCount),
+                coreAuditPreserved: teardown.coreAuditPreserved === true,
+                timekeepingAuditPreserved: teardown.timekeepingAuditPreserved === true,
+                credentialsIncluded: teardown.credentialsIncluded === false ? false : null,
+                piiIncluded: teardown.piiIncluded === false ? false : null,
+                digest: teardownDigest,
               },
               digest,
             }));
@@ -1120,132 +1495,14 @@ jobs:
             PONTO_RELEASE_ROLLBACK_JSON="$(cat "$PONTO_ARTIFACT_DIR/rollback.json")" \
             "${predecessor_args[@]}" \
             node .github/scripts/ponto-release-evidence.mjs write "$PONTO_ARTIFACT_DIR/ponto-release-evidence.json"
-      - name: Keep the selected environment fail-closed on any mutation-stage failure
+      - name: Upload the durable recovery journal for separate recovery jobs
         if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          abort_target=production
-          [[ "$STAGE" == staging ]] && abort_target=staging
-          node - "$RUNNER_TEMP/module-abort.json" "$abort_target" <<'NODE'
-          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ module: "timekeeping", target: process.argv[3], state: "maintenance", message: "Ponto automatic stop limit or release failure.", orchestrator_run_id: process.env.GITHUB_RUN_ID }));
-          NODE
-          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-abort.json" "$PONTO_ARTIFACT_DIR/runs/module-abort.json"
-          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-abort.json")"
-          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
-          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
-            --name "module-transition-timekeeping-$abort_target-maintenance-$GITHUB_RUN_ID" \
-            --dir "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
-      - name: Cancel and reconcile every governed non-terminal child before rollback
-        if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PONTO_RECONCILIATION_TIMEOUT_SECONDS: "600"
-        run: |
-          set -euo pipefail
-          mkdir -p "$PONTO_ARTIFACT_DIR/automatic-rollback"
-          node .github/scripts/ponto-reconcile-children.mjs \
-            "$PONTO_ARTIFACT_DIR" \
-            "$PONTO_ARTIFACT_DIR/automatic-rollback/ponto-child-reconciliation.json"
-      - name: Reassert maintenance after every governed child is terminal
-        if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          abort_target=production
-          [[ "$STAGE" == staging ]] && abort_target=staging
-          node - "$RUNNER_TEMP/module-abort-final.json" "$abort_target" <<'NODE'
-          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ module: "timekeeping", target: process.argv[3], state: "maintenance", message: "Ponto automatic stop limit or release failure; maintenance reasserted after child reconciliation.", orchestrator_run_id: process.env.GITHUB_RUN_ID }));
-          NODE
-          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-abort-final.json" "$PONTO_ARTIFACT_DIR/runs/module-abort.json"
-          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-abort.json")"
-          rm -rf "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
-          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
-          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
-            --name "module-transition-timekeeping-$abort_target-maintenance-$GITHUB_RUN_ID" \
-            --dir "$PONTO_ARTIFACT_DIR/module-transitions/automatic-abort"
-      - name: Roll back every successfully mutated surface to its attested incumbent
-        if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_PAGES_PROJECT: ${{ inputs.stage == 'staging' && (vars.CLOUDFLARE_PAGES_PROJECT_STAGING || 'skincos-staging') || (vars.CLOUDFLARE_PAGES_PROJECT || 'skincos') }}
-          MODULE_CONTROL_KV_ID: ${{ inputs.stage == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-        run: |
-          set -euo pipefail
-          recover_surface() {
-            local run_file="$1" artifact="$2" destination="$3" surface_file="$4"
-            [[ -f "$surface_file" || ! -f "$run_file" ]] || {
-              local conclusion run_id
-              conclusion="$(node -e "process.stdout.write(String(require(process.argv[1]).conclusion||''))" "$run_file")"
-              run_id="$(node -e "process.stdout.write(String(require(process.argv[1]).runId||''))" "$run_file")"
-              if [[ "$conclusion" == success && "$run_id" =~ ^[0-9]+$ ]]; then
-                mkdir -p "$destination"
-                gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir "$destination" || true
-              fi
-            }
-          }
-          recover_journal() {
-            local run_file="$1" artifact="$2" destination="$3"
-            [[ -f "$run_file" ]] || return 0
-            local run_id
-            run_id="$(node -e "process.stdout.write(String(require(process.argv[1]).runId||''))" "$run_file")"
-            [[ "$run_id" =~ ^[0-9]+$ ]] || return 0
-            mkdir -p "$destination"
-            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir "$destination" || true
-          }
-          recover_surface "$PONTO_ARTIFACT_DIR/runs/timekeeping.json" "ponto-surface-timekeeping-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json"
-          recover_surface "$PONTO_ARTIFACT_DIR/runs/identity.json" "ponto-surface-identity-workforce-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/surfaces/identity" "$PONTO_ARTIFACT_DIR/surfaces/identity/surface.json"
-          recover_surface "$PONTO_ARTIFACT_DIR/runs/core.json" "ponto-surface-core-api-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/surfaces/core" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json"
-          recover_surface "$PONTO_ARTIFACT_DIR/runs/pages.json" "ponto-surface-crm-pages-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/surfaces/pages" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json"
-          recover_journal "$PONTO_ARTIFACT_DIR/runs/timekeeping.json" "ponto-mutation-timekeeping-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/mutations/timekeeping"
-          recover_journal "$PONTO_ARTIFACT_DIR/runs/identity.json" "ponto-mutation-identity-workforce-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/mutations/identity"
-          recover_journal "$PONTO_ARTIFACT_DIR/runs/core.json" "ponto-mutation-core-api-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/mutations/core"
-          recover_journal "$PONTO_ARTIFACT_DIR/runs/pages.json" "ponto-mutation-crm-pages-$STAGE-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/mutations/pages"
-          if [[ "$STAGE" == staging ]]; then
-            recover_journal "$PONTO_ARTIFACT_DIR/runs/staging-rollback-drill.json" \
-              "ponto-staging-rollback-drill-$RELEASE_SHA" \
-              "$PONTO_ARTIFACT_DIR/staging-rollback-drill"
-          fi
-          secret_target=production
-          [[ "$STAGE" == staging ]] && secret_target=staging
-          recover_journal "$PONTO_ARTIFACT_DIR/runs/provision-pages.json" "ponto-pages-secret-attestation-$secret_target-$RELEASE_SHA" "$PONTO_ARTIFACT_DIR/provisioning/pages"
-          mkdir -p "$PONTO_ARTIFACT_DIR/automatic-rollback"
-          status=0
-          node .github/scripts/ponto-automatic-rollback.mjs \
-            "$PONTO_ARTIFACT_DIR" \
-            "$PONTO_ARTIFACT_DIR/automatic-rollback/ponto-automatic-rollback.json" || status=$?
-          if [[ ! -f "$PONTO_ARTIFACT_DIR/automatic-rollback/ponto-automatic-rollback.json" ]]; then
-            node - "$PONTO_ARTIFACT_DIR/automatic-rollback/ponto-automatic-rollback.json" <<'NODE'
-          const fs = require("fs");
-          fs.writeFileSync(process.argv[2], `${JSON.stringify({
-            schemaVersion: 1,
-            automaticInterruption: true,
-            sourceSha: process.env.RELEASE_SHA,
-            failedStage: process.env.STAGE,
-            orchestratorRunId: process.env.GITHUB_RUN_ID,
-            passed: false,
-            unresolved: [{ surface: "release", reason: "rollback-runner-failed-before-complete-attestation" }],
-            credentialsIncluded: false,
-            piiIncluded: false,
-          }, null, 2)}\n`, { mode: 0o600 });
-          NODE
-          fi
-          exit "$status"
-      - name: Upload automatic interruption and rollback evidence
-        if: ${{ always() && (failure() || cancelled()) && contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ponto-automatic-rollback-${{ inputs.stage }}-${{ inputs.release_sha }}
-          path: ${{ runner.temp }}/ponto-release/automatic-rollback/ponto-automatic-rollback.json
+          name: ponto-recovery-journal-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-release
           retention-days: 90
-          if-no-files-found: error
+          if-no-files-found: warn
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ success() && inputs.stage == 'preview' }}
         with:
@@ -1279,7 +1536,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ponto-release-evidence-${{ inputs.stage }}-${{ inputs.release_sha }}
-          path: ${{ runner.temp }}/ponto-release/ponto-release-evidence.json
+          path: |
+            ${{ runner.temp }}/ponto-release/ponto-release-evidence.json
+            ${{ runner.temp }}/ponto-release/staging-slo/ponto-staging-teardown-report.json
           retention-days: 90
           if-no-files-found: error
       - name: Upload edge guard evidence
@@ -1304,5 +1563,340 @@ jobs:
         with:
           name: ponto-release-runs-${{ inputs.stage }}-${{ inputs.release_sha }}
           path: ${{ runner.temp }}/ponto-release/runs
+          retention-days: 90
+          if-no-files-found: warn
+
+  recovery-latch:
+    needs: orchestrate
+    if: ${{ always() && contains(fromJSON('["failure","cancelled"]'), needs.orchestrate.result) && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: ponto-emergency-latch-${{ inputs.stage == 'staging' && 'staging' || 'production' }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+    environment: ${{ inputs.stage == 'staging' && 'ponto-emergency-staging' || 'ponto-emergency-production' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Monotonically latch Ponto closed outside the surface mutex
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: ${{ inputs.stage == 'staging' && 'staging' || 'production' }}
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ github.run_id }}
+          PONTO_EMERGENCY_LATCH_REPORT: ${{ runner.temp }}/ponto-ordinary-recovery/latch.json
+        run: node .github/scripts/ponto-emergency-latch-write.mjs
+      - name: Attempt external overlay propagation before reconciliation
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_MODULE_HEALTH_URL: ${{ inputs.stage == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/ponto-ordinary-recovery"
+          node - "$directory/latch.json" "$directory/overlay-expectation.json" <<'NODE'
+          const fs = require("fs");
+          const latch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: latch.changedAt,
+          })}\n`, { mode: 0o600 });
+          NODE
+          status=0
+          PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+          PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+          PONTO_MODULE_PROPAGATION_REPORT="$directory/overlay-propagation.json" \
+            node .github/scripts/ponto-module-propagation.mjs || status=$?
+          PONTO_PROPAGATION_STATUS="$status" node - \
+            "$directory/overlay-propagation.json" \
+            "$directory/overlay-propagation-attempt.json" <<'NODE'
+          const fs = require("fs");
+          const propagation = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            schemaVersion: 1,
+            passed: propagation.passed === true,
+            pendingPrimaryClose: propagation.passed !== true,
+            disposition: propagation.passed === true
+              ? "emergency-overlay-observed"
+              : "overlay-unavailable-primary-close-required",
+            lastObservedState: String(propagation.lastObserved?.state || ""),
+            probeExitStatus: Number(process.env.PONTO_PROPAGATION_STATUS),
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -f "$directory/overlay-expectation.json"
+      - name: Upload immutable ordinary-recovery latch evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-ordinary-recovery-latch-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-ordinary-recovery
+          retention-days: 90
+          if-no-files-found: error
+
+  recovery-reconcile:
+    needs: [orchestrate, recovery-latch]
+    if: ${{ always() && needs.recovery-latch.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Download the durable recovery journal
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-recovery-journal-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-ordinary-recovery/journal
+      - name: Cancel and reconcile children without waiting on the surface mutex
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
+          PONTO_COORDINATOR_RUN_ID: ${{ github.run_id }}
+          PONTO_COORDINATOR_SHA: ${{ inputs.release_sha }}
+          PONTO_RECONCILIATION_TIMEOUT_SECONDS: "600"
+        run: |
+          mkdir -p "$RUNNER_TEMP/ponto-ordinary-recovery/reconciliation"
+          node .github/scripts/ponto-reconcile-children.mjs \
+            "$RUNNER_TEMP/ponto-ordinary-recovery/journal" \
+            "$RUNNER_TEMP/ponto-ordinary-recovery/reconciliation/children.json"
+      - name: Reconstruct and fetch exact rollback journals outside the surface mutex
+        if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
+          PONTO_COORDINATOR_RUN_ID: ${{ github.run_id }}
+          PONTO_COORDINATOR_SHA: ${{ inputs.release_sha }}
+          PONTO_COORDINATOR_STAGE: ${{ inputs.stage }}
+          PONTO_RECOVERY_ARTIFACT_ROOT: ${{ runner.temp }}/ponto-ordinary-recovery/journal
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-watchdog-journal.mjs
+          node - "$PONTO_RECOVERY_ARTIFACT_ROOT/watchdog-journal.json" <<'NODE' |
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          for (const item of report.downloads || []) {
+            if (
+              !/^[1-9][0-9]*$/.test(item.runId)
+              || !/^[A-Za-z0-9._-]{1,200}$/.test(item.artifact)
+              || !/^[A-Za-z0-9._/-]{1,200}$/.test(item.destination)
+            ) throw new Error("unsafe artifact manifest entry");
+            process.stdout.write(`${item.runId}\t${item.artifact}\t${item.destination}\n`);
+          }
+          NODE
+          while IFS=$'\t' read -r run_id artifact destination; do
+            mkdir -p "$PONTO_RECOVERY_ARTIFACT_ROOT/$destination"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name "$artifact" --dir "$PONTO_RECOVERY_ARTIFACT_ROOT/$destination" || true
+          done
+      - name: Upload immutable ordinary-recovery reconciliation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-ordinary-recovery-reconciliation-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-ordinary-recovery/reconciliation
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Upload reconstructed recovery journal for mutexed rollback
+        if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-reconstructed-recovery-journal-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-ordinary-recovery/journal
+          retention-days: 90
+          if-no-files-found: error
+
+  recovery-close:
+    needs: [orchestrate, recovery-latch, recovery-reconcile]
+    if: ${{ always() && needs.recovery-latch.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    environment: ${{ inputs.stage == 'staging' && 'ponto-emergency-staging' || 'ponto-emergency-production' }}
+    concurrency:
+      group: ponto-surface-mutation
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Write regular maintenance under the exact closed latch
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: ${{ inputs.stage == 'staging' && 'staging' || 'production' }}
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ github.run_id }}
+          PONTO_EMERGENCY_MAINTENANCE_REPORT: ${{ runner.temp }}/ponto-ordinary-recovery/maintenance.json
+        run: node .github/scripts/ponto-emergency-maintenance-write.mjs
+      - name: Prove external fail-close through overlay or exact incumbent control
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_MODULE_HEALTH_URL: ${{ inputs.stage == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/ponto-ordinary-recovery"
+          node - "$directory/maintenance.json" \
+            "$directory/overlay-expectation.json" \
+            "$directory/control-fallback-expectation.json" <<'NODE'
+          const fs = require("fs");
+          const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: maintenance.latchChangedAt,
+          })}\n`, { mode: 0o600 });
+          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+            state: "maintenance",
+            changedAt: maintenance.controlChangedAt,
+            source: "control",
+          })}\n`, { mode: 0o600 });
+          NODE
+          PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+          PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+          PONTO_MODULE_ALTERNATE_EXPECTATION_FILE="$directory/control-fallback-expectation.json" \
+          PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+            node .github/scripts/ponto-module-propagation.mjs
+          rm -f "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json"
+      - name: Upload immutable ordinary-recovery maintenance evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-ordinary-recovery-maintenance-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-ordinary-recovery
+          retention-days: 90
+          if-no-files-found: error
+
+  recovery-rollback:
+    needs: [orchestrate, recovery-reconcile, recovery-close]
+    if: ${{ always() && needs.recovery-reconcile.result == 'success' && needs.recovery-close.result == 'success' && contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+    environment: ${{ inputs.stage == 'staging' && 'staging' || 'production' }}
+    concurrency:
+      group: ponto-surface-mutation
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Revalidate protected target environment before rollback mutation
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_ENVIRONMENT_TARGET: ${{ inputs.stage == 'staging' && 'staging' || 'production' }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for rollback protection attestation'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/environments/$PONTO_ENVIRONMENT_TARGET" \
+            > "$RUNNER_TEMP/ponto-rollback-environment.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$PONTO_ENVIRONMENT_TARGET/deployment-branch-policies?per_page=100" \
+            > "$RUNNER_TEMP/ponto-rollback-environment-branch-policies.json"
+          mkdir -p "$RUNNER_TEMP/ponto-ordinary-recovery/journal/automatic-rollback"
+          node .github/scripts/ponto-environment-protection.mjs \
+            "$RUNNER_TEMP/ponto-rollback-environment.json" \
+            "$RUNNER_TEMP/ponto-rollback-environment-branch-policies.json" \
+            "$RUNNER_TEMP/ponto-ordinary-recovery/journal/automatic-rollback/ponto-environment-protection.json"
+          rm -f \
+            "$RUNNER_TEMP/ponto-rollback-environment.json" \
+            "$RUNNER_TEMP/ponto-rollback-environment-branch-policies.json"
+      - name: Download the durable recovery journal
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-reconstructed-recovery-journal-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-ordinary-recovery/journal
+      - name: Download exact ordinary child reconciliation
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-ordinary-recovery-reconciliation-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-ordinary-recovery/evidence/reconciliation
+      - name: Download exact ordinary broker fail-close evidence
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-ordinary-recovery-maintenance-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-ordinary-recovery/evidence/fail-close
+      - name: Normalize exact ordinary recovery custody for automatic rollback
+        env:
+          PONTO_RECOVERY_SOURCE_MODE: ordinary
+          PONTO_COORDINATOR_RUN_ID: ${{ github.run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          STAGE: ${{ inputs.stage }}
+          PONTO_RECOVERY_TARGET: ${{ inputs.stage == 'staging' && 'staging' || 'production' }}
+        run: |
+          node .github/scripts/ponto-recovery-evidence.mjs \
+            "$RUNNER_TEMP/ponto-ordinary-recovery/evidence/reconciliation/children.json" \
+            "$RUNNER_TEMP/ponto-ordinary-recovery/evidence/fail-close/maintenance.json" \
+            "$RUNNER_TEMP/ponto-ordinary-recovery/evidence/fail-close/final-propagation.json" \
+            "$RUNNER_TEMP/ponto-ordinary-recovery/journal"
+      - name: Restore every attested incumbent idempotently
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY: ${{ secrets.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          STAGE: ${{ inputs.stage }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_PAGES_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING }}
+          PRODUCTION_PAGES_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
+          STAGING_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PRODUCTION_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          case "$STAGE" in
+            staging)
+              CLOUDFLARE_PAGES_PROJECT="$STAGING_PAGES_PROJECT_RAW"
+              OPPOSITE_PAGES_PROJECT="$PRODUCTION_PAGES_PROJECT_RAW"
+              MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
+              OPPOSITE_MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            pilot|canary|production)
+              CLOUDFLARE_PAGES_PROJECT="$PRODUCTION_PAGES_PROJECT_RAW"
+              OPPOSITE_PAGES_PROJECT="$STAGING_PAGES_PROJECT_RAW"
+              MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
+              OPPOSITE_MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            *) echo 'Unsupported recovery rollback stage'; exit 1 ;;
+          esac
+          for name in CLOUDFLARE_PAGES_PROJECT MODULE_CONTROL_KV_ID; do
+            [[ -n "${!name:-}" ]] || { echo "Missing selected rollback value: $name"; exit 1; }
+          done
+          [[ -z "${OPPOSITE_PAGES_PROJECT:-}" || "$CLOUDFLARE_PAGES_PROJECT" != "$OPPOSITE_PAGES_PROJECT" ]] || { echo 'Pages projects are not isolated'; exit 1; }
+          [[ -z "${OPPOSITE_MODULE_CONTROL_KV_ID:-}" || "$MODULE_CONTROL_KV_ID" != "$OPPOSITE_MODULE_CONTROL_KV_ID" ]] || { echo 'Module-control namespaces are not isolated'; exit 1; }
+          export CLOUDFLARE_PAGES_PROJECT MODULE_CONTROL_KV_ID
+          export PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$OPPOSITE_MODULE_CONTROL_KV_ID"
+          root="$RUNNER_TEMP/ponto-ordinary-recovery/journal"
+          mkdir -p "$root/automatic-rollback"
+          status=0
+          node .github/scripts/ponto-automatic-rollback.mjs \
+            "$root" "$root/automatic-rollback/ponto-automatic-rollback.json" || status=$?
+          exit "$status"
+      - name: Upload immutable automatic rollback evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-automatic-rollback-${{ inputs.stage }}-${{ inputs.release_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-ordinary-recovery/journal/automatic-rollback
           retention-days: 90
           if-no-files-found: warn

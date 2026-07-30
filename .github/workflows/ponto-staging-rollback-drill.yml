@@ -1,15 +1,12 @@
 name: Ponto staging rollback drill
-run-name: Ponto staging rollback drill ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
+run-name: Ponto staging rollback drill ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }} nonce=${{ inputs.orchestrator_nonce }}
 
 on:
   workflow_dispatch:
     inputs:
       release_sha: { description: "Immutable SHA restored after the drill", required: true, type: string }
       orchestrator_run_id: { description: "Ponto coordinator correlation ID", required: true, type: string }
-      orchestrator_lease_token: { description: "Single-use coordinator capability", required: false, type: string }
       orchestrator_stage: { description: "Exact coordinator stage", required: false, type: string }
-      rollback_incumbent_open_lease_token: { description: "Single-use capability for opening the exact incumbent", required: true, type: string }
-      rollback_candidate_open_lease_token: { description: "Single-use capability for reopening the restored candidate", required: true, type: string }
       staging_journey_run_id: { description: "Successful authenticated staging journey predecessor", required: true, type: string }
       timekeeping_candidate_version_id: { description: "Exact Timekeeping staging candidate", required: true, type: string }
       timekeeping_incumbent_version_id: { description: "Exact Timekeeping staging incumbent", required: true, type: string }
@@ -19,9 +16,14 @@ on:
       identity_incumbent_version_id: { description: "Exact Identity staging incumbent", required: true, type: string }
       pages_candidate_deployment_id: { description: "Exact CRM Pages staging candidate deployment", required: true, type: string }
       pages_incumbent_deployment_id: { description: "Exact CRM Pages staging incumbent deployment", required: true, type: string }
+      orchestrator_issuer_run_id: { description: "Exact direct issuer run", required: false, type: string }
+      orchestrator_nonce: { description: "Non-secret per-dispatch correlation nonce", required: false, type: string }
 
 concurrency:
-  group: ponto-staging-release
+  # Every current Ponto surface mutator takes this direct lock. The drill
+  # writes module-control itself, so it does not dispatch lock-recursive
+  # module grandchildren.
+  group: ponto-surface-mutation
   cancel-in-progress: false
 
 permissions:
@@ -31,19 +33,26 @@ permissions:
 jobs:
   coordination:
     permissions:
-      actions: write
+      actions: read
+      checks: write
       contents: read
+      deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     with:
       required: true
       lease_key: staging-rollback
       stage: ${{ inputs.orchestrator_stage }}
+      target: staging
       release_sha: ${{ inputs.release_sha }}
       orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
-      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
 
   drill:
     needs: coordination
+    if: ${{ github.run_attempt == 1 }}
+    permissions:
+      actions: read
+      checks: write
+      contents: read
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 60
@@ -73,8 +82,9 @@ jobs:
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/timekeeping-staging-journey.yml"
+            || workflow.name !== "Timekeeping authenticated staging journey"
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.path !== workflow.path
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
@@ -108,14 +118,34 @@ jobs:
       - name: Install Playwright Chromium
         run: npx --yes playwright install --with-deps chromium
         working-directory: crm/console
-      - name: Exercise exact incumbents and restore every exact staging candidate
+      - name: Revalidate the exact active coordinator before rollback drill secrets or mutation
         env:
           GH_TOKEN: ${{ github.token }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-orchestrator-lease.mjs assert-active \
+            "$ORCHESTRATOR_STAGE" \
+            "$RELEASE_SHA" \
+            "$ORCHESTRATOR_RUN_ID"
+      - name: Attest exact staging D1 and module-control identities before rollback drill mutation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_RESOURCE_TARGET: staging
+          PONTO_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+          PONTO_OPPOSITE_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
+          PONTO_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-staging-resource-identity.json
+        run: node .github/scripts/ponto-cloudflare-resource-identity.mjs
+      - name: Exercise exact incumbents and restore every exact staging candidate
+        env:
           RELEASE_SHA: ${{ inputs.release_sha }}
           ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
           ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage }}
-          ROLLBACK_INCUMBENT_OPEN_LEASE_TOKEN: ${{ inputs.rollback_incumbent_open_lease_token }}
-          ROLLBACK_CANDIDATE_OPEN_LEASE_TOKEN: ${{ inputs.rollback_candidate_open_lease_token }}
           STAGING_JOURNEY_RUN_ID: ${{ inputs.staging_journey_run_id }}
           TIMEKEEPING_CANDIDATE_VERSION_ID: ${{ inputs.timekeeping_candidate_version_id }}
           TIMEKEEPING_INCUMBENT_VERSION_ID: ${{ inputs.timekeeping_incumbent_version_id }}
@@ -128,15 +158,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
-          CLOUDFLARE_PAGES_PROJECT_STAGING: ${{ vars.CLOUDFLARE_PAGES_PROJECT_STAGING || 'skincos-staging' }}
-          MODULE_CONTROL_STAGING_KV_ID: ${{ vars.MODULE_CONTROL_STAGING_KV_ID }}
+          PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING }}
+          PONTO_MODULE_CONTROL_STAGING_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
           STAGING_CORE_D1_DATABASE: skincos-db-staging
           STAGING_TIMEKEEPING_D1_DATABASE: skincos-timekeeping-staging
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          echo "::add-mask::$ROLLBACK_INCUMBENT_OPEN_LEASE_TOKEN"
-          echo "::add-mask::$ROLLBACK_CANDIDATE_OPEN_LEASE_TOKEN"
           node .github/scripts/ponto-staging-rollback-drill.mjs "$RUNNER_TEMP/ponto-staging-rollback-drill.json"
       - name: Upload immutable staging rollback drill evidence
         if: always()

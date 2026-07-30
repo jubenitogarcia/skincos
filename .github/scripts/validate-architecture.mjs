@@ -91,11 +91,10 @@ if (crmRunner.includes("/../../../..")) {
 }
 
 const crmPagesWorkflow = fs.readFileSync(path.join(root, ".github/workflows", "deploy-crm-pages.yml"), "utf8");
-if (!/^  group: deploy-crm-pages-\$\{\{ inputs\.target \}\}$/m.test(crmPagesWorkflow)) {
-  fail("deploy-crm-pages.yml must serialize independently by target environment");
-}
-if (!/^  cancel-in-progress: false$/m.test(crmPagesWorkflow)) {
-  fail("deploy-crm-pages.yml must serialize rather than cancel an in-flight deployment");
+if (
+  !/^concurrency:\r?\n\s+group:\s+ponto-surface-mutation\r?\n\s+cancel-in-progress:\s+false/m.test(crmPagesWorkflow)
+) {
+  fail("deploy-crm-pages.yml must serialize every preview, general, and governed Ponto mutation with the global surface mutex");
 }
 
 if (!process.exitCode) process.stdout.write("Architecture contract validation OK.\n");

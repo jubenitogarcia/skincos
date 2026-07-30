@@ -15,7 +15,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+          PROJECT: ${{ vars.CRM_PAGES_PROJECT }}
         run: |
           set -euo pipefail
           if [[ -z "${TOKEN:-}" || -z "${ACCOUNT_ID:-}" ]]; then

@@ -8,6 +8,8 @@ param(
     [switch]$SkipGenerate
 )
 
+# WSL_BOUNDARY_EXCEPTION: this backup publication bridge starts the governed
+# native systemd unit and copies its verified artifact into Windows.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 

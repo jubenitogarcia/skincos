@@ -6,6 +6,12 @@
 - Durable operator evidence: `C:\CodexRuntime\operator\admin\skincos`; secrets and mutable runtime state never belong in Git or `C:\CodexShared`.
 - Human operator: Windows/WSL `admin`. Linux `skincos` is non-interactive and owns system services.
 - Product roots are `ads`, `api`, `booking`, `crm`, `finance`, `integration`, `inventory`, `messaging`, `orb`, `service`, `social`, `website` and `workforce`; neutral code belongs in `shared`, infrastructure in `platform`/`ops`, and executable commands in `scripts`.
+- Codex runs natively on Windows with PowerShell as its integrated terminal.
+  Windows Node/Python support general agent tools; SKINCOS dependencies,
+  builds, tests, Playwright, Wrangler and runtime operations remain in
+  `Ubuntu-24.04` behind `scripts/invoke-skincos-wsl.ps1`.
+- Do not create Windows project `node_modules` or `.venv` trees. The visible
+  operator interface is PowerShell; Linux is an encapsulated backend.
 
 ## Native runtime — validated 2026-07-15
 

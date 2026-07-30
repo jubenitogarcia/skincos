@@ -24,6 +24,10 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
   ficam fora do repositório compartilhado, em `%LOCALAPPDATA%\Codex\skincos\`.
   Logs, relatórios, checkpoints, evidências e backups locais ficam no runtime
   privado `C:\CodexRuntime\operator\admin\skincos\`.
+- O agente Codex roda nativamente no Windows, com terminal PowerShell. Node e
+  Python do Windows servem às ferramentas gerais do agente; operações do
+  projeto passam pelo gateway tipado para Ubuntu descrito em
+  [codex-windows-native.md](codex-windows-native.md).
 
 ## Fluxo de primeira execução do operador
 
@@ -42,7 +46,9 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
 3. Validar o runtime nativo do Orb:
 
    ```powershell
-   wsl.exe -d Ubuntu-24.04 -u admin -- bash -lc "/opt/skincos/current/source/scripts/runtime/manage-native-runtime.sh validate"
+   .\scripts\invoke-skincos-wsl.ps1 `
+     -ScriptPath scripts/runtime/manage-native-runtime.sh `
+     -ArgumentList validate
    ```
 
 4. Instalar os atalhos compartilhados:
@@ -55,17 +61,21 @@ Tarefas simultâneas do Codex continuam usando worktrees para evitar conflitos.
    `C:\ProgramData`, o instalador cai automaticamente para o Menu Iniciar do
    usuario atual em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Skincos Codex`.
 
-5. Dentro do WSL da conta, rodar o bootstrap da conta humana:
+5. Pelo PowerShell, rodar o bootstrap da conta humana no backend Ubuntu:
 
-   ```bash
-   cd /mnt/c/CodexShared/Projetos/skincos/orb/engine
-   bash scripts/bootstrap-imported-wsl-account.sh
+   ```powershell
+   .\scripts\invoke-skincos-wsl.ps1 `
+     -ScriptPath orb/engine/scripts/bootstrap-imported-wsl-account.sh `
+     -SkipBootstrapCheck
    ```
 
-6. Para este workspace, o GitHub CLI canônico é o do WSL. Autenticar por ele:
+6. Para este workspace, autenticar o GitHub CLI do backend pelo gateway:
 
-   ```bash
-   gh auth login --web --git-protocol https --hostname github.com
+   ```powershell
+   .\scripts\invoke-skincos-wsl.ps1 `
+     -Executable gh `
+     -ArgumentList auth,login,--web,--git-protocol,https,--hostname,github.com `
+     -SkipBootstrapCheck -SkipNodeCheck -SkipNpmCheck -SkipGitCheck
    ```
 
 7. Validar o estado com o atalho ou botão `GitHub Auth Status`.

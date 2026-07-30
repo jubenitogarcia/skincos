@@ -42,9 +42,11 @@ function isConsultor(actor) { return actor?.role === 'CONSULTOR' }
 function canManageWorkforce(actor) { return actor?.role === 'SUPERVISOR' || actor?.role === 'ADMIN' }
 function isFacePunchEnabled(env) { return String(env?.PONTO_FACE_PUNCH_ENABLED || '').trim().toLowerCase() === 'true' }
 const FULL_RELEASE_SHA = /^[0-9a-f]{40}$/
+const SHA256_HEX = /^[0-9a-f]{64}$/
 const CLOUDFLARE_VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const OPAQUE_COHORT_REF = /^v1:[A-Za-z0-9_-]{43}$/
 const VALID_ROLLOUT_STAGES = new Set(['pilot', 'canary'])
+const RELEASE_PROBE_RESERVATION_PATH = '/api/ponto/internal/release-probe-nonce'
 function releaseShaFor(env) { return String(env?.APP_VERSION || '').trim().toLowerCase() }
 function workerVersionIdFor(env) { return String(env?.VERSION_METADATA?.id || '').trim() }
 function environmentFor(env) { return String(env?.ENVIRONMENT || '').trim().toLowerCase() }
@@ -792,6 +794,69 @@ async function enforceReplayProtection(request, db, requestId, actor) {
   } catch { return false }
 }
 
+async function consumeReleaseProbeNonce(request, db, requestId, actor, releaseSha, environment) {
+  if (
+    request.method !== 'POST'
+    || !['staging', 'production'].includes(environment)
+    || actor?.id !== `release-probe:${environment}`
+    || actor?.email !== `release-probe@${environment}.internal.invalid`
+    || actor?.role !== 'ADMIN'
+    || actor?.releaseSha !== releaseSha
+    || !Array.isArray(actor?.allowedUnits)
+    || actor.allowedUnits.length !== 0
+    || String(request.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase() !== 'application/json'
+  ) return false
+
+  let body
+  try {
+    body = await readJson(request)
+  } catch {
+    return false
+  }
+  const bodyKeys = Object.keys(body && typeof body === 'object' && !Array.isArray(body) ? body : {}).sort()
+  if (bodyKeys.join(',') !== 'bodyDigest,nonceDigest,releaseSha,schemaVersion,target') return false
+  const target = String(body?.target || '').trim().toLowerCase()
+  const bodyReleaseSha = String(body?.releaseSha || '').trim().toLowerCase()
+  const nonceDigest = String(body?.nonceDigest || '').trim().toLowerCase()
+  const bodyDigest = String(body?.bodyDigest || '').trim().toLowerCase()
+  if (
+    Number(body?.schemaVersion) !== 1
+    || target !== environment
+    || bodyReleaseSha !== releaseSha
+    || !SHA256_HEX.test(nonceDigest)
+    || !SHA256_HEX.test(bodyDigest)
+  ) return false
+
+  // The database key is derived only from the external nonce (plus immutable
+  // target/release namespace). A caller cannot reuse that nonce by signing a
+  // different probe body. bodyDigest remains authenticated inside the actor
+  // envelope but deliberately cannot select another UNIQUE key.
+  const expectedNonce = `ponto-release-probe:${target}:${bodyReleaseSha}:${nonceDigest}`
+  if (!equal(String(request.headers.get('x-request-nonce') || ''), expectedNonce)) return false
+
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+  try {
+    // The UNIQUE primary key is the sole acceptance decision. Cleanup happens
+    // only after the insert, so concurrent or cross-PoP requests cannot both
+    // pass through a read/delete gap.
+    const result = await db.prepare(
+      'INSERT INTO timekeeping_request_nonces (nonce, expires_at, request_id, created_at) VALUES (?, ?, ?, ?)',
+    ).bind(expectedNonce, expiresAt, requestId, now()).run()
+    if (result?.success === false || (Number.isFinite(Number(result?.meta?.changes)) && Number(result.meta.changes) !== 1)) {
+      return false
+    }
+  } catch {
+    return false
+  }
+  try {
+    await db.prepare('DELETE FROM timekeeping_request_nonces WHERE expires_at<?').bind(now()).run()
+  } catch {
+    // A later reservation retries bounded TTL cleanup. Never turn an already
+    // committed one-time consume into a false negative.
+  }
+  return true
+}
+
 async function identityServiceAuthorized(request, env, bodyHash, db, { consumeNonce = true } = {}) {
   if (String(request.headers.get('x-skincos-service') || '') !== 'identity') return { ok: false, error: 'SERVICE_UNAUTHORIZED' }
   const secret = String(env.IDENTITY_WORKFORCE_HMAC_KEY || '')
@@ -907,6 +972,7 @@ export async function handleTimekeeping(request, env) {
   let path = canonicalPath(url.pathname.replace(/^\/workforce/, ''))
   const internalOnboarding = path === '/api/ponto/internal/onboarding' || path === '/api/ponto/internal/onboarding/status'
   const internalContractProbe = path === '/api/ponto/internal/onboarding/contract-probe'
+  const internalReleaseProbeNonce = path === RELEASE_PROBE_RESERVATION_PATH
   const internalIdentityRoute = internalOnboarding || internalContractProbe
   const releaseSha = releaseShaFor(env)
   const availability = await readModuleAvailability(env, 'timekeeping', {
@@ -990,6 +1056,9 @@ export async function handleTimekeeping(request, env) {
     }, requestId, moduleHeaders)
   }
   if (!path.startsWith('/api/ponto')) return json(404, { ok: false, error: 'NOT_FOUND' }, requestId)
+  if (internalReleaseProbeNonce && request.method !== 'POST') {
+    return json(404, { ok: false, error: 'NOT_FOUND' }, requestId, moduleHeaders)
+  }
   if (availability.state === 'canary' && internalOnboarding) {
     return json(403, { ok: false, error: 'TIMEKEEPING_CANARY_NOT_GRANTED', code: 'TIMEKEEPING_CANARY_NOT_GRANTED' }, requestId, moduleHeaders)
   }
@@ -1071,6 +1140,28 @@ export async function handleTimekeeping(request, env) {
   if (!actor) return json(401, { ok: false, error: 'UNAUTHORIZED' }, requestId)
   if (actor.role !== 'DEVICE' && actor.releaseSha !== releaseSha) {
     return json(503, { ok: false, error: 'RELEASE_AFFINITY_MISMATCH', code: 'RELEASE_AFFINITY_MISMATCH' }, requestId, moduleHeaders)
+  }
+  if (internalReleaseProbeNonce) {
+    const consumed = await consumeReleaseProbeNonce(
+      request,
+      db,
+      requestId,
+      actor,
+      releaseSha,
+      environmentFor(env),
+    )
+    if (!consumed) {
+      return json(409, {
+        ok: false,
+        error: 'RELEASE_PROBE_RESERVATION_REJECTED',
+      }, requestId, moduleHeaders)
+    }
+    return json(201, {
+      ok: true,
+      consumed: true,
+      releaseSha,
+      environment: environmentFor(env),
+    }, requestId, moduleHeaders)
   }
   if (availability.state === 'canary' && !await authorizeTimekeepingCanary(request, env, availability, actor, db, bodyHash, releaseSha)) {
     return json(403, { ok: false, error: 'TIMEKEEPING_CANARY_NOT_GRANTED', code: 'TIMEKEEPING_CANARY_NOT_GRANTED' }, requestId, moduleHeaders)
@@ -1629,4 +1720,5 @@ export const __testables = {
   identityLoginCanaryRef,
   verifiedCanaryNetworkContext,
   authorizeTimekeepingCanary,
+  consumeReleaseProbeNonce,
 }
