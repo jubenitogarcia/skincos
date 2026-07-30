@@ -6,16 +6,14 @@ import { createSignedDomainContext } from '../../shared/service-adapters/signed-
 const gatewayError = (status, error) => new Response(JSON.stringify({ ok: false, error }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const isOperationalProbe = (request) => request.method === 'GET' && ['/health', '/readiness'].includes(new URL(request.url).pathname);
 const FINANCE_PROBE_TIMEOUT_MS = 3_000;
-const FINANCE_AUDIT_READ_TIMEOUT_MS = 3_000;
+const FINANCE_OPERATION_TIMEOUT_MS = 3_000;
 
-function financeServiceTimeout(request) {
-    // Audit is an authenticated, read-only, paginated D1 query.  It must have
-    // the same bounded observation window as health/readiness so a legitimate
-    // slow audit lookup is not turned into a fabricated gateway 503.  Writes
-    // and all other Finance routes retain the short 800 ms dependency budget.
-    return request.method === 'GET' && new URL(request.url).pathname === '/audit'
-        ? FINANCE_AUDIT_READ_TIMEOUT_MS
-        : 800;
+function financeServiceTimeout() {
+    // Finance mutations carry mandatory idempotency keys. Give reads and
+    // writes a bounded cold-start window so a completed operation is not
+    // converted into a fabricated gateway 503. The dependency still fails
+    // closed after three seconds or on a real upstream 5xx.
+    return FINANCE_OPERATION_TIMEOUT_MS;
 }
 
 export async function forwardFinanceProbe(request, env) {

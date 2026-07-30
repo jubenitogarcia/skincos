@@ -134,9 +134,7 @@ describe('Finance transport helpers', () => {
     const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
     expect(app).toContain("unlockedModuleKeys(financeEnabled ? 'finance' : DEFAULT_MODULE_KEY")
     expect(app).toContain('}, [financeEnabled, initializing])')
-    expect(app).toContain('const FINANCE_BOOTSTRAP_MAX_ATTEMPTS = 3')
-    expect(app).toContain('response.status >= 500')
-    expect(app).toContain('FINANCE_BOOTSTRAP_RETRY_DELAY_MS')
+    expect(app).toContain('resolveFinanceBootstrapEnabled')
   })
 
   it('keeps the local authorization smoke synchronized with the asynchronous Finance bootstrap gate', () => {
