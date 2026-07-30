@@ -245,8 +245,9 @@ The executable blockers, in required order, are:
    the minimal unit/network cohort. Then environment owners may register
    `PONTO_PILOT_LOGIN`, `PONTO_PILOT_PASSWORD` and
    `PONTO_PILOT_COHORT_JSON`; do not invent or activate a collaborator.
-8. Provide a clinic-network self-hosted runner matching
-   `PONTO_PILOT_RUNNER_LABELS_JSON`, online and idle, plus a reviewed
+8. Provide `PONTO_PILOT_RUNNER_LABELS_JSON` as a repository variable (never an
+   environment variable with the same name), plus a clinic-network
+   self-hosted runner matching it, online and idle, and a reviewed
    `PONTO_CANARY_COHORT_PERCENTAGE`. The current repository runner inventory is
    zero.
 9. Enable production deploy flags only for the authorized stage, then complete

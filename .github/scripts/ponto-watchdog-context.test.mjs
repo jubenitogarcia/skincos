@@ -78,6 +78,33 @@ test("watchdog closes both successful and failed unauthorized reruns", async () 
   }
 });
 
+test("watchdog audits a preview rerun without assigning a live target or closing production", async () => {
+  for (const conclusion of ["success", "failure"]) {
+    const replay = {
+      ...run,
+      run_attempt: 2,
+      conclusion,
+      display_title: `Ponto preview ${sha} orchestrator=99`,
+    };
+    const context = await validateWatchdogContext(input({
+      event: {
+        workflow_run: {
+          ...event.workflow_run,
+          run_attempt: 2,
+          conclusion,
+        },
+      },
+      request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
+        ? workflow
+        : replay,
+    }));
+    assert.equal(context.stage, "preview");
+    assert.equal(context.unauthorizedReplay, true);
+    assert.equal(context.target, null);
+    assert.equal(context.requiresClose, false);
+  }
+});
+
 test("watchdog rejects first-attempt success, non-main source, and event/API drift", async (t) => {
   for (const [name, value] of [
     ["success", { ...run, conclusion: "success" }],

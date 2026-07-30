@@ -387,9 +387,10 @@ jornada autenticada atual continue válida.
   CONSULTOR/EMPLOYEE já elegível e ativa em Identity/Workforce e cadastrar os
   secrets de login e coorte sem inventar vínculo ou expor PII. Hoje não há
   identidade elegível/autorizada.
-- [ ] Prover `PONTO_PILOT_RUNNER_LABELS_JSON`, um runner clínico online/idle e
-  `PONTO_CANARY_COHORT_PERCENTAGE`; habilitar as flags produtivas apenas no
-  estágio autorizado.
+- [ ] Prover `PONTO_PILOT_RUNNER_LABELS_JSON` exclusivamente como repository
+  variable (sem homônimo no environment `production`), um runner clínico
+  online/idle e `PONTO_CANARY_COHORT_PERCENTAGE`; habilitar as flags produtivas
+  apenas no estágio autorizado.
 - [ ] Completar pilot, canary, produção, observação pós-release e cleanup
   somente com predecessores, health/version/gateway, SLO e jornada
   autenticada do mesmo SHA. Até lá, a thread e produção permanecem abertas e

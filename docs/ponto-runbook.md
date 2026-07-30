@@ -295,18 +295,9 @@ seletor `PONTO_PILOT_RUNNER_LABELS_JSON` deve existir como **repository
 variable**, porque `runs-on` é resolvido antes de o environment do job ficar
 disponível. O preflight lê esse valor pela API, exige igualdade exata com a
 allowlist versionada e rejeita uma variável homônima no environment
-`production`; `PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM` segue o mesmo
-contrato de escopo. A allowlist tem exatamente os labels automáticos
-`self-hosted`, `Linux`, `X64` e um único label
-`ponto-jit-<identificador-one-shot>` pinado pela política. Antes de abrir a
-coorte e novamente antes do agendamento do SLO, o inventário completo precisa
-ter exatamente um match online/idle, com ID e nome pinados, política JIT
-Ed25519 completa e chave RSA pública correspondente. O `runs-on` consome o
-seletor emitido por esse preflight, não reavalia uma variable mutável. Não
-cadastre esses valores como environment variables nem reutilize o label após o
-runner one-shot. O token de inventário protegido precisa de
-`Administration:read`, `Variables:read`, `Actions:read` e `Environments:read`
-(ou equivalentes no tipo de token usado).
+`production`; não cadastre o seletor como environment variable. O token de
+inventário protegido precisa de `Administration:read`, `Variables:read`,
+`Actions:read` e `Environments:read` (ou equivalentes no tipo de token usado).
 Pages environment `preview` usa `https://api-staging.skincos.com.br`; nunca
 compartilhe upstream ou chave HMAC de produção com preview. O smoke produtivo
 permanece somente leitura e não aceita opção para criar marcações.
