@@ -1,4 +1,5 @@
 name: Timekeeping authenticated staging journey
+run-name: Timekeeping staging journey ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
 
 on:
   workflow_dispatch:
@@ -15,6 +16,10 @@ on:
         description: Canonical Core API staging run containing promotion evidence
         required: true
         type: string
+      identity_staging_run_id:
+        description: Canonical Identity/Workforce staging run containing promotion evidence
+        required: true
+        type: string
       crm_pages_staging_run_id:
         description: Canonical CRM Pages staging run containing promotion evidence
         required: true
@@ -22,6 +27,26 @@ on:
       pages_url:
         description: Immutable skincos-staging Pages deployment URL
         required: true
+        type: string
+      timekeeping_version_id:
+        description: Exact staging Timekeeping candidate version
+        required: true
+        type: string
+      identity_version_id:
+        description: Exact staging Identity/Workforce candidate version
+        required: true
+        type: string
+      orchestrator_run_id:
+        description: Ponto coordinator correlation ID
+        required: false
+        type: string
+      orchestrator_lease_token:
+        description: Masked single-use capability issued by the Ponto coordinator
+        required: false
+        type: string
+      orchestrator_stage:
+        description: Exact stage of the issuing Ponto coordinator
+        required: false
         type: string
 
 concurrency:
@@ -33,8 +58,22 @@ permissions:
   contents: read
 
 jobs:
+  coordination:
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    with:
+      required: true
+      lease_key: staging-journey
+      stage: ${{ inputs.orchestrator_stage }}
+      release_sha: ${{ inputs.release_sha }}
+      orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
+      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
+
   journey:
     name: synthetic authenticated CONSULTOR journey
+    needs: coordination
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 30
@@ -48,18 +87,20 @@ jobs:
           RELEASE_SHA: ${{ inputs.release_sha }}
           TIMEKEEPING_RUN: ${{ inputs.timekeeping_staging_run_id }}
           CORE_API_RUN: ${{ inputs.core_api_staging_run_id }}
+          IDENTITY_RUN: ${{ inputs.identity_staging_run_id }}
           CRM_PAGES_RUN: ${{ inputs.crm_pages_staging_run_id }}
           PAGES_URL: ${{ inputs.pages_url }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'release_sha must be a full SHA'; exit 1; }
-          [[ "$TIMEKEEPING_RUN" =~ ^[0-9]+$ && "$CORE_API_RUN" =~ ^[0-9]+$ && "$CRM_PAGES_RUN" =~ ^[0-9]+$ ]] || { echo 'canonical run IDs must be numeric'; exit 1; }
+          [[ "$TIMEKEEPING_RUN" =~ ^[0-9]+$ && "$CORE_API_RUN" =~ ^[0-9]+$ && "$IDENTITY_RUN" =~ ^[0-9]+$ && "$CRM_PAGES_RUN" =~ ^[0-9]+$ ]] || { echo 'canonical run IDs must be numeric'; exit 1; }
           [[ "$PAGES_URL" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'pages_url must be an immutable skincos-staging.pages.dev URL'; exit 1; }
-          mkdir -p "$RUNNER_TEMP/promotion-evidence/timekeeping" "$RUNNER_TEMP/promotion-evidence/core-api" "$RUNNER_TEMP/promotion-evidence/crm-pages"
+          mkdir -p "$RUNNER_TEMP/promotion-evidence/timekeeping" "$RUNNER_TEMP/promotion-evidence/core-api" "$RUNNER_TEMP/promotion-evidence/identity" "$RUNNER_TEMP/promotion-evidence/crm-pages"
           gh run download "$TIMEKEEPING_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-timekeeping --dir "$RUNNER_TEMP/promotion-evidence/timekeeping"
           gh run download "$CORE_API_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-api --dir "$RUNNER_TEMP/promotion-evidence/core-api"
+          gh run download "$IDENTITY_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-core-inventory --dir "$RUNNER_TEMP/promotion-evidence/identity"
           gh run download "$CRM_PAGES_RUN" --repo "$GITHUB_REPOSITORY" --name promotion-evidence-crm-pages --dir "$RUNNER_TEMP/promotion-evidence/crm-pages"
-          for evidence in "$RUNNER_TEMP/promotion-evidence/timekeeping/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/core-api/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/crm-pages/promotion-evidence.json"; do
+          for evidence in "$RUNNER_TEMP/promotion-evidence/timekeeping/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/core-api/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/identity/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/crm-pages/promotion-evidence.json"; do
             node -e "const e=require(process.argv[1]); if(e.sourceSha!==process.env.RELEASE_SHA||e.target!=='staging') process.exit(1)" "$evidence"
           done
 
@@ -105,6 +146,89 @@ jobs:
           [[ "$STAGING_CORE_D1_DATABASE" == 'skincos-db-staging' && "$STAGING_TIMEKEEPING_D1_DATABASE" == 'skincos-timekeeping-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
           npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$CORE_SQL" >/dev/null
           npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config workforce/timekeeping/wrangler.toml --env staging --remote --file "$TIMEKEEPING_SQL" >/dev/null
+      - name: Prove exact Identity candidate through the protected Pages binding
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          IDENTITY_VERSION_ID: ${{ inputs.identity_version_id }}
+          TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
+          PAGES_URL: ${{ inputs.pages_url }}
+          FIXTURES: ${{ runner.temp }}/ponto-staging-fixtures.json
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$IDENTITY_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Exact staging version IDs are required'; exit 1; }
+          [[ -n "${PONTO_IDEMPOTENCY_KEY:-}" ]] || { echo 'Staging PONTO_IDEMPOTENCY_KEY is required for the one-time release probe'; exit 1; }
+          node - "$FIXTURES" "$RUNNER_TEMP/ponto-staging-contract.json" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const fixture = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (fixture?.environment !== "staging" || fixture?.role !== "CONSULTOR" || !String(fixture?.email || "").endsWith("@staging.invalid")) {
+            throw new Error("protected contract requires the run-scoped synthetic staging identity");
+          }
+          const origin = new URL(process.env.PAGES_URL);
+          if (origin.protocol !== "https:" || !origin.hostname.endsWith(".skincos-staging.pages.dev") || origin.pathname !== "/" || origin.search || origin.hash) {
+            throw new Error("protected contract requires the immutable staging Pages origin");
+          }
+          const pathname = "/api/ponto/_release-contract";
+          const rawBody = JSON.stringify({ email: fixture.email, password: fixture.password });
+          const timestamp = String(Date.now());
+          const nonce = crypto.randomBytes(32).toString("base64url");
+          const bodyHash = crypto.createHash("sha256").update(rawBody).digest("hex");
+          const releaseProbeKey = crypto.createHmac("sha256", process.env.PONTO_IDEMPOTENCY_KEY)
+            .update("skincos/ponto/release-probe/v1")
+            .digest("base64url");
+          const signature = crypto.createHmac("sha256", releaseProbeKey)
+            .update(`ponto-release-probe/v1.${timestamp}.${nonce}.POST.${pathname}.${bodyHash}.${process.env.RELEASE_SHA}`)
+            .digest("base64url");
+          const response = await fetch(new URL("/api/ponto/_release-contract", origin), {
+            method: "POST",
+            redirect: "manual",
+            headers: {
+              accept: "application/json",
+              "content-type": "application/json",
+              "x-skincos-release-probe-ts": timestamp,
+              "x-skincos-release-probe-nonce": nonce,
+              "x-skincos-release-probe-signature-version": "1",
+              "x-skincos-release-probe-sig": signature,
+            },
+            body: rawBody,
+            signal: AbortSignal.timeout(30_000),
+          });
+          const body = await response.json().catch(() => null);
+          const valid = response.status === 200
+            && response.headers.get("x-skincos-pages-release-sha") === process.env.RELEASE_SHA
+            && response.headers.get("x-skincos-pages-environment") === "staging"
+            && body?.ok === true
+            && body?.ready === true
+            && body?.releaseSha === process.env.RELEASE_SHA
+            && String(body?.identityVersionId || "").toLowerCase() === process.env.IDENTITY_VERSION_ID.toLowerCase()
+            && body?.contract === "identity-workforce-hmac-v2"
+            && body?.roleClass === "CONSULTOR"
+            && JSON.stringify(body?.modules) === JSON.stringify(["atendimento", "ponto"])
+            && body?.sessionRead === true
+            && body?.sessionRevoked === true
+            && body?.credentialsIncluded === false
+            && body?.piiIncluded === false;
+          if (!valid) throw new Error("protected staging Identity contract did not match the exact release");
+          const summary = {
+            passed: true,
+            sourceSha: process.env.RELEASE_SHA,
+            environment: "staging",
+            contract: "identity-workforce-hmac-v2",
+            contractMode: "protected-pages-service-binding",
+            identityVersionId: process.env.IDENTITY_VERSION_ID,
+            timekeepingVersionId: process.env.TIMEKEEPING_VERSION_ID,
+            roleClass: "CONSULTOR",
+            moduleKeys: ["atendimento", "ponto"],
+            sessionRead: true,
+            sessionRevoked: true,
+            publicVersionOverrideUsed: false,
+            writes: 0,
+            piiIncluded: false,
+          };
+          summary.digest = crypto.createHash("sha256").update(JSON.stringify(summary)).digest("hex");
+          fs.writeFileSync(process.argv[3], `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
+          NODE
 
       - name: Execute authenticated Ponto journey
         env:
@@ -122,20 +246,61 @@ jobs:
           FIXTURES: ${{ runner.temp }}/ponto-staging-fixtures.json
           CORE_SQL: ${{ runner.temp }}/ponto-staging-core-teardown.sql
           TIMEKEEPING_SQL: ${{ runner.temp }}/ponto-staging-timekeeping-teardown.sql
+          CORE_RESULT: ${{ runner.temp }}/ponto-staging-core-teardown-result.json
+          TIMEKEEPING_RESULT: ${{ runner.temp }}/ponto-staging-timekeeping-teardown-result.json
+          TEARDOWN_REPORT: ${{ runner.temp }}/ponto-staging-teardown-report.json
         run: |
           set -euo pipefail
           [[ -f "$FIXTURES" ]] || exit 0
           [[ "$STAGING_CORE_D1_DATABASE" == 'skincos-db-staging' && "$STAGING_TIMEKEEPING_D1_DATABASE" == 'skincos-timekeeping-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
           node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$FIXTURES" --core-sql "$CORE_SQL" --timekeeping-sql "$TIMEKEEPING_SQL"
-          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config workforce/timekeeping/wrangler.toml --env staging --remote --file "$TIMEKEEPING_SQL" >/dev/null
-          npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$CORE_SQL" >/dev/null
-          rm -f "$FIXTURES" "$CORE_SQL" "$TIMEKEEPING_SQL"
+          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config workforce/timekeeping/wrangler.toml --env staging --remote --file "$TIMEKEEPING_SQL" --json > "$TIMEKEEPING_RESULT"
+          npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$CORE_SQL" --json > "$CORE_RESULT"
+          node - "$CORE_RESULT" "$TIMEKEEPING_RESULT" "$TEARDOWN_REPORT" <<'NODE'
+          const fs = require("fs");
+          const rows = (file) => {
+            const payload = JSON.parse(fs.readFileSync(file, "utf8"));
+            const entries = Array.isArray(payload) ? payload : [payload];
+            if (entries.some((entry) => entry?.success === false)) throw new Error("D1 teardown returned a failed statement");
+            return entries.flatMap((entry) => entry?.results || entry?.result?.results || []);
+          };
+          const core = rows(process.argv[2]).find((row) => Object.hasOwn(row, "users"));
+          const timekeeping = rows(process.argv[3]).find((row) => Object.hasOwn(row, "employees"));
+          if (!core || !timekeeping) throw new Error("D1 teardown attestation rows are missing");
+          const numeric = (value) => Number(value || 0);
+          const coreResidualCount = ["users", "sessions", "auth_attempts", "prefs", "onboarding"]
+            .reduce((total, key) => total + numeric(core[key]), 0);
+          const timekeepingResidualCount = [
+            "employees", "employee_units", "profiles", "hierarchy", "events", "evidence",
+            "corrections", "pin_failures", "pin_credentials", "request_nonces", "departments", "policies",
+          ].reduce((total, key) => total + numeric(timekeeping[key]), 0);
+          const coreAuditPreserved = numeric(core.audit_count) >= 2 && numeric(core.teardown_audit) >= 1;
+          const timekeepingAuditPreserved = numeric(timekeeping.audit_count) >= 1;
+          if (coreResidualCount !== 0 || timekeepingResidualCount !== 0 || !coreAuditPreserved || !timekeepingAuditPreserved) {
+            throw new Error("synthetic teardown did not prove zero operational residue and preserved audit");
+          }
+          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+            schemaVersion: 1,
+            passed: true,
+            environment: "staging",
+            coreResidualCount,
+            timekeepingResidualCount,
+            coreAuditPreserved,
+            timekeepingAuditPreserved,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -f "$FIXTURES" "$CORE_SQL" "$TIMEKEEPING_SQL" "$CORE_RESULT" "$TIMEKEEPING_RESULT"
 
       - name: Upload sanitised journey evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: timekeeping-staging-journey-${{ inputs.release_sha }}
-          path: ${{ runner.temp }}/ponto-staging-report.json
+          path: |
+            ${{ runner.temp }}/ponto-staging-report.json
+            ${{ runner.temp }}/ponto-staging-contract.json
+            ${{ runner.temp }}/ponto-staging-teardown-report.json
           retention-days: 30
           if-no-files-found: warn

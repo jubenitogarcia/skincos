@@ -1,5 +1,107 @@
 # Current state
 
+## Workforce Timekeeping — controls reconstructed; production remains fail-closed — 2026-07-30
+
+This entry supersedes the 2026-07-29 Ponto section below. The reconstruction
+started from fetched `origin/main`
+`0a2117904ba58eb45e1163fb0971c31e6b2a7d1e` (through PR #920), GitHub
+rules/environments/runs, Cloudflare Pages and Workers control-plane metadata,
+Identity/Workforce evidence and live endpoints. PR #894 is merged as
+`4a6d0cfced901c5297f76d141f5f7f1c18ea4a93`; PRs #912, #914, #916, #917 and
+#919 are also integrated. The old statement that #894 remained open and the
+old 29-path post-#886 inventory are revoked. Its three residual review
+conversations were answered with the superseding technical-control evidence
+in PR #921 and resolved; the fresh GraphQL count is zero unresolved.
+
+PR #921 is open and ready for review on the exact observed `main` boundary.
+Its technical commits through
+`5f0cb631a22362d2ec631d868783fbf8bcfcabc0` are pushed but not integrated.
+The initial hosted runs exposed a Pages target-mutex regression and a
+CI-test-only `GITHUB_ACTIONS` inheritance; both were corrected without
+loosening the release guards. Local reproduction now passes the architecture
+contract, the progressive policy validator, actionlint and the exact
+GitHub-Actions-mode Timekeeping test command. Hosted checks and merge remain
+required.
+
+The complete upstream delta after PR #886
+`10b2197731d0210cf8fc8cd961f7a787d73bf650` through the observed main contains
+58 commits, 30 first-parent commits and 109 unique net paths: 33 added, 76
+modified and none deleted. It includes eight Ponto-exclusive paths, five
+ledgers, 27 Finance, six shared/multidomain, eight Orb/n8n, five
+Livia/native, 13 website/Meta/WhatsApp, one observability and 36 CRM Local
+paths. The path-by-path source of truth is
+`docs/project-state/ponto-post-886-delta.json`; some shared files have multiple
+labels even though every path has one primary classification.
+
+Private Ponto Core bootstrap publication is complete and independently
+attested. PR #919 workflow run `30512105626` executed on control SHA
+`e50385144408c96fbcf919bbe1f3fdc7da4b9e1d` using the reviewed PR #912 source
+`0f3480dce1a170ac0f862fa392a95456af292a88`. Staging artifact `8747521765`
+attests deployment `d88aa85e-a90b-4fd0-b03b-14bf4c6fc248` and version
+`0ee7a2fe-deff-4f37-bcda-c35ad54b68f3`; production artifact `8747532031`
+attests deployment `96aba9e3-fb02-48b4-bc38-ef6a7187328a` and version
+`487f3c03-0159-4914-8d79-470fd1ef209d`. Both are at 100%, route-only, bound
+only to their environment-specific Timekeeping service and have zero Worker
+routes/custom domains with `workers.dev` and preview URLs disabled.
+
+The staging CRM Pages baseline is also isolated: preview run `30508476617` and
+staging run `30508502488` succeeded for source
+`32d5de056788761893aa4025282f0cfa3bcde66c`; deployment
+`ee5ab6dd-4bba-48da-96ea-38fa686f8691` serves the immutable
+`https://ee5ab6dd.skincos-staging.pages.dev` deployment in project
+`skincos-staging` and aliases `https://crm-staging.skincos.com.br`.
+
+PR #921 implements the missing technical release
+controls across Timekeeping, private Ponto Core, Identity/Inventory and CRM
+Pages: exact current-main `GITHUB_SHA`, ordered predecessor evidence, version
+affinity, zero-default-traffic pilot/canary with protected Pages bucketing,
+network/identity/unit grants, WAF precondition, additive migrations and
+checkpoints, authenticated synthetic staging journey, audit-preserving
+teardown, external SLO, child-run reconciliation, exact mutation ownership,
+opaque within-environment and cross-environment root separation, pilot
+credential hydration restricted to the approved self-hosted runner, automatic
+interruption and four-surface rollback. The cataloged Core bootstrap and the
+complete production rollback baseline are consumed, verified and pinned before
+the first staging/pilot mutation; an arbitrary active incumbent no longer
+satisfies the gate.
+
+No final candidate `preview`, complete staging journey, pilot, canary or
+production release has run. The coordinator accepts only its exact
+`GITHUB_SHA` on the then-current `main`; if main advances between stages, the
+chain must restart at preview. Production remains explicitly
+`module-control:timekeeping=maintenance` from run `30496220685`, with
+`ENABLE_CORE_WORKERS_DEPLOY=false`; this is containment, not a completed
+release.
+
+Run `30496220685` changed only the production Timekeeping module-control target
+to `maintenance` as an emergency fail-close containment. The contemporaneous
+ledger does not contain a separate pre-production approval package for that
+configuration mutation, so it is recorded as a policy exception rather than
+normal release authorization. Its validation was the externally observed
+`503/MODULE_MAINTENANCE` on the authenticated module path; residual risk was
+the then-incomplete readiness contract, which is corrected in the changeset
+containing this entry. The decision is to preserve—not repeat or broaden—that
+safe state under the current explicit instruction. This exception cannot
+authorize `active`, a deploy, a grant, a secret change or any later production
+mutation.
+
+The first remaining blocker is integration of PR #921 after hosted checks.
+The subsequent blockers are external authorization/configuration, not a reason
+to loosen source guards: `PONTO_PROFILE_DATA_KEY` is absent by name from both
+GitHub environments. The repository-only
+`PONTO_ROOT_ATTESTATION_KEY_SHARED`/`PONTO_ROOT_ATTESTATION_KEY_ID` pair and the
+per-environment `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` /
+`PONTO_IDEMPOTENCY_KEY_CUSTODY_REF` variables are also absent. The keyed
+attestation proves exact-byte non-reuse under one effective audit-key version
+and carries producer run/artifact provenance, but cannot replace approved vault
+custody or prove entropy/correlation. The required WAF rule IDs/variables are absent; production
+lacks the approved pilot login/password/cohort and runner/canary variables;
+the repository has zero self-hosted runners; and no Identity/Workforce pilot
+designation is evidenced. `PONTO_IDEMPOTENCY_KEY` exists by name in both
+environments. Secret values were not read. Until those prerequisites are
+provided through their approved processes and the ordered chain passes,
+consultants are not authorized to use Ponto in production.
+
 ## Finance — fresh PostgreSQL offsite restore proven; pilot still disabled — 2026-07-30T00:13Z
 
 The private, sanitised drill `20260729T2255Z-postgresql-fresh` completed a

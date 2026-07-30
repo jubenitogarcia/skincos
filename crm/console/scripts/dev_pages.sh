@@ -8,6 +8,7 @@ set -euo pipefail
 #   VITE_PORT=5173 PAGES_PORT=8788 R2_PERSIST_DIR=.wrangler
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+WORKSPACE_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 VITE_PORT="${VITE_PORT:-5173}"
 PAGES_PORT="${PAGES_PORT:-8788}"
 R2_PERSIST_DIR_EXPLICIT="${R2_PERSIST_DIR+x}"
@@ -16,36 +17,12 @@ CRM_DIST_DIR="${CRM_DIST_DIR:-$ROOT_DIR/dist}"
 CRM_LOCAL_LOG_LEVEL="${CRM_LOCAL_LOG_LEVEL:-warn}"
 CRM_LOCAL_ISOLATED="${CRM_LOCAL_ISOLATED:-0}"
 COMPAT_DATE="${COMPAT_DATE:-2026-01-13}"
+PONTO_PAGES_ENV_FILE="${PONTO_PAGES_ENV_FILE:-}"
 
 cd "$ROOT_DIR"
 if [[ "$CRM_DIST_DIR" != /* ]]; then
   CRM_DIST_DIR="$ROOT_DIR/$CRM_DIST_DIR"
 fi
-
-ensure_dev_var() {
-  local key="$1"
-  local value="$2"
-  if [[ ! -f "$ROOT_DIR/.dev.vars" ]]; then
-    return
-  fi
-  if ! grep -qE "^${key}=" "$ROOT_DIR/.dev.vars"; then
-    printf '\n%s=%s\n' "$key" "$value" >> "$ROOT_DIR/.dev.vars"
-    echo "[dev_pages] ${key} não estava em .dev.vars; adicionado default local"
-  fi
-}
-
-upsert_non_secret_dev_var() {
-  local key="$1"
-  local value="$2"
-  if [[ ! -f "$ROOT_DIR/.dev.vars" ]]; then
-    return
-  fi
-  if grep -qE "^${key}=" "$ROOT_DIR/.dev.vars"; then
-    sed -i -E "s#^${key}=.*#${key}=${value}#" "$ROOT_DIR/.dev.vars"
-  else
-    printf '\n%s=%s\n' "$key" "$value" >> "$ROOT_DIR/.dev.vars"
-  fi
-}
 
 PAGES_BINDING_ARGS=()
 PAGES_ENV_ARGS=()
@@ -104,62 +81,36 @@ if [[ "$CRM_LOCAL_ISOLATED" == "1" ]]; then
   # R2_PERSIST_DIR. This keeps Meta/Instagram integration state useful without
   # touching the production bucket.
   PAGES_RESOURCE_ARGS+=(--r2 SHARE_BUCKET)
-  add_binding "LOCAL_AUTH_BYPASS" "$local_auth_bypass"
-  add_binding "LOCAL_AUTH_ROLE" "$local_auth_role"
-  add_binding "LOCAL_AUTH_TEST_USER_ADMIN" "$local_auth_test_user_admin"
-  add_binding "LOCAL_AUTH_USERNAME" "$local_auth_username"
-  add_binding "LOCAL_AUTH_EMAIL" "$local_auth_email"
-  add_binding "LOCAL_AUTH_NAME" "$local_auth_name"
-  add_binding "LOCAL_AUTH_ALLOWED_MODULES" "$local_auth_allowed_modules"
-  add_binding "LOCAL_AUTH_ALLOWED_UNITS" "$local_auth_allowed_units"
-
-  add_optional_binding "AUTH_API_TARGET" "${AUTH_API_TARGET:-}"
-  add_binding "AUTH_PATH_PREFIX" "$auth_path_prefix"
-  add_optional_binding "CRM_API_TARGET" "${CRM_API_TARGET:-}"
-  add_optional_binding "CAIXA_API_TARGET" "${CAIXA_API_TARGET:-}"
-  add_optional_binding "TRACKING_API_TARGET" "${TRACKING_API_TARGET:-}"
-  add_optional_binding "UNIT_MONITOR_API_TARGET" "${UNIT_MONITOR_API_TARGET:-}"
-  add_optional_binding "FINANCE_API_TARGET" "$finance_api_target"
-  add_optional_binding "LOCAL_FINANCE_ACTOR" "${LOCAL_FINANCE_ACTOR:-}"
-  add_optional_binding "LOCAL_FINANCE_CSRF_TOKEN" "${LOCAL_FINANCE_CSRF_TOKEN:-}"
-  add_binding "ESCALA_API_TARGET" "$escala_api_target"
-  add_binding "LOCAL_ESCALA_MOCK" "$local_escala_mock"
-  add_binding "LOCAL_ESCALA_SHADOW_WRITES" "$local_escala_shadow_writes"
-  add_optional_binding "ESCALA_ACTOR_HMAC_KEY" "${ESCALA_ACTOR_HMAC_KEY:-}"
-  add_optional_binding "INSTAGRAM_MODULE_TARGET" "${INSTAGRAM_MODULE_TARGET:-}"
-  add_optional_binding "INTEGRATIONS_ENCRYPTION_SECRET" "${INTEGRATIONS_ENCRYPTION_SECRET:-}"
-  add_binding "REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET" "${REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET:-true}"
-else
-  if [[ ! -f "$ROOT_DIR/.dev.vars" && -f "$ROOT_DIR/.dev.vars.example" ]]; then
-    cp "$ROOT_DIR/.dev.vars.example" "$ROOT_DIR/.dev.vars"
-    echo "[dev_pages] .dev.vars não existia; criado a partir de .dev.vars.example"
-  fi
-
-  upsert_non_secret_dev_var "LOCAL_AUTH_BYPASS" "$local_auth_bypass"
-  upsert_non_secret_dev_var "LOCAL_AUTH_ROLE" "$local_auth_role"
-  upsert_non_secret_dev_var "LOCAL_AUTH_TEST_USER_ADMIN" "$local_auth_test_user_admin"
-  upsert_non_secret_dev_var "LOCAL_AUTH_USERNAME" "$local_auth_username"
-  upsert_non_secret_dev_var "LOCAL_AUTH_EMAIL" "$local_auth_email"
-  upsert_non_secret_dev_var "LOCAL_AUTH_NAME" "$local_auth_name"
-  upsert_non_secret_dev_var "LOCAL_AUTH_ALLOWED_MODULES" "$local_auth_allowed_modules"
-  upsert_non_secret_dev_var "LOCAL_AUTH_ALLOWED_UNITS" "$local_auth_allowed_units"
-  if [[ -n "$finance_api_target" ]]; then
-    upsert_non_secret_dev_var "FINANCE_API_TARGET" "$finance_api_target"
-  fi
-  for finance_key in LOCAL_FINANCE_ACTOR LOCAL_FINANCE_CSRF_TOKEN; do
-    finance_value="${!finance_key:-}"
-    if [[ -n "$finance_value" ]]; then
-      upsert_non_secret_dev_var "$finance_key" "$finance_value"
-    fi
-  done
-  ensure_dev_var "ESCALA_API_TARGET" "https://escala-api.skincos.com.br"
-  ensure_dev_var "LOCAL_ESCALA_MOCK" "false"
-  ensure_dev_var "LOCAL_ESCALA_SHADOW_WRITES" "true"
-  ensure_dev_var "ESCALA_ACTOR_HMAC_KEY" "__CONFIGURE_REAL_ESCALA_HMAC_KEY__"
+elif [[ -e "$ROOT_DIR/.dev.vars" ]]; then
+  echo "[dev_pages] .dev.vars na árvore compartilhada é proibido; mova bindings sensíveis para um env-file privado." >&2
+  exit 1
 fi
 
+add_binding "LOCAL_AUTH_BYPASS" "$local_auth_bypass"
+add_binding "LOCAL_AUTH_ROLE" "$local_auth_role"
+add_binding "LOCAL_AUTH_TEST_USER_ADMIN" "$local_auth_test_user_admin"
+add_binding "LOCAL_AUTH_USERNAME" "$local_auth_username"
+add_binding "LOCAL_AUTH_EMAIL" "$local_auth_email"
+add_binding "LOCAL_AUTH_NAME" "$local_auth_name"
+add_binding "LOCAL_AUTH_ALLOWED_MODULES" "$local_auth_allowed_modules"
+add_binding "LOCAL_AUTH_ALLOWED_UNITS" "$local_auth_allowed_units"
+add_optional_binding "AUTH_API_TARGET" "${AUTH_API_TARGET:-}"
+add_binding "AUTH_PATH_PREFIX" "$auth_path_prefix"
+add_optional_binding "CRM_API_TARGET" "${CRM_API_TARGET:-}"
+add_optional_binding "CAIXA_API_TARGET" "${CAIXA_API_TARGET:-}"
+add_optional_binding "TRACKING_API_TARGET" "${TRACKING_API_TARGET:-}"
+add_optional_binding "UNIT_MONITOR_API_TARGET" "${UNIT_MONITOR_API_TARGET:-}"
+add_optional_binding "FINANCE_API_TARGET" "$finance_api_target"
+add_optional_binding "LOCAL_FINANCE_ACTOR" "${LOCAL_FINANCE_ACTOR:-}"
+add_optional_binding "LOCAL_FINANCE_CSRF_TOKEN" "${LOCAL_FINANCE_CSRF_TOKEN:-}"
+add_binding "ESCALA_API_TARGET" "$escala_api_target"
+add_binding "LOCAL_ESCALA_MOCK" "$local_escala_mock"
+add_binding "LOCAL_ESCALA_SHADOW_WRITES" "$local_escala_shadow_writes"
+add_optional_binding "ESCALA_ACTOR_HMAC_KEY" "${ESCALA_ACTOR_HMAC_KEY:-}"
+add_optional_binding "INSTAGRAM_MODULE_TARGET" "${INSTAGRAM_MODULE_TARGET:-}"
+add_optional_binding "INTEGRATIONS_ENCRYPTION_SECRET" "${INTEGRATIONS_ENCRYPTION_SECRET:-}"
+add_binding "REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET" "${REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET:-true}"
 add_optional_binding "LOCAL_CRM_FOCUS_MODULE" "${LOCAL_CRM_FOCUS_MODULE:-}"
-
 if [[ -n "${LOCAL_INSUMOS_API_TARGET:-}" ]]; then
   add_binding "INSUMOS_API_TARGET" "$LOCAL_INSUMOS_API_TARGET"
 elif [[ "$CRM_LOCAL_ISOLATED" == "1" ]]; then
@@ -168,11 +119,38 @@ fi
 if [[ -n "${PONTO_API_TARGET:-}" ]]; then
   add_binding "PONTO_API_TARGET" "$PONTO_API_TARGET"
 fi
-if [[ -n "${PONTO_ACTOR_HMAC_KEY:-}" ]]; then
-  add_binding "PONTO_ACTOR_HMAC_KEY" "$PONTO_ACTOR_HMAC_KEY"
+for ponto_var in SKINCOS_DEPLOYMENT_ENV PONTO_RELEASE_SHA PONTO_ROLLOUT_STAGE PONTO_ALLOW_LOCAL_DIRECT_TIMEKEEPING; do
+  ponto_value="${!ponto_var:-}"
+  add_optional_binding "$ponto_var" "$ponto_value"
+done
+if [[ -n "${PONTO_ACTOR_HMAC_KEY:-}" || -n "${PONTO_NETWORK_CONTEXT_KEY:-}" || -n "${PONTO_RELEASE_PROBE_HMAC_KEY:-}" ]]; then
+  echo "[dev_pages] Secrets do Ponto não podem ser passados pela linha de comando; use PONTO_PAGES_ENV_FILE." >&2
+  exit 1
 fi
-if [[ -n "${PONTO_NETWORK_CONTEXT_KEY:-}" ]]; then
-  add_binding "PONTO_NETWORK_CONTEXT_KEY" "$PONTO_NETWORK_CONTEXT_KEY"
+PONTO_TARGET_IS_LOOPBACK=false
+if [[ "${PONTO_API_TARGET:-}" =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]+/?$ ]]; then
+  PONTO_TARGET_IS_LOOPBACK=true
+fi
+if [[ "${SKINCOS_DEPLOYMENT_ENV:-}" == "local" || "${PONTO_ALLOW_LOCAL_DIRECT_TIMEKEEPING:-}" == "true" || "$PONTO_TARGET_IS_LOOPBACK" == "true" ]]; then
+  if [[ "${SKINCOS_DEPLOYMENT_ENV:-}" != "local" || "${PONTO_ALLOW_LOCAL_DIRECT_TIMEKEEPING:-}" != "true" || "${LOCAL_AUTH_BYPASS:-}" != "true" || "$PONTO_TARGET_IS_LOOPBACK" != "true" ]]; then
+    echo "[dev_pages] Ponto local direto exige ambiente, bypass, flag e alvo loopback explícitos e consistentes." >&2
+    exit 1
+  fi
+  if [[ -z "${CRM_TIMEKEEPING_ENV_FILE:-}" || -z "$PONTO_PAGES_ENV_FILE" ]]; then
+    echo "[dev_pages] Ponto local exige os arquivos privados separados do Worker e de Pages." >&2
+    exit 1
+  fi
+  if [[ -e "$ROOT_DIR/.dev.vars" ]]; then
+    echo "[dev_pages] .dev.vars na árvore compartilhada é proibido; mova bindings sensíveis para um env-file privado." >&2
+    exit 1
+  fi
+  node "$WORKSPACE_ROOT/scripts/validate-local-timekeeping-env.mjs" \
+    "$CRM_TIMEKEEPING_ENV_FILE" "$PONTO_PAGES_ENV_FILE" "$WORKSPACE_ROOT" >/dev/null
+  PONTO_PAGES_ENV_FILE="$(realpath "$PONTO_PAGES_ENV_FILE")"
+  PAGES_ENV_ARGS=(--env-file "$PONTO_PAGES_ENV_FILE")
+elif [[ -n "$PONTO_PAGES_ENV_FILE" ]]; then
+  echo "[dev_pages] PONTO_PAGES_ENV_FILE só pode ser carregado no modo local direto validado." >&2
+  exit 1
 fi
 if [[ -n "${LOCAL_WA_ORCHESTRATOR_API_TARGET:-}" ]]; then
   add_binding "WA_ORCHESTRATOR_API_TARGET" "$LOCAL_WA_ORCHESTRATOR_API_TARGET"

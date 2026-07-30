@@ -1,14 +1,14 @@
 import { canonicalEventType, calculateDay, calculatePeriod, isoDateInZone } from './domain.js'
 import { biometricDistance, constantTimeEqual, decryptSensitiveText, decryptTemplate, encryptSensitiveText, encryptTemplate, hashPin, isValidBiometricTemplate, sha256, signHmac, verifyPin } from './security.js'
-import { readModuleAvailability, moduleUnavailableResponse } from '../../shared/module-availability/worker.js'
+import { canaryBucket, publicModuleAvailability, readModuleAvailability, moduleUnavailableResponse } from '../../shared/module-availability/worker.js'
 import { dependencyState, operationalStatus } from '../../shared/observability/contract.js'
 import { normalizeAllowedUnits, unknownUnitScopes } from '../../shared/identity-contract/index.js'
 import { isValidAccountTransition, normalizeAccountState, workforceStatusForAccount } from '../../shared/identity-runtime/onboarding-state.js'
 
 const encoder = new TextEncoder()
-const json = (status, payload, requestId) => new Response(JSON.stringify({ ...payload, requestId }), {
+const json = (status, payload, requestId, extraHeaders = {}) => new Response(JSON.stringify({ ...payload, requestId }), {
   status,
-  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-request-id': requestId },
+  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-request-id': requestId, ...extraHeaders },
 })
 const now = () => new Date().toISOString()
 const b64Url = (value) => {
@@ -41,6 +41,96 @@ function normalizeWorkforceRole(value) {
 function isConsultor(actor) { return actor?.role === 'CONSULTOR' }
 function canManageWorkforce(actor) { return actor?.role === 'SUPERVISOR' || actor?.role === 'ADMIN' }
 function isFacePunchEnabled(env) { return String(env?.PONTO_FACE_PUNCH_ENABLED || '').trim().toLowerCase() === 'true' }
+const FULL_RELEASE_SHA = /^[0-9a-f]{40}$/
+const CLOUDFLARE_VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const OPAQUE_COHORT_REF = /^v1:[A-Za-z0-9_-]{43}$/
+const VALID_ROLLOUT_STAGES = new Set(['pilot', 'canary'])
+function releaseShaFor(env) { return String(env?.APP_VERSION || '').trim().toLowerCase() }
+function workerVersionIdFor(env) { return String(env?.VERSION_METADATA?.id || '').trim() }
+function environmentFor(env) { return String(env?.ENVIRONMENT || '').trim().toLowerCase() }
+function exactControlledVersions(availability, workerVersionId, peerVersionId, peerSurface = 'coreApi') {
+  const timekeepingCandidate = String(availability?.versions?.timekeeping?.candidate || '').trim().toLowerCase()
+  const peerCandidate = String(availability?.versions?.[peerSurface]?.candidate || '').trim().toLowerCase()
+  if (!CLOUDFLARE_VERSION_ID.test(timekeepingCandidate) || !CLOUDFLARE_VERSION_ID.test(peerCandidate)) return false
+  return String(workerVersionId || '').trim().toLowerCase() === timekeepingCandidate
+    && String(peerVersionId || '').trim().toLowerCase() === peerCandidate
+}
+function timekeepingControlStatus(availability, releaseSha, workerVersionId, peerVersionId, peerSurface = 'coreApi', at = Date.now(), environment = '') {
+  if (availability?.state === 'active') {
+    if (availability.schemaVersion !== 2) return { ready: false, code: 'ACTIVE_CONTROL_INVALID' }
+    if (!FULL_RELEASE_SHA.test(releaseSha) || availability.releaseSha !== releaseSha) return { ready: false, code: 'RELEASE_AFFINITY_MISMATCH' }
+    const rolloutStage = String(availability.rolloutStage || '').trim().toLowerCase()
+    if (environment === 'local') {
+      if (rolloutStage !== 'local') return { ready: false, code: 'ACTIVE_CONTROL_INVALID' }
+    } else if (environment === 'staging') {
+      if (rolloutStage !== 'staging' || availability.syntheticOnly !== true) return { ready: false, code: 'ACTIVE_CONTROL_INVALID' }
+    } else if (environment === 'production') {
+      if (rolloutStage !== 'production' || availability.syntheticOnly === true) return { ready: false, code: 'ACTIVE_CONTROL_INVALID' }
+    } else {
+      return { ready: false, code: 'ACTIVE_CONTROL_INVALID' }
+    }
+    // The private loopback-only launcher has no Cloudflare deployment IDs.
+    // Its explicit local control is accepted only when both the runtime and
+    // control declare local; every hosted environment still requires exact
+    // immutable Worker version IDs.
+    if (environment === 'local' && availability.rolloutStage === 'local') return { ready: true, code: 'ACTIVE_LOCAL' }
+    if (!exactControlledVersions(availability, workerVersionId, peerVersionId, peerSurface)) return { ready: false, code: 'VERSION_AFFINITY_MISMATCH' }
+    return { ready: true, code: 'ACTIVE' }
+  }
+  if (availability?.state === 'maintenance') return { ready: false, code: 'MODULE_MAINTENANCE' }
+  if (availability?.state === 'disabled') return { ready: false, code: 'MODULE_DISABLED' }
+  if (availability?.state !== 'canary') return { ready: false, code: 'MODULE_CONTROL_INVALID' }
+  if (availability.schemaVersion !== 2 || !VALID_ROLLOUT_STAGES.has(availability.rolloutStage)) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
+  if (!FULL_RELEASE_SHA.test(releaseSha) || availability.releaseSha !== releaseSha) return { ready: false, code: 'RELEASE_AFFINITY_MISMATCH' }
+  if (!exactControlledVersions(availability, workerVersionId, peerVersionId, peerSurface)) return { ready: false, code: 'VERSION_AFFINITY_MISMATCH' }
+  const expiresAt = Date.parse(String(availability.expiresAt || ''))
+  if (!Number.isFinite(expiresAt) || expiresAt <= at) return { ready: false, code: 'CANARY_CONTROL_EXPIRED' }
+  if (!Array.isArray(availability.pilotEmployeeRefs) || !availability.pilotEmployeeRefs.length || availability.pilotEmployeeRefs.some((ref) => !OPAQUE_COHORT_REF.test(ref))) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
+  if (!Array.isArray(availability.pilotIdentityRefs) || !availability.pilotIdentityRefs.length || availability.pilotIdentityRefs.some((ref) => !OPAQUE_COHORT_REF.test(ref))) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
+  if (!Array.isArray(availability.pilotIdentityLoginRefs) || !availability.pilotIdentityLoginRefs.length || availability.pilotIdentityLoginRefs.some((ref) => !OPAQUE_COHORT_REF.test(ref))) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
+  if (availability.pilotEmployeeRefs.length !== availability.pilotIdentityRefs.length || availability.pilotIdentityRefs.length !== availability.pilotIdentityLoginRefs.length) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
+  if (!Array.isArray(availability.pilotNetworkContexts) || !availability.pilotNetworkContexts.length || availability.pilotNetworkContexts.some((ref) => !OPAQUE_COHORT_REF.test(ref))) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
+  if (!Array.isArray(availability.pilotUnits) || !availability.pilotUnits.length || availability.pilotUnits.some((unit) => !String(unit || '').trim())) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
+  if (!Number.isInteger(availability.percentage) || availability.percentage < 1 || availability.percentage > 100) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
+  if (availability.rolloutStage === 'pilot' && (availability.pilotEmployeeRefs.length !== 1 || availability.pilotIdentityRefs.length !== 1 || availability.pilotIdentityLoginRefs.length !== 1 || availability.pilotNetworkContexts.length !== 1 || availability.pilotUnits.length !== 1 || availability.percentage !== 100)) return { ready: false, code: 'CANARY_CONTROL_INVALID' }
+  return { ready: true, code: availability.rolloutStage.toUpperCase() }
+}
+function gatewayAffinityFor(request, env, releaseSha = releaseShaFor(env)) {
+  const gatewayReleaseSha = String(request.headers.get('x-skincos-gateway-release-sha') || '').trim().toLowerCase()
+  const gatewayEnvironment = String(request.headers.get('x-skincos-gateway-environment') || '').trim().toLowerCase()
+  const gatewayVersionId = String(request.headers.get('x-skincos-gateway-version-id') || '').trim().toLowerCase()
+  const environment = environmentFor(env)
+  return {
+    matched: FULL_RELEASE_SHA.test(releaseSha)
+      && gatewayReleaseSha === releaseSha
+      && Boolean(environment)
+      && gatewayEnvironment === environment,
+    gatewayReleaseSha,
+    gatewayEnvironment,
+    gatewayVersionId,
+  }
+}
+const REQUIRED_RUNTIME_BINDINGS = Object.freeze({
+  actor_authentication: 'PONTO_ACTOR_HMAC_KEY',
+  idempotency: 'PONTO_IDEMPOTENCY_KEY',
+  biometric_encryption: 'PONTO_TEMPLATES_KEY',
+  profile_encryption: 'PONTO_PROFILE_DATA_KEY',
+  network_context: 'PONTO_NETWORK_CONTEXT_KEY',
+  identity_workforce_authentication: 'IDENTITY_WORKFORCE_HMAC_KEY',
+})
+function hasRuntimeBinding(env, binding) { return Boolean(String(env?.[binding] || '').trim()) }
+function runtimeDependencyStates(env) {
+  return Object.fromEntries(Object.entries(REQUIRED_RUNTIME_BINDINGS).map(([logicalName, binding]) => [
+    logicalName,
+    dependencyState(hasRuntimeBinding(env, binding), {
+      required: true,
+      reason: hasRuntimeBinding(env, binding) ? '' : 'NOT_CONFIGURED',
+    }),
+  ]))
+}
+function runtimeBindingsReady(env) {
+  return Object.values(REQUIRED_RUNTIME_BINDINGS).every((binding) => hasRuntimeBinding(env, binding))
+}
 function normalizeNetworkPolicy(value) { return ['NONE', 'OBSERVE', 'REQUIRE'].includes(String(value || '').trim().toUpperCase()) ? String(value).trim().toUpperCase() : 'NONE' }
 function normalizePresenceMode(value) { return ['TERMINAL_REQUIRED', 'EXTERNAL_REVIEW', 'FLEXIBLE'].includes(String(value || '').trim().toUpperCase()) ? String(value).trim().toUpperCase() : 'FLEXIBLE' }
 function ipv4ToInt(value) {
@@ -118,7 +208,14 @@ async function actorFor(request, env, db, bodyHash) {
   try {
     const parsed = JSON.parse(b64Url(raw))
     if (!parsed?.id || !parsed?.email) return null
-    return { id: String(parsed.id), email: String(parsed.email).toLowerCase(), role: normalizeWorkforceRole(parsed.role), allowedUnits: normalizeUnits(parsed.allowedUnits), name: String(parsed.name || '') }
+    return {
+      id: String(parsed.id),
+      email: String(parsed.email).toLowerCase(),
+      role: normalizeWorkforceRole(parsed.role),
+      allowedUnits: normalizeUnits(parsed.allowedUnits),
+      name: String(parsed.name || ''),
+      releaseSha: String(parsed.releaseSha || '').trim().toLowerCase(),
+    }
   } catch { return null }
 }
 
@@ -285,6 +382,97 @@ async function audit(db, { actor, action, entityType, entityId, unitId, requestI
 
 async function employeeForActor(db, actor) {
   return db.prepare('SELECT * FROM workforce_employees WHERE lower(login_email)=lower(?) LIMIT 1').bind(actor.email).first()
+}
+
+function isSyntheticEmployee(employee) {
+  try { return JSON.parse(String(employee?.metadata_json || '{}'))?.synthetic === true } catch { return false }
+}
+
+async function employeeCanaryRef(employee, env, releaseSha = releaseShaFor(env)) {
+  const employeeId = String(employee?.canonical_employee_id || '').trim()
+  const secret = String(env?.PONTO_ACTOR_HMAC_KEY || '')
+  if (!employeeId || !secret || !FULL_RELEASE_SHA.test(releaseSha)) return ''
+  return `v1:${await hmac(secret, `ponto-canary-employee/v1.${releaseSha}.${employeeId}`)}`
+}
+
+async function identityCanaryRef(actor, env, releaseSha = releaseShaFor(env)) {
+  const identityId = String(actor?.id || '').trim()
+  const secret = String(env?.PONTO_ACTOR_HMAC_KEY || '')
+  if (!identityId || !secret || !FULL_RELEASE_SHA.test(releaseSha)) return ''
+  return `v1:${await hmac(secret, `ponto-canary-identity/v1.${releaseSha}.${identityId}`)}`
+}
+
+async function identityLoginCanaryRef(actor, env, releaseSha = releaseShaFor(env)) {
+  const login = String(actor?.email || '').trim().toLowerCase()
+  const secret = String(env?.PONTO_ACTOR_HMAC_KEY || '')
+  if (!login || !secret || !FULL_RELEASE_SHA.test(releaseSha)) return ''
+  return `v1:${await hmac(secret, `ponto-canary-login/v1.${releaseSha}.${login}`)}`
+}
+
+async function verifiedCanaryNetworkContext(request, env, bodyHash, releaseSha = releaseShaFor(env)) {
+  const context = String(request.headers.get('x-skincos-network-context') || '').trim()
+  const timestamp = String(request.headers.get('x-skincos-network-ts') || '').trim()
+  const signature = String(request.headers.get('x-skincos-network-sig') || '').trim()
+  const signatureVersion = String(request.headers.get('x-skincos-network-signature-version') || '').trim()
+  const actorPayload = String(request.headers.get('x-skincos-actor') || '').trim()
+  const nonce = cleanText(request.headers.get('x-request-nonce') || request.headers.get('x-idempotency-key') || request.headers.get('idempotency-key'), 180)
+  const secret = String(env?.PONTO_NETWORK_CONTEXT_KEY || '')
+  const timestampMs = Number(timestamp)
+  if (
+    signatureVersion !== '2'
+    || !OPAQUE_COHORT_REF.test(context)
+    || !actorPayload
+    || !signature
+    || !secret
+    || !Number.isFinite(timestampMs)
+    || Math.abs(Date.now() - timestampMs) > 5 * 60 * 1000
+    || request.headers.has('x-skincos-network-ip')
+  ) return ''
+  const url = new URL(request.url)
+  const expected = await hmac(secret, [
+    timestamp,
+    actorPayload,
+    request.method.toUpperCase(),
+    `${url.pathname}${url.search}`,
+    nonce,
+    bodyHash,
+    releaseSha,
+    context,
+  ].join('.'))
+  return equal(expected, signature) ? context : ''
+}
+
+async function authorizeTimekeepingCanary(request, env, availability, actor, db, bodyHash, releaseSha = releaseShaFor(env)) {
+  if (actor?.role !== 'CONSULTOR' || actor.releaseSha !== releaseSha) return false
+  const identityRef = await identityCanaryRef(actor, env, releaseSha)
+  const identityLoginRef = await identityLoginCanaryRef(actor, env, releaseSha)
+  if (!identityRef || !identityLoginRef) return false
+  const employee = await employeeForActor(db, actor)
+  if (!employee || !isOperationalEmployee(employee)) return false
+  if (availability.syntheticOnly && !isSyntheticEmployee(employee)) return false
+  const employeeRef = await employeeCanaryRef(employee, env, releaseSha)
+  if (!employeeRef) return false
+  const employeeRefs = Array.isArray(availability.pilotEmployeeRefs) ? availability.pilotEmployeeRefs : []
+  const identityRefs = Array.isArray(availability.pilotIdentityRefs) ? availability.pilotIdentityRefs : []
+  const identityLoginRefs = Array.isArray(availability.pilotIdentityLoginRefs) ? availability.pilotIdentityLoginRefs : []
+  if (!employeeRefs.length || employeeRefs.length !== identityRefs.length || identityRefs.length !== identityLoginRefs.length) return false
+  const tupleIndex = employeeRefs.findIndex((value, index) => (
+    value === employeeRef
+    && identityRefs[index] === identityRef
+    && identityLoginRefs[index] === identityLoginRef
+  ))
+  if (tupleIndex < 0) return false
+  const employeeUnitIds = await employeeUnits(db, employee.id)
+  const hasAllowedUnit = availability.pilotUnits.some((unitId) => (
+    actor.allowedUnits.includes(unitId) && employeeUnitIds.includes(unitId)
+  ))
+  if (!hasAllowedUnit) return false
+  const networkContext = await verifiedCanaryNetworkContext(request, env, bodyHash, releaseSha)
+  if (!networkContext || !availability.pilotNetworkContexts.includes(networkContext)) return false
+  // Pages and Timekeeping intentionally bucket the same opaque Identity
+  // reference so an authorized request cannot be selected by one surface and
+  // rejected by the other because they hashed different identifiers.
+  return canaryBucket(identityRef) < availability.percentage * 100
 }
 
 async function readJson(request) {
@@ -604,14 +792,22 @@ async function enforceReplayProtection(request, db, requestId, actor) {
   } catch { return false }
 }
 
-async function identityServiceAuthorized(request, env, bodyHash, db) {
+async function identityServiceAuthorized(request, env, bodyHash, db, { consumeNonce = true } = {}) {
   if (String(request.headers.get('x-skincos-service') || '') !== 'identity') return { ok: false, error: 'SERVICE_UNAUTHORIZED' }
   const secret = String(env.IDENTITY_WORKFORCE_HMAC_KEY || '')
+  const signatureVersion = String(request.headers.get('x-skincos-workforce-signature-version') || '')
   const timestamp = String(request.headers.get('x-skincos-workforce-ts') || '')
   const signature = String(request.headers.get('x-skincos-workforce-sig') || '')
   const nonce = String(request.headers.get('x-skincos-workforce-nonce') || '').trim()
-  if (!secret || !timestamp || !signature || !nonce || !Number.isFinite(Number(timestamp)) || Math.abs(Date.now() - Number(timestamp)) > 300000) return { ok: false, error: 'SERVICE_UNAUTHORIZED' }
-  if (!equal(await hmac(secret, `${timestamp}.${bodyHash}`), signature)) return { ok: false, error: 'SERVICE_UNAUTHORIZED' }
+  const identityReleaseSha = String(request.headers.get('x-skincos-identity-release-sha') || '').trim().toLowerCase()
+  const identityVersionId = String(request.headers.get('x-skincos-identity-version-id') || '').trim().toLowerCase()
+  const url = new URL(request.url)
+  const method = String(request.method || '').trim().toUpperCase()
+  const canonicalPath = `${url.pathname}${url.search}`
+  if (signatureVersion !== '2' || !secret || !timestamp || !signature || !nonce || !method || !FULL_RELEASE_SHA.test(identityReleaseSha) || !CLOUDFLARE_VERSION_ID.test(identityVersionId) || !Number.isFinite(Number(timestamp)) || Math.abs(Date.now() - Number(timestamp)) > 300000) return { ok: false, error: 'SERVICE_UNAUTHORIZED' }
+  const signedPayload = `v2.${timestamp}.${nonce}.${method}.${canonicalPath}.${bodyHash}.${identityReleaseSha}.${identityVersionId}`
+  if (!equal(await hmac(secret, signedPayload), signature)) return { ok: false, error: 'SERVICE_UNAUTHORIZED' }
+  if (!consumeNonce) return { ok: true }
   try {
     await db.prepare('DELETE FROM timekeeping_request_nonces WHERE expires_at<?').bind(now()).run()
     await db.prepare('INSERT INTO timekeeping_request_nonces (nonce, expires_at, request_id, created_at) VALUES (?, ?, ?, ?)').bind(nonce, new Date(Date.now() + 10 * 60 * 1000).toISOString(), request.headers.get('x-request-id') || null, now()).run()
@@ -709,17 +905,115 @@ export async function handleTimekeeping(request, env) {
   const requestId = requestIdFor(request)
   const url = new URL(request.url)
   let path = canonicalPath(url.pathname.replace(/^\/workforce/, ''))
-  const availability = await readModuleAvailability(env, 'timekeeping')
-  if (path === '/health' || path === '/api/ponto/health') return json(200, { service: 'workforce-timekeeping', database: Boolean(env.DB), ...operationalStatus({ unit: 'timekeeping', version: env.APP_VERSION || '1.0.0', environment: env.ENVIRONMENT, ready: Boolean(env.DB) && availability.state === 'active', requestId, dependencies: { d1: dependencyState(Boolean(env.DB)), schedule: dependencyState(Boolean(env.SCHEDULE), { required: false }), module_control: dependencyState(Boolean(env.MODULE_CONTROL), { required: false }) } }), availability }, requestId)
+  const internalOnboarding = path === '/api/ponto/internal/onboarding' || path === '/api/ponto/internal/onboarding/status'
+  const internalContractProbe = path === '/api/ponto/internal/onboarding/contract-probe'
+  const internalIdentityRoute = internalOnboarding || internalContractProbe
+  const releaseSha = releaseShaFor(env)
+  const availability = await readModuleAvailability(env, 'timekeeping', {
+    missingState: 'maintenance',
+    malformedState: 'maintenance',
+  })
+  const visibleAvailability = publicModuleAvailability(availability)
+  const releaseAffinity = gatewayAffinityFor(request, env, releaseSha)
+  const identityReleaseSha = String(request.headers.get('x-skincos-identity-release-sha') || '').trim().toLowerCase()
+  const identityVersionId = String(request.headers.get('x-skincos-identity-version-id') || '').trim().toLowerCase()
+  const peerSurface = internalIdentityRoute ? 'identityWorkforce' : 'coreApi'
+  const peerVersionId = internalIdentityRoute ? identityVersionId : releaseAffinity.gatewayVersionId
+  const controlStatus = timekeepingControlStatus(availability, releaseSha, workerVersionIdFor(env), peerVersionId, peerSurface, Date.now(), environmentFor(env))
+  const runtimeReady = runtimeBindingsReady(env)
+  const scheduleReady = Boolean(env.SCHEDULE) && hasRuntimeBinding(env, 'ESCALA_ACTOR_HMAC_KEY')
+  const moduleHeaders = { 'x-skincos-module-state': availability.state }
+  const dependencies = {
+    d1: dependencyState(Boolean(env.DB)),
+    schedule: dependencyState(scheduleReady, { required: false, reason: scheduleReady ? '' : 'NOT_CONFIGURED' }),
+    module_control: dependencyState(controlStatus.ready, { required: true, reason: controlStatus.ready ? '' : controlStatus.code }),
+    gateway_affinity: dependencyState(releaseAffinity.matched, { required: true, reason: releaseAffinity.matched ? '' : 'RELEASE_AFFINITY_MISMATCH' }),
+    ...runtimeDependencyStates(env),
+  }
+  const versionMetadata = {
+    releaseSha,
+    workerVersionId: workerVersionIdFor(env),
+    gatewayReleaseSha: releaseAffinity.gatewayReleaseSha,
+    gatewayEnvironment: releaseAffinity.gatewayEnvironment,
+    gatewayVersionId: releaseAffinity.gatewayVersionId,
+  }
+  if (path === '/health' || path === '/api/ponto/health') {
+    const ready = Boolean(env.DB) && controlStatus.ready && releaseAffinity.matched && runtimeReady
+    return json(200, {
+      service: 'workforce-timekeeping',
+      database: Boolean(env.DB),
+      ...operationalStatus({
+        unit: 'timekeeping',
+        version: releaseSha,
+        environment: environmentFor(env),
+        ready,
+        requestId,
+        dependencies,
+      }),
+      availability: visibleAvailability,
+      versionMetadata,
+    }, requestId, moduleHeaders)
+  }
   if (path === '/readiness' || path === '/api/ponto/readiness') {
+    let databaseAvailable = false
     try {
       if (!env.DB) throw new Error('DB_NOT_CONFIGURED')
       await env.DB.prepare('SELECT 1 AS ok').first()
-      return json(200, { ok: true, service: 'workforce-timekeeping', ready: true, database: 'available' }, requestId)
-    } catch { return json(503, { ok: false, error: 'NOT_READY', code: 'DATABASE_UNAVAILABLE' }, requestId) }
+      databaseAvailable = true
+    } catch {}
+    const readinessDependencies = {
+      ...dependencies,
+      d1: dependencyState(databaseAvailable),
+    }
+    const ready = databaseAvailable && controlStatus.ready && releaseAffinity.matched && runtimeReady
+    const code = !databaseAvailable
+      ? 'DATABASE_UNAVAILABLE'
+      : !controlStatus.ready
+        ? controlStatus.code
+        : !releaseAffinity.matched
+          ? 'RELEASE_AFFINITY_MISMATCH'
+          : 'RUNTIME_BINDINGS_UNAVAILABLE'
+    return json(ready ? 200 : 503, {
+      service: 'workforce-timekeeping',
+      database: databaseAvailable ? 'available' : 'unavailable',
+      ...operationalStatus({
+        unit: 'timekeeping',
+        version: releaseSha,
+        environment: environmentFor(env),
+        ready,
+        requestId,
+        dependencies: readinessDependencies,
+      }),
+      ...(ready ? {} : { error: 'NOT_READY', code }),
+      availability: visibleAvailability,
+      versionMetadata,
+    }, requestId, moduleHeaders)
   }
   if (!path.startsWith('/api/ponto')) return json(404, { ok: false, error: 'NOT_FOUND' }, requestId)
-  if (availability.state !== 'active') return moduleUnavailableResponse('timekeeping', availability, requestId)
+  if (availability.state === 'canary' && internalOnboarding) {
+    return json(403, { ok: false, error: 'TIMEKEEPING_CANARY_NOT_GRANTED', code: 'TIMEKEEPING_CANARY_NOT_GRANTED' }, requestId, moduleHeaders)
+  }
+  if (!controlStatus.ready) {
+    if (availability.state === 'maintenance' || availability.state === 'disabled') {
+      return moduleUnavailableResponse('timekeeping', availability, requestId, { publicOnly: true })
+    }
+    return json(503, {
+      ok: false,
+      error: controlStatus.code,
+      code: controlStatus.code,
+      availability: visibleAvailability,
+    }, requestId, moduleHeaders)
+  }
+  // Identity reaches Workforce through a direct service binding. That path is
+  // denied outright in canary and, in active, must pass its own replay-
+  // protected HMAC below. Every browser/gateway route requires exact affinity.
+  if (!releaseAffinity.matched && !internalIdentityRoute) {
+    return json(503, { ok: false, error: 'RELEASE_AFFINITY_MISMATCH', code: 'RELEASE_AFFINITY_MISMATCH' }, requestId, moduleHeaders)
+  }
+  if (internalIdentityRoute && identityReleaseSha !== releaseSha) {
+    return json(503, { ok: false, error: 'RELEASE_AFFINITY_MISMATCH', code: 'RELEASE_AFFINITY_MISMATCH' }, requestId, moduleHeaders)
+  }
+  if (!runtimeReady) return json(503, { ok: false, error: 'RUNTIME_BINDINGS_UNAVAILABLE', code: 'RUNTIME_BINDINGS_UNAVAILABLE' }, requestId, moduleHeaders)
   if (!env.DB) return json(503, { ok: false, error: 'NOT_READY', code: 'DATABASE_UNAVAILABLE' }, requestId)
   let bodyHash = await sha256('')
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
@@ -733,6 +1027,22 @@ export async function handleTimekeeping(request, env) {
     }
   }
   const db = env.DB
+  if (internalContractProbe && request.method === 'GET') {
+    const serviceAuth = await identityServiceAuthorized(request, env, bodyHash, db, { consumeNonce: false })
+    if (!serviceAuth.ok) return json(401, { ok: false, error: serviceAuth.error }, requestId, moduleHeaders)
+    return json(200, {
+      ok: true,
+      data: {
+        contract: 'identity-workforce-hmac-v2',
+        matched: true,
+        releaseSha,
+        environment: environmentFor(env),
+        timekeepingVersionId: workerVersionIdFor(env),
+        identityReleaseSha,
+        identityVersionId,
+      },
+    }, requestId, moduleHeaders)
+  }
   if (path === '/api/ponto/internal/onboarding' && request.method === 'POST') {
     const serviceAuth = await identityServiceAuthorized(request, env, bodyHash, db)
     if (!serviceAuth.ok) return json(serviceAuth.error === 'SERVICE_REPLAY' ? 409 : 401, { ok: false, error: serviceAuth.error }, requestId)
@@ -759,6 +1069,12 @@ export async function handleTimekeeping(request, env) {
   }
   const actor = await actorFor(request, env, db, bodyHash)
   if (!actor) return json(401, { ok: false, error: 'UNAUTHORIZED' }, requestId)
+  if (actor.role !== 'DEVICE' && actor.releaseSha !== releaseSha) {
+    return json(503, { ok: false, error: 'RELEASE_AFFINITY_MISMATCH', code: 'RELEASE_AFFINITY_MISMATCH' }, requestId, moduleHeaders)
+  }
+  if (availability.state === 'canary' && !await authorizeTimekeepingCanary(request, env, availability, actor, db, bodyHash, releaseSha)) {
+    return json(403, { ok: false, error: 'TIMEKEEPING_CANARY_NOT_GRANTED', code: 'TIMEKEEPING_CANARY_NOT_GRANTED' }, requestId, moduleHeaders)
+  }
   if (!await enforceReplayProtection(request, db, requestId, actor)) return failure(409, 'REPLAY_DETECTED', requestId)
 
   try {
@@ -1264,5 +1580,53 @@ export async function handleTimekeeping(request, env) {
   }
 }
 
-export default { fetch: handleTimekeeping }
-export const __testables = { normalizeWorkforceRole, roleAllows, requireUnit, canonicalEventType, calculateDay, calculatePeriod, csvCell, eventsForWorkDate, isFacePunchEnabled, verifyPunchCredential, profileInput, profileDocumentStatus, normalizeNetworks, ipInNetwork, locationEvidence, normalizePresenceMode, normalizeNetworkPolicy, identityServiceAuthorized, normalizedDepartmentKey, publicEmployee, isOperationalEmployee, identityOnboardingId, resolveOnboardingManager, syncIdentityOnboardingStatus }
+async function fetchWithReleaseIdentity(request, env) {
+  const response = await handleTimekeeping(request, env)
+  const headers = new Headers(response.headers)
+  const releaseSha = releaseShaFor(env)
+  const workerVersionId = workerVersionIdFor(env)
+  const environment = environmentFor(env)
+  if (FULL_RELEASE_SHA.test(releaseSha)) headers.set('x-skincos-timekeeping-release-sha', releaseSha)
+  if (workerVersionId) headers.set('x-skincos-timekeeping-version-id', workerVersionId)
+  if (environment) headers.set('x-skincos-timekeeping-environment', environment)
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
+export default { fetch: fetchWithReleaseIdentity }
+export const __testables = {
+  normalizeWorkforceRole,
+  roleAllows,
+  requireUnit,
+  canonicalEventType,
+  calculateDay,
+  calculatePeriod,
+  csvCell,
+  eventsForWorkDate,
+  isFacePunchEnabled,
+  verifyPunchCredential,
+  profileInput,
+  profileDocumentStatus,
+  normalizeNetworks,
+  ipInNetwork,
+  locationEvidence,
+  normalizePresenceMode,
+  normalizeNetworkPolicy,
+  identityServiceAuthorized,
+  normalizedDepartmentKey,
+  publicEmployee,
+  isOperationalEmployee,
+  identityOnboardingId,
+  resolveOnboardingManager,
+  syncIdentityOnboardingStatus,
+  timekeepingControlStatus,
+  gatewayAffinityFor,
+  employeeCanaryRef,
+  identityCanaryRef,
+  identityLoginCanaryRef,
+  verifiedCanaryNetworkContext,
+  authorizeTimekeepingCanary,
+}

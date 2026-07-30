@@ -18,6 +18,21 @@ function mountedRequest(request, mount) {
     return new Request(url.toString(), request);
 }
 
+function sanitizeExternalRoutingHeaders(request, isPontoRoute) {
+    const headers = new Headers(request.headers);
+    headers.delete('cloudflare-workers-version-overrides');
+    headers.delete('x-skincos-gateway-release-sha');
+    headers.delete('x-skincos-gateway-environment');
+    headers.delete('x-skincos-gateway-version-id');
+    headers.delete('x-skincos-gateway-version-tag');
+
+    if (!isPontoRoute) {
+        headers.delete('cloudflare-workers-version-key');
+    }
+
+    return new Request(request, { headers });
+}
+
 function isInternalServiceRequest(request, env) {
     const expected = String(env.INTERNAL_API_TOKEN || '').trim();
     if (!expected) return false;
@@ -26,11 +41,18 @@ function isInternalServiceRequest(request, env) {
 }
 
 function operationalPayload(env, requestId, ready, dependencies) {
+    const workerVersionId = String(env.CF_VERSION_METADATA?.id || '').trim();
+    const workerVersionTag = String(env.CF_VERSION_METADATA?.tag || '').trim();
     return {
         ok: Boolean(ready),
         service: 'api',
         unit: 'api',
         version: String(env.APP_VERSION || 'unknown'),
+        release_sha: String(env.APP_VERSION || 'unknown'),
+        worker_version: {
+            id: workerVersionId || null,
+            tag: workerVersionTag || null,
+        },
         environment: String(env.ENVIRONMENT || 'production'),
         ready: Boolean(ready),
         dependencies,
@@ -70,6 +92,17 @@ function pontoOperationalPayload(env, requestId, ready, dependencyState) {
         request_id: requestId,
         requestId,
     };
+}
+
+function setGatewayReleaseHeaders(headers, env) {
+    headers.set('x-skincos-gateway-release-sha', String(env.APP_VERSION || 'unknown').trim().toLowerCase());
+    headers.set('x-skincos-gateway-environment', String(env.ENVIRONMENT || 'production').trim().toLowerCase());
+    const workerVersionId = String(env.CF_VERSION_METADATA?.id || '').trim();
+    const workerVersionTag = String(env.CF_VERSION_METADATA?.tag || '').trim();
+    if (workerVersionId) headers.set('x-skincos-gateway-version-id', workerVersionId);
+    else headers.delete('x-skincos-gateway-version-id');
+    if (workerVersionTag) headers.set('x-skincos-gateway-version-tag', workerVersionTag);
+    else headers.delete('x-skincos-gateway-version-tag');
 }
 
 function operationalLog(env, requestId, status, route) {
@@ -140,7 +173,8 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
         const requestId = requestIdFor(request);
         const url = new URL(request.url);
         const pontoRouteOnly = isPontoRouteOnly(env);
-        const pontoRoute = url.pathname === '/api/ponto' || url.pathname.startsWith('/api/ponto/');
+        const isPontoRoute = url.pathname === '/api/ponto' || url.pathname.startsWith('/api/ponto/');
+        request = sanitizeExternalRoutingHeaders(request, isPontoRoute);
 
         if (pontoRouteOnly) {
             if (request.method === 'GET' && url.pathname === '/health') {
@@ -153,7 +187,7 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
                 return pontoReadiness(request, env, ctx, timekeepingHandler, requestId);
             }
 
-            if (!pontoRoute) {
+            if (!isPontoRoute) {
                 return json(404, { ok: false, error: 'ponto_route_only', request_id: requestId, requestId }, requestId);
             }
         }
@@ -178,14 +212,26 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
             }
         }
 
-        if (pontoRoute) {
+        if (isPontoRoute) {
             if (typeof timekeepingHandler !== 'function') {
-                return json(503, { ok: false, error: 'workforce_unavailable', requestId }, requestId);
+                const unavailable = json(503, { ok: false, error: 'workforce_unavailable', requestId }, requestId);
+                setGatewayReleaseHeaders(unavailable.headers, env);
+                return unavailable;
             }
             const response = await timekeepingHandler(request, env, ctx);
             const headers = new Headers(response.headers);
             headers.set('x-request-id', requestId);
+            setGatewayReleaseHeaders(headers, env);
             return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+        }
+
+        // The governed Ponto Core is a separate, private service-bound Worker.
+        // It shares the gateway source so all release surfaces carry one SHA,
+        // but it must never become an alternate path to Inventory, Finance or
+        // internal routes. The no-route Wrangler config is the outer boundary;
+        // this runtime guard is the fail-closed inner boundary.
+        if (isPontoRouteOnly(env)) {
+            return json(404, { ok: false, error: 'ponto_route_only', requestId }, requestId);
         }
 
         if (url.pathname === '/inventory' || url.pathname.startsWith('/inventory/')) {

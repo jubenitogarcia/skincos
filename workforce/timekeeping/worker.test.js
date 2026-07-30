@@ -1,21 +1,460 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
 import worker, { __testables } from './worker.js'
 import { signHmac } from './security.js'
+import { readModuleAvailability } from '../../shared/module-availability/worker.js'
 
-test('health is public and does not disclose secrets', async () => {
-  const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/health'), { APP_VERSION: 'test', DB: {} })
+const releaseSha = 'a'.repeat(40)
+const cohortRef = (value) => `v1:${value.repeat(43)}`
+const timekeepingVersionId = '11111111-1111-4111-8111-111111111111'
+const gatewayVersionId = '22222222-2222-4222-8222-222222222222'
+const identityVersionId = '33333333-3333-4333-8333-333333333333'
+const activeControl = (overrides = {}) => ({
+  state: 'active',
+  schemaVersion: 2,
+  rolloutStage: 'staging',
+  syntheticOnly: true,
+  releaseSha,
+  versions: {
+    timekeeping: { candidate: timekeepingVersionId },
+    coreApi: { candidate: gatewayVersionId },
+    identityWorkforce: { candidate: identityVersionId },
+  },
+  ...overrides,
+})
+const affinityHeaders = {
+  'x-skincos-gateway-release-sha': releaseSha,
+  'x-skincos-gateway-environment': 'staging',
+  'x-skincos-gateway-version-id': gatewayVersionId,
+}
+const criticalRuntimeBindings = {
+  VERSION_METADATA: { id: timekeepingVersionId },
+  PONTO_ACTOR_HMAC_KEY: 'synthetic-actor-key',
+  PONTO_IDEMPOTENCY_KEY: 'synthetic-idempotency-key',
+  PONTO_TEMPLATES_KEY: 'synthetic-template-key',
+  PONTO_PROFILE_DATA_KEY: 'synthetic-profile-key',
+  PONTO_NETWORK_CONTEXT_KEY: 'synthetic-network-key',
+  IDENTITY_WORKFORCE_HMAC_KEY: 'synthetic-identity-key',
+}
+const criticalDependencyNames = {
+  PONTO_ACTOR_HMAC_KEY: 'actor_authentication',
+  PONTO_IDEMPOTENCY_KEY: 'idempotency',
+  PONTO_TEMPLATES_KEY: 'biometric_encryption',
+  PONTO_PROFILE_DATA_KEY: 'profile_encryption',
+  PONTO_NETWORK_CONTEXT_KEY: 'network_context',
+  IDENTITY_WORKFORCE_HMAC_KEY: 'identity_workforce_authentication',
+}
+const controlStore = (value) => ({ async get() { return value } })
+const readyDb = {
+  prepare() {
+    return {
+      bind() { return this },
+      async first() { return { ok: 1 } },
+    }
+  },
+}
+
+test('health stays HTTP 200 but fails closed when module control is missing', async () => {
+  const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/health', { headers: affinityHeaders }), {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'staging',
+    DB: readyDb,
+    ...criticalRuntimeBindings,
+  })
   assert.equal(response.status, 200)
   const body = await response.json()
-  assert.equal(body.ok, true)
+  assert.equal(body.ok, false)
+  assert.equal(body.ready, false)
   assert.equal(body.service, 'workforce-timekeeping')
+  assert.equal(body.availability.state, 'maintenance')
+  assert.equal(body.availability.source, 'binding-missing')
+  assert.equal(body.dependencies.module_control.required, true)
+  assert.equal(body.dependencies.module_control.state, 'unavailable')
   assert.equal(JSON.stringify(body).includes('PONTO_'), false)
 })
 
+test('health is ready only with D1, valid explicit control and exact gateway release affinity', async () => {
+  const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/health', { headers: affinityHeaders }), {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'staging',
+    DB: readyDb,
+    MODULE_CONTROL: controlStore(activeControl()),
+    ...criticalRuntimeBindings,
+  })
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.equal(body.ok, true)
+  assert.equal(body.ready, true)
+  assert.equal(body.versionMetadata.releaseSha, releaseSha)
+  assert.equal(body.versionMetadata.workerVersionId, timekeepingVersionId)
+  assert.equal(body.versionMetadata.gatewayVersionId, gatewayVersionId)
+  assert.equal(response.headers.get('x-skincos-module-state'), 'active')
+  assert.equal(response.headers.get('x-skincos-timekeeping-release-sha'), releaseSha)
+  assert.equal(response.headers.get('x-skincos-timekeeping-version-id'), timekeepingVersionId)
+  assert.equal(response.headers.get('x-skincos-timekeeping-environment'), 'staging')
+})
+
+test('private loopback runtime accepts only an explicit local control and matching local release affinity', async () => {
+  const localHeaders = {
+    'x-skincos-gateway-release-sha': releaseSha,
+    'x-skincos-gateway-environment': 'local',
+  }
+  const localControl = {
+    state: 'active',
+    schemaVersion: 2,
+    rolloutStage: 'local',
+    releaseSha,
+  }
+  const response = await worker.fetch(new Request('http://127.0.0.1:8801/api/ponto/readiness', {
+    headers: localHeaders,
+  }), {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'local',
+    DB: readyDb,
+    MODULE_CONTROL: controlStore(localControl),
+    ...criticalRuntimeBindings,
+    VERSION_METADATA: undefined,
+  })
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).ready, true)
+
+  const hosted = await worker.fetch(new Request('https://timekeeping.local/api/ponto/readiness', {
+    headers: {
+      'x-skincos-gateway-release-sha': releaseSha,
+      'x-skincos-gateway-environment': 'staging',
+    },
+  }), {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'staging',
+    DB: readyDb,
+    MODULE_CONTROL: controlStore(localControl),
+    ...criticalRuntimeBindings,
+    VERSION_METADATA: undefined,
+  })
+  assert.equal(hosted.status, 503)
+  assert.equal((await hosted.json()).code, 'ACTIVE_CONTROL_INVALID')
+})
+
+test('active control fails closed unless schema and immutable release match the artifact', async () => {
+  const request = () => new Request('https://timekeeping.local/api/ponto/readiness', { headers: affinityHeaders })
+  const baseEnv = { APP_VERSION: releaseSha, ENVIRONMENT: 'staging', DB: readyDb, ...criticalRuntimeBindings }
+  const invalidSchema = await worker.fetch(request(), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore(activeControl({ schemaVersion: 1 })),
+  })
+  assert.equal(invalidSchema.status, 503)
+  assert.equal((await invalidSchema.json()).code, 'ACTIVE_CONTROL_INVALID')
+
+  const wrongRelease = await worker.fetch(request(), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore(activeControl({ releaseSha: 'b'.repeat(40) })),
+  })
+  assert.equal(wrongRelease.status, 503)
+  assert.equal((await wrongRelease.json()).code, 'RELEASE_AFFINITY_MISMATCH')
+
+  const wrongWorkerVersion = await worker.fetch(request(), {
+    ...baseEnv,
+    VERSION_METADATA: { id: '33333333-3333-4333-8333-333333333333' },
+    MODULE_CONTROL: controlStore(activeControl()),
+  })
+  assert.equal(wrongWorkerVersion.status, 503)
+  assert.equal((await wrongWorkerVersion.json()).code, 'VERSION_AFFINITY_MISMATCH')
+
+  const wrongGatewayVersion = await worker.fetch(new Request('https://timekeeping.local/api/ponto/readiness', {
+    headers: { ...affinityHeaders, 'x-skincos-gateway-version-id': '33333333-3333-4333-8333-333333333333' },
+  }), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore(activeControl()),
+  })
+  assert.equal(wrongGatewayVersion.status, 503)
+  assert.equal((await wrongGatewayVersion.json()).code, 'VERSION_AFFINITY_MISMATCH')
+
+  const missingStage = await worker.fetch(request(), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore(activeControl({ rolloutStage: undefined })),
+  })
+  assert.equal(missingStage.status, 503)
+  assert.equal((await missingStage.json()).code, 'ACTIVE_CONTROL_INVALID')
+
+  const wrongEnvironmentStage = await worker.fetch(request(), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore(activeControl({ rolloutStage: 'production' })),
+  })
+  assert.equal(wrongEnvironmentStage.status, 503)
+  assert.equal((await wrongEnvironmentStage.json()).code, 'ACTIVE_CONTROL_INVALID')
+
+  const stagingWithoutSyntheticOnly = await worker.fetch(request(), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore(activeControl({ syntheticOnly: false })),
+  })
+  assert.equal(stagingWithoutSyntheticOnly.status, 503)
+  assert.equal((await stagingWithoutSyntheticOnly.json()).code, 'ACTIVE_CONTROL_INVALID')
+
+  const productionHeaders = {
+    ...affinityHeaders,
+    'x-skincos-gateway-environment': 'production',
+  }
+  const productionSynthetic = await worker.fetch(new Request('https://timekeeping.local/api/ponto/readiness', {
+    headers: productionHeaders,
+  }), {
+    ...baseEnv,
+    ENVIRONMENT: 'production',
+    MODULE_CONTROL: controlStore(activeControl({ rolloutStage: 'production', syntheticOnly: true })),
+  })
+  assert.equal(productionSynthetic.status, 503)
+  assert.equal((await productionSynthetic.json()).code, 'ACTIVE_CONTROL_INVALID')
+
+  const production = await worker.fetch(new Request('https://timekeeping.local/api/ponto/readiness', {
+    headers: productionHeaders,
+  }), {
+    ...baseEnv,
+    ENVIRONMENT: 'production',
+    MODULE_CONTROL: controlStore(activeControl({ rolloutStage: 'production', syntheticOnly: false })),
+  })
+  assert.equal(production.status, 200)
+})
+
 test('readiness fails closed when D1 is unavailable', async () => {
-  const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/readiness'), {})
+  const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/readiness', { headers: affinityHeaders }), {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'staging',
+    MODULE_CONTROL: controlStore(activeControl()),
+    ...criticalRuntimeBindings,
+  })
   assert.equal(response.status, 503)
   assert.equal((await response.json()).code, 'DATABASE_UNAVAILABLE')
+})
+
+test('readiness requires explicit module control and accepts only a valid unexpired canary for this release', async () => {
+  const request = () => new Request('https://timekeeping.local/api/ponto/readiness', { headers: affinityHeaders })
+  const baseEnv = { APP_VERSION: releaseSha, ENVIRONMENT: 'staging', DB: readyDb, ...criticalRuntimeBindings }
+  const missing = await worker.fetch(request(), baseEnv)
+  assert.equal(missing.status, 503)
+  assert.equal((await missing.json()).code, 'MODULE_MAINTENANCE')
+
+  const validCanary = {
+    state: 'canary',
+    schemaVersion: 2,
+    rolloutStage: 'pilot',
+    pilotEmployeeRefs: [cohortRef('e')],
+    pilotIdentityRefs: [cohortRef('i')],
+    pilotIdentityLoginRefs: [cohortRef('l')],
+    pilotNetworkContexts: [cohortRef('n')],
+    pilotUnits: ['UNIT_A'],
+    percentage: 100,
+    releaseSha,
+    versions: {
+      timekeeping: { candidate: timekeepingVersionId },
+      coreApi: { candidate: gatewayVersionId },
+    },
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    syntheticOnly: true,
+  }
+  const ready = await worker.fetch(request(), { ...baseEnv, MODULE_CONTROL: controlStore(validCanary) })
+  assert.equal(ready.status, 200)
+  const readyBody = await ready.json()
+  assert.equal(readyBody.ok, true)
+  assert.equal(readyBody.availability.rolloutStage, 'pilot')
+  assert.equal(JSON.stringify(readyBody).includes('pilotEmployeeRefs'), false)
+  assert.equal(JSON.stringify(readyBody).includes('pilotIdentityRefs'), false)
+  assert.equal(JSON.stringify(readyBody).includes(cohortRef('e')), false)
+
+  const wrongRelease = await worker.fetch(request(), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore({ ...validCanary, releaseSha: 'b'.repeat(40) }),
+  })
+  assert.equal(wrongRelease.status, 503)
+  assert.equal((await wrongRelease.json()).code, 'RELEASE_AFFINITY_MISMATCH')
+
+  const expired = await worker.fetch(request(), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore({ ...validCanary, expiresAt: new Date(Date.now() - 1_000).toISOString() }),
+  })
+  assert.equal(expired.status, 503)
+  assert.equal((await expired.json()).code, 'CANARY_CONTROL_EXPIRED')
+
+  const missingLoginGrant = await worker.fetch(request(), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore({ ...validCanary, pilotIdentityLoginRefs: undefined }),
+  })
+  assert.equal(missingLoginGrant.status, 503)
+  assert.equal((await missingLoginGrant.json()).code, 'CANARY_CONTROL_INVALID')
+
+  const mismatchedTupleLengths = await worker.fetch(request(), {
+    ...baseEnv,
+    MODULE_CONTROL: controlStore({
+      ...validCanary,
+      rolloutStage: 'canary',
+      pilotEmployeeRefs: [cohortRef('e'), cohortRef('f')],
+    }),
+  })
+  assert.equal(mismatchedTupleLengths.status, 503)
+  assert.equal((await mismatchedTupleLengths.json()).code, 'CANARY_CONTROL_INVALID')
+})
+
+test('health, readiness and Ponto routes fail closed for each critical runtime binding without disclosing values', async (t) => {
+  for (const [binding, dependency] of Object.entries(criticalDependencyNames)) {
+    await t.test(binding, async () => {
+      const env = {
+        APP_VERSION: releaseSha,
+        ENVIRONMENT: 'staging',
+        DB: readyDb,
+        MODULE_CONTROL: controlStore(activeControl()),
+        ...criticalRuntimeBindings,
+        [binding]: '   ',
+      }
+      const health = await worker.fetch(new Request('https://timekeeping.local/api/ponto/health', { headers: affinityHeaders }), env)
+      assert.equal(health.status, 200)
+      const healthBody = await health.json()
+      assert.equal(healthBody.ok, false)
+      assert.equal(healthBody.dependencies[dependency].required, true)
+      assert.equal(healthBody.dependencies[dependency].state, 'unavailable')
+      assert.equal(JSON.stringify(healthBody).includes(criticalRuntimeBindings[binding]), false)
+
+      const readiness = await worker.fetch(new Request('https://timekeeping.local/api/ponto/readiness', { headers: affinityHeaders }), env)
+      assert.equal(readiness.status, 503)
+      assert.equal((await readiness.json()).code, 'RUNTIME_BINDINGS_UNAVAILABLE')
+
+      const route = await worker.fetch(new Request('https://timekeeping.local/api/ponto/context', { headers: affinityHeaders }), env)
+      assert.equal(route.status, 503)
+      assert.equal((await route.json()).code, 'RUNTIME_BINDINGS_UNAVAILABLE')
+    })
+  }
+})
+
+test('Timekeeping canary authorization is conjunctive and keeps employee/network cohort values opaque', async () => {
+  const actorKey = 'actor-key-for-canary-test'
+  const networkKey = 'network-key-for-canary-test'
+  const env = {
+    APP_VERSION: releaseSha,
+    PONTO_ACTOR_HMAC_KEY: actorKey,
+    PONTO_NETWORK_CONTEXT_KEY: networkKey,
+  }
+  const employee = {
+    id: 'employee-row-1',
+    canonical_employee_id: 'canonical-employee-1',
+    login_email: 'pilot@example.invalid',
+    status: 'ACTIVE',
+    access_state: 'ACTIVE',
+    metadata_json: JSON.stringify({ synthetic: true }),
+  }
+  const actorPayload = Buffer.from(JSON.stringify({
+    id: 'actor-1',
+    email: employee.login_email,
+    role: 'CONSULTOR',
+    allowedUnits: ['UNIT_A'],
+    releaseSha,
+  })).toString('base64url')
+  const actor = {
+    id: 'actor-1',
+    email: employee.login_email,
+    role: 'CONSULTOR',
+    allowedUnits: ['UNIT_A'],
+    releaseSha,
+  }
+  const employeeRef = await __testables.employeeCanaryRef(employee, env, releaseSha)
+  const identityRef = await __testables.identityCanaryRef(actor, env, releaseSha)
+  const identityLoginRef = await __testables.identityLoginCanaryRef(actor, env, releaseSha)
+  assert.match(employeeRef, /^v1:[A-Za-z0-9_-]{43}$/)
+  assert.match(identityRef, /^v1:[A-Za-z0-9_-]{43}$/)
+  assert.match(identityLoginRef, /^v1:[A-Za-z0-9_-]{43}$/)
+  assert.equal(employeeRef.includes(employee.canonical_employee_id), false)
+  const networkContext = cohortRef('n')
+  const timestamp = String(Date.now())
+  const bodyHash = createHash('sha256').update('').digest('hex')
+  const signature = await signHmac(networkKey, [
+    timestamp,
+    actorPayload,
+    'GET',
+    '/api/ponto/context',
+    '',
+    bodyHash,
+    releaseSha,
+    networkContext,
+  ].join('.'))
+  const request = new Request('https://timekeeping.local/api/ponto/context', {
+    headers: {
+      'x-skincos-actor': actorPayload,
+      'x-skincos-network-context': networkContext,
+      'x-skincos-network-ts': timestamp,
+      'x-skincos-network-sig': signature,
+      'x-skincos-network-signature-version': '2',
+    },
+  })
+  const dbFor = (row = employee, units = ['UNIT_A']) => ({
+    prepare(sql) {
+      return {
+        bind() { return this },
+        async first() { return sql.includes('workforce_employees') ? row : null },
+        async all() { return { results: sql.includes('timekeeping_employee_units') ? units.map((unit_id) => ({ unit_id })) : [] } },
+      }
+    },
+  })
+  const availability = {
+    state: 'canary',
+    pilotEmployeeRefs: [employeeRef],
+    pilotIdentityRefs: [identityRef],
+    pilotIdentityLoginRefs: [identityLoginRef],
+    pilotNetworkContexts: [networkContext],
+    pilotUnits: ['UNIT_A'],
+    percentage: 100,
+    syntheticOnly: true,
+  }
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, availability, actor, dbFor(), bodyHash, releaseSha), true)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, availability, { ...actor, role: 'SUPERVISOR' }, dbFor(), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, availability, { ...actor, email: '' }, dbFor(), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, availability, { ...actor, releaseSha: 'b'.repeat(40) }, dbFor(), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, availability, actor, dbFor({ ...employee, access_state: 'SUSPENDED' }), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, availability, actor, dbFor({ ...employee, metadata_json: '{}' }), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, availability, actor, dbFor(employee, ['UNIT_B']), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, { ...availability, pilotEmployeeRefs: [cohortRef('x')] }, actor, dbFor(), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, { ...availability, pilotIdentityRefs: [cohortRef('x')] }, actor, dbFor(), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, { ...availability, pilotIdentityLoginRefs: [cohortRef('x')] }, actor, dbFor(), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, {
+    ...availability,
+    pilotEmployeeRefs: [cohortRef('x'), employeeRef],
+    pilotIdentityRefs: [identityRef, cohortRef('x')],
+    pilotIdentityLoginRefs: [identityLoginRef, cohortRef('x')],
+  }, actor, dbFor(), bodyHash, releaseSha), false)
+  assert.equal(await __testables.authorizeTimekeepingCanary(request, env, { ...availability, pilotNetworkContexts: [cohortRef('x')] }, actor, dbFor(), bodyHash, releaseSha), false)
+
+  const forgedNetworkRequest = new Request(request, { headers: { ...Object.fromEntries(request.headers), 'x-skincos-network-sig': 'forged' } })
+  assert.equal(await __testables.authorizeTimekeepingCanary(forgedNetworkRequest, env, availability, actor, dbFor(), bodyHash, releaseSha), false)
+})
+
+test('shared module availability preserves the historical active default outside fail-closed Ponto', async () => {
+  assert.equal((await readModuleAvailability({}, 'finance')).state, 'active')
+  assert.equal((await readModuleAvailability({ MODULE_CONTROL: controlStore({ state: 'invalid' }) }, 'finance')).state, 'active')
+})
+
+test('forged candidate and gateway headers never replace a valid actor HMAC envelope', async () => {
+  const response = await worker.fetch(new Request('https://timekeeping.local/api/ponto/context', {
+    headers: {
+      ...affinityHeaders,
+      'cloudflare-workers-version-key': 'browser-selected-candidate',
+      'x-skincos-candidate-release-sha': releaseSha,
+      'x-skincos-actor': Buffer.from(JSON.stringify({
+        id: 'forged-actor',
+        email: 'forged@example.invalid',
+        role: 'CONSULTOR',
+        allowedUnits: ['UNIT_A'],
+        releaseSha,
+      })).toString('base64url'),
+      'x-skincos-actor-ts': String(Date.now()),
+      'x-skincos-actor-sig': 'forged',
+      'x-skincos-signature-version': '2',
+    },
+  }), {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'staging',
+    DB: readyDb,
+    MODULE_CONTROL: controlStore(activeControl()),
+    ...criticalRuntimeBindings,
+    PONTO_ACTOR_HMAC_KEY: 'expected-actor-key',
+  })
+  assert.equal(response.status, 401)
+  assert.equal((await response.json()).error, 'UNAUTHORIZED')
 })
 
 test('role matrix keeps consultor self-service and gives supervisor the former RH/auditor duties', () => {
@@ -75,10 +514,13 @@ test('Identity onboarding service binding requires a fresh HMAC and cannot be fo
   const secret = 'identity-workforce-test-secret'
   const timestamp = String(Date.now())
   const bodyHash = 'body-hash'
-  const signature = await signHmac(secret, `${timestamp}.${bodyHash}`)
+  const method = 'GET'
+  const path = '/api/ponto/internal/onboarding'
+  const signatureFor = (nonce, overrides = {}) => signHmac(secret, `v2.${overrides.timestamp || timestamp}.${nonce}.${overrides.method || method}.${overrides.path || path}.${overrides.bodyHash || bodyHash}.${overrides.releaseSha || releaseSha}.${overrides.versionId || identityVersionId}`)
+  const signature = await signatureFor('nonce-1')
   const seen = new Set()
   const db = { prepare(sql) { return { bind(...values) { this.values = values; return this }, async run() { if (sql.includes('INSERT INTO')) { if (seen.has(this.values[0])) throw new Error('UNIQUE') ; seen.add(this.values[0]) } return { meta: { changes: 1 } } } } } }
-  const headers = { 'x-skincos-service': 'identity', 'x-skincos-workforce-ts': timestamp, 'x-skincos-workforce-sig': signature, 'x-skincos-workforce-nonce': 'nonce-1', 'x-request-id': 'req-1' }
+  const headers = { 'x-skincos-service': 'identity', 'x-skincos-workforce-signature-version': '2', 'x-skincos-workforce-ts': timestamp, 'x-skincos-workforce-sig': signature, 'x-skincos-workforce-nonce': 'nonce-1', 'x-skincos-identity-release-sha': releaseSha, 'x-skincos-identity-version-id': identityVersionId, 'x-request-id': 'req-1' }
   const signed = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers })
   assert.deepEqual(await __testables.identityServiceAuthorized(signed, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: true })
   const replay = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers })
@@ -87,13 +529,187 @@ test('Identity onboarding service binding requires a fresh HMAC and cannot be fo
   assert.deepEqual(await __testables.identityServiceAuthorized(unsigned, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
   const missingNonce = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { ...headers, 'x-skincos-workforce-nonce': '' } })
   assert.deepEqual(await __testables.identityServiceAuthorized(missingNonce, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
-  const altered = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { ...headers, 'x-skincos-workforce-nonce': 'nonce-3' } })
-  assert.deepEqual(await __testables.identityServiceAuthorized(altered, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, 'altered-body', db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
+  const changedNonce = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { ...headers, 'x-skincos-workforce-nonce': 'nonce-3' } })
+  assert.deepEqual(await __testables.identityServiceAuthorized(changedNonce, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
+  const changedPath = new Request('https://timekeeping.local/api/ponto/internal/onboarding/status', { headers })
+  assert.deepEqual(await __testables.identityServiceAuthorized(changedPath, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
+  const changedMethod = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { method: 'POST', headers })
+  assert.deepEqual(await __testables.identityServiceAuthorized(changedMethod, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
+  const changedIdentityVersion = new Request('https://timekeeping.local/api/ponto/internal/onboarding', {
+    headers: { ...headers, 'x-skincos-identity-version-id': '44444444-4444-4444-8444-444444444444' },
+  })
+  assert.deepEqual(await __testables.identityServiceAuthorized(changedIdentityVersion, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
+  const alteredBody = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { ...headers, 'x-skincos-workforce-nonce': 'nonce-3', 'x-skincos-workforce-sig': await signatureFor('nonce-3') } })
+  assert.deepEqual(await __testables.identityServiceAuthorized(alteredBody, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, 'altered-body', db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
   const expiredTimestamp = String(Date.now() - 301000)
-  const expiredSig = await signHmac(secret, `${expiredTimestamp}.${bodyHash}`)
+  const expiredSig = await signatureFor('nonce-4', { timestamp: expiredTimestamp })
   const expired = new Request('https://timekeeping.local/api/ponto/internal/onboarding', { headers: { ...headers, 'x-skincos-workforce-ts': expiredTimestamp, 'x-skincos-workforce-sig': expiredSig, 'x-skincos-workforce-nonce': 'nonce-4' } })
   assert.deepEqual(await __testables.identityServiceAuthorized(expired, { IDENTITY_WORKFORCE_HMAC_KEY: secret }, bodyHash, db), { ok: false, error: 'SERVICE_UNAUTHORIZED' })
   assert.equal(__testables.normalizedDepartmentKey('  Atendimento Técnico  '), 'atendimento tecnico')
+})
+
+test('read-only Identity contract probe proves HMAC v2 and exact candidate affinity during canary without writing PII', async () => {
+  const path = '/api/ponto/internal/onboarding/contract-probe'
+  const bodyHash = createHash('sha256').update('').digest('hex')
+  const identityKey = criticalRuntimeBindings.IDENTITY_WORKFORCE_HMAC_KEY
+  const signedProbe = async ({ versionId = identityVersionId, signatureOverride = '' } = {}) => {
+    const timestamp = String(Date.now())
+    const nonce = crypto.randomUUID()
+    const signature = signatureOverride || await signHmac(identityKey, `v2.${timestamp}.${nonce}.GET.${path}.${bodyHash}.${releaseSha}.${versionId}`)
+    return new Request(`https://timekeeping.local${path}`, {
+      headers: {
+        'x-skincos-service': 'identity',
+        'x-skincos-workforce-signature-version': '2',
+        'x-skincos-workforce-ts': timestamp,
+        'x-skincos-workforce-sig': signature,
+        'x-skincos-workforce-nonce': nonce,
+        'x-skincos-identity-release-sha': releaseSha,
+        'x-skincos-identity-version-id': versionId,
+      },
+    })
+  }
+  const canaryControl = {
+    state: 'canary',
+    schemaVersion: 2,
+    rolloutStage: 'pilot',
+    pilotEmployeeRefs: [cohortRef('e')],
+    pilotIdentityRefs: [cohortRef('i')],
+    pilotIdentityLoginRefs: [cohortRef('l')],
+    pilotNetworkContexts: [cohortRef('n')],
+    pilotUnits: ['UNIT_A'],
+    percentage: 100,
+    releaseSha,
+    versions: {
+      timekeeping: { candidate: timekeepingVersionId },
+      coreApi: { candidate: gatewayVersionId },
+      identityWorkforce: { candidate: identityVersionId },
+    },
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    syntheticOnly: true,
+  }
+  const env = {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'staging',
+    DB: readyDb,
+    MODULE_CONTROL: controlStore(canaryControl),
+    ...criticalRuntimeBindings,
+  }
+
+  const valid = await worker.fetch(await signedProbe(), env)
+  assert.equal(valid.status, 200)
+  const body = await valid.json()
+  assert.equal(body.ok, true)
+  assert.deepEqual(body.data, {
+    contract: 'identity-workforce-hmac-v2',
+    matched: true,
+    releaseSha,
+    environment: 'staging',
+    timekeepingVersionId,
+    identityReleaseSha: releaseSha,
+    identityVersionId,
+  })
+
+  const forged = await worker.fetch(await signedProbe({ signatureOverride: 'forged' }), env)
+  assert.equal(forged.status, 401)
+  assert.equal((await forged.json()).error, 'SERVICE_UNAUTHORIZED')
+
+  const wrongIdentityVersion = await worker.fetch(await signedProbe({
+    versionId: '44444444-4444-4444-8444-444444444444',
+  }), env)
+  assert.equal(wrongIdentityVersion.status, 503)
+  assert.equal((await wrongIdentityVersion.json()).code, 'VERSION_AFFINITY_MISMATCH')
+})
+
+test('active permits direct Identity onboarding only with its HMAC, while canary denies it', async () => {
+  const bodyText = JSON.stringify({
+    onboardingId: 'onboarding-1',
+    employeeId: 'employee-1',
+    accountStatus: 'ACTIVE',
+  })
+  const bodyHash = createHash('sha256').update(bodyText).digest('hex')
+  const identityKey = criticalRuntimeBindings.IDENTITY_WORKFORCE_HMAC_KEY
+  const signedRequest = async (nonce, signatureOverride = '') => {
+    const timestamp = String(Date.now())
+    const signature = signatureOverride || await signHmac(identityKey, `v2.${timestamp}.${nonce}.POST./api/ponto/internal/onboarding/status.${bodyHash}.${releaseSha}.${identityVersionId}`)
+    return new Request('https://timekeeping.local/api/ponto/internal/onboarding/status', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-skincos-service': 'identity',
+        'x-skincos-workforce-signature-version': '2',
+        'x-skincos-workforce-ts': timestamp,
+        'x-skincos-workforce-sig': signature,
+        'x-skincos-workforce-nonce': nonce,
+        'x-skincos-identity-release-sha': releaseSha,
+        'x-skincos-identity-version-id': identityVersionId,
+      },
+      body: bodyText,
+    })
+  }
+  const onboardingDb = () => ({
+    prepare(sql) {
+      return {
+        bind() { return this },
+        async run() { return { meta: { changes: 1 } } },
+        async first() {
+          return sql.includes('SELECT * FROM workforce_employees')
+            ? {
+                id: 'employee-1',
+                status: 'ACTIVE',
+                access_state: 'ACTIVE',
+                metadata_json: JSON.stringify({ identityOnboardingId: 'onboarding-1' }),
+              }
+            : null
+        },
+      }
+    },
+  })
+  const baseEnv = {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'staging',
+    ...criticalRuntimeBindings,
+  }
+
+  const active = await worker.fetch(await signedRequest('active-valid'), {
+    ...baseEnv,
+    DB: onboardingDb(),
+    MODULE_CONTROL: controlStore(activeControl()),
+  })
+  assert.equal(active.status, 200)
+  assert.equal((await active.json()).data.idempotent, true)
+
+  const forged = await worker.fetch(await signedRequest('active-forged', 'forged'), {
+    ...baseEnv,
+    DB: onboardingDb(),
+    MODULE_CONTROL: controlStore(activeControl()),
+  })
+  assert.equal(forged.status, 401)
+  assert.equal((await forged.json()).error, 'SERVICE_UNAUTHORIZED')
+
+  const canary = await worker.fetch(await signedRequest('canary-valid'), {
+    ...baseEnv,
+    DB: onboardingDb(),
+    MODULE_CONTROL: controlStore({
+      state: 'canary',
+      schemaVersion: 2,
+      rolloutStage: 'pilot',
+      pilotEmployeeRefs: [cohortRef('e')],
+      pilotIdentityRefs: [cohortRef('i')],
+      pilotIdentityLoginRefs: [cohortRef('l')],
+      pilotNetworkContexts: [cohortRef('n')],
+      pilotUnits: ['UNIT_A'],
+      percentage: 100,
+      releaseSha,
+      versions: {
+        timekeeping: { candidate: timekeepingVersionId },
+        coreApi: { candidate: gatewayVersionId },
+      },
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      syntheticOnly: true,
+    }),
+  })
+  assert.equal(canary.status, 403)
+  assert.equal((await canary.json()).code, 'TIMEKEEPING_CANARY_NOT_GRANTED')
 })
 
 test('Workforce never presents pending or invited onboarding as operational', () => {
