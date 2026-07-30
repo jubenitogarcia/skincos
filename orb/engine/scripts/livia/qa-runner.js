@@ -126,6 +126,51 @@ function firstSubmitted(rows, keys) {
   return '';
 }
 
+function auditTargetKey(target) {
+  return `${String(target?.platform || '').trim().toLowerCase()}/${String(target?.unit || '').trim().toLowerCase()}`;
+}
+
+function reconcileAuditTargets(runData, derivedTargets) {
+  const collected = executionItems(runData, 'Collect Publish Results')[0]?.json || {};
+  const persistedTargets = collected?.publishVerification?.targets;
+  if (!Array.isArray(persistedTargets) || !persistedTargets.length) return derivedTargets;
+
+  const persistedByKey = new Map();
+  for (const target of persistedTargets) {
+    const key = auditTargetKey(target);
+    if (key === '/' || persistedByKey.has(key)) {
+      throw new Error(`Collect Publish Results has an ambiguous persisted verification target: ${key}.`);
+    }
+    persistedByKey.set(key, target);
+  }
+
+  if (persistedByKey.size !== derivedTargets.length) {
+    throw new Error(`Collect Publish Results verification target count (${persistedByKey.size}) does not match reconstructed HTTP targets (${derivedTargets.length}).`);
+  }
+
+  return derivedTargets.map((derived) => {
+    const key = auditTargetKey(derived);
+    const persisted = persistedByKey.get(key);
+    if (!persisted) throw new Error(`Collect Publish Results is missing persisted verification target: ${key}.`);
+
+    for (const field of ['providerObjectId', 'providerMediaId']) {
+      const derivedValue = String(derived[field] || '').trim();
+      const persistedValue = String(persisted[field] || '').trim();
+      if (derivedValue && persistedValue && derivedValue !== persistedValue) {
+        throw new Error(`Persisted verification target ${key} has a conflicting ${field}.`);
+      }
+    }
+
+    return {
+      ...derived,
+      expected: persisted.expected && typeof persisted.expected === 'object' ? persisted.expected : derived.expected,
+      submitted: persisted.submitted && typeof persisted.submitted === 'object' ? persisted.submitted : derived.submitted,
+      accessibilityContract: persisted.accessibilityContract,
+      mediaEvidenceContract: persisted.mediaEvidenceContract,
+    };
+  });
+}
+
 function buildAuditTargets(runData) {
   const prepared = executionItems(runData, 'Prepare HTTP Publish Request').map((item) => item.json || {});
   const responses = executionItems(runData, 'HTTP Request').map((item) => item.json || {});
@@ -178,7 +223,7 @@ function buildAuditTargets(runData) {
     tokenOverrides[platform] ||= {};
     tokenOverrides[platform][unit] ||= token;
   }
-  return { jobs, targets, tokenOverrides };
+  return { jobs, targets: reconcileAuditTargets(runData, targets), tokenOverrides };
 }
 
 function extractNodeParameters(runData, nodeName) {
@@ -1048,6 +1093,7 @@ module.exports = {
   ACCESSIBILITY_VERIFIER_MARKERS,
   driveAuditForExecution,
   notificationForExecution,
+  reconcileAuditTargets,
   readSelectedEnvironmentFile,
   verifierEnvironment,
   buildGraphReplayEnvironment,
