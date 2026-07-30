@@ -249,6 +249,7 @@ export default function AppFunctionalNeatlab() {
     const DEFAULT_MODULE_KEY = 'insumos'
 
     const allowedModulesKey = Array.isArray(user?.allowedModules) ? user.allowedModules.join('|') : ''
+    const hasFinanceModuleGrant = allowedModulesKey.split('|').includes('finance')
     const roleKey = String(user?.role || '').trim().toUpperCase()
     const [financeEnabled, setFinanceEnabled] = React.useState(false)
     const pontoCanAdmin = canManagePonto(roleKey)
@@ -325,7 +326,7 @@ export default function AppFunctionalNeatlab() {
 	    )
 	    const [sidebarHover, setSidebarHover] = useState(false)
 	    React.useEffect(() => {
-	        if (!Array.isArray(user?.allowedModules) || !user.allowedModules.map(String).includes('finance')) { setFinanceEnabled(false); return }
+	        if (!hasFinanceModuleGrant) { setFinanceEnabled(false); return }
 	        const controller = new AbortController()
 	        void resolveFinanceBootstrapEnabled({
 	            apiOrigin: String(import.meta.env.VITE_FINANCE_API_ORIGIN || '/api'),
@@ -334,7 +335,7 @@ export default function AppFunctionalNeatlab() {
 	            if (!controller.signal.aborted) setFinanceEnabled(enabled)
 	        })
 	        return () => controller.abort()
-	    }, [allowedModulesKey, user?.allowedModules])
+	    }, [hasFinanceModuleGrant])
 	    const [sidebarCanHover, setSidebarCanHover] = useState(() => {
 	        try {
 	            return window.matchMedia('(hover: hover) and (pointer: fine)').matches
