@@ -19,7 +19,7 @@ on:
         type: boolean
 
 concurrency:
-  group: ponto-core-baseline-bootstrap
+  group: ponto-release-custody
   cancel-in-progress: false
 
 permissions:
