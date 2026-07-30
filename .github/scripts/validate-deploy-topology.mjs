@@ -44,7 +44,22 @@ for (const unit of catalog.units ?? []) {
   if (!/^concurrency:/m.test(source) || !source.includes(unit.concurrencyPrefix)) fail(`${unit.id} must serialize by unit and environment`);
   if (!/^\s+environment:/m.test(source)) fail(`${unit.id} must select a GitHub environment`);
   if (!/^permissions:\r?\n\s+actions:\s+read\r?\n\s+contents:\s+read/m.test(source)) fail(`${unit.id} must grant the promotion gate actions: read and contents: read`);
-  if (!source.includes("promotion-gate.yml") || !source.includes("release_sha") || !source.includes("staging_run_id")) fail(`${unit.id} must use the immutable promotion gate`);
+  if (unit.promotion.bootstrapOnly === true) {
+    for (const required of [
+      'baseline_sha',
+      'confirm_staging',
+      'confirm_production',
+      'ponto-core-baseline-publisher.mjs',
+      'environment: staging',
+      'environment: production',
+      'if: always()',
+    ]) {
+      if (!source.includes(required)) fail(`${unit.id} bootstrap publisher is missing: ${required}`);
+    }
+    if (source.includes('promotion-gate.yml')) fail(`${unit.id} bootstrap must not masquerade as a release promotion`);
+  } else if (!source.includes("promotion-gate.yml") || !source.includes("release_sha") || !source.includes("staging_run_id")) {
+    fail(`${unit.id} must use the immutable promotion gate`);
+  }
 }
 
 for (const retiredPath of catalog.retiredWorkflowPaths ?? []) {
@@ -90,6 +105,23 @@ if (
 for (const filename of fs.readdirSync(path.join(root, 'finance/migrations')).filter((name) => /^\d{4}_.+\.sql$/.test(name))) {
   const migration = read(path.posix.join('finance/migrations', filename)).replace(/^--.*$/gm, '');
   if (/\bDROP\b/i.test(migration)) fail(`Finance migration violates the additive-only policy: ${filename}`);
+}
+
+const pontoBaselinePublisher = read('.github/scripts/ponto-core-baseline-publisher.mjs');
+for (const required of [
+  'EXPECTED_CHANGED_FILES',
+  'baseline_sha is not reachable from origin/main',
+  'must have exactly one active version at 100%',
+  'workers.dev endpoint is enabled',
+  'preview URLs are enabled',
+  'public Worker routes',
+  'public custom domain',
+  'resourceDeletionAttempted: false',
+]) {
+  if (!pontoBaselinePublisher.includes(required)) fail(`Ponto Core baseline publisher is missing: ${required}`);
+}
+if (/['"]delete['"]\s*,|wrangler(?:@\S+)?\s+delete|workers\/scripts\/.+method:\s*['"]DELETE['"]/i.test(pontoBaselinePublisher)) {
+  fail('Ponto Core baseline publisher must never delete a remote resource during rollback');
 }
 
 if (failures.length) {

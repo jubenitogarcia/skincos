@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBookingDb, coerceTrackingContext, insertMetaCapiDeliveryLog, insertWhatsappClickEvent, nowMs, parseCookieHeader, sanitizeOneLine } from "@/lib/bookingDb";
 import { sendMetaServerEvent } from "@/lib/metaConversionsApi";
-import { buildWhatsappClickToken, injectWhatsappToken, parseWhatsappDestination } from "@/lib/whatsappTracking";
+import { buildWhatsappClickToken, decodeWhatsappRedirectQueryValue, expandWhatsappTrackingContext, injectWhatsappToken, parseWhatsappDestination } from "@/lib/whatsappTracking";
 
 export const dynamic = "force-dynamic";
 
@@ -22,17 +22,24 @@ function clientIp(request: Request): string | null {
 
 export async function GET(request: Request) {
     const url = new URL(request.url);
-    const rawDestination = (url.searchParams.get("dest") ?? "").trim();
+    const rawDestination = decodeWhatsappRedirectQueryValue(
+        (url.searchParams.get("dest") ?? "").trim(),
+    );
     const parsedDestination = parseWhatsappDestination(rawDestination);
     if (!parsedDestination) {
         return NextResponse.json({ ok: false, error: "invalid_destination" }, { status: 400 });
     }
 
-    const rawContext = url.searchParams.get("ctx");
+    const rawContextParam = url.searchParams.get("ctx");
+    const rawContext = rawContextParam
+        ? decodeWhatsappRedirectQueryValue(rawContextParam)
+        : null;
     let trackingContext = null;
     if (rawContext) {
         try {
-            trackingContext = coerceTrackingContext(JSON.parse(rawContext));
+            trackingContext = coerceTrackingContext(
+                expandWhatsappTrackingContext(JSON.parse(rawContext)),
+            );
         } catch {
             trackingContext = null;
         }
@@ -55,8 +62,14 @@ export async function GET(request: Request) {
     const unitSlug = sanitizeOneLine(url.searchParams.get("unit_slug") ?? "") || null;
     const doctorName = sanitizeOneLine(url.searchParams.get("doctor_name") ?? "") || null;
     const bookingId = sanitizeOneLine(url.searchParams.get("booking_id") ?? "") || null;
-    const pageUrl = sanitizeOneLine(url.searchParams.get("page_url") ?? "") || trackingContextResolved?.pageUrl || null;
-    const pagePath = sanitizeOneLine(url.searchParams.get("page_path") ?? "") || trackingContextResolved?.pagePath || null;
+    const rawPageUrl = url.searchParams.get("page_url");
+    const rawPagePath = url.searchParams.get("page_path");
+    const pageUrl = sanitizeOneLine(
+        rawPageUrl ? decodeWhatsappRedirectQueryValue(rawPageUrl) : "",
+    ) || trackingContextResolved?.pageUrl || null;
+    const pagePath = sanitizeOneLine(
+        rawPagePath ? decodeWhatsappRedirectQueryValue(rawPagePath) : "",
+    ) || trackingContextResolved?.pagePath || null;
     const clientUserAgent = sanitizeOneLine(request.headers.get("user-agent") ?? "") || null;
 
     const destinationUrl = new URL(parsedDestination.destinationUrl);

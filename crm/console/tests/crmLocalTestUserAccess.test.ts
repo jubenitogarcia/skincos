@@ -46,4 +46,15 @@ describe('local CRM test user', () => {
       allowedModules: ['atendimento'],
     })
   })
+
+  it('publishes only a valid server-bound modular focus', () => {
+    expect(getLocalDevAuthUser(context({
+      LOCAL_AUTH_ROLE: 'GESTOR',
+      LOCAL_CRM_FOCUS_MODULE: 'meta-pages-review',
+    })).localFocusModule).toBe('meta-pages-review')
+    expect(getLocalDevAuthUser(context({
+      LOCAL_AUTH_ROLE: 'GESTOR',
+      LOCAL_CRM_FOCUS_MODULE: '../meta-pages-review',
+    })).localFocusModule).toBeUndefined()
+  })
 })

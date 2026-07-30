@@ -31,13 +31,14 @@ try {
     $http.Start(); [System.IO.File]::WriteAllText($ReadyPath, 'ready')
     while ($http.IsListening) {
       try {
-        $context = $http.GetContext(); $mode = 'healthy'
-        try { $rules = Get-Content -Raw -LiteralPath $RulesPath | ConvertFrom-Json; $property = $rules.PSObject.Properties[$context.Request.Url.AbsolutePath]; if ($property) { $mode = [string]$property.Value } } catch {}
+        $context = $http.GetContext(); $requestPath = $context.Request.Url.AbsolutePath; $mode = 'healthy'
+        try { $rules = Get-Content -Raw -LiteralPath $RulesPath | ConvertFrom-Json; $property = $rules.PSObject.Properties[$requestPath]; if ($property) { $mode = [string]$property.Value } } catch {}
         if ($mode -eq 'slow') { Start-Sleep -Milliseconds 900 }
         $ok = $mode -eq 'healthy'; $body = if ($ok) { '{"ok":true,"version":"test"}' } else { '{"ok":false,"version":"test"}' }
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
         $context.Response.StatusCode = if ($ok) { 200 } else { 503 }; $context.Response.ContentType = 'application/json'; $context.Response.ContentLength64 = $bytes.Length
         $context.Response.OutputStream.Write($bytes, 0, $bytes.Length); $context.Response.Close()
+        if ($requestPath -eq '/__shutdown') { break }
       } catch { if (-not $http.IsListening) { break } }
     }
     $http.Close()
@@ -131,6 +132,11 @@ try {
 } catch {
   throw "Observability monitor policy tests failed: $($_.Exception.Message)"
 } finally {
-  if ($server) { Stop-Job $server -ErrorAction SilentlyContinue; Remove-Job $server -Force -ErrorAction SilentlyContinue }
+  if ($server) {
+    try { Invoke-WebRequest -Uri "http://127.0.0.1:$port/__shutdown" -UseBasicParsing -TimeoutSec 2 | Out-Null } catch {}
+    $completed = $server | Wait-Job -Timeout 5
+    if (-not $completed) { Stop-Job $server -ErrorAction SilentlyContinue }
+    Remove-Job $server -Force -ErrorAction SilentlyContinue
+  }
   if (Test-Path $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force }
 }

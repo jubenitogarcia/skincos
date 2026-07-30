@@ -1,0 +1,264 @@
+name: Bootstrap private Ponto Core rollback baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_sha:
+        description: "Full immutable squash SHA from PR #912"
+        required: true
+        type: string
+      confirm_staging:
+        description: "Create or exactly attest the private staging Worker"
+        required: true
+        default: false
+        type: boolean
+      confirm_production:
+        description: "Create or exactly attest the private production Worker after staging"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: ponto-release-custody
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  validate:
+    name: Validate immutable private baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Initialize validation evidence
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/ponto-core-baseline-validation
+          BASELINE_SHA: ${{ inputs.baseline_sha }}
+          CONTROL_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTIFACT_DIR"
+          printf '{"schemaVersion":1,"result":"incomplete","baselineSha":"%s","workflowControlSha":"%s","mutation":{"attempted":false,"performed":false,"resourceDeletionAttempted":false},"secrets":{"valuesRead":false,"valuesEmitted":false}}\n' \
+            "$BASELINE_SHA" "$CONTROL_SHA" > "$ARTIFACT_DIR/evidence.json"
+          printf '{"schemaVersion":1,"entries":[{"event":"workflow_initialized","mutationPerformed":false,"resourceDeletionAttempted":false}]}\n' \
+            > "$ARTIFACT_DIR/mutation-journal.json"
+
+      - name: Require main dispatch and both explicit confirmations
+        env:
+          CONFIRM_STAGING: ${{ inputs.confirm_staging }}
+          CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$DISPATCH_REF" == "refs/heads/main" ]] || {
+            echo "::error::The baseline publisher may only be dispatched from main."
+            exit 1
+          }
+          [[ "$CONFIRM_STAGING" == "true" ]] || {
+            echo "::error::confirm_staging must be true before any mutation."
+            exit 1
+          }
+          [[ "$CONFIRM_PRODUCTION" == "true" ]] || {
+            echo "::error::confirm_production must be true before any mutation."
+            exit 1
+          }
+
+      - name: Checkout publisher control
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          path: control
+
+      - name: Checkout exact baseline source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.baseline_sha }}
+          fetch-depth: 0
+          path: source
+
+      - name: Setup pinned Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: source/api/package-lock.json
+
+      - name: Attest ancestry and the four-file PR 912 delta
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/ponto-core-baseline-validation
+          BASELINE_SHA: ${{ inputs.baseline_sha }}
+          WORKFLOW_CONTROL_SHA: ${{ github.sha }}
+        run: node control/.github/scripts/ponto-core-baseline-publisher.mjs validate source "$ARTIFACT_DIR"
+
+      - name: Install exact baseline toolchain
+        run: npm --prefix source/api ci --ignore-scripts
+
+      - name: Test route isolation
+        run: npm --prefix source/api test
+
+      - name: Dry-run both private Worker bundles
+        env:
+          BASELINE_SHA: ${{ inputs.baseline_sha }}
+        run: |
+          set -euo pipefail
+          source/api/node_modules/.bin/wrangler deploy \
+            --dry-run \
+            --config source/api/wrangler.ponto.toml \
+            --outdir "$RUNNER_TEMP/ponto-core-baseline-production-dry-run" \
+            --var "APP_VERSION:$BASELINE_SHA" \
+            --var "ENVIRONMENT:production" \
+            --var "PONTO_ROUTE_ONLY:true"
+          source/api/node_modules/.bin/wrangler deploy \
+            --dry-run \
+            --config source/api/wrangler.ponto.toml \
+            --env staging \
+            --outdir "$RUNNER_TEMP/ponto-core-baseline-staging-dry-run" \
+            --var "APP_VERSION:$BASELINE_SHA" \
+            --var "ENVIRONMENT:staging" \
+            --var "PONTO_ROUTE_ONLY:true"
+
+      - name: Mark validation complete
+        env:
+          EVIDENCE_FILE: ${{ runner.temp }}/ponto-core-baseline-validation/evidence.json
+        run: |
+          node -e "const fs=require('fs');const p=process.env.EVIDENCE_FILE;const x=JSON.parse(fs.readFileSync(p));x.result='passed';x.checks={apiTests:'passed',productionDryRun:'passed',stagingDryRun:'passed'};fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n',{mode:0o600})"
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-core-baseline-validation-${{ inputs.baseline_sha }}
+          path: ${{ runner.temp }}/ponto-core-baseline-validation
+          retention-days: 30
+          if-no-files-found: error
+
+  staging:
+    name: Create or attest private staging baseline
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Initialize staging mutation journal
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/ponto-core-baseline-staging
+          BASELINE_SHA: ${{ inputs.baseline_sha }}
+          CONTROL_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTIFACT_DIR"
+          printf '{"schemaVersion":1,"result":"incomplete","target":"staging","worker":"skincos-ponto-core-staging","baselineSha":"%s","workflowControlSha":"%s","mutation":{"attempted":false,"performed":false,"resourceDeletionAttempted":false},"secrets":{"CLOUDFLARE_API_TOKEN":false,"CLOUDFLARE_ACCOUNT_ID":false,"valuesEmitted":false}}\n' \
+            "$BASELINE_SHA" "$CONTROL_SHA" > "$ARTIFACT_DIR/evidence.json"
+          printf '{"schemaVersion":1,"entries":[{"event":"workflow_initialized","mutationPerformed":false,"resourceDeletionAttempted":false}]}\n' \
+            > "$ARTIFACT_DIR/mutation-journal.json"
+
+      - name: Checkout publisher control
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          path: control
+
+      - name: Checkout exact baseline source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.baseline_sha }}
+          fetch-depth: 0
+          path: source
+
+      - name: Setup pinned Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: source/api/package-lock.json
+
+      - name: Install exact baseline toolchain
+        run: npm --prefix source/api ci --ignore-scripts
+
+      - name: Publish once or prove exact idempotency
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/ponto-core-baseline-staging
+          BASELINE_SHA: ${{ inputs.baseline_sha }}
+          WORKFLOW_CONTROL_SHA: ${{ github.sha }}
+          TARGET: staging
+          CONFIRM_BOOTSTRAP: ${{ inputs.confirm_staging }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node control/.github/scripts/ponto-core-baseline-publisher.mjs publish source "$ARTIFACT_DIR"
+
+      - name: Upload staging mutation journal and attestation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-core-baseline-staging-${{ inputs.baseline_sha }}
+          path: ${{ runner.temp }}/ponto-core-baseline-staging
+          retention-days: 30
+          if-no-files-found: error
+
+  production:
+    name: Create or attest private production baseline
+    needs: [validate, staging]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Initialize production mutation journal
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/ponto-core-baseline-production
+          BASELINE_SHA: ${{ inputs.baseline_sha }}
+          CONTROL_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTIFACT_DIR"
+          printf '{"schemaVersion":1,"result":"incomplete","target":"production","worker":"skincos-ponto-core","baselineSha":"%s","workflowControlSha":"%s","mutation":{"attempted":false,"performed":false,"resourceDeletionAttempted":false},"secrets":{"CLOUDFLARE_API_TOKEN":false,"CLOUDFLARE_ACCOUNT_ID":false,"valuesEmitted":false}}\n' \
+            "$BASELINE_SHA" "$CONTROL_SHA" > "$ARTIFACT_DIR/evidence.json"
+          printf '{"schemaVersion":1,"entries":[{"event":"workflow_initialized","mutationPerformed":false,"resourceDeletionAttempted":false}]}\n' \
+            > "$ARTIFACT_DIR/mutation-journal.json"
+
+      - name: Checkout publisher control
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          path: control
+
+      - name: Checkout exact baseline source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.baseline_sha }}
+          fetch-depth: 0
+          path: source
+
+      - name: Setup pinned Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: source/api/package-lock.json
+
+      - name: Install exact baseline toolchain
+        run: npm --prefix source/api ci --ignore-scripts
+
+      - name: Publish once or prove exact idempotency
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/ponto-core-baseline-production
+          BASELINE_SHA: ${{ inputs.baseline_sha }}
+          WORKFLOW_CONTROL_SHA: ${{ github.sha }}
+          TARGET: production
+          CONFIRM_BOOTSTRAP: ${{ inputs.confirm_production }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node control/.github/scripts/ponto-core-baseline-publisher.mjs publish source "$ARTIFACT_DIR"
+
+      - name: Upload production mutation journal and attestation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-core-baseline-production-${{ inputs.baseline_sha }}
+          path: ${{ runner.temp }}/ponto-core-baseline-production
+          retention-days: 30
+          if-no-files-found: error
