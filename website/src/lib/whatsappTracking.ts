@@ -16,6 +16,27 @@ export type WhatsappTrackingPayload = {
 
 const WHATSAPP_HOSTS = new Set(["wa.me", "api.whatsapp.com", "chat.whatsapp.com"]);
 const MAX_WHATSAPP_REDIRECT_HREF_LENGTH = 2_000;
+const OPAQUE_QUERY_VALUE_PREFIX = "u1.";
+
+export function encodeWhatsappRedirectQueryValue(value: string): string {
+    return `${OPAQUE_QUERY_VALUE_PREFIX}${encodeURIComponent(value)}`;
+}
+
+export function decodeWhatsappRedirectQueryValue(value: string): string {
+    if (!value.startsWith(OPAQUE_QUERY_VALUE_PREFIX)) return value;
+
+    const payload = value.slice(OPAQUE_QUERY_VALUE_PREFIX.length);
+    // Cloudflare/OpenNext may normalize the outer query once before the route
+    // constructs request.url. In that case the protected value is already
+    // decoded, while direct/local requests still carry the encoded payload.
+    if (/^(?:https?:\/\/|\/|\{|\[)/i.test(payload)) return payload;
+
+    try {
+        return decodeURIComponent(payload);
+    } catch {
+        return payload;
+    }
+}
 
 function normalizeUrl(value: string | null | undefined): string | null {
     const trimmed = (value ?? "").trim();
@@ -221,7 +242,7 @@ export function buildWhatsappRedirectHref(params: {
     if (!isSupportedWhatsappUrl(destinationUrl)) return null;
 
     const url = new URL("/api/whatsapp/redirect", "https://espacofacial.com");
-    url.searchParams.set("dest", destinationUrl);
+    url.searchParams.set("dest", encodeWhatsappRedirectQueryValue(destinationUrl));
 
     const tracking = params.tracking;
     if (tracking?.eventId) url.searchParams.set("event_id", tracking.eventId);
@@ -229,11 +250,20 @@ export function buildWhatsappRedirectHref(params: {
     if (tracking?.unitSlug) url.searchParams.set("unit_slug", tracking.unitSlug);
     if (tracking?.doctorName) url.searchParams.set("doctor_name", tracking.doctorName);
     if (tracking?.source) url.searchParams.set("source", tracking.source);
-    if (tracking?.pageUrl && !tracking.trackingContext) url.searchParams.set("page_url", tracking.pageUrl);
-    if (tracking?.pagePath && !tracking.trackingContext) url.searchParams.set("page_path", tracking.pagePath);
+    if (tracking?.pageUrl && !tracking.trackingContext) {
+        url.searchParams.set("page_url", encodeWhatsappRedirectQueryValue(tracking.pageUrl));
+    }
+    if (tracking?.pagePath && !tracking.trackingContext) {
+        url.searchParams.set("page_path", encodeWhatsappRedirectQueryValue(tracking.pagePath));
+    }
     if (tracking?.bookingId) url.searchParams.set("booking_id", tracking.bookingId);
     if (tracking?.trackingContext) {
-        url.searchParams.set("ctx", JSON.stringify(compactTrackingContext(tracking.trackingContext)));
+        url.searchParams.set(
+            "ctx",
+            encodeWhatsappRedirectQueryValue(
+                JSON.stringify(compactTrackingContext(tracking.trackingContext)),
+            ),
+        );
     }
 
     const redirectHref = `${url.pathname}${url.search}`;
@@ -245,8 +275,12 @@ export function buildWhatsappRedirectHref(params: {
     // attribution envelope is too large to transport reliably. Without ctx,
     // server-side CAPI remains fail-closed.
     url.searchParams.delete("ctx");
-    if (tracking?.pageUrl) url.searchParams.set("page_url", tracking.pageUrl);
-    if (tracking?.pagePath) url.searchParams.set("page_path", tracking.pagePath);
+    if (tracking?.pageUrl) {
+        url.searchParams.set("page_url", encodeWhatsappRedirectQueryValue(tracking.pageUrl));
+    }
+    if (tracking?.pagePath) {
+        url.searchParams.set("page_path", encodeWhatsappRedirectQueryValue(tracking.pagePath));
+    }
     const correlatedFallbackHref = `${url.pathname}${url.search}`;
     if (correlatedFallbackHref.length <= MAX_WHATSAPP_REDIRECT_HREF_LENGTH) {
         return correlatedFallbackHref;
