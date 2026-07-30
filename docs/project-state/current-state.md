@@ -44,7 +44,7 @@ provenance is invalid` because the workflow admitted every completed
 first-attempt coordinator while its validator intentionally accepts only
 failure/cancelled/timed-out first attempts or any unauthorized rerun. All
 emergency jobs skipped, so no latch, broker, rollback or live mutation ran.
-The bounded correction moves that contract to job admission: successful
+PR #931 moves that contract to job admission: successful
 first-attempt coordinators are skipped; failure, cancellation, timeout and
 every rerun remain governed. Focused watchdog tests pass 9/9. Because
 integrating this correction advances `main`, its exact merge SHA requires a

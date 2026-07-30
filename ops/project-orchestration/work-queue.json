@@ -8,7 +8,7 @@
       "id": "p0-workforce-timekeeping-current-main-release",
       "objective": "Complete the governed Workforce Timekeeping release through preview, staging, pilot, canary and production on one immutable source SHA.",
       "priority": 1100,
-      "state": "pr-930-integrated-complete-four-surface-preview-success-watchdog-success-admission-fix-pending-both-environments-maintenance-external-gates-pending",
+      "state": "pr-930-integrated-complete-four-surface-preview-success-watchdog-success-admission-successor-pr-931-fresh-preview-pending-both-environments-maintenance-external-gates-pending",
       "dependencies": [
         "ponto-release-prerequisites"
       ],
@@ -27,7 +27,7 @@
       ],
       "environment": "staging-then-production",
       "permitted_actions": [
-        "integrate the bounded watchdog successful-first-attempt admission correction without bypass, then rerun preview on its exact protected-main merge SHA",
+        "merge PR #931 without bypass, then rerun preview on its exact protected-main merge SHA",
         "preserve the external replay containment checkpoint and fail-closed production and staging environment overrides/fences until the permanent control and governed predecessors are proved",
         "after corrective merge and authorized WAF/secret-custody provisioning, select only the exact then-current main GITHUB_SHA and execute immutable preview then staging",
         "synthetic CONSULTOR-only authenticated journey with teardown and sanitised evidence",
@@ -195,6 +195,8 @@
           "live_mutation": false
         },
         "watchdog_success_admission_successor": {
+          "branch": "codex/admin/ponto-watchdog-success-admission",
+          "pr": 931,
           "failed_watchdog_run": 30567091382,
           "failed_context_job": 90954219518,
           "cause": "successful-first-attempt-coordinator-admitted-to-failure-only-provenance-validator",
@@ -202,7 +204,7 @@
           "live_mutation": false,
           "fix": "skip-successful-first-attempt-and-preserve-failed-cancelled-timed-out-or-rerun-admission",
           "focused_tests": "9/9",
-          "state": "bounded-successor-pending-integration-and-fresh-exact-main-preview"
+          "state": "successor-pr-931-fresh-exact-main-preview-required"
         },
         "post_merge_corrective_overlay": {
           "branch": "codex/admin/ponto-release-evidence",
@@ -688,7 +690,7 @@
       "id": "ponto-release-prerequisites",
       "objective": "Close the technical and authorized-input prerequisites for the single-SHA Ponto staging, pilot and canary sequence.",
       "priority": 1099,
-      "state": "pr-930-integrated-complete-preview-success-watchdog-admission-successor-pending-both-environments-maintenance-broker-policy-null-external-gates-open",
+      "state": "pr-930-integrated-complete-preview-success-watchdog-admission-successor-pr-931-fresh-preview-pending-both-environments-maintenance-broker-policy-null-external-gates-open",
       "dependencies": [],
       "blockers": [
         "PR #930 integrated the exact Corepack activation correction as 71c54b1d406317c614dc33e48ced170458fbd707 after all 14 checks and exact-head Codex review passed; complete preview 30566547605 and all four children succeeded, but watchdog run 30567091382 exposed a false-red admission of successful first attempts and its bounded correction plus a fresh exact-main preview are pending",
@@ -705,7 +707,7 @@
       ],
       "environment": "source-and-staging",
       "permitted_actions": [
-        "integrate the bounded watchdog successful-first-attempt admission correction without bypass and rerun preview on the exact resulting main SHA",
+        "merge PR #931 without bypass and rerun preview on the exact resulting main SHA",
         "preserve the private containment checkpoint and production/staging environment fences until guarded workflows and authorized predecessors are live",
         "obtain a reviewed decision that pins distinct per-target broker URL, custodyRef, responseKeyId and Ed25519 SPKI before provisioning broker endpoints, credentials or keys",
         "provision staging secret names only through an approved source/process without reading or exposing values",
@@ -768,6 +770,8 @@
           "selected_release_sha": null
         },
         "watchdog_success_admission_successor": {
+          "branch": "codex/admin/ponto-watchdog-success-admission",
+          "pr": 931,
           "failed_watchdog_run": 30567091382,
           "failed_context_job": 90954219518,
           "emergency_jobs": "all-skipped",

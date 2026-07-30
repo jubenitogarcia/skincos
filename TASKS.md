@@ -223,7 +223,8 @@ jornada autenticada atual continue válida.
   fixa todos os digests. Foi dry-run: nenhuma superfície live, migration,
   escrita D1/KV ou module-control mudou. Staging continua bloqueado pelos
   predecessores externos abaixo; qualquer avanço de `main` exige novo preview.
-- [ ] Integrar a correção bounded de admissão do watchdog e repetir o preview.
+- [ ] Integrar pela PR #931 a correção bounded de admissão do watchdog e
+  repetir o preview no SHA exato do merge.
   O coordenador bem-sucedido `30566547605` disparou automaticamente o watchdog
   `30567091382`; o context job `90954219518` falhou porque o job admitiu um
   first attempt `success` que o validador corretamente recusa. Todos os jobs de

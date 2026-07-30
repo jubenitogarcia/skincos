@@ -58,8 +58,8 @@ runs the preview SHA.
 The successful coordinator triggered watchdog run `30567091382`; context job
 `90954219518` failed because workflow admission included successful
 first-attempt coordinators although the validator correctly rejects them.
-Every emergency job skipped and no live mutation occurred. The bounded
-correction skips only successful first attempts while preserving admission for
+Every emergency job skipped and no live mutation occurred. PR #931 skips only
+successful first attempts while preserving admission for
 failure, cancellation, timeout and every rerun; focused tests pass 9/9.
 
 Both module-control KVs are now maintenance. Timekeeping D1 journals contain
@@ -134,8 +134,8 @@ active external SLO evidence.
 
 The executable blockers, in required order, are:
 
-1. Integrate the bounded watchdog admission correction without bypass and
-   repeat the complete preview on its exact protected-main merge SHA. Preserve
+1. Merge PR #931 without bypass and repeat the complete preview on its exact
+   protected-main merge SHA. Preserve
    run `30566547605` and its retained artifacts as historical evidence, not as
    the predecessor after `main` advances. Historical child definitions cannot
    be rewritten, so the checkpointed fences and disabled legacy smokes remain

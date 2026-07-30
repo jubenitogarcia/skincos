@@ -185,8 +185,8 @@ A trava `timekeeping_period_guards` é adquirida por data antes do cálculo e im
 > `30527767707` é somente evidência fail-close. Mantenha os fences externos e
 > não despache staging antes de reviewer independente, custódia, broker, WAF,
 > runner/coorte e SLO externos. Watchdog `30567091382` expôs que first-attempt
-> success também entrava no job de contexto e gerava false-red; a correção
-> bounded pula somente esse caso e preserva failure/cancelled/timed-out e
+> success também entrava no job de contexto e gerava false-red; a PR #931 pula
+> somente esse caso e preserva failure/cancelled/timed-out e
 > reruns. Como o merge dessa correção avança `main`, execute novo preview no
 > SHA exato antes de usar qualquer predecessor.
 
