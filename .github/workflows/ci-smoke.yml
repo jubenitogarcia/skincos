@@ -45,6 +45,15 @@ jobs:
             exit 1
           fi
 
+      - name: Validate supervised Codex continuity
+        run: |
+          set -euo pipefail
+          python3 -m json.tool .codex/hooks.json >/dev/null
+          python3 -m json.tool .codex/supervisor.json >/dev/null
+          python3 -m unittest discover -s .codex/hooks/tests -p 'test_*.py' -v
+          bash skills/skincos-project-orchestrator/scripts/test-behavior.sh
+          bash .codex/hooks/tests/test-host-wrappers.sh
+
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -99,3 +108,24 @@ jobs:
           set -euo pipefail
           bash backend/scripts/e2e.sh ci-smoke
           bash orb/engine/scripts/test-backup-n8n-storage-copy.sh
+
+  supervised-continuity-windows:
+    name: Supervised continuity (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Run Windows gate and rollback tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m unittest discover -s .codex/hooks/tests -p 'test_*.py' -v
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-host-wrappers.ps1
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-rollback.ps1
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\.codex\hooks\tests\test-skill-installer.ps1
