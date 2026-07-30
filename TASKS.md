@@ -21,6 +21,17 @@
   essa evidência e o procedimento de recriptografia/rollback não existirem.
   Isto não reabre o P0 de Insumos nem autoriza deploy.
 
+## Workforce Timekeeping — dependency advisory backlog (2026-07-30)
+
+- [ ] Triar as três vulnerabilidades `high` reportadas pelo `npm audit` completo
+  durante o alinhamento local das dependências de Timekeeping. Elas já existiam
+  antes desta mudança de gateway e não autorizam `npm audit fix --force`.
+  A auditoria de 2026-07-30 identificou `wrangler` direto e `miniflare`/`sharp`
+  transitivos; o npm oferece `wrangler@4.115.0` sem salto major. Avaliar a
+  exposição em produção e regressões antes de atualizar; manter a auditoria
+  `--omit=dev` separada da árvore completa e fechar somente com testes do
+  módulo.
+
 ## Finance — authoritative reconciliation follow-up (2026-07-29)
 
 - [x] Confirm continuous external observability, a controlled human-alert

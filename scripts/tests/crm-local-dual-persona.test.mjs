@@ -175,15 +175,15 @@ test('launcher assigns each role/module its own runtime, state, gate and browser
   assert.match(launcher, /Join-Path \$runtimeRoot "state\\timekeeping"/)
   assert.match(launcher, /Join-Path \$runtimeRoot "state\\whatsapp"/)
   for (const contract of [
-    'CRM_RUNTIME_ID={0}',
-    'CRM_RUNTIME_MODULE={1}',
-    'CRM_RUNTIME_CONFIG_FINGERPRINT={6}',
-    'CRM_BUILD_STATE_FILE={8}',
-    'CRM_BUILD_LOCK_DIR={9}',
-    'CRM_BROWSER_PROFILE_DIR={11}',
-    'CRM_LOCAL_ISOLATED=1',
-    'CRM_GATE_STRICT=1',
-    'CRM_GATE_MODULES={32}',
+    '"CRM_RUNTIME_ID=$([string]$Spec.runtimeId)"',
+    '"CRM_RUNTIME_MODULE=$module"',
+    '"CRM_RUNTIME_CONFIG_FINGERPRINT=$([string]$Spec.configFingerprint)"',
+    '"CRM_BUILD_STATE_FILE=$buildStateWsl"',
+    '"CRM_BUILD_LOCK_DIR=$buildLockWsl"',
+    '"CRM_BROWSER_PROFILE_DIR=$browserProfileWsl"',
+    '"CRM_LOCAL_ISOLATED=1"',
+    '"CRM_GATE_STRICT=1"',
+    '"CRM_GATE_MODULES=$gateModules"',
   ]) {
     assert.ok(launcher.includes(contract), `missing modular launch contract ${contract}`)
   }
@@ -252,14 +252,20 @@ test('runtime policy reuses only the exact v3 module, configuration and build', 
 test('full CRM propagates its catalog-derived runtime contract through policy and launch', () => {
   assert.doesNotMatch(launcher, /CRM_RUNTIME_CONFIG_FINGERPRINT=full-v2/)
   assert.match(launcher, /return \[string\]\$catalog\.fullRuntime\.configFingerprint/)
-  assert.match(launcher, /--runtime-id \{7\} --module \{8\} --config-fingerprint \{9\}/)
+  assert.match(launcher, /function Test-CrmTimekeepingReadinessEndpoint/)
+  assert.match(launcher, /'x-skincos-gateway-release-sha' = \$TargetCommit/)
+  assert.match(launcher, /'x-skincos-gateway-environment' = 'local'/)
+  assert.match(launcher, /Test-CrmTimekeepingReadinessEndpoint[\s\S]*?-TargetCommit \(\[string\]\$Manifest\.targetCommit\)/)
+  assert.match(launcher, /"--runtime-id", \$RuntimeId/)
+  assert.match(launcher, /"--module", \$Module/)
+  assert.match(launcher, /"--config-fingerprint", \$ConfigFingerprint/)
   assert.match(
     launcher,
     /Get-CrmPersonaDecision[^\r\n]+-RuntimeId \$runtimeId -Module \$runtimeModule -ConfigFingerprint \$configFingerprint/,
   )
   assert.match(
     launcher,
-    /CRM_RUNTIME_ID=gestor--full CRM_RUNTIME_MODULE=full[\s\S]*?CRM_RUNTIME_CONFIG_FINGERPRINT=\{3\}/,
+    /"CRM_RUNTIME_ID=gestor--full"[\s\S]*?"CRM_RUNTIME_MODULE=full"[\s\S]*?"CRM_RUNTIME_CONFIG_FINGERPRINT=\$ConfigFingerprint"/,
   )
   assert.match(
     launcher,
@@ -574,7 +580,7 @@ test "$actual" = "$expected"
 crm_runtime_pid_identity_matches "$$" "$expected"`
   const result = runBashHarness(body)
   assert.equal(result.status, 0, result.stderr || result.stdout)
-  assert.match(launcher, /source \{0\}; crm_runtime_pid_start_ticks \{1\}/)
+  assert.match(launcher, /"pid-start-ticks", \$pidText/)
   assert.doesNotMatch(launcher, /awk '\{print `\$20\}'/)
 })
 
@@ -602,7 +608,7 @@ test('browser and Pages state remain inside the private role/module runtime', ()
   assert.match(crmRunner, /CRM_BROWSER_SCRIPT.*-ProfilePath "\$browser_profile_windows"/s)
   assert.match(launcher, /\$browserScriptWsl = Convert-WindowsPathToWsl -Path \(Join-Path \$SourceRoot "scripts\\open-crm-local-browser\.ps1"\)/)
   assert.match(launcher, /\[switch\]\$CrmRuntimeSuppressBrowser/)
-  assert.match(launcher, /CRM_OPEN_BROWSER=\$openBrowser/)
+  assert.match(launcher, /"CRM_OPEN_BROWSER=\$openBrowser"/)
   assert.match(launcher, /\$arguments \+= "-CrmRuntimeSuppressBrowser"/)
   assert.match(pagesRunner, /R2_PERSIST_DIR/)
   assert.match(pagesRunner, /--persist-to "\$R2_PERSIST_DIR"/)

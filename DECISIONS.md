@@ -1,5 +1,18 @@
 # DECISIONS
 
+## 2026-07-30 - Keep Codex Windows-native and encapsulate the Linux backend
+
+- Decision: run the Codex agent natively on Windows with PowerShell as the
+  integrated terminal, while routing SKINCOS Node/npm/Python/build/test/runtime
+  operations through the typed `scripts/invoke-skincos-wsl.ps1` gateway to
+  `Ubuntu-24.04` as operator `admin`.
+- Why: Windows-native Codex preserves tasks, plugins, browser, Computer Use,
+  MCPs and authentication. Reimplementing the repository's Bash/systemd/Unix
+  contracts on Windows would duplicate production behavior and increase drift.
+- Impact: Windows Git, GitHub CLI, Node LTS and Python support general agent
+  tooling only. Project dependency trees and caches stay Linux-only; visible
+  actions use typed gateway arguments, and direct WSL ownership is restricted
+  to explicitly documented lifecycle infrastructure.
 ## 2026-07-30 - Proposed atomic release probe and mandatory Identity session teardown
 
 - Status: these contracts exist only in the evolving local successor. They have

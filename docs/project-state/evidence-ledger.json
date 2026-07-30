@@ -2,6 +2,21 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-30T15:26:17Z",
+      "surface": "isolated-windows-worktree-powershell-ubuntu-24.04-private-crm-runtime",
+      "scope": "Windows-native Codex, typed WSL gateway and complete CRM Local delivery candidate",
+      "state": "candidate-published-hosted-checks-and-integration-pending",
+      "method": "Reconstructed the dirty shared checkout and private recovery evidence; reconciled the change on an isolated branch from current origin/main; parsed PowerShell, Bash and TOML; ran the typed gateway fail-closed harness and all local launcher/build/boundary tests through Ubuntu-24.04; launched the exact immutable candidate twice with owner-only private local bindings.",
+      "result": "Candidate ed8c20b109137a39d35345341ef04dc89b5eff86 on codex/admin/native-codex-wsl-gateway centralizes typed Windows-to-Linux operations while preserving Windows-native Codex and PowerShell. The final clean CRM run rebuilt on the changed fingerprint, started local Insumos, Timekeeping and the WhatsApp adapter, passed the strict 14/14 Pages shell gate and opened the browser only after success. The consecutive action explicitly reused the ready runtime without rebuild. All 56 Node tests, the PowerShell gateway harness, 13 changed PowerShell parsers, four changed Bash parsers, two changed TOML files and git diff --check passed; the Windows worktree has zero node_modules. WSL-unavailable simulation failed before service start.",
+      "limitation": "This is pre-integration evidence. PR #925 is open; no hosted check result, review approval or merge is claimed by this entry. The runtime still uses an explicitly selected private preview of the exact candidate until canonical integration. No deployment applies: no production service, Cloudflare resource, database or remote configuration was changed. The pre-existing Timekeeping audit remains three high and zero critical findings; no force remediation was used.",
+      "sha": "ed8c20b109137a39d35345341ef04dc89b5eff86",
+      "origin_main": "c96caa4fec6fc0c33cc3b3904792905c6f38eda7",
+      "branch": "codex/admin/native-codex-wsl-gateway",
+      "pr": 925,
+      "gate_report": "C:\\CodexRuntime\\operator\\admin\\skincos\\runtime\\crm-local\\instances\\gestor\\full\\logs\\crm-local-gate-20260730-122147.json",
+      "next_action": "Pass PR #925 hosted checks and automated review, merge through repository protections, then clear the preview selection and repeat build/reuse validation from canonical origin/main."
+    },
+    {
       "observed_at": "2026-07-30T10:54:19Z",
       "surface": "github-actions-legacy-production-ponto-backend-smoke",
       "scope": "Contain obsolete protected-environment hydration by a read-only scheduled probe",
