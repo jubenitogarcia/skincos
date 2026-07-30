@@ -16,10 +16,11 @@
 - [x] Confirm continuous external observability, a controlled human-alert
   recovery, historical Finance rollback/kill-switch/scratch-restore evidence,
   and the merged PR #815 import state machine.
-- [ ] Create a candidate from the then-current `origin/main` and, in a
-  separately authorized staging operation, promote that exact SHA through the
-  canonical Finance Worker/UI preview and staging pipelines. Complete the
-  synthetic authenticated import/UI journey on the same artifact lineage.
+- [x] Promote current `origin/main` `c277032db96ba96484522a19994a66cbb323a46d`
+  through the canonical immutable candidate, Finance Worker/UI and CRM Pages
+  preview/staging paths. The synthetic authenticated import/UI canary passed in
+  run `30500922386` with zero threshold breaches; the workflow restored the
+  non-enabled staging baseline and synthetic grant.
 - [ ] Obtain an authorized streaming/provider path for fresh PostgreSQL
   offsite retrieval, verify integrity, and perform the isolated scratch
   restore. D1/runtime-config evidence does not close this PostgreSQL gate.
@@ -30,7 +31,11 @@
   attest only the isolated Worker, D1, KV, Pages project and environment
   configuration through the canonical path; do not copy staging identifiers.
 
-## Controle de Ponto — `codex/admin/workforce-timekeeping-complete`
+## Controle de Ponto — liberação atual de Workforce Timekeeping
+
+As marcações abaixo registram a entrega histórica. Elas não comprovam que o
+`main` atual tenha a mesma versão no CRM Pages, gateway e Worker, nem que a
+jornada autenticada atual continue válida.
 
 - [x] Domínio definitivo criado em `workforce/timekeeping` e montado no gateway.
 - [x] D1 modelado com migrations reproduzíveis, constraints, índices, snapshots e auditoria imutável.
@@ -42,8 +47,82 @@
 - [x] Perfil canônico preparado a partir do modelo de Pessoas, com campos privados cifrados, CNPJ por unidade e tela de perfil no Ponto.
 - [x] Testes locais do domínio, gateway, proxy, cliente, D1 e integração HTTP.
 - [x] Executar todos os gates finais (lint completo, testes completos e build de produção).
-- [x] Publicar e validar staging com D1/secrets próprios (workflow `29700256254`).
-- [x] Promover por workflow oficial e executar smoke produtivo somente leitura (produção `29700295125`; API `29700339758`; UI `29753110570`).
+- [x] Publicar e validar staging com D1/secrets próprios (workflow histórico `29700256254`).
+- [x] Promover por workflow oficial e executar smoke produtivo somente leitura (evidência histórica `29700295125`; API `29700339758`; UI `29753110570`).
+
+### P0 — release atual (candidato final ainda não selecionado)
+
+- [x] Integrar o candidato por PR #886 em `main` como
+  `10b2197731d0210cf8fc8cd961f7a787d73bf650`, com todos os checks obrigatórios
+  verdes. Esta integração não é uma promoção de Worker, gateway ou Pages.
+- [x] Inventariar integralmente o delta posterior à PR #886. Entre
+  `10b21977…` e `66424871…`, o `main` recebeu: contrato/finalização/convergência
+  do canário Finance (PRs #891/#895/#898), guardas produtivas e migration
+  aditiva Finance (PR #890), observação e agendamento seguro de releases
+  estáveis do Orb/n8n (#888/#896), ACL do
+  preparador de release nativo da Livia (#892) e contrato de acessibilidade do
+  QA da Livia (#897). O delta total contém 29 arquivos: 17 de Finance, 8 de
+  Orb/n8n, 2 do QA da Livia e 2 do preparador nativo, com
+  `.github/scripts/validate-deploy-topology.mjs` compartilhado na guarda
+  Finance. Nenhum deles altera diretamente o runtime, migration ou workflow
+  de Ponto, mas a classificação anterior de “somente um arquivo Finance” era
+  incorreta.
+- [ ] Selecionar um único SHA imutável somente depois de integrar os controles
+  obrigatórios de pilot/canary. O gate canônico aceita SHA ancestral
+  alcançável a partir de `main`; portanto `10b21977…` é tecnicamente
+  promovível, mas não é mais automaticamente o candidato correto.
+- [x] Restaurar a navegação de CONSULTOR/EMPLOYEE para exatamente Atendimento e
+  Ponto, preservando a autorização no servidor.
+- [x] Cobrir a regressão de navegação e incluir seus arquivos no path filter de
+  Timekeeping CI.
+- [x] Criar jornada autenticada sintética, com fixture efêmera, teardown
+  específico por execução e evidência sanitizada.
+- [x] Tornar `PONTO_PROFILE_DATA_KEY` obrigatório nos sync/deploys e registrar
+  release SHA/environment no health do Worker.
+- [x] Manter `ENABLE_CORE_WORKERS_DEPLOY=true` somente em `staging`.
+  `production` voltou a `false` em `2026-07-29T22:17:37Z`, antes de qualquer
+  dispatch, e permanece fail-closed até existirem staging, pilot e canary
+  válidos.
+- [ ] Implementar e validar, antes de produção, afinidade entre versões do Core
+  API e Timekeeping, roteamento gradual, coorte piloto baseada em contexto de
+  rede, grants mínimos, interrupção automática e evidência externa de SLO. A
+  política progressiva atual marca Core Workers, CRM Pages e Timekeeping como
+  bloqueados enquanto esses controles não existirem. Corrigir também o default
+  fail-open `${ENABLE:-true}` do Core deploy, o checkpoint Timekeeping rotulado
+  com o SHA do dispatch em vez do release SHA e a ausência de inputs/gates
+  executáveis para pilot/canary.
+- [ ] Criar primeiro `PONTO_PROFILE_DATA_KEY` em `staging` por processo de
+  segredo aprovado; não gerar/copyar valor pelo código. Somente após staging
+  completo e autorização pré-produção separada, provisionar um valor
+  independente em `production`.
+- [ ] Desacoplar o deploy produtivo do Core API para Ponto do binding Finance
+  ausente. O `api/wrangler.toml` atual referencia `skincos-finance`, que não
+  existe e já causou Cloudflare `10143`; a correção não pode provisionar nem
+  ativar Finance sob este objetivo.
+- [ ] Fazer preview e staging do mesmo SHA para Timekeeping, Core API e CRM
+  Pages; executar a jornada sintética pelo URL imutável do Pages e confirmar
+  que o teardown preservou auditoria.
+- [ ] Exercitar `module-control:timekeeping` em staging (`maintenance` →
+  `active`) e registrar o rollback; só então tornar `active` explícito em
+  produção após promoção imutável, piloto e observação.
+- [x] Fechar explicitamente o Ponto produtivo em `maintenance` pelo workflow
+  canônico `30496220685`. A contenção/rollback operacional mantém essa chave
+  explicitamente em `maintenance`; ela não deve ser removida, pois o estado
+  ausente é fail-open. O conjunto incumbente preservado para rollback de
+  artefato é Timekeeping deployment
+  `0da32d7c-6d6f-4b54-a538-6b7c642e57de`, Core API version
+  `a1d6ddb0-905d-4784-9e77-d1231cd75e90` e CRM Pages deployment
+  `a77cf500-f272-4d37-87c2-c02f78352c4e`, sempre com a manutenção retida até
+  nova atestação. `/api/ponto/me` passou a responder
+  `503/MODULE_MAINTENANCE`; a readiness ainda responde 200 e precisa ser
+  corrigida para refletir o controle operacional.
+- [ ] Corrigir a reconciliação operacional: o inventário agregado encontrou um
+  CONSULTOR ativo no Core de staging sem Workforce ativo correspondente; em
+  produção não há CONSULTOR ativo elegível para o piloto. Não criar ou ativar
+  identidades sem a decisão de Identity/Workforce apropriada.
+- [ ] Não considerar produção, piloto, conclusão ou arquivamento provados até
+  existirem artefatos, health/version/gateway e jornada autenticada para o
+  mesmo SHA.
 
 ## External/product follow-up
 

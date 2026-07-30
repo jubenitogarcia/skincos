@@ -102,12 +102,11 @@ function facebookPhotoObject(target) {
 }
 
 function facebookReadObjectId(target) {
-  // The token-vault only permits numeric Graph object IDs. For a feed post in
-  // pageId_postId form, validate the attached public photo and keep the post
-  // permalink as a separate, deterministic public URL.
-  return facebookCompositePost(target)
-    ? str(target.providerMediaId)
-    : str(target.providerObjectId);
+  // A composite Page post must be read as the post itself, not as one chosen
+  // attachment. Reading only the first photo/video made it impossible to
+  // detect a provider that accepted the post but omitted a later carousel
+  // child. The gateway permits this tightly-scoped pageId_postId GET path.
+  return str(target.providerObjectId);
 }
 
 function facebookCompositePermalink(target) {
@@ -137,6 +136,7 @@ function compactProviderBody(platform, body) {
       status: source.status,
       created_time: source.created_time,
       full_picture: source.full_picture,
+      attachments: compactFacebookAttachments(source.attachments),
     };
   }
   if (platform === 'instagram') {
@@ -158,6 +158,20 @@ function compactProviderBody(platform, body) {
   };
 }
 
+function compactFacebookAttachments(value) {
+  const data = asArray(asObject(value).data);
+  const compact = (entry) => {
+    const current = asObject(entry);
+    return {
+      media_type: current.media_type,
+      target: asObject(current.target).id,
+      media: asObject(current.media).id,
+      subattachments: asArray(asObject(current.subattachments).data).map(compact),
+    };
+  };
+  return data.map(compact);
+}
+
 function providerRequest(target) {
   const platform = str(target.platform).toLowerCase();
   const objectId = platform === 'facebook'
@@ -173,13 +187,148 @@ function providerRequest(target) {
   const fields = platform === 'instagram'
     ? 'id,permalink,media_type,caption,timestamp,thumbnail_url'
     : platform === 'facebook'
-      ? facebookStaticPost(target)
-        ? facebookPhotoObject(target)
-          ? 'id,link,name,created_time,images,from'
-          : 'id,permalink_url,message,created_time,full_picture,from'
+      ? facebookCompositePost(target)
+        ? 'id,permalink_url,message,created_time,attachments{media_type,media,target,subattachments{media_type,media,target}},from'
+        : facebookStaticPost(target)
+          ? facebookPhotoObject(target)
+            ? 'id,link,name,created_time,images,from'
+            : 'id,permalink_url,message,created_time,full_picture,from'
         : 'id,permalink_url,description,title,created_time,status,published,from'
       : 'id,permalink,media_type,text,timestamp';
   return { url, fields };
+}
+
+function expectedAccessibilitySupport(platform, mediaKind) {
+  if (platform === 'facebook') return 'unsupported';
+  if (platform === 'instagram' && mediaKind === 'video') return 'unsupported';
+  if ((platform === 'instagram' || platform === 'threads') && (mediaKind === 'image' || mediaKind === 'video')) return 'required';
+  return 'unsupported';
+}
+
+function assessAccessibilityContract(target) {
+  const platform = str(target.platform).toLowerCase();
+  const contract = asObject(target.accessibilityContract);
+  const items = asArray(contract.items).map((entry) => asObject(entry));
+  if (contract.schema !== 'livia.media-alt-text.v1' || contract.orderedBy !== 'groupOrder' || !items.length) {
+    return { status: 'failed', reason: 'accessibility_contract_missing_or_invalid' };
+  }
+
+  const semanticKeys = new Set();
+  const sourceKeys = new Set();
+  let requiredCount = 0;
+  let submittedRequiredCount = 0;
+  let unsupportedCount = 0;
+  for (const item of items) {
+    const sourceMediaId = str(item.sourceMediaId);
+    const semanticJobKey = str(item.semanticJobKey);
+    const mediaKind = str(item.mediaKind).toLowerCase();
+    const support = str(item.support).toLowerCase();
+    const expectedAltText = str(item.expectedAltText);
+    const submittedAltText = str(item.submittedAltText);
+    const groupOrder = Number(item.groupOrder);
+    if (!sourceMediaId || !semanticJobKey || !Number.isInteger(groupOrder) || groupOrder < 0 || !['image', 'video'].includes(mediaKind)) {
+      return { status: 'failed', reason: 'accessibility_item_identity_invalid' };
+    }
+    if (semanticKeys.has(semanticJobKey) || sourceKeys.has(`${sourceMediaId}|${groupOrder}`)) {
+      return { status: 'failed', reason: 'accessibility_item_identity_duplicate' };
+    }
+    semanticKeys.add(semanticJobKey);
+    sourceKeys.add(`${sourceMediaId}|${groupOrder}`);
+    const expectedSupport = expectedAccessibilitySupport(platform, mediaKind);
+    if (support !== expectedSupport) {
+      return { status: 'failed', reason: 'accessibility_support_mismatch' };
+    }
+    if (support === 'required') {
+      requiredCount += 1;
+      if (!expectedAltText || !submittedAltText || expectedAltText !== submittedAltText) {
+        return { status: 'failed', reason: 'alt_text_not_submitted_or_mismatched' };
+      }
+      submittedRequiredCount += 1;
+    } else {
+      unsupportedCount += 1;
+      if (submittedAltText) return { status: 'failed', reason: 'alt_text_submitted_to_unsupported_media' };
+    }
+  }
+
+  if (Number(contract.requiredCount) !== requiredCount ||
+      Number(contract.submittedRequiredCount) !== submittedRequiredCount ||
+      Number(contract.unsupportedCount) !== unsupportedCount) {
+    return { status: 'failed', reason: 'accessibility_contract_count_mismatch' };
+  }
+  return requiredCount
+    ? { status: 'accepted', reason: 'submitted_to_provider_but_not_readable_from_public_object', requiredCount, submittedRequiredCount, unsupportedCount }
+    : { status: 'unsupported', reason: `${platform}_media_alt_text_not_supported_in_current_flow`, requiredCount, submittedRequiredCount, unsupportedCount };
+}
+
+function orderedMediaEvidence(target) {
+  const contract = asObject(target.mediaEvidenceContract);
+  const items = asArray(contract.items).map((entry) => asObject(entry));
+  if (contract.schema !== 'livia.media-evidence.v1' || contract.orderedBy !== 'groupOrder' || !items.length) {
+    return { status: 'failed', reason: 'media_evidence_contract_missing_or_invalid', items: [] };
+  }
+  const seenSemanticKeys = new Set();
+  const seenSourceKeys = new Set();
+  let previousOrder = -1;
+  for (const item of items) {
+    const sourceMediaId = str(item.sourceMediaId);
+    const semanticJobKey = str(item.semanticJobKey);
+    const providerMediaId = str(item.providerMediaId);
+    const mediaKind = str(item.mediaKind).toLowerCase();
+    const groupOrder = Number(item.groupOrder);
+    if (!sourceMediaId || !semanticJobKey || !providerMediaId || !Number.isInteger(groupOrder) || groupOrder < 0 || !['image', 'video'].includes(mediaKind)) {
+      return { status: 'failed', reason: 'media_evidence_item_identity_invalid', items: [] };
+    }
+    if (seenSemanticKeys.has(semanticJobKey) || seenSourceKeys.has(`${sourceMediaId}|${groupOrder}`) || groupOrder < previousOrder) {
+      return { status: 'failed', reason: 'media_evidence_order_or_identity_invalid', items: [] };
+    }
+    seenSemanticKeys.add(semanticJobKey);
+    seenSourceKeys.add(`${sourceMediaId}|${groupOrder}`);
+    previousOrder = groupOrder;
+  }
+  return { status: 'accepted', reason: 'ordered_semantic_media_evidence', items };
+}
+
+function facebookAttachmentIds(value, output = new Set()) {
+  if (Array.isArray(value)) {
+    for (const entry of value) facebookAttachmentIds(entry, output);
+    return output;
+  }
+  const current = asObject(value);
+  if (!Object.keys(current).length) return output;
+  for (const candidate of [asObject(current.target).id, asObject(current.media).id]) {
+    const id = str(candidate);
+    if (id) output.add(id);
+  }
+  facebookAttachmentIds(asObject(current.subattachments).data, output);
+  return output;
+}
+
+function assessMediaEvidence(target, body) {
+  const contract = orderedMediaEvidence(target);
+  if (contract.status !== 'accepted') return contract;
+  if (!facebookCompositePost(target)) return contract;
+
+  const attachmentIds = facebookAttachmentIds(asObject(asObject(body).attachments).data);
+  if (!attachmentIds.size) {
+    return { status: 'failed', reason: 'facebook_composite_attachments_missing', items: contract.items };
+  }
+  const missing = contract.items
+    .map((item) => str(item.providerMediaId))
+    .filter((id) => !attachmentIds.has(id));
+  if (missing.length) {
+    return {
+      status: 'failed',
+      reason: 'facebook_composite_attachment_identity_missing',
+      items: contract.items,
+      missingProviderMediaIds: missing,
+    };
+  }
+  return {
+    status: 'accepted',
+    reason: 'facebook_composite_attachments_match_ordered_media_evidence',
+    items: contract.items,
+    attachmentIds: [...attachmentIds],
+  };
 }
 
 function buildDelivery(target, response) {
@@ -204,7 +353,7 @@ function buildDelivery(target, response) {
   const facebookPublished = staticFacebook ? response.statusCode === 200 && Boolean(permalink) : body.published === true &&
     str(asObject(facebookStatus.publishing_phase).publish_status).toLowerCase() === 'published';
   const expectedFacebookPageId = compositeFacebook ? str(target.providerObjectId).split('_')[0] : '';
-  const captionReadable = !(platform === 'facebook' && compositeFacebook);
+  const captionReadable = true;
 
   if (response.statusCode !== 200) errors.push(`provider_read_failed:${response.statusCode}`);
   if (!permalink) errors.push('public_permalink_missing');
@@ -217,22 +366,9 @@ function buildDelivery(target, response) {
   }
   if (captionReadable && !exactText(caption, expected.caption)) errors.push('caption_mismatch');
 
-  const accessibility = platform === 'facebook'
-    ? { status: 'unsupported', reason: staticFacebook
-      ? 'facebook_static_post_alt_text_not_available_in_current_flow'
-      : 'facebook_reels_api_does_not_receive_alt_text_in_this_flow' }
-    : mediaKind === 'video'
-      ? { status: 'unsupported', reason: `${platform}_video_alt_text_not_supported` }
-    : submitted.altText
-      ? { status: 'accepted', reason: 'submitted_to_provider_but_not_readable_from_public_object' }
-      : { status: 'failed', reason: 'alt_text_not_submitted' };
-  const title = platform === 'instagram' || platform === 'threads' || staticFacebook
-    ? { status: 'unsupported', reason: `${platform}_${mediaKind || 'media'}_has_no_public_title_contract` }
-    : submitted.title
-      ? exactText(body.title, expected.title) && str(body.title)
-        ? { status: 'verified' }
-        : { status: 'accepted', reason: 'submitted_to_provider_but_not_returned_by_object_read' }
-      : { status: 'failed', reason: 'title_not_submitted' };
+  const accessibility = assessAccessibilityContract(target);
+  const mediaEvidence = assessMediaEvidence(target, body);
+  const title = { status: 'unsupported', reason: `${platform}_${mediaKind || 'media'}_has_no_public_title_contract` };
   const cover = mediaKind !== 'video'
     ? { status: 'unsupported', reason: 'not_applicable_for_static_image' }
     : platform === 'instagram'
@@ -242,6 +378,10 @@ function buildDelivery(target, response) {
         : { status: 'failed', reason: 'instagram_thumbnail_missing' }
       : { status: 'failed', reason: 'cover_not_requested' }
     : { status: 'unsupported', reason: `${platform}_video_cover_not_configurable_in_this_flow` };
+
+  if (accessibility.status === 'failed') errors.push(`accessibility_failed:${str(accessibility.reason) || 'unknown'}`);
+  if (mediaEvidence.status === 'failed') errors.push(`media_evidence_failed:${str(mediaEvidence.reason) || 'unknown'}`);
+  if (cover.status === 'failed') errors.push(`cover_failed:${str(cover.reason) || 'unknown'}`);
 
   return {
     platform,
@@ -258,10 +398,11 @@ function buildDelivery(target, response) {
         : 'accepted',
       title,
       accessibility,
+      mediaEvidence,
       cover,
     },
     verificationNotes: compositeFacebook
-      ? ['facebook_carousel_post_confirmed_by_public_attached_photo_and_submitted_feed_payload']
+      ? ['facebook_carousel_post_confirmed_by_public_post_readback_and_ordered_attachment_contract']
       : [],
     errors,
     provider: compactProviderBody(platform, body),
@@ -342,7 +483,18 @@ async function main() {
   if (failures.length) process.exitCode = 2;
 }
 
-main().catch((error) => {
-  console.error(error && error.stack ? error.stack : String(error));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error && error.stack ? error.stack : String(error));
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  assessAccessibilityContract,
+  assessMediaEvidence,
+  buildDelivery,
+  expectedAccessibilitySupport,
+  facebookAttachmentIds,
+  orderedMediaEvidence,
+};

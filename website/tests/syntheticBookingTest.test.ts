@@ -7,7 +7,8 @@ const validInput = {
     providedToken: "temporary-test-token",
     patientName: "META CAPI TEST Synthetic",
     email: "schedule@capi-test.invalid",
-    whatsapp: "555199990000",
+    // Mirrors normalizePhone("555199990000") in the booking request route.
+    whatsapp: "+555199990000",
 };
 
 test("synthetic booking notification suppression requires the secret and all fake identity markers", () => {
@@ -15,5 +16,6 @@ test("synthetic booking notification suppression requires the secret and all fak
     assert.equal(isAuthorizedSyntheticBookingTest({ ...validInput, providedToken: "wrong-token" }), false);
     assert.equal(isAuthorizedSyntheticBookingTest({ ...validInput, patientName: "Maria Silva" }), false);
     assert.equal(isAuthorizedSyntheticBookingTest({ ...validInput, email: "maria@example.com" }), false);
-    assert.equal(isAuthorizedSyntheticBookingTest({ ...validInput, whatsapp: "555199999999" }), false);
+    assert.equal(isAuthorizedSyntheticBookingTest({ ...validInput, whatsapp: "+555199999999" }), false);
+    assert.equal(isAuthorizedSyntheticBookingTest({ ...validInput, whatsapp: "555199990000" }), false);
 });

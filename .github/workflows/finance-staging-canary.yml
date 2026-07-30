@@ -97,7 +97,7 @@ jobs:
         continue-on-error: true
         env:
           FINANCE_STAGING_CANARY_ACK: "1"
-          FINANCE_CANARY_BASE_URL: https://api-staging.skincos.com.br
+          FINANCE_CANARY_BASE_URL: https://skincos-staging.pages.dev
           FINANCE_CANARY_USERNAME: finance-staging-smoke
           FINANCE_CANARY_PASSWORD: ${{ secrets.FINANCE_SMOKE_PASSWORD }}
           FINANCE_CANARY_SCOPE_ID: finance-scope-novo-hamburgo
@@ -109,13 +109,14 @@ jobs:
         continue-on-error: true
         env:
           FINANCE_SMOKE_ACK: "1"
-          FINANCE_SMOKE_BASE_URL: https://api-staging.skincos.com.br
+          FINANCE_SMOKE_BASE_URL: https://skincos-staging.pages.dev
           FINANCE_SMOKE_USERNAME: finance-staging-smoke
           FINANCE_SMOKE_PASSWORD: ${{ secrets.FINANCE_SMOKE_PASSWORD }}
           FINANCE_SMOKE_SCOPE_ID: finance-scope-novo-hamburgo
         run: node finance/scripts/staging-import-smoke.mjs --fixture finance/test/fixtures/staging-smoke-import.csv --commit --undo --report "$RUNNER_TEMP/import-report.json"
       - name: Install browser dependencies for isolated shell smoke
         if: steps.canary_open.outcome == 'success'
+        timeout-minutes: 20
         run: |
           npm --prefix crm/console ci
           npm --prefix crm/console exec -- playwright install --with-deps chromium

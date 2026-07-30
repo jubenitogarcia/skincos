@@ -5,7 +5,7 @@
 CREATE TRIGGER IF NOT EXISTS finance_movements_no_delete BEFORE DELETE ON finance_movements
 BEGIN SELECT RAISE(ABORT, 'finance movements cannot be deleted'); END;
 
-CREATE TRIGGER IF NOT EXISTS finance_movements_immutable_fields BEFORE UPDATE OF scope_id,type,account_id,destination_account_id,category_id,payee_id,cost_center_id,description,amount_minor,currency,base_currency,base_amount_minor,exchange_rate_ppm,competence_date,due_date,paid_date,source,external_id,created_by,created_at,submitted_at ON finance_movements
+CREATE TRIGGER IF NOT EXISTS finance_movements_immutable_fields BEFORE UPDATE OF scope_id,source,external_id,created_by,created_at,submitted_at ON finance_movements
 BEGIN SELECT RAISE(ABORT, 'submitted finance movement fields are immutable'); END;
 
 CREATE TRIGGER IF NOT EXISTS finance_movement_status_transition BEFORE UPDATE OF operational_status ON finance_movements
@@ -52,9 +52,11 @@ BEGIN SELECT RAISE(ABORT, 'journal lines are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS finance_movement_splits_no_update BEFORE UPDATE ON finance_movement_splits
 BEGIN SELECT RAISE(ABORT, 'movement splits are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS finance_movement_splits_no_delete BEFORE DELETE ON finance_movement_splits
+WHEN NOT EXISTS(SELECT 1 FROM finance_movements m WHERE m.id=OLD.movement_id AND m.status='draft' AND m.operational_status='pending')
 BEGIN SELECT RAISE(ABORT, 'movement splits are append-only'); END;
 
 CREATE TRIGGER IF NOT EXISTS finance_installments_immutable_fields BEFORE UPDATE OF movement_id,sequence,due_date,amount_minor,created_at ON finance_installments
+WHEN NOT EXISTS(SELECT 1 FROM finance_movements m WHERE m.id=OLD.movement_id AND m.status='draft' AND m.operational_status='pending')
 BEGIN SELECT RAISE(ABORT, 'installment evidence is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS finance_installments_status_transition BEFORE UPDATE OF status ON finance_installments
 WHEN NOT (

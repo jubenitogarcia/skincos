@@ -30,7 +30,22 @@ scripts/runtime/prepare-native-source-release.sh \
 O comando valida o construtor, a matriz offline e os entrypoints antes de criar
 `/opt/skincos/releases/$SKINCOS_RELEASE_ID/source`; ele não muda
 `/opt/skincos/current/source`. Em seguida, gere o manifesto da versão
-candidata e publique exclusivamente pela transação versionada:
+candidata pelo construtor único e valide o grafo produzido. Não aplique patches
+isolados manualmente: o construtor inclui, como unidade atômica de candidato,
+as marcas Drive por fonte, o preflight do Token Vault, o contrato de alt text,
+o contrato de carrossel Facebook e o pin/runtime semanticamente idempotente.
+
+```bash
+sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/prepare-livia-production-candidate.js \
+  --input /var/tmp/livia-live-export.json \
+  --output /var/tmp/livia-candidate.json \
+  --release-root /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine
+sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/validate-livia-workflow.js \
+  /var/tmp/livia-candidate.json
+```
+
+Somente então gere o manifesto da versão candidata e publique exclusivamente
+pela transação versionada:
 
 ```bash
 sudo -u postgres node /opt/skincos/releases/"$SKINCOS_RELEASE_ID"/source/orb/engine/scripts/workflow-runtime-manifest.js \
@@ -62,6 +77,23 @@ ou `--verifier`. Não introduza wrapper para aceitar `caption_mismatch`: uma
 divergência de legenda é falha causal e deve bloquear Drive, notificações e
 cleanup de sucesso até a evidência do provedor ser reconciliada no verificador
 versionado.
+
+### Replay offline do grafo de publicação
+
+Para conferir uma execução histórica sem chamar o gateway, use o `qa-runner`
+da própria release imutável:
+
+```bash
+sudo node /opt/skincos/releases/<release-40-hex>/source/orb/engine/scripts/livia/qa-runner.js \
+  replay-build-graph --execution '<execution-id>'
+```
+
+O runner fixa `LIVIA_BUILD_JOB_GRAPH_SOURCE` em
+`/opt/skincos/releases/<release-40-hex>/source/orb/engine/compose2-current.js`.
+Ele não pode herdar `/opt/skincos/current`, `ORB_ROOT`, `N8N_ROOT` nem procurar
+o antigo Code node. Confirme no resultado a quantidade/fases dos jobs, a
+`coverUrl` de Instagram e o contrato de acessibilidade de Threads; uma falha
+ou qualquer tentativa de gateway invalida o replay.
 
 ## Rollback de workflow
 

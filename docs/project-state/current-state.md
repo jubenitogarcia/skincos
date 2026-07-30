@@ -1,5 +1,131 @@
 # Current state
 
+## Finance — current-main staging lineage and canary passed — 2026-07-29T23:54Z
+
+`origin/main` `c277032db96ba96484522a19994a66cbb323a46d` is the current
+Finance staging candidate. Candidate `30500613099`, Finance Worker/UI/CRM Pages
+preview `30500694945`/`30500696857`/`30500698417`, and staging
+`30500732310`/`30500734160`/`30500735957` all used that explicit SHA. Finance
+Worker staging completed its encrypted pre-migration checkpoint, additive
+migration step, immutable version deployment and Worker smoke through its
+canonical workflow.
+
+Synthetic canary `30500922386` passed against that lineage. The authenticated
+journey covered login/session, bootstrap, scope and negative authorization,
+Finance health/readiness, import stage/analyze/decision/preview/commit,
+idempotent replay, conflict, audit and compensating undo; the independent UI
+and shell smoke also passed. The canary decision recorded Finance p95 426 ms
+(limit 1000 ms), zero errors and zero authentication, journey, data,
+audit or dependency failures. Its finalizer restored the non-enabled staging
+baseline and the temporary synthetic grant. The standalone 503 from the prior
+canary did not recur. A non-Finance `/api/instagram/status` 503 was observed in
+the browser console but did not affect Finance responses or the shell result.
+
+Finance remains `experimental`, `module_enabled=false`, without production
+resources, user grants or pilot activation. The only technical gate before a
+pilot-package review is a fresh provider-separated PostgreSQL retrieval and
+isolated scratch restore; named human approval and separately authorized
+production provisioning remain subsequent gates. The older Finance section
+below is retained as historical audit trail and is superseded where it conflicts
+with this section.
+
+## Workforce Timekeeping release — source integrated; production fail-closed — 2026-07-29T22:29Z
+
+PR #886 integrated the Ponto source remediation into `main` as
+`10b2197731d0210cf8fc8cd961f7a787d73bf650`, with required checks green. It
+restored exactly `atendimento` and `ponto` for CONSULTOR/EMPLOYEE while keeping
+server-side authorization, added the synthetic authenticated staging journey,
+made `PONTO_PROFILE_DATA_KEY` mandatory, and stamped Worker health with release
+SHA/environment. This proves integrated source only; it is not a deployment.
+
+The complete delta from that merge to the freshly fetched `origin/main`
+`6642487142e4de30cf27ae337da60d9f7f64449c` contains 29 files and is
+classified as follows:
+
+- Finance, 17 files (PRs #891, #890, #895 and #898):
+  `.github/scripts/finance-production-preflight.mjs`,
+  `.github/scripts/validate-deploy-topology.mjs`,
+  `.github/workflows/deploy-finance.yml`,
+  `crm/console/modules/RemoteFinanceModule.tsx`,
+  `crm/console/vite.finance.config.ts`, migrations `0007`, `0008` and `0013`,
+  `finance/package.json`, both staging smoke scripts, the Worker release smoke
+  and five Finance tests.
+  The shared topology validator change enforces the Finance preflight; it does
+  not alter the Ponto publishers.
+- Orb/n8n release watch, 8 files (#888/#896): the qualification document,
+  scheduled workflow, `audit-release-baseline.sh`,
+  `release-watch-policy.json`, three tests and `watch-stable-release.sh`.
+- Livia QA accessibility, 2 files (PR #897): `qa-runner.js` and its test.
+- Native Livia release preparation, 2 files (PR #892):
+  `prepare-native-source-release.sh` and its test.
+
+No file in that delta directly changes the Timekeeping runtime/migrations,
+Ponto gateway routes or the three canonical Ponto publisher workflows. The
+prior assertion that the delta was only one Finance file was false and is
+superseded. The immutable promotion gate accepts any full SHA reachable from
+`main`, so ancestral `10b21977…` remains technically eligible; it is not the
+final candidate because the governed pilot/canary controls still need a
+reviewed source change. No final release SHA is selected yet.
+
+The progressive policy requires `preview → staging → pilot → canary →
+production` and currently marks Core Workers, CRM Pages and Timekeeping
+pilot/canary blocked by absent version affinity, gradual routing, pilot cohort
+configuration and external SLO interruption evidence. The executable publishers
+offer only preview/staging/production, so the policy predecessors are not
+enforced; Core deploy also defaults a missing gate to enabled
+(`${ENABLE:-true}`), and the Timekeeping checkpoint is named with the dispatch
+SHA instead of the selected ancestral release SHA. CRM Pages has no
+Ponto-specific production gate. These are release-control defects, not
+documentation-only blockers. The production Core API config also binds
+`FINANCE` to nonexistent Worker `skincos-finance`; a prior API promotion failed
+with Cloudflare `10143` before upload. Ponto therefore needs a governed
+gateway-only release path that does not require or advance Finance. The production
+`ENABLE_CORE_WORKERS_DEPLOY` value was therefore restored from `true` to
+`false` at `2026-07-29T22:17:37Z`; staging remains `true`. No workflow was
+dispatched by either variable change.
+
+`PONTO_PROFILE_DATA_KEY` remains absent by name from accessible GitHub
+staging/production secret metadata and both deployed Timekeeping Workers.
+The Cloudflare account's only Secrets Store is empty, so it is not an approved
+source for this key.
+`module-control:timekeeping` remains absent in staging. Production was moved
+from the same implicit default to an explicit `maintenance` state by canonical
+workflow run `30496220685` at `2026-07-29T22:28:04Z`; the prior absent-key
+state is the recorded rollback checkpoint. Production health now reports
+`ok=false`, `ready=false`, `availability=maintenance`, and `/api/ponto/me`
+returns `503/MODULE_MAINTENANCE`. The separate readiness endpoint still returns
+200/ready and must be fixed before release because it ignores module
+availability. Existing version fields still attest only the incumbent
+`1.0.0/unknown`, not #886 or a later candidate. Aggregate Identity/Workforce
+inventory found one active, unit-scoped staging Core CONSULTOR but zero active
+staging Workforce CONSULTORs (the only staging employee is a terminated
+SUPERVISOR). Production has zero active Core CONSULTOR/EMPLOYEE; its one linked
+CONSULTOR onboarding/hierarchy pair is INVITED and the employee is on LEAVE,
+so eligible active pilot count is also zero. The dedicated Ponto smoke account
+is a GESTOR automation identity, not an authorized consultant pilot. No PII was
+read or recorded.
+
+Current deployed lineage is split. Production Timekeeping is 100% on Worker
+version `0da32d7c-6d6f-4b54-a538-6b7c642e57de`, Core API is on
+`a1d6ddb0-905d-4784-9e77-d1231cd75e90`, and CRM Pages deployment
+`a77cf500-f272-4d37-87c2-c02f78352c4e` still identifies source `f30f66e…`.
+Staging Timekeeping is on `d6e60024-bb67-48da-91b1-4d7e16ee31ba`, Core API on
+`bc80ab45-c8c8-4742-9109-7e336303dd4d`, and Pages deployment
+`2bd3d04d-30df-4d2b-9832-8e0da69151b1` identifies `c64bc546…`. More critically,
+the staging Pages proxy resolves its canonical default to the production API
+and reports `actorKeyConfigured=false`; it is not a safe staging journey
+surface until the isolated proxy configuration is corrected and verified.
+
+The secret layout is also not independently isolated yet. Besides the missing
+profile key, several Ponto runtime secrets resolve from repository scope rather
+than environment overrides; production and staging can therefore inherit the
+same value. A release must migrate all Ponto secret names to independent
+environment custody without exposing or copying their values.
+
+No candidate preview/staging deployment, D1 write, migration, KV transition,
+authenticated candidate journey, pilot, canary or production promotion has
+occurred. Historical Ponto records below remain historical only.
+
 ## Authoritative Finance reconciliation — 2026-07-29T14:02Z
 
 This entry is the authoritative Finance status for `origin/main`
