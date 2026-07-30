@@ -388,8 +388,11 @@ jornada autenticada atual continue válida.
   secrets de login e coorte sem inventar vínculo ou expor PII. Hoje não há
   identidade elegível/autorizada.
 - [ ] Prover `PONTO_PILOT_RUNNER_LABELS_JSON` exclusivamente como repository
-  variable (sem homônimo no environment `production`), um runner clínico
-  online/idle e `PONTO_CANARY_COHORT_PERCENTAGE`; habilitar as flags produtivas
+  variable (sem homônimo no environment `production`), com os três labels
+  automáticos e um label `ponto-jit-*` one-shot; piná-lo a exatamente um runner
+  clínico online/idle, ID/nome e supervisor JIT revisados. Prover também
+  `PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM` somente como repository
+  variable e `PONTO_CANARY_COHORT_PERCENTAGE`; habilitar as flags produtivas
   apenas no estágio autorizado.
 - [ ] Completar pilot, canary, produção, observação pós-release e cleanup
   somente com predecessores, health/version/gateway, SLO e jornada

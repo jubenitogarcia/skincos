@@ -466,15 +466,18 @@ jobs:
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments, Actions, Variables, and Administration read is required'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$RUNNER_TEMP/production-secret-names.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runners" > "$RUNNER_TEMP/repository-runners.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runners?per_page=100" > "$RUNNER_TEMP/repository-runners.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON" > "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM" > "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json"
           gh api "repos/$GITHUB_REPOSITORY/environments/production/variables?per_page=100" > "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json"
           node - \
             "$RUNNER_TEMP/production-secret-names.json" \
             "$RUNNER_TEMP/repository-runners.json" \
             "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json" \
             "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json" \
             "$PONTO_ARTIFACT_DIR/cohort-summary.json" <<'NODE'
+          const crypto = require("crypto");
           const fs = require("fs");
           const path = require("path");
           const secretPayload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
@@ -482,22 +485,95 @@ jobs:
           for (const name of ["PONTO_PILOT_LOGIN", "PONTO_PILOT_PASSWORD", "PONTO_PILOT_COHORT_JSON", "PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
             if (!names.has(name)) throw new Error(`${name} must be owned by the production environment`);
           }
+          const policy = JSON.parse(fs.readFileSync(".github/governance/progressive-release-policy.json", "utf8"));
+          const expected = policy?.pilotRunner?.production;
+          const requiredBaseLabels = ["self-hosted", "Linux", "X64"];
+          const customLabels = Array.isArray(expected?.requiredLabels)
+            ? expected.requiredLabels.filter(label => !requiredBaseLabels.includes(label))
+            : [];
+          const jitPaths = [
+            expected?.jitAttestationFilePath,
+            expected?.jitCredentialBundleFilePath,
+            expected?.jitDecryptKeyFilePath,
+          ].map(value => String(value || ""));
+          const repositoryEncryptionVariable = JSON.parse(fs.readFileSync(process.argv[6], "utf8"));
+          let jitPublicKey = null;
+          let runnerEncryptionPublicKey = null;
+          let runnerEncryptionFingerprint = "";
+          try { jitPublicKey = crypto.createPublicKey(String(expected?.jitAttestationPublicKeyPem || "")); } catch {}
+          try {
+            runnerEncryptionPublicKey = crypto.createPublicKey(String(repositoryEncryptionVariable?.value || ""));
+            const publicDer = runnerEncryptionPublicKey.export({ type: "spki", format: "der" });
+            runnerEncryptionFingerprint = crypto.createHash("sha256").update(publicDer).digest("hex");
+          } catch {}
+          if (
+            !/^[1-9][0-9]{0,19}$/.test(String(expected?.runnerId || ""))
+            || typeof expected?.runnerName !== "string"
+            || !expected.runnerName.trim()
+            || typeof expected?.runnerIsolationRef !== "string"
+            || !expected.runnerIsolationRef.trim()
+            || !Array.isArray(expected?.requiredLabels)
+            || expected.requiredLabels.length !== 4
+            || new Set(expected.requiredLabels).size !== expected.requiredLabels.length
+            || expected.requiredLabels.some(label => typeof label !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(label))
+            || !requiredBaseLabels.every(label => expected.requiredLabels.includes(label))
+            || customLabels.length !== 1
+            || !/^ponto-jit-[a-z0-9][a-z0-9-]{15,63}$/.test(customLabels[0])
+            || typeof expected?.networkContextCustodyRef !== "string"
+            || !expected.networkContextCustodyRef.trim()
+            || !/^[0-9a-f]{64}$/.test(String(expected?.encryptionPublicKeySha256 || ""))
+            || expected?.jitMode !== "ephemeral-pre-job-hook-ed25519-v1"
+            || !/^[a-z][a-z0-9-]{1,63}$/.test(String(expected?.jitAttestationKeyId || ""))
+            || jitPublicKey?.asymmetricKeyType !== "ed25519"
+            || repositoryEncryptionVariable?.name !== "PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM"
+            || runnerEncryptionPublicKey?.asymmetricKeyType !== "rsa"
+            || Number(runnerEncryptionPublicKey?.asymmetricKeyDetails?.modulusLength || 0) < 2048
+            || runnerEncryptionFingerprint !== String(expected?.encryptionPublicKeySha256 || "").toLowerCase()
+            || jitPaths.some(value => !path.posix.isAbsolute(value))
+            || new Set(jitPaths).size !== jitPaths.length
+            || new Set(jitPaths.map(value => path.posix.dirname(value))).size !== 1
+            || typeof expected?.jitSupervisorCustodyRef !== "string"
+            || !expected.jitSupervisorCustodyRef.trim()
+            || typeof expected?.jitCleanupHookCustodyRef !== "string"
+            || !expected.jitCleanupHookCustodyRef.trim()
+          ) throw new Error("production one-shot pilot runner policy remains fail-closed");
           const repositoryVariable = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
           const environmentVariables = JSON.parse(fs.readFileSync(process.argv[5], "utf8")).variables || [];
-          if (environmentVariables.some(item => item?.name === "PONTO_PILOT_RUNNER_LABELS_JSON")) {
-            throw new Error("PONTO_PILOT_RUNNER_LABELS_JSON environment shadowing is forbidden");
+          const shadowed = new Set(environmentVariables.map(item => item?.name));
+          if (
+            shadowed.has("PONTO_PILOT_RUNNER_LABELS_JSON")
+            || shadowed.has("PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM")
+          ) {
+            throw new Error("Ponto pilot runner repository variables may not be shadowed by the production environment");
           }
           let requiredLabels;
           try { requiredLabels = JSON.parse(repositoryVariable?.value || ""); } catch {}
-          if (!Array.isArray(requiredLabels) || !requiredLabels.length || requiredLabels.some(value => typeof value !== "string" || !value)) throw new Error("PONTO_PILOT_RUNNER_LABELS_JSON is absent or invalid");
-          const runners = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).runners || [];
-          const ready = runners.some(runner => runner.status === "online" && !runner.busy && requiredLabels.every(label => (runner.labels || []).some(item => item.name === label)));
-          if (!ready) throw new Error("no online idle runner has the exact approved pilot labels");
+          if (
+            repositoryVariable?.name !== "PONTO_PILOT_RUNNER_LABELS_JSON"
+            || JSON.stringify(requiredLabels) !== JSON.stringify(expected.requiredLabels)
+          ) throw new Error("repository runner selector differs from the versioned one-shot policy");
+          const runnerPayload = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const runners = runnerPayload.runners || [];
+          if (runnerPayload.total_count !== runners.length) {
+            throw new Error("runner inventory exceeds the bounded complete attestation page");
+          }
+          const matching = runners.filter((runner) => {
+            const labels = (runner.labels || []).map(item => String(item?.name || ""));
+            return labels.length === requiredLabels.length
+              && requiredLabels.every(label => labels.includes(label));
+          });
+          if (
+            matching.length !== 1
+            || String(matching[0]?.id || "") !== String(expected.runnerId)
+            || matching[0]?.name !== expected.runnerName
+            || matching[0]?.status !== "online"
+            || matching[0]?.busy !== false
+          ) throw new Error("exact policy-pinned one-shot clinic runner is not uniquely online and idle");
           if (process.env.STAGE === "canary") {
             const percentage = Number(process.env.CANARY_COHORT_PERCENTAGE);
             if (!Number.isInteger(percentage) || percentage < 1 || percentage > 100) throw new Error("PONTO_CANARY_COHORT_PERCENTAGE must be 1..100");
           }
-          fs.writeFileSync(process.argv[6], `${JSON.stringify({
+          fs.writeFileSync(process.argv[7], `${JSON.stringify({
             configured: true,
             valuesHydratedOnCoordinator: false,
             validatedByName: true,
@@ -514,7 +590,8 @@ jobs:
             "$RUNNER_TEMP/production-secret-names.json" \
             "$RUNNER_TEMP/repository-runners.json" \
             "$RUNNER_TEMP/ponto-pilot-runner-labels-repository-variable.json" \
-            "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json"
+            "$RUNNER_TEMP/ponto-pilot-runner-environment-variables.json" \
+            "$RUNNER_TEMP/ponto-pilot-runner-encryption-repository-variable.json"
       - name: Attest unconditional edge blocks before any candidate mutation
         if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
         env:
@@ -675,11 +752,7 @@ jobs:
           const fs = require("fs");
           const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const runs = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).workflow_runs || [];
-          if (
-            workflow.state !== "active"
-            || workflow.path !== ".github/workflows/ponto-production-baseline.yml"
-            || workflow.name !== "Ponto production baseline"
-          ) throw new Error("canonical baseline workflow is unavailable");
+          if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-production-baseline.yml") throw new Error("canonical baseline workflow is unavailable");
           const exactTitle = new RegExp(
             `^Ponto baseline ${process.env.RELEASE_SHA} staging=${process.env.PREDECESSOR_RUN_ID} orchestrator=${process.env.GITHUB_RUN_ID} nonce=[0-9a-f]{32}$`,
           );
@@ -692,6 +765,7 @@ jobs:
               && run.head_branch === "main"
               && run.head_sha === process.env.RELEASE_SHA
               && run.run_attempt === 1
+              && run.name === "Ponto production baseline"
               && run.repository?.full_name === process.env.GITHUB_REPOSITORY
               && String(run.repository?.id || "") === process.env.GITHUB_REPOSITORY_ID
               && run.head_repository?.full_name === process.env.GITHUB_REPOSITORY
