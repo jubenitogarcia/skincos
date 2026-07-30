@@ -1,5 +1,36 @@
 # DECISIONS
 
+## 2026-07-30 - Accept the complete preview but keep staging closed
+
+- Decision: PR #930's merge
+  `71c54b1d406317c614dc33e48ced170458fbd707` and coordinator run
+  `30566547605` are the first complete four-surface Ponto preview. The
+  Timekeeping, Identity/Inventory, Core API and CRM Pages children all used
+  that exact SHA and completed their non-mutating publishers. Combined evidence
+  artifact `8769249449` and sanitized run ledger `8769249808` are the canonical
+  hosted records; private checkpoint
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T144137-20-complete-preview.md`
+  retains every artifact digest.
+- Decision: the preview proves build/test/dry-run lineage only. It does not
+  authorize staging and does not prove a migration, live deployment,
+  module-control transition, authenticated journey, rollback, pilot, canary,
+  external SLO or production use.
+- Decision: the workflow-run watchdog must skip a successful first-attempt
+  coordinator before provenance validation. It continues to admit
+  failure/cancelled/timed-out first attempts and every rerun, including a
+  successful unauthorized rerun. Run `30567091382` proved the missing
+  admission predicate; all emergency jobs skipped and no mutation occurred.
+- Decision: staging remains fail-closed until independent deployment approval,
+  approved target-specific secret custody, the policy-pinned close-only broker,
+  split-custody WAF enforcement and external probes, Ponto resource selectors,
+  clinic JIT runner, Identity/Workforce-authorized cohort and external SLO
+  monitoring are all functional. Existing Cloudflare resources are not release
+  authority, and the four `ENABLE_PONTO_*` flags remain false/absent.
+- Impact: if `main` advances after this evidence, the coordinator contract
+  requires a fresh preview on the new exact `GITHUB_SHA`; the ancestral run
+  cannot become a staging predecessor. Both environments remain
+  `module-control:timekeeping=maintenance`.
+
 ## 2026-07-30 - Use canonical REST workflow paths and static workflow metadata
 
 - Decision: GitHub REST workflow-run provenance compares `run.path` with the
