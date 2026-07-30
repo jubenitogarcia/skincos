@@ -32,6 +32,21 @@ function tomlActions(source) {
   }))
 }
 
+function runBashHarness(body, options = {}) {
+  const harnessRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-local-bash-harness-'))
+  const harnessPath = path.join(harnessRoot, 'run.sh')
+  try {
+    fs.writeFileSync(harnessPath, `${body}\n`, { mode: 0o700 })
+    return spawnSync('bash', [harnessPath], {
+      ...options,
+      cwd: root,
+      encoding: 'utf8',
+    })
+  } finally {
+    fs.rmSync(harnessRoot, { recursive: true, force: true })
+  }
+}
+
 test('Codex App and Windows expose CRM – Local and CRM – Módulos without the generic Local surface', () => {
   const crmActions = tomlActions(environment).filter(({ name }) => name?.startsWith('CRM'))
   assert.deepEqual(crmActions, [
@@ -281,10 +296,9 @@ test('auto build is fingerprinted, serialized and recorded only through the dete
 test('runtime v3 manifest records role/module, build, PID identities, private state and browser profile', (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-runtime-v3-'))
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
-  const helper = path.join(root, 'scripts', 'crm-local-persona-runtime.sh')
   const target = '5'.repeat(40)
   const body = `set -e
-source "$1"
+source scripts/crm-local-persona-runtime.sh
 crm_persona_runtime_init
 CRM_BUILD_COMMIT=${target}
 CRM_BUILD_INPUT_FINGERPRINT=sha256:${'6'.repeat(64)}
@@ -350,8 +364,7 @@ value.token = process.env.CRM_LOCK_ORIGINAL_TOKEN
 fs.writeFileSync(file, JSON.stringify(value) + '\\n')
 NODE
 crm_persona_runtime_release_lock`
-  const result = spawnSync('bash', ['-c', body, 'bash', helper], {
-    encoding: 'utf8',
+  const result = runBashHarness(body, {
     env: {
       ...process.env,
       ROOT_DIR: root,
@@ -422,9 +435,8 @@ test('a concurrent launch waits for the exact ready manifest before health check
 test('runtime lock publishes one atomic owner and self-heals only a proven stale identity', (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-runtime-lock-v3-'))
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
-  const helper = path.join(root, 'scripts', 'crm-local-persona-runtime.sh')
   const body = `set -e
-source "$1"
+source scripts/crm-local-persona-runtime.sh
 crm_persona_runtime_init
 mkdir -p "$CRM_RUNTIME_LOCK_DIR"
 current_ticks="$(crm_runtime_pid_start_ticks "$$")"
@@ -453,8 +465,7 @@ if (value.version !== 1 || !value.token || value.pid !== Number(process.argv[3])
 NODE
 crm_persona_runtime_release_lock
 test ! -e "$CRM_RUNTIME_LOCK_DIR"`
-  const result = spawnSync('bash', ['-c', body, 'bash', helper], {
-    encoding: 'utf8',
+  const result = runBashHarness(body, {
     env: {
       ...process.env,
       ROOT_DIR: root,
@@ -472,9 +483,8 @@ test ! -e "$CRM_RUNTIME_LOCK_DIR"`
 test('runtime lock never steals a live owner with another source and release is token-CAS', (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-runtime-lock-cas-'))
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
-  const helper = path.join(root, 'scripts', 'crm-local-persona-runtime.sh')
   const body = `set -e
-source "$1"
+source scripts/crm-local-persona-runtime.sh
 crm_persona_runtime_init
 mkdir -p "$CRM_RUNTIME_LOCK_DIR"
 ticks="$(crm_runtime_pid_start_ticks "$$")"
@@ -510,8 +520,7 @@ NODE
 crm_persona_runtime_release_lock
 test -d "$CRM_RUNTIME_LOCK_DIR"
 test "$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1])).token" "$CRM_RUNTIME_LOCK_DIR/owner.json")" = successor-token`
-  const result = spawnSync('bash', ['-c', body, 'bash', helper], {
-    encoding: 'utf8',
+  const result = runBashHarness(body, {
     env: {
       ...process.env,
       ROOT_DIR: root,
@@ -529,9 +538,8 @@ test "$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1])).token" 
 test('runtime lock treats a fresh partial owner as contention instead of deleting it', (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-runtime-lock-partial-'))
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
-  const helper = path.join(root, 'scripts', 'crm-local-persona-runtime.sh')
   const body = `set -e
-source "$1"
+source scripts/crm-local-persona-runtime.sh
 crm_persona_runtime_init
 mkdir -p "$CRM_RUNTIME_LOCK_DIR"
 set +e
@@ -541,8 +549,7 @@ set -e
 test "$status" = 1
 test -d "$CRM_RUNTIME_LOCK_DIR"
 test ! -e "$CRM_RUNTIME_LOCK_DIR/owner.json"`
-  const result = spawnSync('bash', ['-c', body, 'bash', helper], {
-    encoding: 'utf8',
+  const result = runBashHarness(body, {
     env: {
       ...process.env,
       ROOT_DIR: root,
@@ -558,15 +565,14 @@ test ! -e "$CRM_RUNTIME_LOCK_DIR/owner.json"`
 })
 
 test('PID identity reads start ticks correctly when Linux comm contains spaces and a parenthesis', () => {
-  const helper = path.join(root, 'scripts', 'crm-local-persona-runtime.sh')
   const body = `set -e
-source "$1"
+source scripts/crm-local-persona-runtime.sh
 printf 'crm ) worker' > "/proc/$$/comm"
 actual="$(crm_runtime_pid_start_ticks "$$")"
   expected="$(node -e 'const fs=require("fs");const s=fs.readFileSync("/proc/"+process.ppid+"/stat","utf8");const i=s.lastIndexOf(")");process.stdout.write(s.slice(i+2).trim().split(/\\s+/)[19])')"
 test "$actual" = "$expected"
 crm_runtime_pid_identity_matches "$$" "$expected"`
-  const result = spawnSync('bash', ['-c', body, 'bash', helper], { encoding: 'utf8' })
+  const result = runBashHarness(body)
   assert.equal(result.status, 0, result.stderr || result.stdout)
   assert.match(launcher, /source \{0\}; crm_runtime_pid_start_ticks \{1\}/)
   assert.doesNotMatch(launcher, /awk '\{print `\$20\}'/)
