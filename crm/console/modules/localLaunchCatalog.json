@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": 1,
+  "launcherContractVersion": 1,
+  "baseDependencyIds": [
+    "crm-console",
+    "pages-functions"
+  ],
+  "modules": [
+    {
+      "key": "insumos",
+      "label": "Insumos",
+      "route": "/?module=insumos",
+      "onlineEnabled": true,
+      "dependencyIds": [
+        "insumos-worker"
+      ]
+    },
+    {
+      "key": "conversa",
+      "label": "Conversa",
+      "route": "/?module=conversa",
+      "onlineEnabled": true,
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "atendimento",
+      "label": "Atendimento",
+      "route": "/?module=atendimento",
+      "onlineEnabled": true,
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "ponto",
+      "label": "Ponto",
+      "route": "/?module=ponto",
+      "onlineEnabled": true,
+      "dependencyIds": [
+        "timekeeping-worker"
+      ]
+    },
+    {
+      "key": "clientes",
+      "label": "Clientes",
+      "route": "/?module=clientes",
+      "onlineEnabled": true,
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "caixa",
+      "label": "Caixa",
+      "route": "/?module=caixa",
+      "onlineEnabled": false,
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "faturamento",
+      "label": "Faturamento",
+      "route": "/?module=faturamento",
+      "onlineEnabled": false,
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "procedimentos",
+      "label": "Procedimentos",
+      "route": "/?module=procedimentos",
+      "onlineEnabled": false,
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "unit-monitor",
+      "label": "Unit Monitor",
+      "route": "/?module=unit-monitor",
+      "onlineEnabled": false,
+      "dependencyIds": [
+        "crm-local-adapter"
+      ]
+    },
+    {
+      "key": "instagram-studio",
+      "label": "Redes Sociais",
+      "route": "/?module=instagram-studio",
+      "onlineEnabled": false,
+      "dependencyIds": [
+        "social-local-pages"
+      ]
+    },
+    {
+      "key": "meta-pages-review",
+      "label": "Meta Review",
+      "route": "/?module=meta-pages-review",
+      "onlineEnabled": false,
+      "dependencyIds": [
+        "meta-review-local-pages"
+      ]
+    },
+    {
+      "key": "meta-ads",
+      "label": "Meta Ads",
+      "route": "/?module=meta-ads",
+      "onlineEnabled": false,
+      "localScenario": "connected-ready",
+      "dependencyIds": [
+        "meta-ads-local-scenario"
+      ]
+    },
+    {
+      "key": "site-tracking",
+      "label": "Site EF",
+      "route": "/?module=site-tracking",
+      "onlineEnabled": false,
+      "localScenario": "connected-ready",
+      "dependencyIds": [
+        "tracking-local-scenario"
+      ]
+    },
+    {
+      "key": "escala-profissionais",
+      "label": "Escala",
+      "route": "/?module=escala-profissionais",
+      "onlineEnabled": true,
+      "dependencyIds": [
+        "escala-local-mock"
+      ]
+    }
+  ]
+}

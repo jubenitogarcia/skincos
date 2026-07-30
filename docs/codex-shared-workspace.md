@@ -80,15 +80,17 @@ Os atalhos ficam no Menu Iniciar compartilhado:
 
 - `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Skincos Codex`
 
-O layout principal agora foi reduzido para cinco atalhos de topo:
+O layout principal expõe seis atalhos de topo:
 
 - `Workspace`
 - `Contexto`
-- `Local`
+- `CRM – Local`
+- `CRM – Módulos`
 - `EF App`
 - `Orb`
 
-Todos eles abrem menus interativos por dominio.
+`CRM – Local` é uma ação direta e não pede variáveis técnicas. Os demais
+atalhos de agrupamento abrem menus curtos por domínio.
 
 ### Workspace
 
@@ -108,11 +110,18 @@ Todos eles abrem menus interativos por dominio.
 - `Thread Bootstrap`
 - `New Worktree`
 
-### Local
+### CRM – Local
 
-- `Website -> Start | Stop | Site Check | Release Check`
-- `CRM -> Local | Site EF | Meta Ads | Atendimento | Stop | Memory | Site Smoke | Meta Ads Smoke | Atendimento Smoke`
-- `Platform Local -> Start`
+Inicia o CRM completo como Gestor, com build automático por impressão,
+Insumos, Timekeeping, adaptador do WhatsApp, Pages Functions, gate dos 14
+módulos e navegador somente depois da aprovação.
+
+### CRM – Módulos
+
+Permite escolher somente papel e módulo. O instalador também cria 16 atalhos
+diretos na subpasta `CRM – Módulos`: 14 módulos para Gestor e Atendimento/Ponto
+para Consultor. Portas, PIDs, logs, estado, autenticação e perfil de navegador
+são privados por combinação.
 
 ### EF App
 
@@ -169,8 +178,8 @@ Limites importantes:
   Windows pode aparecer deslogado ou com `hosts.yml` vazio sem bloquear o fluxo;
 - os atalhos do Menu Iniciar e os botões do topo são complementares: o primeiro
   é compartilhamento no Windows, o segundo é compartilhamento por projeto;
-- a barra principal do Codex App agora foi condensada para os mesmos cinco
-  atalhos de topo do Menu Iniciar.
+- a barra principal do Codex App usa as mesmas seis ações de topo do Menu
+  Iniciar.
 
 ## Local vs runtime live
 
@@ -180,7 +189,8 @@ Os atalhos seguem dois modelos operacionais diferentes.
 
 Usado para edição, QA e iteração dos projetos locais como website e CRM.
 
-- roda a partir do código em `C:\CodexShared\Projetos\skincos`;
+- seleciona o código no clone compartilhado ou worktree atual; o CRM materializa
+  uma cópia imutável no runtime privado antes de executar;
 - guarda PID e estado temporário em `%LOCALAPPDATA%\Codex\skincos\`, e logs
   persistentes em `C:\CodexRuntime\operator\admin\skincos\logs\`;
 - não deve gravar artefatos operacionais novos no clone compartilhado nem no

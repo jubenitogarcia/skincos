@@ -34,6 +34,7 @@ import { createTrackingDashboardRouter } from './server/trackingDashboardRoutes.
 import { createAtendimentoRouter } from './server/atendimento/routes.js'
 import { createCaixaRouter } from './server/caixa/routes.js'
 import { configuredCorsOrigins, isAllowedCrmCorsOrigin } from './server/corsPolicy.js'
+import { effectiveAllowedModules, normalizeCrmRole as normalizeRole } from './server/crmRolePolicy.js'
 import { resolveEvolutionMediaUrl } from './server/whatsappMediaUrl.js'
 
 // Axios for facade requests to Unified System
@@ -610,25 +611,6 @@ if (DEV_AUTH_ENABLED) {
 const VISUAL_THEME_FILE = process.env.CRM_VISUAL_THEME_FILE || path.join(CORE_STATE_DIR, 'visual_theme.v1.json')
 let visualThemeState = { themes: {} }
 let saveVisualThemeTimer = null
-
-const ROLE_ALIASES = new Map([
-    ['ADMIN', 'GESTOR'],
-    ['OPERADOR', 'INJETOR'],
-    ['RH', 'SUPERVISOR'],
-    ['AUDITOR', 'SUPERVISOR'],
-    ['EMPLOYEE', 'CONSULTOR'],
-])
-
-const normalizeRole = (value) => {
-    const raw = String(value || '').trim().toUpperCase()
-    if (!raw) return ''
-    return ROLE_ALIASES.get(raw) || raw
-}
-
-const effectiveAllowedModules = (role, allowedModules) => {
-    if (normalizeRole(role) === 'CONSULTOR') return ['atendimento']
-    return Array.isArray(allowedModules) ? allowedModules.map((x) => String(x)).filter(Boolean) : []
-}
 
 const normalizeCrmUser = (user) => {
     if (!user || typeof user !== 'object') return user

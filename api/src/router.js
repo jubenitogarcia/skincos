@@ -40,6 +40,38 @@ function operationalPayload(env, requestId, ready, dependencies) {
     };
 }
 
+function isPontoRouteOnly(env) {
+    return String(env?.PONTO_ROUTE_ONLY || '').trim() === 'true';
+}
+
+function hasTimekeepingBinding(env) {
+    return typeof env?.TIMEKEEPING?.fetch === 'function';
+}
+
+function pontoOperationalPayload(env, requestId, ready, dependencyState) {
+    const metadata = env?.CF_VERSION_METADATA || {};
+    return {
+        ok: Boolean(ready),
+        service: 'ponto-core',
+        unit: 'ponto-core',
+        version: String(env.APP_VERSION || 'unknown'),
+        version_metadata: {
+            id: String(metadata.id || 'unknown'),
+            tag: String(metadata.tag || ''),
+        },
+        environment: String(env.ENVIRONMENT || 'production'),
+        ready: Boolean(ready),
+        dependencies: {
+            timekeeping: {
+                required: true,
+                state: dependencyState,
+            },
+        },
+        request_id: requestId,
+        requestId,
+    };
+}
+
 function operationalLog(env, requestId, status, route) {
     console.log({
         domain: 'api',
@@ -50,6 +82,48 @@ function operationalLog(env, requestId, status, route) {
         status,
         route,
     });
+}
+
+function pontoOperationalLog(env, requestId, status, route) {
+    console.log({
+        domain: 'ponto-core',
+        version: String(env.APP_VERSION || 'unknown'),
+        environment: String(env.ENVIRONMENT || 'production'),
+        request_id: requestId,
+        duration_ms: 0,
+        status,
+        route,
+    });
+}
+
+async function pontoReadiness(request, env, ctx, timekeepingHandler, requestId) {
+    if (!hasTimekeepingBinding(env) || typeof timekeepingHandler !== 'function') {
+        pontoOperationalLog(env, requestId, 503, '/readiness');
+        return json(503, pontoOperationalPayload(env, requestId, false, 'unavailable'), requestId);
+    }
+
+    const probeUrl = new URL(request.url);
+    probeUrl.pathname = '/api/ponto/readiness';
+    probeUrl.search = '';
+    const probe = new Request(probeUrl.toString(), {
+        method: 'GET',
+        headers: {
+            accept: 'application/json',
+            'x-request-id': requestId,
+        },
+    });
+
+    try {
+        const response = await timekeepingHandler(probe, env, ctx);
+        const ready = response.ok;
+        await response.body?.cancel().catch(() => {});
+        const status = ready ? 200 : 503;
+        pontoOperationalLog(env, requestId, status, '/readiness');
+        return json(status, pontoOperationalPayload(env, requestId, ready, ready ? 'healthy' : 'degraded'), requestId);
+    } catch {
+        pontoOperationalLog(env, requestId, 503, '/readiness');
+        return json(503, pontoOperationalPayload(env, requestId, false, 'unavailable'), requestId);
+    }
 }
 
 /**
@@ -65,6 +139,24 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
     return async function handleGatewayRequest(request, env, ctx) {
         const requestId = requestIdFor(request);
         const url = new URL(request.url);
+        const pontoRouteOnly = isPontoRouteOnly(env);
+        const pontoRoute = url.pathname === '/api/ponto' || url.pathname.startsWith('/api/ponto/');
+
+        if (pontoRouteOnly) {
+            if (request.method === 'GET' && url.pathname === '/health') {
+                const configured = hasTimekeepingBinding(env);
+                pontoOperationalLog(env, requestId, 200, '/health');
+                return json(200, pontoOperationalPayload(env, requestId, configured, configured ? 'configured' : 'unavailable'), requestId);
+            }
+
+            if (request.method === 'GET' && url.pathname === '/readiness') {
+                return pontoReadiness(request, env, ctx, timekeepingHandler, requestId);
+            }
+
+            if (!pontoRoute) {
+                return json(404, { ok: false, error: 'ponto_route_only', request_id: requestId, requestId }, requestId);
+            }
+        }
 
         if (url.pathname === '/health') {
             const dependencies = { d1: { required: true, state: env.DB ? 'configured' : 'unavailable' } };
@@ -86,7 +178,7 @@ export function createGatewayHandler({ inventoryHandler, timekeepingHandler, fin
             }
         }
 
-        if (url.pathname === '/api/ponto' || url.pathname.startsWith('/api/ponto/')) {
+        if (pontoRoute) {
             if (typeof timekeepingHandler !== 'function') {
                 return json(503, { ok: false, error: 'workforce_unavailable', requestId }, requestId);
             }

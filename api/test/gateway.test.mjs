@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createGatewayHandler } from '../src/router.js';
 import { createApiGateway, forwardFinanceProbe, forwardFinanceToService, handleGatewayRequest } from '../src/gateway.js';
+import pontoCoreWorker from '../workers/ponto.js';
 import { verifySignedDomainContext } from '../../shared/service-adapters/signed-domain-context.js';
 import { resetBoundServiceResilienceForTest } from '../../shared/service-adapters/cloudflare-service-binding.js';
 
@@ -35,6 +37,107 @@ test('readiness proves D1 is available and fails closed when it is not', async (
     const unavailable = await gateway(new Request('https://api.skincos.com.br/readiness'), {}, {});
     assert.equal(unavailable.status, 503);
     assert.equal((await unavailable.json()).ready, false);
+});
+
+test('Ponto route-only health and readiness use only the Timekeeping binding', async () => {
+    const probePaths = [];
+    const isolated = createGatewayHandler({
+        inventoryHandler: async () => new Response('must-not-run'),
+        timekeepingHandler: async (request) => {
+            probePaths.push(new URL(request.url).pathname);
+            return new Response(JSON.stringify({ ok: true, ready: true }), { headers: { 'content-type': 'application/json' } });
+        },
+    });
+    const env = {
+        PONTO_ROUTE_ONLY: 'true',
+        TIMEKEEPING: { fetch: async () => new Response('unused') },
+        APP_VERSION: 'baseline-sha',
+        ENVIRONMENT: 'staging',
+        CF_VERSION_METADATA: { id: 'version-id', tag: 'baseline-tag' },
+    };
+
+    const health = await isolated(new Request('https://ponto-core.invalid/health', { headers: { 'x-request-id': 'ponto-health-1' } }), env, {});
+    assert.equal(health.status, 200);
+    const healthBody = await health.json();
+    assert.equal(healthBody.unit, 'ponto-core');
+    assert.equal(healthBody.ready, true);
+    assert.equal(healthBody.dependencies.timekeeping.state, 'configured');
+    assert.equal(healthBody.dependencies.d1, undefined);
+    assert.deepEqual(healthBody.version_metadata, { id: 'version-id', tag: 'baseline-tag' });
+
+    const readiness = await isolated(new Request('https://ponto-core.invalid/readiness?ignored=true'), env, {});
+    assert.equal(readiness.status, 200);
+    assert.equal((await readiness.json()).dependencies.timekeeping.state, 'healthy');
+    assert.deepEqual(probePaths, ['/api/ponto/readiness']);
+});
+
+test('Ponto route-only readiness fails closed without a healthy Timekeeping service', async () => {
+    const isolated = createGatewayHandler({
+        inventoryHandler: async () => new Response('must-not-run'),
+        timekeepingHandler: async () => new Response(JSON.stringify({ ok: false }), { status: 503 }),
+    });
+    const baseEnv = { PONTO_ROUTE_ONLY: 'true', TIMEKEEPING: { fetch: async () => new Response('unused') } };
+
+    const degraded = await isolated(new Request('https://ponto-core.invalid/readiness'), baseEnv, {});
+    assert.equal(degraded.status, 503);
+    assert.equal((await degraded.json()).dependencies.timekeeping.state, 'degraded');
+
+    const absent = await isolated(new Request('https://ponto-core.invalid/readiness'), { PONTO_ROUTE_ONLY: 'true' }, {});
+    assert.equal(absent.status, 503);
+    assert.equal((await absent.json()).dependencies.timekeeping.state, 'unavailable');
+});
+
+test('Ponto route-only mode denies every non-Ponto and non-probe route before sibling handlers', async () => {
+    let siblingCalls = 0;
+    const isolated = createGatewayHandler({
+        inventoryHandler: async () => { siblingCalls += 1; return new Response('inventory'); },
+        timekeepingHandler: async () => { siblingCalls += 1; return new Response('timekeeping'); },
+        financeHandler: async () => { siblingCalls += 1; return new Response('finance'); },
+    });
+    const env = { PONTO_ROUTE_ONLY: 'true', TIMEKEEPING: { fetch: async () => new Response('unused') } };
+
+    for (const [path, method] of [['/inventory/insumos', 'GET'], ['/finance/health', 'GET'], ['/internal/orb/dispatch', 'POST'], ['/health', 'POST'], ['/unknown', 'GET']]) {
+        const response = await isolated(new Request(`https://ponto-core.invalid${path}`, { method }), env, {});
+        assert.equal(response.status, 404);
+        assert.equal((await response.json()).error, 'ponto_route_only');
+    }
+    assert.equal(siblingCalls, 0);
+});
+
+test('dedicated Ponto entrypoint requires the route-only guard and never exposes sibling mounts', async () => {
+    resetBoundServiceResilienceForTest();
+    let bindingCalls = 0;
+    const binding = { fetch: async () => { bindingCalls += 1; return new Response(JSON.stringify({ ok: true, service: 'workforce-timekeeping' }), { headers: { 'content-type': 'application/json' } }); } };
+
+    const invalid = await pontoCoreWorker.fetch(new Request('https://ponto-core.invalid/api/ponto/health'), { TIMEKEEPING: binding }, {});
+    assert.equal(invalid.status, 503);
+    assert.equal((await invalid.json()).error, 'PONTO_CORE_CONFIG_INVALID');
+    assert.equal(bindingCalls, 0);
+
+    const denied = await pontoCoreWorker.fetch(new Request('https://ponto-core.invalid/inventory/insumos'), { PONTO_ROUTE_ONLY: 'true', TIMEKEEPING: binding }, {});
+    assert.equal(denied.status, 404);
+    assert.equal((await denied.json()).error, 'ponto_route_only');
+    assert.equal(bindingCalls, 0);
+
+    const forwarded = await pontoCoreWorker.fetch(new Request('https://ponto-core.invalid/api/ponto/health'), { PONTO_ROUTE_ONLY: 'true', TIMEKEEPING: binding }, {});
+    assert.equal(forwarded.status, 200);
+    assert.equal((await forwarded.json()).service, 'workforce-timekeeping');
+    assert.equal(bindingCalls, 1);
+});
+
+test('dedicated Ponto Wrangler config has private, independent staging and production services', async () => {
+    const config = await readFile(new URL('../wrangler.ponto.toml', import.meta.url), 'utf8');
+    assert.match(config, /^name = "skincos-ponto-core"$/m);
+    assert.match(config, /^\[env\.staging\]\r?\nname = "skincos-ponto-core-staging"$/m);
+    assert.match(config, /^main = "workers\/ponto\.js"$/m);
+    assert.equal((config.match(/^workers_dev = false$/gm) || []).length, 2);
+    assert.equal((config.match(/^preview_urls = false$/gm) || []).length, 2);
+    assert.equal((config.match(/^PONTO_ROUTE_ONLY = "true"$/gm) || []).length, 2);
+    assert.doesNotMatch(config, /^\s*(?:route|routes)\s*=/m);
+    assert.doesNotMatch(config, /\b(?:d1_databases|durable_objects|r2_buckets)\b/);
+    assert.doesNotMatch(config, /\bbinding = "(?:DB|FINANCE|INVENTORY|BACKUP_BUCKET|RATE_LIMITER|JOB_QUEUE)"\b/);
+    assert.match(config, /service = "skincos-timekeeping"/);
+    assert.match(config, /service = "skincos-timekeeping-staging"/);
 });
 
 test('inventory is mounted without retaining the legacy public prefix', async () => {
@@ -158,7 +261,18 @@ test('Finance health probes still classify a genuine upstream failure as unavail
   assert.equal((await response.json()).error, 'domain_service_degraded');
 });
 
-test('Finance audit read preserves a slow successful binding response without widening write timeouts', async () => {
+test('Finance operations preserve slow successful binding responses but stay bounded', async () => {
+  resetBoundServiceResilienceForTest();
+  const bootstrapStartedAt = Date.now();
+  const bootstrap = await forwardFinanceToService(new Request('https://api.skincos.com.br/bootstrap', {
+    headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-bootstrap-timeout' },
+  }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 1_050)); return new Response(JSON.stringify({ ok: true, canAccess: true }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
+  assert.equal(bootstrap.status, 200);
+  assert.ok(Date.now() - bootstrapStartedAt >= 1_000);
+
   resetBoundServiceResilienceForTest();
   const auditStartedAt = Date.now();
   const audit = await forwardFinanceToService(new Request('https://api.skincos.com.br/audit?scopeId=finance-scope-novo-hamburgo', {
@@ -177,7 +291,34 @@ test('Finance audit read preserves a slow successful binding response without wi
     FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
     FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 1_050)); return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }); } },
   }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
-  assert.equal(write.status, 503);
+  assert.equal(write.status, 200);
+
+  resetBoundServiceResilienceForTest();
+  const timedOutRead = await forwardFinanceToService(new Request('https://api.skincos.com.br/audit?scopeId=finance-scope-novo-hamburgo', {
+    headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-read-bounded-timeout' },
+  }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 3_100)); return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
+  assert.equal(timedOutRead.status, 503);
+
+  resetBoundServiceResilienceForTest();
+  const coldWrite = await forwardFinanceToService(new Request('https://api.skincos.com.br/tags?scopeId=finance-scope-novo-hamburgo', {
+    method: 'POST', headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-write-cold-start' },
+  }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 3_100)); return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
+  assert.equal(coldWrite.status, 200);
+
+  resetBoundServiceResilienceForTest();
+  const timedOut = await forwardFinanceToService(new Request('https://api.skincos.com.br/tags?scopeId=finance-scope-novo-hamburgo', {
+    method: 'POST', headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-write-bounded-timeout' },
+  }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 5_100)); return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
+  assert.equal(timedOut.status, 503);
 });
 
 test('finance gateway passes only an authenticated, CSRF-valid request', async () => {
