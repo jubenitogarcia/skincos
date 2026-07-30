@@ -115,6 +115,18 @@ async function main() {
         WHERE id=$9`,
       [JSON.stringify(candidate.nodes), JSON.stringify(candidate.connections), JSON.stringify(candidate.settings || parseJson(row.settings, {})), JSON.stringify(candidate.meta || parseJson(row.meta, {})), nextVersion, nextVersion, Number(row.versionCounter) + 1, now, WORKFLOW_ID],
     );
+    // n8n's publish-history identity can be stale after a restore.  Reconcile
+    // it inside the same transaction and lock writers so this isolated
+    // promotion cannot either collide with a historical record or advance a
+    // different workflow's history concurrently.
+    await client.query('LOCK TABLE n8n_runtime.workflow_publish_history IN SHARE ROW EXCLUSIVE MODE');
+    await client.query(
+      `SELECT setval(
+        pg_get_serial_sequence('n8n_runtime.workflow_publish_history', 'id')::regclass,
+        (SELECT COALESCE(MAX(id), 0) FROM n8n_runtime.workflow_publish_history),
+        true
+      )`,
+    );
     await client.query(
       `INSERT INTO n8n_runtime.workflow_published_version ("workflowId","publishedVersionId","createdAt","updatedAt")
        VALUES ($1,$2,$3,$3)
