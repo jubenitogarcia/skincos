@@ -3,10 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { isTerminalPagesDeployment } from "./ponto-rollback-ownership.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{40}$/i;
-const LEASE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const WORKER_SURFACES = ["timekeeping", "identityWorkforce", "coreApi"];
 const SURFACE_SOURCE_PATTERNS = {
   timekeeping: /ponto:timekeeping:([0-9a-f]{40})/i,
@@ -269,7 +269,8 @@ export async function runStagingRollbackDrill(config, runtime) {
         report.moduleControl.incumbentActive = {
           attempted: true,
           ...await runtime.setModuleState("active", {
-            // This binds the delegated drill lease; incumbent source evidence remains per surface.
+            // The drill's signed coordinator lease covers this direct mutation;
+            // incumbent source evidence remains independently attested per surface.
             releaseSha: config.releaseSha,
             versions: versionSet(config.ids, "incumbent"),
           }, "incumbent-active"),
@@ -445,23 +446,19 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
   const releaseSha = requireValue(env, "RELEASE_SHA").toLowerCase();
   const runId = requireValue(env, "GITHUB_RUN_ID");
   const repository = requireValue(env, "GITHUB_REPOSITORY");
+  const repositoryId = requireValue(env, "GITHUB_REPOSITORY_ID");
   const orchestratorRunId = requireValue(env, "ORCHESTRATOR_RUN_ID");
   const orchestratorStage = requireValue(env, "ORCHESTRATOR_STAGE");
-  const rollbackOpenLeases = {
-    incumbent: requireValue(env, "ROLLBACK_INCUMBENT_OPEN_LEASE_TOKEN"),
-    candidate: requireValue(env, "ROLLBACK_CANDIDATE_OPEN_LEASE_TOKEN"),
-  };
   const predecessorRunId = requireValue(env, "STAGING_JOURNEY_RUN_ID");
   const accountId = requireValue(env, "CLOUDFLARE_ACCOUNT_ID").toLowerCase();
   const apiToken = requireValue(env, "CLOUDFLARE_API_TOKEN");
-  const ghToken = requireValue(env, "GH_TOKEN");
   const idempotencyKey = requireValue(env, "PONTO_IDEMPOTENCY_KEY");
   const releaseProbeKey = crypto.createHmac("sha256", idempotencyKey)
     .update("skincos/ponto/release-probe/v1")
     .digest("base64url");
-  const moduleControlNamespaceId = requireValue(env, "MODULE_CONTROL_STAGING_KV_ID").toLowerCase();
+  const moduleControlNamespaceId = requireValue(env, "PONTO_MODULE_CONTROL_STAGING_KV_ID").toLowerCase();
   const runnerTemp = requireValue(env, "RUNNER_TEMP");
-  const pagesProject = String(env.CLOUDFLARE_PAGES_PROJECT_STAGING || "skincos-staging").trim();
+  const pagesProject = requireValue(env, "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING");
   const ids = {
     timekeeping: {
       worker: "skincos-timekeeping-staging",
@@ -489,12 +486,8 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
   if (![runId, orchestratorRunId, predecessorRunId].every((value) => /^[0-9]{1,20}$/.test(value))) {
     throw new DrillFailure("RUN_PROVENANCE_INVALID");
   }
-  if (
-    orchestratorStage !== "staging"
-    || !Object.values(rollbackOpenLeases).every((value) => LEASE_TOKEN.test(value))
-    || rollbackOpenLeases.incumbent === rollbackOpenLeases.candidate
-  ) throw new DrillFailure("MODULE_OPEN_CAPABILITIES_INVALID");
-  if (!repository.includes("/") || !/^[0-9a-f]{32}$/.test(accountId) || !/^[0-9a-f]{32}$/.test(moduleControlNamespaceId)) {
+  if (orchestratorStage !== "staging") throw new DrillFailure("DRILL_STAGE_INVALID");
+  if (!repository.includes("/") || !/^[1-9][0-9]*$/.test(repositoryId) || !/^[0-9a-f]{32}$/.test(accountId) || !/^[0-9a-f]{32}$/.test(moduleControlNamespaceId)) {
     throw new DrillFailure("STAGING_CUSTODY_INVALID");
   }
   if (Buffer.byteLength(idempotencyKey, "utf8") < 32) throw new DrillFailure("IDEMPOTENCY_KEY_INVALID");
@@ -519,19 +512,17 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
     releaseSha,
     runId,
     repository,
+    repositoryId,
     orchestratorRunId,
     orchestratorStage,
-    rollbackOpenLeases,
     predecessorRunId,
     accountId,
     apiToken,
-    ghToken,
     releaseProbeKey,
     moduleControlNamespaceId,
     runnerTemp,
     pagesProject,
     ids,
-    githubApiUrl: String(env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, ""),
     accessHeaders: accessId ? {
       "CF-Access-Client-Id": accessId,
       "CF-Access-Client-Secret": accessSecret,
@@ -543,10 +534,12 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
 
 function createRealRuntime(config, env = process.env) {
   const runCommand = (command, args, options = {}) => {
+    const childEnv = { ...env, ...(options.env || {}) };
+    delete childEnv.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY;
     const result = spawnSync(command, args, {
       cwd: process.cwd(),
       encoding: "utf8",
-      env: { ...env, ...(options.env || {}) },
+      env: childEnv,
       maxBuffer: 20 * 1024 * 1024,
     });
     if (result.status !== 0) throw new DrillFailure(options.code || "GOVERNED_COMMAND_FAILED");
@@ -564,20 +557,6 @@ function createRealRuntime(config, env = process.env) {
       if (error instanceof DrillFailure) throw error;
       throw new DrillFailure("WRANGLER_JSON_INVALID");
     }
-  };
-  const github = async (pathname, init = {}) => {
-    const response = await fetch(`${config.githubApiUrl}${pathname}`, {
-      ...init,
-      signal: AbortSignal.timeout(30_000),
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${config.ghToken}`,
-        "x-github-api-version": "2022-11-28",
-        ...(init.headers || {}),
-      },
-    });
-    if (!response.ok) throw new DrillFailure("GITHUB_API_FAILED");
-    return response.status === 204 ? null : response.json();
   };
   const cloudflare = async (pathname, init = {}) => {
     const response = await fetch(`https://api.cloudflare.com/client/v4${pathname}`, {
@@ -678,12 +657,12 @@ function createRealRuntime(config, env = process.env) {
   const pageDetails = (deployment, { allowPending = false } = {}) => {
     const id = String(deployment?.id || "");
     const url = String(deployment?.url || "");
-    const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
+    const status = String(deployment?.latest_stage?.status || "").toLowerCase();
     const rawCommitHash = String(
       deployment?.deployment_trigger?.metadata?.commit_hash || "",
     ).trim().toLowerCase();
     const commitHash = SHA.test(rawCommitHash) ? rawCommitHash : null;
-    const terminal = ["success", "idle"].includes(status);
+    const terminal = isTerminalPagesDeployment(deployment);
     const pending = ["active", "queued", "waiting", "pending", "building", "initializing"].includes(status);
     let origin;
     try { origin = new URL(url); } catch { throw new DrillFailure("PAGES_DEPLOYMENT_INVALID"); }
@@ -749,6 +728,35 @@ function createRealRuntime(config, env = process.env) {
       throw new DrillFailure("MODULE_CONTROL_INVALID");
     }
   };
+  const readEmergencyLatch = () => {
+    const raw = wrangler([
+      "kv",
+      "key",
+      "get",
+      "module-control:timekeeping:emergency-latch",
+      "--namespace-id",
+      config.moduleControlNamespaceId,
+      "--remote",
+    ], "EMERGENCY_LATCH_READ_FAILED");
+    let value;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new DrillFailure("EMERGENCY_LATCH_INVALID");
+    }
+    if (
+      value?.schemaVersion !== 1
+      || value?.module !== "timekeeping"
+      || value?.latched !== false
+      || !Number.isFinite(Date.parse(String(value?.changedAt || "")))
+      || !String(value?.changedBy || "").trim()
+    ) throw new DrillFailure("EMERGENCY_LATCH_NOT_OPEN");
+    return {
+      passed: true,
+      latched: false,
+      changedAt: value.changedAt,
+    };
+  };
   const assertModuleControl = (state, details = {}) => {
     const value = readModuleControl();
     if (value?.state !== state) throw new DrillFailure("MODULE_CONTROL_STATE_MISMATCH");
@@ -771,87 +779,62 @@ function createRealRuntime(config, env = process.env) {
       changedAt: String(value.changedAt || ""),
     };
   };
-  let moduleWorkflow;
-  const moduleWorkflowInfo = async () => {
-    moduleWorkflow ||= await github(
-      `/repos/${config.repository}/actions/workflows/module-availability.yml`,
-    );
-    if (
-      moduleWorkflow?.state !== "active"
-      || moduleWorkflow?.path !== ".github/workflows/module-availability.yml"
-    ) throw new DrillFailure("MODULE_WORKFLOW_PROVENANCE_INVALID");
-    return moduleWorkflow;
-  };
-  const dispatchModuleState = async (state, details, phase) => {
-    const workflow = await moduleWorkflowInfo();
-    const runsPath = `/repos/${config.repository}/actions/workflows/module-availability.yml/runs?event=workflow_dispatch&branch=main&per_page=50`;
-    const before = await github(runsPath);
-    const priorIds = new Set((before.workflow_runs || []).map((run) => String(run.id)));
-    const inputs = {
-      module: "timekeeping",
-      target: "staging",
+  const setModuleStateDirectly = async (state, details, phase) => {
+    if (!["active", "maintenance"].includes(state)) throw new DrillFailure("MODULE_STATE_INVALID");
+    const latchBefore = readEmergencyLatch();
+    const payload = {
+      schemaVersion: 2,
       state,
       message: `Ponto staging rollback drill ${phase}.`,
-      orchestrator_run_id: config.orchestratorRunId,
+      changedAt: new Date().toISOString(),
+      changedBy: `ponto-staging-rollback-drill:${config.runId}`,
     };
     if (state === "active") {
-      const delegatedCapability = {
-        "incumbent-active": {
-          leaseKey: "rollback-incumbent-open",
-          leaseToken: config.rollbackOpenLeases.incumbent,
-        },
-        "candidate-active": {
-          leaseKey: "rollback-candidate-open",
-          leaseToken: config.rollbackOpenLeases.candidate,
-        },
-      }[phase];
-      if (!delegatedCapability) throw new DrillFailure("MODULE_OPEN_PHASE_INVALID");
-      Object.assign(inputs, {
-        release_sha: details.releaseSha,
-        orchestrator_release_sha: config.releaseSha,
-        orchestrator_stage: config.orchestratorStage,
-        orchestrator_lease_key: delegatedCapability.leaseKey,
-        orchestrator_lease_token: delegatedCapability.leaseToken,
-        timekeeping_candidate_version_id: details.versions.timekeeping,
-        core_candidate_version_id: details.versions.coreApi,
-        identity_candidate_version_id: details.versions.identityWorkforce,
-        synthetic_only: true,
+      if (
+        !SHA.test(String(details?.releaseSha || ""))
+        || !WORKER_SURFACES.every((surface) => UUID.test(String(details?.versions?.[surface] || "")))
+      ) throw new DrillFailure("MODULE_ACTIVE_PAYLOAD_INVALID");
+      Object.assign(payload, {
+        rolloutStage: "staging",
+        releaseSha: details.releaseSha.toLowerCase(),
+        syntheticOnly: true,
+        versions: Object.fromEntries(WORKER_SURFACES.map((surface) => [
+          surface,
+          { candidate: details.versions[surface].toLowerCase() },
+        ])),
       });
     }
-    await github(`/repos/${config.repository}/actions/workflows/module-availability.yml/dispatches`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ref: "main", inputs }),
-    });
-
-    const expectedTitle = `Module timekeeping staging ${state} orchestrator=${config.orchestratorRunId}`;
-    const deadline = Date.now() + 15 * 60_000;
-    let selected;
-    while (Date.now() < deadline) {
-      const listing = await github(runsPath);
-      selected = (listing.workflow_runs || [])
-        .filter((run) => (
-          !priorIds.has(String(run.id))
-          && run.workflow_id === workflow.id
-          && run.display_title === expectedTitle
-          && run.event === "workflow_dispatch"
-          && run.head_branch === "main"
-          && run.head_sha === config.releaseSha
-          && run.path === `${workflow.path}@refs/heads/main`
-          && run.repository?.full_name === config.repository
-          && run.head_repository?.full_name === config.repository
-        ))
-        .sort((a, b) => Number(b.id) - Number(a.id))[0];
-      if (selected?.status === "completed") break;
-      await new Promise((resolve) => setTimeout(resolve, 10_000));
+    const payloadFile = path.join(
+      config.runnerTemp,
+      `ponto-staging-drill-module-${phase}-${config.runId}.json`,
+    );
+    fs.writeFileSync(payloadFile, `${JSON.stringify(payload)}\n`, { mode: 0o600 });
+    try {
+      wrangler([
+        "kv",
+        "key",
+        "put",
+        "module-control:timekeeping",
+        "--path",
+        payloadFile,
+        "--namespace-id",
+        config.moduleControlNamespaceId,
+        "--remote",
+      ], "MODULE_CONTROL_WRITE_FAILED");
+    } finally {
+      fs.rmSync(payloadFile, { force: true });
     }
-    if (!selected || selected.status !== "completed" || selected.conclusion !== "success") {
-      throw new DrillFailure("MODULE_WORKFLOW_FAILED");
-    }
+    const proof = assertModuleControl(state, details);
+    const latchAfter = readEmergencyLatch();
     return {
-      ...assertModuleControl(state, details),
-      runId: String(selected.id),
-      workflow: "module-availability.yml",
+      ...proof,
+      mutation: "direct-signed-drill",
+      runId: config.runId,
+      workflow: "ponto-staging-rollback-drill.yml",
+      emergencyLatch: {
+        before: latchBefore,
+        after: latchAfter,
+      },
     };
   };
 
@@ -1221,6 +1204,7 @@ function createRealRuntime(config, env = process.env) {
 
   return {
     async attestInitialState() {
+      const emergencyLatch = readEmergencyLatch();
       const moduleControl = assertModuleControl("maintenance");
       const surfaces = {};
       const incumbents = { passed: true };
@@ -1244,7 +1228,7 @@ function createRealRuntime(config, env = process.env) {
         sourceSha: incumbentPages.commitHash,
       };
       return {
-        moduleControl,
+        moduleControl: { ...moduleControl, emergencyLatch },
         surfaces: { passed: true, ...surfaces },
         incumbents: validateIncumbentProvenance(config.ids, incumbents),
       };
@@ -1320,7 +1304,7 @@ function createRealRuntime(config, env = process.env) {
       }
       throw new DrillFailure(`PAGES_${phase.toUpperCase()}_ATTESTATION_FAILED`);
     },
-    setModuleState: dispatchModuleState,
+    setModuleState: setModuleStateDirectly,
     prepareFixture,
     provisionFixture,
     runJourney,

@@ -4,6 +4,8 @@ param(
     [string]$StateDirectory = (Join-Path $env:LOCALAPPDATA "Codex\skincos")
 )
 
+# WSL_BOUNDARY_EXCEPTION: this Windows-only keepalive intentionally owns one
+# detached wsl.exe process so the native Linux services remain resident.
 $ErrorActionPreference = "Stop"
 $wslPath = Join-Path $env:SystemRoot "System32\wsl.exe"
 $pidPath = Join-Path $stateDirectory "wsl-runtime-keepalive.pid"

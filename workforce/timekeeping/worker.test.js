@@ -23,6 +23,15 @@ const activeControl = (overrides = {}) => ({
   },
   ...overrides,
 })
+const openEmergencyLatch = (overrides = {}) => ({
+  schemaVersion: 1,
+  module: 'timekeeping',
+  target: 'staging',
+  latched: false,
+  changedAt: '2026-07-30T00:00:00.000Z',
+  changedBy: 'ponto-emergency-latch-reset',
+  ...overrides,
+})
 const affinityHeaders = {
   'x-skincos-gateway-release-sha': releaseSha,
   'x-skincos-gateway-environment': 'staging',
@@ -45,7 +54,11 @@ const criticalDependencyNames = {
   PONTO_NETWORK_CONTEXT_KEY: 'network_context',
   IDENTITY_WORKFORCE_HMAC_KEY: 'identity_workforce_authentication',
 }
-const controlStore = (value) => ({ async get() { return value } })
+const controlStore = (value, latch = openEmergencyLatch()) => ({
+  async get(key) {
+    return key === 'module-control:timekeeping:emergency-latch' ? latch : value
+  },
+})
 const readyDb = {
   prepare() {
     return {
@@ -72,6 +85,80 @@ test('health stays HTTP 200 but fails closed when module control is missing', as
   assert.equal(body.dependencies.module_control.required, true)
   assert.equal(body.dependencies.module_control.state, 'unavailable')
   assert.equal(JSON.stringify(body).includes('PONTO_'), false)
+})
+
+test('health and readiness fail closed when the independent emergency latch is missing, unreadable, malformed, or active', async (t) => {
+  const request = () => new Request('https://timekeeping.local/api/ponto/readiness', { headers: affinityHeaders })
+  const baseEnv = {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: 'staging',
+    DB: readyDb,
+    ...criticalRuntimeBindings,
+  }
+  const cases = [
+    ['missing', null, 'emergency-latch-missing'],
+    ['malformed', { latched: false }, 'emergency-latch-malformed'],
+    ['active', openEmergencyLatch({ latched: true }), 'emergency-latch-active'],
+  ]
+  for (const [name, latch, source] of cases) {
+    await t.test(name, async () => {
+      const env = { ...baseEnv, MODULE_CONTROL: controlStore(activeControl(), latch) }
+      const health = await worker.fetch(new Request('https://timekeeping.local/api/ponto/health', { headers: affinityHeaders }), env)
+      assert.equal(health.status, 200)
+      const healthBody = await health.json()
+      assert.equal(healthBody.ready, false)
+      assert.equal(healthBody.availability.source, source)
+      const readiness = await worker.fetch(request(), env)
+      assert.equal(readiness.status, 503)
+      assert.equal((await readiness.json()).code, 'MODULE_MAINTENANCE')
+    })
+  }
+  await t.test('unreadable', async () => {
+    const env = {
+      ...baseEnv,
+      MODULE_CONTROL: {
+        async get(key) {
+          if (key === 'module-control:timekeeping:emergency-latch') throw new Error('unavailable')
+          return activeControl()
+        },
+      },
+    }
+    const readiness = await worker.fetch(request(), env)
+    assert.equal(readiness.status, 503)
+    const body = await readiness.json()
+    assert.equal(body.code, 'MODULE_MAINTENANCE')
+    assert.equal(body.availability.source, 'emergency-latch-unavailable')
+  })
+})
+
+test('health and readiness reject an emergency overlay target that is missing, malformed, or mismatched', async (t) => {
+  const request = () => new Request('https://timekeeping.local/api/ponto/readiness', { headers: affinityHeaders })
+  const withoutTarget = openEmergencyLatch()
+  delete withoutTarget.target
+  const cases = [
+    ['missing', withoutTarget, 'emergency-latch-target-malformed'],
+    ['malformed', openEmergencyLatch({ target: 'qa' }), 'emergency-latch-target-malformed'],
+    ['mismatched', openEmergencyLatch({ target: 'production' }), 'emergency-latch-target-mismatch'],
+  ]
+  for (const [name, latch, source] of cases) {
+    await t.test(name, async () => {
+      const env = {
+        APP_VERSION: releaseSha,
+        ENVIRONMENT: 'staging',
+        DB: readyDb,
+        MODULE_CONTROL: controlStore(activeControl(), latch),
+        ...criticalRuntimeBindings,
+      }
+      const health = await worker.fetch(new Request('https://timekeeping.local/api/ponto/health', { headers: affinityHeaders }), env)
+      assert.equal(health.status, 200)
+      const healthBody = await health.json()
+      assert.equal(healthBody.ready, false)
+      assert.equal(healthBody.availability.source, source)
+      const readiness = await worker.fetch(request(), env)
+      assert.equal(readiness.status, 503)
+      assert.equal((await readiness.json()).code, 'MODULE_MAINTENANCE')
+    })
+  }
 })
 
 test('health is ready only with D1, valid explicit control and exact gateway release affinity', async () => {
@@ -112,7 +199,7 @@ test('private loopback runtime accepts only an explicit local control and matchi
     APP_VERSION: releaseSha,
     ENVIRONMENT: 'local',
     DB: readyDb,
-    MODULE_CONTROL: controlStore(localControl),
+    MODULE_CONTROL: controlStore(localControl, openEmergencyLatch({ target: 'local' })),
     ...criticalRuntimeBindings,
     VERSION_METADATA: undefined,
   })
@@ -200,7 +287,10 @@ test('active control fails closed unless schema and immutable release match the 
   }), {
     ...baseEnv,
     ENVIRONMENT: 'production',
-    MODULE_CONTROL: controlStore(activeControl({ rolloutStage: 'production', syntheticOnly: true })),
+    MODULE_CONTROL: controlStore(
+      activeControl({ rolloutStage: 'production', syntheticOnly: true }),
+      openEmergencyLatch({ target: 'production' }),
+    ),
   })
   assert.equal(productionSynthetic.status, 503)
   assert.equal((await productionSynthetic.json()).code, 'ACTIVE_CONTROL_INVALID')
@@ -210,7 +300,10 @@ test('active control fails closed unless schema and immutable release match the 
   }), {
     ...baseEnv,
     ENVIRONMENT: 'production',
-    MODULE_CONTROL: controlStore(activeControl({ rolloutStage: 'production', syntheticOnly: false })),
+    MODULE_CONTROL: controlStore(
+      activeControl({ rolloutStage: 'production', syntheticOnly: false }),
+      openEmergencyLatch({ target: 'production' }),
+    ),
   })
   assert.equal(production.status, 200)
 })
@@ -224,6 +317,136 @@ test('readiness fails closed when D1 is unavailable', async () => {
   })
   assert.equal(response.status, 503)
   assert.equal((await response.json()).code, 'DATABASE_UNAVAILABLE')
+})
+
+test('release-probe nonce consumption is atomic across concurrent PoPs and replay stays fail-closed', async () => {
+  const stored = new Map()
+  const db = {
+    prepare(sql) {
+      return {
+        values: [],
+        bind(...values) { this.values = values; return this },
+        async run() {
+          if (sql.startsWith('INSERT INTO timekeeping_request_nonces')) {
+            // Yield so two independently signed requests reach the shared
+            // UNIQUE decision concurrently, as separate PoPs would.
+            await Promise.resolve()
+            if (stored.has(this.values[0])) throw new Error('UNIQUE constraint failed')
+            stored.set(this.values[0], {
+              expiresAt: this.values[1],
+              requestId: this.values[2],
+              createdAt: this.values[3],
+            })
+            return { success: true, meta: { changes: 1 } }
+          }
+          if (sql.startsWith('DELETE FROM timekeeping_request_nonces')) {
+            const cutoff = Date.parse(String(this.values[0] || ''))
+            for (const [nonce, row] of stored) {
+              if (Date.parse(row.expiresAt) < cutoff) stored.delete(nonce)
+            }
+            return { success: true, meta: { changes: 0 } }
+          }
+          throw new Error(`unexpected SQL: ${sql}`)
+        },
+      }
+    },
+  }
+  const target = 'staging'
+  const nonceDigest = 'b'.repeat(64)
+  const bodyDigest = 'c'.repeat(64)
+  const reservationNonce = `ponto-release-probe:${target}:${releaseSha}:${nonceDigest}`
+  const reservationPayload = {
+    schemaVersion: 1,
+    target,
+    releaseSha,
+    nonceDigest,
+    bodyDigest,
+  }
+  const actorRaw = Buffer.from(JSON.stringify({
+    id: `release-probe:${target}`,
+    email: `release-probe@${target}.internal.invalid`,
+    role: 'ADMIN',
+    allowedUnits: [],
+    releaseSha,
+  })).toString('base64url')
+  const requestFor = async (requestId, payload = reservationPayload, nonce = reservationNonce) => {
+    const requestBody = JSON.stringify(payload)
+    const requestBodyHash = createHash('sha256').update(requestBody).digest('hex')
+    const timestamp = String(Date.now())
+    const signature = await signHmac(
+      criticalRuntimeBindings.PONTO_ACTOR_HMAC_KEY,
+      [
+        timestamp,
+        actorRaw,
+        'POST',
+        '/api/ponto/internal/release-probe-nonce',
+        nonce,
+        requestBodyHash,
+      ].join('.'),
+    )
+    return new Request('https://timekeeping.local/api/ponto/internal/release-probe-nonce', {
+      method: 'POST',
+      headers: {
+        ...affinityHeaders,
+        'content-type': 'application/json',
+        'x-request-id': requestId,
+        'x-request-nonce': nonce,
+        'x-skincos-actor': actorRaw,
+        'x-skincos-actor-ts': timestamp,
+        'x-skincos-actor-sig': signature,
+        'x-skincos-signature-version': '2',
+      },
+      body: requestBody,
+    })
+  }
+  const environment = {
+    APP_VERSION: releaseSha,
+    ENVIRONMENT: target,
+    DB: db,
+    MODULE_CONTROL: controlStore(activeControl()),
+    ...criticalRuntimeBindings,
+  }
+
+  const [left, right] = await Promise.all([
+    worker.fetch(await requestFor('probe-pop-a'), { ...environment }),
+    worker.fetch(await requestFor('probe-pop-b'), { ...environment }),
+  ])
+  assert.deepEqual([left.status, right.status].sort(), [201, 409])
+  assert.equal(stored.size, 1)
+  const [storedNonce, storedRow] = [...stored.entries()][0]
+  assert.equal(storedNonce, reservationNonce)
+  assert.ok(['probe-pop-a', 'probe-pop-b'].includes(storedRow.requestId))
+  assert.ok(storedRow.requestId)
+  assert.ok(Date.parse(storedRow.expiresAt) > Date.now())
+
+  const replay = await worker.fetch(await requestFor('probe-pop-replay'), { ...environment })
+  assert.equal(replay.status, 409)
+  const replayBody = await replay.json()
+  assert.deepEqual(
+    { ok: replayBody.ok, error: replayBody.error },
+    { ok: false, error: 'RELEASE_PROBE_RESERVATION_REJECTED' },
+  )
+  assert.equal(JSON.stringify(replayBody).includes(nonceDigest), false)
+  assert.equal(JSON.stringify(replayBody).includes(reservationNonce), false)
+
+  const independentlySignedMismatches = [
+    [requestFor('probe-wrong-target', { ...reservationPayload, target: 'production' }), 'target'],
+    [requestFor('probe-wrong-release', { ...reservationPayload, releaseSha: 'd'.repeat(40) }), 'release'],
+    [requestFor('probe-wrong-body', { ...reservationPayload, bodyDigest: 'e'.repeat(64) }), 'body digest'],
+    [requestFor('probe-extra-field', { ...reservationPayload, unexpected: 'value' }), 'extra field'],
+    [requestFor('probe-wrong-nonce', reservationPayload, `${reservationNonce.slice(0, -1)}0`), 'nonce'],
+  ]
+  for (const [pendingRequest, label] of independentlySignedMismatches) {
+    const denied = await worker.fetch(await pendingRequest, { ...environment })
+    assert.equal(denied.status, 409, label)
+  }
+  assert.equal(stored.size, 1)
+
+  const getDenied = await worker.fetch(new Request(
+    'https://timekeeping.local/api/ponto/internal/release-probe-nonce',
+    { headers: affinityHeaders },
+  ), { ...environment })
+  assert.equal(getDenied.status, 404)
 })
 
 test('readiness requires explicit module control and accepts only a valid unexpired canary for this release', async () => {

@@ -117,10 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           node --test \
-            .github/scripts/ponto-production-journey.test.mjs \
-            .github/scripts/ponto-release-evidence.test.mjs \
-            .github/scripts/ponto-staging-rollback-drill.test.mjs \
-            .github/scripts/ponto-wrangler-output.test.mjs \
+            .github/scripts/ponto-*.test.mjs \
             workforce/timekeeping/scripts/ponto-staging-journey-fixtures.test.mjs \
             shared/identity-runtime/workforce-onboarding.test.mjs \
             inventory/tests/releaseHealth.test.mjs

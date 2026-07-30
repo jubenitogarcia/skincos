@@ -80,7 +80,7 @@ function fixture(target = 'staging') {
   };
   const run = {
     id: Number(runId),
-    path: '.github/workflows/ponto-core-baseline-publisher.yml@refs/heads/main',
+    path: '.github/workflows/ponto-core-baseline-publisher.yml',
     head_sha: controlSha,
     head_branch: 'main',
     event: 'workflow_dispatch',
@@ -276,7 +276,7 @@ const tamperCases = [
     /versionId/,
   ],
   ['run id', (x) => (x.run.id = 30512105627), /run id differs/],
-  ['run path', (x) => (x.run.path = '.github/workflows/ponto-core-baseline-publisher.yml'), /path must be pinned/],
+  ['run path', (x) => (x.run.path = '.github/workflows/other.yml'), /path must equal/],
   ['run SHA', (x) => (x.run.head_sha = 'd'.repeat(40)), /head_sha differs/],
   ['run branch', (x) => (x.run.head_branch = 'feature'), /head_branch/],
   ['run event', (x) => (x.run.event = 'push'), /workflow_dispatch/],

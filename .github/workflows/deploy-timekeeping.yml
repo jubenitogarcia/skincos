@@ -1,5 +1,5 @@
 name: Deploy Workforce Timekeeping
-run-name: Timekeeping ${{ inputs.target }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
+run-name: Timekeeping ${{ inputs.target }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }} nonce=${{ inputs.orchestrator_nonce }}
 
 on:
   workflow_dispatch:
@@ -50,17 +50,21 @@ on:
         description: Correlation ID of the Ponto progressive coordinator
         required: false
         type: string
-      orchestrator_lease_token:
-        description: Masked single-use capability issued by the Ponto coordinator
-        required: false
-        type: string
       orchestrator_stage:
         description: Exact stage of the issuing Ponto coordinator
         required: false
         type: string
+      orchestrator_issuer_run_id:
+        description: Exact direct issuer run; equals the coordinator except for approved grandchildren
+        required: false
+        type: string
+      orchestrator_nonce:
+        description: Non-secret per-dispatch correlation nonce
+        required: false
+        type: string
 
 concurrency:
-  group: ${{ inputs.target == 'preview' && 'deploy-timekeeping-preview' || (inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '') && format('ponto-child-timekeeping-{0}', inputs.orchestrator_run_id) || 'ponto-release-custody' }}
+  group: ponto-surface-mutation
   cancel-in-progress: false
 
 permissions:
@@ -70,16 +74,18 @@ permissions:
 jobs:
   coordination:
     permissions:
-      actions: write
+      actions: read
+      checks: write
       contents: read
+      deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     with:
       required: ${{ inputs.target != 'preview' }}
       lease_key: timekeeping
       stage: ${{ inputs.orchestrator_stage || inputs.target }}
+      target: ${{ inputs.target == 'staging' && 'staging' || 'production' }}
       release_sha: ${{ inputs.release_sha }}
       orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
-      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
   promotion:
     needs: coordination
     if: ${{ inputs.target == 'preview' || inputs.target == 'staging' }}
@@ -173,6 +179,7 @@ jobs:
     if: >-
       ${{
         always() &&
+        github.run_attempt == 1 &&
         inputs.target != 'preview' &&
         (
           (inputs.target == 'staging' && needs.promotion.result == 'success') ||
@@ -181,31 +188,71 @@ jobs:
       }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.target == 'staging' && 'staging' || 'production' }}
+    timeout-minutes: 60
     env:
       RELEASE_SHA: ${{ needs.promotion.outputs.source_sha || needs.progressive.outputs.source_sha }}
       TARGET: ${{ inputs.target }}
     steps:
+      - name: Checkout trusted Ponto custody guard
+        if: ${{ inputs.orchestrator_run_id != '' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Revalidate the exact active coordinator before Timekeeping secrets or mutation
+        if: ${{ inputs.orchestrator_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage || inputs.target }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-orchestrator-lease.mjs assert-active \
+            "$ORCHESTRATOR_STAGE" \
+            "$RELEASE_SHA" \
+            "$ORCHESTRATOR_RUN_ID"
       - name: Guard target resources and explicit production authorization
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          D1_ID: ${{ inputs.target == 'staging' && vars.TIMEKEEPING_D1_STAGING_ID || vars.TIMEKEEPING_D1_PRODUCTION_ID }}
-          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
-          ENABLE_PRODUCTION: ${{ vars.ENABLE_TIMEKEEPING_PRODUCTION_DEPLOY }}
+          STAGING_D1_ID_RAW: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+          PRODUCTION_D1_ID_RAW: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
+          STAGING_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PRODUCTION_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          ENABLE_PRODUCTION: ${{ vars.ENABLE_PONTO_TIMEKEEPING_PRODUCTION_DEPLOY }}
           TIMEKEEPING_BACKUP_PASSPHRASE: ${{ secrets.TIMEKEEPING_BACKUP_PASSPHRASE }}
         run: |
           set -euo pipefail
+          case "$TARGET" in
+            staging)
+              D1_ID="$STAGING_D1_ID_RAW"; OPPOSITE_D1_ID="$PRODUCTION_D1_ID_RAW"
+              MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"; OPPOSITE_MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            pilot|canary|production|rollback)
+              D1_ID="$PRODUCTION_D1_ID_RAW"; OPPOSITE_D1_ID="$STAGING_D1_ID_RAW"
+              MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"; OPPOSITE_MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            *) echo 'Unsupported Timekeeping release target'; exit 1 ;;
+          esac
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID MODULE_CONTROL_KV_ID; do
             [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }
           done
+          [[ -z "${OPPOSITE_D1_ID:-}" || "$D1_ID" != "$OPPOSITE_D1_ID" ]] || { echo 'Timekeeping D1 databases are not isolated'; exit 1; }
+          [[ -z "${OPPOSITE_MODULE_CONTROL_KV_ID:-}" || "$MODULE_CONTROL_KV_ID" != "$OPPOSITE_MODULE_CONTROL_KV_ID" ]] || { echo 'Module-control namespaces are not isolated'; exit 1; }
           [[ "$D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid Timekeeping D1 id'; exit 1; }
           [[ "$MODULE_CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid module-control KV id'; exit 1; }
           if [[ "$TARGET" != staging ]]; then
-            [[ "$ENABLE_PRODUCTION" == true ]] || { echo 'ENABLE_TIMEKEEPING_PRODUCTION_DEPLOY must be explicitly true'; exit 1; }
+            [[ "$ENABLE_PRODUCTION" == true ]] || { echo 'ENABLE_PONTO_TIMEKEEPING_PRODUCTION_DEPLOY must be explicitly true'; exit 1; }
           fi
           if [[ "$TARGET" =~ ^(staging|pilot)$ ]]; then
             [[ -n "${TIMEKEEPING_BACKUP_PASSPHRASE:-}" ]] || { echo 'TIMEKEEPING_BACKUP_PASSPHRASE is required before migrations'; exit 1; }
           fi
+          {
+            echo "D1_ID=$D1_ID"
+            echo "OPPOSITE_D1_ID=$OPPOSITE_D1_ID"
+            echo "MODULE_CONTROL_KV_ID=$MODULE_CONTROL_KV_ID"
+            echo "OPPOSITE_MODULE_CONTROL_KV_ID=$OPPOSITE_MODULE_CONTROL_KV_ID"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
           ref: ${{ env.RELEASE_SHA }}
@@ -215,6 +262,19 @@ jobs:
           node-version: 22.12.0
           cache: npm
           cache-dependency-path: workforce/timekeeping/package-lock.json
+      - name: Attest exact selected D1 and module-control identities before checkpoint or mutation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_RESOURCE_TARGET: ${{ inputs.target == 'staging' && 'staging' || 'production' }}
+          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-resource-identity.json
+        run: |
+          set -euo pipefail
+          export PONTO_TIMEKEEPING_D1_ID="$D1_ID"
+          export PONTO_OPPOSITE_TIMEKEEPING_D1_ID="$OPPOSITE_D1_ID"
+          export PONTO_MODULE_CONTROL_KV_ID="$MODULE_CONTROL_KV_ID"
+          export PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$OPPOSITE_MODULE_CONTROL_KV_ID"
+          node .github/scripts/ponto-cloudflare-resource-identity.mjs
       - name: Fetch the exact staging root custody predecessor
         if: ${{ inputs.target == 'pilot' }}
         env:
@@ -271,9 +331,6 @@ jobs:
             "${staging_args[@]}"
           rm -f "$RUNNER_TEMP/timekeeping-root-custody/staging.json"
       - name: Test and render only the selected environment
-        env:
-          D1_ID: ${{ inputs.target == 'staging' && vars.TIMEKEEPING_D1_STAGING_ID || vars.TIMEKEEPING_D1_PRODUCTION_ID }}
-          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
         run: |
           set -euo pipefail
           npm --prefix workforce/timekeeping ci --ignore-scripts
@@ -317,9 +374,9 @@ jobs:
             }
           }
           if (
-            !repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
-            || environmentSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
-          ) throw new Error("shared root attestation key must exist only at repository scope");
+            repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+            || !environmentSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+          ) throw new Error("shared root attestation key must exist only in the selected GitHub environment");
           for (const name of ["PONTO_PROFILE_DATA_KEY_CUSTODY_REF", "PONTO_IDEMPOTENCY_KEY_CUSTODY_REF"]) {
             if (!environmentVariables.has(name)) throw new Error(`${name} must exist in the selected GitHub environment`);
           }
@@ -443,22 +500,27 @@ jobs:
           const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           const target = process.argv[4];
-          const expectedTitle = `Attest Ponto Workers ${target} ${process.env.RELEASE_SHA} orchestrator=${process.env.ORCHESTRATOR_RUN_ID}`;
+          const expectedTitle = new RegExp(
+            `^Attest Ponto Workers ${target} ${process.env.RELEASE_SHA} orchestrator=${process.env.ORCHESTRATOR_RUN_ID} nonce=([0-9a-f]{32})$`,
+          ).exec(String(run.display_title || ""));
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"
+            || workflow.name !== "Attest Ponto Worker secret custody"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.path !== workflow.path
+            || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
             || run.head_sha !== process.env.RELEASE_SHA
-            || run.name !== "Attest Ponto Worker secret custody"
-            || run.display_title !== expectedTitle
+            || !expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || String(run.repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID
+            || String(run.head_repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID
           ) throw new Error("root custody run provenance differs from the governed pre-mutation child");
           NODE
           artifact_name="ponto-root-custody-$target-$RELEASE_SHA"

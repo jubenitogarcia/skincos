@@ -159,8 +159,8 @@ function validateRun(run, bootstrap, expectedRepository) {
   const runId = canonicalId(run.id, 'workflow run id');
   requireValue(runId === String(bootstrap.workflowRunId), 'workflow run id differs from catalog');
   requireValue(
-    run.path === `${bootstrap.workflowPath}@refs/heads/main`,
-    'workflow run path must be pinned to the publisher on refs/heads/main',
+    run.path === bootstrap.workflowPath,
+    'workflow run path must equal the canonical publisher workflow',
   );
   requireValue(run.head_sha === bootstrap.workflowControlSha, 'workflow run head_sha differs');
   requireValue(run.head_branch === 'main', 'workflow run head_branch must be main');

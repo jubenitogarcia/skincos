@@ -85,6 +85,14 @@ export function latestProductionPagesDeployment(payload) {
     .sort((left, right) => String(right?.created_on || "").localeCompare(String(left?.created_on || "")))[0] || null;
 }
 
+export function isTerminalPagesDeployment(deployment) {
+  const stage = deployment?.latest_stage;
+  return stage?.name === "deploy"
+    && stage?.status === "success"
+    && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+    && deployment?.is_skipped === false;
+}
+
 export function classifyPagesRollbackOwnership(payload, item) {
   if (!UUID.test(item?.incumbentDeploymentId || "")) {
     throw new Error("Pages rollback incumbent identity is invalid");
@@ -96,6 +104,7 @@ export function classifyPagesRollbackOwnership(payload, item) {
   const restoredId = String(item?.restoredDeploymentId || "").toLowerCase();
   if (candidateId && !UUID.test(candidateId)) throw new Error("Pages rollback candidate identity is invalid");
   if (restoredId && !UUID.test(restoredId)) throw new Error("Pages restored deployment identity is invalid");
+  if (!isTerminalPagesDeployment(latest)) return "ownership-conflict";
   if (candidateId && latestId === candidateId) return "candidate-owned";
   if (restoredId && latestId === restoredId) return "already-restored";
   if (latestId === incumbentId) return "already-incumbent";
@@ -156,7 +165,6 @@ export function attestPagesIncumbentState(incumbent, active, {
 }) {
   const incumbentCommit = String(incumbent?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase();
   const activeCommit = String(active?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase();
-  const activeStatus = String(active?.latest_stage?.status || active?.stage?.status || "").toLowerCase();
   const activeAliasHosts = new Set((active?.aliases || []).map((value) => {
     try { return new URL(value).hostname; } catch { return String(value).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
   }));
@@ -167,12 +175,13 @@ export function attestPagesIncumbentState(incumbent, active, {
     && incumbent?.environment === "production"
     && incumbent?.deployment_trigger?.metadata?.branch === branch
     && /^[0-9a-f]{40}$/.test(incumbentCommit)
+    && isTerminalPagesDeployment(incumbent)
     && active?.id === activeDeploymentId
     && active?.project_name === project
     && active?.environment === "production"
     && active?.deployment_trigger?.metadata?.branch === branch
     && activeCommit === incumbentCommit
-    && ["success", "idle"].includes(activeStatus)
+    && isTerminalPagesDeployment(active)
     && activeAliasHosts.has(alias);
   return { passed, sourceCommitSha: incumbentCommit };
 }

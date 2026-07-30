@@ -1,8 +1,6 @@
-name: Ponto UI Smoke (prod)
+name: Ponto UI Smoke (authorized manual)
 
 on:
-  schedule:
-    - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
       expect_sha:
@@ -20,7 +18,7 @@ permissions:
 
 jobs:
   smoke:
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.ENABLE_PONTO_UI_SMOKE == 'true') }}
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 15
@@ -72,13 +70,13 @@ jobs:
 
       - name: Check required secrets
         env:
-          SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
-          SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
+          SMOKE_EMAIL: ${{ secrets.PONTO_PILOT_LOGIN }}
+          SMOKE_PASSWORD: ${{ secrets.PONTO_PILOT_PASSWORD }}
         run: |
           set -euo pipefail
           if [[ -z "${SMOKE_EMAIL:-}" || -z "${SMOKE_PASSWORD:-}" ]]; then
-            echo "Missing GitHub Actions secrets: PONTO_SMOKE_EMAIL / PONTO_SMOKE_PASSWORD"
-            echo "Configure them in the repo Settings → Secrets and variables → Actions."
+            echo "Missing production-environment secrets: PONTO_PILOT_LOGIN / PONTO_PILOT_PASSWORD"
+            echo "Use only the separately approved least-privilege CONSULTOR pilot identity."
             exit 1
           fi
 
@@ -89,8 +87,8 @@ jobs:
           CRM_URL: https://crm.skincos.com.br
           EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
           AUTO_LOGIN: "1"
-          SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
-          SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
+          SMOKE_EMAIL: ${{ secrets.PONTO_PILOT_LOGIN }}
+          SMOKE_PASSWORD: ${{ secrets.PONTO_PILOT_PASSWORD }}
           LOGIN_WAIT_MS: "120000"
           NO_SCREENSHOTS: "1"
           MUTATE_ADMIN: "0"
@@ -107,11 +105,11 @@ jobs:
           CRM_URL: https://crm.skincos.com.br
           EXPECT_BUILD_SHA: ${{ steps.sha.outputs.sha }}
           AUTO_LOGIN: "1"
-          SMOKE_EMAIL: ${{ secrets.PONTO_SMOKE_EMAIL }}
-          SMOKE_PASSWORD: ${{ secrets.PONTO_SMOKE_PASSWORD }}
+          SMOKE_EMAIL: ${{ secrets.PONTO_PILOT_LOGIN }}
+          SMOKE_PASSWORD: ${{ secrets.PONTO_PILOT_PASSWORD }}
           LOGIN_WAIT_MS: "120000"
           TRACE: "0"
-          FULL_PAGE: "1"
+          NO_SCREENSHOTS: "1"
           MUTATE_ADMIN: "0"
           MUTATE_EMPLOYEE: "0"
           MUTATE_PUNCH: "0"
@@ -119,17 +117,6 @@ jobs:
         run: |
           set -euo pipefail
           node crm/console/scripts/ponto-ui-smoke.cjs
-
-      - name: Upload artifacts
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ponto-ui-smoke-artifacts
-          path: |
-            output/playwright/*.png
-            output/playwright/*.log
-          if-no-files-found: ignore
-          retention-days: 3
 
       - name: Fail if fast smoke failed
         if: ${{ steps.smoke.outcome != 'success' }}

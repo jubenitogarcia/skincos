@@ -1,5 +1,8 @@
 name: Bootstrap private Ponto Core rollback baseline
 
+# The immutable baseline was completed once. The input schema remains available
+# so historical runs are intelligible, but every current dispatch is stopped by
+# the first source guard before checkout, environment secrets, or mutation.
 on:
   workflow_dispatch:
     inputs:
@@ -19,7 +22,7 @@ on:
         type: boolean
 
 concurrency:
-  group: ponto-release-custody
+  group: ponto-surface-mutation
   cancel-in-progress: false
 
 permissions:
@@ -32,6 +35,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Reject retired publisher dispatch
+        run: |
+          echo "::error::This one-time baseline publisher is retired. Current dispatches are fail-closed."
+          exit 1
+
       - name: Initialize validation evidence
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/ponto-core-baseline-validation
@@ -54,6 +62,10 @@ jobs:
           set -euo pipefail
           [[ "$DISPATCH_REF" == "refs/heads/main" ]] || {
             echo "::error::The baseline publisher may only be dispatched from main."
+            exit 1
+          }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || {
+            echo "::error::The privileged baseline publisher cannot be replayed; dispatch a new run."
             exit 1
           }
           [[ "$CONFIRM_STAGING" == "true" ]] || {
@@ -138,6 +150,7 @@ jobs:
   staging:
     name: Create or attest private staging baseline
     needs: validate
+    if: ${{ github.run_attempt == 1 && needs.validate.result == 'success' }}
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 15
@@ -202,6 +215,7 @@ jobs:
   production:
     name: Create or attest private production baseline
     needs: [validate, staging]
+    if: ${{ github.run_attempt == 1 && needs.validate.result == 'success' && needs.staging.result == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 15

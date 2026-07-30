@@ -14,6 +14,9 @@ const validatorSource = fs.readFileSync(validator, 'utf8')
 const runner = fs.readFileSync(path.join(root, 'scripts', 'run-local-crm.sh'), 'utf8')
 const pagesRunner = fs.readFileSync(path.join(root, 'crm', 'console', 'scripts', 'dev_pages.sh'), 'utf8')
 const shortcut = fs.readFileSync(path.join(root, 'scripts', 'run-shared-codex-shortcut.ps1'), 'utf8')
+const inventoryWrangler = fs.readFileSync(path.join(root, 'inventory', 'wrangler.toml'), 'utf8')
+const consoleWrangler = fs.readFileSync(path.join(root, 'crm', 'console', 'wrangler.toml'), 'utf8')
+const consolePackage = JSON.parse(fs.readFileSync(path.join(root, 'crm', 'console', 'package.json'), 'utf8'))
 const workerBindings = [
   'PONTO_ACTOR_HMAC_KEY',
   'PONTO_IDEMPOTENCY_KEY',
@@ -183,6 +186,8 @@ test('local launcher uses private env files, explicit KV control and exact relea
   assert.match(runner, /--var "ALLOW_DEV_SEED:true"/)
   assert.match(runner, /--var "ALLOW_DEV_AUTH_BYPASS:\$auth_bypass"/)
   assert.match(runner, /module-control:timekeeping/)
+  assert.match(runner, /module-control:timekeeping:emergency-latch/)
+  assert.match(runner, /syntheticLocalOnly: true/)
   assert.match(runner, /--binding MODULE_CONTROL --local/)
   assert.match(runner, /--var "APP_VERSION:\$CRM_TIMEKEEPING_RELEASE_SHA"/)
   assert.match(runner, /--var "ENVIRONMENT:local"/)
@@ -193,6 +198,11 @@ test('local launcher uses private env files, explicit KV control and exact relea
   assert.match(runner, /x-skincos-gateway-environment: local/)
   assert.match(runner, /PONTO_ALLOW_LOCAL_DIRECT_TIMEKEEPING=true/)
   assert.match(pagesRunner, /--env-file "\$PONTO_PAGES_ENV_FILE"/)
+  assert.match(inventoryWrangler, /required = \["IDENTITY_WORKFORCE_HMAC_KEY", "SESSION_SECRET"\]/)
+  const localConsoleWrangler = consoleWrangler.split('[[env.production.')[0]
+  assert.match(localConsoleWrangler, /\[secrets\]/)
+  for (const binding of pagesBindings) assert.match(localConsoleWrangler, new RegExp(`"${binding}"`))
+  assert.equal(consolePackage.devDependencies.wrangler, '4.107.1')
   assert.match(pagesRunner, /validate-local-timekeeping-env\.mjs/)
   assert.match(pagesRunner, /"\$CRM_TIMEKEEPING_ENV_FILE" "\$PONTO_PAGES_ENV_FILE" "\$WORKSPACE_ROOT"/)
   assert.match(pagesRunner, /SKINCOS_DEPLOYMENT_ENV:-\}" != "local"/)

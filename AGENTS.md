@@ -27,6 +27,24 @@
 - If local execution needs secrets, use a private overlay or a private clone
   outside the shared area and document only variable names here.
 
+## Windows-native Codex boundary
+
+- Run the Codex agent natively on Windows and use PowerShell as the integrated
+  terminal. Keep Codex sessions, plugins, browser automation, MCPs and
+  authentication in the Windows client.
+- Windows Git, GitHub CLI, Node LTS and Python are available for general Codex
+  tooling. Never run `npm install`, `npm ci`, project builds/tests, Playwright,
+  Wrangler, project Python environments, PostgreSQL or systemd operations for
+  SKINCOS directly on Windows.
+- Route project Node/npm/Python/build/test/runtime operations through
+  `scripts/invoke-skincos-wsl.ps1`, using its typed script, executable, npm or
+  Python parameters. Do not add `PowerShell -> wsl.exe -> bash -lc` command
+  strings to Codex actions.
+- Keep project `node_modules`, Python environments and caches in
+  `Ubuntu-24.04`; never copy dependency trees between Windows and Linux.
+- A direct `wsl.exe` owner is permitted only for documented Windows lifecycle
+  infrastructure and must carry `WSL_BOUNDARY_EXCEPTION`.
+
 ## Default Codex App Startup
 
 - For non-trivial work in this repo, start by running or mentally applying

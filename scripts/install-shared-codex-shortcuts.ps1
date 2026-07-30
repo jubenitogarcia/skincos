@@ -88,21 +88,19 @@ function New-ShortcutFile {
     }
 }
 
-function Convert-WindowsPathToWsl {
-    param([string]$Path)
-    if ($Path -match '^(?<drive>[A-Za-z]):\\(?<rest>.*)$') {
-        return "/mnt/$($Matches.drive.ToLowerInvariant())/$($Matches.rest -replace '\\', '/')"
-    }
-    return $Path
-}
-
 function Get-CrmLocalModuleCatalog {
     $catalogScript = Join-Path $ProjectRoot "scripts\crm-local-module-catalog.mjs"
     if (-not (Test-Path -LiteralPath $catalogScript)) {
         throw "CRM module catalog is missing: '$catalogScript'."
     }
-    $catalogScriptWsl = Convert-WindowsPathToWsl -Path $catalogScript
-    $raw = & wsl.exe -d Ubuntu-24.04 -- node $catalogScriptWsl --json
+    $wslInvoker = Join-Path $ProjectRoot "scripts\invoke-skincos-wsl.ps1"
+    if (-not (Test-Path -LiteralPath $wslInvoker)) {
+        throw "Typed WSL gateway is missing: '$wslInvoker'."
+    }
+    $raw = & $wslInvoker `
+        -ProjectRoot $ProjectRoot `
+        -Executable node `
+        -ArgumentList @("./scripts/crm-local-module-catalog.mjs", "--json")
     if ($LASTEXITCODE -ne 0) {
         throw "The CRM module catalog could not be read through Ubuntu-24.04."
     }

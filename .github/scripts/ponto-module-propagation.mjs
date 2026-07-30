@@ -8,6 +8,8 @@ const healthUrl = new URL(String(process.env.PONTO_MODULE_HEALTH_URL || ""));
 const timeoutMs = Number(process.env.PONTO_MODULE_PROPAGATION_TIMEOUT_MS || 150_000);
 const cadenceMs = Number(process.env.PONTO_MODULE_PROPAGATION_CADENCE_MS || 5_000);
 const requiredConsecutive = Number(process.env.PONTO_MODULE_PROPAGATION_CONSECUTIVE || 2);
+const expectedSource = String(process.env.PONTO_MODULE_EXPECTED_SOURCE || "").trim();
+const alternateExpectationFile = String(process.env.PONTO_MODULE_ALTERNATE_EXPECTATION_FILE || "").trim();
 const allowedOrigins = new Set([
   "https://api.skincos.com.br",
   "https://api-staging.skincos.com.br",
@@ -22,10 +24,51 @@ if (!Number.isFinite(cadenceMs) || cadenceMs < 1_000 || cadenceMs > 15_000) thro
 if (!Number.isInteger(requiredConsecutive) || requiredConsecutive < 2 || requiredConsecutive > 5) throw new Error("module propagation consecutive sample count must be 2..5");
 
 const expectation = JSON.parse(fs.readFileSync(expectationFile, "utf8"));
-if (!["active", "canary", "maintenance", "disabled"].includes(expectation.state)) throw new Error("invalid expected module state");
-if (!Number.isFinite(Date.parse(expectation.changedAt))) throw new Error("invalid expected changedAt");
-if (["active", "canary"].includes(expectation.state) && !/^[0-9a-f]{40}$/.test(String(expectation.releaseSha || ""))) {
-  throw new Error("active/canary propagation requires an exact release SHA");
+if (expectedSource && !["control", "emergency-latch-active"].includes(expectedSource)) {
+  throw new Error("invalid expected module availability source");
+}
+const validateExpectation = (value, source, label, degraded) => {
+  if (!["active", "canary", "maintenance", "disabled"].includes(value?.state)) {
+    throw new Error(`invalid ${label} expected module state`);
+  }
+  if (!Number.isFinite(Date.parse(String(value?.changedAt || "")))) {
+    throw new Error(`invalid ${label} expected changedAt`);
+  }
+  if (!["", "control", "emergency-latch-active"].includes(source)) {
+    throw new Error(`invalid ${label} expected module availability source`);
+  }
+  if (["active", "canary"].includes(value.state) && !/^[0-9a-f]{40}$/.test(String(value.releaseSha || ""))) {
+    throw new Error(`${label} active/canary propagation requires an exact release SHA`);
+  }
+  return {
+    label,
+    state: value.state,
+    changedAt: value.changedAt,
+    releaseSha: String(value.releaseSha || ""),
+    source,
+    degraded,
+  };
+};
+const acceptedExpectations = [
+  validateExpectation(expectation, expectedSource, "primary", false),
+];
+if (alternateExpectationFile) {
+  const alternate = JSON.parse(fs.readFileSync(alternateExpectationFile, "utf8"));
+  if (
+    acceptedExpectations[0].state !== "maintenance"
+    || acceptedExpectations[0].source !== "emergency-latch-active"
+  ) {
+    throw new Error("alternate propagation is restricted to an exact maintenance emergency-latch primary");
+  }
+  if (alternate?.state !== "maintenance" || String(alternate?.source || "").trim() !== "control") {
+    throw new Error("incumbent propagation fallback must be exact maintenance from control");
+  }
+  acceptedExpectations.push(validateExpectation(
+    alternate,
+    String(alternate.source || "").trim(),
+    "incumbent-control-fallback",
+    true,
+  ));
 }
 
 const accessHeaders = {};
@@ -40,7 +83,7 @@ let attempts = 0;
 let consecutive = 0;
 let lastStatus = 0;
 let lastObserved = null;
-let legacyMaintenanceStateOnly = false;
+let matchedExpectation = null;
 while (performance.now() - started <= timeoutMs) {
   attempts += 1;
   const probe = new URL(healthUrl);
@@ -57,16 +100,21 @@ while (performance.now() - started <= timeoutMs) {
       state: String(availability.state || ""),
       changedAt: String(availability.changedAt || ""),
       releaseSha: String(availability.releaseSha || ""),
+      source: String(availability.source || ""),
     } : null;
-    const stateOnlyMaintenance = expectation.state === "maintenance"
-      && lastObserved?.state === "maintenance"
-      && !lastObserved?.changedAt;
-    const exact = response.status === 200
-      && lastObserved?.state === expectation.state
-      && (lastObserved?.changedAt === expectation.changedAt || stateOnlyMaintenance)
-      && (!["active", "canary"].includes(expectation.state) || lastObserved.releaseSha === expectation.releaseSha);
-    legacyMaintenanceStateOnly = exact && stateOnlyMaintenance;
-    consecutive = exact ? consecutive + 1 : 0;
+    const matched = response.status === 200
+      ? acceptedExpectations.find((candidate) =>
+        lastObserved?.state === candidate.state
+        && lastObserved?.changedAt === candidate.changedAt
+        && (!candidate.source || lastObserved?.source === candidate.source)
+        && (!["active", "canary"].includes(candidate.state) || lastObserved.releaseSha === candidate.releaseSha))
+      : null;
+    if (matched && matchedExpectation?.label === matched.label) {
+      consecutive += 1;
+    } else {
+      consecutive = matched ? 1 : 0;
+    }
+    matchedExpectation = matched || null;
     if (consecutive >= requiredConsecutive) break;
   } catch {
     lastStatus = 0;
@@ -94,12 +142,19 @@ const report = {
   observation: `${healthUrl.origin}${healthUrl.pathname}`,
   lastStatus,
   lastObserved,
-  exactChangedAtObserved: lastObserved?.changedAt === expectation.changedAt,
-  legacyMaintenanceStateOnly,
+  exactChangedAtObserved: Boolean(matchedExpectation)
+    && lastObserved?.changedAt === matchedExpectation.changedAt,
+  exactSourceObserved: Boolean(matchedExpectation)
+    && (!matchedExpectation.source || lastObserved?.source === matchedExpectation.source),
+  expectedSource,
+  acceptedExpectations,
+  matchedExpectation: matchedExpectation?.label || "",
+  matchedSource: matchedExpectation?.source || "",
+  degraded: matchedExpectation?.degraded === true,
   credentialsIncluded: false,
   piiIncluded: false,
 };
 fs.mkdirSync(path.dirname(reportFile), { recursive: true });
 fs.writeFileSync(reportFile, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
 if (!passed) throw new Error(`module-control propagation was not externally observed within ${timeoutMs} ms`);
-process.stdout.write(`Observed ${expectation.state} at ${expectation.changedAt} after ${elapsedMs} ms.\n`);
+process.stdout.write(`Observed ${matchedExpectation.state} at ${matchedExpectation.changedAt} from ${matchedExpectation.source || "any-source"} after ${elapsedMs} ms.\n`);
