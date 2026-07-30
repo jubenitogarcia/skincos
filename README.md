@@ -78,6 +78,8 @@ Plataforma interna (local) para automações e operações da clínica.
   - `REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET=true`
 
 ### Testar CRM local
+- No Codex App/Windows, use `CRM – Local` para o CRM completo ou `CRM – Módulos` para escolher diretamente papel e módulo.
+- O catálogo modular, a matriz de papéis, o isolamento e os comandos explícitos estão em `docs/runbooks/crm-local-modular.md`.
 - Launcher recomendado: `npm run crm:local`
 - Atalho direto para o módulo Meta Ads: `npm run crm:local:meta-ads`
 - Atalho direto para o módulo Site EF: `npm run crm:local:site-tracking`
@@ -94,7 +96,9 @@ Plataforma interna (local) para automações e operações da clínica.
   - sobe o CRM via `Pages Functions` local (`crm/console/scripts/dev_pages.sh`)
   - ativa bypass local de auth apenas em `localhost`
   - preserva os módulos que já suportam leitura real com segurança, como `Escala`
-  - os atalhos `CRM Local`, `Site EF` e `Meta Ads` usam um worktree privado, destacado em `origin/main`. Alterações não integradas no checkout aberto não são carregadas no runtime local.
+  - cada ação materializa uma fonte privada identificada pelo snapshot exato; uma prévia explicitamente selecionada inclui suas alterações locais sem modificar o checkout compartilhado.
+  - cada combinação módulo × papel possui portas, manifesto/PIDs, logs, estado, registry Wrangler e perfil de navegador próprios em `C:\CodexRuntime\operator\admin\skincos`.
+  - o build é alinhado automaticamente ao lockfile e às impressões determinísticas de código, configuração e assets; uma segunda execução idêntica reutiliza somente a instância comprovadamente saudável.
   - o primeiro uso do gate local instala o Chromium do Playwright; o CRM não inicia se a smoke obrigatória não puder ser executada.
   - no perfil genérico, o launcher inicia o `workforce/timekeeping` local, aplica suas migrations e faz o proxy do Ponto assinar requests com uma chave local de teste; nenhum secret de produção é copiado para o ambiente local.
 - Para testar a sessão real sem bypass: `CRM_PROFILE=session npm run crm:local`

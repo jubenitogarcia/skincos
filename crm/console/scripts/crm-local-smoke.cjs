@@ -42,7 +42,13 @@ function moduleRoute(key) {
 }
 
 function moduleUrl(key) {
-  return new globalThis.URL(moduleRoute(key), APP_URL).toString()
+  const target = new globalThis.URL(moduleRoute(key), APP_URL)
+  if (key === 'meta-ads' || key === 'site-tracking') {
+    const bootstrap = new globalThis.URL(APP_URL)
+    const scenario = bootstrap.searchParams.get('metaAdsLocalScenario')
+    if (scenario) target.searchParams.set('metaAdsLocalScenario', scenario)
+  }
+  return target.toString()
 }
 
 function stripAnsi(value) {
