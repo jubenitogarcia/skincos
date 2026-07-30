@@ -9,7 +9,19 @@ rules/environments/runs, Cloudflare Pages and Workers control-plane metadata,
 Identity/Workforce evidence and live endpoints. PR #894 is merged as
 `4a6d0cfced901c5297f76d141f5f7f1c18ea4a93`; PRs #912, #914, #916, #917 and
 #919 are also integrated. The old statement that #894 remained open and the
-old 29-path post-#886 inventory are revoked.
+old 29-path post-#886 inventory are revoked. Its three residual review
+conversations were answered with the superseding technical-control evidence
+in PR #921 and resolved; the fresh GraphQL count is zero unresolved.
+
+PR #921 is open and ready for review on the exact observed `main` boundary.
+Its technical commits through
+`5f0cb631a22362d2ec631d868783fbf8bcfcabc0` are pushed but not integrated.
+The initial hosted runs exposed a Pages target-mutex regression and a
+CI-test-only `GITHUB_ACTIONS` inheritance; both were corrected without
+loosening the release guards. Local reproduction now passes the architecture
+contract, the progressive policy validator, actionlint and the exact
+GitHub-Actions-mode Timekeeping test command. Hosted checks and merge remain
+required.
 
 The complete upstream delta after PR #886
 `10b2197731d0210cf8fc8cd961f7a787d73bf650` through the observed main contains
@@ -39,7 +51,7 @@ staging run `30508502488` succeeded for source
 `https://ee5ab6dd.skincos-staging.pages.dev` deployment in project
 `skincos-staging` and aliases `https://crm-staging.skincos.com.br`.
 
-The changeset containing this entry implements the missing technical release
+PR #921 implements the missing technical release
 controls across Timekeeping, private Ponto Core, Identity/Inventory and CRM
 Pages: exact current-main `GITHUB_SHA`, ordered predecessor evidence, version
 affinity, zero-default-traffic pilot/canary with protected Pages bucketing,
@@ -73,7 +85,8 @@ safe state under the current explicit instruction. This exception cannot
 authorize `active`, a deploy, a grant, a secret change or any later production
 mutation.
 
-The remaining blockers are external authorization/configuration, not a reason
+The first remaining blocker is integration of PR #921 after hosted checks.
+The subsequent blockers are external authorization/configuration, not a reason
 to loosen source guards: `PONTO_PROFILE_DATA_KEY` is absent by name from both
 GitHub environments. The repository-only
 `PONTO_ROOT_ATTESTATION_KEY_SHARED`/`PONTO_ROOT_ATTESTATION_KEY_ID` pair and the

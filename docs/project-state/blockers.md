@@ -2,21 +2,24 @@
 
 ## P0 — Workforce Timekeeping production release is fail-closed
 
-PR #894 and the private Ponto Core/Pages staging prerequisites are integrated,
-and the changeset carrying this entry implements the missing progressive
-release controls. No immutable candidate has completed the current
+PR #894 and the private Ponto Core/Pages staging prerequisites are integrated.
+Its three residual conversations are resolved with zero unresolved threads.
+PR #921 carries the missing progressive release controls, is pushed and open,
+but still requires hosted checks and merge. No immutable candidate has completed the current
 preview/staging/pilot/canary/production chain. Production remains explicitly
 `module-control:timekeeping=maintenance` through canonical run `30496220685`
 and `ENABLE_CORE_WORKERS_DEPLOY=false`.
 
 The executable blockers, in required order, are:
 
-1. An authorized Cloudflare owner must create/enable the exact zone-scoped WAF
+1. Complete hosted checks, review and merge PR #921 without bypass. Only the
+   resulting exact current `main` `GITHUB_SHA` may enter preview.
+2. An authorized Cloudflare owner must create/enable the exact zone-scoped WAF
    block rules and register `CLOUDFLARE_ZONE_ID`, `PONTO_WAF_RULESET_ID`,
    `PONTO_WAF_HEADER_RULE_ID` and `PONTO_WAF_CONTRACT_RULE_ID`. The gate
    requires external 403 probes for both public version-selection headers and
    `/insumos/health/workforce-contract`; no Worker-side bypass is accepted.
-2. An authorized secret custodian must provision a distinct, separately
+3. An authorized secret custodian must provision a distinct, separately
    custodied `PONTO_PROFILE_DATA_KEY` in the GitHub `staging` environment from
    an approved source, plus environment variables
    `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` and
@@ -26,26 +29,27 @@ The executable blockers, in required order, are:
    `PONTO_ROOT_ATTESTATION_KEY_ID` only as a repository variable. Do not
    generate in CI, print, copy application roots across environments or
    version a secret value.
-3. With (1) and (2) present, execute `preview` and then `staging` using exactly
-   the coordinator `GITHUB_SHA` on the current `main`. The staging predecessor
+4. With the WAF and staging custody inputs present, execute `preview` and then
+   `staging` using exactly the coordinator `GITHUB_SHA` on the current `main`.
+   The staging predecessor
    must include all four surfaces, checkpoints, additive migrations,
    maintenance/active transitions, authenticated CONSULTOR navigation and
    server-side authorization, audit-preserving teardown and the real
    incumbent/candidate rollback drill. Any main advancement requires a fresh
    preview.
-4. Only after staging passes and separate pre-production authorization, an
+5. Only after staging passes and separate pre-production authorization, an
    authorized custodian must provision a different, separately custodied
    `PONTO_PROFILE_DATA_KEY` in `production`, with production-only custody
    references that do not reuse either staging reference.
-5. Identity/Workforce must designate an existing eligible pilot and authorize
+6. Identity/Workforce must designate an existing eligible pilot and authorize
    the minimal unit/network cohort. Then environment owners may register
    `PONTO_PILOT_LOGIN`, `PONTO_PILOT_PASSWORD` and
    `PONTO_PILOT_COHORT_JSON`; do not invent or activate a collaborator.
-6. Provide a clinic-network self-hosted runner matching
+7. Provide a clinic-network self-hosted runner matching
    `PONTO_PILOT_RUNNER_LABELS_JSON`, online and idle, plus a reviewed
    `PONTO_CANARY_COHORT_PERCENTAGE`. The current repository runner inventory is
    zero.
-7. Enable production deploy flags only for the authorized stage, then complete
+8. Enable production deploy flags only for the authorized stage, then complete
    pilot, canary, production and the post-release observation window with the
    exact predecessor artifacts and SLOs. Restore maintenance and exact
    incumbents on any threshold or ownership failure.
@@ -67,9 +71,9 @@ Core, wrong staging Pages target, fail-open deploy default, dispatch-SHA
 checkpoint labels, missing version affinity, missing executable predecessors,
 readiness ignoring maintenance, arbitrary Core incumbent capture, late
 production-baseline verification, hosted-coordinator pilot credentials and
-unproved key separation—are closed by the reviewed source in the changeset
-containing this entry. They must still pass hosted checks and the ordered
-workflow; they are not external permission to skip items 1–7.
+unproved key separation—are closed by the source proposed in PR #921. They
+must still pass hosted checks, merge and the ordered workflow; they are not
+external permission to skip items 1–8.
 
 ## Resolved — Insumos unit access P0
 

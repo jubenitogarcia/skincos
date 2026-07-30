@@ -36,16 +36,17 @@
       "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\timekeeping\\baseline-publisher\\30512105626"
     },
     {
-      "observed_at": "2026-07-30T04:29:34Z",
-      "surface": "github-main-pr-894-and-isolated-ponto-controls-worktree",
+      "observed_at": "2026-07-30T05:29:58Z",
+      "surface": "github-main-pr-894-pr-921-and-isolated-ponto-controls-worktree",
       "scope": "Ponto blocker-ledger integration, post-PR-886 delta and current candidate boundary",
-      "state": "blocker-ledger-merged-technical-controls-pending-review-production-fail-closed",
-      "method": "Verified PR #894 and its required checks, fetched origin/main, enumerated the full name-status delta from PR #886 through the current main boundary, and inspected the isolated progressive-release controls branch without treating unmerged work as integrated.",
-      "result": "PR #894 merged at 4a6d0cfced901c5297f76d141f5f7f1c18ea4a93 with all required checks successful. A fresh GraphQL audit found three still-open review conversations: production-maintenance authorization, the production module-activation gate and the Finance handoff. The changeset recorded here explicitly classifies run 30496220685 as a non-authorizing fail-close exception, gates Timekeeping canary/active through a coordinator lease and exact release identities, and restores the post-Ponto Finance queue pointer; the conversations must be replied to and resolved before this changeset merges. At boundary 0a2117904ba58eb45e1163fb0971c31e6b2a7d1e, the post-PR-886 interval contains 58 commits, 30 first-parent commits and 109 unique paths (33 added, 76 modified, zero deleted), including eight Ponto-exclusive paths; it is not a Finance-only delta. The exact path-level inventory is docs/project-state/ponto-post-886-delta.json. The technical controls exist only on pending branch codex/admin/ponto-progressive-release, currently at local commits b3632455 and 7011b319, and are not yet reviewed, merged or a release candidate. The governed selector must use the coordinator workflow's exact GITHUB_SHA after the controls are merged to main; an arbitrary ancestral SHA is not acceptable.",
-      "limitation": "No final candidate SHA is selected. After the technical controls merge, release execution still requires distinct and separately custodied PONTO_PROFILE_DATA_KEY values, repository-only PONTO_ROOT_ATTESTATION_KEY_SHARED and PONTO_ROOT_ATTESTATION_KEY_ID, per-environment PONTO_PROFILE_DATA_KEY_CUSTODY_REF and PONTO_IDEMPOTENCY_KEY_CUSTODY_REF values, the two required WAF deny rules and their three identifiers, an Identity/Workforce-authorized pilot plus cohort credentials, PONTO_PILOT_RUNNER_LABELS_JSON with an online clinic-context self-hosted runner, and the governed canary percentage. None may be invented or bypassed. Production remains fail-closed with Timekeeping in maintenance and ENABLE_CORE_WORKERS_DEPLOY=false; no candidate preview, staging, pilot, canary or production dispatch is claimed.",
+      "state": "blocker-ledger-merged-review-threads-resolved-technical-controls-pr-open-production-fail-closed",
+      "method": "Verified PR #894 and its required checks, replied to and resolved each residual review conversation, re-queried GraphQL for zero unresolved threads, fetched origin/main, enumerated the full name-status delta from PR #886 through the current main boundary, pushed PR #921 and reproduced its initial hosted failures locally before applying minimal fixes.",
+      "result": "PR #894 merged at 4a6d0cfced901c5297f76d141f5f7f1c18ea4a93 with all required checks successful. Its three residual conversations—production-maintenance authorization, the production module-activation gate and the Finance handoff—were answered by replies 3680219970, 3680220047 and 3680220164 with the superseding PR #921 evidence, resolved, and independently re-counted as zero unresolved. At boundary 0a2117904ba58eb45e1163fb0971c31e6b2a7d1e, the post-PR-886 interval contains 58 commits, 30 first-parent commits and 109 unique paths (33 added, 76 modified, zero deleted), including eight Ponto-exclusive paths; it is not a Finance-only delta. The exact path-level inventory is docs/project-state/ponto-post-886-delta.json. PR #921 is open and carries published technical commits b3632455, 7011b319, 98361799 and 5f0cb631. The Pages concurrency contract and the exact GitHub-Actions-mode Timekeeping tests now pass locally together with the progressive validator and actionlint. These controls remain unmerged and are not yet a release candidate. The governed selector must use the coordinator workflow's exact GITHUB_SHA after merge; an arbitrary ancestral SHA is not acceptable.",
+      "limitation": "PR #921 still requires hosted checks, review and merge. No final candidate SHA is selected. After integration, release execution still requires distinct and separately custodied PONTO_PROFILE_DATA_KEY values, repository-only PONTO_ROOT_ATTESTATION_KEY_SHARED and PONTO_ROOT_ATTESTATION_KEY_ID, per-environment PONTO_PROFILE_DATA_KEY_CUSTODY_REF and PONTO_IDEMPOTENCY_KEY_CUSTODY_REF values, the two required WAF deny rules and their three identifiers, an Identity/Workforce-authorized pilot plus cohort credentials, PONTO_PILOT_RUNNER_LABELS_JSON with an online clinic-context self-hosted runner, and the governed canary percentage. None may be invented or bypassed. Production remains fail-closed with Timekeeping in maintenance and ENABLE_CORE_WORKERS_DEPLOY=false; no candidate preview, staging, pilot, canary or production dispatch is claimed.",
       "sha": "0a2117904ba58eb45e1163fb0971c31e6b2a7d1e",
       "origin_main": "0a2117904ba58eb45e1163fb0971c31e6b2a7d1e",
       "pr": 894,
+      "technical_controls_pr": 921,
       "merge_sha": "4a6d0cfced901c5297f76d141f5f7f1c18ea4a93",
       "related_pr": 886,
       "delta": {
@@ -64,9 +65,11 @@
         "name": "codex/admin/ponto-progressive-release",
         "commits": [
           "b3632455",
-          "7011b319"
+          "7011b319",
+          "98361799",
+          "5f0cb631"
         ],
-        "state": "local-pending-review-and-merge"
+        "state": "remote-pr-open-hosted-checks-and-merge-pending"
       },
       "supersedes": [
         "2026-07-29T22:29:04Z post-PR-886 29-file delta and ancestor-only promotion rule"

@@ -67,7 +67,10 @@ jornada autenticada atual continue válida.
 
 - [x] Sanear e integrar a PR #894 como
   `4a6d0cfced901c5297f76d141f5f7f1c18ea4a93`; os bloqueios antigos nela
-  descritos foram substituídos pelos controles e evidências atuais.
+  descritos foram substituídos pelos controles e evidências atuais. As três
+  conversas residuais receberam resposta rastreável para a PR #921 e foram
+  resolvidas; a reconsulta GraphQL em 2026-07-30 retornou zero conversas
+  abertas.
 - [x] Integrar a correção da PR #886 em
   `10b2197731d0210cf8fc8cd961f7a787d73bf650`. Esse SHA é somente a base do
   inventário e não é um candidato promovível pela cadeia atual.
@@ -105,6 +108,11 @@ jornada autenticada atual continue válida.
   opaca de separação dos roots antes de mutation, credenciais piloto somente
   no runner self-hosted autorizado, interrupção automática, ownership e
   rollback exato nas quatro superfícies.
+- [ ] Integrar a PR #921, aberta sobre o `main`
+  `0a2117904ba58eb45e1163fb0971c31e6b2a7d1e`, depois de todos os checks
+  hospedados e conversas verdes. Os commits técnicos até
+  `5f0cb631a22362d2ec631d868783fbf8bcfcabc0` estão publicados; isso ainda não
+  os torna código de `main` nem seleciona um candidato.
 - [x] Isolar o Ponto Core do binding Finance e publicar o Pages staging
   `ee5ab6dd-4bba-48da-96ea-38fa686f8691` no projeto `skincos-staging`
   (`https://ee5ab6dd.skincos-staging.pages.dev`), mantendo produção separada.
