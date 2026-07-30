@@ -1,23 +1,23 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-30T16:34:46Z",
-  "source_main_sha": "46b97519adc056d31553531cf3f90ad5a324fc88",
-  "source_main_state": "verified-current-main-after-pr-924-925-926-928",
+  "authoritative_at": "2026-07-30T17:51:13Z",
+  "source_main_sha": "71c54b1d406317c614dc33e48ced170458fbd707",
+  "source_main_state": "verified-current-main-after-pr-930-and-complete-preview",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
       "objective": "Complete the governed Workforce Timekeeping release through preview, staging, pilot, canary and production on one immutable source SHA.",
       "priority": 1100,
-      "state": "pr-924-integrated-pr-927-open-preview-failed-both-environments-maintenance-external-gates-pending",
+      "state": "pr-930-integrated-complete-four-surface-preview-success-watchdog-success-admission-successor-pr-931-fresh-preview-pending-both-environments-maintenance-external-gates-pending",
       "dependencies": [
         "ponto-release-prerequisites"
       ],
       "blockers": [
-        "PR #924 integrated the corrective package, but first preview 30556924556 failed after successful Timekeeping child 30556988335 on the GitHub REST path contract; PR #927 initial head 5b8447a70c passed 14 hosted checks and review-fix c3131eb8 closes two Codex P1s, but final checks, re-review, thread closure and canonical merge remain before a replacement preview",
+        "PR #930 final head 872f1b10c9bd64e1768fa0e8777d992e2658240b passed all 14 hosted checks and exact-head Codex review, then merged without bypass as 71c54b1d406317c614dc33e48ced170458fbd707; complete preview 30566547605 and all four canonical child surfaces succeeded, but automatically triggered watchdog 30567091382 false-reded in context job 90954219518 because successful first attempts were admitted to a validator that intentionally accepts only failures or reruns; the bounded admission correction is pending integration and a fresh exact-main preview",
         "the release-probe and Identity-session contracts are integrated by PR #924 but not live; HMAC-before-login, pilot/canary v2 provenance, atomic UNIQUE D1 nonce acceptance, Core-owned affinity and stale-cookie 401 teardown remain unexercised without authorized staging inputs",
         "the watchdog source is integrated, but run 30558653559 exposed a REST dynamic-name P1 fixed in PR #927; broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI, broker endpoint/credential/keys, clinic runner and independent external recovery proof remain absent",
         "seven historical Timekeeping child runs and CRM Pages attempt-2 run 30491926800 retain their old definitions; live dispatch fences and both disabled legacy Ponto smokes must remain through expiry or reviewed replacement",
-        "required WAF enforcement and the three immutable rule identifiers are unproven: ruleset reads return 403/code 10000 and all 12 required external block probes fail across production and staging",
+        "required WAF enforcement and the three immutable rule identifiers are absent: authenticated account inventory lists only managed rulesets and no custom http_request_firewall_custom ruleset, while all 12 required external block probes fail across production and staging",
         "governed capability custody is unprovisioned: each target environment needs a distinct PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY and the repository needs only PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON verifier metadata",
         "staging and production now require main-only custom branch policies, can_admins_bypass=false and prevent_self_review=true, but the sole repository collaborator is the owner reviewer, GITHUB_TOKEN can_approve_pull_request_reviews=false, no authorized app/bot approver is proved and no independent reviewer is available",
         "scheduled production Ponto Smoke run 30521686413 correctly detects ready=false under maintenance but is not successful external production SLO evidence; UI Smoke run 30518888970 is not an authenticated authorized-user journey",
@@ -27,7 +27,7 @@
       ],
       "environment": "staging-then-production",
       "permitted_actions": [
-        "complete PR #927 hosted checks, valid automated review and thread closure, merge without bypass, then rerun preview on the exact resulting main SHA",
+        "merge PR #931 without bypass, then rerun preview on its exact protected-main merge SHA",
         "preserve the external replay containment checkpoint and fail-closed production and staging environment overrides/fences until the permanent control and governed predecessors are proved",
         "after corrective merge and authorized WAF/secret-custody provisioning, select only the exact then-current main GITHUB_SHA and execute immutable preview then staging",
         "synthetic CONSULTOR-only authenticated journey with teardown and sanitised evidence",
@@ -35,7 +35,7 @@
         "production promotion only after matching staging, pilot and canary evidence and an Identity/Workforce-valid pilot scope"
       ],
       "prohibited_actions": [
-        "select any ancestor or dispatch a replacement preview before PR #927 is integrated; release_sha must equal the then-current main coordinator GITHUB_SHA",
+        "dispatch staging before the watchdog admission correction is integrated and a fresh four-surface preview succeeds on its exact coordinator GITHUB_SHA",
         "restore any removed, disabled or fenced production/staging dispatch input before the permanent legacy-run control is merged and release predecessors are authorized",
         "use administrator environment bypass or PR #921 code-governance status as deployment/pilot approval",
         "claim automatic interruption rollback or external freeze readiness before the policy-bound broker, clinic runner and independent external recovery proof exist",
@@ -63,12 +63,12 @@
       ],
       "done_definition": "A single immutable release has complete preview, staging, pilot, canary and production evidence, an authenticated authorized-user journey, proven rollback and post-release observation.",
       "next_item": "finance-current-main-staging-evidence",
-      "last_verified": "2026-07-30T16:08:11Z",
+      "last_verified": "2026-07-30T17:51:13Z",
       "evidence": {
         "base_sha": "f202e29f4178bba8966edf71539c942618254de0",
         "merge_sha": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
         "selected_release_sha": null,
-        "origin_main_last_verified": "abe56a171e5a0ad3b79885ca0fda9bfae819b011",
+        "origin_main_last_verified": "71c54b1d406317c614dc33e48ced170458fbd707",
         "origin_main_last_verified_state": "verified",
         "technical_controls_merge_sha": "aa9bfa6595b9cb12e7228f67f9606527bb375de2",
         "post_pr_886_delta": {
@@ -112,7 +112,9 @@
           "pr": 927,
           "first_commit_sha": "4c895a4b",
           "review_fix_commit_sha": "c3131eb8",
-          "state": "open-final-checks-rereview-merge-and-replacement-preview-pending",
+          "final_head_sha": "7d8945300903847167c0ba55234ab8458cfb240d",
+          "merge_sha": "15ac662e0c3b01317d48270cd211d7910000ca5a",
+          "state": "merged-all-hosted-checks-green-zero-unresolved-exact-head-codex-review-clean",
           "failed_preview_run": 30556924556,
           "failed_preview_job": 90919728697,
           "successful_timekeeping_child_run": 30556988335,
@@ -120,6 +122,89 @@
           "governed_tests": "219/219",
           "initial_hosted_checks": "14/14",
           "security_review": "rest-path-dynamic-name-and-admin-bypass-p1s-fixed-zero-remaining-p0-p1-p2"
+        },
+        "pnpm_bootstrap_successor": {
+          "branch": "codex/admin/ponto-preview-pnpm",
+          "base_main_sha": "15ac662e0c3b01317d48270cd211d7910000ca5a",
+          "pr": 929,
+          "final_head_sha": "019a34367f3e2e40387b3f50da74b35149ff5981",
+          "merge_sha": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
+          "state": "merged-all-14-hosted-checks-green-exact-head-codex-review-clean",
+          "failed_preview_run": 30562834119,
+          "failed_identity_child_run": 30562970927,
+          "failed_identity_job": 90940563185,
+          "successful_timekeeping_child_run": 30562866947,
+          "timekeeping_surface_artifact": 8767637805,
+          "timekeeping_promotion_artifact": 8767637318,
+          "focused_tests": "15/15",
+          "governed_tests": "212/212",
+          "inventory_tests": "17/17",
+          "resolved_pnpm_version": "9.15.4"
+        },
+        "corepack_signing_key_successor": {
+          "branch": "codex/admin/ponto-preview-corepack",
+          "base_main_sha": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
+          "pr": 930,
+          "final_head_sha": "872f1b10c9bd64e1768fa0e8777d992e2658240b",
+          "merge_sha": "71c54b1d406317c614dc33e48ced170458fbd707",
+          "state": "integrated-all-14-hosted-checks-green-exact-head-codex-review-clean-complete-preview-success",
+          "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T142303-19-corepack-preview-failure.md",
+          "failed_preview_run": 30564873785,
+          "failed_preview_job": 90946808121,
+          "failed_identity_child_run": 30565019029,
+          "failed_identity_job": 90947405936,
+          "successful_timekeeping_child_run": 30564915304,
+          "timekeeping_surface_artifact": {
+            "id": 8768441812,
+            "digest": "sha256:541edf288b8cb62ded320c08d3dfb71d28e219164e19bac834966a7b8fd95604"
+          },
+          "timekeeping_promotion_artifact": {
+            "id": 8768441200,
+            "digest": "sha256:6a7b0a45628672aa57acc8a00a4ba6195407ef4bcb1bc4bc69639f02b702f044"
+          },
+          "coordinator_ledger_artifact": {
+            "id": 8768476655,
+            "digest": "sha256:90dc7777a40570b7c823344b876415727ae82d77812e7b32baec96b8ffc5eb02"
+          },
+          "identity_artifact_count": 0,
+          "root_cause": "node-22.12-bundled-corepack-stale-pnpm-signing-key-cannot-find-matching-keyid",
+          "package_manager_source": "inventory/package.json#packageManager",
+          "activation": "corepack-prepare-exact-version-activate",
+          "pre_use_verification": "pnpm-version-must-equal-exact-package-manager-pin",
+          "covered_identity_jobs": 3,
+          "live_mutation": false
+        },
+        "complete_preview": {
+          "release_sha": "71c54b1d406317c614dc33e48ced170458fbd707",
+          "run": 30566547605,
+          "source_job": 90952396490,
+          "orchestrator_job": 90952445595,
+          "timekeeping_run": 30566594811,
+          "identity_inventory_run": 30566729991,
+          "core_api_run": 30566806246,
+          "crm_pages_run": 30566905155,
+          "evidence_artifact": {
+            "id": 8769249449,
+            "digest": "sha256:7458fce0e783647c66c1b634515b0099590cfd43d5ed09c306a3bc9516543b62"
+          },
+          "runs_ledger_artifact": {
+            "id": 8769249808,
+            "digest": "sha256:83268fc89fb64bc357ad6ac6a52d97dd8942fa74101cd784ba97466fd1b2baf4"
+          },
+          "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T144137-20-complete-preview.md",
+          "live_mutation": false
+        },
+        "watchdog_success_admission_successor": {
+          "branch": "codex/admin/ponto-watchdog-success-admission",
+          "pr": 931,
+          "failed_watchdog_run": 30567091382,
+          "failed_context_job": 90954219518,
+          "cause": "successful-first-attempt-coordinator-admitted-to-failure-only-provenance-validator",
+          "emergency_jobs": "all-skipped",
+          "live_mutation": false,
+          "fix": "skip-successful-first-attempt-and-preserve-failed-cancelled-timed-out-or-rerun-admission",
+          "focused_tests": "9/9",
+          "state": "successor-pr-931-fresh-exact-main-preview-required"
         },
         "post_merge_corrective_overlay": {
           "branch": "codex/admin/ponto-release-evidence",
@@ -605,33 +690,33 @@
       "id": "ponto-release-prerequisites",
       "objective": "Close the technical and authorized-input prerequisites for the single-SHA Ponto staging, pilot and canary sequence.",
       "priority": 1099,
-      "state": "pr-924-integrated-pr-927-open-both-environments-maintenance-broker-policy-null-external-gates-open",
+      "state": "pr-930-integrated-complete-preview-success-watchdog-admission-successor-pr-931-fresh-preview-pending-both-environments-maintenance-broker-policy-null-external-gates-open",
       "dependencies": [],
       "blockers": [
-        "PR #924 integrated the corrective overlay; PR #927 is the bounded REST path/dynamic-name correction, initial head 5b8447a70c passed 14 hosted checks and review-fix c3131eb8 closes the remaining admin-bypass/static-name P1s, but final checks, re-review, merge and replacement preview are pending",
+        "PR #930 integrated the exact Corepack activation correction as 71c54b1d406317c614dc33e48ced170458fbd707 after all 14 checks and exact-head Codex review passed; complete preview 30566547605 and all four children succeeded, but watchdog run 30567091382 exposed a false-red admission of successful first attempts and its bounded correction plus a fresh exact-main preview are pending",
         "the release-probe and Identity-session contracts are integrated but not live; authorized custody and staging predecessors required to exercise them are absent",
-        "the watchdog source is integrated and its live REST P1 is fixed in PR #927, but broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI, endpoint/credential/keys, clinic runner and independent external recovery proof remain absent",
+        "the watchdog REST correction is integrated by PR #927, but broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI, endpoint/credential/keys, clinic runner and independent external recovery proof remain absent",
         "historical child runs remain rerunnable under their old definitions and therefore externally contained through expiry or reviewed replacement",
         "target-environment PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY signers and repository PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON public metadata are absent",
         "staging and production now enforce main-only custom branch policy, no administrator bypass and prevent-self-review, but the sole repository collaborator is the owner reviewer, GITHUB_TOKEN can_approve_pull_request_reviews=false, no authorized app/bot approver is proved and no independent reviewer is available",
         "PONTO_PROFILE_DATA_KEY and its approved custody reference are absent from staging",
         "target-environment root-attestation and Pages-intent keys, repository root key-id metadata and environment idempotency custody references are absent",
-        "required WAF enforcement and the three rule identifiers remain unproven: custom entrypoint access is unauthorized and 12/12 required public block probes fail; production pilot identity, runner and canary inputs remain separately blocked",
+        "required WAF enforcement and the three rule identifiers remain absent: authenticated account inventory finds no custom http_request_firewall_custom ruleset and 12/12 required public block probes fail; production pilot identity, runner and canary inputs remain separately blocked",
         "legacy Ponto UI smoke is disabled and its repository credentials were removed, while legacy backend workflow 230950805 is disabled and run 30536124024 ended completed/cancelled; the historical GESTOR account still requires authorized Identity/Workforce reconciliation",
         "the close-only broker remains fail-closed because reviewed policy identities and provisioned endpoints/credentials/keys are absent: url, custodyRef, responseKeyId and responsePublicKeyPem are null for staging and production"
       ],
       "environment": "source-and-staging",
       "permitted_actions": [
-        "complete PR #927 hosted checks/review/merge without bypass and rerun preview on the exact resulting main SHA",
+        "merge PR #931 without bypass and rerun preview on the exact resulting main SHA",
         "preserve the private containment checkpoint and production/staging environment fences until guarded workflows and authorized predecessors are live",
         "obtain a reviewed decision that pins distinct per-target broker URL, custodyRef, responseKeyId and Ed25519 SPKI before provisioning broker endpoints, credentials or keys",
         "provision staging secret names only through an approved source/process without reading or exposing values",
         "after complete staging evidence and separate pre-production authorization, provision distinct and separately custodied production secrets",
-        "select the then-current exact main GITHUB_SHA only after PR #927 and its evidence update are integrated",
+        "select the then-current exact main GITHUB_SHA only after the watchdog successor and its evidence update are integrated",
         "run preview/staging and synthetic teardown only after all staging guards pass"
       ],
       "prohibited_actions": [
-        "dispatch a replacement preview or staging before PR #927 is merged and the exact then-current main GITHUB_SHA is selected",
+        "dispatch staging before the watchdog successor is merged and a fresh complete preview succeeds on the exact selected SHA",
         "restore removed D1 identifiers, disabled deploy flags or fenced Pages project variables before the permanent legacy-run control is merged and authorized",
         "use can_admins_bypass or PR code review state as deployment/pilot approval",
         "ask the sole owner, GITHUB_TOKEN or an unproved app/bot to manufacture an invalid approval",
@@ -653,9 +738,9 @@
       ],
       "done_definition": "All technical controls and authorized inputs required to begin the governed single-SHA release sequence are present and fail-closed defaults remain intact.",
       "next_item": "p0-workforce-timekeeping-current-main-release",
-      "last_verified": "2026-07-30T16:08:11Z",
+      "last_verified": "2026-07-30T17:51:13Z",
       "evidence": {
-        "origin_main_boundary": "abe56a171e5a0ad3b79885ca0fda9bfae819b011",
+        "origin_main_boundary": "71c54b1d406317c614dc33e48ced170458fbd707",
         "origin_main_boundary_state": "verified",
         "selected_release_sha": null,
         "technical_controls_branch": "codex/admin/ponto-progressive-release",
@@ -666,6 +751,34 @@
         "post_merge_corrective_commit_sha": "c35aaf6892fea8ad5ae5745a82be55f24bd5a342",
         "post_merge_corrective_pr": 924,
         "post_merge_corrective_state": "integrated-as-91f6e9033fed8a186ef2e93be070db3ed896fdd3",
+        "pnpm_bootstrap_pr": 929,
+        "pnpm_bootstrap_final_head": "019a34367f3e2e40387b3f50da74b35149ff5981",
+        "pnpm_bootstrap_merge_sha": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
+        "pnpm_bootstrap_state": "integrated-all-14-checks-green-exact-head-codex-review-clean",
+        "corepack_signing_key_successor": {
+          "branch": "codex/admin/ponto-preview-corepack",
+          "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T142303-19-corepack-preview-failure.md",
+          "failed_preview_run": 30564873785,
+          "successful_timekeeping_child_run": 30564915304,
+          "failed_identity_child_run": 30565019029,
+          "failed_identity_job": 90947405936,
+          "pr": 930,
+          "final_head_sha": "872f1b10c9bd64e1768fa0e8777d992e2658240b",
+          "merge_sha": "71c54b1d406317c614dc33e48ced170458fbd707",
+          "complete_preview_run": 30566547605,
+          "state": "integrated-complete-four-surface-preview-success",
+          "selected_release_sha": null
+        },
+        "watchdog_success_admission_successor": {
+          "branch": "codex/admin/ponto-watchdog-success-admission",
+          "pr": 931,
+          "failed_watchdog_run": 30567091382,
+          "failed_context_job": 90954219518,
+          "emergency_jobs": "all-skipped",
+          "live_mutation": false,
+          "focused_tests": "9/9",
+          "state": "bounded-fix-pending-integration-and-fresh-preview"
+        },
         "local_freeze": {
           "observed_at": "2026-07-30T15:29:06Z",
           "state": "frozen-and-integrated-pr-924",
@@ -733,7 +846,7 @@
         },
         "repository_resource_variables": {
           "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T074500-14-ponto-resource-variables-before.md",
-          "observed_at": "2026-07-30T16:08:11Z",
+          "observed_at": "2026-07-30T17:51:13Z",
           "historical_checkpoint_present_by_name": [
             "PONTO_MODULE_CONTROL_STAGING_KV_ID",
             "PONTO_MODULE_CONTROL_PRODUCTION_KV_ID",
@@ -743,11 +856,18 @@
             "PONTO_TIMEKEEPING_D1_PRODUCTION_ID",
             "CLOUDFLARE_ZONE_ID"
           ],
-          "current_ponto_present_by_name": [],
+          "current_ponto_present_by_name": [
+            "PONTO_MODULE_CONTROL_STAGING_KV_ID",
+            "PONTO_MODULE_CONTROL_PRODUCTION_KV_ID",
+            "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING",
+            "PONTO_CLOUDFLARE_PAGES_PROJECT",
+            "PONTO_TIMEKEEPING_D1_STAGING_ID",
+            "PONTO_TIMEKEEPING_D1_PRODUCTION_ID"
+          ],
           "current_shared_present_by_name": [
             "CLOUDFLARE_ZONE_ID"
           ],
-          "state": "fresh-name-only-inventory-finds-ponto-resource-variables-absent-fail-closed",
+          "state": "fresh-name-only-inventory-finds-six-ponto-resource-selectors-present-four-enable-flags-absent-fail-closed",
           "values_recorded_in_public_ledger": false
         },
         "external_gates_state": "active-open-authorized-input-required",
