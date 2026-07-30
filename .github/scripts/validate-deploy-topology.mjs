@@ -245,10 +245,14 @@ const runnerInventoryStep = runnerInventoryStart >= 0 && runnerInventoryEnd > ru
 if (
   !runnerInventoryStep.includes('GH_TOKEN: ${{ secrets.GH_TOKEN }}')
   || runnerInventoryStep.includes('GH_TOKEN: ${{ github.token }}')
-  || !runnerInventoryStep.includes('GH_TOKEN with Administration:read is required')
+  || !runnerInventoryStep.includes('GH_TOKEN with Administration:read and Variables:read is required')
   || !runnerInventoryStep.includes('actions/runners?per_page=100')
+  || !runnerInventoryStep.includes('actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON')
+  || !runnerInventoryStep.includes('environments/production/variables?per_page=100')
+  || !runnerInventoryStep.includes('PONTO_PILOT_RUNNER_LABELS_JSON environment shadowing is forbidden')
+  || runnerInventoryStep.includes('CONFIGURED_RUNNER_LABELS_JSON: ${{ vars.')
 ) {
-  fail('Ponto runner inventory must use the protected read-only Administration token, never GITHUB_TOKEN');
+  fail('Ponto runner inventory must use protected read-only custody and prove the unshadowed repository runs-on selector');
 }
 for (const forbidden of [
   'secrets.PONTO_PILOT_LOGIN',

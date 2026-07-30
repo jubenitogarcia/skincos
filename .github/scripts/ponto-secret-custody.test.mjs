@@ -20,8 +20,30 @@ test("clinic runner inventory uses protected Administration read custody and nev
   assert.ok(start >= 0 && end > start);
   assert.match(step, /GH_TOKEN: \$\{\{ secrets\.GH_TOKEN \}\}/);
   assert.doesNotMatch(step, /GH_TOKEN: \$\{\{ github\.token \}\}/);
-  assert.match(step, /GH_TOKEN with Administration:read is required/);
+  assert.match(step, /GH_TOKEN with Administration:read and Variables:read is required/);
   assert.match(step, /repos\/\$GITHUB_REPOSITORY\/actions\/runners\?per_page=100/);
+  assert.match(step, /actions\/variables\/PONTO_PILOT_RUNNER_LABELS_JSON/);
+  assert.match(step, /environments\/production\/variables\?per_page=100/);
+  assert.match(step, /PONTO_PILOT_RUNNER_LABELS_JSON environment shadowing is forbidden/);
+  assert.doesNotMatch(step, /CONFIGURED_RUNNER_LABELS_JSON: \$\{\{ vars\./);
+});
+
+test("release preflight proves the repository-scoped runner selector used by runs-on", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const start = source.indexOf(
+    "- name: Preflight production custody, approved cohort, and online pilot runner",
+  );
+  const end = source.indexOf(
+    "- name: Attest unconditional edge blocks before any candidate mutation",
+    start,
+  );
+  const step = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(step, /GH_TOKEN with Environments, Actions, Variables, and Administration read is required/);
+  assert.match(step, /actions\/variables\/PONTO_PILOT_RUNNER_LABELS_JSON/);
+  assert.match(step, /environments\/production\/variables\?per_page=100/);
+  assert.match(step, /PONTO_PILOT_RUNNER_LABELS_JSON environment shadowing is forbidden/);
+  assert.doesNotMatch(step, /REQUIRED_RUNNER_LABELS_JSON: \$\{\{ vars\./);
 });
 
 test("coordinator refuses repository fallback for both environment-owned roots before mutation", () => {
