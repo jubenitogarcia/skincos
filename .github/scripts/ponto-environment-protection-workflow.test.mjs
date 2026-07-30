@@ -1,0 +1,98 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import test from "node:test";
+
+const workflow = (name) => fs.readFileSync(
+  new URL(`../workflows/${name}`, import.meta.url),
+  "utf8",
+);
+
+test("coordinator and consumer attest live environment protection before authority", () => {
+  const coordinator = workflow("ponto-progressive-release.yml");
+  const issuerPreflight = coordinator.indexOf(
+    "Attest protected selected environment before issuing any capability",
+  );
+  const issuerCustody = coordinator.indexOf(
+    "Verify target-bound asymmetric child capability custody",
+  );
+  const firstMutationPreflight = coordinator.indexOf(
+    "Refuse a latched Ponto emergency stop before issuing capabilities",
+  );
+  assert.ok(issuerPreflight >= 0);
+  assert.ok(issuerPreflight < issuerCustody);
+  assert.ok(issuerPreflight < firstMutationPreflight);
+  assert.match(
+    coordinator.slice(issuerPreflight, issuerCustody),
+    /ponto-environment-protection\.mjs/,
+  );
+
+  const gate = workflow("ponto-orchestrator-gate.yml");
+  const consumerPreflight = gate.indexOf(
+    "Revalidate protected target environment before consuming authority",
+  );
+  const consume = gate.indexOf(
+    "Validate, transition, and confirm the exact child-bound coordinator capability",
+  );
+  assert.ok(consumerPreflight >= 0);
+  assert.ok(consumerPreflight < consume);
+  assert.match(gate.slice(consumerPreflight, consume), /deployment-branch-policies/);
+  assert.match(gate, /deployments: read/);
+});
+
+test("every governed caller grants read-only deployment metadata to the gate", () => {
+  const callers = [
+    "cloudflare-pages-sync-ponto.yml",
+    "cloudflare-workers-sync-ponto-secrets.yml",
+    "deploy-core-workers.yml",
+    "deploy-crm-pages.yml",
+    "deploy-timekeeping.yml",
+    "module-availability.yml",
+    "ponto-production-baseline.yml",
+    "ponto-production-slo.yml",
+    "ponto-staging-rollback-drill.yml",
+    "timekeeping-staging-journey.yml",
+  ];
+  for (const name of callers) {
+    const source = workflow(name);
+    const gate = source.indexOf(
+      "uses: ./.github/workflows/ponto-orchestrator-gate.yml",
+    );
+    assert.notEqual(gate, -1, name);
+    assert.match(source.slice(Math.max(0, gate - 220), gate), /deployments: read/, name);
+  }
+});
+
+test("ordinary and watchdog rollback revalidate governance and use dedicated intent custody", () => {
+  for (const name of [
+    "ponto-progressive-release.yml",
+    "ponto-release-watchdog.yml",
+  ]) {
+    const source = workflow(name);
+    const rollback = source.lastIndexOf("\n  rollback:") >= 0
+      ? source.lastIndexOf("\n  rollback:")
+      : source.indexOf("\n  recovery-rollback:");
+    const scoped = source.slice(rollback);
+    const protection = scoped.indexOf("ponto-environment-protection.mjs");
+    const mutation = scoped.indexOf("node .github/scripts/ponto-automatic-rollback.mjs");
+    assert.ok(protection >= 0, name);
+    assert.ok(protection < mutation, name);
+    assert.match(
+      scoped.slice(0, mutation),
+      /PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY: \$\{\{ secrets\.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY \}\}/,
+      name,
+    );
+  }
+});
+
+test("emergency broker environments allow only the implicit protected-branch rule", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const start = source.indexOf(
+    "Require the independent no-review true-only emergency close path",
+  );
+  const end = source.indexOf("Preflight production custody", start);
+  const scoped = source.slice(start, end);
+  assert.match(scoped, /environment\?\.can_admins_bypass !== false/);
+  assert.match(scoped, /protectionRules\.length !== 1/);
+  assert.match(scoped, /protectionRules\[0\]\?\.type !== "branch_policy"/);
+  assert.doesNotMatch(scoped, /protection_rules \|\| \[\]\)\.length !== 0/);
+});

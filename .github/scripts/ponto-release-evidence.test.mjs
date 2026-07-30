@@ -100,6 +100,25 @@ const stagingRollbackSummary = () => ({
   predecessorRunId: "205",
   restoredCandidate: true,
 });
+const stagingSloSummary = () => ({
+  passed: true,
+  samples: 23,
+  errors: 0,
+  p95Ms: 0,
+  windowSeconds: 1,
+  digest,
+  teardown: {
+    passed: true,
+    environment: "staging",
+    coreResidualCount: 0,
+    timekeepingResidualCount: 0,
+    coreAuditPreserved: true,
+    timekeepingAuditPreserved: true,
+    credentialsIncluded: false,
+    piiIncluded: false,
+    digest,
+  },
+});
 const stagingBootstrapCore = () => ({
   schemaVersion: 1,
   target: "staging",
@@ -146,13 +165,19 @@ const edgeGuard = (stage) => {
     unconditional: true,
     upstreamZoneExemption: false,
     blockedHeaders: ["cloudflare-workers-version-overrides", "cloudflare-workers-version-key"],
+    blocksTruncatedHeaders: true,
     blockedPath: "/insumos/health/workforce-contract",
+    recursivelyDecodesBlockedPath: true,
+    firstRuleIds: ["e".repeat(32), "f".repeat(32)],
     hosts: ["api.skincos.com.br", "api-staging.skincos.com.br"],
     probes: ["api.skincos.com.br", "api-staging.skincos.com.br"].flatMap(host => [
       { host, kind: "negative-control", status: 200, cloudflareRayPresent: true, passed: true },
       { host, header: "cloudflare-workers-version-overrides", status: 403, cloudflareRayPresent: true, passed: true },
       { host, header: "cloudflare-workers-version-key", status: 403, cloudflareRayPresent: true, passed: true },
       { host, path: "/insumos/health/workforce-contract", status: 403, cloudflareRayPresent: true, passed: true },
+      { host, path: "/%69nsumos/health/workforce-contract", status: 403, cloudflareRayPresent: true, passed: true },
+      { host, path: "/%2569nsumos/health/workforce-contract", status: 403, cloudflareRayPresent: true, passed: true },
+      { host, path: "/INSUMOS/HEALTH/WORKFORCE-CONTRACT", status: 403, cloudflareRayPresent: true, passed: true },
     ]),
     passed: true,
     credentialsIncluded: false,
@@ -200,7 +225,7 @@ function writePreviewAndStaging(dir) {
       identityWorkforce: { artifactName: `identity-staging-pre-migration-${sha}`, sha256: digest, releaseSha: sha },
     }),
     PONTO_RELEASE_MIGRATIONS_JSON: JSON.stringify([{ unit: "timekeeping", name: "0001_test.sql", sha256: digest, status: "applied-or-preexisting" }]),
-    PONTO_RELEASE_SLO_JSON: JSON.stringify({ passed: true, samples: 10, errors: 0, p95Ms: 400, windowSeconds: 300, digest }),
+    PONTO_RELEASE_SLO_JSON: JSON.stringify(stagingSloSummary()),
     PONTO_RELEASE_ROLLBACK_JSON: JSON.stringify(stagingRollbackSummary()),
     GITHUB_RUN_ID: "200",
     GITHUB_REPOSITORY: "skincos/skincos",
@@ -208,10 +233,26 @@ function writePreviewAndStaging(dir) {
   assert.equal(result.status, 0, result.stderr);
   const stagingEvidence = JSON.parse(fs.readFileSync(staging, "utf8"));
   assert.equal(stagingEvidence.edgeGuard.stage, "staging");
-  assert.equal(stagingEvidence.edgeGuard.probes.length, 8);
+  assert.equal(stagingEvidence.edgeGuard.probes.length, 14);
   assert.equal(stagingEvidence.bootstrapCore.workflowRunId, "30512105626");
   return { preview, staging };
 }
+
+test("staging evidence durably requires zero synthetic residue and preserved audit", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-evidence-"));
+  const { preview, staging } = writePreviewAndStaging(dir);
+  const evidence = JSON.parse(fs.readFileSync(staging, "utf8"));
+  delete evidence.slo.teardown;
+  fs.writeFileSync(staging, JSON.stringify(evidence));
+  const result = run("verify", staging, {
+    PONTO_EXPECTED_STAGE: "staging",
+    PONTO_EXPECTED_SHA: sha,
+    PONTO_EXPECTED_REPOSITORY: "skincos/skincos",
+    PONTO_PREDECESSOR_FILE: preview,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /staging synthetic teardown did not pass/);
+});
 
 test("rejects staging edge evidence without the exact negative and block probe matrix", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-evidence-"));
@@ -226,7 +267,7 @@ test("rejects staging edge evidence without the exact negative and block probe m
     PONTO_PREDECESSOR_FILE: preview,
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /two negative controls and six external block probes/);
+  assert.match(result.stderr, /two negative controls and twelve external block probes/);
 });
 
 test("rejects staging evidence when the bootstrap predecessor differs from the exact incumbent", () => {

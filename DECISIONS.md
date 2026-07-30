@@ -1,5 +1,195 @@
 # DECISIONS
 
+## 2026-07-30 - Proposed atomic release probe and mandatory Identity session teardown
+
+- Status: these contracts exist only in the evolving local successor. They have
+  targeted local validation but no immutable commit, PR, hosted checks, review,
+  merge or selected release SHA. Aggregate worktree/test counts remain pending
+  until the technical freeze.
+- Decision: the private release probe validates its external HMAC before parsing
+  credentials or contacting Identity. Signature v2 is mandatory for `pilot` and
+  `canary` and binds timestamp, nonce, method, path, exact body digest, release
+  SHA, rollout stage, coordinator run ID and workflow run ID. Signature v1 is
+  accepted only for the isolated synthetic staging drill.
+- Decision: after the external HMAC passes, Pages sends a server-signed actor
+  envelope through the private Ponto Core and consumes the external nonce at the
+  Timekeeping boundary with one D1 `INSERT` against the existing UNIQUE nonce
+  table. The database key is target + release + SHA-256 of the external nonce;
+  body digest remains authenticated but cannot select a second key. Thus
+  concurrent cross-PoP requests and same-nonce/different-body replay admit at
+  most one request. KV `get` followed by `put` is not an acceptable acceptance
+  decision. Ponto Core, not the browser, supplies the exact Timekeeping version
+  affinity.
+- Decision: receipt of a login session cookie means a release-probe session may
+  exist. Teardown therefore runs in `finally`: revoke the current session ID
+  when known, otherwise call `/auth/logout`, then replay the exact stale cookie
+  against `/auth/me`. Only the canonical `401` unauthenticated response proves
+  teardown. An indeterminate teardown fails the probe explicitly and preserves
+  the primary contract error; credentials and PII remain absent from evidence.
+- Impact: these safeguards close replay and leaked-probe-session failure modes
+  in local source only. They do not authorize staging, identify a pilot, satisfy
+  deployment review or prove a live release.
+
+## 2026-07-30 - Contain legacy Ponto UI smoke and harden environment admission
+
+- Decision: keep GitHub workflow `Ponto UI Smoke (prod)` id `231059578`
+  manually disabled and keep repository secret names `PONTO_SMOKE_EMAIL` /
+  `PONTO_SMOKE_PASSWORD` plus variable `ENABLE_PONTO_UI_SMOKE` removed. The
+  checkpoint is
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T072614-11-legacy-ponto-ui-smoke-disable.md`.
+  Re-enable only after the reviewed manual-only, production-environment-scoped
+  replacement is merged. The historical GESTOR account is not thereby revoked;
+  it still requires separate authorized reconciliation without guessing its
+  identity or exposing PII.
+- Decision: keep legacy workflow `Ponto Smoke (prod)` id `230950805` manually
+  disabled and its waiting scheduled run `30536124024` cancelled. The current
+  `main` definition unnecessarily enters the protected production environment
+  for an unauthenticated read-only health probe; the local successor removes
+  that environment. Re-enable only after the read-only successor is reviewed
+  and merged. Checkpoint:
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T075100-15-legacy-ponto-smoke-disable.md`.
+- Decision: `staging` and `production` admit only branch `main`, have
+  `can_admins_bypass=false`, `prevent_self_review=true`, zero wait and one
+  required reviewer. Staging rule/policy IDs are `61302994` / `56015291`;
+  production IDs are `61303000` / `56015293`. The sole reviewer is repository
+  owner `jubenitogarcia` (`199169872`), so the current actor cannot self-approve
+  and historical reruns cannot silently hydrate credentials. This is a
+  fail-closed improvement, not independent review: a separate valid reviewer
+  remains required. Repository collaborator inventory contains only that owner;
+  the observed `GITHUB_TOKEN` reports
+  `can_approve_pull_request_reviews=false`, and no authorized GitHub App, bot or
+  automation approver has been proved. Checkpoint:
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T073000-12-environment-protection-before.md`.
+- Decision: `ponto-emergency-staging` and `ponto-emergency-production` exist
+  only as fail-close environments, with protected-branch admission,
+  `can_admins_bypass=false`, no reviewer/timer/custom rule and branch-policy
+  rule IDs `61303367` / `61303369`. Each currently has only
+  `PONTO_EMERGENCY_CLOSE_MODE=external-close-only-broker-v1`; broker URL,
+  custody reference and credential are absent, so emergency mutation remains
+  blocked. Checkpoint:
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T073300-13-emergency-environments-before.md`.
+- Decision: immutable Cloudflare resource identities required by the successor
+  are repository metadata, not credentials. The six Ponto-specific KV, Pages
+  and D1 resource variables plus `CLOUDFLARE_ZONE_ID` were created/read back
+  individually after private checkpoint
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T074500-14-ponto-resource-variables-before.md`;
+  their values remain in the private checkpoint. This does not authorize any
+  `ENABLE_PONTO_*` flag, consume a secret, select a candidate, remove a legacy
+  fence, deploy or mutate Cloudflare. Missing custody, WAF-rule identifiers,
+  independent review and release predecessors still fail closed.
+- Impact: these live controls reduce replay/credential exposure but do not
+  select a candidate, provision release custody, identify a pilot, satisfy
+  independent approval or prove production use. Their rollback weakens
+  security and cannot be used as a release bypass.
+
+## 2026-07-30 - Proposed Ponto emergency overlay and direct-surface custody
+
+- Status: the source implementation is local and unmerged. Only the explicitly
+  checkpointed fail-close environment admission/mode and seven non-secret
+  resource-identity variables are live; the broker, custody inputs, enable
+  gates and consuming workflow remain unprovisioned/non-operational. This
+  becomes operational release policy only after a reviewed PR is merged, the
+  exact required names are provisioned through authorized custody, hosted
+  checks pass and live behavior is attested. Until then, the checkpointed
+  GitHub environment fences remain in force and both staging and production
+  stay `module-control:timekeeping=maintenance`.
+  Staging was closed through canonical run `30527767707`; that run is
+  fail-close evidence only, not candidate or release evidence.
+- Decision: emergency closure is a monotonic overlay at
+  `module-control:timekeeping:emergency-latch`, separate from ordinary
+  `module-control:timekeeping`. Every protected Ponto edge and every workflow
+  that could open or mutate the release requires a well-formed schema-v1 latch
+  whose value is explicitly `latched=false`. A missing, unreadable, malformed
+  or `latched=true` overlay denies service and release progress. Writing an
+  ordinary `active` control never clears or overrides the overlay.
+- Decision: `.github/workflows/ponto-emergency-latch-reset.yml` is the sole
+  writer of `latched=false`. Reset requires immutable latch/reconciliation
+  evidence, an idle governed surface and ordinary module-control already in
+  maintenance; it leaves the module in maintenance. Emergency close paths may
+  only set `latched=true`. Deleting the key, synthesizing an open default or
+  using an unreadable prior value as open is forbidden.
+- Decision: every direct mutation of a Ponto surface serializes on the global
+  `ponto-surface-mutation` mutex, including canonical publishers, scheduled
+  Pages secret writers, the rollback drill, latch reset and the watchdog's
+  ordinary maintenance write. The external
+  `.github/workflows/ponto-release-watchdog.yml` reacts only to an exact
+  first-attempt failed, cancelled or timed-out coordinator on `main`; for
+  non-preview stages it writes the monotonic latch before waiting on that
+  mutex, reconciles/cancels governed work, then writes and reattests ordinary
+  maintenance under the still-closed latch.
+- Decision: the watchdog's pre-mutex close uses only the dedicated
+  `ponto-emergency-{staging,production}` environments and an external
+  close-only broker. Each environment has its own
+  `PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL` secret,
+  `PONTO_EMERGENCY_CLOSE_BROKER_URL`,
+  `PONTO_EMERGENCY_CLOSE_CUSTODY_REF` and
+  `PONTO_EMERGENCY_CLOSE_MODE=external-close-only-broker-v1` variables. The
+  broker identity must also be pinned per target in
+  `.github/governance/progressive-release-policy.json` by exact HTTPS URL,
+  custody reference, response key ID and Ed25519 SPKI PEM public key. Requests
+  carry a fresh nonce/time/digest HMAC bound to that policy identity; responses
+  must carry a fresh Ed25519 attestation bound to the exact request and response
+  digest. The broker contract permits only `latch-true` and `maintenance`; it denies
+  `latch-false`, `active`, `disabled`, `canary`, delete and arbitrary KV writes,
+  and returns no credentials or PII. Both `emergencyBrokers.staging` and
+  `emergencyBrokers.production` currently have `url`, `custodyRef`,
+  `responseKeyId` and `responsePublicKeyPem` set to `null`. Therefore there is
+  no functionally attested broker identity for either target, and staging is
+  blocked until a reviewed decision pins both identities and authorized custody
+  provisions the endpoints/credentials/keys. The emergency environments must not contain a
+  direct Cloudflare/KV token, account/KV identifier or broad release credential,
+  and staging/production custody references must differ. The two emergency
+  environments and mode variable are live; broker URL, custody reference and
+  credential remain unprovisioned, while the implementation is local/unmerged.
+  No automatic interruption, rollback or kill switch may be described as ready
+  while the broker policy, clinic runner and independent external freeze/recovery
+  proof are absent. Even after provisioning, this recovery is not independent of terminal GitHub `workflow_run` delivery,
+  GitHub Actions, the broker or its downstream Cloudflare control plane;
+  outage or delayed delivery can prevent/delay it. External monitoring,
+  checkpointed fences and an operator recovery path therefore remain required.
+- Decision: target selection has no fallback. `staging` and `production` must
+  map explicitly to their own project, D1 and KV identifiers; a missing,
+  unsupported or ambiguous target/name fails before credential hydration or
+  mutation. The Ponto-only contract is
+  `ENABLE_PONTO_CRM_PAGES_DEPLOY`,
+  `ENABLE_PONTO_CRM_PAGES_DEPLOY_STAGING`,
+  `PONTO_CLOUDFLARE_PAGES_PROJECT`,
+  `PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING`,
+  `ENABLE_PONTO_CORE_WORKERS_DEPLOY`,
+  `ENABLE_PONTO_TIMEKEEPING_PRODUCTION_DEPLOY`,
+  `PONTO_TIMEKEEPING_D1_STAGING_ID`,
+  `PONTO_TIMEKEEPING_D1_PRODUCTION_ID`,
+  `PONTO_MODULE_CONTROL_STAGING_KV_ID` and
+  `PONTO_MODULE_CONTROL_PRODUCTION_KV_ID`. General CRM Pages continues to use
+  only `CRM_PAGES_PROJECT` and `CRM_PAGES_PROJECT_STAGING`; neither namespace
+  may fall back to the other. Legacy general names retained in the current
+  external containment are fences, not candidate configuration.
+- Decision: governed child capabilities use target-bound schema-v6 Ed25519.
+  `PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY` exists only in the selected
+  `staging` or `production` environment; the repository stores only the
+  non-secret target-to-verifier/key-ID map
+  `PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON`. Consumers and the watchdog
+  receive only the public map, never another target's private signer.
+  Environment-owned application roots and Ponto target selectors have no
+  repository, cross-environment or general-CRM fallback. The custom zone WAF
+  remains an external precondition.
+  `PONTO_WAF_READ_API_TOKEN` is repository-only and
+  `PONTO_WAF_WRITE_API_TOKEN` is production-environment-only; both are currently
+  unprovisioned and block the release. Neither may fall back to the existing
+  `CLOUDFLARE_SECURITY_API_TOKEN`. An unauthorized API principal or
+  unauthenticated dashboard is not permission to replace WAF with Worker logic.
+  Code review, independent deployment review and
+  the separate Identity/Workforce pilot designation remain distinct gates;
+  administrator environment bypass is forbidden.
+- Impact: the local source remains an evolving, uncommitted proposal; targeted
+  checks do not constitute a final aggregate freeze, hosted validation or
+  release evidence. Path/test counts, corrective commit, successor PR and
+  selected SHA remain pending/null. No candidate SHA may be selected and no fence may
+  be removed until the successor is committed, reviewed, hosted-validated and
+  merged, the required controls are provisioned, and the WAF, custody,
+  deployment approver, pilot identity, runner and SLO prerequisites are
+  independently proven.
+
 ## 2026-07-29 - Govern Ponto as a four-surface progressive release
 
 - Decision: one Ponto release uses exactly the full `GITHUB_SHA` of the
@@ -70,18 +260,22 @@
   100-percent version. The environment-owned `PONTO_IDEMPOTENCY_KEY` is also
   supplied only with that immutable candidate. Before maintenance or any other
   mutation, a constant-time comparison rejects byte equality between the
-  profile and idempotency roots. A repository-only audit secret
-  `PONTO_ROOT_ATTESTATION_KEY_SHARED`, with opaque repository variable
-  `PONTO_ROOT_ATTESTATION_KEY_ID`, creates domain-separated HMAC-SHA-256
-  commitments without containing either application root. The artifact also
+  profile and idempotency roots. The same effective version of audit secret
+  `PONTO_ROOT_ATTESTATION_KEY_SHARED` exists only in the protected `staging` and
+  `production` environments, never at repository scope; the repository stores
+  only opaque non-secret metadata `PONTO_ROOT_ATTESTATION_KEY_ID`. It creates
+  domain-separated HMAC-SHA-256 commitments without containing either
+  application root. Pages rollback intent uses a separate
+  `PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY`, also only in the selected target
+  environment and absent from repository/emergency scopes. The artifact also
   records the environment-owned opaque vault references
   `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` and
   `PONTO_IDEMPOTENCY_KEY_CUSTODY_REF`, plus the producing workflow run,
   artifact ID/digest and coordinator correlation. Production is accepted only
   when both of its commitments and both custody references are disjoint from
   staging and the fixed-label key-version commitment proves that both
-  comparisons used the exact same audit-key version. The audit key is never
-  deployed to a runtime and an environment-level override is refused. This
+  comparisons used the exact same audit-key version. Neither audit nor
+  Pages-intent key is deployed to a runtime. This
   proves non-reuse of exact bytes under one keyed comparison and declared
   separate custody; it does not prove source entropy or rule out correlated
   derivation, so the approved vault/custodian process remains mandatory.

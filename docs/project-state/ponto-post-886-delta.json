@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated_at": "2026-07-30T04:26:50Z",
+  "generated_at": "2026-07-30T11:14:09.503Z",
   "scope": {
     "description": "Complete path-level inventory after PR #886 and before the governed Ponto release candidate is selected.",
     "base_sha_exclusive": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
@@ -9,6 +9,539 @@
     "command": "git diff --name-status 10b2197731d0210cf8fc8cd961f7a787d73bf650..0a2117904ba58eb45e1163fb0971c31e6b2a7d1e",
     "commit_count": 58,
     "first_parent_commit_count": 30
+  },
+  "coverage_through_integrated_controls": {
+    "contract": "The 109 path-level entries below inventory the complete pre-control interval. The deterministic PR #921 supplement inventories every later path: the eight named ledger/runbook paths are project_ledgers_and_runbook, the five named local paths are local_operator_safety, and every other PR #921 path is governed_ponto_release_controls. The two inventories overlap on 15 paths and their union covers all 179 net paths after PR #886 through the merged controls.",
+    "technical_controls_pr": {
+      "pr": 921,
+      "base_sha_exclusive": "0a2117904ba58eb45e1163fb0971c31e6b2a7d1e",
+      "head_sha": "46cf79db11720a2fc05c62ef4b5b84c7015820e9",
+      "merge_sha_inclusive": "aa9bfa6595b9cb12e7228f67f9606527bb375de2",
+      "path_source": "GitHub PR #921 files API and git diff --name-status 0a2117904ba58eb45e1163fb0971c31e6b2a7d1e..aa9bfa6595b9cb12e7228f67f9606527bb375de2",
+      "changed_paths": 85,
+      "status_counts": {
+        "A": 44,
+        "M": 41,
+        "D": 0
+      },
+      "primary_classification_counts": {
+        "governed_ponto_release_controls": 72,
+        "project_ledgers_and_runbook": 8,
+        "local_operator_safety": 5
+      },
+      "project_ledgers_and_runbook_paths": [
+        "DECISIONS.md",
+        "TASKS.md",
+        "docs/ponto-runbook.md",
+        "docs/project-state/blockers.md",
+        "docs/project-state/current-state.md",
+        "docs/project-state/evidence-ledger.json",
+        "docs/project-state/ponto-post-886-delta.json",
+        "ops/project-orchestration/work-queue.json"
+      ],
+      "local_operator_safety_paths": [
+        "scripts/run-local-crm.sh",
+        "scripts/run-shared-codex-shortcut.ps1",
+        "scripts/tests/local-timekeeping-launcher.test.mjs",
+        "scripts/validate-local-timekeeping-env.mjs",
+        "scripts/windows-private-acl.mjs"
+      ]
+    },
+    "combined_net_interval": {
+      "base_sha_exclusive": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
+      "target_sha_inclusive": "aa9bfa6595b9cb12e7228f67f9606527bb375de2",
+      "commit_count": 59,
+      "first_parent_commit_count": 31,
+      "unique_paths": 179,
+      "status_counts": {
+        "A": 77,
+        "M": 102,
+        "D": 0
+      },
+      "pre_control_paths": 109,
+      "technical_controls_pr_paths": 85,
+      "overlapping_paths": 15
+    }
+  },
+  "pending_local_corrective_overlay": {
+    "observed_at": "2026-07-30T11:14:09.503Z",
+    "contract": "This overlay is evolving and is deliberately excluded from the immutable integrated-main interval above. It must not be described as frozen, exhaustive, integrated, reviewed, hosted-validated or selected for release until the final source freeze, immutable commit and merged PR are observed.",
+    "base_main_sha": null,
+    "base_main_state": "pending-final-reconstruction",
+    "branch": "codex/admin/ponto-release-evidence",
+    "commit_sha": null,
+    "pr": null,
+    "selected_release_sha": null,
+    "state": "local-evolving-uncommitted-no-successor-pr-no-selected-release-sha",
+    "path_inventory_state": "pending-final-freeze",
+    "worktree_path_count": null,
+    "worktree_status_counts": {
+      "tracked_modified": null,
+      "untracked_new": null
+    },
+    "technical_path_count": null,
+    "ledger_path_count": null,
+    "technical_paths_state": "provisional-non-exhaustive-pending-final-freeze",
+    "provisional_technical_paths": [
+      ".github/governance/progressive-release-policy.json",
+      ".github/scripts/ponto-assert-idle.mjs",
+      ".github/scripts/ponto-automatic-rollback.mjs",
+      ".github/scripts/ponto-automatic-rollback-safety.test.mjs",
+      ".github/scripts/ponto-cloudflare-resource-identity.mjs",
+      ".github/scripts/ponto-cloudflare-resource-identity.test.mjs",
+      ".github/scripts/ponto-dispatch-run-match.mjs",
+      ".github/scripts/ponto-dispatch-workflow.mjs",
+      ".github/scripts/ponto-dispatch-workflow.test.mjs",
+      ".github/scripts/ponto-edge-override-guard.mjs",
+      ".github/scripts/ponto-emergency-broker.mjs",
+      ".github/scripts/ponto-emergency-latch-write.mjs",
+      ".github/scripts/ponto-emergency-latch-write.test.mjs",
+      ".github/scripts/ponto-emergency-maintenance-write.mjs",
+      ".github/scripts/ponto-emergency-maintenance-write.test.mjs",
+      ".github/scripts/ponto-emergency-stop.mjs",
+      ".github/scripts/ponto-emergency-stop.test.mjs",
+      ".github/scripts/ponto-environment-protection.mjs",
+      ".github/scripts/ponto-environment-protection.test.mjs",
+      ".github/scripts/ponto-environment-protection-workflow.test.mjs",
+      ".github/scripts/ponto-live-deployment-precondition.test.mjs",
+      ".github/scripts/ponto-module-propagation.mjs",
+      ".github/scripts/ponto-module-propagation.test.mjs",
+      ".github/scripts/ponto-orchestrator-lease.mjs",
+      ".github/scripts/ponto-orchestrator-lease.test.mjs",
+      ".github/scripts/ponto-pages-rollback.mjs",
+      ".github/scripts/ponto-pages-rollback.test.mjs",
+      ".github/scripts/ponto-pages-rollback-intent.mjs",
+      ".github/scripts/ponto-pages-rollback-intent.test.mjs",
+      ".github/scripts/ponto-production-baseline.mjs",
+      ".github/scripts/ponto-production-baseline.test.mjs",
+      ".github/scripts/ponto-production-journey.mjs",
+      ".github/scripts/ponto-production-journey.test.mjs",
+      ".github/scripts/ponto-reconcile-children.mjs",
+      ".github/scripts/ponto-reconcile-children.test.mjs",
+      ".github/scripts/ponto-recovery-evidence.mjs",
+      ".github/scripts/ponto-recovery-evidence.test.mjs",
+      ".github/scripts/ponto-release-evidence.mjs",
+      ".github/scripts/ponto-release-evidence.test.mjs",
+      ".github/scripts/ponto-rollback-ownership.mjs",
+      ".github/scripts/ponto-rollback-ownership.test.mjs",
+      ".github/scripts/ponto-secret-custody.test.mjs",
+      ".github/scripts/ponto-staging-rollback-drill.mjs",
+      ".github/scripts/ponto-staging-rollback-drill.test.mjs",
+      ".github/scripts/ponto-waf-security.mjs",
+      ".github/scripts/ponto-waf-security.test.mjs",
+      ".github/scripts/ponto-watchdog-context.mjs",
+      ".github/scripts/ponto-watchdog-context.test.mjs",
+      ".github/scripts/ponto-watchdog-journal.mjs",
+      ".github/scripts/ponto-watchdog-journal.test.mjs",
+      ".github/scripts/validate-architecture.mjs",
+      ".github/scripts/validate-deploy-topology.mjs",
+      ".github/workflows/cloudflare-pages-audit.yml",
+      ".github/workflows/cloudflare-pages-sync-escala.yml",
+      ".github/workflows/cloudflare-pages-sync-meta-ads-report-secret.yml",
+      ".github/workflows/cloudflare-pages-sync-ponto.yml",
+      ".github/workflows/cloudflare-sync-integrations-encryption-secret.yml",
+      ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
+      ".github/workflows/codex-autonomy-preflight.yml",
+      ".github/workflows/deploy-core-workers.yml",
+      ".github/workflows/deploy-crm-pages.yml",
+      ".github/workflows/deploy-timekeeping.yml",
+      ".github/workflows/module-availability.yml",
+      ".github/workflows/ponto-core-baseline-publisher.yml",
+      ".github/workflows/ponto-emergency-close.yml",
+      ".github/workflows/ponto-emergency-latch-reset.yml",
+      ".github/workflows/ponto-orchestrator-gate.yml",
+      ".github/workflows/ponto-production-baseline.yml",
+      ".github/workflows/ponto-production-slo.yml",
+      ".github/workflows/ponto-progressive-release.yml",
+      ".github/workflows/ponto-release-watchdog.yml",
+      ".github/workflows/ponto-smoke.yml",
+      ".github/workflows/ponto-staging-rollback-drill.yml",
+      ".github/workflows/ponto-ui-smoke.yml",
+      ".github/workflows/ponto-waf-security.yml",
+      ".github/workflows/timekeeping-ci.yml",
+      ".github/workflows/timekeeping-staging-journey.yml",
+      "crm/console/functions/api/ponto/[[path]].ts",
+      "crm/console/scripts/bootstrap-ponto-smoke-admin.cjs",
+      "crm/console/scripts/ponto-ui-smoke.cjs",
+      "crm/console/tests/pontoProxy.test.ts",
+      "docs/runbooks/github-governance.md",
+      "platform/deploy/operational-units.json",
+      "scripts/run-local-crm.sh",
+      "scripts/tests/local-timekeeping-launcher.test.mjs",
+      "shared/module-availability/worker.js",
+      "workforce/timekeeping/worker.test.js"
+    ],
+    "ledger_paths": [
+      "DECISIONS.md",
+      "TASKS.md",
+      "docs/ponto-runbook.md",
+      "docs/project-state/blockers.md",
+      "docs/project-state/current-state.md",
+      "docs/project-state/evidence-ledger.json",
+      "docs/project-state/ponto-post-886-delta.json",
+      "ops/project-orchestration/work-queue.json"
+    ],
+    "corrective_controls": [
+      "trusted main workflow checkout and exact SHA verification before capability consumption",
+      "independent production-baseline and production-slo leases",
+      "all seven production baseline provenance outputs",
+      "CRM Pages physical-target serialization with per-orchestrator child isolation",
+      "first-attempt-only enforcement for the canonical coordinator and every privileged child workflow",
+      "exact active coordinator revalidation immediately before every secret-bearing or mutating job",
+      "bodyless HTTP 202 and 204 handling in dispatch, emergency-stop and child-reconciliation helpers",
+      "ponto-release-custody serialization for the three scheduled CRM Pages secret writers",
+      "removal of scheduled Escala and Meta Ads Report dispatches to the retired CRM Pages publisher",
+      "immediate target-scoped Timekeeping kill switch with persistent latch, capability invalidation, cancellation/reconciliation and final fail-close reassertion",
+      "separate emergency overlay where missing unreadable malformed or true denies",
+      "governed immutable-evidence latch reset as the sole false writer that remains in maintenance",
+      "global ponto-surface-mutation mutex and terminal coordinator watchdog with external close-only broker custody",
+      "schema-v6 target-bound Ed25519 release capabilities with environment-private signing and repository-public verification",
+      "consumer and watchdog verification with public material only",
+      "live preflight for main-only custom branch policy, no administrator bypass, exactly one prevent-self-review rule and an independent reviewer",
+      "serialized emergency-latch writers with cancel-in-progress disabled",
+      "Worker and Pages rollback gated by exact live regular-control and emergency-latch attestation before mutation and by post-mutation reread",
+      "Pages rollback dedicated target-environment intent key, exact ownership and deterministic restore",
+      "normalized exact emergencyLatchRef recovery evidence",
+      "WAF drift detection after functional probe",
+      "watchdog journal correlation and broker-backed manual kill switch",
+      "atomic external release-probe nonce consumption by one D1 UNIQUE insert before Identity login, with v2 pilot/canary run provenance and v1 staging-only",
+      "mandatory Identity release-probe session teardown with current-session revoke or logout and canonical stale-cookie 401 proof",
+      "policy-bound emergency broker identity with exact URL custody reference response key ID and Ed25519 SPKI plus HMAC request and signed response",
+      "static architecture/topology and CI coverage for every corrective invariant"
+    ],
+    "ponto_only_control_names": [
+      "ENABLE_PONTO_CRM_PAGES_DEPLOY",
+      "ENABLE_PONTO_CRM_PAGES_DEPLOY_STAGING",
+      "PONTO_CLOUDFLARE_PAGES_PROJECT",
+      "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING",
+      "ENABLE_PONTO_CORE_WORKERS_DEPLOY",
+      "ENABLE_PONTO_TIMEKEEPING_PRODUCTION_DEPLOY",
+      "PONTO_TIMEKEEPING_D1_STAGING_ID",
+      "PONTO_TIMEKEEPING_D1_PRODUCTION_ID",
+      "PONTO_MODULE_CONTROL_STAGING_KV_ID",
+      "PONTO_MODULE_CONTROL_PRODUCTION_KV_ID"
+    ],
+    "ponto_only_control_names_state": "local-uncommitted-unprovisioned-not-live",
+    "general_pages_control_names": [
+      "CRM_PAGES_PROJECT",
+      "CRM_PAGES_PROJECT_STAGING"
+    ],
+    "late_issued_capability_control": "local-proposal-not-operational-pending-final-freeze-broker-and-hosted-proof",
+    "emergency_overlay_contract": {
+      "key": "module-control:timekeeping:emergency-latch",
+      "deny_states": [
+        "missing",
+        "unreadable",
+        "malformed",
+        "latched-true"
+      ],
+      "open_requirement": "schema-v1-explicit-latched-false",
+      "sole_false_writer": ".github/workflows/ponto-emergency-latch-reset.yml",
+      "reset_result": "ordinary-module-control-remains-maintenance",
+      "direct_surface_mutex": "ponto-surface-mutation",
+      "watchdog": ".github/workflows/ponto-release-watchdog.yml",
+      "close_only_broker": {
+        "environments": [
+          "ponto-emergency-staging",
+          "ponto-emergency-production"
+        ],
+        "secret": "PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL",
+        "variables": [
+          "PONTO_EMERGENCY_CLOSE_BROKER_URL",
+          "PONTO_EMERGENCY_CLOSE_CUSTODY_REF",
+          "PONTO_EMERGENCY_CLOSE_MODE"
+        ],
+        "required_mode": "external-close-only-broker-v1",
+        "allowed_operations": [
+          "latch-true",
+          "maintenance"
+        ],
+        "direct_cloudflare_kv_credential": "forbidden",
+        "cross_target_custody_ref_reuse": "forbidden",
+        "environment_and_mode_state": "live",
+        "policy_file": ".github/governance/progressive-release-policy.json",
+        "policy_identity_fields": [
+          "url",
+          "custodyRef",
+          "responseKeyId",
+          "responsePublicKeyPem"
+        ],
+        "staging_policy_identity": null,
+        "production_policy_identity": null,
+        "request_authentication": "fresh-policy-bound-hmac",
+        "response_authentication": "fresh-request-bound-ed25519-spki-signature",
+        "broker_url_custody_ref_key_and_credential_state": "absent-fail-closed",
+        "implementation_state": "local-evolving-uncommitted-staging-blocked"
+      },
+      "watchdog_limitations": [
+        "terminal-workflow-run-delivery",
+        "github-actions-availability",
+        "external-close-only-broker-availability",
+        "downstream-cloudflare-control-plane-availability",
+        "not-independent-external-recovery"
+      ]
+    },
+    "waf_token_custody": {
+      "repository_only_read_secret": "PONTO_WAF_READ_API_TOKEN",
+      "production_environment_only_write_secret": "PONTO_WAF_WRITE_API_TOKEN",
+      "fallback_forbidden": "CLOUDFLARE_SECURITY_API_TOKEN",
+      "state": "local-contract-unprovisioned-release-blocking"
+    },
+    "custody_contract": {
+      "capability": {
+        "schema_version": 6,
+        "algorithm": "Ed25519",
+        "target_environment_private_secret": "PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY",
+        "target_environment_values": "distinct",
+        "repository_public_map_variable": "PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON",
+        "consumers_and_watchdog": "public-only"
+      },
+      "root_attestation": {
+        "target_environment_secret": "PONTO_ROOT_ATTESTATION_KEY_SHARED",
+        "effective_version": "same-across-protected-targets",
+        "repository_metadata_variable": "PONTO_ROOT_ATTESTATION_KEY_ID",
+        "repository_secret": "forbidden"
+      },
+      "pages_rollback_intent": {
+        "target_environment_secret": "PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY",
+        "repository_scope": "forbidden",
+        "emergency_scope": "forbidden"
+      }
+    },
+    "completed_p1_controls": [],
+    "completed_p1_controls_state": "not-frozen-local-proposals-only",
+    "remaining_external_boundary": "Historical privileged runs created before correlation and first-attempt guards cannot be retroactively changed by edited workflow definitions. Checkpointed dispatch fences and disabled legacy smokes contain known paths, but they are not independent automatic freeze/recovery. Both maintenance states remain mandatory until the evolving local controls receive a final freeze, immutable commit, hosted validation, valid review, merge, broker endpoint/key provisioning, a clinic runner and external recovery proof.",
+    "local_validation": {
+      "state": "targeted-local-checks-passed-final-aggregate-freeze-pending",
+      "deployment_topology": "pending-final-freeze",
+      "architecture": "pending-final-freeze",
+      "progressive_validator": "pending-final-freeze",
+      "node_syntax": "pending-final-freeze",
+      "workflow_actionlint": "pending-final-freeze",
+      "json_validation": "pending-current-ledger-validation",
+      "diff_check_findings": null,
+      "ponto_tests_passed": null,
+      "ponto_tests_failed": null,
+      "ponto_top_level_subtests": null,
+      "rollback_ownership_passed": null,
+      "rollback_ownership_failed": null,
+      "environment_workflow_passed": null,
+      "environment_workflow_failed": null,
+      "targeted_release_probe_session_contracts": "passed-local-independent-security-read-no-p0-p1",
+      "hosted_checks": "not-run",
+      "review": "not-requested-no-successor-pr"
+    },
+    "live_containment_and_environment_protection": {
+      "legacy_ui_smoke": {
+        "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T072614-11-legacy-ponto-ui-smoke-disable.md",
+        "workflow_id": 231059578,
+        "state": "disabled_manually",
+        "in_progress_runs_before": 0,
+        "removed_repository_secrets": [
+          "PONTO_SMOKE_EMAIL",
+          "PONTO_SMOKE_PASSWORD"
+        ],
+        "removed_repository_variable": "ENABLE_PONTO_UI_SMOKE",
+        "historical_gestor_account": "not-identified-not-revoked"
+      },
+      "legacy_backend_smoke": {
+        "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T075100-15-legacy-ponto-smoke-disable.md",
+        "workflow_id": 230950805,
+        "state": "disabled_manually",
+        "cancelled_run_id": 30536124024,
+        "cancelled_run_state": "completed-cancelled",
+        "operational_interpretation": "not-active-external-slo-evidence"
+      },
+      "staging_production": {
+        "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T073000-12-environment-protection-before.md",
+        "staging_required_reviewers_rule_id": 61302994,
+        "staging_main_only_custom_policy_id": 56015291,
+        "production_required_reviewers_rule_id": 61303000,
+        "production_main_only_custom_policy_id": 56015293,
+        "can_admins_bypass": false,
+        "prevent_self_review": true,
+        "wait_timer": 0,
+        "sole_reviewer": "jubenitogarcia",
+        "sole_reviewer_id": 199169872,
+        "repository_collaborator_count": 1,
+        "independent_reviewer_available": false,
+        "github_token_can_approve_pull_request_reviews": false,
+        "authorized_app_or_bot_approver_proved": false
+      },
+      "emergency": {
+        "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T073300-13-emergency-environments-before.md",
+        "staging_branch_policy_rule_id": 61303367,
+        "production_branch_policy_rule_id": 61303369,
+        "protected_branches_only": true,
+        "can_admins_bypass": false,
+        "reviewers": 0,
+        "wait_timer": 0,
+        "custom_rules": 0,
+        "secret_count_each": 0,
+        "variable_each": {
+          "PONTO_EMERGENCY_CLOSE_MODE": "external-close-only-broker-v1"
+        },
+        "broker_policy_identity_staging": null,
+        "broker_policy_identity_production": null,
+        "broker_state": "policy-url-custody-ref-response-key-and-credential-absent-fail-closed"
+      },
+      "repository_resource_variables": {
+        "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T074500-14-ponto-resource-variables-before.md",
+        "observed_at": "2026-07-30T10:45:52Z",
+        "before_present_count": 0,
+        "after_present_count": 7,
+        "state": "created-and-individually-read-back-nonsecret-no-release-authority",
+        "names": [
+          "PONTO_MODULE_CONTROL_STAGING_KV_ID",
+          "PONTO_MODULE_CONTROL_PRODUCTION_KV_ID",
+          "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING",
+          "PONTO_CLOUDFLARE_PAGES_PROJECT",
+          "PONTO_TIMEKEEPING_D1_STAGING_ID",
+          "PONTO_TIMEKEEPING_D1_PRODUCTION_ID",
+          "CLOUDFLARE_ZONE_ID"
+        ],
+        "values_recorded_in_public_ledger": false
+      }
+    },
+    "external_replay_containment": {
+      "applied_at": "2026-07-30T06:57:00Z",
+      "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T035009-03-production-replay-containment.md",
+      "production_environment": {
+        "ENABLE_CRM_PAGES_DEPLOY": false,
+        "TIMEKEEPING_D1_PRODUCTION_ID": "removed",
+        "ENABLE_CORE_WORKERS_DEPLOY": false,
+        "CLOUDFLARE_PAGES_PROJECT": "skincos-ponto-fenced-production-20260730",
+        "MODULE_CONTROL_PRODUCTION_KV_ID": "preserved"
+      },
+      "staging_environment": {
+        "ENABLE_CORE_WORKERS_DEPLOY": false,
+        "ENABLE_CRM_PAGES_DEPLOY_STAGING": false,
+        "TIMEKEEPING_D1_STAGING_ID": "removed",
+        "CLOUDFLARE_PAGES_PROJECT": "skincos-ponto-fenced-staging-20260730",
+        "CLOUDFLARE_PAGES_PROJECT_STAGING": "skincos-ponto-fenced-staging-20260730",
+        "MODULE_CONTROL_STAGING_KV_ID": "preserved"
+      },
+      "live_runtime": "unchanged",
+      "historical_evidence": {
+        "timekeeping_production_rerunnable_runs": [
+          30420024733,
+          30132172442,
+          30132009676,
+          29966286110,
+          29959858249,
+          29757475250,
+          29700295125
+        ],
+        "timekeeping_production_run_without_guard": 30420024733,
+        "crm_pages_rerun_attempt_2": 30491926800,
+        "canonical_coordinator_runs": 0,
+        "thirty_day_run_inventory": {
+          "pages_secret_sync": 835,
+          "workers_secret_sync": 121,
+          "timekeeping": 35,
+          "core": 83,
+          "crm_pages_deploy": 113,
+          "module_control": 7,
+          "production_baseline": 1
+        }
+      },
+      "live_recheck": {
+        "observed_at": "2026-07-30T06:57:00Z",
+        "module_control_production": "maintenance",
+        "module_control_staging": "active",
+        "pages_health_status": 200,
+        "historical": true,
+        "superseded_staging_control_state_by_run": 30527767707
+      },
+      "rollback_boundary": "Do not restore the removed, disabled or fenced production or staging dispatch inputs until the permanent legacy-run control is integrated and the governed release prerequisites are authorized."
+    },
+    "latest_fail_close": {
+      "observed_at": "2026-07-30T08:43:14.511Z",
+      "scope": "canonical-staging-module-control-maintenance-before-any-candidate-release",
+      "source_sha": "aa9bfa6595b9cb12e7228f67f9606527bb375de2",
+      "workflow_run": 30527767707,
+      "workflow_conclusion": "success",
+      "jobs": [
+        90822614084,
+        90822665436
+      ],
+      "artifact": {
+        "id": 8753392021,
+        "name": "module-transition-timekeeping-staging-maintenance-30527767707",
+        "digest": "sha256:09de66aad85d0df5fec416917becd87a5aa3004542af8a4ed4bf34ef74244612",
+        "expires_at": "2026-10-28"
+      },
+      "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T084146-06-staging-maintenance-before.json",
+      "checkpoint_prior_state": "absent",
+      "live_readback": {
+        "staging_module_control": "maintenance-schema-v2",
+        "changed_at": "2026-07-30T08:43:14.511Z",
+        "edge_health_ok": false,
+        "edge_health_ready": false,
+        "edge_health_source": "control",
+        "me_status": 503,
+        "production_module_control": "maintenance"
+      },
+      "interpretation": "fail-close-only-not-staging-release-or-candidate-proof"
+    },
+    "live_release_boundary": {
+      "any_surface_on_base_main_sha": false,
+      "module_control_staging": "maintenance",
+      "module_control_production": "maintenance",
+      "module_control_staging_run": 30527767707,
+      "module_control_staging_changed_at": "2026-07-30T08:43:14.511Z",
+      "timekeeping_migrations_staging": "8/8-0001-through-0008",
+      "timekeeping_migrations_production": "8/8-0001-through-0008",
+      "production_readiness": "defective-200-ready-true-during-maintenance",
+      "timekeeping_workers_dev": "public",
+      "waf_functional_state": "required-edge-enforcement-not-observed-version-header-probes-200-contract-probe-401-not-403-custom-rule-state-unverified",
+      "zone_rulesets_listing": "managed-rulesets-only",
+      "custom_ruleset_entrypoint_get": "unauthorized",
+      "cloudflare_dashboard_paths": {
+        "codex_in_app_browser": "login-only-no-authenticated-session",
+        "existing_chrome_profile": "login-only-no-authenticated-session",
+        "credentials_entered": false,
+        "mutation_attempted": false
+      },
+      "deployment_approval": {
+        "staging_required_reviewers_rule_id": 61302994,
+        "production_required_reviewers_rule_id": 61303000,
+        "staging_main_only_custom_branch_policy_id": 56015291,
+        "production_main_only_custom_branch_policy_id": 56015293,
+        "allowed_branch": "main",
+        "can_admins_bypass": false,
+        "prevent_self_review": true,
+        "wait_timer": 0,
+        "sole_reviewer": "jubenitogarcia",
+        "sole_reviewer_id": 199169872,
+        "repository_collaborator_count": 1,
+        "independent_collaborator_reviewer_available": false,
+        "github_token_can_approve_pull_request_reviews": false,
+        "authorized_app_or_bot_approver_proved": false,
+        "pr_921_required_approvals": 0,
+        "pr_921_scope": "code-governance-only",
+        "separation_of_responsibility": "blocked-owner-cannot-self-review-independent-reviewer-required"
+      },
+      "external_monitor": {
+        "scheduled_production_ponto_smoke_run": 30521686413,
+        "attempts": 5,
+        "conclusion": "failure",
+        "ready": false,
+        "interpretation": "fail-closed-non-readiness-detected-not-slo-success",
+        "ponto_ui_smoke_run": 30518888970,
+        "ponto_ui_smoke_conclusion": "historical-success-not-authenticated-use-proof",
+        "ponto_ui_smoke_workflow_state": "disabled_manually",
+        "legacy_repository_credentials_state": "removed-by-name-without-reading-values",
+        "legacy_backend_smoke_workflow_id": 230950805,
+        "legacy_backend_smoke_workflow_state": "disabled_manually",
+        "legacy_backend_smoke_cancelled_run": 30536124024,
+        "legacy_backend_smoke_cancelled_run_state": "completed-cancelled"
+      },
+      "eligible_production_pilots": 0,
+      "repository_self_hosted_runners": 0,
+      "repository_resource_variables": "seven-ponto-kv-pages-d1-and-zone-identities-present-by-name-no-enable-flag-or-release-authority",
+      "authorized_inputs_state": "broker-policy-url-custody-response-key-id-ed25519-spki-and-credentials-target-environment-ed25519-capability-private-signers-repository-public-verifier-map-profile-key-and-custody-refs-target-environment-shared-version-root-attestation-key-repository-root-key-id-metadata-target-environment-pages-intent-key-waf-credentials-and-three-rule-id-variables-independent-deployment-reviewer-eligible-authorized-pilot-credentials-cohort-runner-labels-and-canary-percentage-absent-custom-waf-rule-state-unverified"
+    }
   },
   "summary": {
     "unique_paths": 109,

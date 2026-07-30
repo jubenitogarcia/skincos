@@ -101,7 +101,9 @@ function validateEdgeGuard(edgeGuard, stage, sourceSha) {
   assert(edgeGuard.passed === true, "edge guard did not pass");
   assert(edgeGuard.ruleAction === "block" && edgeGuard.phase === "http_request_firewall_custom", "edge guard ruleset contract is invalid");
   assert(edgeGuard.unconditional === true && edgeGuard.upstreamZoneExemption === false, "edge guard permits an upstream-zone bypass");
+  assert(edgeGuard.blocksTruncatedHeaders === true, "edge guard does not fail closed on truncated request headers");
   assert(edgeGuard.blockedPath === "/insumos/health/workforce-contract", "edge guard workforce contract path is not blocked");
+  assert(edgeGuard.recursivelyDecodesBlockedPath === true, "edge guard does not recursively decode the blocked path");
   assert(JSON.stringify(edgeGuard.blockedHeaders) === JSON.stringify(["cloudflare-workers-version-overrides", "cloudflare-workers-version-key"]), "edge guard headers differ");
   assert(JSON.stringify(edgeGuard.hosts) === JSON.stringify(["api.skincos.com.br", "api-staging.skincos.com.br"]), "edge guard hosts differ");
   assert(/^[0-9a-f]{32}$/.test(String(edgeGuard.zoneId || "")), "edge guard zone ID is invalid");
@@ -120,8 +122,12 @@ function validateEdgeGuard(edgeGuard, stage, sourceSha) {
     ]),
     "edge guard rule descriptions differ",
   );
+  assert(
+    JSON.stringify(edgeGuard.firstRuleIds) === JSON.stringify(edgeGuard.ruleIds),
+    "edge guard block rules are not the first two custom rules",
+  );
   assert(typeof edgeGuard.rulesetVersion === "string" && edgeGuard.rulesetVersion.length > 0, "edge guard ruleset version is absent");
-  assert(Array.isArray(edgeGuard.probes) && edgeGuard.probes.length === 8, "edge guard requires two negative controls and six external block probes");
+  assert(Array.isArray(edgeGuard.probes) && edgeGuard.probes.length === 14, "edge guard requires two negative controls and twelve external block probes");
   for (const host of edgeGuard.hosts) {
     const probes = edgeGuard.probes.filter(probe => probe?.host === host);
     const negative = probes.filter(probe => probe?.kind === "negative-control");
@@ -152,7 +158,21 @@ function validateEdgeGuard(edgeGuard, stage, sourceSha) {
         && contract[0].status === 403,
       `edge guard workforce contract block probe failed for ${host}`,
     );
-    assert(probes.length === 4, `edge guard probe inventory differs for ${host}`);
+    for (const variant of [
+      "/%69nsumos/health/workforce-contract",
+      "/%2569nsumos/health/workforce-contract",
+      "/INSUMOS/HEALTH/WORKFORCE-CONTRACT",
+    ]) {
+      const matches = probes.filter(probe => probe?.path === variant);
+      assert(
+        matches.length === 1
+          && matches[0].passed === true
+          && matches[0].cloudflareRayPresent === true
+          && matches[0].status === 403,
+        `edge guard workforce contract variant failed for ${host}: ${variant}`,
+      );
+    }
+    assert(probes.length === 7, `edge guard probe inventory differs for ${host}`);
   }
   assert(edgeGuard.credentialsIncluded === false && edgeGuard.piiIncluded === false, "edge guard evidence contains sensitive material");
   assertSha256(edgeGuard.digest, "edgeGuard.digest");
@@ -251,6 +271,15 @@ function validateEvidence(evidence) {
   }
   if (evidence.stage === "staging") {
     assert(evidence.checkpoint?.timekeeping && evidence.checkpoint?.identityWorkforce, "staging requires Timekeeping and Identity checkpoints");
+    assert(evidence.slo?.teardown?.passed === true, "staging synthetic teardown did not pass");
+    assert(evidence.slo?.teardown?.environment === "staging", "staging teardown environment is invalid");
+    assert(evidence.slo?.teardown?.coreResidualCount === 0, "staging teardown retained Core operational residue");
+    assert(evidence.slo?.teardown?.timekeepingResidualCount === 0, "staging teardown retained Timekeeping operational residue");
+    assert(evidence.slo?.teardown?.coreAuditPreserved === true, "staging teardown did not preserve Core audit");
+    assert(evidence.slo?.teardown?.timekeepingAuditPreserved === true, "staging teardown did not preserve Timekeeping audit");
+    assert(evidence.slo?.teardown?.credentialsIncluded === false, "staging teardown evidence contains credentials");
+    assert(evidence.slo?.teardown?.piiIncluded === false, "staging teardown evidence contains PII");
+    assertSha256(evidence.slo?.teardown?.digest, "slo.teardown.digest");
     assert(evidence.rollback?.executed === true, "staging requires an executed rollback drill");
     assert(evidence.rollback?.mode === "staging-drill-restored-candidate", "staging rollback drill mode is invalid");
     assert(/^[0-9]+$/.test(String(evidence.rollback?.evidenceRunId || "")), "staging rollback drill run id is invalid");

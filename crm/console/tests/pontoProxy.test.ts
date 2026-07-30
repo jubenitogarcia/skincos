@@ -11,6 +11,43 @@ const IDENTITY_VERSION_ID = '22222222-2222-4222-8222-222222222222'
 const TIMEKEEPING_VERSION_ID = '33333333-3333-4333-8333-333333333333'
 const RELEASE_PROBE_KEY = 'release-probe-test-key'
 let releaseProbeCounter = 0
+const OPEN_EMERGENCY_LATCH = {
+  schemaVersion: 1,
+  module: 'timekeeping',
+  target: 'production',
+  latched: false,
+  changedAt: '2026-07-30T00:00:00.000Z',
+  changedBy: 'ponto-emergency-latch-reset',
+}
+
+async function reserveProbeForTest(env: any, used: Set<string>, request: Request): Promise<Response> {
+  const nonce = String(request.headers.get('x-request-nonce') || '')
+  await Promise.resolve()
+  if (!nonce || used.has(nonce)) {
+    return new Response(JSON.stringify({
+      ok: false,
+      error: 'RELEASE_PROBE_RESERVATION_REJECTED',
+    }), {
+      status: 409,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  used.add(nonce)
+  return new Response(JSON.stringify({
+    ok: true,
+    consumed: true,
+    releaseSha: env.PONTO_RELEASE_SHA,
+    environment: env.SKINCOS_DEPLOYMENT_ENV,
+  }), {
+    status: 201,
+    headers: {
+      'content-type': 'application/json',
+      'x-skincos-gateway-release-sha': env.PONTO_RELEASE_SHA,
+      'x-skincos-gateway-version-id': env.PONTO_CORE_VERSION_ID,
+      'x-skincos-timekeeping-release-sha': env.PONTO_RELEASE_SHA,
+    },
+  })
+}
 
 function context(path: string, init: RequestInit = {}, withCsrf = true) {
   const method = String(init.method || 'GET').toUpperCase()
@@ -29,11 +66,17 @@ function context(path: string, init: RequestInit = {}, withCsrf = true) {
     PONTO_ROLLOUT_STAGE: 'maintenance',
     SKINCOS_DEPLOYMENT_ENV: 'production',
   }
-  env.PONTO_CORE = { fetch: (upstream: Request) => fetch(upstream) }
+  const usedProbeReservations = new Set<string>()
+  env.PONTO_CORE = {
+    fetch: (upstream: Request) => new URL(upstream.url).pathname === '/api/ponto/internal/release-probe-nonce'
+      ? reserveProbeForTest(env, usedProbeReservations, upstream)
+      : fetch(upstream),
+  }
   env.PONTO_IDENTITY = { fetch: (upstream: Request) => fetch(upstream) }
   const usedProbeNonces = new Map<string, string>()
   env.MODULE_CONTROL = {
     get: async (key: string) => {
+      if (key === 'module-control:timekeeping:emergency-latch') return OPEN_EMERGENCY_LATCH
       if (key !== 'module-control:timekeeping') return usedProbeNonces.get(key) || null
       const identityRef = `v1:${createHmac('sha256', env.PONTO_ACTOR_HMAC_KEY)
         .update(`ponto-canary-identity/v1.${env.PONTO_RELEASE_SHA}.gestor-1`)
@@ -71,21 +114,79 @@ function context(path: string, init: RequestInit = {}, withCsrf = true) {
   }
 }
 
-async function signReleaseProbe(ctx: ReturnType<typeof context>, reuse?: { timestamp: string, nonce: string }) {
+async function signReleaseProbe(
+  ctx: ReturnType<typeof context>,
+  reuse?: {
+    timestamp: string
+    nonce: string
+    signatureVersion?: string
+    stage?: string
+    coordinatorRunId?: string
+    workflowRunId?: string
+  },
+) {
   const timestamp = reuse?.timestamp || String(Date.now())
   const nonce = reuse?.nonce || `release-probe-${String(++releaseProbeCounter).padStart(8, '0')}`
+  const stage = reuse?.stage || String(ctx.env.PONTO_ROLLOUT_STAGE || '')
+  const signatureVersion = reuse?.signatureVersion || (stage === 'staging' ? '1' : '2')
+  const coordinatorRunId = reuse?.coordinatorRunId || '10000001'
+  const workflowRunId = reuse?.workflowRunId || '20000001'
   const body = await ctx.request.clone().arrayBuffer()
   const bodyHash = createHash('sha256').update(Buffer.from(body)).digest('hex')
   const url = new URL(ctx.request.url)
-  const message = `ponto-release-probe/v1.${timestamp}.${nonce}.${ctx.request.method}.${url.pathname}.${bodyHash}.${RELEASE_SHA}`
-  const signature = createHmac('sha256', RELEASE_PROBE_KEY).update(message).digest('base64url')
+  const message = signatureVersion === '2'
+    ? [
+        'ponto-release-probe/v2',
+        timestamp,
+        nonce,
+        ctx.request.method,
+        url.pathname,
+        bodyHash,
+        RELEASE_SHA,
+        stage,
+        coordinatorRunId,
+        workflowRunId,
+      ].join('.')
+    : `ponto-release-probe/v1.${timestamp}.${nonce}.${ctx.request.method}.${url.pathname}.${bodyHash}.${RELEASE_SHA}`
+  const delegatedKey = Buffer.alloc(32, releaseProbeCounter % 251 || 1).toString('base64url')
+  const delegatedKeyCommitment = createHash('sha256').update(delegatedKey).digest('hex')
+  const delegationTimestamp = String(Math.floor(Date.now() / 1000))
+  const delegationExpiresAt = String(Number(delegationTimestamp) + 2 * 60 * 60)
+  const delegationMessage = [
+    'ponto-release-probe-delegation/v1',
+    delegationTimestamp,
+    delegationExpiresAt,
+    nonce,
+    ctx.request.method,
+    url.pathname,
+    RELEASE_SHA,
+    stage,
+    coordinatorRunId,
+    workflowRunId,
+    delegatedKeyCommitment,
+  ].join('.')
+  const delegationSignature = createHmac('sha256', RELEASE_PROBE_KEY).update(delegationMessage).digest('base64url')
+  const signature = createHmac('sha256', signatureVersion === '2' ? delegatedKey : RELEASE_PROBE_KEY)
+    .update(message)
+    .digest('base64url')
   const headers = new Headers(ctx.request.headers)
   headers.set('x-skincos-release-probe-ts', timestamp)
   headers.set('x-skincos-release-probe-nonce', nonce)
-  headers.set('x-skincos-release-probe-signature-version', '1')
+  headers.set('x-skincos-release-probe-signature-version', signatureVersion)
   headers.set('x-skincos-release-probe-sig', signature)
+  if (signatureVersion === '2') {
+    headers.set('x-skincos-release-probe-stage', stage)
+    headers.set('x-skincos-release-probe-coordinator-run-id', coordinatorRunId)
+    headers.set('x-skincos-release-probe-workflow-run-id', workflowRunId)
+    headers.set('x-skincos-release-probe-delegation-version', '1')
+    headers.set('x-skincos-release-probe-delegation-key', delegatedKey)
+    headers.set('x-skincos-release-probe-delegation-key-commitment', delegatedKeyCommitment)
+    headers.set('x-skincos-release-probe-delegation-ts', delegationTimestamp)
+    headers.set('x-skincos-release-probe-delegation-exp', delegationExpiresAt)
+    headers.set('x-skincos-release-probe-delegation-sig', delegationSignature)
+  }
   ctx.request = new Request(ctx.request, { headers })
-  return { timestamp, nonce }
+  return { timestamp, nonce, signatureVersion, stage, coordinatorRunId, workflowRunId }
 }
 
 describe('Ponto CRM proxy', () => {
@@ -324,6 +425,7 @@ describe('Ponto CRM proxy', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
+      ready: true,
       environment: 'production',
       rolloutStage: 'pilot',
       releaseSha: RELEASE_SHA,
@@ -369,7 +471,9 @@ describe('Ponto CRM proxy', () => {
     ;(denied.env as any).PONTO_IDENTITY_VERSION_ID = IDENTITY_VERSION_ID
     ;(denied.env as any).PONTO_ROLLOUT_STAGE = 'pilot'
     ;(denied.env as any).MODULE_CONTROL = {
-      get: async () => ({
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? OPEN_EMERGENCY_LATCH
+        : ({
         state: 'canary',
         schemaVersion: 2,
         rolloutStage: 'pilot',
@@ -383,12 +487,88 @@ describe('Ponto CRM proxy', () => {
           identityWorkforce: { candidate: IDENTITY_VERSION_ID },
         },
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      }),
+        }),
     }
     const deniedResponse = await onRequest(denied)
     expect(deniedResponse.status).toBe(403)
     await expect(deniedResponse.json()).resolves.toMatchObject({ error: 'PONTO_COHORT_NOT_AUTHORIZED' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('denies candidate routing when the independent emergency latch is missing, unreadable, malformed, or active', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const stores = [
+      {
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? null
+          : { state: 'canary' },
+      },
+      {
+        get: async (key: string) => {
+          if (key === 'module-control:timekeeping:emergency-latch') throw new Error('unavailable')
+          return { state: 'canary' }
+        },
+      },
+      {
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? { latched: false }
+          : { state: 'canary' },
+      },
+      {
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? { ...OPEN_EMERGENCY_LATCH, latched: true }
+          : { state: 'canary' },
+      },
+    ]
+
+    for (const MODULE_CONTROL of stores) {
+      const ctx = context('/api/ponto/me/records')
+      Object.assign(ctx.env, {
+        PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+        PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+        PONTO_ROLLOUT_STAGE: 'pilot',
+        MODULE_CONTROL,
+      })
+      const response = await onRequest(ctx)
+      expect(response.status).toBe(403)
+      await expect(response.json()).resolves.toMatchObject({ error: 'PONTO_COHORT_NOT_AUTHORIZED' })
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('denies candidate routing when the emergency overlay target is missing, malformed, or mismatched', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const invalidLatches = [
+      {
+        schemaVersion: 1,
+        module: 'timekeeping',
+        latched: false,
+        changedAt: OPEN_EMERGENCY_LATCH.changedAt,
+        changedBy: OPEN_EMERGENCY_LATCH.changedBy,
+      },
+      { ...OPEN_EMERGENCY_LATCH, target: 7 },
+      { ...OPEN_EMERGENCY_LATCH, target: 'staging' },
+    ]
+    for (const latch of invalidLatches) {
+      const ctx = context('/api/ponto/me/records')
+      const baseStore = ctx.env.MODULE_CONTROL
+      Object.assign(ctx.env, {
+        PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+        PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+        PONTO_ROLLOUT_STAGE: 'pilot',
+        MODULE_CONTROL: {
+          get: async (key: string, type?: string) => key === 'module-control:timekeeping:emergency-latch'
+            ? latch
+            : baseStore.get(key, type),
+        },
+      })
+      const response = await onRequest(ctx)
+      expect(response.status).toBe(403)
+      await expect(response.json()).resolves.toMatchObject({ error: 'PONTO_COHORT_NOT_AUTHORIZED' })
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('requires aligned employee, Identity, Identity-login, unit and network grants in Pages', async () => {
@@ -427,7 +607,11 @@ describe('Ponto CRM proxy', () => {
         PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
         PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
         PONTO_ROLLOUT_STAGE: 'pilot',
-        MODULE_CONTROL: { get: async () => control },
+        MODULE_CONTROL: {
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? OPEN_EMERGENCY_LATCH
+            : control,
+        },
       })
       return ctx
     }
@@ -465,7 +649,11 @@ describe('Ponto CRM proxy', () => {
       PONTO_ROLLOUT_STAGE: 'staging',
       PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
       PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
-      MODULE_CONTROL: { get: async () => stagingControl(true) },
+      MODULE_CONTROL: {
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? { ...OPEN_EMERGENCY_LATCH, target: 'staging' }
+          : stagingControl(true),
+      },
     })
 
     expect((await onRequest(allowed)).status).toBe(200)
@@ -479,7 +667,11 @@ describe('Ponto CRM proxy', () => {
       PONTO_ROLLOUT_STAGE: 'staging',
       PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
       PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
-      MODULE_CONTROL: { get: async () => stagingControl(false) },
+      MODULE_CONTROL: {
+        get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+          ? { ...OPEN_EMERGENCY_LATCH, target: 'staging' }
+          : stagingControl(false),
+      },
     })
     expect((await onRequest(denied)).status).toBe(403)
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -495,6 +687,7 @@ describe('Ponto CRM proxy', () => {
       .update(`ponto-network/v1.${RELEASE_SHA}.203.0.113.10`)
       .digest('base64url')}`
     const seen: Request[] = []
+    let sessionActive = false
     const identityFetch = vi.fn(async (request: Request) => {
       seen.push(request)
       const path = new URL(request.url).pathname
@@ -509,12 +702,19 @@ describe('Ponto CRM proxy', () => {
         }), { headers: { 'content-type': 'application/json' } })
       }
       if (path === '/auth/login') {
+        sessionActive = true
         const headers = new Headers({ 'content-type': 'application/json' })
         headers.append('set-cookie', 'session=candidate-session; Path=/; HttpOnly')
         headers.append('set-cookie', 'csrfToken=candidate-csrf; Path=/')
         return new Response(JSON.stringify({ success: true }), { headers })
       }
       if (path === '/auth/me') {
+        if (!sessionActive) {
+          return new Response(JSON.stringify({ error: 'Not authenticated' }), {
+            status: 401,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
         return new Response(JSON.stringify({
           success: true,
           user: { role: 'CONSULTOR', allowedModules: ['ponto', 'atendimento'] },
@@ -528,6 +728,7 @@ describe('Ponto CRM proxy', () => {
       }
       if (path === '/auth/sessions/candidate-current-session/revoke') {
         expect(request.headers.get('x-csrf-token')).toBe('candidate-csrf')
+        sessionActive = false
         return new Response(JSON.stringify({ success: true }), { headers: { 'content-type': 'application/json' } })
       }
       return new Response('not found', { status: 404 })
@@ -543,7 +744,9 @@ describe('Ponto CRM proxy', () => {
     ;(ctx.env as any).PONTO_IDENTITY = { fetch: identityFetch }
     const usedProbeNonces = new Map<string, string>()
     ;(ctx.env as any).MODULE_CONTROL = {
-      get: async (key: string) => key === 'module-control:timekeeping' ? ({
+          get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+            ? OPEN_EMERGENCY_LATCH
+        : key === 'module-control:timekeeping' ? ({
         state: 'canary',
         schemaVersion: 2,
         rolloutStage: 'pilot',
@@ -582,13 +785,173 @@ describe('Ponto CRM proxy', () => {
       credentialsIncluded: false,
       piiIncluded: false,
     })
-    expect(seen).toHaveLength(5)
+    expect(seen).toHaveLength(6)
     for (const request of seen) {
       expect(request.headers.get('cloudflare-workers-version-overrides'))
         .toBe(`skincos-insumos="${IDENTITY_VERSION_ID}"`)
     }
     expect(JSON.stringify(report)).not.toContain(login)
     expect(JSON.stringify(report)).not.toContain(password)
+  })
+
+  it('falls back to logout and proves the stale login cookie is invalid after a post-login failure', async () => {
+    let sessionActive = false
+    let meCalls = 0
+    const seenPaths: string[] = []
+    const identityFetch = vi.fn(async (request: Request) => {
+      const path = new URL(request.url).pathname
+      seenPaths.push(path)
+      if (path === '/health/workforce-contract') {
+        return new Response(JSON.stringify({
+          ok: true,
+          ready: true,
+          version: RELEASE_SHA,
+          workerVersionId: IDENTITY_VERSION_ID,
+          data: { contract: 'identity-workforce-hmac-v2', matched: true },
+        }), { headers: { 'content-type': 'application/json' } })
+      }
+      if (path === '/auth/login') {
+        sessionActive = true
+        const headers = new Headers({ 'content-type': 'application/json' })
+        headers.append('set-cookie', 'session=pre-session-id; Path=/; HttpOnly')
+        headers.append('set-cookie', 'csrfToken=pre-session-csrf; Path=/')
+        return new Response(JSON.stringify({ success: true }), { headers })
+      }
+      if (path === '/auth/me') {
+        meCalls += 1
+        if (meCalls === 1) {
+          return new Response(JSON.stringify({ success: false, error: 'IDENTITY_UNAVAILABLE' }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        expect(request.headers.get('cookie')).toContain('session=pre-session-id')
+        expect(sessionActive).toBe(false)
+        return new Response(JSON.stringify({ error: 'Not authenticated' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (path === '/auth/logout') {
+        expect(request.headers.get('cookie')).toContain('session=pre-session-id')
+        expect(request.headers.get('x-csrf-token')).toBe('pre-session-csrf')
+        sessionActive = false
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    const ctx = context('/api/ponto/_release-contract', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: 'gestor@example.test',
+        password: 'synthetic-password-123',
+      }),
+    }, false)
+    Object.assign(ctx.env, {
+      PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+      PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+      PONTO_ROLLOUT_STAGE: 'pilot',
+      PONTO_IDENTITY: { fetch: identityFetch },
+    })
+    await signReleaseProbe(ctx)
+
+    const response = await onRequest(ctx)
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: 'IDENTITY_RELEASE_CONTRACT_FAILED',
+      primaryError: 'IDENTITY_ROLE_MISMATCH',
+      sessionTeardownAttempted: true,
+      sessionTeardownProven: true,
+      sessionTeardownMethod: 'logout-fallback',
+      credentialsIncluded: false,
+      piiIncluded: false,
+    })
+    expect(seenPaths).toEqual([
+      '/health/workforce-contract',
+      '/auth/login',
+      '/auth/me',
+      '/auth/logout',
+      '/auth/me',
+    ])
+    expect(sessionActive).toBe(false)
+  })
+
+  it('fails explicitly when session revoke is indeterminate and the stale cookie still authenticates', async () => {
+    let meCalls = 0
+    const identityFetch = vi.fn(async (request: Request) => {
+      const path = new URL(request.url).pathname
+      if (path === '/health/workforce-contract') {
+        return new Response(JSON.stringify({
+          ok: true,
+          ready: true,
+          version: RELEASE_SHA,
+          workerVersionId: IDENTITY_VERSION_ID,
+          data: { contract: 'identity-workforce-hmac-v2', matched: true },
+        }), { headers: { 'content-type': 'application/json' } })
+      }
+      if (path === '/auth/login') {
+        const headers = new Headers({ 'content-type': 'application/json' })
+        headers.append('set-cookie', 'session=indeterminate-session; Path=/; HttpOnly')
+        headers.append('set-cookie', 'csrfToken=indeterminate-csrf; Path=/')
+        return new Response(JSON.stringify({ success: true }), { headers })
+      }
+      if (path === '/auth/me') {
+        meCalls += 1
+        if (meCalls > 1) expect(request.headers.get('cookie')).toContain('session=indeterminate-session')
+        return new Response(JSON.stringify({
+          success: true,
+          user: { role: 'CONSULTOR', allowedModules: ['atendimento', 'ponto'] },
+        }), { headers: { 'content-type': 'application/json' } })
+      }
+      if (path === '/auth/sessions') {
+        return new Response(JSON.stringify({
+          success: true,
+          sessions: [{ id: 'indeterminate-current', current: true }],
+        }), { headers: { 'content-type': 'application/json' } })
+      }
+      if (path === '/auth/sessions/indeterminate-current/revoke') {
+        expect(request.headers.get('x-csrf-token')).toBe('indeterminate-csrf')
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'SESSION_OPERATION_UNAVAILABLE',
+        }), { status: 503, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    const ctx = context('/api/ponto/_release-contract', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: 'gestor@example.test',
+        password: 'synthetic-password-123',
+      }),
+    }, false)
+    Object.assign(ctx.env, {
+      PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+      PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+      PONTO_ROLLOUT_STAGE: 'pilot',
+      PONTO_IDENTITY: { fetch: identityFetch },
+    })
+    await signReleaseProbe(ctx)
+
+    const response = await onRequest(ctx)
+    expect(response.status).toBe(503)
+    const report = await response.json()
+    expect(report).toMatchObject({
+      ok: false,
+      error: 'IDENTITY_SESSION_TEARDOWN_UNPROVEN',
+      sessionTeardownAttempted: true,
+      sessionTeardownProven: false,
+      sessionTeardownMethod: 'session-revoke',
+      credentialsIncluded: false,
+      piiIncluded: false,
+    })
+    expect(report.primaryError).toBeUndefined()
+    expect(meCalls).toBe(2)
   })
 
   it('requires a fresh one-time release-probe signature before accepting synthetic credentials', async () => {
@@ -630,6 +993,179 @@ describe('Ponto CRM proxy', () => {
     await expect(replay.json()).resolves.toMatchObject({ error: 'RELEASE_PROBE_NOT_AUTHORIZED' })
   })
 
+  it('requires v2 workflow provenance for pilot and rejects non-canonical signed claims before reservation', async () => {
+    const build = async (claims: {
+      signatureVersion: string
+      stage: string
+      coordinatorRunId: string
+      workflowRunId: string
+    }) => {
+      const ctx = context('/api/ponto/_release-contract', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: 'gestor@example.test',
+          password: 'synthetic-password-123',
+        }),
+      }, false)
+      const reserve = vi.fn((request: Request) =>
+        reserveProbeForTest(ctx.env, new Set<string>(), request))
+      Object.assign(ctx.env, {
+        PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+        PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+        PONTO_ROLLOUT_STAGE: 'pilot',
+        PONTO_CORE: { fetch: reserve },
+        PONTO_IDENTITY: { fetch: vi.fn() },
+      })
+      await signReleaseProbe(ctx, {
+        timestamp: String(Date.now()),
+        nonce: `release-probe-${String(++releaseProbeCounter).padStart(8, '0')}`,
+        ...claims,
+      })
+      return { ctx, reserve }
+    }
+
+    const cases = [
+      {
+        signatureVersion: '1',
+        stage: 'pilot',
+        coordinatorRunId: '10000001',
+        workflowRunId: '20000001',
+      },
+      {
+        signatureVersion: '2',
+        stage: 'canary',
+        coordinatorRunId: '10000001',
+        workflowRunId: '20000001',
+      },
+      {
+        signatureVersion: '2',
+        stage: 'pilot',
+        coordinatorRunId: '010000001',
+        workflowRunId: '20000001',
+      },
+      {
+        signatureVersion: '2',
+        stage: 'pilot',
+        coordinatorRunId: '10000001',
+        workflowRunId: 'not-a-run',
+      },
+    ]
+
+    for (const claims of cases) {
+      const { ctx, reserve } = await build(claims)
+      const response = await onRequest(ctx)
+      expect(response.status).toBe(403)
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'RELEASE_PROBE_NOT_AUTHORIZED',
+      })
+      expect(reserve).not.toHaveBeenCalled()
+    }
+  })
+
+  it('delegates concurrent one-time consumption to the atomic Timekeeping boundary', async () => {
+    const ctx = context('/api/ponto/_release-contract', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: 'gestor@example.test',
+        password: 'synthetic-password-123',
+      }),
+    }, false)
+    Object.assign(ctx.env, {
+      PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
+      PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
+      PONTO_ROLLOUT_STAGE: 'pilot',
+      PONTO_IDENTITY: { fetch: vi.fn().mockResolvedValue(new Response('{}', { status: 503 })) },
+    })
+    const reservations = new Set<string>()
+    const reservationRequests: any[] = []
+    ctx.env.PONTO_CORE = {
+      fetch: vi.fn(async (request: Request) => {
+        reservationRequests.push(request.clone())
+        return reserveProbeForTest(ctx.env, reservations, request)
+      }),
+    }
+    const signed = await signReleaseProbe(ctx)
+    const peer = { request: ctx.request.clone(), env: ctx.env }
+
+    const responses = await Promise.all([onRequest(ctx), onRequest(peer)])
+    expect(responses.map((response) => response.status).sort()).toEqual([403, 503])
+    expect(reservations.size).toBe(1)
+    expect(reservationRequests).toHaveLength(2)
+
+    for (const request of reservationRequests) {
+      expect(request.method).toBe('POST')
+      expect(new URL(request.url).pathname).toBe('/api/ponto/internal/release-probe-nonce')
+      expect(request.headers.get('cloudflare-workers-version-overrides'))
+        .toBe(`skincos-ponto-core="${CORE_VERSION_ID}"`)
+      const actorB64 = String(request.headers.get('x-skincos-actor'))
+      expect(JSON.parse(Buffer.from(actorB64, 'base64url').toString('utf8'))).toEqual({
+        id: 'release-probe:production',
+        email: 'release-probe@production.internal.invalid',
+        role: 'ADMIN',
+        allowedUnits: [],
+        releaseSha: RELEASE_SHA,
+      })
+      const reservationBody = await request.clone().text()
+      const parsedBody = JSON.parse(reservationBody)
+      expect(parsedBody).toMatchObject({
+        schemaVersion: 1,
+        target: 'production',
+        releaseSha: RELEASE_SHA,
+      })
+      expect(parsedBody.nonceDigest).toMatch(/^[0-9a-f]{64}$/)
+      expect(parsedBody.bodyDigest).toMatch(/^[0-9a-f]{64}$/)
+      expect(reservationBody).not.toContain('gestor@example.test')
+      expect(reservationBody).not.toContain('synthetic-password-123')
+      expect(reservationBody).not.toContain(signed.nonce)
+      const timestamp = String(request.headers.get('x-skincos-actor-ts'))
+      const reservationNonce = String(request.headers.get('x-request-nonce'))
+      const reservationBodyHash = createHash('sha256').update(reservationBody).digest('hex')
+      const expectedSignature = createHmac('sha256', 'proxy-test-key')
+        .update([
+          timestamp,
+          actorB64,
+          'POST',
+          '/api/ponto/internal/release-probe-nonce',
+          reservationNonce,
+          reservationBodyHash,
+        ].join('.'))
+        .digest('base64url')
+      expect(request.headers.get('x-skincos-actor-sig')).toBe(expectedSignature)
+      expect(reservationNonce).toMatch(new RegExp(`^ponto-release-probe:production:${RELEASE_SHA}:[0-9a-f]{64}$`))
+    }
+
+    const firstBody = context('/api/ponto/_release-contract', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: 'gestor@example.test',
+        password: 'synthetic-password-123',
+      }),
+    }, false)
+    firstBody.env = ctx.env
+    const oneTime = await signReleaseProbe(firstBody)
+    expect((await onRequest(firstBody)).status).toBe(503)
+
+    const changedBody = context('/api/ponto/_release-contract', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: 'gestor@example.test',
+        password: 'different-synthetic-password',
+      }),
+    }, false)
+    changedBody.env = ctx.env
+    await signReleaseProbe(changedBody, oneTime)
+    const changedBodyReplay = await onRequest(changedBody)
+    expect(changedBodyReplay.status).toBe(403)
+    await expect(changedBodyReplay.json()).resolves.toMatchObject({
+      error: 'RELEASE_PROBE_NOT_AUTHORIZED',
+    })
+    expect(reservations.size).toBe(2)
+  })
+
   it('allows only a signed staging.invalid fixture under exact active synthetic staging control', async () => {
     const stagingControl = {
       state: 'active',
@@ -658,7 +1194,9 @@ describe('Ponto CRM proxy', () => {
         PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
         PONTO_IDENTITY: { fetch: identityFetch },
         MODULE_CONTROL: {
-          get: async (key: string) => key === 'module-control:timekeeping'
+          get: async (key: string) => key === 'module-control:timekeeping:emergency-latch'
+            ? { ...OPEN_EMERGENCY_LATCH, target: 'staging' }
+            : key === 'module-control:timekeeping'
             ? stagingControl
             : (used.get(key) || null),
           put: async (key: string, value: string) => { used.set(key, value) },
@@ -681,12 +1219,16 @@ describe('Ponto CRM proxy', () => {
 
   it('pins protected release readiness to the exact Core and Timekeeping candidate versions', async () => {
     const exact = context('/api/ponto/_release-readiness', {}, false)
+    const exactReservations = new Set<string>()
     Object.assign(exact.env, {
       PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
       PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
       PONTO_ROLLOUT_STAGE: 'pilot',
       PONTO_CORE: {
         fetch: vi.fn(async (request: Request) => {
+          if (new URL(request.url).pathname === '/api/ponto/internal/release-probe-nonce') {
+            return reserveProbeForTest(exact.env, exactReservations, request)
+          }
           expect(request.headers.get('cloudflare-workers-version-overrides'))
             .toBe(`skincos-ponto-core="${CORE_VERSION_ID}"`)
           return new Response(JSON.stringify({ ok: true, ready: true }), {
@@ -713,20 +1255,26 @@ describe('Ponto CRM proxy', () => {
     })
 
     const mismatch = context('/api/ponto/_release-readiness', {}, false)
+    const mismatchReservations = new Set<string>()
     Object.assign(mismatch.env, {
       PONTO_CORE_VERSION_ID: CORE_VERSION_ID,
       PONTO_IDENTITY_VERSION_ID: IDENTITY_VERSION_ID,
       PONTO_ROLLOUT_STAGE: 'pilot',
       PONTO_CORE: {
-        fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, ready: true }), {
-          headers: {
-            'content-type': 'application/json',
-            'x-skincos-gateway-release-sha': RELEASE_SHA,
-            'x-skincos-gateway-version-id': CORE_VERSION_ID,
-            'x-skincos-timekeeping-release-sha': RELEASE_SHA,
-            'x-skincos-timekeeping-version-id': '44444444-4444-4444-8444-444444444444',
-          },
-        })),
+        fetch: vi.fn(async (request: Request) => {
+          if (new URL(request.url).pathname === '/api/ponto/internal/release-probe-nonce') {
+            return reserveProbeForTest(mismatch.env, mismatchReservations, request)
+          }
+          return new Response(JSON.stringify({ ok: true, ready: true }), {
+            headers: {
+              'content-type': 'application/json',
+              'x-skincos-gateway-release-sha': RELEASE_SHA,
+              'x-skincos-gateway-version-id': CORE_VERSION_ID,
+              'x-skincos-timekeeping-release-sha': RELEASE_SHA,
+              'x-skincos-timekeeping-version-id': '44444444-4444-4444-8444-444444444444',
+            },
+          })
+        }),
       },
     })
     await signReleaseProbe(mismatch)

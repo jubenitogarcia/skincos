@@ -81,7 +81,11 @@ jornada autenticada atual continue válida.
   compartilhado/multidomínio, Orb/n8n, Livia/native,
   website/Meta/WhatsApp, observabilidade e CRM Local. O manifesto canônico é
   `docs/project-state/ponto-post-886-delta.json`; a alegação anterior de
-  “somente um arquivo Finance” e o inventário de 29 paths estão revogados.
+  “somente um arquivo Finance” e o inventário de 29 paths estão revogados. O
+  suplemento determinístico da PR #921 cobre seus 85 paths (72 controles
+  Ponto, oito ledgers/runbook e cinco proteções locais); com 15 sobreposições,
+  a união até `aa9bfa6595b9cb12e7228f67f9606527bb375de2` cobre os 179
+  paths líquidos atuais (77 adicionados, 102 modificados, zero removidos).
 - [x] Corrigir a seleção de origem: o release SHA precisa ser exatamente o
   `GITHUB_SHA` do coordenador executado em `refs/heads/main`, além de ser o
   checkout atual e alcançável por `main`. SHA ancestral não é aceito. Se
@@ -99,7 +103,8 @@ jornada autenticada atual continue válida.
 - [x] Restaurar a navegação de CONSULTOR/EMPLOYEE para exatamente Atendimento
   e Ponto, preservando autorização server-side, regressão CI, fixture
   sintética efêmera, teardown run-scoped e auditoria.
-- [x] Implementar os controles técnicos fail-closed: afinidade entre versões
+- [x] Implementar na PR #921 a primeira versão dos controles técnicos
+  fail-closed: afinidade entre versões
   de Timekeeping/Core/Identity/Pages, seleção privada por service binding,
   coorte conjuntiva de identidade/unidade/rede, pilot/canary sem tráfego
   público default, WAF como precondição externa, grants mínimos, checkpoints
@@ -108,11 +113,139 @@ jornada autenticada atual continue válida.
   opaca de separação dos roots antes de mutation, credenciais piloto somente
   no runner self-hosted autorizado, interrupção automática, ownership e
   rollback exato nas quatro superfícies.
-- [ ] Integrar a PR #921, aberta sobre o `main`
-  `0a2117904ba58eb45e1163fb0971c31e6b2a7d1e`, depois de todos os checks
-  hospedados e conversas verdes. Os commits técnicos até
-  `5f0cb631a22362d2ec631d868783fbf8bcfcabc0` estão publicados; isso ainda não
-  os torna código de `main` nem seleciona um candidato.
+- [x] Integrar a PR #921 sobre o `main`
+  `0a2117904ba58eb45e1163fb0971c31e6b2a7d1e` como
+  `aa9bfa6595b9cb12e7228f67f9606527bb375de2`. Os 19 checks ficaram verdes,
+  oito conversas de segurança foram respondidas/resolvidas, seis chaves
+  sintéticas versionadas foram removidas, o regex dinâmico foi fechado, os
+  três alertas adicionais de least-privilege/injeção ficaram fixed e o
+  CodeQL #4519 foi justificadamente classificado como falso positivo. O merge
+  integra a primeira versão dos controles, mas ainda não seleciona um
+  candidato.
+- [ ] Integrar, antes de qualquer `preview`, o pacote corretivo P1/P2 descoberto
+  no recheck pós-merge. Ele continua evoluindo somente no worktree local
+  `codex/admin/ponto-release-evidence`, sem commit, PR, hosted checks, review,
+  merge ou SHA selecionado:
+  checkout trusted-main e comparação exata antes de consumir leases; leases
+  independentes para baseline/SLO; todos os outputs de provenance do baseline;
+  mutex físico de CRM Pages; e kill switch imediato com latch persistente,
+  reconciliação/cancelamento, reassert `always()` e reset governado que
+  permanece em `maintenance`. O pacote ampliado também recusa `run_attempt>1`,
+  revalida o coordenador live imediatamente antes de secrets/mutations em todos
+  os jobs privilegiados, trata acknowledgements HTTP 202/204 sem body nos
+  helpers, serializa os três writers agendados de secrets Pages no mutex físico
+  e remove seus dispatches para o publisher aposentado. A rodada final também
+  integrou: capability Ed25519 schema v6 por target; preflight live das
+  protections; latch writer sem cancelamento; broker close-only; prova de
+  intenção/ownership e rollback determinado de Pages; leitura e reattestation
+  live do controle regular + emergency latch antes/depois do rollback;
+  `emergencyLatchRef` exata na evidência; drift WAF pós-probe; journal de
+  watchdog correlacionado; e kill switch manual pelo broker. O inventário e a
+  matriz agregada ainda não estão congelados: contagens de paths/testes, head do
+  worktree e PR sucessora permanecem pendentes até a estabilização técnica.
+  `commit_sha`, `pr` e `selected_release_sha` continuam `null`.
+- [ ] Integrar a proteção one-time do release probe e o teardown de sessão do
+  Identity já implementados localmente. Pages valida primeiro o HMAC externo;
+  `pilot`/`canary` usam contrato v2 vinculado a stage, coordinator run e workflow
+  run, enquanto v1 fica restrito ao drill de `staging`. Antes de qualquer login,
+  o nonce é consumido por um único `INSERT` com unicidade no D1 existente via
+  Ponto Core/Timekeeping; a chave depende de target, release e SHA-256 do nonce,
+  portanto replay concorrente/cross-PoP ou com outro body não reabre. Ponto Core
+  injeta a afinidade exata da versão Timekeeping. Após receber cookie de login,
+  o probe sempre tenta revogar a sessão corrente ou faz logout; só aceita
+  teardown quando o cookie stale recebe o `401` canônico em `/auth/me`. Falha ou
+  teardown indeterminado mantém o probe fail-closed e preserva o erro primário.
+  A validação foi somente local/targeted; integração, hosted checks e freeze
+  agregado continuam pendentes.
+- [ ] Provisionar e atestar separadamente o broker de fechamento externo nos
+  environments `ponto-emergency-staging` e `ponto-emergency-production`:
+  secret `PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL` e variables
+  `PONTO_EMERGENCY_CLOSE_BROKER_URL`,
+  `PONTO_EMERGENCY_CLOSE_CUSTODY_REF` e
+  `PONTO_EMERGENCY_CLOSE_MODE=external-close-only-broker-v1`, com referências
+  de custódia distintas. A identidade revisada também precisa estar fixada por
+  target em `.github/governance/progressive-release-policy.json` com URL,
+  custody ref, `responseKeyId` e chave pública Ed25519 em formato SPKI PEM. O
+  request usa HMAC fresco sobre método/URL/target/custódia/key ID/nonce/tempo e
+  digest; a resposta precisa trazer atestação Ed25519 fresca sobre o mesmo
+  request e o digest do payload. Hoje os quatro campos da policy são `null`
+  tanto em staging quanto em produção. Os environments e a variable de modo já
+  estão live pelo checkpoint 13, mas URL, custody ref, credential, key ID/SPKI e
+  todos os secrets continuam ausentes. Portanto o broker e qualquer controle
+  automático dependente dele permanecem fail-closed; staging não pode iniciar
+  sem decisão revisada que fixe os dois endpoints/identidades e sem as chaves
+  provisionadas por custódia aprovada. Credencial Cloudflare/KV direta nesses
+  environments é proibida.
+- [ ] Integrar o consumidor e concluir o namespace fail-closed específico de
+  Ponto, mantendo qualquer habilitação separadamente autorizada:
+  `ENABLE_PONTO_CRM_PAGES_DEPLOY`,
+  `ENABLE_PONTO_CRM_PAGES_DEPLOY_STAGING`,
+  `PONTO_CLOUDFLARE_PAGES_PROJECT`,
+  `PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING`,
+  `ENABLE_PONTO_CORE_WORKERS_DEPLOY`,
+  `ENABLE_PONTO_TIMEKEEPING_PRODUCTION_DEPLOY`,
+  `PONTO_TIMEKEEPING_D1_STAGING_ID`,
+  `PONTO_TIMEKEEPING_D1_PRODUCTION_ID`,
+  `PONTO_MODULE_CONTROL_STAGING_KV_ID` e
+  `PONTO_MODULE_CONTROL_PRODUCTION_KV_ID`. Após checkpoint privado
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T074500-14-ponto-resource-variables-before.md`,
+  os seis identificadores/nomes imutáveis de KV, Pages e D1 acima e
+  `CLOUDFLARE_ZONE_ID` foram criados como sete variables não secretas do
+  repositório e lidos de volta individualmente. Eles estavam ausentes antes e
+  foram conferidos contra os recursos Cloudflare live; valores ficam apenas no
+  checkpoint privado. As quatro flags `ENABLE_PONTO_*` permanecem sem
+  autorização de ativação e o código consumidor continua local. Esses IDs não
+  selecionam candidato, não desfazem os fences legados, não implantam nem
+  habilitam o módulo. Pages geral continua usando `CRM_PAGES_PROJECT` /
+  `CRM_PAGES_PROJECT_STAGING` nas definições antigas. A decisão revisável e o
+  runbook correspondentes seguem locais e sem efeito operacional antes do
+  merge.
+- [ ] Revisar e integrar o overlay
+  `module-control:timekeeping:emergency-latch`: missing/unreadable/malformed ou
+  `latched=true` nega; somente schema v1 explícito `latched=false` abre; o
+  workflow de reset é o único writer de false e mantém o controle regular em
+  manutenção. Todas as mutations diretas compartilham
+  `ponto-surface-mutation`. O watchdog proposto somente poderá escrever true
+  antes do mutex e fechar o controle regular depois da reconciliação quando o
+  broker policy-bound estiver provisionado e funcionalmente atestado. Hoje não
+  há broker endpoint/key, runner clínico nem prova de freeze/recovery externo
+  independente; portanto não registrar automatic interruption/rollback como
+  pronto ou operacional. GitHub Actions, monitor, fences e recovery externos
+  continuam predecessores obrigatórios.
+- [x] Conter externamente o replay produtivo e aplicar fences de dispatch em
+  staging em
+  2026-07-30T06:57:00Z, após
+  checkpoint privado
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T035009-03-production-replay-containment.md`:
+  definir o override production `ENABLE_CRM_PAGES_DEPLOY=false`, remover
+  `TIMEKEEPING_D1_PRODUCTION_ID`, preservar
+  `ENABLE_CORE_WORKERS_DEPLOY=false`, apontar
+  `CLOUDFLARE_PAGES_PROJECT` para o projeto deliberadamente inexistente
+  `skincos-ponto-fenced-production-20260730` e preservar o module-control KV.
+  Em staging, definir `ENABLE_CORE_WORKERS_DEPLOY=false` e
+  `ENABLE_CRM_PAGES_DEPLOY_STAGING=false`, remover
+  `TIMEKEEPING_D1_STAGING_ID`, apontar `CLOUDFLARE_PAGES_PROJECT` e
+  `CLOUDFLARE_PAGES_PROJECT_STAGING` para
+  `skincos-ponto-fenced-staging-20260730` e preservar
+  `MODULE_CONTROL_STAGING_KV_ID`. Nenhum Worker, Pages, D1, binding,
+  deployment ou estado live foi alterado naquele instante; o recheck de 06:57
+  manteve produção em `maintenance`, staging em `active` e o health de Pages em
+  HTTP 200. O fechamento canônico posterior de staging está registrado abaixo.
+- [ ] Integrar a proteção permanente e manter contidos os child runs produtivos
+  legados sem correlação até expirarem.
+  Os sete runs Timekeeping production rerunnable identificados são
+  `30420024733`, `30132172442`, `30132009676`, `29966286110`, `29959858249`,
+  `29757475250` e `29700295125`; o primeiro não contém o guard atual. O CRM
+  Pages `30491926800` teve `run_attempt=2`; e a consulta encontrou zero runs
+  do coordenador progressivo. O inventário de 30 dias encontrou 835 runs de
+  Pages secret sync, 121 de Workers secret sync, 35 Timekeeping, 83 Core, 113
+  CRM Pages deploy, sete module-control e um production baseline. O watchdog
+  local agora fecha um rerun do coordenador canônico e a suíte cobre a
+  invalidação terminal de capability emitida tardiamente. Um child run
+  histórico, porém, continua executando sua definição antiga; por isso esses
+  runs permanecem contidos pelos fences externos até expirar. Até o pacote
+  local verde ser commitado, revisado em PR, validado pelos hosted checks e
+  mergeado, manter a contenção acima e não restaurar suas variáveis.
 - [x] Isolar o Ponto Core do binding Finance e publicar o Pages staging
   `ee5ab6dd-4bba-48da-96ea-38fa686f8691` no projeto `skincos-staging`
   (`https://ee5ab6dd.skincos-staging.pages.dev`), mantendo produção separada.
@@ -120,25 +253,129 @@ jornada autenticada atual continue válida.
   `module-control:timekeeping=maintenance` em produção. O run canônico de
   contenção é `30496220685`; nenhum pilot, canary ou deploy Ponto produtivo foi
   executado nesta retomada.
+- [x] Fechar também staging pelo workflow canônico de `main`: run
+  `30527767707` no SHA
+  `aa9bfa6595b9cb12e7228f67f9606527bb375de2`, jobs `90822614084` /
+  `90822665436`, concluiu com sucesso. O artifact `8753392021`
+  `module-transition-timekeeping-staging-maintenance-30527767707` tem digest
+  `sha256:09de66aad85d0df5fec416917becd87a5aa3004542af8a4ed4bf34ef74244612`
+  e expira em 2026-10-28. Após checkpoint privado
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T084146-06-staging-maintenance-before.json`
+  (prior ausente), o KV de staging registrou schema v2 `maintenance` em
+  2026-07-30T08:43:14.511Z; edge health ficou `ok=false/ready=false`,
+  `source=control`, e `/me` retornou 503. Produção permaneceu em manutenção.
+- [x] Reconciliar o live read-only após o merge: `main=aa9bfa6595...`,
+  `selected_release_sha=null`, nenhum dos quatro live surfaces está nesse SHA,
+  staging e produção estão agora `maintenance`. Os D1 Timekeeping de
+  staging e produção journalizam exatamente `0001`–`0008` (8/8, sem migration
+  nomeada pendente), mas o Worker Timekeeping live ainda expõe `workers.dev` e
+  `/api/ponto/readiness` em produção ainda responde `200/ready=true` durante
+  manutenção. Probes dos headers públicos proibidos retornaram 200 e o
+  workforce contract retornou 401, não o 403 exigido na borda; portanto o
+  enforcement WAF exigido não foi observado. Isso não prova se um objeto custom
+  inacessível existe. Há zero piloto produtivo elegível.
+- [x] Confirmar a detecção externa da indisponibilidade fail-closed: o Ponto
+  Smoke agendado production `30521686413`, em
+  2026-07-30T07:04:44Z, falhou como esperado após cinco tentativas; o proxy
+  reconheceu target/actor configurados, mas `ready=false` em todas. Isso prova
+  que o monitor externo detecta non-readiness, não um SLO produtivo verde. O
+  Ponto UI Smoke anterior `30518888970` passou, mas não é jornada autenticada
+  nem autorização de uso.
+- [x] Conter o smoke UI legado com checkpoint
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T072614-11-legacy-ponto-ui-smoke-disable.md`:
+  workflow `Ponto UI Smoke (prod)` id `231059578` ficou
+  `disabled_manually`, secrets de repositório `PONTO_SMOKE_EMAIL` e
+  `PONTO_SMOKE_PASSWORD` foram removidos por nome sem leitura, e a variable
+  `ENABLE_PONTO_UI_SMOKE` foi removida. Não havia run em andamento. Isso
+  impede o schedule horário de reutilizar a credencial legada, mas a conta
+  histórica GESTOR ainda não foi identificada nem revogada e deve ser
+  reconciliada separadamente sem adivinhar identidade ou acessar PII.
+- [x] Conter também o backend `Ponto Smoke (prod)` legado com checkpoint
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T075100-15-legacy-ponto-smoke-disable.md`.
+  O workflow id `230950805` ficou `disabled_manually`; o schedule em espera
+  `30536124024`, source
+  `aa9bfa6595b9cb12e7228f67f9606527bb375de2`, terminou
+  `completed/cancelled` em 2026-07-30T10:54:19Z. O `main` atual ainda associa
+  esse probe ao environment protegido de produção; a sucessora local remove o
+  environment e mantém o probe de health read-only e não autenticado. Reativar
+  somente após essa sucessora ser revisada e mergeada. Nenhum secret,
+  identidade, flag, deployment ou banco foi alterado.
 - [ ] Provisionar `PONTO_PROFILE_DATA_KEY` distinto e separadamente custodiado
   primeiro em `staging`, somente por fonte/processo autorizado. Prover também
   as referências opacas `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` e
   `PONTO_IDEMPOTENCY_KEY_CUSTODY_REF` no environment. Um custodiante de
-  segurança deve registrar `PONTO_ROOT_ATTESTATION_KEY_SHARED` somente como
-  secret do repositório e `PONTO_ROOT_ATTESTATION_KEY_ID` somente como variable
-  do repositório. Não gerar em CI, ler, copiar entre ambientes ou versionar
-  nenhum valor secreto.
-- [ ] Criar e atestar as duas regras WAF externas e registrar
+  segurança deve registrar a mesma versão efetiva de
+  `PONTO_ROOT_ATTESTATION_KEY_SHARED` somente nos environments `staging` e
+  `production`, nunca como secret do repositório, e
+  `PONTO_ROOT_ATTESTATION_KEY_ID` somente como variable não secreta do
+  repositório. O custodiante do orquestrador deve provisionar chaves privadas
+  Ed25519 distintas `PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY` somente nos
+  respectivos environments e publicar apenas os verificadores/key IDs no mapa
+  não secreto `PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON`. A intenção
+  one-shot de rollback de Pages usa
+  `PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY`, também somente no environment
+  selecionado e nunca reutilizada pelo orquestrador. Esses inputs estão
+  ausentes e nenhuma capability governada ou rollback automático pode emitir
+  autoridade sem eles. Não gerar em CI, imprimir, versionar ou transportar
+  valores secretos pelo workflow.
+- [ ] Inspecionar com o principal de segurança autorizado e atestar as duas
+  regras WAF externas, criando/habilitando somente se a inspeção provar
+  necessário, e registrar
   `CLOUDFLARE_ZONE_ID`, `PONTO_WAF_RULESET_ID`,
-  `PONTO_WAF_HEADER_RULE_ID` e `PONTO_WAF_CONTRACT_RULE_ID` no environment.
+  `PONTO_WAF_HEADER_RULE_ID` e `PONTO_WAF_CONTRACT_RULE_ID` nos escopos
+  previstos pelo workflow.
+  `CLOUDFLARE_ZONE_ID` já está presente por nome como variable não secreta do
+  repositório e teve readback no checkpoint 14; os três IDs das regras continuam
+  ausentes e nenhuma regra foi criada ou alterada.
+  A listagem Cloudflare da zona mostrou somente rulesets managed; o GET do
+  custom entrypoint não foi autorizado. Tanto o browser interno do Codex quanto
+  o perfil Chrome existente chegaram somente ao login Cloudflare, sem sessão
+  autenticada; nenhuma credencial foi inserida e nenhuma mutação ocorreu. O
+  estado das regras continua não comprovado; o workflow com security token após
+  o merge deve atestá-lo, sem bypass no Worker. O secret
+  `PONTO_WAF_READ_API_TOKEN` deve ser somente do repositório e
+  `PONTO_WAF_WRITE_API_TOKEN` somente do environment `production`; ambos estão
+  não provisionados e não podem usar `CLOUDFLARE_SECURITY_API_TOKEN` como
+  fallback.
+- [x] Endurecer `staging` e `production` após checkpoint
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T073000-12-environment-protection-before.md`.
+  Staging agora usa required-reviewers rule `61302994` e custom branch policy
+  `56015291`; production usa `61303000` e `56015293`. Ambos têm
+  `can_admins_bypass=false`, `prevent_self_review=true`, zero wait, apenas
+  branch `main` e reviewer único owner `jubenitogarcia` (`199169872`).
+  Isso bloqueia o próprio owner atual e reruns históricos, mas não cria reviewer
+  independente nem aprovação válida de release. O inventário do repositório
+  contém somente esse collaborator owner; o `GITHUB_TOKEN` observado tem
+  `can_approve_pull_request_reviews=false`, e nenhum GitHub App/bot/automation
+  autorizado a aprovar foi comprovado. Codex não deve fabricar aprovação nem
+  contornar a separação de responsabilidade.
+- [x] Criar os environments fail-closed `ponto-emergency-staging` e
+  `ponto-emergency-production` após checkpoint
+  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T073300-13-emergency-environments-before.md`.
+  Eles aceitam somente protected branches, têm `can_admins_bypass=false`, zero
+  reviewer/timer/custom rule e branch-policy rule IDs `61303367` /
+  `61303369`. GitHub retornou 422 apenas ao tentar
+  `prevent_self_review=false` sem reviewer; o readback confirmou a base segura.
+  Ambos têm zero secrets e somente a variable
+  `PONTO_EMERGENCY_CLOSE_MODE=external-close-only-broker-v1`; URL, custody ref e
+  credential do broker permanecem ausentes, portanto o caminho continua
+  bloqueado fail-closed.
+- [ ] Designar um required reviewer realmente independente para `staging` e
+  `production`. O owner atual não pode self-review e nenhum reviewer
+  independente foi comprovado; o único collaborator é o próprio owner, o
+  `GITHUB_TOKEN` não pode aprovar reviews e nenhum app/bot autorizado foi
+  identificado. Os `required_approvals=0` da PR #921 pertencem à governança de
+  código e não substituem deployment/pilot approval.
 - [ ] Executar `preview` e depois `staging` do mesmo `GITHUB_SHA` corrente,
   incluindo checkpoints, migrations, jornada CONSULTOR autenticada,
   `maintenance → active → maintenance`, teardown e drill real de rollback.
 - [ ] Somente depois do staging verde, provisionar um
   `PONTO_PROFILE_DATA_KEY` distinto e separadamente custodiado em `production`,
   com referências de cofre próprias e não reutilizadas; obter a designação
-  Identity/Workforce da identidade piloto e cadastrar os secrets de login e
-  coorte sem inventar vínculo ou expor PII.
+  humana válida, separada da aprovação de deployment, de uma identidade
+  CONSULTOR/EMPLOYEE já elegível e ativa em Identity/Workforce e cadastrar os
+  secrets de login e coorte sem inventar vínculo ou expor PII. Hoje não há
+  identidade elegível/autorizada.
 - [ ] Prover `PONTO_PILOT_RUNNER_LABELS_JSON`, um runner clínico online/idle e
   `PONTO_CANARY_COHORT_PERCENTAGE`; habilitar as flags produtivas apenas no
   estágio autorizado.

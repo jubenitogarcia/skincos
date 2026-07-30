@@ -1,0 +1,396 @@
+name: Reset Ponto emergency latch
+run-name: Ponto emergency latch reset ${{ inputs.target }} source=${{ inputs.emergency_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Isolated environment whose Ponto latch remains fail-closed
+        required: true
+        type: choice
+        options: [staging, production]
+      emergency_run_id:
+        description: Exact completed broker-backed manual emergency-close run; automatic latches must first be reattested by this workflow
+        required: true
+        type: string
+      authorization_ref:
+        description: Opaque approved change or incident reference
+        required: true
+        type: string
+
+concurrency:
+  group: ponto-surface-mutation
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse non-main Ponto latch reset
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto latch reset must execute from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Historical latch-reset reruns are forbidden; dispatch a new attested reset'; exit 1; }
+  preflight:
+    needs: source
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.evidence.outputs.artifact_id }}
+      artifact_digest: ${{ steps.evidence.outputs.artifact_digest }}
+      emergency_sha: ${{ steps.evidence.outputs.emergency_sha }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Verify trusted source and exact completed emergency evidence
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target }}
+          EMERGENCY_RUN_ID: ${{ inputs.emergency_run_id }}
+          AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Latch reset must execute trusted main code'; exit 1; }
+          [[ "$EMERGENCY_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Emergency run ID is invalid'; exit 1; }
+          [[ "$AUTHORIZATION_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/#-]{2,119}$ ]] || { echo 'Authorization reference must be opaque'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-emergency-close.yml" > "$RUNNER_TEMP/emergency-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$EMERGENCY_RUN_ID" > "$RUNNER_TEMP/emergency-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$EMERGENCY_RUN_ID/artifacts?name=ponto-emergency-close-$TARGET-$EMERGENCY_RUN_ID&per_page=10" > "$RUNNER_TEMP/emergency-artifacts.json"
+          mapfile -t evidence < <(node - "$RUNNER_TEMP/emergency-workflow.json" "$RUNNER_TEMP/emergency-run.json" "$RUNNER_TEMP/emergency-artifacts.json" <<'NODE'
+          const fs = require("fs");
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const artifacts = JSON.parse(fs.readFileSync(process.argv[4], "utf8")).artifacts || [];
+          // Automatic watchdog/ordinary latches are intentionally not reset
+          // directly. An operator must first reattest the still-closed state
+          // through the dedicated broker-backed manual close workflow.
+          const expectedArtifact = `ponto-emergency-close-${process.env.TARGET}-${process.env.EMERGENCY_RUN_ID}`;
+          const candidateArtifacts = artifacts.filter((artifact) =>
+            artifact?.name === expectedArtifact
+            && artifact?.expired === false
+            && Number.isInteger(artifact?.id)
+            && /^sha256:[0-9a-f]{64}$/.test(String(artifact?.digest || "")));
+          if (
+            workflow?.state !== "active"
+            || workflow?.path !== ".github/workflows/ponto-emergency-close.yml"
+            || String(run?.id || "") !== process.env.EMERGENCY_RUN_ID
+            || run?.workflow_id !== workflow.id
+            || run?.path !== `${workflow.path}@refs/heads/main`
+            || run?.status !== "completed"
+            || run?.conclusion !== "success"
+            || run?.event !== "workflow_dispatch"
+            || run?.head_branch !== "main"
+            || run?.name !== "Ponto emergency close"
+            || run?.display_title !== `Ponto emergency close ${process.env.TARGET}`
+            || run?.run_attempt !== 1
+            || run?.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || !/^[0-9a-f]{40}$/.test(String(run?.head_sha || "").toLowerCase())
+            || candidateArtifacts.length !== 1
+          ) throw new Error("emergency stop run or artifact provenance is invalid");
+          process.stdout.write(`${run.head_sha.toLowerCase()}\n${candidateArtifacts[0].id}\n${candidateArtifacts[0].digest}\n`);
+          NODE
+          )
+          [[ "${#evidence[@]}" == 3 ]] || { echo 'Emergency evidence outputs are incomplete'; exit 1; }
+          emergency_sha="${evidence[0]}"
+          artifact_id="${evidence[1]}"
+          artifact_digest="${evidence[2]}"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$emergency_sha" "$GITHUB_SHA" || { echo 'Emergency workflow SHA is not reachable from current main'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ponto-emergency-source"
+          gh run download "$EMERGENCY_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-emergency-close-$TARGET-$EMERGENCY_RUN_ID" \
+            --dir "$RUNNER_TEMP/ponto-emergency-source"
+          EMERGENCY_SHA="$emergency_sha" node - "$RUNNER_TEMP/ponto-emergency-source" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const path = require("path");
+          const root = process.argv[2];
+          const read = (name) => JSON.parse(fs.readFileSync(path.join(root, name), "utf8"));
+          const authorization = read("authorization.json");
+          const latch = read("latch.json");
+          const maintenance = read("maintenance.json");
+          const propagation = read("final-propagation.json");
+          const authorizationRefDigest = `sha256:${crypto.createHash("sha256")
+            .update(process.env.AUTHORIZATION_REF)
+            .digest("hex")}`;
+          if (
+            authorization?.schemaVersion !== 1
+            || authorization?.target !== process.env.TARGET
+            || authorization?.emergencyRunId !== process.env.EMERGENCY_RUN_ID
+            || authorization?.sourceSha !== process.env.EMERGENCY_SHA
+            || authorization?.authorizationRefDigest !== authorizationRefDigest
+            || authorization?.passed !== true
+            || authorization?.credentialsIncluded !== false
+            || authorization?.piiIncluded !== false
+            || latch?.schemaVersion !== 1
+            || latch?.target !== process.env.TARGET
+            || latch?.latched !== true
+            || latch?.coordinatorRunId !== process.env.EMERGENCY_RUN_ID
+            || latch?.emergencyRunId !== process.env.EMERGENCY_RUN_ID
+            || latch?.passed !== true
+            || latch?.credentialsIncluded !== false
+            || latch?.piiIncluded !== false
+            || maintenance?.schemaVersion !== 1
+            || maintenance?.target !== process.env.TARGET
+            || maintenance?.coordinatorRunId !== process.env.EMERGENCY_RUN_ID
+            || maintenance?.emergencyRunId !== process.env.EMERGENCY_RUN_ID
+            || maintenance?.state !== "maintenance"
+            || maintenance?.latched !== true
+            || maintenance?.passed !== true
+            || maintenance?.credentialsIncluded !== false
+            || maintenance?.piiIncluded !== false
+            || propagation?.passed !== true
+            || propagation?.environment !== process.env.TARGET
+            || propagation?.state !== "maintenance"
+            || propagation?.credentialsIncluded !== false
+            || propagation?.piiIncluded !== false
+          ) throw new Error("manual emergency-close evidence does not prove a broker-backed propagated latch");
+          NODE
+          {
+            echo "artifact_id=$artifact_id"
+            echo "artifact_digest=$artifact_digest"
+            echo "emergency_sha=$emergency_sha"
+          } >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/emergency-workflow.json" "$RUNNER_TEMP/emergency-run.json" "$RUNNER_TEMP/emergency-artifacts.json"
+      - name: Refuse latch reset while a target coordinator remains non-terminal
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_EMERGENCY_TARGET: ${{ inputs.target }}
+        run: node .github/scripts/ponto-assert-idle.mjs
+
+  reset-mutate:
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    timeout-minutes: 5
+    concurrency:
+      group: ponto-emergency-latch-${{ inputs.target }}
+      cancel-in-progress: false
+    outputs:
+      changed_at: ${{ steps.mutate.outputs.changed_at }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Clear only the attested latch and remain in maintenance
+        id: mutate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_NAMESPACE_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PRODUCTION_NAMESPACE_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          TARGET: ${{ inputs.target }}
+          EMERGENCY_RUN_ID: ${{ inputs.emergency_run_id }}
+          AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+          EMERGENCY_ARTIFACT_ID: ${{ needs.preflight.outputs.artifact_id }}
+          EMERGENCY_ARTIFACT_DIGEST: ${{ needs.preflight.outputs.artifact_digest }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_MODULE_HEALTH_URL: ${{ inputs.target == 'production' && 'https://api.skincos.com.br/api/ponto/health' || 'https://api-staging.skincos.com.br/api/ponto/health' }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            staging) NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW"; OPPOSITE_NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW" ;;
+            production) NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW"; OPPOSITE_NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW" ;;
+            *) echo 'Unsupported latch-reset target'; exit 1 ;;
+          esac
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID NAMESPACE_ID EMERGENCY_ARTIFACT_ID EMERGENCY_ARTIFACT_DIGEST; do
+            [[ -n "${!name:-}" ]] || { echo "Missing latch-reset value: $name"; exit 1; }
+          done
+          if [[ -n "${OPPOSITE_NAMESPACE_ID:-}" && "$NAMESPACE_ID" == "$OPPOSITE_NAMESPACE_ID" ]]; then
+            echo 'Selected and opposite Ponto namespaces must be independent'
+            exit 1
+          fi
+          [[ "$NAMESPACE_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid module-control KV id'; exit 1; }
+          PONTO_RESOURCE_TARGET="$TARGET" \
+          PONTO_MODULE_CONTROL_KV_ID="$NAMESPACE_ID" \
+          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$OPPOSITE_NAMESPACE_ID" \
+          PONTO_RESOURCE_IDENTITY_REPORT="$RUNNER_TEMP/ponto-reset-module-control-identity.json" \
+            node .github/scripts/ponto-cloudflare-resource-identity.mjs
+          directory="$RUNNER_TEMP/ponto-emergency-latch-reset"
+          prior="$directory/prior.json"
+          prior_latch="$directory/prior-emergency-latch.json"
+          payload="$directory/module-control.json"
+          latch_payload="$directory/emergency-latch.json"
+          readback="$directory/readback.json"
+          latch_readback="$directory/emergency-latch-readback.json"
+          mkdir -p "$directory"
+          umask 077
+          PONTO_EMERGENCY_TARGET="$TARGET" node .github/scripts/ponto-assert-idle.mjs
+          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping" --namespace-id "$NAMESPACE_ID" --remote > "$prior"
+          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping:emergency-latch" --namespace-id "$NAMESPACE_ID" --remote > "$prior_latch"
+          node - "$prior" "$prior_latch" "$payload" "$latch_payload" <<'NODE'
+          const fs = require("fs");
+          const prior = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const priorLatch = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (
+            !["maintenance", "disabled"].includes(prior?.state)
+            || priorLatch?.schemaVersion !== 1
+            || priorLatch?.module !== "timekeeping"
+            || priorLatch?.latched !== true
+            || priorLatch?.stopRunId !== process.env.EMERGENCY_RUN_ID
+          ) throw new Error("live emergency latch differs from the exact attested stop");
+          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+            schemaVersion: 2,
+            state: "maintenance",
+            message: "Ponto emergency latch reset; release remains fail-closed.",
+            changedAt: new Date().toISOString(),
+            changedBy: process.env.GITHUB_ACTOR,
+            resetEvidence: {
+              emergencyRunId: process.env.EMERGENCY_RUN_ID,
+              emergencyArtifactId: process.env.EMERGENCY_ARTIFACT_ID,
+              emergencyArtifactDigest: process.env.EMERGENCY_ARTIFACT_DIGEST,
+              authorizationRef: process.env.AUTHORIZATION_REF,
+            },
+          })}\n`, { mode: 0o600 });
+          fs.writeFileSync(process.argv[5], `${JSON.stringify({
+            schemaVersion: 1,
+            module: "timekeeping",
+            target: process.env.TARGET,
+            latched: false,
+            changedAt: new Date().toISOString(),
+            changedBy: process.env.GITHUB_ACTOR,
+            resetEvidence: {
+              emergencyRunId: process.env.EMERGENCY_RUN_ID,
+              emergencyArtifactId: process.env.EMERGENCY_ARTIFACT_ID,
+              emergencyArtifactDigest: process.env.EMERGENCY_ARTIFACT_DIGEST,
+              authorizationRef: process.env.AUTHORIZATION_REF,
+            },
+          })}\n`, { mode: 0o600 });
+          NODE
+          npx --yes wrangler@4.112.0 kv key put "module-control:timekeeping" --path "$payload" --namespace-id "$NAMESPACE_ID" --remote
+          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping" --namespace-id "$NAMESPACE_ID" --remote > "$readback"
+          npx --yes wrangler@4.112.0 kv key put "module-control:timekeeping:emergency-latch" --path "$latch_payload" --namespace-id "$NAMESPACE_ID" --remote
+          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping:emergency-latch" --namespace-id "$NAMESPACE_ID" --remote > "$latch_readback"
+          node - "$readback" "$latch_readback" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const latch = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (
+            value?.state !== "maintenance"
+            || value?.resetEvidence?.emergencyRunId !== process.env.EMERGENCY_RUN_ID
+            || value?.resetEvidence?.emergencyArtifactId !== process.env.EMERGENCY_ARTIFACT_ID
+            || value?.resetEvidence?.emergencyArtifactDigest !== process.env.EMERGENCY_ARTIFACT_DIGEST
+            || value?.resetEvidence?.authorizationRef !== process.env.AUTHORIZATION_REF
+            || latch?.schemaVersion !== 1
+            || latch?.module !== "timekeeping"
+            || latch?.latched !== false
+            || latch?.resetEvidence?.emergencyRunId !== process.env.EMERGENCY_RUN_ID
+            || latch?.resetEvidence?.emergencyArtifactId !== process.env.EMERGENCY_ARTIFACT_ID
+            || latch?.resetEvidence?.emergencyArtifactDigest !== process.env.EMERGENCY_ARTIFACT_DIGEST
+            || latch?.resetEvidence?.authorizationRef !== process.env.AUTHORIZATION_REF
+          ) throw new Error("latch reset readback differs or left Ponto open");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed_at=${latch.changedAt}\n`);
+          NODE
+          rm -f "$prior" "$prior_latch" "$payload" "$latch_payload" "$readback" "$latch_readback"
+
+  verify-reset:
+    needs: [preflight, reset-mutate]
+    if: ${{ needs.reset-mutate.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Prove the reset remained maintenance-only and propagated
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STAGING_NAMESPACE_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PRODUCTION_NAMESPACE_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          TARGET: ${{ inputs.target }}
+          EMERGENCY_RUN_ID: ${{ inputs.emergency_run_id }}
+          AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+          EMERGENCY_ARTIFACT_ID: ${{ needs.preflight.outputs.artifact_id }}
+          EMERGENCY_ARTIFACT_DIGEST: ${{ needs.preflight.outputs.artifact_digest }}
+          EXPECTED_CHANGED_AT: ${{ needs.reset-mutate.outputs.changed_at }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_MODULE_HEALTH_URL: ${{ inputs.target == 'production' && 'https://api.skincos.com.br/api/ponto/health' || 'https://api-staging.skincos.com.br/api/ponto/health' }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            staging) NAMESPACE_ID="$STAGING_NAMESPACE_ID_RAW" ;;
+            production) NAMESPACE_ID="$PRODUCTION_NAMESPACE_ID_RAW" ;;
+            *) echo 'Unsupported latch-reset target'; exit 1 ;;
+          esac
+          [[ "$NAMESPACE_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid module-control KV id'; exit 1; }
+          directory="$RUNNER_TEMP/ponto-emergency-latch-reset"
+          readback="$directory/readback.json"
+          latch_readback="$directory/emergency-latch-readback.json"
+          mkdir -p "$directory"
+          umask 077
+          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping" --namespace-id "$NAMESPACE_ID" --remote > "$readback"
+          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping:emergency-latch" --namespace-id "$NAMESPACE_ID" --remote > "$latch_readback"
+          node - "$readback" "$latch_readback" <<'NODE'
+          const fs = require("fs");
+          const control = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const latch = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          for (const value of [control, latch]) {
+            if (
+              value?.resetEvidence?.emergencyRunId !== process.env.EMERGENCY_RUN_ID
+              || value?.resetEvidence?.emergencyArtifactId !== process.env.EMERGENCY_ARTIFACT_ID
+              || value?.resetEvidence?.emergencyArtifactDigest !== process.env.EMERGENCY_ARTIFACT_DIGEST
+              || value?.resetEvidence?.authorizationRef !== process.env.AUTHORIZATION_REF
+            ) throw new Error("reset verification no longer matches the exact authorized evidence");
+          }
+          if (
+            control?.state !== "maintenance"
+            || latch?.schemaVersion !== 1
+            || latch?.module !== "timekeeping"
+            || latch?.latched !== false
+            || latch?.changedAt !== process.env.EXPECTED_CHANGED_AT
+          ) throw new Error("reset verification observed a new close or non-maintenance drift");
+          NODE
+          PONTO_MODULE_EXPECTED_SOURCE=control \
+          PONTO_MODULE_EXPECTATION_FILE="$readback" \
+          PONTO_MODULE_PROPAGATION_REPORT="$directory/propagation.json" \
+            node .github/scripts/ponto-module-propagation.mjs
+          PONTO_EMERGENCY_TARGET="$TARGET" node .github/scripts/ponto-assert-idle.mjs
+          node - "$readback" "$latch_readback" "$directory/propagation.json" "$directory/evidence.json" <<'NODE'
+          const fs = require("fs");
+          const control = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const latch = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const propagation = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+          fs.writeFileSync(process.argv[5], `${JSON.stringify({
+            schemaVersion: 1,
+            target: process.env.TARGET,
+            emergencyRunId: process.env.EMERGENCY_RUN_ID,
+            emergencyArtifactId: process.env.EMERGENCY_ARTIFACT_ID,
+            emergencyArtifactDigest: process.env.EMERGENCY_ARTIFACT_DIGEST,
+            authorizationRef: process.env.AUTHORIZATION_REF,
+            state: control.state,
+            latchOpen: latch.latched === false,
+            propagationPassed: propagation.passed === true,
+            passed: control.state === "maintenance"
+              && latch.latched === false
+              && propagation.passed === true,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -f "$readback" "$latch_readback"
+      - name: Upload immutable latch-reset evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-emergency-latch-reset-${{ inputs.target }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-emergency-latch-reset
+          retention-days: 90
+          if-no-files-found: error

@@ -38,10 +38,23 @@ const unsignedBaseline = (state = "maintenance") => ({
     identityWorkforce: worker(identityVersionId, identityDeploymentId),
     crmPages: {
       deploymentId: pagesDeploymentId,
-      commitHash: releaseSha,
+      commitHash: "b".repeat(40),
       createdOn: "2026-07-29T23:59:00.000Z",
       status: "success",
+      latestStage: {
+        name: "deploy",
+        endedOn: "2026-07-29T23:59:30.000Z",
+      },
+      isSkipped: false,
       project: "skincos",
+      environment: "production",
+      canonical: true,
+      alias: "https://crm.skincos.com.br",
+      sourceControl: {
+        deploymentsEnabled: false,
+        productionDeploymentsEnabled: false,
+        previewDeploymentSetting: "none",
+      },
     },
   },
   bootstrapCore: {
@@ -162,6 +175,44 @@ test("baseline verification rejects readiness inconsistent with the initial stat
       assert.notEqual(result.status, 0, `${state} with ready=${ready} unexpectedly passed`);
       assert.match(result.stderr, /baseline initial readiness is inconsistent with module state/);
     }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("baseline verification rejects absent status and non-canonical Pages identity", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ponto-baseline-pages-"));
+  try {
+    const cases = [
+      ["missing-status", baseline => { delete baseline.surfaces.crmPages.status; }, /unskipped completed deploy success/],
+      ["idle-status", baseline => { baseline.surfaces.crmPages.status = "idle"; }, /unskipped completed deploy success/],
+      ["wrong-stage", baseline => { baseline.surfaces.crmPages.latestStage.name = "build"; }, /unskipped completed deploy success/],
+      ["unfinished-stage", baseline => { baseline.surfaces.crmPages.latestStage.endedOn = ""; }, /unskipped completed deploy success/],
+      ["skipped", baseline => { baseline.surfaces.crmPages.isSkipped = true; }, /unskipped completed deploy success/],
+      ["candidate-as-incumbent", baseline => { baseline.surfaces.crmPages.commitHash = releaseSha; }, /cannot already be the release candidate/],
+      ["legacy-auto-deploy", baseline => { baseline.surfaces.crmPages.sourceControl.deploymentsEnabled = true; }, /auto-deploy controls/],
+      ["production-auto-deploy", baseline => { baseline.surfaces.crmPages.sourceControl.productionDeploymentsEnabled = true; }, /auto-deploy controls/],
+      ["preview-auto-deploy", baseline => { baseline.surfaces.crmPages.sourceControl.previewDeploymentSetting = "all"; }, /auto-deploy controls/],
+      ["wrong-project", baseline => { baseline.surfaces.crmPages.project = "skincos-staging"; }, /project is not canonical/],
+      ["wrong-environment", baseline => { baseline.surfaces.crmPages.environment = "preview"; }, /environment is not production/],
+      ["not-canonical", baseline => { baseline.surfaces.crmPages.canonical = false; }, /deployment is not canonical/],
+      ["wrong-alias", baseline => { baseline.surfaces.crmPages.alias = "https:\\/\\/example.invalid"; }, /canonical alias is invalid/],
+    ];
+    for (const [label, mutate, pattern] of cases) {
+      const unsigned = unsignedBaseline();
+      mutate(unsigned);
+      const baselineFile = path.join(directory, `${label}.json`);
+      fs.writeFileSync(baselineFile, `${JSON.stringify(signedBaseline(unsigned))}\n`);
+      const result = verifyBaseline(baselineFile);
+      assert.notEqual(result.status, 0, `${label} unexpectedly passed`);
+      assert.match(result.stderr, pattern);
+    }
+    const source = fs.readFileSync(
+      new URL("./ponto-production-baseline.mjs", import.meta.url),
+      "utf8",
+    );
+    assert.match(source, /project\\?\\.canonical_deployment|project\?\.canonical_deployment/);
+    assert.doesNotMatch(source, /pages\/projects\/\$\{encodeURIComponent\(pagesProject\)\}\/deployments/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

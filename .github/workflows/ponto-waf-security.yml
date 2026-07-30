@@ -1,0 +1,328 @@
+name: Ponto WAF security
+run-name: Ponto WAF security ${{ inputs.mode }} source=${{ inputs.probe_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Read-only scope probe or reviewed idempotent reconciliation
+        required: true
+        type: choice
+        options: [probe, apply]
+      probe_run_id:
+        description: Exact successful probe run from the same immutable main SHA (apply only)
+        required: false
+        type: string
+      authorization_ref:
+        description: Opaque approved change or incident reference
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse untrusted or replayed WAF operation
+        env:
+          MODE: ${{ inputs.mode }}
+          PROBE_RUN_ID: ${{ inputs.probe_run_id }}
+          AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Ponto WAF operation must execute from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Ponto WAF reruns are forbidden; dispatch a new operation'; exit 1; }
+          [[ "$AUTHORIZATION_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/#-]{2,119}$ ]] || { echo 'Authorization reference must be opaque'; exit 1; }
+          case "$MODE" in
+            probe)
+              [[ -z "$PROBE_RUN_ID" ]] || { echo 'Probe must not claim a predecessor'; exit 1; }
+              ;;
+            apply)
+              [[ "$PROBE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Apply requires an exact probe run ID'; exit 1; }
+              ;;
+            *)
+              echo 'Unsupported Ponto WAF mode'
+              exit 1
+              ;;
+          esac
+
+  probe:
+    needs: source
+    if: ${{ inputs.mode == 'probe' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Verify immutable trusted probe source
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'WAF probe checkout differs from main SHA'; exit 1; }
+      - name: Attest read-only WAF token custody before hydrating probe authority
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GitHub metadata custody token is required'; exit 1; }
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" \
+            > "$RUNNER_TEMP/ponto-waf-repository-secrets.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/environments/staging/secrets?per_page=100" \
+            > "$RUNNER_TEMP/ponto-waf-staging-secrets.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" \
+            > "$RUNNER_TEMP/ponto-waf-production-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/ponto-waf-repository.json"
+          owner_type="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).owner.type' "$RUNNER_TEMP/ponto-waf-repository.json")"
+          owner_login="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).owner.login' "$RUNNER_TEMP/ponto-waf-repository.json")"
+          case "$owner_type" in
+            User)
+              printf '[]\n' > "$RUNNER_TEMP/ponto-waf-owner-secrets.json"
+              ;;
+            Organization)
+              [[ "$owner_login" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || { echo 'Invalid repository organization owner'; exit 1; }
+              gh api --paginate --slurp \
+                "orgs/$owner_login/actions/secrets?per_page=100" \
+                > "$RUNNER_TEMP/ponto-waf-owner-secrets.json"
+              ;;
+            *)
+              echo 'Unsupported repository owner type'
+              exit 1
+              ;;
+          esac
+          node - \
+            "$RUNNER_TEMP/ponto-waf-repository-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-staging-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-production-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-owner-secrets.json" <<'NODE'
+          const fs = require("fs");
+          const names = (file) => new Set(
+            JSON.parse(fs.readFileSync(file, "utf8"))
+              .flatMap((page) => page?.secrets || [])
+              .map((item) => item?.name)
+              .filter(Boolean),
+          );
+          const repository = names(process.argv[2]);
+          const staging = names(process.argv[3]);
+          const production = names(process.argv[4]);
+          const owner = names(process.argv[5]);
+          const read = "PONTO_WAF_READ_API_TOKEN";
+          const write = "PONTO_WAF_WRITE_API_TOKEN";
+          if (
+            !repository.has(read)
+            || repository.has(write)
+            || owner.has(read)
+            || owner.has(write)
+            || staging.has(read)
+            || staging.has(write)
+            || production.has(read)
+          ) {
+            throw new Error(
+              "WAF probe token custody must be repository-read only",
+            );
+          }
+          NODE
+          rm -f \
+            "$RUNNER_TEMP/ponto-waf-repository-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-staging-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-production-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-repository.json" \
+            "$RUNNER_TEMP/ponto-waf-owner-secrets.json"
+      - name: Probe exact skincos.com.br WAF scope without mutation
+        env:
+          PONTO_WAF_MODE: probe
+          PONTO_WAF_READ_API_TOKEN: ${{ secrets.PONTO_WAF_READ_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          PONTO_WAF_ARTIFACT_DIR: ${{ runner.temp }}/ponto-waf-security
+        run: node .github/scripts/ponto-waf-security.mjs
+      - name: Upload sanitized read-only WAF probe
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-waf-security-probe-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-waf-security
+          retention-days: 90
+          if-no-files-found: error
+
+  apply:
+    needs: source
+    if: ${{ inputs.mode == 'apply' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: ponto-surface-mutation
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Verify immutable trusted apply source
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'WAF apply checkout differs from main SHA'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ponto-waf-security"
+      - name: Attest split WAF token custody before hydrating write authority
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GitHub metadata custody token is required'; exit 1; }
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" \
+            > "$RUNNER_TEMP/ponto-waf-repository-secrets.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/environments/staging/secrets?per_page=100" \
+            > "$RUNNER_TEMP/ponto-waf-staging-secrets.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" \
+            > "$RUNNER_TEMP/ponto-waf-production-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/ponto-waf-repository.json"
+          owner_type="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).owner.type' "$RUNNER_TEMP/ponto-waf-repository.json")"
+          owner_login="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).owner.login' "$RUNNER_TEMP/ponto-waf-repository.json")"
+          case "$owner_type" in
+            User)
+              printf '[]\n' > "$RUNNER_TEMP/ponto-waf-owner-secrets.json"
+              ;;
+            Organization)
+              [[ "$owner_login" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || { echo 'Invalid repository organization owner'; exit 1; }
+              gh api --paginate --slurp \
+                "orgs/$owner_login/actions/secrets?per_page=100" \
+                > "$RUNNER_TEMP/ponto-waf-owner-secrets.json"
+              ;;
+            *)
+              echo 'Unsupported repository owner type'
+              exit 1
+              ;;
+          esac
+          node - \
+            "$RUNNER_TEMP/ponto-waf-repository-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-staging-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-production-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-owner-secrets.json" <<'NODE'
+          const fs = require("fs");
+          const names = (file) => new Set(
+            JSON.parse(fs.readFileSync(file, "utf8"))
+              .flatMap((page) => page?.secrets || [])
+              .map((item) => item?.name)
+              .filter(Boolean),
+          );
+          const repository = names(process.argv[2]);
+          const staging = names(process.argv[3]);
+          const production = names(process.argv[4]);
+          const owner = names(process.argv[5]);
+          const read = "PONTO_WAF_READ_API_TOKEN";
+          const write = "PONTO_WAF_WRITE_API_TOKEN";
+          if (
+            !repository.has(read)
+            || repository.has(write)
+            || owner.has(read)
+            || owner.has(write)
+            || staging.has(read)
+            || staging.has(write)
+            || production.has(read)
+            || !production.has(write)
+          ) {
+            throw new Error(
+              "WAF token custody must be repository-read and production-environment-write only",
+            );
+          }
+          NODE
+          rm -f \
+            "$RUNNER_TEMP/ponto-waf-repository-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-staging-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-production-secrets.json" \
+            "$RUNNER_TEMP/ponto-waf-repository.json" \
+            "$RUNNER_TEMP/ponto-waf-owner-secrets.json"
+      - name: Verify and download exact successful same-SHA probe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBE_RUN_ID: ${{ inputs.probe_run_id }}
+          AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-waf-security.yml" > "$RUNNER_TEMP/ponto-waf-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PROBE_RUN_ID" > "$RUNNER_TEMP/ponto-waf-probe-run.json"
+          artifact_name="ponto-waf-security-probe-$PROBE_RUN_ID"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PROBE_RUN_ID/artifacts?name=$artifact_name&per_page=10" > "$RUNNER_TEMP/ponto-waf-probe-artifacts.json"
+          mapfile -t provenance < <(node - "$RUNNER_TEMP/ponto-waf-workflow.json" "$RUNNER_TEMP/ponto-waf-probe-run.json" "$RUNNER_TEMP/ponto-waf-probe-artifacts.json" <<'NODE'
+          const fs = require("fs");
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const artifacts = JSON.parse(fs.readFileSync(process.argv[4], "utf8")).artifacts || [];
+          const expectedArtifact = `ponto-waf-security-probe-${process.env.PROBE_RUN_ID}`;
+          const candidates = artifacts.filter((artifact) =>
+            artifact?.name === expectedArtifact
+            && artifact?.expired === false
+            && Number.isInteger(artifact?.id)
+            && /^sha256:[0-9a-f]{64}$/.test(String(artifact?.digest || "")));
+          if (
+            workflow?.state !== "active"
+            || workflow?.path !== ".github/workflows/ponto-waf-security.yml"
+            || run?.workflow_id !== workflow.id
+            || run?.path !== `${workflow.path}@refs/heads/main`
+            || run?.status !== "completed"
+            || run?.conclusion !== "success"
+            || run?.event !== "workflow_dispatch"
+            || run?.run_attempt !== 1
+            || run?.head_branch !== "main"
+            || run?.head_sha !== process.env.GITHUB_SHA
+            || run?.name !== "Ponto WAF security"
+            || run?.display_title !== "Ponto WAF security probe source="
+            || run?.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || String(run?.id || "") !== process.env.PROBE_RUN_ID
+            || candidates.length !== 1
+          ) throw new Error("WAF probe run or artifact provenance is invalid");
+          process.stdout.write(`${candidates[0].id}\n${candidates[0].digest}\n`);
+          NODE
+          )
+          [[ "${#provenance[@]}" == 2 ]] || { echo 'WAF probe artifact provenance is incomplete'; exit 1; }
+          gh run download "$PROBE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$artifact_name" \
+            --dir "$RUNNER_TEMP/ponto-waf-security/probe"
+          [[ -f "$RUNNER_TEMP/ponto-waf-security/probe/ponto-waf-report.json" ]] || { echo 'WAF probe report is absent'; exit 1; }
+          PROBE_ARTIFACT_ID="${provenance[0]}" \
+          PROBE_ARTIFACT_DIGEST="${provenance[1]}" \
+          node - "$RUNNER_TEMP/ponto-waf-security/probe-provenance.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            probeRunId: process.env.PROBE_RUN_ID,
+            probeArtifactId: process.env.PROBE_ARTIFACT_ID,
+            probeArtifactDigest: process.env.PROBE_ARTIFACT_DIGEST,
+            sourceSha: process.env.GITHUB_SHA,
+            authorizationRef: process.env.AUTHORIZATION_REF,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -f "$RUNNER_TEMP/ponto-waf-workflow.json" "$RUNNER_TEMP/ponto-waf-probe-run.json" "$RUNNER_TEMP/ponto-waf-probe-artifacts.json"
+      - name: Reconcile exact first-position Ponto WAF blocks atomically
+        env:
+          PONTO_WAF_MODE: apply
+          PONTO_WAF_WRITE_API_TOKEN: ${{ secrets.PONTO_WAF_WRITE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          PONTO_WAF_PROBE_REPORT: ${{ runner.temp }}/ponto-waf-security/probe/ponto-waf-report.json
+          PONTO_WAF_ARTIFACT_DIR: ${{ runner.temp }}/ponto-waf-security/apply
+        run: node .github/scripts/ponto-waf-security.mjs
+      - name: Upload sanitized WAF checkpoint, postimage and rollback identity
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-waf-security-apply-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-waf-security
+          retention-days: 90
+          if-no-files-found: error

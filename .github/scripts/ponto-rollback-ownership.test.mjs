@@ -6,6 +6,7 @@ import {
   classifyPagesRollbackOwnership,
   classifyWorkerPublisherCompensationOwnership,
   classifyWorkerRollbackOwnership,
+  isTerminalPagesDeployment,
 } from "./ponto-rollback-ownership.mjs";
 
 const candidate = "11111111-1111-4111-8111-111111111111";
@@ -111,7 +112,17 @@ test("publisher compensation is a no-op for an incumbent and refuses ambiguous o
 
 const pages = id => ({
   success: true,
-  result: [{ id, environment: "production", created_on: "2026-07-30T00:00:00Z" }],
+  result: [{
+    id,
+    environment: "production",
+    created_on: "2026-07-30T00:00:00Z",
+    latest_stage: {
+      name: "deploy",
+      status: "success",
+      ended_on: "2026-07-30T00:01:00Z",
+    },
+    is_skipped: false,
+  }],
 });
 
 test("Pages rollback mutates only its exact current candidate", () => {
@@ -130,6 +141,25 @@ test("Pages rollback mutates only its exact current candidate", () => {
   );
 });
 
+test("Pages ownership accepts only an unskipped completed deploy success", () => {
+  const valid = pages(candidate).result[0];
+  assert.equal(isTerminalPagesDeployment(valid), true);
+  for (const mutate of [
+    deployment => { deployment.latest_stage.status = "idle"; },
+    deployment => { deployment.latest_stage.name = "build"; },
+    deployment => { deployment.latest_stage.ended_on = ""; },
+    deployment => { deployment.is_skipped = true; },
+  ]) {
+    const invalid = structuredClone(valid);
+    mutate(invalid);
+    assert.equal(isTerminalPagesDeployment(invalid), false);
+    assert.equal(classifyPagesRollbackOwnership(
+      { success: true, result: [invalid] },
+      { candidateDeploymentId: candidate, incumbentDeploymentId: incumbent },
+    ), "ownership-conflict");
+  }
+});
+
 test("Pages already-restored clone must attest the exact incumbent commit and public alias", () => {
   const restored = "55555555-5555-4555-8555-555555555555";
   const commit = "a".repeat(40);
@@ -138,7 +168,12 @@ test("Pages already-restored clone must attest the exact incumbent commit and pu
     project_name: "skincos-staging",
     environment: "production",
     deployment_trigger: { metadata: { branch: "staging", commit_hash: commitHash } },
-    latest_stage: { status: "success" },
+    latest_stage: {
+      name: "deploy",
+      status: "success",
+      ended_on: "2026-07-30T00:01:00Z",
+    },
+    is_skipped: false,
     aliases: ["https://crm-staging.skincos.com.br"],
   });
   const args = {
@@ -166,14 +201,14 @@ test("Pages already-restored clone must attest the exact incumbent commit and pu
   );
 });
 
-test("automatic rollback refuses every mutation until child reconciliation passed", () => {
+test("automatic rollback refuses every mutation until custody reconciliation and live fail-close passed", () => {
   const source = fs.readFileSync(
     new URL("./ponto-automatic-rollback.mjs", import.meta.url),
     "utf8",
   );
   assert.match(
     source,
-    /const rollbackPermitted = childReconciliationPassed && drillOwnershipResolved;[\s\S]*if \(!rollbackPermitted\) \{[\s\S]*rollback-blocked-by-custody-reconciliation/,
+    /const preMutationFailClose = readAndAttestBrokerFailClose\(\);[\s\S]*const rollbackPermitted = childReconciliationPassed\s*&& drillOwnershipResolved\s*&& preMutationFailClose\.attestation\.passed;[\s\S]*if \(!rollbackPermitted\) \{[\s\S]*rollback-blocked-by-custody-reconciliation/,
   );
   assert.match(
     source,

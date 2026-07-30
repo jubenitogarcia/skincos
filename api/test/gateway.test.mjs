@@ -107,7 +107,12 @@ test('Ponto route-only mode denies every non-Ponto and non-probe route before si
 test('dedicated Ponto entrypoint requires the route-only guard and never exposes sibling mounts', async () => {
     resetBoundServiceResilienceForTest();
     let bindingCalls = 0;
-    const binding = { fetch: async () => { bindingCalls += 1; return new Response(JSON.stringify({ ok: true, service: 'workforce-timekeeping' }), { headers: { 'content-type': 'application/json' } }); } };
+    let forwardedRequest = null;
+    const binding = { fetch: async (request) => {
+        bindingCalls += 1;
+        forwardedRequest = request;
+        return new Response(JSON.stringify({ ok: true, service: 'workforce-timekeeping' }), { headers: { 'content-type': 'application/json' } });
+    } };
 
     const invalid = await pontoCoreWorker.fetch(new Request('https://ponto-core.invalid/api/ponto/health'), { TIMEKEEPING: binding }, {});
     assert.equal(invalid.status, 503);
@@ -119,10 +124,41 @@ test('dedicated Ponto entrypoint requires the route-only guard and never exposes
     assert.equal((await denied.json()).error, 'ponto_route_only');
     assert.equal(bindingCalls, 0);
 
-    const forwarded = await pontoCoreWorker.fetch(new Request('https://ponto-core.invalid/api/ponto/health'), { PONTO_ROUTE_ONLY: 'true', TIMEKEEPING: binding }, {});
+    const forwarded = await pontoCoreWorker.fetch(new Request('https://ponto-core.invalid/api/ponto/health', {
+        headers: {
+            'x-skincos-gateway-release-sha': 'browser-controlled',
+            'x-skincos-gateway-environment': 'production',
+            'cloudflare-workers-version-overrides': 'skincos-timekeeping="browser-controlled"',
+            'cloudflare-workers-version-key': `v1:${'b'.repeat(43)}`,
+            'x-skincos-actor': 'server-generated-actor',
+            'x-skincos-actor-sig': 'c'.repeat(43),
+            'x-skincos-network-context': `v1:${'b'.repeat(43)}`,
+            'x-skincos-network-ts': '1785355200000',
+            'x-skincos-network-sig': 'd'.repeat(43),
+            'x-skincos-network-signature-version': '2',
+        },
+    }), {
+        PONTO_ROUTE_ONLY: 'true',
+        TIMEKEEPING: binding,
+        APP_VERSION: 'a'.repeat(40),
+        ENVIRONMENT: 'staging',
+        TIMEKEEPING_VERSION_ID: '33333333-3333-4333-8333-333333333333',
+        CF_VERSION_METADATA: { id: '22222222-2222-4222-8222-222222222222' },
+    }, {});
     assert.equal(forwarded.status, 200);
     assert.equal((await forwarded.json()).service, 'workforce-timekeeping');
     assert.equal(bindingCalls, 1);
+    assert.equal(forwardedRequest.headers.get('x-skincos-gateway-release-sha'), 'a'.repeat(40));
+    assert.equal(forwardedRequest.headers.get('x-skincos-gateway-environment'), 'staging');
+    assert.equal(forwardedRequest.headers.get('x-skincos-gateway-version-id'), '22222222-2222-4222-8222-222222222222');
+    assert.equal(forwardedRequest.headers.get('x-skincos-actor'), 'server-generated-actor');
+    assert.equal(forwardedRequest.headers.get('x-skincos-actor-sig'), 'c'.repeat(43));
+    assert.equal(forwardedRequest.headers.get('x-skincos-network-context'), `v1:${'b'.repeat(43)}`);
+    assert.equal(forwardedRequest.headers.get('cloudflare-workers-version-key'), `v1:${'b'.repeat(43)}`);
+    assert.equal(
+        forwardedRequest.headers.get('cloudflare-workers-version-overrides'),
+        'skincos-timekeeping-staging="33333333-3333-4333-8333-333333333333"',
+    );
 });
 
 test('dedicated Ponto Wrangler config has private, independent staging and production services', async () => {

@@ -4,6 +4,11 @@ import { pathToFileURL } from "node:url";
 
 const NON_TERMINAL = new Set(["queued", "in_progress", "waiting", "pending", "requested"]);
 
+export const isBodylessResponseStatus = (status) => status === 202 || status === 204;
+export const readGitHubResponse = (response) => (
+  isBodylessResponseStatus(response.status) ? null : response.json()
+);
+
 export function isCorrelatedChild(run, {
   repository,
   orchestratorRunId,
@@ -14,7 +19,9 @@ export function isCorrelatedChild(run, {
     && run?.head_branch === "main"
     && String(run?.head_sha || "").toLowerCase() === orchestratorHeadSha
     && run?.repository?.full_name === repository
-    && String(run?.display_title || "").endsWith(`orchestrator=${orchestratorRunId}`)
+    && new RegExp(`orchestrator=${orchestratorRunId}(?: nonce=[0-9a-f]{32})?$`).test(
+      String(run?.display_title || ""),
+    )
     && String(run?.path || "").startsWith(".github/workflows/");
 }
 
@@ -26,10 +33,32 @@ export function matchesPendingDispatch(run, pending) {
   const workflowName = String(run?.path || "").split("@")[0].split("/").at(-1) || "";
   const requestedAt = Date.parse(String(pending?.dispatchRequestedAt || ""));
   const createdAt = Date.parse(String(run?.created_at || ""));
+  const orchestratorRunId = String(pending?.orchestratorRunId || "");
+  const dispatchNonce = String(pending?.dispatchNonce || "");
   return pending?.workflow === workflowName
+    && /^[1-9][0-9]*$/.test(orchestratorRunId)
+    && /^[0-9a-f]{32}$/.test(dispatchNonce)
+    && String(run?.display_title || "").endsWith(
+      `orchestrator=${orchestratorRunId} nonce=${dispatchNonce}`,
+    )
     && Number.isFinite(requestedAt)
     && Number.isFinite(createdAt)
     && createdAt >= requestedAt - 2_000;
+}
+
+export function isJournalAuthorizedRun(run, savedEntries) {
+  const workflowPath = String(run?.path || "").split("@")[0];
+  const workflowName = workflowPath.split("/").at(-1) || "";
+  return (savedEntries || []).some((saved) => {
+    const sameWorkflow = saved?.workflow === workflowName
+      && saved?.workflowPath === workflowPath
+      && Number(saved?.workflowId) === Number(run?.workflow_id);
+    if (!sameWorkflow) return false;
+    if (String(saved?.runId || "") === String(run?.id || "")) return true;
+    return saved?.status === "dispatch-requested"
+      && !saved?.runId
+      && matchesPendingDispatch(run, saved);
+  });
 }
 
 async function main() {
@@ -37,8 +66,12 @@ async function main() {
   const token = String(process.env.GH_TOKEN || "").trim();
   const repository = String(process.env.GITHUB_REPOSITORY || "").trim();
   const apiBase = String(process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
-  const orchestratorRunId = String(process.env.GITHUB_RUN_ID || "").trim();
-  const orchestratorHeadSha = String(process.env.GITHUB_SHA || "").trim().toLowerCase();
+  const orchestratorRunId = String(
+    process.env.PONTO_COORDINATOR_RUN_ID || process.env.GITHUB_RUN_ID || "",
+  ).trim();
+  const orchestratorHeadSha = String(
+    process.env.PONTO_COORDINATOR_SHA || process.env.GITHUB_SHA || "",
+  ).trim().toLowerCase();
   const reconciliationTimeoutSeconds = Number(process.env.PONTO_RECONCILIATION_TIMEOUT_SECONDS || "600");
   if (!artifactRoot || !reportFile) throw new Error("artifact root and reconciliation report path are required");
   if (!token || !repository.includes("/") || !/^[0-9]+$/.test(orchestratorRunId) || !/^[0-9a-f]{40}$/.test(orchestratorHeadSha)) {
@@ -62,7 +95,24 @@ async function main() {
       },
     });
     if (!response.ok) throw new Error(`GitHub API ${init.method || "GET"} ${pathname} returned ${response.status}`);
-    return response.status === 204 ? null : response.json();
+    return readGitHubResponse(response);
+  };
+
+  const runsDir = path.join(artifactRoot, "runs");
+  const journalAuthorizes = (run) => {
+    if (!fs.existsSync(runsDir)) return false;
+    const savedEntries = [];
+    for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      let saved;
+      try {
+        saved = JSON.parse(fs.readFileSync(path.join(runsDir, entry.name), "utf8"));
+      } catch {
+        continue;
+      }
+      savedEntries.push(saved);
+    }
+    return isJournalAuthorizedRun(run, savedEntries);
   };
 
   const discover = async () => {
@@ -71,7 +121,10 @@ async function main() {
       const payload = await request(`/repos/${repository}/actions/runs?event=workflow_dispatch&branch=main&per_page=100&page=${page}`);
       const rows = payload?.workflow_runs || [];
       for (const run of rows) {
-        if (isCorrelatedChild(run, { repository, orchestratorRunId, orchestratorHeadSha })) {
+        if (
+          isCorrelatedChild(run, { repository, orchestratorRunId, orchestratorHeadSha })
+          && journalAuthorizes(run)
+        ) {
           found.set(String(run.id), run);
         }
       }
@@ -85,7 +138,10 @@ async function main() {
         try { saved = JSON.parse(fs.readFileSync(path.join(runsDir, entry.name), "utf8")); } catch { continue; }
         if (!/^[0-9]+$/.test(String(saved?.runId || ""))) continue;
         const run = await request(`/repos/${repository}/actions/runs/${saved.runId}`);
-        if (isCorrelatedChild(run, { repository, orchestratorRunId, orchestratorHeadSha })) {
+        if (
+          isCorrelatedChild(run, { repository, orchestratorRunId, orchestratorHeadSha })
+          && journalAuthorizes(run)
+        ) {
           found.set(String(run.id), run);
         }
       }
@@ -118,7 +174,6 @@ async function main() {
   };
 
   const pendingDispatches = new Map();
-  const runsDir = path.join(artifactRoot, "runs");
   if (fs.existsSync(runsDir)) {
     for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
@@ -128,6 +183,8 @@ async function main() {
         pendingDispatches.set(entry.name, {
           workflow: saved.workflow,
           dispatchRequestedAt: String(saved.dispatchRequestedAt || ""),
+          orchestratorRunId: String(saved.orchestratorRunId || ""),
+          dispatchNonce: String(saved.dispatchNonce || ""),
         });
       }
     }

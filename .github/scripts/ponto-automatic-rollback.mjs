@@ -2,25 +2,39 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { buildWorkerRollbackArgs } from "./ponto-automatic-rollback-command.mjs";
+import { attestPontoCloudflareResources } from "./ponto-cloudflare-resource-identity.mjs";
+import { rollbackPagesWithReconciliation } from "./ponto-pages-rollback.mjs";
+import {
+  completePagesRollbackIntent,
+  createPagesRollbackIntent,
+  readPagesRollbackIntent,
+  recordCreatedPagesRollbackIntent,
+} from "./ponto-pages-rollback-intent.mjs";
 import {
   attestPagesIncumbentState,
   classifyPagesRollbackOwnership,
   classifyWorkerRollbackOwnership,
 } from "./ponto-rollback-ownership.mjs";
+import { attestBrokerFailCloseEvidence } from "./ponto-recovery-evidence.mjs";
 
 const [artifactRoot, reportFile] = process.argv.slice(2);
 const releaseSha = String(process.env.RELEASE_SHA || "").trim().toLowerCase();
 const stage = String(process.env.STAGE || "").trim().toLowerCase();
-const orchestratorRunId = String(process.env.GITHUB_RUN_ID || "");
+const orchestratorRunId = String(
+  process.env.PONTO_COORDINATOR_RUN_ID || process.env.GITHUB_RUN_ID || "",
+);
 const repository = String(process.env.GITHUB_REPOSITORY || "");
+const repositoryId = String(process.env.GITHUB_REPOSITORY_ID || "");
+const recoveryRunId = String(process.env.GITHUB_RUN_ID || "");
+const ghToken = String(process.env.GH_TOKEN || "");
+const githubApiBase = String(process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
+const pagesRollbackIntentHmacKey = String(
+  process.env.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY || "",
+);
 const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || "");
 const apiToken = String(process.env.CLOUDFLARE_API_TOKEN || "");
-const pagesProject = String(process.env.CLOUDFLARE_PAGES_PROJECT || "skincos");
-const moduleControlNamespaceId = String(
-  process.env.MODULE_CONTROL_KV_ID
-  || process.env.MODULE_CONTROL_PRODUCTION_KV_ID
-  || "",
-);
+const pagesProject = String(process.env.CLOUDFLARE_PAGES_PROJECT || "");
+const moduleControlNamespaceId = String(process.env.MODULE_CONTROL_KV_ID || "");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const staging = stage === "staging";
 const expectedPagesProject = staging ? "skincos-staging" : "skincos";
@@ -29,7 +43,14 @@ const expectedPagesAlias = staging ? "crm-staging.skincos.com.br" : "crm.skincos
 
 if (!artifactRoot || !reportFile) throw new Error("automatic rollback artifact root and report path are required");
 if (!/^[0-9a-f]{40}$/.test(releaseSha) || !["staging", "pilot", "canary", "production"].includes(stage)) throw new Error("invalid automatic rollback identity");
-if (!/^[0-9]+$/.test(orchestratorRunId) || !repository.includes("/")) throw new Error("invalid orchestrator provenance");
+if (
+  !/^[0-9]+$/.test(orchestratorRunId)
+  || !repository.includes("/")
+  || !/^[1-9][0-9]*$/.test(repositoryId)
+  || !/^[1-9][0-9]*$/.test(recoveryRunId)
+  || !ghToken
+  || Buffer.byteLength(pagesRollbackIntentHmacKey, "utf8") < 32
+) throw new Error("invalid orchestrator or rollback-intent provenance");
 if (
   !/^[0-9a-f]{32}$/.test(accountId)
   || !apiToken
@@ -37,7 +58,66 @@ if (
   || !/^[0-9a-f]{32}$/i.test(moduleControlNamespaceId)
 ) throw new Error(`${stage} Cloudflare custody is unavailable`);
 
+await attestPontoCloudflareResources({
+  env: {
+    ...process.env,
+    PONTO_RESOURCE_TARGET: staging ? "staging" : "production",
+    PONTO_MODULE_CONTROL_KV_ID: moduleControlNamespaceId,
+    PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: process.env.PONTO_OPPOSITE_MODULE_CONTROL_KV_ID,
+  },
+});
+
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+const brokerFailCloseFile = path.join(
+  artifactRoot,
+  "automatic-rollback/ponto-broker-fail-close.json",
+);
+const brokerFailClose = fs.existsSync(brokerFailCloseFile)
+  ? readJson(brokerFailCloseFile)
+  : null;
+const readRemoteModuleKey = (key) => spawnSync("npx", [
+  "--yes",
+  "wrangler@4.112.0",
+  "kv",
+  "key",
+  "get",
+  key,
+  "--namespace-id",
+  moduleControlNamespaceId,
+  "--remote",
+], { encoding: "utf8", env: process.env, maxBuffer: 2 * 1024 * 1024 });
+const readAndAttestBrokerFailClose = () => {
+  let moduleControl = null;
+  let emergencyLatch = null;
+  try {
+    const controlResult = readRemoteModuleKey("module-control:timekeeping");
+    if (controlResult.status !== 0) throw new Error("KV readback failed");
+    moduleControl = JSON.parse(controlResult.stdout);
+    const latchResult = readRemoteModuleKey(
+      "module-control:timekeeping:emergency-latch",
+    );
+    if (latchResult.status !== 0) {
+      throw new Error("emergency latch KV readback failed");
+    }
+    emergencyLatch = JSON.parse(latchResult.stdout);
+  } catch {
+    moduleControl = null;
+    emergencyLatch = null;
+  }
+  return {
+    moduleControl,
+    emergencyLatch,
+    attestation: attestBrokerFailCloseEvidence({
+      evidence: brokerFailClose,
+      moduleControl,
+      emergencyLatch,
+      coordinatorRunId: orchestratorRunId,
+      releaseSha,
+      stage,
+      target: staging ? "staging" : "production",
+    }),
+  };
+};
 const surfaceSpecs = {
   timekeeping: {
     path: "surfaces/timekeeping/surface.json",
@@ -363,7 +443,20 @@ if (staging && fs.existsSync(drillRunFile)) {
     }
   }
 }
-const rollbackPermitted = childReconciliationPassed && drillOwnershipResolved;
+// A durable broker artifact alone is not authority to mutate. Read both live
+// KV records and bind the regular control to the exact still-true emergency
+// latch before any Worker or Pages rollback. The workflow-level surface mutex
+// excludes the protected latch reset until the final readback below.
+const preMutationFailClose = readAndAttestBrokerFailClose();
+if (!preMutationFailClose.attestation.passed) {
+  unresolved.push({
+    surface: "moduleControl",
+    reason: "broker-fail-close-precondition-unresolved",
+  });
+}
+const rollbackPermitted = childReconciliationPassed
+  && drillOwnershipResolved
+  && preMutationFailClose.attestation.passed;
 
 const proofs = {};
 const workerStatus = (workerName) => spawnSync("npx", [
@@ -474,32 +567,109 @@ const cloudflare = async (pathname, init = {}) => {
   return payload;
 };
 
-const waitForPagesDeployment = async (deploymentId, expectedCommitSha) => {
-  const deadline = Date.now() + 180_000;
-  while (Date.now() < deadline) {
-    const payload = await cloudflare(
-      `/accounts/${accountId}/pages/projects/${encodeURIComponent(pagesProject)}/deployments/${deploymentId}`,
-    );
-    const deployment = payload.result;
-    const status = String(deployment?.latest_stage?.status || deployment?.stage?.status || "").toLowerCase();
-    const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
-      try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
-    }));
-    if (
-      deployment?.id === deploymentId
-      && deployment?.project_name === expectedPagesProject
-      && deployment?.environment === "production"
-      && deployment?.deployment_trigger?.metadata?.branch === expectedPagesBranch
-      && String(deployment?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() === expectedCommitSha
-      && ["success", "idle"].includes(status)
-      && aliasHosts.has(expectedPagesAlias)
-    ) return deployment;
-    if (!["active", "queued", "waiting", "pending", "building", "initializing"].includes(status)) {
-      throw new Error("Pages rollback entered a failed or invalid state");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
+const github = async (pathname, init = {}) => {
+  const response = await fetch(`${githubApiBase}${pathname}`, {
+    ...init,
+    signal: AbortSignal.timeout(30_000),
+    headers: {
+      authorization: `Bearer ${ghToken}`,
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      ...(init.body ? { "content-type": "application/json" } : {}),
+      ...(init.headers || {}),
+    },
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(`GitHub rollback-intent API returned ${response.status}`);
+  return payload;
+};
+
+let pagesCreatedDeploymentId = "";
+let pagesMutationAttempted = false;
+let pagesMutationObserved = false;
+let pagesIntent = null;
+const pagesIntentInput = plan.crmPages ? {
+  request: github,
+  secret: pagesRollbackIntentHmacKey,
+  repositoryId,
+  repository,
+  coordinatorRunId: orchestratorRunId,
+  sourceSha: releaseSha,
+  stage,
+  project: expectedPagesProject,
+  branch: expectedPagesBranch,
+  alias: expectedPagesAlias,
+  candidateDeploymentId: plan.crmPages.candidateDeploymentId,
+  incumbentDeploymentId: plan.crmPages.incumbentDeploymentId,
+} : null;
+if (pagesIntentInput) {
+  pagesIntent = await readPagesRollbackIntent(pagesIntentInput);
+  pagesMutationAttempted = Boolean(pagesIntent);
+  if (["created", "restored"].includes(pagesIntent?.claims?.state)) {
+    plan.crmPages.restoredDeploymentId = pagesIntent.claims.restoredDeploymentId;
+    pagesCreatedDeploymentId = pagesIntent.claims.restoredDeploymentId;
+    pagesMutationObserved = true;
   }
-  throw new Error("Pages rollback did not reach terminal success before timeout");
+}
+const persistPagesAttempt = async () => {
+  pagesIntent = await createPagesRollbackIntent({
+    ...pagesIntentInput,
+    recoveryRunId,
+  });
+  if (pagesIntent.created !== true) {
+    throw new Error("durable Pages rollback intent already exists; a second POST is forbidden");
+  }
+  pagesMutationAttempted = true;
+  const attemptFile = path.join(
+    artifactRoot,
+    "automatic-rollback/ponto-pages-rollback-attempt.json",
+  );
+  fs.mkdirSync(path.dirname(attemptFile), { recursive: true });
+  fs.writeFileSync(attemptFile, `${JSON.stringify({
+    schemaVersion: 1,
+    sourceSha: releaseSha,
+    failedStage: stage,
+    orchestratorRunId,
+    candidateDeploymentId: plan.crmPages.candidateDeploymentId,
+    incumbentDeploymentId: plan.crmPages.incumbentDeploymentId,
+    mutationAttempted: true,
+    mutationOutcome: "indeterminate-until-reconciled",
+    attemptedAt: new Date().toISOString(),
+    credentialsIncluded: false,
+    piiIncluded: false,
+  }, null, 2)}\n`, { mode: 0o600 });
+};
+const persistPagesCreatedId = async (deploymentId, source) => {
+  if (!pagesIntent) throw new Error("Pages rollback created ID has no durable one-shot intent");
+  pagesIntent = await recordCreatedPagesRollbackIntent({
+    request: github,
+    secret: pagesRollbackIntentHmacKey,
+    intent: pagesIntent,
+    restoredDeploymentId: deploymentId,
+  });
+  pagesCreatedDeploymentId = deploymentId;
+  pagesMutationObserved = true;
+  plan.crmPages.restoredDeploymentId = deploymentId;
+  const journalFile = path.join(
+    artifactRoot,
+    "automatic-rollback/ponto-pages-rollback-created.json",
+  );
+  fs.mkdirSync(path.dirname(journalFile), { recursive: true });
+  fs.writeFileSync(journalFile, `${JSON.stringify({
+    schemaVersion: 1,
+    sourceSha: releaseSha,
+    failedStage: stage,
+    orchestratorRunId,
+    candidateDeploymentId: plan.crmPages.candidateDeploymentId,
+    incumbentDeploymentId: plan.crmPages.incumbentDeploymentId,
+    restoredDeploymentId: deploymentId,
+    source,
+    mutationAttempted: true,
+    mutationOutcome: "created-id-observed",
+    recordedAt: new Date().toISOString(),
+    credentialsIncluded: false,
+    piiIncluded: false,
+  }, null, 2)}\n`, { mode: 0o600 });
 };
 
 if (plan.crmPages) {
@@ -515,7 +685,11 @@ if (plan.crmPages) {
     const before = await cloudflare(
       `/accounts/${accountId}/pages/projects/${encodeURIComponent(pagesProject)}/deployments?env=production&per_page=25`,
     );
-    const ownership = classifyPagesRollbackOwnership(before, plan.crmPages);
+    let ownership = classifyPagesRollbackOwnership(before, plan.crmPages);
+    if (
+      ownership === "ownership-conflict"
+      && ["attempted", "created"].includes(pagesIntent?.claims?.state)
+    ) ownership = "durable-intent-reconcile";
     if (ownership === "ownership-conflict") {
       unresolved.push({
         surface: "crmPages",
@@ -529,6 +703,15 @@ if (plan.crmPages) {
         reason: "current-pages-ownership-conflict",
       };
     } else if (["already-incumbent", "already-restored"].includes(ownership)) {
+      if (
+        ownership === "already-incumbent"
+        && pagesIntent
+        && pagesIntent.claims.state !== "restored"
+      ) {
+        throw new Error(
+          "Pages rollback intent exists but no distinct rollback clone can be proven",
+        );
+      }
       const activeId = ownership === "already-restored"
         ? plan.crmPages.restoredDeploymentId
         : requested;
@@ -546,6 +729,14 @@ if (plan.crmPages) {
         alias: expectedPagesAlias,
       });
       if (!attestation.passed) throw new Error("existing Pages rollback deployment does not attest the incumbent");
+      if (pagesIntent && pagesIntent.claims.state !== "restored") {
+        pagesIntent = await completePagesRollbackIntent({
+          request: github,
+          secret: pagesRollbackIntentHmacKey,
+          intent: pagesIntent,
+          restoredDeploymentId: activeId,
+        });
+      }
       proofs.crmPages = {
         passed: true,
         mutationPerformed: false,
@@ -557,47 +748,65 @@ if (plan.crmPages) {
         publicAliasesAttested: true,
       };
     } else {
-      const requestedDeployment = await cloudflare(`/accounts/${accountId}/pages/projects/${encodeURIComponent(pagesProject)}/deployments/${requested}`);
-      const requestedResult = requestedDeployment.result;
-      const requestedCommitSha = String(requestedResult?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase();
-      if (
-        requestedResult?.id !== requested
-        || requestedResult?.project_name !== expectedPagesProject
-        || requestedResult?.environment !== "production"
-        || requestedResult?.deployment_trigger?.metadata?.branch !== expectedPagesBranch
-        || !/^[0-9a-f]{40}$/.test(requestedCommitSha)
-      ) throw new Error("requested Pages incumbent metadata is invalid");
-      const rollback = await cloudflare(`/accounts/${accountId}/pages/projects/${encodeURIComponent(pagesProject)}/deployments/${requested}/rollback`, {
-        method: "POST",
-        body: "{}",
+      const rolledBack = await rollbackPagesWithReconciliation({
+        request: cloudflare,
+        accountId,
+        project: expectedPagesProject,
+        branch: expectedPagesBranch,
+        alias: expectedPagesAlias,
+        candidateDeploymentId: plan.crmPages.candidateDeploymentId,
+        candidateCommitSha: releaseSha,
+        incumbentDeploymentId: requested,
+        mutationAllowed: !pagesIntent,
+        knownRestoredDeploymentId: ["created", "restored"].includes(
+          pagesIntent?.claims?.state,
+        )
+          ? pagesIntent.claims.restoredDeploymentId
+          : "",
+        persistAttempt: persistPagesAttempt,
+        persistCreatedId: persistPagesCreatedId,
       });
-      const createdId = String(rollback.result?.id || "");
-      if (!UUID.test(createdId)) throw new Error("Pages rollback response omitted deployment id");
-      const active = await waitForPagesDeployment(createdId, requestedCommitSha);
-      const listing = await cloudflare(`/accounts/${accountId}/pages/projects/${encodeURIComponent(pagesProject)}/deployments?env=production&per_page=25`);
-      const production = (listing.result || [])
-        .filter((item) => item.environment === "production")
-        .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
-      const latest = production[0];
-      if (
-        latest?.id !== createdId
-      ) throw new Error("Pages rollback is not the exact aliased incumbent production deployment");
+      if (!pagesIntent) throw new Error("Pages rollback completed without durable intent");
+      pagesIntent = await completePagesRollbackIntent({
+        request: github,
+        secret: pagesRollbackIntentHmacKey,
+        intent: pagesIntent,
+        restoredDeploymentId: rolledBack.activeDeploymentId,
+      });
       proofs.crmPages = {
         passed: true,
-        mutationPerformed: true,
+        mutationPerformed: rolledBack.mutationPerformed,
+        mutationAttempted: true,
+        mutationOutcome: "attested-incumbent",
         requestedDeploymentId: requested,
-        activeDeploymentId: createdId,
-        activeDeploymentUrl: String(active?.url || ""),
+        activeDeploymentId: rolledBack.activeDeploymentId,
+        activeDeploymentUrl: String(rolledBack.active?.url || ""),
         project: pagesProject,
-        sourceCommitSha: requestedCommitSha,
+        sourceCommitSha: rolledBack.incumbentCommitSha,
+        disposition: rolledBack.disposition,
+        rollbackAttempts: rolledBack.attempts,
         publicAliasesAttested: true,
       };
     }
   } catch {
+    unresolved.push({
+      surface: "crmPages",
+      childRunId: plan.crmPages.childRunId,
+      reason: "pages-rollback-or-attestation-failed",
+    });
     proofs.crmPages = {
       passed: false,
-      mutationPerformed: false,
+      ...(pagesMutationObserved ? { mutationPerformed: true } : {}),
+      mutationAttempted: pagesMutationAttempted,
+      mutationOutcome: pagesMutationObserved
+        ? "created-id-observed-but-unresolved"
+        : pagesMutationAttempted
+          ? "indeterminate"
+          : "not-attempted",
       requestedDeploymentId: plan.crmPages.incumbentDeploymentId,
+      ...(pagesCreatedDeploymentId
+        ? { activeDeploymentId: pagesCreatedDeploymentId }
+        : {}),
       reason: "pages-rollback-or-attestation-failed",
     };
   }
@@ -666,44 +875,19 @@ if (plan.coreApi && plan.timekeeping && proofs.coreApi?.passed && proofs.timekee
   }
 }
 
-const moduleAbortFile = path.join(artifactRoot, "runs/module-abort.json");
-const moduleAbort = fs.existsSync(moduleAbortFile) ? readJson(moduleAbortFile) : null;
-const transitionFile = path.join(artifactRoot, "module-transitions/automatic-abort/module-transition.json");
-const moduleTransition = fs.existsSync(transitionFile) ? readJson(transitionFile) : null;
-let moduleReadback = null;
-const readbackResult = spawnSync("npx", [
-  "--yes",
-  "wrangler@4.112.0",
-  "kv",
-  "key",
-  "get",
-  "module-control:timekeeping",
-  "--namespace-id",
-  moduleControlNamespaceId,
-  "--remote",
-], { encoding: "utf8", env: process.env, maxBuffer: 2 * 1024 * 1024 });
-try {
-  if (readbackResult.status !== 0) throw new Error("KV readback failed");
-  moduleReadback = JSON.parse(readbackResult.stdout);
-} catch {
-  moduleReadback = null;
+// Re-read after every mutation while still holding the surface mutex. A reset,
+// drift, or broker/control mismatch makes the recovery unresolved even when all
+// deployment commands themselves succeeded.
+const postMutationFailClose = readAndAttestBrokerFailClose();
+if (!postMutationFailClose.attestation.passed) {
+  unresolved.push({
+    surface: "moduleControl",
+    reason: "broker-fail-close-postcondition-unresolved",
+  });
 }
-const moduleFailClosed = moduleAbort?.workflow === "module-availability.yml"
-  && moduleAbort?.status === "completed"
-  && moduleAbort?.conclusion === "success"
-  && moduleAbort?.event === "workflow_dispatch"
-  && moduleAbort?.headBranch === "main"
-  && moduleAbort?.repository === repository
-  && moduleTransition?.schemaVersion === 1
-  && moduleTransition?.module === "timekeeping"
-  && moduleTransition?.environment === (staging ? "staging" : "production")
-  && moduleTransition?.state === "maintenance"
-  && moduleTransition?.passed === true
-  && Number.isFinite(Date.parse(String(moduleTransition?.changedAt || "")))
-  && moduleTransition?.credentialsIncluded === false
-  && moduleTransition?.piiIncluded === false
-  && moduleReadback?.state === "maintenance"
-  && moduleReadback?.changedAt === moduleTransition?.changedAt;
+const moduleFailCloseAttestation = postMutationFailClose.attestation;
+const moduleFailClosed = preMutationFailClose.attestation.passed
+  && postMutationFailClose.attestation.passed;
 const plannedNames = Object.keys(plan);
 const allRollbacksPassed = plannedNames.every((name) => proofs[name]?.passed === true);
 const allExternalPassed = Object.values(external).every((proof) => proof.passed === true);
@@ -716,15 +900,19 @@ const report = {
   sourceSha: releaseSha,
   failedStage: stage,
   orchestratorRunId,
-  moduleMaintenanceRunId: moduleAbort ? String(moduleAbort.runId) : "",
+  moduleMaintenanceRunId: moduleFailCloseAttestation.emergencyRunId,
   moduleFailClosed,
   moduleTransition: moduleFailClosed ? {
     state: "maintenance",
-    changedAt: moduleTransition.changedAt,
+    changedAt: moduleFailCloseAttestation.controlChangedAt,
+    emergencyLatchChangedAt: moduleFailCloseAttestation.latchChangedAt,
+    preMutationReadbackMatched: true,
     remoteKvReadbackMatched: true,
+    emergencyLatchReadbackMatched: true,
   } : {
     state: "unresolved",
     remoteKvReadbackMatched: false,
+    emergencyLatchReadbackMatched: false,
   },
   childReconciliation: childReconciliationPassed ? {
     passed: true,
