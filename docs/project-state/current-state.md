@@ -1,103 +1,81 @@
 # Current state
 
-## Workforce Timekeeping — pnpm successor #929 integrated; Corepack signing-key successor pending; release fail-closed — 2026-07-30T17:23:36Z
+## Workforce Timekeeping — complete four-surface preview; staging still fail-closed — 2026-07-30T17:41:30Z
 
-This is the authoritative Ponto entry and supersedes the older local-successor
-entries below. PR #924 integrated the post-#921 corrective package as
-`91f6e9033fed8a186ef2e93be070db3ed896fdd3`; its final reviewed head was
-`c35aaf6892fea8ad5ae5745a82be55f24bd5a342`. The merge had all required checks
-green, 20/20 review conversations resolved and the sealed security scans
-reported zero surviving findings. Unrelated PRs #925, #926 and #928 then
-advanced `main` to `46b97519adc056d31553531cf3f90ad5a324fc88`.
+This is the authoritative Ponto entry and supersedes the older release entries
+below. PR #924 integrated the post-#921 corrective package as
+`91f6e9033fed8a186ef2e93be070db3ed896fdd3`; PRs #927 and #929 then corrected
+the GitHub REST run contract and pnpm bootstrap. PR #930 closed the final
+observed Corepack signing-key failure: final head
+`872f1b10c9bd64e1768fa0e8777d992e2658240b` passed all 14 hosted checks,
+independent local security reviews found zero P0/P1/P2, Codex found no major
+issue on that exact head, and protected `main` merged it without bypass as
+`71c54b1d406317c614dc33e48ced170458fbd707`.
 
-The first canonical preview, run `30556924556` on `91f6e903...`, proved source
-admission and completed the Timekeeping child run `30556988335` successfully
-with preview artifacts, but coordinator job `90919728697` failed after a
-20-minute observation timeout. GitHub REST returns workflow-run `path` as the
-canonical file without `@refs/heads/main`; the merged code expected the suffix
-and did not recognize its own successful child. The same live evidence exposed
-a second P1: with `run-name`, REST `run.name` is dynamic, so watchdog run
-`30558653559` rejected the failed coordinator before its latch job.
+Coordinator run `30566547605` selected that exact `main` SHA and completed
+successfully. Source job `90952396490` and orchestrator job `90952445595`
+passed; recovery jobs were correctly skipped. All four canonical dry-run
+children completed on the same immutable SHA:
 
-PR #927 (`codex/admin/ponto-run-path-contract`, first corrective commit
-`4c895a4b`) fixes both contracts while retaining independent workflow ID/path,
-`main` branch, immutable SHA, repository, event, attempt, title/nonce,
-capability and predecessor checks. It also versions the stronger live
-staging/production environment baseline (custom `main`, owner reviewer,
-`prevent_self_review=true`, `can_admins_bypass=false`) so the weaker historical
-payload cannot be reapplied. Its initial published head
-`5b8447a70c30e7011a9a48099d8e1222b72e5992` passed all 14 hosted checks.
-Codex then found two P1s: the versioned environment payload omitted the
-administrator-bypass prohibition, and other REST validators still treated
-dynamic `run.name` as the static workflow name. Corrective commit `c3131eb8`
-sets and validates the non-bypassable environment payload, moves every static
-identity check to canonical workflow metadata and adds a regression guard.
-The full governed suite is now 219/219; actionlint 1.7.12, syntax, architecture,
-topology, progressive policy, module, governance, security exception and diff
-checks are green. Two independent read-only security reviews found no
-remaining P0/P1/P2 after the fixes. Final head
-`7d8945300903847167c0ba55234ab8458cfb240d` passed all 14 hosted checks; both
-review threads were resolved, and Codex re-reviewed that exact head without a
-major issue. PR #927 merged through protected `main`, without bypass, as
-`15ac662e0c3b01317d48270cd211d7910000ca5a`.
+- Timekeeping run `30566594811`, job `90952777570`, surface artifact
+  `8769104630` and promotion artifact `8769104027`;
+- Identity/Inventory run `30566729991`, job `90953095462`, surface artifact
+  `8769138110` and promotion artifact `8769137752`;
+- Core API run `30566806246`, job `90953342171`, surface artifact `8769175430`
+  and promotion artifact `8769175021`;
+- CRM Pages run `30566905155`, job `90953758618`, surface artifact
+  `8769241946` and promotion artifact `8769241662`.
 
-Replacement preview `30562834119` selected that exact merge SHA. Source
-admission succeeded and Timekeeping child `30562866947` completed, publishing
-surface artifact `8767637805`
-(`sha256:700a0e50241bd9272929cdcaf03166e0d800e24ebce1a7c0a81caab94df3c1fa`)
-and promotion artifact `8767637318`
-(`sha256:a42e0bdd3056cc16c06c6662bde2e2a9cbb77fb9d626e12774ffd7e07eb31ea1`).
-Identity/Inventory child `30562970927` then failed in job `90940563185` before
-tests or dry-run because `actions/setup-node` requested pnpm caching before a
-`pnpm` executable existed. PR #929 removed that invalid cache request. Its
-final head `019a34367f3e2e40387b3f50da74b35149ff5981` passed all 14 hosted checks,
-Codex found no major issue on that exact head, and protected `main` merged it
-without bypass as `77f241ec20f8956fc7e9b20dd2b373518dafa7be`.
+The coordinator retained combined preview evidence artifact `8769249449`
+(`sha256:7458fce0e783647c66c1b634515b0099590cfd43d5ed09c306a3bc9516543b62`)
+and sanitized run ledger `8769249808`
+(`sha256:83268fc89fb64bc357ad6ac6a52d97dd8942fa74101cd784ba97466fd1b2baf4`),
+plus consolidated promotion artifacts `8769248202`, `8769248512`,
+`8769248832` and `8769249135`. The private checkpoint
+`C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T144137-20-complete-preview.md`
+records every child digest. Preview was non-mutating: it did not deploy
+Workers or Pages, apply a migration, write D1/KV, transition module-control,
+select a pilot, run an authenticated hosted journey, or execute
+pilot/canary/production.
 
-Second replacement preview `30564873785` selected that exact #929 merge.
-Source admission and Timekeeping child `30564915304` succeeded, producing
-surface artifact `8768441812`
-(`sha256:541edf288b8cb62ded320c08d3dfb71d28e219164e19bac834966a7b8fd95604`)
-and promotion artifact `8768441200`
-(`sha256:6a7b0a45628672aa57acc8a00a4ba6195407ef4bcb1bc4bc69639f02b702f044`).
-Identity/Inventory child `30565019029` failed in job `90947405936` before tests
-or dry-run: the Corepack bundled with Node 22.12 attempted direct pnpm metadata
-resolution with a stale signing key and returned `Cannot find matching keyid`.
-Core API and CRM Pages were skipped; no Worker/Pages deployment, migration,
-D1/KV write, module transition or other live mutation occurred. The coordinator
-retained sanitized ledger artifact `8768476655`
-(`sha256:90dc7777a40570b7c823344b876415727ae82d77812e7b32baec96b8ffc5eb02`);
-the failed Identity child produced zero artifacts.
-
-The bounded successor reads the exact `packageManager` from
-`inventory/package.json`, requires an exact pnpm version, runs
-`corepack prepare "$pnpm_spec" --activate`, and verifies `pnpm --version`
-before the first package-manager use in all three Identity jobs. A complete
-replacement preview has not yet passed, so `selected_release_sha` remains null.
+The successful coordinator automatically triggered watchdog run
+`30567091382`. Its context job `90954219518` failed with `failed coordinator
+provenance is invalid` because the workflow admitted every completed
+first-attempt coordinator while its validator intentionally accepts only
+failure/cancelled/timed-out first attempts or any unauthorized rerun. All
+emergency jobs skipped, so no latch, broker, rollback or live mutation ran.
+PR #931 moves that contract to job admission: successful
+first-attempt coordinators are skipped; failure, cancellation, timeout and
+every rerun remain governed. Focused watchdog tests pass 9/9. Because
+integrating this correction advances `main`, its exact merge SHA requires a
+fresh complete preview before staging.
 
 Live Cloudflare remains unchanged and deliberately closed. Both
 `module-control:timekeeping` values are `maintenance`; the emergency-latch key
-is absent in both namespaces, so new source would deny but the old deployments
-do not prove that overlay. Neither Worker/Pages surface identifies #924 or the
-current `main`. Timekeeping D1 journals are exactly `0001`–`0008` and
-Identity/Inventory exactly `0001`–`0018` in staging and production. Required
-WAF behavior is absent (12/12 block probes failed across the two API hosts),
-ruleset reads are unauthorized with Cloudflare 403/code 10000, Timekeeping
-workers.dev/previews remain public, and readiness incorrectly returns
-200/ready=true during maintenance. Staging Pages reports
-`actorKeyConfigured=false`; no authenticated journey was attempted.
+is absent in both namespaces. Timekeeping D1 journals remain exactly
+`0001`–`0008` and Identity/Inventory exactly `0001`–`0018` in staging and
+production. The existing Timekeeping, Core API, Identity and Pages deployments
+remain incumbents rather than the preview SHA. Required WAF behavior is absent
+(12/12 public block probes failed); the authenticated account inventory exposes
+only managed rulesets and no custom `http_request_firewall_custom` ruleset.
+Timekeeping workers.dev/previews remain public, readiness still returns a
+false-positive 200 during maintenance and staging Pages reports
+`actorKeyConfigured=false`.
 
-GitHub remains fail-closed for deployment: staging/production allow only
-custom branch policy `main`, admin bypass is false and the sole reviewer is the
-owner with self-review forbidden. There is no independent collaborator/app
-reviewer and zero self-hosted runners. Name-only inventory confirms the
-required profile/root/capability/Pages-intent custody, WAF tokens/IDs,
-broker URL/credential/custody, pilot credentials/cohort, runner selector/key,
-canary percentage, Ponto resource variables and four enable flags are absent
-at their governed scopes. No secret values were read. Identity/Workforce still
-provides no authorized eligible pilot. Therefore preview may resume only after
-the Corepack successor merges; staging, pilot, canary and production remain
-ineligible.
+GitHub remains fail-closed for deployment: staging/production admit only
+`main`, have `can_admins_bypass=false`, and require the sole owner reviewer
+while forbidding self-review. There is no independent collaborator/app reviewer
+and zero self-hosted runners. The Cloudflare D1, KV, Pages and Worker resources
+exist, and the six Ponto-only D1/KV/Pages repository selectors plus
+`CLOUDFLARE_ZONE_ID` are present by name. The four enable flags remain
+false/absent under the historical rerun fences; selector presence alone neither
+deploys nor authorizes release. Name-only inventory also confirms that approved profile/root/
+capability/Pages-intent custody, WAF split-custody tokens and rule IDs, broker
+URL/credential/custody, pilot credentials/cohort, clinic runner selector/key
+and canary percentage remain absent at governed scopes. No secret values or
+PII were read. Identity/Workforce still provides no authorized eligible pilot.
+The successful preview is therefore valid evidence only; staging, pilot,
+canary and production remain ineligible.
 
 ## Codex Windows native / PowerShell gateway — integrated and validated locally — 2026-07-30T16:21Z
 
@@ -468,9 +446,12 @@ source declaring it disabled. Production `/api/ponto/readiness` still returns
 version-selection header returned 200, while
 `/insumos/health/workforce-contract` returned 401 rather than the required
 edge-generated 403; therefore the required WAF enforcement was not observed.
-This does not establish whether an inaccessible custom rule object exists. The
-zone ruleset listing exposed only managed rulesets, and the custom entrypoint
-GET was not authorized for the available principal.
+At this historical snapshot, that principal did not establish whether an
+inaccessible custom rule object existed: its zone listing exposed only managed
+rulesets and its custom-entrypoint GET was unauthorized. The authoritative
+entry above supersedes this limitation with the later authenticated account
+inventory, which found no custom `http_request_firewall_custom` ruleset and
+confirmed functional absence through the 12/12 failed block probes.
 The Codex in-app browser and the existing Chrome profile both reached only the
 Cloudflare login screen, with no authenticated dashboard session; no credential
 was entered and no mutation was attempted. Rule inspection/attestation remains

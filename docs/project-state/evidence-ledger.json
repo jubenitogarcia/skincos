@@ -2,6 +2,86 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-30T17:51:13Z",
+      "surface": "github-protected-main-github-actions-complete-ponto-preview-and-watchdog-admission",
+      "scope": "PR #930 integration, complete exact-main four-surface preview and successful-run watchdog false-red correction",
+      "state": "complete-preview-successful-live-release-still-fail-closed-watchdog-success-admission-successor-pr-931",
+      "method": "Verified PR #930 protected merge, all 14 hosted checks and exact-head Codex result; dispatched the Ponto coordinator on the exact merge SHA; inspected all four child jobs and retained artifacts; inspected the automatically triggered watchdog failure; added a job-admission predicate and focused regression test so successful first-attempt coordinators are skipped while failed/cancelled/timed-out first attempts and every rerun remain governed. No secret value, PII, deployment, migration, D1/KV write, module-control transition or identity mutation was performed.",
+      "result": "PR #930 final head 872f1b10c9bd64e1768fa0e8777d992e2658240b passed all 14 hosted checks and Codex found no major issue on that exact head, then merged through protected main without bypass as 71c54b1d406317c614dc33e48ced170458fbd707. Coordinator 30566547605, source job 90952396490 and orchestrator job 90952445595 succeeded. Canonical children Timekeeping 30566594811, Identity/Inventory 30566729991, Core API 30566806246 and CRM Pages 30566905155 all completed on that exact SHA. Combined preview evidence 8769249449 has digest sha256:7458fce0e783647c66c1b634515b0099590cfd43d5ed09c306a3bc9516543b62; sanitized run ledger 8769249808 has digest sha256:83268fc89fb64bc357ad6ac6a52d97dd8942fa74101cd784ba97466fd1b2baf4. Automatically triggered watchdog run 30567091382 failed only in context job 90954219518 because the workflow admitted a successful first-attempt coordinator that its validator intentionally rejects; every emergency job skipped and no mutation occurred. The bounded admission fix keeps successful first attempts out of the watchdog while preserving close/recovery handling for failed, cancelled, timed-out or replayed runs; focused tests pass 9/9.",
+      "limitation": "Preview is dry-run evidence only and selected_release_sha remains null for live release. No staging deployment, additive migration checkpoint, authenticated CONSULTOR/EMPLOYEE journey, module-control drill, kill switch, rollback, pilot, canary, external SLO or production promotion occurred. Both module-control values remain maintenance. Independent deployment approval, approved secret custody, broker, WAF split custody and block proof, pilot identity/cohort, clinic JIT runner and external SLO remain absent. Any main advancement requires a fresh preview on the new exact coordinator GITHUB_SHA.",
+      "origin_main": "71c54b1d406317c614dc33e48ced170458fbd707",
+      "corepack_successor_pr": 930,
+      "corepack_successor_final_head": "872f1b10c9bd64e1768fa0e8777d992e2658240b",
+      "corepack_successor_merge_sha": "71c54b1d406317c614dc33e48ced170458fbd707",
+      "corepack_successor_hosted_checks": "14/14",
+      "preview_release_sha": "71c54b1d406317c614dc33e48ced170458fbd707",
+      "selected_release_sha": null,
+      "preview_run": 30566547605,
+      "preview_source_job": 90952396490,
+      "preview_orchestrator_job": 90952445595,
+      "preview_children": {
+        "timekeeping": {
+          "run": 30566594811,
+          "job": 90952777570,
+          "surface_artifact": 8769104630,
+          "promotion_artifact": 8769104027
+        },
+        "identity_inventory": {
+          "run": 30566729991,
+          "job": 90953095462,
+          "surface_artifact": 8769138110,
+          "promotion_artifact": 8769137752
+        },
+        "core_api": {
+          "run": 30566806246,
+          "job": 90953342171,
+          "surface_artifact": 8769175430,
+          "promotion_artifact": 8769175021
+        },
+        "crm_pages": {
+          "run": 30566905155,
+          "job": 90953758618,
+          "surface_artifact": 8769241946,
+          "promotion_artifact": 8769241662
+        }
+      },
+      "preview_evidence_artifact": {
+        "id": 8769249449,
+        "digest": "sha256:7458fce0e783647c66c1b634515b0099590cfd43d5ed09c306a3bc9516543b62"
+      },
+      "preview_runs_ledger_artifact": {
+        "id": 8769249808,
+        "digest": "sha256:83268fc89fb64bc357ad6ac6a52d97dd8942fa74101cd784ba97466fd1b2baf4"
+      },
+      "watchdog_success_false_red": {
+        "run": 30567091382,
+        "job": 90954219518,
+        "mutation": false,
+        "successor_pr": 931,
+        "fix": "context-job-skips-successful-first-attempt-coordinator-but-keeps-failed-cancelled-timed-out-and-rerun-admission",
+        "focused_tests": "9/9"
+      },
+      "module_control": {
+        "staging": "maintenance",
+        "production": "maintenance"
+      },
+      "repository_resource_selectors": {
+        "present_by_name": [
+          "PONTO_MODULE_CONTROL_STAGING_KV_ID",
+          "PONTO_MODULE_CONTROL_PRODUCTION_KV_ID",
+          "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING",
+          "PONTO_CLOUDFLARE_PAGES_PROJECT",
+          "PONTO_TIMEKEEPING_D1_STAGING_ID",
+          "PONTO_TIMEKEEPING_D1_PRODUCTION_ID",
+          "CLOUDFLARE_ZONE_ID"
+        ],
+        "enable_flags": "all-four-absent",
+        "release_authority": false
+      },
+      "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T144137-20-complete-preview.md",
+      "next_action": "Merge PR #931 without bypass. Because that merge advances main, execute a fresh four-surface preview on its exact merge SHA. Do not dispatch staging until all independent approval, WAF, custody, broker, runner, pilot and external-SLO predecessors are proved."
+    },
+    {
       "observed_at": "2026-07-30T17:23:36Z",
       "surface": "github-protected-main-github-actions-ponto-preview-and-local-corepack-successor",
       "scope": "PR #929 integration, second exact-main replacement preview and bounded Identity Corepack signing-key successor",
