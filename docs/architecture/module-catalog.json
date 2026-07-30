@@ -207,7 +207,7 @@
       "healthChecks": [{ "name": "inventory health", "command": "curl -fsS https://api.skincos.com.br/insumos/health" }],
       "testCommands": ["npm --prefix inventory test", "npm run codex:crm:site-smoke"],
       "featureFlag": { "key": "not-yet-implemented", "defaultState": "not-applicable", "enforcement": "PONTO_INSUMOS_ENABLED controls only the Ponto bridge, not Inventory itself; new Inventory exposure needs a module flag." },
-      "fallback": "Serve the last safe read state where possible, queue no new mutations during a dependency failure, and use backup recovery for data repair.",
+      "fallback": "Serve the last safe read state where possible, queue no new mutations during a dependency failure, and use backup recovery for data repair. Do not rotate or replace IDENTITY_PII_KEY while encrypted onboarding payloads exist; first execute the approved dual-key re-encryption and rollback procedure.",
       "slo": { "availability": "99.5% monthly", "latency": "p95 <= 800 ms for health and reads", "measurement": "Inventory API SLO workflow and CRM smoke" },
       "rollback": "Promote the previous Worker artifact, retain additive D1 migrations, and restore from the documented backup only after write suspension."
     },

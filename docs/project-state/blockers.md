@@ -57,6 +57,22 @@ Pages run `30420793906`, checkpoint artifact `8711811875`, and sanitized
 synthetic positive/negative unit-scope smokes. Retain rollback evidence, but
 do not reopen this item without a new production symptom.
 
+## P1 — Identity PII key custody
+
+The active production `IDENTITY_PII_KEY` is used by the Inventory onboarding
+writer and Identity recovery reader. The 2026-07-30 read-only aggregate query
+found three onboarding rows with encrypted personal email and phone fields and
+one encrypted invite token. GitHub and the active Worker attest the secret
+name, but do not prove an external escrow reference, recovery custodian or
+rotation record. The current key must therefore not be generated, copied,
+replaced or rotated.
+
+**Responsible:** authorized Identity security owner. **Required action:**
+register the private escrow/custody reference and approve a dual-key
+re-encryption plus rollback procedure before any key lifecycle operation.
+This is a recovery-assurance blocker only; it does not reopen the resolved
+Insumos P0 or authorize a deployment.
+
 ## Finance — current-main staging gate closed; recovery gate remains
 
 The immutable candidate, Finance Worker, independent Finance UI and CRM Pages
