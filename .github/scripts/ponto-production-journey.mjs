@@ -436,6 +436,9 @@ if (expectedStage === "pilot" || expectedStage === "canary") {
   releaseProbeCapabilityDigest = crypto.createHash("sha256").update(JSON.stringify(capability)).digest("hex");
   const releaseContractBody = JSON.stringify({ email: pilotLogin, password: pilotPassword });
   const requestTimestamp = String(Date.now());
+  // This digest binds the exact request body inside a delegated HMAC. It is
+  // neither stored nor used as a password verifier.
+  // lgtm[js/insufficient-password-hash]
   const requestBodyDigest = crypto.createHash("sha256").update(releaseContractBody).digest("hex");
   const requestMessage = [
     "ponto-release-probe/v2",
