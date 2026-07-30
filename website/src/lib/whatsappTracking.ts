@@ -236,9 +236,16 @@ export function buildWhatsappRedirectHref(params: {
         return redirectHref;
     }
 
-    // A direct WhatsApp destination keeps contact functional and avoids a
-    // request whose tracking context would be truncated before reaching the
-    // Worker. In that rare fallback, server-side CAPI remains fail-closed.
+    // Preserve the internal click/token correlation even when the complete
+    // attribution envelope is too large to transport reliably. Without ctx,
+    // server-side CAPI remains fail-closed.
+    url.searchParams.delete("ctx");
+    const correlatedFallbackHref = `${url.pathname}${url.search}`;
+    if (correlatedFallbackHref.length <= MAX_WHATSAPP_REDIRECT_HREF_LENGTH) {
+        return correlatedFallbackHref;
+    }
+
+    // Only an unusually large destination itself reaches this final fallback.
     return destinationUrl.length <= MAX_WHATSAPP_REDIRECT_HREF_LENGTH
         ? destinationUrl
         : null;

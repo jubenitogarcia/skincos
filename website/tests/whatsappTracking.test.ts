@@ -153,8 +153,8 @@ test("campaign-rich Contact redirect keeps consent and matching context within a
     }
 });
 
-test("buildWhatsappRedirectHref falls back to the direct destination when the complete redirect exceeds the bound", () => {
-    const destination = buildWhatsAppUrl("5551995811008", "A".repeat(1_900));
+test("buildWhatsappRedirectHref keeps internal correlation without ctx when the complete redirect exceeds the bound", () => {
+    const destination = buildWhatsAppUrl("5551995811008", "A".repeat(1_700));
     assert.ok(destination);
 
     const href = buildWhatsappRedirectHref({
@@ -166,7 +166,12 @@ test("buildWhatsappRedirectHref falls back to the direct destination when the co
         },
     });
 
-    assert.equal(href, destination);
+    assert.ok(href);
+    assert.ok(href.startsWith("/api/whatsapp/redirect?"));
+    const fallbackUrl = new URL(href, "https://espacofacial.com");
+    assert.equal(fallbackUrl.searchParams.get("dest"), destination);
+    assert.equal(fallbackUrl.searchParams.get("event_id"), "contact_transport_fallback");
+    assert.equal(fallbackUrl.searchParams.has("ctx"), false);
     assert.ok(href.length <= 2_000);
 });
 
