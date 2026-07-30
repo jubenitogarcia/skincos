@@ -10,6 +10,8 @@ import {
 } from "./ponto-orchestrator-lease.mjs";
 
 const COORDINATOR_TITLE = /^Ponto (staging|pilot|canary|production|rollback) ([0-9a-f]{40}) orchestrator=([1-9][0-9]*)$/;
+const CAPABILITY_CHECK_NAME =
+  /^ponto-lease\/([a-z][a-z0-9-]{1,63})\/([1-9][0-9]*)\/([0-9a-f]{32})$/;
 export const NON_TERMINAL_STATUSES = ["queued", "in_progress", "waiting", "pending", "requested"];
 const NON_TERMINAL = new Set(NON_TERMINAL_STATUSES);
 const ALLOWED_HIGH_RISK_EVENTS = new Set(["workflow_dispatch", "schedule"]);
@@ -335,14 +337,13 @@ if (invokedAsScript) {
         }
       }
       if (!exhausted) throw new Error("capability check inventory exceeds the governed bound");
-      const pattern = new RegExp(
-        `^ponto-lease\\/([a-z][a-z0-9-]{1,63})\\/${record.runId}\\/([0-9a-f]{32})$`,
-      );
-      const candidates = checks.filter(check =>
-        pattern.test(String(check?.name || ""))
-        && check?.head_sha === run.head_sha
-        && check?.app?.slug === "github-actions"
-        && Number.isInteger(check?.id));
+      const candidates = checks.filter((check) => {
+        const match = CAPABILITY_CHECK_NAME.exec(String(check?.name || ""));
+        return match?.[2] === record.runId
+          && check?.head_sha === run.head_sha
+          && check?.app?.slug === "github-actions"
+          && Number.isInteger(check?.id);
+      });
       if (candidates.length > 1) {
         throw new Error("child capability check is ambiguous");
       }
@@ -352,7 +353,7 @@ if (invokedAsScript) {
       }
 
       const check = await request(`/repos/${repository}/check-runs/${candidates[0].id}`);
-      const match = pattern.exec(String(check?.name || ""));
+      const match = CAPABILITY_CHECK_NAME.exec(String(check?.name || ""));
       const document = JSON.parse(String(check?.output?.summary || ""));
       const claims = document?.claims || {};
       const capabilityState = String(document?.transition?.state || "");
@@ -376,7 +377,8 @@ if (invokedAsScript) {
         || claims.childWorkflowPath !== childWorkflowPath
         || claims.childRunId !== record.runId
         || claims.leaseKey !== match[1]
-        || claims.dispatchNonce !== match[2]
+        || match[2] !== record.runId
+        || claims.dispatchNonce !== match[3]
         || claims.releaseSha !== run.head_sha
         || claims.target !== target
         || claims.keyId !== capabilityVerifier.keyId
