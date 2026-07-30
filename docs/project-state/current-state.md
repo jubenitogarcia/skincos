@@ -34,9 +34,10 @@ no `--force` remediation was used.
 
 This is local operator tooling only. No deployment workflow, production
 service, Cloudflare resource, database or remote configuration was changed.
-At this observation the candidate is not yet integrated; GitHub PR/check/merge
-evidence remains required before the private preview selection can be removed
-and the canonical `origin/main` source validated.
+At this observation the candidate is published in PR #925 but not yet
+integrated; hosted checks, automated review and merge evidence remain required
+before the private preview selection can be removed and the canonical
+`origin/main` source validated.
 
 ## Workforce Timekeeping — controls reconstructed; production remains fail-closed — 2026-07-30
 
