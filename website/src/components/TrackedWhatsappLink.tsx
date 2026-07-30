@@ -1,14 +1,21 @@
 "use client";
 
-import Link, { type LinkProps } from "next/link";
-import { type MouseEventHandler, type ReactNode, useMemo } from "react";
+import {
+    type AnchorHTMLAttributes,
+    type MouseEventHandler,
+    type ReactNode,
+    useMemo,
+} from "react";
 import { buildTrackingContextFromBrowser } from "@/lib/attribution";
 import { trackContactConversion } from "@/lib/conversions";
 import { createMetaEventId } from "@/lib/metaBrowser";
 import { trackEvent } from "@/lib/analytics";
 import { buildWhatsappRedirectHref } from "@/lib/whatsappTracking";
 
-type TrackedWhatsappLinkProps = Omit<LinkProps, "href"> & {
+type TrackedWhatsappLinkProps = Omit<
+    AnchorHTMLAttributes<HTMLAnchorElement>,
+    "href" | "onClick"
+> & {
     children: ReactNode;
     className?: string;
     rawUrl?: string | null;
@@ -58,7 +65,7 @@ export default function TrackedWhatsappLink({
     );
 
     return (
-        <Link
+        <a
             {...rest}
             href={fallbackHref}
             className={className}
@@ -113,6 +120,6 @@ export default function TrackedWhatsappLink({
             }}
         >
             {children}
-        </Link>
+        </a>
     );
 }
