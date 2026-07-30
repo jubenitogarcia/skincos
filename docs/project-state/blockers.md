@@ -16,6 +16,10 @@ the REST path/dynamic-name and environment-payload correction: final head
 threads were resolved, Codex re-reviewed that exact head without a major issue,
 and protected `main` merged it without bypass as
 `15ac662e0c3b01317d48270cd211d7910000ca5a`.
+PR #929 then removed the invalid pnpm cache bootstrap. Its final head
+`019a34367f3e2e40387b3f50da74b35149ff5981` passed all 14 checks, Codex found
+no major issue on that exact head, and protected `main` merged it without
+bypass as `77f241ec20f8956fc7e9b20dd2b373518dafa7be`.
 
 The first post-merge preview (`30556924556`) proved its source and completed
 Timekeeping child `30556988335`, but coordinator job `90919728697` failed
@@ -23,15 +27,19 @@ because the GitHub REST `run.path` contract was modeled with a nonexistent ref
 suffix. Watchdog run `30558653559` also exposed a dynamic `run.name` mismatch
 that prevented the emergency latch path. Those defects are integrated.
 Replacement preview `30562834119` selected `15ac662e...`; source admission and
-Timekeeping child `30562866947` passed, with surface/promotion artifacts
-`8767637805` and `8767637318`. Identity/Inventory child `30562970927` failed
-in job `90940563185` before tests or dry-run because `actions/setup-node`
-requested pnpm caching before the runner had a `pnpm` executable. The bounded
-successor removes that invalid cache request from both Identity preview and
-staging, executes `corepack pnpm` from `inventory` in all three Identity jobs
-so `pnpm@9.15.4` is pinned, and adds cache/cwd/pin regressions.
-`selected_release_sha` remains null until that successor and a
-complete four-surface preview succeed; no live surface runs current `main`.
+Timekeeping child `30562866947` passed, while Identity/Inventory child
+`30562970927` exposed the pnpm-cache bootstrap fixed by #929. Second replacement
+preview `30564873785` then selected exact merge `77f241ec...`; source admission
+and Timekeeping child `30564915304` passed, with surface/promotion artifacts
+`8768441812` and `8768441200`. Identity/Inventory child `30565019029` failed in
+job `90947405936` before tests or dry-run because Node 22.12's bundled Corepack
+attempted direct pnpm metadata resolution with a stale signing key (`Cannot find
+matching keyid`). Core API and CRM Pages were skipped and no live mutation
+occurred. The bounded successor reads the exact Inventory `packageManager`,
+prepares that version explicitly and verifies the activated pnpm before use in
+all three Identity jobs. `selected_release_sha` remains null until that
+successor and a complete four-surface preview succeed; no live surface runs
+current `main`.
 
 Both module-control KVs are now maintenance. Timekeeping D1 journals contain
 exactly `0001`–`0008` and Identity/Inventory exactly `0001`–`0018` in both
@@ -104,10 +112,11 @@ active external SLO evidence.
 
 The executable blockers, in required order, are:
 
-1. Integrate the bounded pnpm bootstrap successor without bypass, then repeat
-   preview on its exact protected-main merge SHA. The #924/#927 source package
-   is already integrated; only the observed preview/staging bootstrap order is
-   changing. Historical child definitions cannot be rewritten, so the
+1. Integrate the bounded Corepack signing-key successor without bypass, then
+   repeat preview on its exact protected-main merge SHA. The #924/#927/#929
+   source package is already integrated; only the observed package-manager
+   activation order is changing. Historical child definitions cannot be
+   rewritten, so the
    checkpointed fences and disabled legacy smokes remain until their exposure
    expires or the governed release makes them irrelevant.
 2. An authorized Cloudflare security principal must inspect and attest the exact
@@ -229,10 +238,11 @@ interruption/rollback is not operational evidence.
 
 PR #921 closed the earlier Finance-coupling, wrong-target, fail-open default,
 version-affinity, predecessor, pilot-credential and key-separation defects; PR
-#924 integrated the post-merge P1/P2 package, and PR #927 integrated the
-bounded REST contract correction. The pnpm bootstrap successor in item 1 does
-not change any external prerequisite. None of these source merges is permission
-to skip items 2–10.
+#924 integrated the post-merge P1/P2 package, PR #927 integrated the bounded
+REST contract correction and PR #929 integrated the first pnpm bootstrap
+correction. The Corepack signing-key successor in item 1 does not change any
+external prerequisite. None of these source merges is permission to skip items
+2–10.
 
 ## Resolved — Insumos unit access P0
 
