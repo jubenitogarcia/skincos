@@ -45,8 +45,8 @@ type CompactTrackingContextV1 = {
     i: 0 | string | null;
     b: string | null;
     f: string | null;
-    l: CompactValueReference;
-    h: CompactValueReference;
+    l?: CompactValueReference;
+    h?: CompactValueReference;
     a: CompactAttributionTouchV1 | null;
     z: CompactAttributionTouchV1 | null;
 };
@@ -97,6 +97,8 @@ function compactTouch(
 }
 
 function compactTrackingContext(context: TrackingContext): CompactTrackingContextV1 {
+    const landingUrl = compactValue(context.landingUrl, context.pageUrl);
+    const landingPath = compactValue(context.landingPath, context.pagePath);
     return {
         v: 1,
         c: context.capturedAtMs,
@@ -108,8 +110,11 @@ function compactTrackingContext(context: TrackingContext): CompactTrackingContex
         i: context.fbclid === context.params.fbclid ? 0 : context.fbclid,
         b: context.fbp,
         f: context.fbc,
-        l: compactValue(context.landingUrl, context.pageUrl),
-        h: compactValue(context.landingPath, context.pagePath),
+        // Zero means "same as the primary value". Omitting these two zero
+        // aliases keeps the query envelope canonical and avoids redundant
+        // numeric fields in the production redirect transport.
+        l: landingUrl === 0 ? undefined : landingUrl,
+        h: landingPath === 0 ? undefined : landingPath,
         // The compact tuple preserves each touch's own URL/path and identifiers.
         // References 0/1 avoid repeating the top-level first/current values.
         a: compactTouch(context.firstTouch, context),
@@ -133,8 +138,8 @@ export function expandWhatsappTrackingContext(raw: unknown): unknown {
         if (value === 1) return secondary;
         return value;
     };
-    const landingUrl = expandValue(context.l ?? null, pageUrl);
-    const landingPath = expandValue(context.h ?? null, pagePath);
+    const landingUrl = expandValue(context.l ?? 0, pageUrl);
+    const landingPath = expandValue(context.h ?? 0, pagePath);
     const fbclid = context.i === 0 ? context.q?.fbclid ?? null : context.i ?? null;
     const expandTouch = (
         touch: CompactAttributionTouchV1 | null | undefined,
