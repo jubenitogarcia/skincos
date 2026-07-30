@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-29T22:29:04Z",
-  "source_main_sha": "6642487142e4de30cf27ae337da60d9f7f64449c",
+  "authoritative_at": "2026-07-30T00:13:34Z",
+  "source_main_sha": "3868c79ac3bfb9fd98f8bf90be16648e35728c59",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
@@ -137,13 +137,51 @@
         "synthetic positive and negative unit-scope journey"
       ],
       "done_definition": "Resolved; retained only for audit and regression observation.",
-      "next_item": "finance-current-main-staging-evidence",
-      "last_verified": "2026-07-29T14:02:00Z",
+      "next_item": "p0-workforce-timekeeping-current-main-release",
+      "last_verified": "2026-07-30T00:13:34Z",
       "evidence": {
         "release_sha": "f30f66e70e0dc949adde5120378509a1c95fe557",
         "inventory_run": 30420719000,
         "crm_pages_run": 30420793906,
-        "checkpoint_artifact": 8711811875
+        "checkpoint_artifact": 8711811875,
+        "inventory_worker_deployment": "4bb6a932-05ba-44a9-aea3-5f139b31abca",
+        "crm_pages_deployment": "a77cf500-f272-4d37-87c2-c02f78352c4e"
+      }
+    },
+    {
+      "id": "p1-identity-pii-key-custody",
+      "objective": "Establish recoverable external custody for the active Identity onboarding PII key without changing the key or encrypted records.",
+      "priority": 950,
+      "state": "blocked-human-custody-evidence",
+      "dependencies": [],
+      "blockers": [
+        "no authorized external escrow/custodian reference is evidenced for the active production IDENTITY_PII_KEY",
+        "production contains encrypted onboarding payloads, so generating, copying, replacing or rotating the key is unsafe"
+      ],
+      "environment": "production-metadata-only",
+      "permitted_actions": [
+        "read-only verification of secret names and aggregate encrypted-payload counts",
+        "private registration by an authorized Identity security owner of an escrow reference and recovery procedure"
+      ],
+      "prohibited_actions": [
+        "read, print, commit, copy, generate, replace or rotate IDENTITY_PII_KEY",
+        "deploy, migration, user, grant, flag or business-data mutation under this objective"
+      ],
+      "required_evidence": [
+        "private external escrow/custodian reference",
+        "named authorized recovery owner",
+        "approved dual-key re-encryption, verification and rollback runbook"
+      ],
+      "done_definition": "The key remains unchanged and an authorized recovery process can prove custody and safe rotation without losing existing ciphertext.",
+      "next_item": null,
+      "last_verified": "2026-07-30T00:13:34Z",
+      "evidence": {
+        "production_onboarding_rows": 3,
+        "encrypted_email_rows": 3,
+        "encrypted_phone_rows": 3,
+        "encrypted_invite_token_rows": 1,
+        "github_environment_secret_metadata": "staging and production names present",
+        "worker_secret_metadata": "active Inventory Worker name present"
       }
     },
     {
