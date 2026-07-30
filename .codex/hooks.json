@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'safe(){ printf \"%s\\n\" \"{\\\"continue\\\":true,\\\"stopReason\\\":\\\"SKINCOS supervisor: canonical Git root unavailable or invalid; automatic continuation is safely disabled\\\"}\"; exit 0; }; common_raw=\"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\" || safe; [ -n \"$common_raw\" ] || safe; [ \"$(basename -- \"$common_raw\")\" = .git ] || safe; [ -d \"$common_raw\" ] && [ ! -L \"$common_raw\" ] || safe; common=\"$(CDPATH= cd -- \"$common_raw\" 2>/dev/null && pwd -P)\" || safe; [ \"$(basename -- \"$common\")\" = .git ] || safe; root=\"$(dirname -- \"$common\")\"; codex=\"$root/.codex\"; hooks=\"$codex/hooks\"; runner=\"$hooks/invoke-skincos-supervisor.sh\"; [ -d \"$codex\" ] && [ ! -L \"$codex\" ] || safe; [ -d \"$hooks\" ] && [ ! -L \"$hooks\" ] || safe; [ -f \"$runner\" ] && [ ! -L \"$runner\" ] || safe; hooks_real=\"$(CDPATH= cd -- \"$hooks\" 2>/dev/null && pwd -P)\" || safe; [ \"$hooks_real\" = \"$hooks\" ] || safe; exec \"$runner\"'",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $safe='{\\\"continue\\\":true,\\\"stopReason\\\":\\\"SKINCOS supervisor: canonical Git root unavailable or invalid; automatic continuation is safely disabled\\\"}'; try { $commonRaw=(& git rev-parse --path-format=absolute --git-common-dir 2>$null); if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commonRaw)) { throw 'git-common-dir unavailable' }; $common=[IO.Path]::GetFullPath($commonRaw.Trim()); if ((Split-Path -Leaf $common) -cne '.git') { throw 'invalid git common directory' }; $root=Split-Path -Parent $common; $codex=Join-Path $root '.codex'; $hooks=Join-Path $codex 'hooks'; $runner=Join-Path $hooks 'invoke-skincos-supervisor.ps1'; foreach ($entry in @($root,$common,$codex,$hooks,$runner)) { $item=Get-Item -LiteralPath $entry -Force -ErrorAction Stop; if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'reparse point refused' } }; if (-not (Test-Path -LiteralPath $root -PathType Container) -or -not (Test-Path -LiteralPath $common -PathType Container) -or -not (Test-Path -LiteralPath $codex -PathType Container) -or -not (Test-Path -LiteralPath $hooks -PathType Container) -or -not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw 'canonical runner unavailable' }; & $runner } catch { [Console]::Out.WriteLine($safe) }\"",
+            "timeout": 30,
+            "statusMessage": "SKINCOS supervised continuity"
+          }
+        ]
+      }
+    ]
+  }
+}
