@@ -102,7 +102,7 @@ jobs:
           if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-progressive-release.yml") {
             throw new Error("canonical Ponto coordinator is not active at the expected path");
           }
-          const expectedPath = `${workflow.path}@refs/heads/main`;
+          const expectedPath = workflow.path;
           if (
             run.workflow_id !== workflow.id
             || run.path !== expectedPath
@@ -137,7 +137,7 @@ jobs:
             || workflow.path !== ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.path !== workflow.path
             || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"

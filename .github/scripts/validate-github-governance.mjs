@@ -45,11 +45,28 @@ for (const requiredRule of ["deletion", "non_fast_forward", "pull_request", "req
   if (!ruleset.rules?.some((rule) => rule.type === requiredRule)) fail(`main ruleset is missing ${requiredRule}`);
 }
 
+const environmentBranchPolicy = readJson(".github/governance/environments/main-branch-policy.json");
+if (environmentBranchPolicy.name !== "main" || environmentBranchPolicy.type !== "branch") {
+  fail("environment branch policy must select exactly the main branch");
+}
+
 for (const environmentName of ["staging", "production"]) {
   const environment = readJson(`.github/governance/environments/${environmentName}.json`);
-  if (typeof environment.wait_timer !== "number") fail(`${environmentName} environment metadata is invalid`);
-  if (environment.deployment_branch_policy?.protected_branches !== true || environment.deployment_branch_policy?.custom_branch_policies !== false) {
-    fail(`${environmentName} must be restricted to protected branches`);
+  if (environment.wait_timer !== 0 || environment.prevent_self_review !== true) {
+    fail(`${environmentName} must require a self-review-safe deployment approval without a wait timer`);
+  }
+  if (
+    environment.reviewers?.length !== 1 ||
+    environment.reviewers[0]?.type !== "User" ||
+    environment.reviewers[0]?.id !== 199169872
+  ) {
+    fail(`${environmentName} must preserve the fail-closed deployment reviewer`);
+  }
+  if (
+    environment.deployment_branch_policy?.protected_branches !== false ||
+    environment.deployment_branch_policy?.custom_branch_policies !== true
+  ) {
+    fail(`${environmentName} must use the versioned custom main branch policy`);
   }
 }
 

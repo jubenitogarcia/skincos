@@ -56,7 +56,7 @@ const execute = (args, env = {}) => new Promise((resolve) => {
 const canonicalRun = (overrides = {}) => ({
   id: Number(orchestratorRunId),
   workflow_id: 77,
-  path: ".github/workflows/ponto-progressive-release.yml@refs/heads/main",
+  path: ".github/workflows/ponto-progressive-release.yml",
   run_attempt: 1,
   status: "in_progress",
   conclusion: null,

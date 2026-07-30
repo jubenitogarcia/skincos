@@ -96,7 +96,7 @@ jobs:
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/ponto-progressive-release.yml"
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.path !== workflow.path
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"

@@ -565,7 +565,7 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage, cur
     || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
     || String(run?.id || "") !== orchestratorRunId
     || run?.workflow_id !== workflow.id
-    || run?.path !== `${workflow.path}@refs/heads/main`
+    || run?.path !== workflow.path
     || run?.run_attempt !== 1
     || run?.status !== "in_progress"
     || run?.conclusion != null
@@ -623,7 +623,7 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
   if (
     String(child?.id || "") !== childRunId
     || child?.run_attempt !== 1
-    || child?.path !== `${childWorkflowPath}@refs/heads/main`
+    || child?.path !== childWorkflowPath
     || child?.status !== "in_progress"
     || child?.conclusion != null
     || child?.event !== "workflow_dispatch"
@@ -657,7 +657,7 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     || issuer?.workflow_id !== issuerWorkflow?.id
     || issuerWorkflow?.state !== "active"
     || issuerWorkflow?.path !== issuerWorkflowPath
-    || issuer?.path !== `${issuerWorkflowPath}@refs/heads/main`
+    || issuer?.path !== issuerWorkflowPath
     || issuer?.run_attempt !== 1
     || issuer?.status !== "in_progress"
     || issuer?.conclusion != null

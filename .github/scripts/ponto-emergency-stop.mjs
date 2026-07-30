@@ -131,7 +131,7 @@ export function parseCoordinator(run, {
   if (
     !match
     || run?.workflow_id !== workflowId
-    || run?.path !== ".github/workflows/ponto-progressive-release.yml@refs/heads/main"
+    || run?.path !== ".github/workflows/ponto-progressive-release.yml"
     || run?.event !== "workflow_dispatch"
     || run?.head_branch !== "main"
     || run?.name !== "Ponto progressive release"

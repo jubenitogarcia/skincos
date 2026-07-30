@@ -33,7 +33,7 @@ const run = (id, pathName, title) => ({
     : pathName === "deploy-crm-pages.yml"
       ? 503
       : 502,
-  path: `.github/workflows/${pathName}@refs/heads/main`,
+  path: `.github/workflows/${pathName}`,
   display_title: title,
   event: "workflow_dispatch",
   head_branch: "main",
@@ -57,7 +57,7 @@ const workflowIds = {
 const coordinator = {
   id: 99,
   workflow_id: 900,
-  path: ".github/workflows/ponto-progressive-release.yml@refs/heads/main",
+  path: ".github/workflows/ponto-progressive-release.yml",
   event: "workflow_dispatch",
   head_branch: "main",
   head_sha: sha,

@@ -164,7 +164,7 @@ jobs:
             || !Number.isInteger(workflow?.id)
             || String(run?.id || "") !== process.env.PREDECESSOR_RUN_ID
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.path !== workflow.path
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.run_attempt !== 1
@@ -758,7 +758,7 @@ jobs:
           );
           const reusableRuns = runs
             .filter(run => run.workflow_id === workflow.id
-              && run.path === `${workflow.path}@refs/heads/main`
+              && run.path === workflow.path
               && run.status === "completed"
               && run.conclusion === "success"
               && run.event === "workflow_dispatch"
