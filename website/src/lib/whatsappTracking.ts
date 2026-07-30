@@ -240,9 +240,20 @@ export function buildWhatsappRedirectHref(params: {
     // attribution envelope is too large to transport reliably. Without ctx,
     // server-side CAPI remains fail-closed.
     url.searchParams.delete("ctx");
+    if (tracking?.pageUrl) url.searchParams.set("page_url", tracking.pageUrl);
+    if (tracking?.pagePath) url.searchParams.set("page_path", tracking.pagePath);
     const correlatedFallbackHref = `${url.pathname}${url.search}`;
     if (correlatedFallbackHref.length <= MAX_WHATSAPP_REDIRECT_HREF_LENGTH) {
         return correlatedFallbackHref;
+    }
+
+    // Keep click/token correlation even when the optional page attribution
+    // cannot fit beside an unusually large destination.
+    url.searchParams.delete("page_url");
+    url.searchParams.delete("page_path");
+    const minimalCorrelatedFallbackHref = `${url.pathname}${url.search}`;
+    if (minimalCorrelatedFallbackHref.length <= MAX_WHATSAPP_REDIRECT_HREF_LENGTH) {
+        return minimalCorrelatedFallbackHref;
     }
 
     // Only an unusually large destination itself reaches this final fallback.

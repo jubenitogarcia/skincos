@@ -154,7 +154,9 @@ test("campaign-rich Contact redirect keeps consent and matching context within a
 });
 
 test("buildWhatsappRedirectHref keeps internal correlation without ctx when the complete redirect exceeds the bound", () => {
-    const destination = buildWhatsAppUrl("5551995811008", "A".repeat(1_700));
+    const pageUrl = "https://espacofacial.com/cadastro?utm_source=meta&utm_campaign=bounded_fallback";
+    const pagePath = "/cadastro?utm_source=meta&utm_campaign=bounded_fallback";
+    const destination = buildWhatsAppUrl("5551995811008", "A".repeat(1_400));
     assert.ok(destination);
 
     const href = buildWhatsappRedirectHref({
@@ -163,6 +165,23 @@ test("buildWhatsappRedirectHref keeps internal correlation without ctx when the 
             eventId: "contact_transport_fallback",
             placement: "oversized_fixture",
             source: "test",
+            pageUrl,
+            pagePath,
+            trackingContext: {
+                capturedAtMs: 1_785_367_500_000,
+                pageUrl,
+                pagePath,
+                referrer: null,
+                consent: { analytics: true, marketing: true },
+                params: { utm_source: "meta", utm_campaign: "bounded_fallback" },
+                fbclid: "bounded-fbclid",
+                fbp: "fb.1.1785367500.bounded-browser",
+                fbc: "fb.1.1785367500.bounded-fbclid",
+                landingUrl: pageUrl,
+                landingPath: pagePath,
+                firstTouch: null,
+                lastTouch: null,
+            },
         },
     });
 
@@ -171,6 +190,8 @@ test("buildWhatsappRedirectHref keeps internal correlation without ctx when the 
     const fallbackUrl = new URL(href, "https://espacofacial.com");
     assert.equal(fallbackUrl.searchParams.get("dest"), destination);
     assert.equal(fallbackUrl.searchParams.get("event_id"), "contact_transport_fallback");
+    assert.equal(fallbackUrl.searchParams.get("page_url"), pageUrl);
+    assert.equal(fallbackUrl.searchParams.get("page_path"), pagePath);
     assert.equal(fallbackUrl.searchParams.has("ctx"), false);
     assert.ok(href.length <= 2_000);
 });
