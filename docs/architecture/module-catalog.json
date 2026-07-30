@@ -142,12 +142,12 @@
       "id": "finance",
       "maturity": "experimental",
       "readiness": {
-        "assessedAt": "2026-07-29T14:02:00Z",
+        "assessedAt": "2026-07-29T23:54:22Z",
         "state": "experimental",
         "integratedImportStateMachine": "PR #815 / 32bf3ebb296ca95e3273bb4fed664480eb5642e5",
-        "stagingBaseline": "Worker and independent UI healthy at 32bf3ebb; module_enabled=false; not a current-main single-SHA release",
-        "provenCapabilities": ["staging rollback", "remote kill switch", "isolated scratch restore", "continuous external monitor and controlled human alert"],
-        "openGates": ["current-main single-SHA preview/staging", "synthetic authenticated import/UI journey", "fresh offsite PostgreSQL retrieval and scratch restore", "named pilot approval"],
+        "stagingBaseline": "Current-main c277032db96ba96484522a19994a66cbb323a46d passed canonical candidate, Worker/UI/CRM Pages preview and staging plus synthetic authenticated import/UI canary; module_enabled=false after baseline restoration",
+        "provenCapabilities": ["staging rollback", "remote kill switch", "isolated scratch restore", "continuous external monitor and controlled human alert", "current-main immutable staging lineage and synthetic authenticated import/UI canary"],
+        "openGates": ["fresh offsite PostgreSQL retrieval and scratch restore", "named pilot approval", "separately authorized production provisioning"],
         "production": "not provisioned: skincos-finance Worker, D1, control KV and Finance UI project absent"
       },
       "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },

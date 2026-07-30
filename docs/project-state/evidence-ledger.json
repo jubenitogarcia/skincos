@@ -2,6 +2,33 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-29T22:29:04Z",
+      "surface": "github-main-pr-894-review-governance-github-environment-metadata",
+      "scope": "Workforce Timekeeping blocker-ledger correction and production fail-closed restoration",
+      "state": "source-integrated-candidate-unselected-production-fail-closed",
+      "method": "Fetched origin/main, enumerated every path and merge after PR #886, inspected the immutable promotion gate and progressive-release policy, read all PR #894 review threads, and restored the production Core deploy variable to false. Secret names and aggregate Identity/Workforce evidence only were used; no secret value or PII was read.",
+      "result": "origin/main is 6642487142e4de30cf27ae337da60d9f7f64449c. PR #886 remains merged as 10b2197731d0210cf8fc8cd961f7a787d73bf650. The full post-merge delta is 29 files: 17 Finance files from PRs #891/#890/#895/#898, 8 Orb/n8n release-watch files from #888/#896, 2 Livia QA files from #897 and 2 native release-preparer files from #892; none directly changes the Ponto runtime, migrations, gateway routes or canonical Ponto publisher workflows. The promotion gate permits a full SHA that is any ancestor of origin/main, but the final Ponto candidate is deliberately unselected until the missing pilot/canary controls are integrated. ENABLE_CORE_WORKERS_DEPLOY remains true in staging and was restored to false in production at 2026-07-29T22:17:37Z before any dispatch. Canonical module-control run 30496220685 then set production Timekeeping to maintenance; health reports not ready and a protected route returns 503/MODULE_MAINTENANCE.",
+      "limitation": "PONTO_PROFILE_DATA_KEY remains absent from accessible staging/production metadata, the empty Cloudflare Secrets Store and both incumbent Timekeeping Workers. Other Ponto secrets still inherit repository scope rather than independent environment custody. The progressive policy blocks Core Workers, CRM Pages and Timekeeping pilot/canary because version affinity, gradual routing, network-context cohort configuration and external SLO interruption evidence are absent. Executable publishers do not enforce pilot/canary predecessors; Core deploy defaults an unset gate to enabled, Timekeeping names checkpoints with the dispatch SHA instead of the selected release SHA, and CRM Pages has no Ponto-specific production gate. Staging Pages currently routes to the production API without an actor key. Production Core API also binds FINANCE to nonexistent skincos-finance, so Ponto needs a gateway-only release path that neither requires nor advances Finance. Staging module-control remains absent, production readiness incorrectly ignores maintenance, there is no eligible active production CONSULTOR pilot, and no candidate preview, staging, journey, pilot, canary or production deployment occurred.",
+      "sha": "6642487142e4de30cf27ae337da60d9f7f64449c",
+      "origin_main": "6642487142e4de30cf27ae337da60d9f7f64449c",
+      "pr": 894,
+      "supersedes": ["2026-07-29T21:57:36Z release candidate scope claim"],
+      "next_action": "Integrate the governed pilot/canary, staging-isolation and Ponto gateway-only controls; provision only the independent staging secrets through an approved source; complete preview/staging; then separately authorize production secrets and an Identity/Workforce-valid pilot before selecting the production predecessors."
+    },
+    {
+      "observed_at": "2026-07-29T21:49:16Z",
+      "surface": "github-main-github-actions-github-environment-metadata-cloudflare-worker-secrets-d1-kv-live-http",
+      "scope": "Workforce Timekeeping current-main release recheck",
+      "state": "main-integrated-staging-and-production-blocked-before-dispatch",
+      "method": "Verified PR #886 merge and required checks; inspected current GitHub secret-name and variable metadata; read Timekeeping Worker secret names, module-control KV keys, D1 aggregate counts and public health endpoints; queried workflow history without reading secret values or personal data.",
+      "result": "PR #886 is merged in main as 10b2197731d0210cf8fc8cd961f7a787d73bf650 with required checks successful. ENABLE_CORE_WORKERS_DEPLOY=true was configured in staging and production so an explicit Core API Ponto promotion will no longer be skipped. Current staging/production Timekeeping health endpoints remain 200 but report the incumbent version/environment, not the candidate SHA. Both module-control:timekeeping keys are absent; the existing health response is default-active rather than an explicit release control. Aggregate reconciliation found one active CONSULTOR in the staging Core without an active Workforce counterpart; production has no active CRM CONSULTOR or active Workforce employee eligible for the required pilot.",
+      "limitation": "PONTO_PROFILE_DATA_KEY is absent from the accessible GitHub staging/production secret metadata and both deployed Timekeeping Workers. The canonical sync/deploy workflow therefore fails closed before checkpoint, migration or deployment. No candidate staging dispatch, synthetic journey, module-control mutation, production checkpoint, production promotion, pilot, data mutation or identity change was performed. Health 200 and the post-merge Ponto UI smoke do not establish current-SHA multi-surface lineage or an authenticated production journey.",
+      "sha": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
+      "pr": 886,
+      "runs": [30492794200, 30492794295, 30492794379, 30492794431, 30492794912, 30492794935, 30492797961, 30493207905],
+      "next_action": "Provision PONTO_PROFILE_DATA_KEY through the approved secret path in both environments, reconcile or designate a valid production pilot identity through Identity/Workforce, then promote this exact SHA through Timekeeping, Core API and CRM Pages staging before the synthetic journey and module-control rollback drill."
+    },
+    {
       "observed_at": "2026-07-29T20:45:00Z",
       "surface": "isolated-worktree-origin-main-github-metadata-cloudflare-d1-kv-live-http",
       "scope": "Workforce Timekeeping current-main release preparation",
@@ -612,6 +639,18 @@
       "manifest_sha256": "3ca96e4038529680e019b35f13b5c306a57beaa4c71426a9a191a28621038a21",
       "rollback_checkpoint": "livia-postpromote-1dee4fc2-20260729T093100-0300",
       "rollback_checkpoint_sha256": "a2a03f4223167bda6f6a4753b7b0073b7d014ca74100980d1cb99be1c996f5a9"
+    },
+    {
+      "observed_at": "2026-07-29T23:54:22Z",
+      "surface": "github-actions-cloudflare-staging-and-private-sanitized-artifact",
+      "scope": "Finance current-main immutable staging lineage and synthetic canary",
+      "state": "staging-gate-closed-experimental-production-unprovisioned",
+      "method": "Explicit origin/main SHA candidate; canonical Finance Worker, independent Finance UI and CRM Pages preview/staging workflows; synthetic-only authenticated import/UI canary with baseline/grant restoration and sanitized artifact capture.",
+      "result": "SHA c277032db96ba96484522a19994a66cbb323a46d completed candidate 30500613099; previews 30500694945 (Worker), 30500696857 (Finance UI) and 30500698417 (CRM Pages); and staging 30500732310, 30500734160 and 30500735957. Worker staging recorded its encrypted checkpoint, additive migrations, immutable version deployment and smoke. Canary 30500922386 passed login/session, authorization, health/readiness, state-machine import, idempotent replay/conflict, audit, compensating undo and isolated Finance-shell smoke. Its decision had p95 426 ms against 1000 ms and zero errors, authentication, journey, data-divergence, audit or dependency failures. The finalizer restored the non-enabled baseline and synthetic grant; artifact 8743464166 is retained privately in sanitized form.",
+      "limitation": "The browser smoke observed a non-Finance 503 at /api/instagram/status, while all Finance responses and shell isolation passed. This does not establish production Finance. module_enabled remains false; no production resource, flag, grant, user, secret or data changed. Fresh provider-separated PostgreSQL retrieval and scratch restoration, named pilot approval and separately authorized production provisioning remain open.",
+      "sha": "c277032db96ba96484522a19994a66cbb323a46d",
+      "runs": [30500613099, 30500694945, 30500696857, 30500698417, 30500732310, 30500734160, 30500735957, 30500922386],
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\finance-canary-retry\\canary-30500922386"
     },
     {
       "observed_at": "2026-07-29T17:54:03.7415409Z",

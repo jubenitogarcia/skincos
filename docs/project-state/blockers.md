@@ -1,5 +1,54 @@
 # Current blockers
 
+## P0 — Workforce Timekeeping production release is fail-closed
+
+PR #886 is integrated at
+`10b2197731d0210cf8fc8cd961f7a787d73bf650`, but no immutable release has
+completed the current preview/staging/pilot/canary/production chain. The
+production Core deploy flag was restored to
+`ENABLE_CORE_WORKERS_DEPLOY=false` at `2026-07-29T22:17:37Z`; staging remains
+enabled for a later governed operation. Production Ponto itself is explicitly
+in `maintenance` through canonical run `30496220685`.
+
+The executable blockers, in required order, are:
+
+1. integrate and validate version affinity between Core API and Timekeeping,
+   gradual Worker routing, a network-context pilot cohort, minimal grants,
+   automatic interruption and external SLO evidence; make the Core gate
+   fail-closed when unset, label Timekeeping checkpoints with the promoted
+   release SHA, and add executable pilot/canary predecessors plus a
+   Ponto-specific Pages gate;
+2. provision `PONTO_PROFILE_DATA_KEY` in staging only from an approved secret
+   source/process, and move the other staging Ponto runtime secrets out of
+   shared repository scope; provision an independent production set only
+   after complete staging evidence and separate pre-production authorization;
+3. choose one immutable SHA reachable from `main` after those controls are
+   integrated, then prove the same SHA in Timekeeping, Core API and CRM Pages
+   preview/staging; first repair staging Pages, which currently routes its
+   canonical default to the production API and has no actor key;
+4. add a Ponto gateway-only Core API promotion path that does not require the
+   nonexistent `skincos-finance` Worker or mutate/provision Finance; the
+   current production binding already caused Cloudflare `10143`;
+5. exercise `module-control:timekeeping` through maintenance, active and
+   rollback in staging and complete the synthetic authenticated journey with
+   audit-preserving teardown;
+6. reconcile or designate an eligible pilot through Identity/Workforce. The
+   aggregate inventory currently has no active production CONSULTOR with an
+   active Workforce counterpart, and staging has one Core CONSULTOR without
+   that counterpart;
+7. complete separately evidenced pilot and canary predecessors before any
+   production deployment, migration, grant or activation.
+
+`PONTO_PROFILE_DATA_KEY` is absent by name from accessible GitHub
+staging/production metadata and both incumbent Timekeeping Workers.
+`module-control:timekeeping` is absent in staging and explicitly
+`maintenance` in production. Production `/api/ponto/me` returns
+`503/MODULE_MAINTENANCE`, while readiness incorrectly remains 200 and is a
+release-control defect. Incumbent health/version responses do not attest a
+candidate release.
+No production Ponto dispatch, migration, D1/KV write, pilot or canary is
+authorized by the current evidence.
+
 ## Resolved — Insumos unit access P0
 
 Insumos is not an executable blocker. The production closure is recorded on
@@ -8,23 +57,27 @@ Pages run `30420793906`, checkpoint artifact `8711811875`, and sanitized
 synthetic positive/negative unit-scope smokes. Retain rollback evidence, but
 do not reopen this item without a new production symptom.
 
-## Finance — staging release evidence is incomplete
+## Finance — current-main staging gate closed; recovery gate remains
 
-The current Finance staging Worker and independent UI are healthy at
-`32bf3ebb…` (runs `30168445270` and `30168445288`), but current `origin/main`
-is `6963ba04…`; the API and general CRM Pages staging versions differ as well.
-The next technical milestone is therefore a single immutable current-main
-candidate through canonical Finance Worker/UI preview and staging, followed by
-the synthetic authenticated import/UI journey. Until that happens, no staging
-release is eligible for a pilot decision.
+The immutable candidate, Finance Worker, independent Finance UI and CRM Pages
+all used `c277032db96ba96484522a19994a66cbb323a46d`: candidate `30500613099`,
+preview runs `30500694945`/`30500696857`/`30500698417` and staging runs
+`30500732310`/`30500734160`/`30500735957`. Synthetic canary `30500922386`
+passed the authenticated import, idempotent replay/conflict, audit,
+compensation and isolated-shell journeys. Its Finance p95 was 426 ms (limit
+1000 ms), with zero errors, authentication failures, journey failures,
+divergences, audit failures and dependency failures. It restored the
+non-enabled staging baseline and its temporary synthetic grant.
 
-Historical staging evidence remains valid only for the capabilities it tested:
-rollback `30143185583`, remote kill switch
-`30143674681`/`30143742671`, scratch restore and the controlled canary stop.
-The `audit returned 503` in canary `30168648150` was restored and is not a
-current outage: fresh Worker/gateway probes and the continuous monitor are
-healthy. External observability is complete as infrastructure, with a live
-Run-key monitor, dashboard, 30-day retention and recorded human-alert drill.
+The prior transient `domain_service_degraded`/503 during import analysis is
+superseded for this candidate: retry is bounded to transient 5xx on the
+idempotent analyze operation, and the full journey now passed. The historical
+`audit returned 503` remains an audit finding, not a current blocker.
+Historical rollback `30143185583`, remote kill switch
+`30143674681`/`30143742671`, scratch restore and the controlled abort remain
+valid for their tested capabilities. External observability remains complete as
+infrastructure, with its live Run-key monitor, dashboard, 30-day retention and
+recorded human-alert drill.
 
 ## Finance — offsite PostgreSQL recovery remains blocked
 
