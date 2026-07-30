@@ -3,7 +3,7 @@ import test from "node:test";
 import type { TrackingContext } from "../src/lib/attribution";
 import { CADASTRO_WHEEL_PRIZES } from "../src/lib/cadastroWheelPrizes";
 import { buildWhatsAppUrl } from "../src/lib/whatsapp";
-import { buildWhatsappRedirectHref, buildWhatsappRedirectHrefFromRequest, buildWhatsappClickToken, expandWhatsappTrackingContext, injectWhatsappToken, parseWhatsappDestination } from "../src/lib/whatsappTracking";
+import { buildWhatsappRedirectHref, buildWhatsappRedirectHrefFromRequest, buildWhatsappClickToken, decodeWhatsappRedirectQueryValue, expandWhatsappTrackingContext, injectWhatsappToken, parseWhatsappDestination } from "../src/lib/whatsappTracking";
 
 test("buildWhatsappRedirectHref wraps supported whatsapp destination with tracking params", () => {
     const href = buildWhatsappRedirectHref({
@@ -17,10 +17,14 @@ test("buildWhatsappRedirectHref wraps supported whatsapp destination with tracki
         },
     });
 
+    assert.ok(href);
+    const redirectUrl = new URL(href, "https://espacofacial.com");
     assert.equal(
-        href,
-        "/api/whatsapp/redirect?dest=https%3A%2F%2Fwa.me%2F5551999999999%3Ftext%3DOi&event_id=contact_evt_1&placement=booking_confirmation&unit_slug=novo-hamburgo&source=booking_confirmation&booking_id=req_123",
+        decodeWhatsappRedirectQueryValue(redirectUrl.searchParams.get("dest") ?? ""),
+        "https://wa.me/5551999999999?text=Oi",
     );
+    assert.equal(redirectUrl.searchParams.get("event_id"), "contact_evt_1");
+    assert.equal(redirectUrl.searchParams.get("booking_id"), "req_123");
 });
 
 test("parseWhatsappDestination extracts phone and text from api.whatsapp.com", () => {
@@ -43,9 +47,11 @@ test("buildWhatsappRedirectHrefFromRequest preserves attribution params on the d
         },
     });
 
+    assert.ok(href);
+    const redirectUrl = new URL(href, "https://espacofacial.com");
     assert.equal(
-        href,
-        "/api/whatsapp/redirect?dest=https%3A%2F%2Fapi.whatsapp.com%2Fsend%3Fphone%3D5551999999999%26text%3DOi%26utm_source%3Dmeta%26utm_campaign%3Dabril%26fbclid%3Dfbclid_123&placement=legacy_redirect&unit_slug=novo-hamburgo&source=legacy_redirect%3A%2Fnovohamburgo%2Ffaleconosco",
+        decodeWhatsappRedirectQueryValue(redirectUrl.searchParams.get("dest") ?? ""),
+        "https://api.whatsapp.com/send?phone=5551999999999&text=Oi&utm_source=meta&utm_campaign=abril&fbclid=fbclid_123",
     );
 });
 
@@ -120,7 +126,11 @@ test("campaign-rich Contact redirect keeps consent and matching context within a
     assert.equal(redirectUrl.searchParams.has("page_url"), false);
     assert.equal(redirectUrl.searchParams.has("page_path"), false);
 
-    const compactContext = JSON.parse(redirectUrl.searchParams.get("ctx") ?? "null") as TrackingContext;
+    const compactContext = JSON.parse(
+        decodeWhatsappRedirectQueryValue(redirectUrl.searchParams.get("ctx") ?? "null"),
+    ) as TrackingContext;
+    assert.equal(Object.hasOwn(compactContext, "l"), false);
+    assert.equal(Object.hasOwn(compactContext, "h"), false);
     const transportedContext = expandWhatsappTrackingContext(compactContext) as TrackingContext;
     assert.deepEqual(transportedContext.consent, { analytics: true, marketing: true });
     assert.deepEqual(transportedContext.params, trackingContext.params);
@@ -130,6 +140,25 @@ test("campaign-rich Contact redirect keeps consent and matching context within a
     assert.equal(transportedContext.landingUrl, trackingContext.landingUrl);
     assert.deepEqual(transportedContext.firstTouch, trackingContext.firstTouch);
     assert.deepEqual(transportedContext.lastTouch, trackingContext.lastTouch);
+
+    const onceNormalizedUrl = new URL(
+        decodeURIComponent(href),
+        "https://espacofacial.com",
+    );
+    assert.equal(
+        decodeWhatsappRedirectQueryValue(onceNormalizedUrl.searchParams.get("dest") ?? ""),
+        "https://api.whatsapp.com/send?phone=5551980882293",
+    );
+    assert.deepEqual(
+        expandWhatsappTrackingContext(
+            JSON.parse(
+                decodeWhatsappRedirectQueryValue(
+                    onceNormalizedUrl.searchParams.get("ctx") ?? "null",
+                ),
+            ),
+        ),
+        trackingContext,
+    );
 
     for (const prize of CADASTRO_WHEEL_PRIZES) {
         const prizeHref = buildWhatsappRedirectHref({
@@ -188,10 +217,19 @@ test("buildWhatsappRedirectHref keeps internal correlation without ctx when the 
     assert.ok(href);
     assert.ok(href.startsWith("/api/whatsapp/redirect?"));
     const fallbackUrl = new URL(href, "https://espacofacial.com");
-    assert.equal(fallbackUrl.searchParams.get("dest"), destination);
+    assert.equal(
+        decodeWhatsappRedirectQueryValue(fallbackUrl.searchParams.get("dest") ?? ""),
+        destination,
+    );
     assert.equal(fallbackUrl.searchParams.get("event_id"), "contact_transport_fallback");
-    assert.equal(fallbackUrl.searchParams.get("page_url"), pageUrl);
-    assert.equal(fallbackUrl.searchParams.get("page_path"), pagePath);
+    assert.equal(
+        decodeWhatsappRedirectQueryValue(fallbackUrl.searchParams.get("page_url") ?? ""),
+        pageUrl,
+    );
+    assert.equal(
+        decodeWhatsappRedirectQueryValue(fallbackUrl.searchParams.get("page_path") ?? ""),
+        pagePath,
+    );
     assert.equal(fallbackUrl.searchParams.has("ctx"), false);
     assert.ok(href.length <= 2_000);
 });

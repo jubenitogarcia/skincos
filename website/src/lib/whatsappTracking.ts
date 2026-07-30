@@ -16,6 +16,27 @@ export type WhatsappTrackingPayload = {
 
 const WHATSAPP_HOSTS = new Set(["wa.me", "api.whatsapp.com", "chat.whatsapp.com"]);
 const MAX_WHATSAPP_REDIRECT_HREF_LENGTH = 2_000;
+const OPAQUE_QUERY_VALUE_PREFIX = "u1.";
+
+export function encodeWhatsappRedirectQueryValue(value: string): string {
+    return `${OPAQUE_QUERY_VALUE_PREFIX}${encodeURIComponent(value)}`;
+}
+
+export function decodeWhatsappRedirectQueryValue(value: string): string {
+    if (!value.startsWith(OPAQUE_QUERY_VALUE_PREFIX)) return value;
+
+    const payload = value.slice(OPAQUE_QUERY_VALUE_PREFIX.length);
+    // Cloudflare/OpenNext may normalize the outer query once before the route
+    // constructs request.url. In that case the protected value is already
+    // decoded, while direct/local requests still carry the encoded payload.
+    if (/^(?:https?:\/\/|\/|\{|\[)/i.test(payload)) return payload;
+
+    try {
+        return decodeURIComponent(payload);
+    } catch {
+        return payload;
+    }
+}
 
 function normalizeUrl(value: string | null | undefined): string | null {
     const trimmed = (value ?? "").trim();
@@ -45,8 +66,8 @@ type CompactTrackingContextV1 = {
     i: 0 | string | null;
     b: string | null;
     f: string | null;
-    l: CompactValueReference;
-    h: CompactValueReference;
+    l?: CompactValueReference;
+    h?: CompactValueReference;
     a: CompactAttributionTouchV1 | null;
     z: CompactAttributionTouchV1 | null;
 };
@@ -97,6 +118,8 @@ function compactTouch(
 }
 
 function compactTrackingContext(context: TrackingContext): CompactTrackingContextV1 {
+    const landingUrl = compactValue(context.landingUrl, context.pageUrl);
+    const landingPath = compactValue(context.landingPath, context.pagePath);
     return {
         v: 1,
         c: context.capturedAtMs,
@@ -108,8 +131,11 @@ function compactTrackingContext(context: TrackingContext): CompactTrackingContex
         i: context.fbclid === context.params.fbclid ? 0 : context.fbclid,
         b: context.fbp,
         f: context.fbc,
-        l: compactValue(context.landingUrl, context.pageUrl),
-        h: compactValue(context.landingPath, context.pagePath),
+        // Zero means "same as the primary value". Omitting these two zero
+        // aliases keeps the query envelope canonical and avoids redundant
+        // numeric fields in the production redirect transport.
+        l: landingUrl === 0 ? undefined : landingUrl,
+        h: landingPath === 0 ? undefined : landingPath,
         // The compact tuple preserves each touch's own URL/path and identifiers.
         // References 0/1 avoid repeating the top-level first/current values.
         a: compactTouch(context.firstTouch, context),
@@ -133,8 +159,8 @@ export function expandWhatsappTrackingContext(raw: unknown): unknown {
         if (value === 1) return secondary;
         return value;
     };
-    const landingUrl = expandValue(context.l ?? null, pageUrl);
-    const landingPath = expandValue(context.h ?? null, pagePath);
+    const landingUrl = expandValue(context.l ?? 0, pageUrl);
+    const landingPath = expandValue(context.h ?? 0, pagePath);
     const fbclid = context.i === 0 ? context.q?.fbclid ?? null : context.i ?? null;
     const expandTouch = (
         touch: CompactAttributionTouchV1 | null | undefined,
@@ -216,7 +242,7 @@ export function buildWhatsappRedirectHref(params: {
     if (!isSupportedWhatsappUrl(destinationUrl)) return null;
 
     const url = new URL("/api/whatsapp/redirect", "https://espacofacial.com");
-    url.searchParams.set("dest", destinationUrl);
+    url.searchParams.set("dest", encodeWhatsappRedirectQueryValue(destinationUrl));
 
     const tracking = params.tracking;
     if (tracking?.eventId) url.searchParams.set("event_id", tracking.eventId);
@@ -224,11 +250,20 @@ export function buildWhatsappRedirectHref(params: {
     if (tracking?.unitSlug) url.searchParams.set("unit_slug", tracking.unitSlug);
     if (tracking?.doctorName) url.searchParams.set("doctor_name", tracking.doctorName);
     if (tracking?.source) url.searchParams.set("source", tracking.source);
-    if (tracking?.pageUrl && !tracking.trackingContext) url.searchParams.set("page_url", tracking.pageUrl);
-    if (tracking?.pagePath && !tracking.trackingContext) url.searchParams.set("page_path", tracking.pagePath);
+    if (tracking?.pageUrl && !tracking.trackingContext) {
+        url.searchParams.set("page_url", encodeWhatsappRedirectQueryValue(tracking.pageUrl));
+    }
+    if (tracking?.pagePath && !tracking.trackingContext) {
+        url.searchParams.set("page_path", encodeWhatsappRedirectQueryValue(tracking.pagePath));
+    }
     if (tracking?.bookingId) url.searchParams.set("booking_id", tracking.bookingId);
     if (tracking?.trackingContext) {
-        url.searchParams.set("ctx", JSON.stringify(compactTrackingContext(tracking.trackingContext)));
+        url.searchParams.set(
+            "ctx",
+            encodeWhatsappRedirectQueryValue(
+                JSON.stringify(compactTrackingContext(tracking.trackingContext)),
+            ),
+        );
     }
 
     const redirectHref = `${url.pathname}${url.search}`;
@@ -240,8 +275,12 @@ export function buildWhatsappRedirectHref(params: {
     // attribution envelope is too large to transport reliably. Without ctx,
     // server-side CAPI remains fail-closed.
     url.searchParams.delete("ctx");
-    if (tracking?.pageUrl) url.searchParams.set("page_url", tracking.pageUrl);
-    if (tracking?.pagePath) url.searchParams.set("page_path", tracking.pagePath);
+    if (tracking?.pageUrl) {
+        url.searchParams.set("page_url", encodeWhatsappRedirectQueryValue(tracking.pageUrl));
+    }
+    if (tracking?.pagePath) {
+        url.searchParams.set("page_path", encodeWhatsappRedirectQueryValue(tracking.pagePath));
+    }
     const correlatedFallbackHref = `${url.pathname}${url.search}`;
     if (correlatedFallbackHref.length <= MAX_WHATSAPP_REDIRECT_HREF_LENGTH) {
         return correlatedFallbackHref;
