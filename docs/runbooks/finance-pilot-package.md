@@ -19,6 +19,25 @@ listas vazias ou herança administrativa.
 - a ativação somente poderá ocorrer depois da aprovação nominal registrada na
   seção final.
 
+## Revalidação de recovery — 2026-07-30
+
+O gate de restore PostgreSQL offsite foi fechado pelo drill privado sanitizado
+`20260729T2255Z-postgresql-fresh`: download autenticado fresco de 90,908,667
+bytes do Google Drive separado, hash do ciphertext e HMAC compatíveis com o
+manifesto, restore PostgreSQL 16.14 em scratch em 55.43 s, 58 tabelas, zero
+FKs não validadas e checks funcionais. Plaintext e scratch foram destruídos.
+Isso não ativa o módulo nem preenche campos humanos: `module_enabled=false`,
+grants reais e produção permanecem inalterados.
+
+As evidências atuais de staging são o SHA único
+`c277032db96ba96484522a19994a66cbb323a46d`, os runs
+`30500613099`, `30500694945`, `30500696857`, `30500698417`,
+`30500732310`, `30500734160`, `30500735957` e o canary autenticado
+`30500922386` (p95 426 ms, sem threshold breach). Rollback, kill switch,
+monitor externo e alerta humano também estão evidenciados. O pacote continua
+pendente exclusivamente de aprovação nominal e de provisionamento produtivo
+separadamente autorizado.
+
 ## Reavaliação após rollback e restore do SHA atual — 2026-07-25
 
 O SHA candidato exercitado a partir da main foi

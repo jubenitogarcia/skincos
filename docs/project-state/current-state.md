@@ -1,5 +1,23 @@
 # Current state
 
+## Finance — fresh PostgreSQL offsite restore proven; pilot still disabled — 2026-07-30T00:13Z
+
+The private, sanitised drill `20260729T2255Z-postgresql-fresh` completed a
+fresh authenticated retrieval of the 90,908,667-byte PostgreSQL ciphertext
+from the provider-separated Google Drive vault. Its ciphertext SHA-256
+`fe11d31fbf0d0ef9d8f78dcc4bff31bb3b2621fc9a92779dc5e018283e884f4a` matches
+the offsite manifest; HMAC verification and plaintext-manifest comparison
+passed. PostgreSQL 16.14 was restored only in isolated scratch in 55.43 s,
+with 58 tables, zero unvalidated foreign keys and sanitised logical checksum
+evidence. Plaintext and scratch were destroyed; production was untouched.
+
+This closes the fresh offsite PostgreSQL recovery gate that remained open after
+the current-main Finance staging canary. Finance remains `experimental` and
+disabled: no production Worker, D1, KV, UI project, grant, cohort or
+`module_enabled` change exists. The next permitted action is to present the
+already-versioned pilot package for named human approval; production
+provisioning remains a separate explicit authorization.
+
 ## Inventory production provenance and Identity PII custody correction — 2026-07-30T00:13Z
 
 Fresh read-only reconciliation used `origin/main`

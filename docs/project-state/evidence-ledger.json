@@ -3,6 +3,17 @@
   "entries": [
     {
       "observed_at": "2026-07-30T00:13:34Z",
+      "surface": "private-google-drive-offsite-vault-and-isolated-postgresql-scratch",
+      "scope": "Finance fresh offsite PostgreSQL recovery gate",
+      "state": "proven-fresh-provider-retrieval-and-scratch-restore",
+      "method": "Inspected the private sanitised drill record and independently recomputed the local ciphertext SHA-256; no key, plaintext, provider credential or database record was read into the repository.",
+      "result": "Drill 20260729T2255Z-postgresql-fresh freshly retrieved 90,908,667 ciphertext bytes from the provider-separated Google Drive vault. Ciphertext SHA-256 fe11d31fbf0d0ef9d8f78dcc4bff31bb3b2621fc9a92779dc5e018283e884f4a matched the offsite manifest; HMAC and plaintext-manifest validation passed. PostgreSQL 16.14 restored in isolated scratch in 55.43 seconds with 58 tables, zero unvalidated foreign keys and sanitised logical checksum evidence. Plaintext and scratch were destroyed; production was untouched.",
+      "limitation": "This closes only the Finance offsite PostgreSQL recovery gate. Finance remains experimental and disabled; named pilot approval and separately authorised production Worker/D1/KV/UI provisioning remain required.",
+      "sha": "309172306369cd8f3d9f1d2b0a6325185f830aa4",
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\offsite-recovery\\20260729T2255Z-postgresql-fresh\\restore-evidence.sanitized.json"
+    },
+    {
+      "observed_at": "2026-07-30T00:13:34Z",
       "surface": "origin-main-github-actions-cloudflare-worker-pages-d1-and-live-http",
       "scope": "Inventory production provenance and IDENTITY_PII_KEY custody correction",
       "state": "production-release-reconciled-key-custody-blocked",
