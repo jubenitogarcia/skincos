@@ -9,7 +9,7 @@ preview_urls = false
 binding = "CF_VERSION_METADATA"
 
 [secrets]
-required = ["IDENTITY_WORKFORCE_HMAC_KEY"]
+required = ["IDENTITY_WORKFORCE_HMAC_KEY", "SESSION_SECRET"]
 
 [triggers]
 crons = ["0 * * * *"]
@@ -58,7 +58,7 @@ preview_urls = false
 binding = "CF_VERSION_METADATA"
 
 [env.staging.secrets]
-required = ["IDENTITY_WORKFORCE_HMAC_KEY"]
+required = ["IDENTITY_WORKFORCE_HMAC_KEY", "SESSION_SECRET"]
 
 [[env.staging.durable_objects.bindings]]
 name = "RATE_LIMITER"

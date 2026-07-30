@@ -1,4 +1,5 @@
 import { createGatewayHandler } from '../src/router.js';
+import { prepareTimekeepingRequest } from '../src/gateway.js';
 import { fetchBoundService } from '../../shared/service-adapters/cloudflare-service-binding.js';
 
 const invalidConfiguration = () => new Response(
@@ -26,7 +27,12 @@ const handlePontoCoreRequest = createGatewayHandler({
             },
         },
     ),
-    timekeepingHandler: (request, env) => fetchBoundService(request, env, 'TIMEKEEPING', { timeoutMs: 800 }),
+    timekeepingHandler: (request, env) => fetchBoundService(
+        prepareTimekeepingRequest(request, env),
+        env,
+        'TIMEKEEPING',
+        { timeoutMs: 800 },
+    ),
 });
 
 export default {

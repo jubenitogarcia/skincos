@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param()
 
+# WSL_BOUNDARY_EXCEPTION: validates the identity contract of the approved
+# Windows keepalive process; it is not an application launcher.
 $ErrorActionPreference = "Stop"
 $launcher = Join-Path $PSScriptRoot "start-wsl-runtime-keepalive.ps1"
 $content = Get-Content -LiteralPath $launcher -Raw

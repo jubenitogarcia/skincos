@@ -185,10 +185,8 @@ test("workflow checks both live surfaces before mutation and retains both pilot 
   assert.match(workflow, /Resolve incumbent Identity version before pilot[\s\S]*baseline_identity_deployment_id[\s\S]*pilot-baseline[\s\S]*identityWorkforce/);
   assert.match(workflow, /ponto-live-deployment-precondition\.mjs[\s\S]*coreApi/);
   assert.match(workflow, /ponto-live-deployment-precondition\.mjs[\s\S]*identityWorkforce/);
-  assert.match(workflow, /format\('ponto-child-core-\{0\}-\{1\}', inputs\.unit, inputs\.orchestrator_run_id\)/);
-  assert.match(workflow, /\|\| 'ponto-release-custody'/);
-  assert.doesNotMatch(workflow, /ponto-(?:staging|production)-release-custody/);
-  assert.match(workflow, /format\('deploy-core-worker-\{0\}-preview', inputs\.unit\)/);
+  assert.match(workflow, /concurrency:\s*\n\s*group:\s*ponto-surface-mutation\s*\n\s*cancel-in-progress:\s*false/);
+  assert.doesNotMatch(workflow, /ponto-(?:child-core|release-custody|staging-release-custody|production-release-custody)|deploy-core-worker-\{0\}-preview/);
 });
 
 test("Timekeeping candidate upload requires both root secrets in the selected environment without repository fallback", () => {

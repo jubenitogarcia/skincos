@@ -1,5 +1,5 @@
 name: Timekeeping authenticated staging journey
-run-name: Timekeeping staging journey ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
+run-name: Timekeeping staging journey ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }} nonce=${{ inputs.orchestrator_nonce }}
 
 on:
   workflow_dispatch:
@@ -40,17 +40,21 @@ on:
         description: Ponto coordinator correlation ID
         required: false
         type: string
-      orchestrator_lease_token:
-        description: Masked single-use capability issued by the Ponto coordinator
-        required: false
-        type: string
       orchestrator_stage:
         description: Exact stage of the issuing Ponto coordinator
         required: false
         type: string
+      orchestrator_issuer_run_id:
+        description: Exact direct issuer run
+        required: false
+        type: string
+      orchestrator_nonce:
+        description: Non-secret per-dispatch correlation nonce
+        required: false
+        type: string
 
 concurrency:
-  group: timekeeping-staging-journey-${{ inputs.release_sha }}
+  group: ponto-surface-mutation
   cancel-in-progress: false
 
 permissions:
@@ -60,20 +64,23 @@ permissions:
 jobs:
   coordination:
     permissions:
-      actions: write
+      actions: read
+      checks: write
       contents: read
+      deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     with:
       required: true
       lease_key: staging-journey
       stage: ${{ inputs.orchestrator_stage }}
+      target: staging
       release_sha: ${{ inputs.release_sha }}
       orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
-      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
 
   journey:
     name: synthetic authenticated CONSULTOR journey
     needs: coordination
+    if: ${{ github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 30
@@ -81,6 +88,11 @@ jobs:
       STAGING_CORE_D1_DATABASE: skincos-db-staging
       STAGING_TIMEKEEPING_D1_DATABASE: skincos-timekeeping-staging
     steps:
+      - name: Checkout smoke harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 1
       - name: Validate immutable source and matching staging evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,12 +115,6 @@ jobs:
           for evidence in "$RUNNER_TEMP/promotion-evidence/timekeeping/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/core-api/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/identity/promotion-evidence.json" "$RUNNER_TEMP/promotion-evidence/crm-pages/promotion-evidence.json"; do
             node -e "const e=require(process.argv[1]); if(e.sourceSha!==process.env.RELEASE_SHA||e.target!=='staging') process.exit(1)" "$evidence"
           done
-
-      - name: Checkout smoke harness
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.release_sha }}
-          fetch-depth: 1
 
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -134,6 +140,18 @@ jobs:
           set -euo pipefail
           node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action provision --run-id "$GITHUB_RUN_ID" --fixtures "$FIXTURES" --core-sql "$CORE_SQL" --timekeeping-sql "$TIMEKEEPING_SQL"
 
+      - name: Revalidate the exact active coordinator before staging journey secrets or mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORCHESTRATOR_STAGE: ${{ inputs.orchestrator_stage }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/ponto-orchestrator-lease.mjs assert-active \
+            "$ORCHESTRATOR_STAGE" \
+            "$RELEASE_SHA" \
+            "$ORCHESTRATOR_RUN_ID"
       - name: Provision only run-scoped synthetic staging records
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

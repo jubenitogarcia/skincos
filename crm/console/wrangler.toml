@@ -3,6 +3,13 @@ name = "skincos"
 pages_build_output_dir = "dist"
 compatibility_date = "2026-01-13"
 
+[secrets]
+required = [
+  "PONTO_ACTOR_HMAC_KEY",
+  "PONTO_NETWORK_CONTEXT_KEY",
+  "PONTO_RELEASE_PROBE_HMAC_KEY",
+]
+
 [[env.production.r2_buckets]]
 binding = "SHARE_BUCKET"
 bucket_name = "skincos-share"

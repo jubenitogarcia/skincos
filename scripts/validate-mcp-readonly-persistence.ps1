@@ -3,6 +3,8 @@ param(
     [switch]$SkipShutdown
 )
 
+# WSL_BOUNDARY_EXCEPTION: this resilience test deliberately shuts down the WSL
+# VM and verifies the official Windows keepalive recovery path end to end.
 $ErrorActionPreference = 'Stop'
 $evidenceRoot = Join-Path $env:LOCALAPPDATA 'Codex\skincos'
 New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
