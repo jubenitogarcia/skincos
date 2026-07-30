@@ -57,6 +57,22 @@ Pages run `30420793906`, checkpoint artifact `8711811875`, and sanitized
 synthetic positive/negative unit-scope smokes. Retain rollback evidence, but
 do not reopen this item without a new production symptom.
 
+## P1 — Identity PII key custody
+
+The active production `IDENTITY_PII_KEY` is used by the Inventory onboarding
+writer and Identity recovery reader. The 2026-07-30 read-only aggregate query
+found three onboarding rows with encrypted personal email and phone fields and
+one encrypted invite token. GitHub and the active Worker attest the secret
+name, but do not prove an external escrow reference, recovery custodian or
+rotation record. The current key must therefore not be generated, copied,
+replaced or rotated.
+
+**Responsible:** authorized Identity security owner. **Required action:**
+register the private escrow/custody reference and approve a dual-key
+re-encryption plus rollback procedure before any key lifecycle operation.
+This is a recovery-assurance blocker only; it does not reopen the resolved
+Insumos P0 or authorize a deployment.
+
 ## Finance — current-main staging gate closed; recovery gate remains
 
 The immutable candidate, Finance Worker, independent Finance UI and CRM Pages
@@ -79,14 +95,14 @@ valid for their tested capabilities. External observability remains complete as
 infrastructure, with its live Run-key monitor, dashboard, 30-day retention and
 recorded human-alert drill.
 
-## Finance — offsite PostgreSQL recovery remains blocked
+## Resolved Finance gate — offsite PostgreSQL recovery
 
-The D1 offsite restore and fresh runtime-config retrieval are valid, but a
-fresh provider-vault retrieval and scratch restoration of the large PostgreSQL
-object is still unproven. The provider connector exceeded its IPC limit and the
-alternate path was unauthorized. An authorized streaming/provider identity is
-required; do not relabel manifest-matched local ciphertext as an offsite
-restore.
+Drill `20260729T2255Z-postgresql-fresh` freshly retrieved the 90,908,667-byte
+PostgreSQL ciphertext from the provider-separated Google Drive vault,
+validated its manifest hash and HMAC, restored it in isolated PostgreSQL 16.14
+scratch in 55.43 s and destroyed both plaintext and scratch. No production
+resource or Finance setting changed. The historical connector/authorization
+failure is retained as context, but is not a current recovery blocker.
 
 ## Finance — production is not provisioned
 
@@ -103,6 +119,6 @@ production authorization and precedes any production/pilot activation.
 ## Pilot decision
 
 `module_enabled` is false and no production actor, grant, flag, secret or data
-may change. A named pilot approval is meaningful only after the current-main
-single-SHA staging journey and the offsite PostgreSQL recovery gate are both
-closed.
+may change. The current-main single-SHA staging journey and the offsite
+PostgreSQL recovery gate are closed. A named pilot approval and a separately
+authorized production foundation remain required before activation.

@@ -12,5 +12,6 @@ if (!Number.isInteger(policy.cohort?.percentage) || policy.cohort.percentage < 1
 for (const key of ['minimumSamples', 'errors', 'p95LatencyMs', 'authenticationFailures', 'journeyFailures', 'dataDivergences', 'auditFailures', 'dependencyFailures']) {
   if (!Number.isFinite(Number(policy.limits?.[key])) || Number(policy.limits[key]) < 0) fail(`limits.${key} must be non-negative`);
 }
+if (!Number.isInteger(policy.limits.minimumSamples) || policy.limits.minimumSamples < 20) fail('limits.minimumSamples must preserve a representative p95 sample');
 if (policy.abort?.state !== 'disabled' || policy.abort?.moduleEnabled !== false) fail('abort must disable the module and module_enabled');
 console.log(`Validated Finance synthetic canary policy for ${policy.cohort.pilotActors[0]}.`);

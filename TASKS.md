@@ -11,6 +11,16 @@
   de Atendimento também foi aprovada. Débitos de outros módulos seguem
   independentes deste P0.
 
+## P1 — custódia de `IDENTITY_PII_KEY`
+
+- [ ] Registrar, fora do repositório, o owner autorizado, a referência de
+  escrow e o procedimento de recuperação/rotação dual-key da chave ativa de
+  PII de onboarding. A reconciliação somente leitura de 2026-07-30 confirmou
+  três payloads de email, três de telefone e um token de convite cifrados no
+  D1 produtivo. Não gerar, copiar, substituir ou rotacionar a chave enquanto
+  essa evidência e o procedimento de recriptografia/rollback não existirem.
+  Isto não reabre o P0 de Insumos nem autoriza deploy.
+
 ## Finance — authoritative reconciliation follow-up (2026-07-29)
 
 - [x] Confirm continuous external observability, a controlled human-alert
@@ -21,9 +31,12 @@
   preview/staging paths. The synthetic authenticated import/UI canary passed in
   run `30500922386` with zero threshold breaches; the workflow restored the
   non-enabled staging baseline and synthetic grant.
-- [ ] Obtain an authorized streaming/provider path for fresh PostgreSQL
-  offsite retrieval, verify integrity, and perform the isolated scratch
-  restore. D1/runtime-config evidence does not close this PostgreSQL gate.
+- [x] Obtain a fresh provider-separated PostgreSQL ciphertext, verify
+  integrity and restore it in isolated scratch. Drill
+  `20260729T2255Z-postgresql-fresh` downloaded 90,908,667 bytes from the
+  private Google Drive vault, matched the offsite manifest, verified HMAC and
+  restored PostgreSQL 16.14 in 55.43 s; plaintext and scratch were destroyed.
+  This closes the recovery gate without activating Finance.
 - [ ] Keep Finance `experimental`; do not enable the module, change grants or
   start a production pilot until the two preceding gates and named pilot
   approval are recorded.

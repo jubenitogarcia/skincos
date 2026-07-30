@@ -1,5 +1,57 @@
 # Current state
 
+## Finance — fresh PostgreSQL offsite restore proven; pilot still disabled — 2026-07-30T00:13Z
+
+The private, sanitised drill `20260729T2255Z-postgresql-fresh` completed a
+fresh authenticated retrieval of the 90,908,667-byte PostgreSQL ciphertext
+from the provider-separated Google Drive vault. Its ciphertext SHA-256
+`fe11d31fbf0d0ef9d8f78dcc4bff31bb3b2621fc9a92779dc5e018283e884f4a` matches
+the offsite manifest; HMAC verification and plaintext-manifest comparison
+passed. PostgreSQL 16.14 was restored only in isolated scratch in 55.43 s,
+with 58 tables, zero unvalidated foreign keys and sanitised logical checksum
+evidence. Plaintext and scratch were destroyed; production was untouched.
+
+This closes the fresh offsite PostgreSQL recovery gate that remained open after
+the current-main Finance staging canary. Finance remains `experimental` and
+disabled: no production Worker, D1, KV, UI project, grant, cohort or
+`module_enabled` change exists. The next permitted action is to present the
+already-versioned pilot package for named human approval; production
+provisioning remains a separate explicit authorization.
+
+## Inventory production provenance and Identity PII custody correction — 2026-07-30T00:13Z
+
+Fresh read-only reconciliation used `origin/main`
+`3868c79ac3bfb9fd98f8bf90be16648e35728c59`, GitHub Actions, Cloudflare
+metadata and aggregate D1 queries. PR #787 is documentation/queue-only. The
+current Inventory release is instead the immutable
+`RELEASE_SHA` `f30f66e70e0dc949adde5120378509a1c95fe557`: canonical production
+Core Worker run `30420719000` and CRM Pages run `30420793906` both received
+that explicit input, verified the staging predecessor and checked out that
+exact commit. Their workflow revision was `2f0bba6…`, but the intervening
+delta changes neither `inventory`, `identity` nor `crm/console`; it is not a
+second product artifact.
+
+The currently serving Inventory deployment is Cloudflare deployment
+`4bb6a932-05ba-44a9-aea3-5f139b31abca`; active CRM Pages deployment
+`a77cf500-f272-4d37-87c2-c02f78352c4e` declares source `f30f66e…`. Inventory
+health remains `200`/`ready=true`, CRM health remains `200`, and the remote
+D1 migration journal reports no migrations to apply. The resolved Insumos P0
+therefore remains closed; this audit did not dispatch a workflow or mutate a
+secret, flag, user, grant or business record.
+
+This audit corrects the obsolete zero-payload assertion in older historical
+sections below. Aggregate, read-only production D1 evidence now finds three
+onboarding rows, three encrypted personal-email values, three encrypted phone
+values and one encrypted invite token. `IDENTITY_PII_KEY` exists by name in
+both GitHub environments and on the active Inventory Worker; its value was not
+read. Inventory encrypts and Identity decrypts a shared SHA-256-derived
+AES-GCM key with a random 12-byte IV and the `v1.<iv>.<ciphertext>` contract.
+Custody remains **case 5**: no external escrow/custodian or rotation record is
+currently evidenced. Do not generate, replace, copy or rotate the key. An
+authorized Identity security owner must first register the external recovery
+reference and a dual-key re-encryption/rollback procedure. This blocks key
+rotation and recovery assurance, not the already-resolved Insumos release.
+
 ## Finance — current-main staging lineage and canary passed — 2026-07-29T23:54Z
 
 `origin/main` `c277032db96ba96484522a19994a66cbb323a46d` is the current

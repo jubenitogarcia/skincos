@@ -84,6 +84,6 @@ test('a transient Finance bootstrap failure retries without exposing Finance bef
   })
   await page.goto('/?module=finance')
 
+  await expect.poll(() => attempts, { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
   await expect(page.getByRole('button', { name: 'Financeiro' })).toBeVisible({ timeout: 30_000 })
-  await expect.poll(() => attempts).toBeGreaterThanOrEqual(2)
 })

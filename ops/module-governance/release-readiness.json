@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "assessedAt": "2026-07-23",
+  "assessedAt": "2026-07-30T00:13:34Z",
   "assessmentRule": "A live endpoint, historical deployment, or local test alone does not make a module releasable. A module is released only when its catalog maturity and reviewed promotion evidence satisfy the target gate.",
   "enterpriseGate": ["explicit feature flag defaulting to off", "least-privilege pilot group", "non-production or approved seed data", "operator training and named support channel", "safe manual fallback", "measurable success criteria", "tested rapid rollback", "backup, restore and independent monitoring evidence"],
   "classification": [
@@ -8,7 +8,7 @@
     { "id": "api", "currentUse": "Production gateway health returned 200 on 2026-07-23", "decision": "hold", "reason": "Core transport, not a separately releasable product capability; deployed health contract is legacy." },
     { "id": "booking", "currentUse": "Public booking paths are registered", "decision": "hold", "reason": "No approved pilot flag or restore evidence." },
     { "id": "crm", "currentUse": "CRM console returned 200 on 2026-07-23", "decision": "hold", "reason": "Console health returned HTML, so API readiness and independent monitoring are not evidenced." },
-    { "id": "finance", "currentUse": "Current-main SHA c277032db96ba96484522a19994a66cbb323a46d passed canonical preview/staging and synthetic authenticated import/UI canary on 2026-07-29; the module remains disabled with no production grants.", "decision": "blocked-offsite-postgresql-recovery", "reason": "Current staging journey, bounded transient-analyze retry, external monitor, rollback, kill switch and Finance D1/KV scratch restore are evidenced. A fresh provider-separated PostgreSQL retrieval and isolated scratch restore, then named approval and separately authorized production provisioning, remain required." },
+    { "id": "finance", "currentUse": "Current-main SHA c277032db96ba96484522a19994a66cbb323a46d passed canonical preview/staging and synthetic authenticated import/UI canary on 2026-07-29; fresh provider-separated PostgreSQL drill 20260729T2255Z-postgresql-fresh restored scratch successfully; the module remains disabled with no production grants.", "decision": "blocked-named-pilot-approval-and-production-provisioning", "reason": "Current staging journey, bounded transient-analyze retry, external monitor, rollback, kill switch, Finance D1/KV scratch restore and fresh PostgreSQL offsite restore are evidenced. Named approval and separately authorized production foundation provisioning remain required." },
     { "id": "identity", "currentUse": "Compatibility authentication path remains in use", "decision": "hold", "reason": "Identity is not independently deployed and must not be released as a new service until its cutover gate is complete." },
     { "id": "integration", "currentUse": "Operator-managed connector executors", "decision": "hold", "reason": "Provider-specific release controls and recovery evidence are incomplete." },
     { "id": "inventory", "currentUse": "Production health returned 200 on 2026-07-23", "decision": "candidate-after-finance", "reason": "No disabled-by-default Inventory module flag, independent restore drill or external monitor evidence." },
