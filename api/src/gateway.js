@@ -6,14 +6,15 @@ import { createSignedDomainContext } from '../../shared/service-adapters/signed-
 const gatewayError = (status, error) => new Response(JSON.stringify({ ok: false, error }), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const isOperationalProbe = (request) => request.method === 'GET' && ['/health', '/readiness'].includes(new URL(request.url).pathname);
 const FINANCE_PROBE_TIMEOUT_MS = 3_000;
-const FINANCE_OPERATION_TIMEOUT_MS = 3_000;
+const FINANCE_READ_TIMEOUT_MS = 3_000;
+const FINANCE_WRITE_TIMEOUT_MS = 5_000;
 
-function financeServiceTimeout() {
-    // Finance mutations carry mandatory idempotency keys. Give reads and
-    // writes a bounded cold-start window so a completed operation is not
-    // converted into a fabricated gateway 503. The dependency still fails
-    // closed after three seconds or on a real upstream 5xx.
-    return FINANCE_OPERATION_TIMEOUT_MS;
+function financeServiceTimeout(request) {
+    // State-changing Finance routes carry mandatory idempotency keys. Give
+    // write methods a wider, still-bounded D1 cold-start window so a committed
+    // operation is not converted into a fabricated gateway 503. Reads retain
+    // the tighter deadline and every real upstream 5xx still fails closed.
+    return ['GET', 'HEAD'].includes(request.method) ? FINANCE_READ_TIMEOUT_MS : FINANCE_WRITE_TIMEOUT_MS;
 }
 
 export async function forwardFinanceProbe(request, env) {

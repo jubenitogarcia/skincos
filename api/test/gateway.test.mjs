@@ -191,11 +191,29 @@ test('Finance operations preserve slow successful binding responses but stay bou
   assert.equal(write.status, 200);
 
   resetBoundServiceResilienceForTest();
+  const timedOutRead = await forwardFinanceToService(new Request('https://api.skincos.com.br/audit?scopeId=finance-scope-novo-hamburgo', {
+    headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-read-bounded-timeout' },
+  }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 3_100)); return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
+  assert.equal(timedOutRead.status, 503);
+
+  resetBoundServiceResilienceForTest();
+  const coldWrite = await forwardFinanceToService(new Request('https://api.skincos.com.br/tags?scopeId=finance-scope-novo-hamburgo', {
+    method: 'POST', headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-write-cold-start' },
+  }), {
+    FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 3_100)); return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }); } },
+  }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
+  assert.equal(coldWrite.status, 200);
+
+  resetBoundServiceResilienceForTest();
   const timedOut = await forwardFinanceToService(new Request('https://api.skincos.com.br/tags?scopeId=finance-scope-novo-hamburgo', {
     method: 'POST', headers: { cookie: 'session=private', 'x-csrf-token': 'csrf-ok', 'x-request-id': 'finance-write-bounded-timeout' },
   }), {
     FINANCE_SERVICE_AUTH_SECRET: 'finance-secret',
-    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 3_100)); return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }); } },
+    FINANCE: { fetch: async () => { await new Promise((resolve) => setTimeout(resolve, 5_100)); return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }); } },
   }, {}, { actor: { username: 'pilot', allowedModules: ['finance'] }, csrf: 'csrf-ok' });
   assert.equal(timedOut.status, 503);
 });
