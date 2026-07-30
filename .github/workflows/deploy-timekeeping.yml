@@ -91,7 +91,6 @@ jobs:
       preview_run_id: ${{ inputs.preview_run_id }}
       staging_run_id: ${{ inputs.staging_run_id }}
       emit_preview_evidence: false
-    secrets: inherit
 
   progressive:
     needs: coordination

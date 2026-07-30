@@ -65,7 +65,6 @@ jobs:
       preview_run_id: ${{ inputs.preview_run_id }}
       staging_run_id: ${{ inputs.staging_run_id }}
       emit_preview_evidence: ${{ !(inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '') }}
-    secrets: inherit
   progressive:
     needs: coordination
     if: ${{ inputs.release_scope == 'ponto' && contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}

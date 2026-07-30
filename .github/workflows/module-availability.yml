@@ -161,6 +161,7 @@ jobs:
           PONTO_PILOT_COHORT_JSON: ${{ inputs.module == 'timekeeping' && inputs.state == 'canary' && secrets.PONTO_PILOT_COHORT_JSON || '' }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_MODULE_HEALTH_URL: ${{ inputs.target == 'production' && 'https://api.skincos.com.br/api/ponto/health' || 'https://api-staging.skincos.com.br/api/ponto/health' }}
         run: |
           set -euo pipefail
           payload="$RUNNER_TEMP/module-control.json"
@@ -284,7 +285,6 @@ jobs:
           if [[ "$MODULE" == timekeeping ]]; then
             PONTO_MODULE_EXPECTATION_FILE="$readback" \
             PONTO_MODULE_PROPAGATION_REPORT="$RUNNER_TEMP/module-transition.json" \
-            PONTO_MODULE_HEALTH_URL="${{ inputs.target == 'production' && 'https://api.skincos.com.br/api/ponto/health' || 'https://api-staging.skincos.com.br/api/ponto/health' }}" \
               node .github/scripts/ponto-module-propagation.mjs
           else
             node - "$readback" "$RUNNER_TEMP/module-transition.json" <<'NODE'
@@ -293,7 +293,7 @@ jobs:
           fs.writeFileSync(process.argv[3], `${JSON.stringify({
             schemaVersion: 1,
             module: process.env.MODULE,
-            environment: "${{ inputs.target }}",
+            environment: process.env.TARGET,
             state: value.state,
             changedAt: value.changedAt,
             passed: true,
