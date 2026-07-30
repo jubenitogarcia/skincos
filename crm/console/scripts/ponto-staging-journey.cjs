@@ -28,9 +28,26 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'))
 if (fixture?.environment !== 'staging' || fixture?.role !== 'CONSULTOR' || JSON.stringify(fixture?.allowedModules) !== JSON.stringify(['atendimento', 'ponto'])) {
   throw new Error('Ponto staging fixture is invalid')
 }
+if (fixture.fixtureId && !/^[a-z][a-z0-9-]{0,31}$/.test(String(fixture.fixtureId))) {
+  throw new Error('Ponto staging fixture label is invalid')
+}
+const fixtureKey = fixture.fixtureId ? `${fixture.runId}-${fixture.fixtureId}` : String(fixture.runId)
 
 const assert = (condition, message) => { if (!condition) throw new Error(message) }
 const safeRequestMeta = (response) => ({ status: response.status, requestIdPresent: Boolean(response.requestId), cfRayPresent: Boolean(response.cfRay) })
+const recordCleanupRequest = (response) => {
+  const requestId = String(response?.requestId || '')
+  assert(/^[A-Za-z0-9._:-]{1,180}$/.test(requestId), 'mutation response omitted a safe cleanup request id')
+  const requestIds = Array.from(new Set([...(fixture.teardownRequestIds || []), requestId]))
+  fixture.teardownRequestIds = requestIds
+  fs.writeFileSync(fixturePath, JSON.stringify(fixture), { mode: 0o600 })
+}
+const recordCleanupEvent = (eventId) => {
+  const value = String(eventId || '')
+  assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value), 'mutation response omitted a safe cleanup event id')
+  fixture.teardownEventIds = Array.from(new Set([...(fixture.teardownEventIds || []), value]))
+  fs.writeFileSync(fixturePath, JSON.stringify(fixture), { mode: 0o600 })
+}
 // The browser stays on the validated staging origin and calls only literal,
 // same-origin routes below.
 const api = async (page, pathname, init = {}) => {
@@ -102,6 +119,10 @@ async function main() {
     const pontoButton = page.getByRole('button', { name: 'Ponto', exact: true }).first()
     await pontoButton.click({ timeout: 20_000 })
     await page.getByText('Meu ponto', { exact: true }).waitFor({ state: 'visible', timeout: 20_000 })
+    const visibleModuleKeys = await page.locator('[data-module-nav="true"]:not([disabled])').evaluateAll((items) =>
+      items.map((item) => String(item.getAttribute('data-module-key') || '').trim()).filter(Boolean).sort(),
+    )
+    assert(JSON.stringify(visibleModuleKeys) === JSON.stringify(['atendimento', 'ponto']), `visible CRM modules drifted (${visibleModuleKeys.join(',')})`)
     for (const label of ['Usuários', 'Insumos', 'Financeiro', 'Clientes', 'Escala']) {
       assert(await page.getByRole('button', { name: label, exact: true }).count() === 0, `unexpected administrative navigation: ${label}`)
     }
@@ -117,25 +138,105 @@ async function main() {
     const before = await api(page, `/api/ponto/me/records?unit=${encodeURIComponent(fixture.unitId)}&limit=20`)
     assert(before.status === 200 && Array.isArray(before.json?.data) && before.json.data.length === 0, 'synthetic employee was not clean before punch')
 
-    const invalidPin = await post(page, '/api/ponto/me/punch', { pin: '000000', unit: fixture.unitId }, `invalid-${fixture.runId}`)
+    const invalidPin = await post(page, '/api/ponto/me/punch', { pin: '000000', unit: fixture.unitId }, `invalid-${fixtureKey}`)
+    recordCleanupRequest(invalidPin)
     assert(invalidPin.status === 401 && invalidPin.json?.error === 'PIN_INVALID', `invalid PIN did not fail closed (${invalidPin.status}/${invalidPin.json?.error || ''})`)
-    const idempotencyKey = `synthetic-punch-${fixture.runId}`
+    const idempotencyKey = `synthetic-punch-${fixtureKey}`
     const occurredAt = new Date().toISOString()
     const punchBody = { pin: fixture.pin, unit: fixture.unitId, occurredAt, requestId: idempotencyKey }
     const punch = await post(page, '/api/ponto/me/punch', punchBody, idempotencyKey)
+    recordCleanupRequest(punch)
     assert(punch.status === 201 && punch.json?.ok === true && punch.json?.data?.id, `PIN punch failed (${punch.status}/${punch.json?.error || ''})`)
+    recordCleanupEvent(punch.json.data.id)
     const retry = await post(page, '/api/ponto/me/punch', punchBody, idempotencyKey)
+    recordCleanupRequest(retry)
     assert(retry.status === 200 && retry.json?.idempotent === true && retry.json?.data?.id === punch.json.data.id, 'punch retry was not idempotent')
-    const forbiddenUnit = await post(page, '/api/ponto/me/punch', { pin: fixture.pin, unit: fixture.forbiddenUnitId }, `forbidden-unit-${fixture.runId}`)
+    const forbiddenUnit = await post(page, '/api/ponto/me/punch', { pin: fixture.pin, unit: fixture.forbiddenUnitId }, `forbidden-unit-${fixtureKey}`)
+    recordCleanupRequest(forbiddenUnit)
     assert(forbiddenUnit.status === 403 && forbiddenUnit.json?.error === 'UNIT_FORBIDDEN', `cross-unit punch did not fail closed (${forbiddenUnit.status}/${forbiddenUnit.json?.error || ''})`)
     const after = await api(page, `/api/ponto/me/records?unit=${encodeURIComponent(fixture.unitId)}&limit=20`)
     assert(after.status === 200 && after.json?.data?.length === 1 && after.json.data[0]?.id === punch.json.data.id, 'idempotent punch created an unexpected ledger count')
-    const correction = await post(page, '/api/ponto/corrections', { eventId: punch.json.data.id, proposedAtUtc: new Date(Date.now() + 60_000).toISOString(), reason: 'Synthetic staging correction' }, `correction-${fixture.runId}`)
+    const correction = await post(page, '/api/ponto/corrections', { eventId: punch.json.data.id, proposedAtUtc: new Date(Date.now() + 60_000).toISOString(), reason: 'Synthetic staging correction' }, `correction-${fixtureKey}`)
+    recordCleanupRequest(correction)
     assert(correction.status === 201 && correction.json?.data?.status === 'PENDING', `correction request failed (${correction.status}/${correction.json?.error || ''})`)
     const corrections = await api(page, '/api/ponto/corrections?status=PENDING')
     assert(corrections.status === 200 && corrections.json?.data?.some((entry) => entry.id === correction.json.data.id && entry.eventId === punch.json.data.id), 'self correction was not visible to CONSULTOR')
     const admin = await api(page, '/api/ponto/admin/employees')
     assert(admin.status === 403 && admin.json?.error === 'FORBIDDEN', `admin Ponto route did not remain server-forbidden (${admin.status}/${admin.json?.error || ''})`)
+
+    // Exercise the deployed Identity candidate's real HMAC v2 create/status
+    // boundary with a separate least-privileged synthetic GESTOR. A SUPERVISOR starts
+    // PENDING_ACCESS, so this proves the saga without issuing an invite or
+    // sending email. Teardown removes its operational rows and preserves both
+    // audit ledgers.
+    let identityOnboarding
+    const adminContext = await browser.newContext({ baseURL: base.origin, viewport: { width: 1280, height: 720 } })
+    const adminPage = await adminContext.newPage()
+    try {
+      await adminPage.goto('/', { waitUntil: 'domcontentloaded', timeout: 60_000 })
+      const adminLogin = await api(adminPage, '/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ email: fixture.adminEmail, password: fixture.adminPassword }),
+      })
+      assert(adminLogin.status === 200, `synthetic GESTOR login failed (${adminLogin.status})`)
+      const adminMe = await api(adminPage, '/api/auth/me')
+      assert(adminMe.status === 200 && String(adminMe.json?.user?.role || '').toUpperCase() === 'GESTOR', 'synthetic onboarding actor is not GESTOR')
+      assert(JSON.stringify(adminMe.json.user.allowedModules || []) === JSON.stringify(['insumos']), 'synthetic onboarding actor module grant drifted')
+      assert(JSON.stringify(adminMe.json.user.allowedUnits || []) === JSON.stringify([fixture.unitId]), 'synthetic onboarding actor unit grant drifted')
+      const onboarding = await post(adminPage, '/api/insumos/admin/onboarding', {
+        fullName: 'Synthetic Ponto Supervisor',
+        corporateEmail: fixture.onboardingCorporateEmail,
+        personalEmail: fixture.onboardingPersonalEmail,
+        mobilePhone: fixture.onboardingPhone,
+        jobTitle: 'supervisor',
+        department: fixture.onboardingDepartment,
+        units: [fixture.unitId],
+      }, `identity-onboarding-${fixtureKey}`)
+      recordCleanupRequest(onboarding)
+      assert(
+        [200, 201].includes(onboarding.status)
+          && onboarding.json?.success === true
+          && onboarding.json?.data?.id === fixture.onboardingId
+          && onboarding.json?.data?.accountStatus === 'PENDING_ACCESS'
+          && onboarding.json?.data?.provisioningState === 'COMPLETED',
+        `synthetic Identity onboarding failed (${onboarding.status}/${onboarding.json?.code || onboarding.json?.error || ''})`,
+      )
+      const deprovision = await post(
+        adminPage,
+        `/api/insumos/admin/onboarding/${encodeURIComponent(fixture.onboardingId)}/status`,
+        { accountStatus: 'TERMINATED' },
+        `identity-status-${fixtureKey}`,
+      )
+      recordCleanupRequest(deprovision)
+      assert(
+        deprovision.status === 200
+          && deprovision.json?.success === true
+          && deprovision.json?.data?.accountStatus === 'TERMINATED',
+        `synthetic Identity status sync failed (${deprovision.status}/${deprovision.json?.code || deprovision.json?.error || ''})`,
+      )
+      const list = await api(adminPage, '/api/insumos/admin/onboarding')
+      assert(
+        list.status === 200
+          && Array.isArray(list.json?.data)
+          && list.json.data.some((entry) => entry.id === fixture.onboardingId && entry.accountStatus === 'TERMINATED'),
+        'synthetic Identity onboarding ledger did not retain the synchronized terminal state',
+      )
+      identityOnboarding = {
+        adminAuth: safeRequestMeta(adminMe),
+        create: safeRequestMeta(onboarding),
+        terminate: safeRequestMeta(deprovision),
+        ledger: safeRequestMeta(list),
+        hmacContract: 'v2',
+        actorRole: 'GESTOR',
+        actorModuleKeys: ['insumos'],
+        actorUnitCount: 1,
+        inviteIssued: false,
+        auditPreserved: true,
+      }
+    } finally {
+      await adminContext.close()
+    }
 
     const report = {
       schemaVersion: 1,
@@ -143,7 +244,12 @@ async function main() {
       origin: base.origin,
       at: new Date().toISOString(),
       role: 'CONSULTOR',
-      navigation: { atendimentoVisible: await page.getByRole('button', { name: 'Atendimento', exact: true }).count() === 1, pontoVisible: true, administrativeNavigationHidden: true },
+      navigation: {
+        atendimentoVisible: await page.getByRole('button', { name: 'Atendimento', exact: true }).count() === 1,
+        pontoVisible: true,
+        administrativeNavigationHidden: true,
+        visibleModuleKeys,
+      },
       journey: {
         auth: safeRequestMeta(authMe),
         me: safeRequestMeta(me),
@@ -156,6 +262,7 @@ async function main() {
         correction: safeRequestMeta(correction),
         adminDenied: safeRequestMeta(admin),
       },
+      identityOnboarding,
       pontoRequests: requests,
       credentialsIncluded: false,
       piiIncluded: false,

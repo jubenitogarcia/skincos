@@ -9,10 +9,31 @@ compatibility_date = "2026-01-13"
 binding = "SHARE_BUCKET"
 bucket_name = "skincos-share-staging"
 
+[[env.production.services]]
+binding = "PONTO_CORE"
+service = "skincos-ponto-core-staging"
+
+[[env.production.services]]
+binding = "PONTO_IDENTITY"
+service = "skincos-insumos-staging"
+
+[[env.production.kv_namespaces]]
+binding = "MODULE_CONTROL"
+id = "e69fe06b6abc46eca4f4c00198d078f2"
+
+[env.production.secrets]
+required = [
+  "PONTO_ACTOR_HMAC_KEY",
+  "PONTO_NETWORK_CONTEXT_KEY",
+  "PONTO_RELEASE_PROBE_HMAC_KEY",
+]
+
 [env.production.vars]
 INSUMOS_API_TARGET = "https://api-staging.skincos.com.br"
 FINANCE_API_TARGET = "https://api-staging.skincos.com.br"
 PONTO_API_TARGET = "https://api-staging.skincos.com.br"
+PONTO_RELEASE_SHA = "__RELEASE_SHA__"
+PONTO_ROLLOUT_STAGE = "maintenance"
 SKINCOS_DEPLOYMENT_ENV = "staging"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "true"
 R2_KEY_PREFIX = "staging/"
@@ -22,10 +43,31 @@ R2_PRODUCTION_BRANCH = "staging"
 binding = "SHARE_BUCKET"
 bucket_name = "skincos-share-staging"
 
+[[env.preview.services]]
+binding = "PONTO_CORE"
+service = "skincos-ponto-core-staging"
+
+[[env.preview.services]]
+binding = "PONTO_IDENTITY"
+service = "skincos-insumos-staging"
+
+[[env.preview.kv_namespaces]]
+binding = "MODULE_CONTROL"
+id = "e69fe06b6abc46eca4f4c00198d078f2"
+
+[env.preview.secrets]
+required = [
+  "PONTO_ACTOR_HMAC_KEY",
+  "PONTO_NETWORK_CONTEXT_KEY",
+  "PONTO_RELEASE_PROBE_HMAC_KEY",
+]
+
 [env.preview.vars]
 INSUMOS_API_TARGET = "https://api-staging.skincos.com.br"
 FINANCE_API_TARGET = "https://api-staging.skincos.com.br"
 PONTO_API_TARGET = "https://api-staging.skincos.com.br"
+PONTO_RELEASE_SHA = "__RELEASE_SHA__"
+PONTO_ROLLOUT_STAGE = "maintenance"
 SKINCOS_DEPLOYMENT_ENV = "staging"
 REQUIRE_INTEGRATIONS_ENCRYPTION_SECRET = "false"
 R2_KEY_PREFIX = "preview/"

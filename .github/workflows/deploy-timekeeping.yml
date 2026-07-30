@@ -1,29 +1,66 @@
 name: Deploy Workforce Timekeeping
+run-name: Timekeeping ${{ inputs.target }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
 
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: Deploy target
+        description: Canonical release stage
         required: true
         default: staging
         type: choice
-        options: [preview, staging, production]
+        options: [preview, staging, pilot, canary, production, rollback]
       release_sha:
-        description: Immutable commit SHA
-        required: false
+        description: Immutable main commit SHA
+        required: true
         type: string
       preview_run_id:
         description: Required for staging
         required: false
         type: string
       staging_run_id:
-        description: Required for production - successful staging run id for this exact commit
+        description: Retained for the immutable promotion contract; Ponto live stages use predecessor_run_id
+        required: false
+        type: string
+      release_scope:
+        description: Governed Ponto composite release; only preview is independently dispatchable
+        required: true
+        default: ponto
+        type: choice
+        options: [ponto]
+      predecessor_run_id:
+        description: Required for pilot, canary, production, and rollback
+        required: false
+        type: string
+      baseline_run_id:
+        description: Required for pilot; immutable production incumbent baseline
+        required: false
+        type: string
+      root_custody_run_id:
+        description: Required for staging and pilot; exact successful pre-mutation root-custody child run
+        required: false
+        type: string
+      rollback_from_stage:
+        description: Required for rollback
+        required: false
+        default: production
+        type: choice
+        options: [pilot, canary, production]
+      orchestrator_run_id:
+        description: Correlation ID of the Ponto progressive coordinator
+        required: false
+        type: string
+      orchestrator_lease_token:
+        description: Masked single-use capability issued by the Ponto coordinator
+        required: false
+        type: string
+      orchestrator_stage:
+        description: Exact stage of the issuing Ponto coordinator
         required: false
         type: string
 
 concurrency:
-  group: deploy-timekeeping-${{ inputs.target }}
+  group: ${{ inputs.target == 'preview' && 'deploy-timekeeping-preview' || (inputs.release_scope == 'ponto' && inputs.orchestrator_run_id != '') && format('ponto-child-timekeeping-{0}', inputs.orchestrator_run_id) || 'ponto-release-custody' }}
   cancel-in-progress: false
 
 permissions:
@@ -31,7 +68,21 @@ permissions:
   contents: read
 
 jobs:
+  coordination:
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    with:
+      required: ${{ inputs.target != 'preview' }}
+      lease_key: timekeeping
+      stage: ${{ inputs.orchestrator_stage || inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      orchestrator_run_id: ${{ inputs.orchestrator_run_id }}
+      orchestrator_lease_token: ${{ inputs.orchestrator_lease_token }}
   promotion:
+    needs: coordination
+    if: ${{ inputs.target == 'preview' || inputs.target == 'staging' }}
     uses: ./.github/workflows/promotion-gate.yml
     with:
       unit: timekeeping
@@ -39,35 +90,25 @@ jobs:
       release_sha: ${{ inputs.release_sha }}
       preview_run_id: ${{ inputs.preview_run_id }}
       staging_run_id: ${{ inputs.staging_run_id }}
-    secrets: inherit
-  deploy:
-    needs: promotion
-    if: ${{ github.ref == 'refs/heads/main' && inputs.target != 'preview' }}
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.target }}
-    steps:
-      - name: Guard target and credentials
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          D1_ID: ${{ inputs.target == 'production' && vars.TIMEKEEPING_D1_PRODUCTION_ID || vars.TIMEKEEPING_D1_STAGING_ID }}
-          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID }}
-          PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
-          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
-          PONTO_TEMPLATES_KEY: ${{ secrets.PONTO_TEMPLATES_KEY }}
-          PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
-          PONTO_NETWORK_CONTEXT_KEY: ${{ secrets.PONTO_NETWORK_CONTEXT_KEY }}
-          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
-          IDENTITY_WORKFORCE_HMAC_KEY: ${{ secrets.IDENTITY_WORKFORCE_HMAC_KEY }}
-          TIMEKEEPING_BACKUP_PASSPHRASE: ${{ secrets.TIMEKEEPING_BACKUP_PASSPHRASE }}
-        run: |
-          set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID MODULE_CONTROL_KV_ID PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY PONTO_PROFILE_DATA_KEY PONTO_NETWORK_CONTEXT_KEY ESCALA_ACTOR_HMAC_KEY IDENTITY_WORKFORCE_HMAC_KEY TIMEKEEPING_BACKUP_PASSPHRASE; do
-            [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }
-          done
-          [[ "$D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "Invalid Timekeeping D1 id"; exit 1; }
-          [[ "$MODULE_CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo "Invalid module-control KV id"; exit 1; }
+      emit_preview_evidence: false
 
+  progressive:
+    needs: coordination
+    if: ${{ contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) }}
+    uses: ./.github/workflows/ponto-release-gate.yml
+    with:
+      stage: ${{ inputs.target }}
+      release_sha: ${{ inputs.release_sha }}
+      predecessor_run_id: ${{ inputs.predecessor_run_id }}
+      rollback_from_stage: ${{ inputs.rollback_from_stage }}
+      baseline_run_id: ${{ inputs.baseline_run_id }}
+
+  preview:
+    needs: promotion
+    if: ${{ inputs.target == 'preview' }}
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
           ref: ${{ needs.promotion.outputs.source_sha }}
@@ -75,156 +116,958 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: 22.12.0
-
-      - name: Install pinned Worker toolchains
+          cache: npm
+          cache-dependency-path: workforce/timekeeping/package-lock.json
+      - name: Test and dry-run the immutable Timekeeping source
+        env:
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
           npm --prefix workforce/timekeeping ci --ignore-scripts
-          npm --prefix api ci --ignore-scripts
-          # Node 22.12's bundled Corepack keyring cannot verify pnpm 9.15.4.
-          # Install the lockfile-declared version directly, rather than accepting
-          # an unpinned latest package-manager release.
-          (cd inventory && npx --yes pnpm@9.15.4 install --frozen-lockfile --ignore-scripts)
-
-      - name: Verify checked-out source identity
-        run: |
-          set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "${{ needs.promotion.outputs.source_sha }}" ]] || { echo "Checkout SHA mismatch"; exit 1; }
-
-      - name: Test release source
-        run: |
-          set -euo pipefail
           npm --prefix workforce/timekeeping test
-          npm --prefix api test
-
-      - name: Configure target D1 id in ephemeral checkout
+          sed -i \
+            's/__CONFIGURE_TIMEKEEPING_D1_ID__/00000000-0000-4000-8000-000000000001/;s/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/00000000000000000000000000000001/;s/__CONFIGURE_TIMEKEEPING_STAGING_D1_ID__/00000000-0000-4000-8000-000000000002/' \
+            workforce/timekeeping/wrangler.toml
+          workforce/timekeeping/node_modules/.bin/wrangler versions upload \
+            --dry-run \
+            --outdir "$RUNNER_TEMP/timekeeping-preview" \
+            --config workforce/timekeeping/wrangler.toml \
+            --env staging \
+            --var "APP_VERSION:$RELEASE_SHA" \
+            --var "ENVIRONMENT:staging"
+      - name: Write validated preview artifacts
         env:
-          TARGET: ${{ inputs.target }}
-          D1_ID: ${{ inputs.target == 'production' && vars.TIMEKEEPING_D1_PRODUCTION_ID || vars.TIMEKEEPING_D1_STAGING_ID }}
-          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'production' && vars.MODULE_CONTROL_PRODUCTION_KV_ID || vars.MODULE_CONTROL_STAGING_KV_ID }}
+          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == "production" ]]; then
-            sed -i "s/__CONFIGURE_TIMEKEEPING_D1_ID__/$D1_ID/" workforce/timekeeping/wrangler.toml
-            sed -i "s/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/$MODULE_CONTROL_KV_ID/" workforce/timekeeping/wrangler.toml
-            ! grep -q '__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__' workforce/timekeeping/wrangler.toml || { echo 'Unresolved production module-control KV placeholder'; exit 1; }
-          else
-            sed -i "s/__CONFIGURE_TIMEKEEPING_STAGING_D1_ID__/$D1_ID/" workforce/timekeeping/wrangler.toml
-            ! grep -q '__CONFIGURE_MODULE_CONTROL_STAGING_KV_ID__' workforce/timekeeping/wrangler.toml || { echo 'Unresolved staging module-control KV placeholder'; exit 1; }
-          fi
+          PROMOTION_UNIT=timekeeping PROMOTION_TARGET=preview PROMOTION_SOURCE_SHA="$RELEASE_SHA" \
+          PROMOTION_SOURCE_TREE="$(git rev-parse "${RELEASE_SHA}^{tree}")" \
+            node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/timekeeping-preview-evidence/promotion-evidence.json"
+          mkdir -p "$RUNNER_TEMP/timekeeping-surface"
+          node - "$RUNNER_TEMP/timekeeping-surface/surface.json" <<'NODE'
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "timekeeping",
+            stage: "preview",
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            validation: "tests-and-wrangler-versions-upload-dry-run",
+          }, null, 2)}\n`);
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: promotion-evidence-timekeeping
+          path: ${{ runner.temp }}/timekeeping-preview-evidence/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-surface-timekeeping-preview-${{ needs.promotion.outputs.source_sha }}
+          path: ${{ runner.temp }}/timekeeping-surface/surface.json
+          retention-days: 90
+          if-no-files-found: error
 
-      - name: Capture encrypted D1 checkpoint
-        id: checkpoint
+  release:
+    needs: [promotion, progressive]
+    if: >-
+      ${{
+        always() &&
+        inputs.target != 'preview' &&
+        (
+          (inputs.target == 'staging' && needs.promotion.result == 'success') ||
+          (contains(fromJSON('["pilot","canary","production","rollback"]'), inputs.target) && needs.progressive.result == 'success')
+        )
+      }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'staging' && 'staging' || 'production' }}
+    env:
+      RELEASE_SHA: ${{ needs.promotion.outputs.source_sha || needs.progressive.outputs.source_sha }}
+      TARGET: ${{ inputs.target }}
+    steps:
+      - name: Guard target resources and explicit production authorization
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TARGET: ${{ inputs.target }}
+          D1_ID: ${{ inputs.target == 'staging' && vars.TIMEKEEPING_D1_STAGING_ID || vars.TIMEKEEPING_D1_PRODUCTION_ID }}
+          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+          ENABLE_PRODUCTION: ${{ vars.ENABLE_TIMEKEEPING_PRODUCTION_DEPLOY }}
+          TIMEKEEPING_BACKUP_PASSPHRASE: ${{ secrets.TIMEKEEPING_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID MODULE_CONTROL_KV_ID; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required value: $name"; exit 1; }
+          done
+          [[ "$D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid Timekeeping D1 id'; exit 1; }
+          [[ "$MODULE_CONTROL_KV_ID" =~ ^[0-9a-fA-F]{32}$ ]] || { echo 'Invalid module-control KV id'; exit 1; }
+          if [[ "$TARGET" != staging ]]; then
+            [[ "$ENABLE_PRODUCTION" == true ]] || { echo 'ENABLE_TIMEKEEPING_PRODUCTION_DEPLOY must be explicitly true'; exit 1; }
+          fi
+          if [[ "$TARGET" =~ ^(staging|pilot)$ ]]; then
+            [[ -n "${TIMEKEEPING_BACKUP_PASSPHRASE:-}" ]] || { echo 'TIMEKEEPING_BACKUP_PASSPHRASE is required before migrations'; exit 1; }
+          fi
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: workforce/timekeeping/package-lock.json
+      - name: Fetch the exact staging root custody predecessor
+        if: ${{ inputs.target == 'pilot' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'pilot requires the exact staging predecessor'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence"
+          gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-release-evidence-staging-$RELEASE_SHA" \
+            --dir "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence"
+          PONTO_EXPECTED_STAGE=staging \
+          PONTO_EXPECTED_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-release-evidence.mjs verify \
+              "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence/ponto-release-evidence.json"
+          node - \
+            "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence/ponto-release-evidence.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody/staging.json" <<'NODE'
+          const fs = require("fs");
+          const evidence = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const custody = evidence?.surfaces?.timekeeping?.rootCustody;
+          if (!custody) throw new Error("staging release evidence does not contain root custody");
+          fs.writeFileSync(process.argv[3], `${JSON.stringify(custody, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -rf "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence"
+      - name: Prove environment root separation before checkpoint or migration
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        env:
+          PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+          PONTO_ROOT_ATTESTATION_KEY_SHARED: ${{ secrets.PONTO_ROOT_ATTESTATION_KEY_SHARED }}
+          PONTO_PROFILE_DATA_KEY_CUSTODY_REF: ${{ vars.PONTO_PROFILE_DATA_KEY_CUSTODY_REF }}
+          PONTO_IDEMPOTENCY_KEY_CUSTODY_REF: ${{ vars.PONTO_IDEMPOTENCY_KEY_CUSTODY_REF }}
+          PONTO_ROOT_ATTESTATION_KEY_ID: ${{ vars.PONTO_ROOT_ATTESTATION_KEY_ID }}
+        run: |
+          set -euo pipefail
+          target=staging
+          [[ "$TARGET" == pilot ]] && target=production
+          mkdir -p "$RUNNER_TEMP/timekeeping-root-custody"
+          staging_args=()
+          if [[ "$target" == production ]]; then
+            [[ -f "$RUNNER_TEMP/timekeeping-root-custody/staging.json" ]] || {
+              echo 'exact staging root custody predecessor is absent'
+              exit 1
+            }
+            staging_args=("$RUNNER_TEMP/timekeeping-root-custody/staging.json")
+          fi
+          node .github/scripts/ponto-root-custody.mjs write \
+            "$target" \
+            "$RELEASE_SHA" \
+            "$RUNNER_TEMP/timekeeping-root-custody/root-custody.json" \
+            "${staging_args[@]}"
+          rm -f "$RUNNER_TEMP/timekeeping-root-custody/staging.json"
+      - name: Test and render only the selected environment
+        env:
+          D1_ID: ${{ inputs.target == 'staging' && vars.TIMEKEEPING_D1_STAGING_ID || vars.TIMEKEEPING_D1_PRODUCTION_ID }}
+          MODULE_CONTROL_KV_ID: ${{ inputs.target == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
+        run: |
+          set -euo pipefail
+          npm --prefix workforce/timekeeping ci --ignore-scripts
+          npm --prefix workforce/timekeeping test
+          if [[ "$TARGET" == staging ]]; then
+            sed -i \
+              "s/__CONFIGURE_TIMEKEEPING_D1_ID__/00000000-0000-4000-8000-000000000001/;s/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/00000000000000000000000000000001/;s/__CONFIGURE_TIMEKEEPING_STAGING_D1_ID__/$D1_ID/" \
+              workforce/timekeeping/wrangler.toml
+          else
+            sed -i \
+              "s/__CONFIGURE_TIMEKEEPING_D1_ID__/$D1_ID/;s/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/$MODULE_CONTROL_KV_ID/;s/__CONFIGURE_TIMEKEEPING_STAGING_D1_ID__/00000000-0000-4000-8000-000000000001/" \
+              workforce/timekeeping/wrangler.toml
+          fi
+          ! grep -q '__CONFIGURE_.*_ID__' workforce/timekeeping/wrangler.toml || { echo 'Unresolved binding placeholder'; exit 1; }
+      - name: Require selected-environment custody for both candidate root secrets
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          TARGET_ENVIRONMENT: ${{ inputs.target == 'staging' && 'staging' || 'production' }}
+        run: |
+          set -euo pipefail
+          [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for candidate secret custody attestation'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET_ENVIRONMENT/secrets?per_page=100" > "$RUNNER_TEMP/timekeeping-environment-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/timekeeping-repository-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET_ENVIRONMENT/variables?per_page=100" > "$RUNNER_TEMP/timekeeping-environment-variables.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/timekeeping-repository-variables.json"
+          node - \
+            "$RUNNER_TEMP/timekeeping-environment-secrets.json" \
+            "$RUNNER_TEMP/timekeeping-repository-secrets.json" \
+            "$RUNNER_TEMP/timekeeping-environment-variables.json" \
+            "$RUNNER_TEMP/timekeeping-repository-variables.json" <<'NODE'
+          const fs = require("fs");
+          const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
+          const environmentSecrets = names(process.argv[2], "secrets");
+          const repositorySecrets = names(process.argv[3], "secrets");
+          const environmentVariables = names(process.argv[4], "variables");
+          const repositoryVariables = names(process.argv[5], "variables");
+          for (const name of ["PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
+            if (!environmentSecrets.has(name)) {
+              throw new Error(`${name} must exist in the selected GitHub environment; repository fallback is refused`);
+            }
+          }
+          if (
+            !repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+            || environmentSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+          ) throw new Error("shared root attestation key must exist only at repository scope");
+          for (const name of ["PONTO_PROFILE_DATA_KEY_CUSTODY_REF", "PONTO_IDEMPOTENCY_KEY_CUSTODY_REF"]) {
+            if (!environmentVariables.has(name)) throw new Error(`${name} must exist in the selected GitHub environment`);
+          }
+          if (
+            !repositoryVariables.has("PONTO_ROOT_ATTESTATION_KEY_ID")
+            || environmentVariables.has("PONTO_ROOT_ATTESTATION_KEY_ID")
+          ) throw new Error("shared root attestation key ID must exist only at repository scope");
+          NODE
+          rm -f \
+            "$RUNNER_TEMP/timekeeping-environment-secrets.json" \
+            "$RUNNER_TEMP/timekeeping-repository-secrets.json" \
+            "$RUNNER_TEMP/timekeeping-environment-variables.json" \
+            "$RUNNER_TEMP/timekeeping-repository-variables.json"
+      - name: Attest remote Worker secrets before checkpoint or migration
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == staging ]]; then env_args=(--env staging); else env_args=(); fi
+          list="$RUNNER_TEMP/timekeeping-secret-list.json"
+          workforce/timekeeping/node_modules/.bin/wrangler secret list --config workforce/timekeeping/wrangler.toml "${env_args[@]}" > "$list"
+          node - "$list" <<'NODE'
+          const fs = require("fs");
+          const names = new Set(JSON.parse(fs.readFileSync(process.argv[2], "utf8")).map(item => item.name));
+          for (const name of ["PONTO_ACTOR_HMAC_KEY", "PONTO_IDEMPOTENCY_KEY", "PONTO_TEMPLATES_KEY", "PONTO_NETWORK_CONTEXT_KEY", "ESCALA_ACTOR_HMAC_KEY", "IDENTITY_WORKFORCE_HMAC_KEY"]) {
+            if (!names.has(name)) throw new Error(`remote Worker secret is absent: ${name}`);
+          }
+          NODE
+          rm -f "$list"
+      - name: Resolve incumbent version before pilot mutation
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BASELINE_INCUMBENT_ID: ${{ needs.progressive.outputs.baseline_timekeeping_version_id }}
+          BASELINE_INCUMBENT_DEPLOYMENT_ID: ${{ needs.progressive.outputs.baseline_timekeeping_deployment_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == staging ]]; then env_args=(--env staging); else env_args=(); fi
+          workforce/timekeeping/node_modules/.bin/wrangler deployments status --json --config workforce/timekeeping/wrangler.toml "${env_args[@]}" > "$RUNNER_TEMP/timekeeping-incumbent.json"
+          if [[ "$TARGET" == pilot ]]; then
+            PONTO_BASELINE_DEPLOYMENT_ID="$BASELINE_INCUMBENT_DEPLOYMENT_ID" \
+            PONTO_BASELINE_VERSION_ID="$BASELINE_INCUMBENT_ID" \
+              node .github/scripts/ponto-live-deployment-precondition.mjs \
+                pilot-baseline \
+                "$RUNNER_TEMP/timekeeping-incumbent.json" \
+                timekeeping \
+                "$RUNNER_TEMP/timekeeping-pilot-baseline-precondition.json"
+            id="$BASELINE_INCUMBENT_ID"
+          else
+            id="$(node - "$RUNNER_TEMP/timekeeping-incumbent.json" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versions = value.versions || value.latest?.versions || [];
+          const selected = [...versions].sort((a, b) => Number(b.percentage || 0) - Number(a.percentage || 0))[0];
+          process.stdout.write(String(selected?.version_id || selected?.id || ""));
+          NODE
+            )"
+          fi
+          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve incumbent Timekeeping version'; exit 1; }
+          echo "TIMEKEEPING_INCUMBENT_VERSION_ID=$id" >> "$GITHUB_ENV"
+      - name: Select predecessor version IDs
+        if: ${{ inputs.target == 'canary' || inputs.target == 'production' || inputs.target == 'rollback' }}
+        env:
+          CANDIDATE_ID: ${{ needs.progressive.outputs.timekeeping_candidate_version_id }}
+          INCUMBENT_ID: ${{ needs.progressive.outputs.timekeeping_incumbent_version_id }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_ID" =~ ^[0-9a-fA-F-]{36}$ && "$INCUMBENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Predecessor Timekeeping version IDs are invalid'; exit 1; }
+          echo "TIMEKEEPING_CANDIDATE_VERSION_ID=$CANDIDATE_ID" >> "$GITHUB_ENV"
+          echo "TIMEKEEPING_INCUMBENT_VERSION_ID=$INCUMBENT_ID" >> "$GITHUB_ENV"
+      - name: Capture encrypted D1 checkpoint
+        id: checkpoint
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           TIMEKEEPING_BACKUP_PASSPHRASE: ${{ secrets.TIMEKEEPING_BACKUP_PASSPHRASE }}
         working-directory: workforce/timekeeping
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); DB_NAME=skincos-timekeeping; else ENV_ARGS=(--env staging); DB_NAME=skincos-timekeeping-staging; fi
-          plain="$RUNNER_TEMP/timekeeping-${TARGET}-pre-migration-${GITHUB_SHA}.sql"
+          if [[ "$TARGET" == staging ]]; then env_args=(--env staging); database=skincos-timekeeping-staging; else env_args=(); database=skincos-timekeeping; fi
+          plain="$RUNNER_TEMP/timekeeping-${TARGET}-pre-migration-${RELEASE_SHA}.sql"
           encrypted="${plain}.gpg"
-          ./node_modules/.bin/wrangler d1 export "$DB_NAME" --remote --output "$plain" --config wrangler.toml "${ENV_ARGS[@]}"
+          ./node_modules/.bin/wrangler d1 export "$database" --remote --output "$plain" --config wrangler.toml "${env_args[@]}"
           printf '%s' "$TIMEKEEPING_BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --symmetric --cipher-algo AES256 --output "$encrypted" "$plain"
           rm -f "$plain"
+          sha256sum "$encrypted" | cut -d' ' -f1 > "${encrypted}.sha256"
           echo "artifact=$encrypted" >> "$GITHUB_OUTPUT"
-
+          echo "digest=$(cat "${encrypted}.sha256")" >> "$GITHUB_OUTPUT"
       - name: Upload encrypted migration checkpoint
+        if: steps.checkpoint.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: timekeeping-${{ inputs.target }}-pre-migration-${{ github.sha }}
-          path: ${{ steps.checkpoint.outputs.artifact }}
-          retention-days: 7
+          name: timekeeping-${{ inputs.target }}-pre-migration-${{ env.RELEASE_SHA }}
+          path: |
+            ${{ steps.checkpoint.outputs.artifact }}
+            ${{ steps.checkpoint.outputs.artifact }}.sha256
+          retention-days: 90
           if-no-files-found: error
-
-      - name: Apply remote migrations before code deploy
+      - name: Resolve exact root custody artifact before mutation
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROOT_CUSTODY_RUN_ID: ${{ inputs.root_custody_run_id }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$ROOT_CUSTODY_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'root_custody_run_id must be numeric'; exit 1; }
+          [[ "$ORCHESTRATOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'orchestrator_run_id must be numeric'; exit 1; }
+          target=staging
+          [[ "$TARGET" == pilot ]] && target=production
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ROOT_CUSTODY_RUN_ID" > "$RUNNER_TEMP/timekeeping-root-custody-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cloudflare-workers-sync-ponto-secrets.yml" > "$RUNNER_TEMP/timekeeping-root-custody-workflow.json"
+          node - \
+            "$RUNNER_TEMP/timekeeping-root-custody-run.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody-workflow.json" \
+            "$target" <<'NODE'
+          const fs = require("fs");
+          const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const target = process.argv[4];
+          const expectedTitle = `Attest Ponto Workers ${target} ${process.env.RELEASE_SHA} orchestrator=${process.env.ORCHESTRATOR_RUN_ID}`;
+          if (
+            workflow.state !== "active"
+            || workflow.path !== ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"
+            || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
+            || run.workflow_id !== workflow.id
+            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.status !== "completed"
+            || run.conclusion !== "success"
+            || run.event !== "workflow_dispatch"
+            || run.head_branch !== "main"
+            || run.head_sha !== process.env.RELEASE_SHA
+            || run.name !== "Attest Ponto Worker secret custody"
+            || run.display_title !== expectedTitle
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) throw new Error("root custody run provenance differs from the governed pre-mutation child");
+          NODE
+          artifact_name="ponto-root-custody-$target-$RELEASE_SHA"
+          artifact_list="$RUNNER_TEMP/timekeeping-root-custody-artifacts.json"
+          artifact_metadata="$RUNNER_TEMP/timekeeping-root-custody-artifact.json"
+          artifact_provenance="$RUNNER_TEMP/timekeeping-root-custody-provenance.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ROOT_CUSTODY_RUN_ID/artifacts?per_page=100" > "$artifact_list"
+          artifact_id="$(
+            node - "$artifact_list" "$artifact_name" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const artifactName = process.argv[3];
+          const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : [];
+          if (!Number.isInteger(payload.total_count) || payload.total_count !== artifacts.length) {
+            throw new Error("root custody artifact listing is incomplete");
+          }
+          const matches = artifacts.filter(artifact => artifact?.name === artifactName);
+          if (matches.length !== 1 || !/^[1-9][0-9]*$/.test(String(matches[0]?.id || ""))) {
+            throw new Error("exactly one root custody artifact with a positive numeric ID is required");
+          }
+          process.stdout.write(String(matches[0].id));
+          NODE
+          )"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" > "$artifact_metadata"
+          node - \
+            "$artifact_list" \
+            "$artifact_metadata" \
+            "$artifact_provenance" \
+            "$artifact_name" \
+            "$artifact_id" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const artifact = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const outputFile = process.argv[4];
+          const artifactName = process.argv[5];
+          const artifactId = process.argv[6];
+          const listed = (payload.artifacts || []).filter(item => item?.name === artifactName);
+          const digest = String(artifact.digest || "");
+          const expiresAt = Date.parse(String(artifact.expires_at || ""));
+          if (
+            listed.length !== 1
+            || String(listed[0].id || "") !== artifactId
+            || String(artifact.id || "") !== artifactId
+            || artifact.name !== artifactName
+            || artifact.expired !== false
+            || !Number.isFinite(expiresAt)
+            || expiresAt <= Date.now()
+            || !/^sha256:[0-9a-f]{64}$/.test(digest)
+            || artifact.workflow_run?.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
+            || artifact.workflow_run?.head_sha !== process.env.RELEASE_SHA
+            || String(listed[0].digest || "") !== digest
+            || listed[0].workflow_run?.id !== artifact.workflow_run.id
+            || listed[0].workflow_run?.head_sha !== artifact.workflow_run.head_sha
+          ) {
+            throw new Error("root custody artifact metadata is not exact, current, and tied to the attested run");
+          }
+          const provenance = {
+            workflowRunId: String(process.env.ROOT_CUSTODY_RUN_ID),
+            coordinatorRunId: String(process.env.ORCHESTRATOR_RUN_ID),
+            workflowPath: ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
+            artifactId,
+            artifactDigest: digest.slice("sha256:".length),
+            artifactName,
+            repository: process.env.GITHUB_REPOSITORY,
+          };
+          fs.writeFileSync(outputFile, `${JSON.stringify(provenance, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          preflight_dir="$RUNNER_TEMP/timekeeping-root-custody/preflight"
+          mkdir -p "$preflight_dir/unpacked"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$preflight_dir/artifact.zip"
+          expected_artifact_digest="$(
+            node -e "process.stdout.write(require(process.argv[1]).artifactDigest)" "$artifact_provenance"
+          )"
+          downloaded_artifact_digest="$(sha256sum "$preflight_dir/artifact.zip" | cut -d' ' -f1)"
+          [[ "$downloaded_artifact_digest" == "$expected_artifact_digest" ]] || {
+            echo 'Downloaded root custody archive differs from the exact artifact metadata digest'
+            exit 1
+          }
+          unzip -q "$preflight_dir/artifact.zip" -d "$preflight_dir/unpacked"
+          mapfile -t custody_files < <(find "$preflight_dir/unpacked" -type f -name root-custody.json -print)
+          [[ "${#custody_files[@]}" == 1 ]] || { echo 'Root custody child artifact must contain exactly one root-custody.json'; exit 1; }
+          node .github/scripts/ponto-root-custody.mjs verify \
+            "$target" \
+            "$RELEASE_SHA" \
+            "${custody_files[0]}"
+          install -m 600 \
+            "${custody_files[0]}" \
+            "$RUNNER_TEMP/timekeeping-root-custody/preflight-root-custody.json"
+          rm -rf "$preflight_dir"
+          rm -f \
+            "$RUNNER_TEMP/timekeeping-root-custody-run.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody-workflow.json" \
+            "$artifact_list" \
+            "$artifact_metadata"
+      - name: Compare live root custody immediately before mutation
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        env:
+          ROOT_CUSTODY_RUN_ID: ${{ inputs.root_custody_run_id }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+          PONTO_ROOT_ATTESTATION_KEY_SHARED: ${{ secrets.PONTO_ROOT_ATTESTATION_KEY_SHARED }}
+          PONTO_PROFILE_DATA_KEY_CUSTODY_REF: ${{ vars.PONTO_PROFILE_DATA_KEY_CUSTODY_REF }}
+          PONTO_IDEMPOTENCY_KEY_CUSTODY_REF: ${{ vars.PONTO_IDEMPOTENCY_KEY_CUSTODY_REF }}
+          PONTO_ROOT_ATTESTATION_KEY_ID: ${{ vars.PONTO_ROOT_ATTESTATION_KEY_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$ROOT_CUSTODY_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'root_custody_run_id must be numeric'; exit 1; }
+          [[ "$ORCHESTRATOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'orchestrator_run_id must be numeric'; exit 1; }
+          target=staging
+          [[ "$TARGET" == pilot ]] && target=production
+          node --input-type=module - \
+            "$RUNNER_TEMP/timekeeping-root-custody/preflight-root-custody.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody/root-custody.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody-provenance.json" \
+            "$target" <<'NODE'
+          import crypto from "node:crypto";
+          import fs from "node:fs";
+          import {
+            attestationKeyCommitment,
+            rootFingerprint,
+            validateRootCustody,
+          } from "./.github/scripts/ponto-root-custody.mjs";
+          const target = process.argv[5];
+          const options = { target, releaseSha: process.env.RELEASE_SHA };
+          const raw = fs.readFileSync(process.argv[2]);
+          const preflight = validateRootCustody(
+            JSON.parse(raw),
+            options,
+          );
+          const current = validateRootCustody(
+            JSON.parse(fs.readFileSync(process.argv[3], "utf8")),
+            options,
+          );
+          const artifactProvenance = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+          const canonicalRaw = Buffer.from(`${JSON.stringify(preflight, null, 2)}\n`, "utf8");
+          if (!raw.equals(canonicalRaw)) {
+            throw new Error("root custody artifact attestation is not canonical");
+          }
+          const provenance = {
+            ...artifactProvenance,
+            attestationSha256: crypto.createHash("sha256").update(canonicalRaw).digest("hex"),
+          };
+          const expectedProvenance = {
+            workflowRunId: String(process.env.ROOT_CUSTODY_RUN_ID),
+            coordinatorRunId: String(process.env.ORCHESTRATOR_RUN_ID),
+            workflowPath: ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
+            artifactName: `ponto-root-custody-${target}-${process.env.RELEASE_SHA}`,
+            repository: process.env.GITHUB_REPOSITORY,
+          };
+          if (
+            Object.entries(expectedProvenance).some(([key, value]) => provenance[key] !== value)
+            || !/^[1-9][0-9]*$/.test(String(provenance.artifactId || ""))
+            || !/^[0-9a-f]{64}$/.test(String(provenance.artifactDigest || ""))
+            || !/^[0-9a-f]{64}$/.test(String(provenance.attestationSha256 || ""))
+          ) {
+            throw new Error("root custody durable provenance is invalid");
+          }
+          const liveCommitment = {
+            profileDigest: rootFingerprint(
+              process.env.PONTO_PROFILE_DATA_KEY,
+              process.env.PONTO_ROOT_ATTESTATION_KEY_SHARED,
+            ),
+            idempotencyDigest: rootFingerprint(
+              process.env.PONTO_IDEMPOTENCY_KEY,
+              process.env.PONTO_ROOT_ATTESTATION_KEY_SHARED,
+            ),
+            attestationKeyCommitment: attestationKeyCommitment(
+              process.env.PONTO_ROOT_ATTESTATION_KEY_SHARED,
+            ),
+            profileCustodyRef: process.env.PONTO_PROFILE_DATA_KEY_CUSTODY_REF,
+            idempotencyCustodyRef: process.env.PONTO_IDEMPOTENCY_KEY_CUSTODY_REF,
+            attestationKeyId: process.env.PONTO_ROOT_ATTESTATION_KEY_ID,
+          };
+          if (
+            JSON.stringify(current) !== JSON.stringify(preflight)
+            || Object.entries(liveCommitment).some(([key, value]) => preflight[key] !== value)
+          ) {
+            throw new Error("current Timekeeping roots differ from the exact pre-mutation custody attestation");
+          }
+          const durable = validateRootCustody({
+            ...current,
+            provenance,
+          }, {
+            ...options,
+            requireProvenance: true,
+            repository: process.env.GITHUB_REPOSITORY,
+          });
+          fs.writeFileSync(process.argv[3], `${JSON.stringify(durable, null, 2)}\n`, { mode: 0o600 });
+          fs.chmodSync(process.argv[3], 0o600);
+          NODE
+          touch "$RUNNER_TEMP/timekeeping-root-custody-pre-mutation-attested"
+          rm -f \
+            "$RUNNER_TEMP/timekeeping-root-custody/preflight-root-custody.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody-provenance.json"
+      - name: Apply additive Timekeeping migrations
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TARGET: ${{ inputs.target }}
         working-directory: workforce/timekeeping
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); DB_NAME=skincos-timekeeping; else ENV_ARGS=(--env staging); DB_NAME=skincos-timekeeping-staging; fi
-          ./node_modules/.bin/wrangler d1 migrations apply "$DB_NAME" --remote --config wrangler.toml "${ENV_ARGS[@]}"
-
-      - name: Configure Worker secrets
+          [[ -f "$RUNNER_TEMP/timekeeping-root-custody-pre-mutation-attested" ]] || { echo 'Exact root custody was not revalidated immediately before mutation'; exit 1; }
+          if [[ "$TARGET" == staging ]]; then env_args=(--env staging); database=skincos-timekeeping-staging; else env_args=(); database=skincos-timekeeping; fi
+          touch "$RUNNER_TEMP/timekeeping-migration-started"
+          ./node_modules/.bin/wrangler d1 migrations apply "$database" --remote --config wrangler.toml "${env_args[@]}"
+          touch "$RUNNER_TEMP/timekeeping-migration-completed"
+      - name: Upload immutable candidate version
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TARGET: ${{ inputs.target }}
-          PONTO_ACTOR_HMAC_KEY: ${{ secrets.PONTO_ACTOR_HMAC_KEY }}
-          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
-          PONTO_TEMPLATES_KEY: ${{ secrets.PONTO_TEMPLATES_KEY }}
           PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
-          PONTO_NETWORK_CONTEXT_KEY: ${{ secrets.PONTO_NETWORK_CONTEXT_KEY }}
-          ESCALA_ACTOR_HMAC_KEY: ${{ secrets.ESCALA_ACTOR_HMAC_KEY }}
-          IDENTITY_WORKFORCE_HMAC_KEY: ${{ secrets.IDENTITY_WORKFORCE_HMAC_KEY }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); else ENV_ARGS=(--env staging); fi
-          for name in PONTO_ACTOR_HMAC_KEY PONTO_IDEMPOTENCY_KEY PONTO_TEMPLATES_KEY PONTO_PROFILE_DATA_KEY PONTO_NETWORK_CONTEXT_KEY ESCALA_ACTOR_HMAC_KEY IDENTITY_WORKFORCE_HMAC_KEY; do
-            printf '%s' "${!name}" | workforce/timekeeping/node_modules/.bin/wrangler secret put "$name" --config workforce/timekeeping/wrangler.toml "${ENV_ARGS[@]}" >/dev/null
-          done
-
-      - name: Ensure proxied staging API DNS record
-        if: inputs.target == 'staging'
+          [[ -n "${PONTO_PROFILE_DATA_KEY:-}" ]] || { echo 'PONTO_PROFILE_DATA_KEY must be owned by the selected GitHub environment'; exit 1; }
+          [[ -n "${PONTO_IDEMPOTENCY_KEY:-}" ]] || { echo 'PONTO_IDEMPOTENCY_KEY must be owned by the selected GitHub environment'; exit 1; }
+          if [[ "$TARGET" == staging ]]; then env_args=(--env staging); worker_name=skincos-timekeeping-staging; runtime_environment=staging; else env_args=(); worker_name=skincos-timekeeping; runtime_environment=production; fi
+          output_file="$RUNNER_TEMP/timekeeping-version-upload.ndjson"
+          secrets_file="$RUNNER_TEMP/timekeeping-candidate-secrets.json"
+          trap 'rm -f "$secrets_file" "$output_file"' EXIT
+          node - "$secrets_file" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const derive = (domain) => crypto.createHmac("sha256", process.env.PONTO_IDEMPOTENCY_KEY)
+            .update(domain)
+            .digest("base64url");
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            PONTO_PROFILE_DATA_KEY: process.env.PONTO_PROFILE_DATA_KEY,
+            PONTO_IDEMPOTENCY_KEY: process.env.PONTO_IDEMPOTENCY_KEY,
+            PONTO_ACTOR_HMAC_KEY: derive("skincos/ponto/actor/v1"),
+            PONTO_NETWORK_CONTEXT_KEY: derive("skincos/ponto/network-context/v1"),
+          })}\n`, { mode: 0o600 });
+          NODE
+          chmod 600 "$secrets_file"
+          WRANGLER_OUTPUT_FILE_PATH="$output_file" workforce/timekeeping/node_modules/.bin/wrangler versions upload \
+            --config workforce/timekeeping/wrangler.toml \
+            --keep-vars \
+            --strict \
+            --secrets-file "$secrets_file" \
+            "${env_args[@]}" \
+            --tag "ponto:timekeeping:$RELEASE_SHA" \
+            --message "ponto:timekeeping:$RELEASE_SHA" \
+            --var "APP_VERSION:$RELEASE_SHA" \
+            --var "ENVIRONMENT:$runtime_environment"
+          PONTO_EXPECTED_WRANGLER_ENV="$runtime_environment" node .github/scripts/ponto-wrangler-output.mjs "$output_file" version-upload "$worker_name" > "$RUNNER_TEMP/timekeeping-upload-verified.txt"
+          id="$(node - "$output_file" <<'NODE'
+          const fs = require("fs");
+          const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).map(JSON.parse);
+          process.stdout.write(String(rows.filter(row => row.type === "version-upload").at(-1)?.version_id || ""));
+          NODE
+          )"
+          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ && "$id" != "$TIMEKEEPING_INCUMBENT_VERSION_ID" ]] || { echo 'Invalid or non-distinct Timekeeping candidate version'; exit 1; }
+          echo "TIMEKEEPING_CANDIDATE_VERSION_ID=$id" >> "$GITHUB_ENV"
+          rm -f "$secrets_file" "$output_file"
+          trap - EXIT
+      - name: Prove live Timekeeping still matches the governed predecessor
+        if: ${{ inputs.target == 'canary' || inputs.target == 'production' || inputs.target == 'rollback' }}
         env:
+          GH_TOKEN: ${{ github.token }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+          PREDECESSOR_STAGE: ${{ needs.progressive.outputs.predecessor_stage }}
+          ROLLBACK_FROM_STAGE: ${{ inputs.rollback_from_stage }}
         run: |
           set -euo pipefail
-          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
-          zone="$(curl --fail --silent --show-error "${auth[@]}" 'https://api.cloudflare.com/client/v4/zones?name=skincos.com.br' | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);if(!r.success||r.result.length!==1)process.exit(1);process.stdout.write(r.result[0].id)})")"
-          record="$(curl --fail --silent --show-error "${auth[@]}" "https://api.cloudflare.com/client/v4/zones/$zone/dns_records?name=api-staging.skincos.com.br" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);if(!r.success)process.exit(1);process.stdout.write(r.result[0]?.id||'')})")"
-          if [[ -z "$record" ]]; then
-            curl --fail --silent --show-error --request POST "${auth[@]}" --data '{"type":"A","name":"api-staging.skincos.com.br","content":"192.0.2.1","ttl":1,"proxied":true}' "https://api.cloudflare.com/client/v4/zones/$zone/dns_records" >/dev/null
-          else
-            curl --fail --silent --show-error --request PATCH "${auth[@]}" --data '{"proxied":true,"ttl":1}' "https://api.cloudflare.com/client/v4/zones/$zone/dns_records/$record" >/dev/null
-          fi
-
-      - name: Deploy Timekeeping Worker
+          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'predecessor_run_id must be numeric'; exit 1; }
+          [[ "$PREDECESSOR_STAGE" =~ ^(pilot|canary|production)$ ]] || { echo 'governed predecessor stage is invalid for live Timekeeping'; exit 1; }
+          predecessor_dir="$RUNNER_TEMP/timekeeping-live-predecessor"
+          artifact="ponto-release-evidence-${PREDECESSOR_STAGE}-${RELEASE_SHA}"
+          mkdir -p "$predecessor_dir"
+          gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir "$predecessor_dir"
+          PONTO_EXPECTED_STAGE="$PREDECESSOR_STAGE" \
+          PONTO_EXPECTED_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-release-evidence.mjs verify "$predecessor_dir/ponto-release-evidence.json"
+          workforce/timekeeping/node_modules/.bin/wrangler deployments status \
+            --json \
+            --config workforce/timekeeping/wrangler.toml \
+            > "$RUNNER_TEMP/timekeeping-live-deployment.json"
+          node - \
+            "$predecessor_dir/ponto-release-evidence.json" \
+            "$RUNNER_TEMP/timekeeping-live-deployment.json" \
+            "$TARGET" \
+            "$PREDECESSOR_STAGE" \
+            "$ROLLBACK_FROM_STAGE" \
+            "$TIMEKEEPING_CANDIDATE_VERSION_ID" \
+            "$TIMEKEEPING_INCUMBENT_VERSION_ID" \
+            "$GITHUB_ENV" \
+            "$RUNNER_TEMP/timekeeping-root-custody/root-custody.json" <<'NODE'
+          const fs = require("fs");
+          const [
+            evidenceFile,
+            liveFile,
+            target,
+            predecessorStage,
+            rollbackFromStage,
+            governedCandidateId,
+            governedIncumbentId,
+            githubEnv,
+            custodyFile,
+          ] = process.argv.slice(2);
+          const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          const evidence = JSON.parse(fs.readFileSync(evidenceFile, "utf8"));
+          const live = JSON.parse(fs.readFileSync(liveFile, "utf8"));
+          const surface = evidence?.surfaces?.timekeeping;
+          const expectedPredecessor = target === "canary"
+            ? "pilot"
+            : target === "production"
+              ? "canary"
+              : rollbackFromStage;
+          if (predecessorStage !== expectedPredecessor || surface?.stage !== predecessorStage) {
+            throw new Error("Timekeeping predecessor stage does not govern the requested live mutation");
+          }
+          const candidateId = String(surface?.candidateVersionId || "").toLowerCase();
+          const incumbentId = String(surface?.incumbentVersionId || "").toLowerCase();
+          if (
+            !uuid.test(candidateId)
+            || !uuid.test(incumbentId)
+            || candidateId === incumbentId
+            || candidateId !== governedCandidateId.toLowerCase()
+            || incumbentId !== governedIncumbentId.toLowerCase()
+          ) throw new Error("Timekeeping predecessor version ownership differs from the progressive gate");
+          const candidatePercent = Number(surface?.candidatePercent);
+          const incumbentPercent = Number(surface?.incumbentPercent);
+          if (
+            !Number.isInteger(candidatePercent)
+            || !Number.isInteger(incumbentPercent)
+            || candidatePercent < 0
+            || incumbentPercent < 0
+            || candidatePercent + incumbentPercent !== 100
+          ) throw new Error("Timekeeping predecessor weights are invalid");
+          const deploymentId = String(live?.id || live?.deployment_id || live?.latest?.id || "").toLowerCase();
+          const evidenceDeploymentId = String(surface?.deploymentId || "").toLowerCase();
+          if (!uuid.test(deploymentId) || deploymentId !== evidenceDeploymentId) {
+            throw new Error("current active Timekeeping deployment differs from governed predecessor evidence");
+          }
+          const versions = live?.versions || live?.latest?.versions || [];
+          const expectedActive = new Map([
+            [candidateId, candidatePercent],
+            [incumbentId, incumbentPercent],
+          ].filter(([, percentage]) => predecessorStage !== "production" || percentage > 0));
+          if (!Array.isArray(versions) || versions.length !== expectedActive.size) {
+            throw new Error("current active Timekeeping deployment does not contain the exact governed version set");
+          }
+          const actual = new Map();
+          for (const version of versions) {
+            const id = String(version?.version_id || version?.id || "").toLowerCase();
+            const percentage = Number(version?.percentage);
+            if (!uuid.test(id) || !Number.isInteger(percentage) || percentage < 0 || percentage > 100 || actual.has(id)) {
+              throw new Error("current active Timekeeping version weights are malformed");
+            }
+            actual.set(id, percentage);
+          }
+          if (
+            actual.size !== expectedActive.size
+            || [...expectedActive].some(([id, percentage]) => actual.get(id) !== percentage)
+            || [...actual.values()].reduce((sum, value) => sum + value, 0) !== 100
+          ) throw new Error("current active Timekeeping weights drifted from governed predecessor evidence");
+          fs.appendFileSync(
+            githubEnv,
+            `TIMEKEEPING_PREDECESSOR_DEPLOYMENT_ID=${evidenceDeploymentId}\n`
+              + `TIMEKEEPING_PREDECESSOR_CANDIDATE_PERCENT=${candidatePercent}\n`
+              + `TIMEKEEPING_PREDECESSOR_INCUMBENT_PERCENT=${incumbentPercent}\n`,
+          );
+          if (!surface?.rootCustody) throw new Error("Timekeeping predecessor lacks root custody evidence");
+          fs.mkdirSync(require("path").dirname(custodyFile), { recursive: true });
+          fs.writeFileSync(custodyFile, `${JSON.stringify(surface.rootCustody, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          touch "$RUNNER_TEMP/timekeeping-live-predecessor-attested"
+          rm -f "$predecessor_dir/ponto-release-evidence.json"
+          rmdir "$predecessor_dir"
+          rm -f "$RUNNER_TEMP/timekeeping-live-deployment.json"
+      - name: Deploy exact Timekeeping weights or execute rollback
+        id: deployment
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TARGET: ${{ inputs.target }}
-          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == "production" ]]; then ENV_ARGS=(--env ""); else ENV_ARGS=(--env staging); fi
-          workforce/timekeeping/node_modules/.bin/wrangler deploy --config workforce/timekeeping/wrangler.toml --keep-vars "${ENV_ARGS[@]}" --var "APP_VERSION:$RELEASE_SHA" --var "ENVIRONMENT:$TARGET"
-
-      - name: Read-only endpoint smoke
-        id: smoke
+          if [[ "$TARGET" =~ ^(canary|production|rollback)$ && ! -f "$RUNNER_TEMP/timekeeping-live-predecessor-attested" ]]; then
+            echo 'Live Timekeeping predecessor ownership was not attested; refusing mutation'
+            exit 1
+          fi
+          if [[ "$TARGET" == staging ]]; then
+            env_args=(--env staging); candidate=100; incumbent=0
+          elif [[ "$TARGET" == pilot || "$TARGET" == canary ]]; then
+            env_args=(); candidate=0; incumbent=100
+          elif [[ "$TARGET" == production ]]; then
+            env_args=(); candidate=100; incumbent=0
+          else
+            env_args=(); candidate=0; incumbent=100
+          fi
+          touch "$RUNNER_TEMP/timekeeping-mutation-started"
+          if [[ "$TARGET" == rollback ]]; then
+            workforce/timekeeping/node_modules/.bin/wrangler rollback "$TIMEKEEPING_INCUMBENT_VERSION_ID" --yes --message "ponto:rollback:$RELEASE_SHA" --config workforce/timekeeping/wrangler.toml
+          elif [[ "$incumbent" == 0 ]]; then
+            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/timekeeping-version-deploy.ndjson" workforce/timekeeping/node_modules/.bin/wrangler versions deploy "$TIMEKEEPING_CANDIDATE_VERSION_ID@100%" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config workforce/timekeeping/wrangler.toml "${env_args[@]}"
+          else
+            WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/timekeeping-version-deploy.ndjson" workforce/timekeeping/node_modules/.bin/wrangler versions deploy "$TIMEKEEPING_INCUMBENT_VERSION_ID@100%" "$TIMEKEEPING_CANDIDATE_VERSION_ID@0%" --yes --message "ponto:$TARGET:$RELEASE_SHA" --config workforce/timekeeping/wrangler.toml "${env_args[@]}"
+          fi
+          if [[ "$TARGET" == rollback ]]; then
+            workforce/timekeeping/node_modules/.bin/wrangler deployments status --json --config workforce/timekeeping/wrangler.toml "${env_args[@]}" > "$RUNNER_TEMP/timekeeping-deployment.json"
+            deployment_id="$(node - "$RUNNER_TEMP/timekeeping-deployment.json" <<'NODE'
+          const fs = require("fs"); const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8")); process.stdout.write(String(value.id || value.deployment_id || value.latest?.id || ""));
+          NODE
+            )"
+          else
+            if [[ "$TARGET" == staging ]]; then worker_name=skincos-timekeeping-staging; runtime_environment=staging; else worker_name=skincos-timekeeping; runtime_environment=production; fi
+            PONTO_EXPECTED_WRANGLER_ENV="$runtime_environment" node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/timekeeping-version-deploy.ndjson" version-deploy "$worker_name" > "$RUNNER_TEMP/timekeeping-deploy-verified.txt"
+            deployment_id="$(node - "$RUNNER_TEMP/timekeeping-version-deploy.ndjson" <<'NODE'
+          const fs = require("fs"); const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).map(JSON.parse); const row = rows.filter(item => item.type === "version-deploy").at(-1); process.stdout.write(String(row?.deployment_id || row?.id || ""));
+          NODE
+            )"
+          fi
+          [[ "$deployment_id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to attest Timekeeping deployment ID'; exit 1; }
+          touch "$RUNNER_TEMP/timekeeping-mutation-completed"
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+          echo "candidate_percent=$candidate" >> "$GITHUB_OUTPUT"
+          echo "incumbent_percent=$incumbent" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/timekeeping-version-deploy.ndjson" "$RUNNER_TEMP/timekeeping-deployment.json"
+      - name: Read-only Timekeeping health probe
         env:
-          TARGET: ${{ inputs.target }}
-          RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          BASE_URL: ${{ inputs.target == 'staging' && 'https://api-staging.skincos.com.br' || 'https://api.skincos.com.br' }}
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == "production" ]]; then BASE=https://api.skincos.com.br; else BASE=https://api-staging.skincos.com.br; fi
-          for path in health readiness; do
-            headers="$(mktemp)"; body="$(mktemp)"
-            code="$(curl --silent --show-error --retry 5 --retry-delay 4 --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$BASE/api/ponto/$path")"
-            [[ "$code" == "200" ]] || { echo "$path returned HTTP $code"; cat "$body"; exit 1; }
-            grep -Eiq '^content-type: application/json' "$headers" || { echo "$path returned invalid content-type"; exit 1; }
-            node -e "const p=JSON.parse(require('fs').readFileSync(process.argv[1])); if(!p.ok) process.exit(1); if(process.argv[2]==='health' && (p.version!==process.env.RELEASE_SHA || p.environment!==process.env.TARGET || p.availability?.state!=='active')) process.exit(1)" "$body" "$path"
-          done
-
+          curl --fail --silent --show-error --retry 5 --retry-delay 4 "$BASE_URL/api/ponto/health" > "$RUNNER_TEMP/timekeeping-health.json"
+          node -e "const p=require(process.argv[1]);if(typeof p.ok!=='boolean'||!p.version)process.exit(1)" "$RUNNER_TEMP/timekeeping-health.json"
+      - name: Roll back this publisher after a failed mutation
+        if: ${{ always() && (failure() || cancelled()) && env.TIMEKEEPING_INCUMBENT_VERSION_ID != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$RUNNER_TEMP/timekeeping-mutation-started" ]]; then
+            echo 'No Timekeeping mutation started; compensation is intentionally a no-op'
+            printf '%s\n' not-started > "$RUNNER_TEMP/timekeeping-compensation-disposition"
+            exit 0
+          fi
+          if [[ "$TARGET" == staging ]]; then env_args=(--env staging); else env_args=(); fi
+          workforce/timekeeping/node_modules/.bin/wrangler deployments status --json --config workforce/timekeeping/wrangler.toml "${env_args[@]}" \
+            > "$RUNNER_TEMP/timekeeping-compensation-status.json"
+          ownership="$(node .github/scripts/ponto-rollback-ownership.mjs \
+            classify-worker-compensation \
+            "$RUNNER_TEMP/timekeeping-compensation-status.json" \
+            "$TARGET" \
+            "$TIMEKEEPING_CANDIDATE_VERSION_ID" \
+            "$TIMEKEEPING_INCUMBENT_VERSION_ID" \
+            "$DEPLOYMENT_ID" \
+            "$RUNNER_TEMP/timekeeping-compensation-ownership.json")"
+          case "$ownership" in
+            already-incumbent)
+              echo 'Timekeeping is already on the exact incumbent; compensation is a no-op'
+              printf '%s\n' already-incumbent > "$RUNNER_TEMP/timekeeping-compensation-disposition"
+              exit 0
+              ;;
+            candidate-owned)
+              printf '%s\n' rollback-attempted > "$RUNNER_TEMP/timekeeping-compensation-disposition"
+              ;;
+            ownership-conflict)
+              echo 'Timekeeping compensation ownership conflict; refusing to mutate external state'
+              printf '%s\n' ownership-conflict > "$RUNNER_TEMP/timekeeping-compensation-disposition"
+              exit 1
+              ;;
+            *) echo 'Unexpected Timekeeping compensation classification'; exit 1 ;;
+          esac
+          workforce/timekeeping/node_modules/.bin/wrangler rollback "$TIMEKEEPING_INCUMBENT_VERSION_ID" --yes --message "ponto:auto-abort:$RELEASE_SHA" --config workforce/timekeeping/wrangler.toml "${env_args[@]}"
+          workforce/timekeeping/node_modules/.bin/wrangler deployments status --json --config workforce/timekeeping/wrangler.toml "${env_args[@]}" \
+            > "$RUNNER_TEMP/timekeeping-compensation-after.json"
+          node - "$RUNNER_TEMP/timekeeping-compensation-after.json" "$TIMEKEEPING_INCUMBENT_VERSION_ID" <<'NODE'
+          const fs = require("fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const versions = value.versions || value.latest?.versions || [];
+          const deploymentId = String(value.id || value.deployment_id || value.latest?.id || "");
+          if (
+            !/^[0-9a-f-]{36}$/i.test(deploymentId)
+            || versions.length !== 1
+            || Number(versions[0]?.percentage) !== 100
+            || String(versions[0]?.version_id || versions[0]?.id || "").toLowerCase() !== process.argv[3].toLowerCase()
+          ) throw new Error("Timekeeping compensation did not restore the exact incumbent");
+          NODE
+          printf '%s\n' rolled-back > "$RUNNER_TEMP/timekeeping-compensation-disposition"
+          touch "$RUNNER_TEMP/timekeeping-rollback-completed"
+      - name: Write sanitized Timekeeping mutation journal
+        if: ${{ always() && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.target) }}
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/timekeeping-mutation"
+          node - "$RUNNER_TEMP/timekeeping-mutation/mutation.json" <<'NODE'
+          const fs = require("fs");
+          const exists = name => fs.existsSync(`${process.env.RUNNER_TEMP}/${name}`);
+          const pilotBaselinePreconditionFile = `${process.env.RUNNER_TEMP}/timekeeping-pilot-baseline-precondition.json`;
+          const compensationOwnershipFile = `${process.env.RUNNER_TEMP}/timekeeping-compensation-ownership.json`;
+          const compensationDispositionFile = `${process.env.RUNNER_TEMP}/timekeeping-compensation-disposition`;
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "timekeeping",
+            stage: process.env.TARGET,
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID || "",
+            baselineRunId: process.env.BASELINE_RUN_ID || "",
+            incumbentVersionId: process.env.TIMEKEEPING_INCUMBENT_VERSION_ID || "",
+            candidateVersionId: process.env.TIMEKEEPING_CANDIDATE_VERSION_ID || "",
+            deploymentId: process.env.DEPLOYMENT_ID || "",
+            migrationStarted: exists("timekeeping-migration-started"),
+            migrationCompleted: exists("timekeeping-migration-completed"),
+            migrationDisposition: exists("timekeeping-migration-started") ? "retained-additive-schema" : "not-run",
+            checkpoint: process.env.CHECKPOINT_DIGEST ? {
+              artifactName: `timekeeping-${process.env.TARGET}-pre-migration-${process.env.RELEASE_SHA}`,
+              sha256: process.env.CHECKPOINT_DIGEST,
+            } : null,
+            mutationStarted: exists("timekeeping-mutation-started"),
+            mutationCompleted: exists("timekeeping-mutation-completed"),
+            rollbackCompleted: exists("timekeeping-rollback-completed"),
+            pilotBaselinePrecondition: fs.existsSync(pilotBaselinePreconditionFile) ? JSON.parse(fs.readFileSync(pilotBaselinePreconditionFile, "utf8")) : null,
+            compensationOwnership: fs.existsSync(compensationOwnershipFile) ? JSON.parse(fs.readFileSync(compensationOwnershipFile, "utf8")) : null,
+            compensationDisposition: fs.existsSync(compensationDispositionFile) ? fs.readFileSync(compensationDispositionFile, "utf8").trim() : "not-required",
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+      - name: Upload Timekeeping mutation journal
+        if: ${{ always() && contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.target) }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-mutation-timekeeping-${{ inputs.target }}-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/timekeeping-mutation/mutation.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Write sanitized Timekeeping surface manifest
+        if: ${{ success() }}
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          CANDIDATE_PERCENT: ${{ steps.deployment.outputs.candidate_percent }}
+          INCUMBENT_PERCENT: ${{ steps.deployment.outputs.incumbent_percent }}
+          CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/timekeeping-surface"
+          node - "$RUNNER_TEMP/timekeeping-surface/surface.json" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const path = require("path");
+          const stage = process.env.TARGET;
+          const rootCustodyFile = process.env.RUNNER_TEMP + "/timekeeping-root-custody/root-custody.json";
+          if (!fs.existsSync(rootCustodyFile)) throw new Error("Timekeeping root custody evidence is absent");
+          const rootCustody = JSON.parse(fs.readFileSync(rootCustodyFile, "utf8"));
+          const migrations = stage === "staging" || stage === "pilot"
+            ? fs.readdirSync("workforce/timekeeping/migrations")
+              .filter(name => /^\d+.*\.sql$/.test(name))
+              .sort()
+              .map(name => ({
+                name,
+                sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join("workforce/timekeeping/migrations", name))).digest("hex"),
+                status: "applied-or-preexisting",
+              }))
+            : [];
+          fs.writeFileSync(process.argv[2], `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "timekeeping",
+            stage,
+            sourceSha: process.env.RELEASE_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            baselineRunId: process.env.BASELINE_RUN_ID || "",
+            candidateVersionId: process.env.TIMEKEEPING_CANDIDATE_VERSION_ID,
+            incumbentVersionId: process.env.TIMEKEEPING_INCUMBENT_VERSION_ID,
+            deploymentId: process.env.DEPLOYMENT_ID,
+            candidatePercent: Number(process.env.CANDIDATE_PERCENT),
+            incumbentPercent: Number(process.env.INCUMBENT_PERCENT),
+            candidateTag: `ponto:timekeeping:${process.env.RELEASE_SHA}`,
+            rootCustody,
+            url: stage === "staging" ? "https://api-staging.skincos.com.br/api/ponto/health" : "https://api.skincos.com.br/api/ponto/health",
+            checkpoint: process.env.CHECKPOINT_DIGEST ? {
+              artifactName: `timekeeping-${stage}-pre-migration-${process.env.RELEASE_SHA}`,
+              sha256: process.env.CHECKPOINT_DIGEST,
+              releaseSha: process.env.RELEASE_SHA,
+            } : null,
+            migrations,
+          }, null, 2)}\n`);
+          NODE
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'
         env:
           PROMOTION_UNIT: timekeeping
           PROMOTION_TARGET: staging
-          PROMOTION_SOURCE_SHA: ${{ needs.promotion.outputs.source_sha }}
-        run: |
-          PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/promotion-evidence/promotion-evidence.json"
-
-      - name: Upload staging promotion evidence
-        if: inputs.target == 'staging'
+          PROMOTION_SOURCE_SHA: ${{ env.RELEASE_SHA }}
+        run: PROMOTION_SOURCE_TREE="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")" node .github/scripts/promotion-evidence.mjs write "$RUNNER_TEMP/timekeeping-staging-evidence/promotion-evidence.json"
+      - if: inputs.target == 'staging'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: promotion-evidence-timekeeping
-          path: ${{ runner.temp }}/promotion-evidence/promotion-evidence.json
-          retention-days: 14
+          path: ${{ runner.temp }}/timekeeping-staging-evidence/promotion-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+      - if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-surface-timekeeping-${{ inputs.target }}-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/timekeeping-surface/surface.json
+          retention-days: 90
           if-no-files-found: error

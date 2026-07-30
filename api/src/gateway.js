@@ -8,6 +8,64 @@ const isOperationalProbe = (request) => request.method === 'GET' && ['/health', 
 const FINANCE_PROBE_TIMEOUT_MS = 3_000;
 const FINANCE_READ_TIMEOUT_MS = 3_000;
 const FINANCE_WRITE_TIMEOUT_MS = 5_000;
+const CLOUDFLARE_VERSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NETWORK_CONTEXT_RE = /^v1:[A-Za-z0-9_-]{43}$/;
+const B64URL_SHA256_RE = /^[A-Za-z0-9_-]{43}$/;
+
+function timekeepingServiceName(env) {
+    return String(env?.ENVIRONMENT || '').trim().toLowerCase() === 'staging'
+        ? 'skincos-timekeeping-staging'
+        : 'skincos-timekeeping';
+}
+
+/**
+ * The public request cannot select a Worker version. Pages may provide a
+ * deterministic affinity key only as part of its signed Ponto envelope; every
+ * version override is generated here from deployment-owned configuration.
+ */
+export function prepareTimekeepingRequest(request, env) {
+    const headers = new Headers(request.headers);
+    const requestedAffinity = String(headers.get('cloudflare-workers-version-key') || '').trim();
+    const networkContext = String(headers.get('x-skincos-network-context') || '').trim();
+    const hasSignedNetworkEnvelope =
+        NETWORK_CONTEXT_RE.test(networkContext)
+        && requestedAffinity === networkContext
+        && /^\d{13}$/.test(String(headers.get('x-skincos-network-ts') || '').trim())
+        && B64URL_SHA256_RE.test(String(headers.get('x-skincos-network-sig') || '').trim())
+        && String(headers.get('x-skincos-network-signature-version') || '').trim() === '2'
+        && Boolean(String(headers.get('x-skincos-actor') || '').trim())
+        && B64URL_SHA256_RE.test(String(headers.get('x-skincos-actor-sig') || '').trim());
+
+    headers.delete('cloudflare-workers-version-key');
+    headers.delete('cloudflare-workers-version-overrides');
+    headers.delete('x-skincos-gateway-release-sha');
+    headers.delete('x-skincos-gateway-environment');
+
+    if (hasSignedNetworkEnvelope) {
+        headers.set('cloudflare-workers-version-key', networkContext);
+    }
+
+    const releaseSha = String(env?.APP_VERSION || 'unknown').trim().toLowerCase();
+    const environment = String(env?.ENVIRONMENT || 'production').trim().toLowerCase();
+    const gatewayVersionId = String(env?.CF_VERSION_METADATA?.id || '').trim();
+    headers.set('x-skincos-gateway-release-sha', releaseSha);
+    headers.set('x-skincos-gateway-environment', environment);
+    if (CLOUDFLARE_VERSION_ID_RE.test(gatewayVersionId)) {
+        headers.set('x-skincos-gateway-version-id', gatewayVersionId);
+    } else {
+        headers.delete('x-skincos-gateway-version-id');
+    }
+
+    const downstreamVersionId = String(env?.TIMEKEEPING_VERSION_ID || '').trim();
+    if (CLOUDFLARE_VERSION_ID_RE.test(downstreamVersionId)) {
+        headers.set(
+            'cloudflare-workers-version-overrides',
+            `${timekeepingServiceName(env)}="${downstreamVersionId}"`,
+        );
+    }
+
+    return new Request(request, { headers });
+}
 
 function financeServiceTimeout(request) {
     // State-changing Finance routes carry mandatory idempotency keys. Give
@@ -48,7 +106,9 @@ export function createApiGateway({ inventoryHandler, timekeepingHandler, finance
     if (typeof inventoryHandler !== 'function') throw new TypeError('inventoryHandler is required');
     return createGatewayHandler({
         inventoryHandler,
-        timekeepingHandler,
+        timekeepingHandler: typeof timekeepingHandler === 'function'
+            ? (request, env, ctx) => timekeepingHandler(prepareTimekeepingRequest(request, env), env, ctx)
+            : undefined,
         financeHandler: async (request, env, ctx) => {
             // Health and readiness contain no actor or financial data. They stay
             // available to external monitors while every domain operation uses

@@ -1,0 +1,919 @@
+{
+  "schema": 1,
+  "generated_at": "2026-07-30T04:26:50Z",
+  "scope": {
+    "description": "Complete path-level inventory after PR #886 and before the governed Ponto release candidate is selected.",
+    "base_sha_exclusive": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
+    "target_sha_inclusive": "0a2117904ba58eb45e1163fb0971c31e6b2a7d1e",
+    "target_ref_at_inventory": "origin/main",
+    "command": "git diff --name-status 10b2197731d0210cf8fc8cd961f7a787d73bf650..0a2117904ba58eb45e1163fb0971c31e6b2a7d1e",
+    "commit_count": 58,
+    "first_parent_commit_count": 30
+  },
+  "summary": {
+    "unique_paths": 109,
+    "status_counts": {
+      "A": 33,
+      "M": 76,
+      "D": 0
+    },
+    "primary_classification_counts": {
+      "ponto_exclusive": 8,
+      "project_ledgers": 5,
+      "finance": 27,
+      "shared_multidomain": 6,
+      "orb_n8n": 8,
+      "livia_native": 5,
+      "website_meta_whatsapp": 13,
+      "observability": 1,
+      "crm_local": 36
+    }
+  },
+  "classification_contract": {
+    "primary_classification": "Exactly one disjoint primary classification is assigned to every changed path.",
+    "labels": "Zero or more non-disjoint technical or operational facets.",
+    "related_prs": "Pull requests identifiable from first-parent history for this range; an empty array means no PR was inferred.",
+    "ponto_impact": {
+      "direct": "Ponto-specific executable source, configuration, workflow, or test.",
+      "shared_control": "Shared source or governance changed in a way that must be included in Ponto candidate qualification.",
+      "documentary": "Persistent project state records Ponto status or blockers but does not itself change runtime behavior.",
+      "indirect": "A shared CRM surface changed for another objective and may require regression coverage for Ponto.",
+      "local_only": "The change belongs to CRM Local/operator tooling and is not evidence of a production Ponto change.",
+      "none": "No Ponto-specific or shared-runtime effect was identified from the path and its commits."
+    }
+  },
+  "paths": [
+    {
+      "path": ".codex/environments/environment.toml",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["codex-environment", "local-operator"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": ".github/scripts/finance-production-preflight.mjs",
+      "status": "A",
+      "primary_classification": "finance",
+      "labels": ["github-actions", "production-preflight"],
+      "related_prs": [890],
+      "ponto_impact": "none"
+    },
+    {
+      "path": ".github/scripts/ponto-core-baseline-publisher.mjs",
+      "status": "A",
+      "primary_classification": "ponto_exclusive",
+      "labels": ["github-actions", "core-worker", "rollback-baseline"],
+      "related_prs": [919],
+      "ponto_impact": "direct"
+    },
+    {
+      "path": ".github/scripts/ponto-core-baseline-publisher.test.mjs",
+      "status": "A",
+      "primary_classification": "ponto_exclusive",
+      "labels": ["test", "core-worker", "rollback-baseline"],
+      "related_prs": [919],
+      "ponto_impact": "direct"
+    },
+    {
+      "path": ".github/scripts/validate-deploy-topology.mjs",
+      "status": "M",
+      "primary_classification": "shared_multidomain",
+      "labels": ["deployment-topology", "finance", "ponto"],
+      "related_prs": [890, 898, 919],
+      "ponto_impact": "shared_control"
+    },
+    {
+      "path": ".github/scripts/validate-finance-canary-policy.mjs",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["canary", "policy-validation"],
+      "related_prs": [903],
+      "ponto_impact": "none"
+    },
+    {
+      "path": ".github/workflows/architecture-governance.yml",
+      "status": "M",
+      "primary_classification": "shared_multidomain",
+      "labels": ["github-actions", "architecture-governance", "ponto"],
+      "related_prs": [919],
+      "ponto_impact": "shared_control"
+    },
+    {
+      "path": ".github/workflows/deploy-crm-pages.yml",
+      "status": "M",
+      "primary_classification": "ponto_exclusive",
+      "labels": ["github-actions", "crm-pages", "staging", "provenance"],
+      "related_prs": [916, 917],
+      "ponto_impact": "direct"
+    },
+    {
+      "path": ".github/workflows/deploy-finance.yml",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["github-actions", "worker-deploy"],
+      "related_prs": [890, 898],
+      "ponto_impact": "none"
+    },
+    {
+      "path": ".github/workflows/finance-staging-canary.yml",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["github-actions", "staging", "canary"],
+      "related_prs": [902],
+      "ponto_impact": "none"
+    },
+    {
+      "path": ".github/workflows/orb-n8n-stable-release-watch.yml",
+      "status": "A",
+      "primary_classification": "orb_n8n",
+      "labels": ["github-actions", "n8n", "release-watch"],
+      "related_prs": [896],
+      "ponto_impact": "none"
+    },
+    {
+      "path": ".github/workflows/ponto-core-baseline-publisher.yml",
+      "status": "A",
+      "primary_classification": "ponto_exclusive",
+      "labels": ["github-actions", "core-worker", "rollback-baseline"],
+      "related_prs": [919],
+      "ponto_impact": "direct"
+    },
+    {
+      "path": "README.md",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["documentation", "crm-local"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "TASKS.md",
+      "status": "M",
+      "primary_classification": "project_ledgers",
+      "labels": ["project-state", "ponto", "finance", "inventory"],
+      "related_prs": [894, 906, 907, 908],
+      "ponto_impact": "documentary"
+    },
+    {
+      "path": "api/src/gateway.js",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["core-api", "gateway", "finance"],
+      "related_prs": [903, 909],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "api/src/router.js",
+      "status": "M",
+      "primary_classification": "ponto_exclusive",
+      "labels": ["core-api", "router", "private-worker"],
+      "related_prs": [912],
+      "ponto_impact": "direct"
+    },
+    {
+      "path": "api/test/gateway.test.mjs",
+      "status": "M",
+      "primary_classification": "shared_multidomain",
+      "labels": ["test", "core-api", "finance", "ponto"],
+      "related_prs": [903, 909, 912],
+      "ponto_impact": "shared_control"
+    },
+    {
+      "path": "api/workers/ponto.js",
+      "status": "A",
+      "primary_classification": "ponto_exclusive",
+      "labels": ["core-api", "worker-entrypoint", "private-worker"],
+      "related_prs": [912],
+      "ponto_impact": "direct"
+    },
+    {
+      "path": "api/wrangler.ponto.toml",
+      "status": "A",
+      "primary_classification": "ponto_exclusive",
+      "labels": ["cloudflare", "worker-config", "private-worker"],
+      "related_prs": [912],
+      "ponto_impact": "direct"
+    },
+    {
+      "path": "backend/scripts/insumos.sh",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "insumos", "launcher"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "crm/api/server.js",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "api", "role-policy"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/api/server/__tests__/crmRolePolicy.test.js",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "test", "role-policy"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "crm/api/server/crmRolePolicy.js",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "api", "role-policy"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/.wrangler-staging/wrangler.toml",
+      "status": "M",
+      "primary_classification": "ponto_exclusive",
+      "labels": ["cloudflare-pages", "staging", "api-upstream"],
+      "related_prs": [914],
+      "ponto_impact": "direct"
+    },
+    {
+      "path": "crm/console/App.tsx",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["crm-shell", "finance", "crm-local"],
+      "related_prs": [902, 903, 920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/authPolicy.ts",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "authorization", "crm-shell"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/contexts.tsx",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "contexts", "crm-shell"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/crmRoleAccess.ts",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "authorization", "role-policy"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/e2e/module-shell-isolation.spec.ts",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["e2e", "crm-shell", "module-isolation"],
+      "related_prs": [902, 903],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/financeBootstrap.ts",
+      "status": "A",
+      "primary_classification": "finance",
+      "labels": ["crm-console", "bootstrap"],
+      "related_prs": [903],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "crm/console/functions/_lib/crmAuth.ts",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "authorization", "pages-functions"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/moduleAvailability.ts",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "module-availability", "crm-shell"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/modules/RemoteFinanceModule.tsx",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["crm-console", "remote-module"],
+      "related_prs": [891],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "crm/console/modules/localLaunchCatalog.json",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "module-catalog", "launcher"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "crm/console/modules/localRolePolicy.json",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "authorization", "role-policy"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "crm/console/scripts/crm-local-smoke.cjs",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "smoke", "launcher"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "crm/console/scripts/dev_pages.sh",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "pages", "launcher"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "crm/console/tests/authPolicy.test.ts",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "test", "authorization"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/tests/crmLocalTestUserAccess.test.ts",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "test", "role-policy"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "crm/console/tests/financeApi.test.ts",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["test", "finance", "crm-local"],
+      "related_prs": [902, 903, 920],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "crm/console/tests/financeBootstrap.test.ts",
+      "status": "A",
+      "primary_classification": "finance",
+      "labels": ["test", "finance", "bootstrap"],
+      "related_prs": [903],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "crm/console/tests/localLaunchCatalog.test.ts",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "test", "module-catalog"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "crm/console/tests/moduleAvailability.test.ts",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "test", "module-availability"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/tsconfig.json",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "typescript", "build-config"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/useReplitAuth.ts",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "authentication", "crm-shell"],
+      "related_prs": [920],
+      "ponto_impact": "indirect"
+    },
+    {
+      "path": "crm/console/vite.finance.config.ts",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["vite", "finance", "build-config"],
+      "related_prs": [895],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "docs/architecture/module-catalog.json",
+      "status": "M",
+      "primary_classification": "shared_multidomain",
+      "labels": ["architecture", "module-catalog", "finance", "inventory"],
+      "related_prs": [906, 907, 908],
+      "ponto_impact": "shared_control"
+    },
+    {
+      "path": "docs/codex-shared-workspace.md",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["documentation", "crm-local", "operator"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "docs/operations/orb-n8n-release-qualification.md",
+      "status": "M",
+      "primary_classification": "orb_n8n",
+      "labels": ["documentation", "n8n", "release-qualification"],
+      "related_prs": [888, 896],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "docs/project-state/blockers.md",
+      "status": "M",
+      "primary_classification": "project_ledgers",
+      "labels": ["project-state", "blockers", "ponto", "finance"],
+      "related_prs": [894, 906, 907, 908],
+      "ponto_impact": "documentary"
+    },
+    {
+      "path": "docs/project-state/current-state.md",
+      "status": "M",
+      "primary_classification": "project_ledgers",
+      "labels": ["project-state", "ponto", "finance", "meta"],
+      "related_prs": [893, 894, 906, 907, 908, 918],
+      "ponto_impact": "documentary"
+    },
+    {
+      "path": "docs/project-state/evidence-ledger.json",
+      "status": "M",
+      "primary_classification": "project_ledgers",
+      "labels": ["project-state", "evidence", "ponto", "finance", "meta"],
+      "related_prs": [893, 894, 906, 907, 908, 918],
+      "ponto_impact": "documentary"
+    },
+    {
+      "path": "docs/runbooks/crm-local-modular.md",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["documentation", "crm-local", "runbook"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "docs/runbooks/finance-pilot-package.md",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["documentation", "finance", "pilot"],
+      "related_prs": [908],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "docs/runbooks/livia-isolated-promotion.md",
+      "status": "M",
+      "primary_classification": "livia_native",
+      "labels": ["documentation", "livia", "native-runtime"],
+      "related_prs": [901],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/migrations/0007_finance_security_integrity.sql",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["migration", "security", "integrity"],
+      "related_prs": [890],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/migrations/0008_finance_draft_revision.sql",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["migration", "revision"],
+      "related_prs": [890],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/migrations/0013_finance_additive_trigger_contract.sql",
+      "status": "A",
+      "primary_classification": "finance",
+      "labels": ["migration", "additive", "trigger-contract"],
+      "related_prs": [890],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/package.json",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["package", "scripts", "test"],
+      "related_prs": [890],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/scripts/staging-import-smoke.mjs",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["staging", "smoke", "import"],
+      "related_prs": [891, 895, 902, 903, 905],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/scripts/staging-synthetic-canary.mjs",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["staging", "synthetic", "canary"],
+      "related_prs": [903],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/scripts/staging-ui-smoke.mjs",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["staging", "ui", "smoke"],
+      "related_prs": [891],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/scripts/worker-release-smoke.mjs",
+      "status": "A",
+      "primary_classification": "finance",
+      "labels": ["worker", "release", "smoke"],
+      "related_prs": [898],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/test/d1-integration.test.mjs",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["test", "d1", "integration"],
+      "related_prs": [890],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/test/migration-policy.test.mjs",
+      "status": "A",
+      "primary_classification": "finance",
+      "labels": ["test", "migration", "policy"],
+      "related_prs": [890],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/test/production-preflight.test.mjs",
+      "status": "A",
+      "primary_classification": "finance",
+      "labels": ["test", "production-preflight"],
+      "related_prs": [890],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/test/staging-smoke-transport.test.mjs",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["test", "staging", "transport"],
+      "related_prs": [891, 895, 902, 903, 905],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "finance/test/worker-release-smoke.test.mjs",
+      "status": "A",
+      "primary_classification": "finance",
+      "labels": ["test", "worker", "release"],
+      "related_prs": [898],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "ops/module-governance/finance-staging-canary-policy.json",
+      "status": "M",
+      "primary_classification": "finance",
+      "labels": ["governance", "staging", "canary"],
+      "related_prs": [903],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "ops/module-governance/release-readiness.json",
+      "status": "M",
+      "primary_classification": "shared_multidomain",
+      "labels": ["governance", "release-readiness", "finance", "inventory"],
+      "related_prs": [906, 908],
+      "ponto_impact": "shared_control"
+    },
+    {
+      "path": "ops/observability/scripts/Test-SkincosObservability.ps1",
+      "status": "M",
+      "primary_classification": "observability",
+      "labels": ["observability", "powershell", "test"],
+      "related_prs": [911],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "ops/project-orchestration/work-queue.json",
+      "status": "M",
+      "primary_classification": "project_ledgers",
+      "labels": ["project-state", "orchestration", "ponto", "finance"],
+      "related_prs": [894, 906, 907, 908],
+      "ponto_impact": "documentary"
+    },
+    {
+      "path": "ops/runtime/n8n-security/audit-release-baseline.sh",
+      "status": "M",
+      "primary_classification": "orb_n8n",
+      "labels": ["n8n", "security", "release-baseline"],
+      "related_prs": [888],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "ops/runtime/n8n-security/release-watch-policy.json",
+      "status": "A",
+      "primary_classification": "orb_n8n",
+      "labels": ["n8n", "policy", "release-watch"],
+      "related_prs": [888],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "ops/runtime/n8n-security/tests/test-release-baseline.sh",
+      "status": "M",
+      "primary_classification": "orb_n8n",
+      "labels": ["n8n", "test", "release-baseline"],
+      "related_prs": [888],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "ops/runtime/n8n-security/tests/test-release-watch-workflow.sh",
+      "status": "A",
+      "primary_classification": "orb_n8n",
+      "labels": ["n8n", "test", "github-actions"],
+      "related_prs": [896],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "ops/runtime/n8n-security/tests/test-watch-stable-release.sh",
+      "status": "A",
+      "primary_classification": "orb_n8n",
+      "labels": ["n8n", "test", "release-watch"],
+      "related_prs": [888],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "ops/runtime/n8n-security/watch-stable-release.sh",
+      "status": "A",
+      "primary_classification": "orb_n8n",
+      "labels": ["n8n", "release-watch", "shell"],
+      "related_prs": [888],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "orb/engine/scripts/livia/qa-runner.js",
+      "status": "M",
+      "primary_classification": "livia_native",
+      "labels": ["livia", "qa", "native-runtime"],
+      "related_prs": [897, 901],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "orb/engine/tests/livia-qa-runner.test.js",
+      "status": "M",
+      "primary_classification": "livia_native",
+      "labels": ["livia", "test", "qa"],
+      "related_prs": [897, 901],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "platform/deploy/operational-units.json",
+      "status": "M",
+      "primary_classification": "shared_multidomain",
+      "labels": ["deployment-topology", "operational-units", "ponto"],
+      "related_prs": [919],
+      "ponto_impact": "shared_control"
+    },
+    {
+      "path": "scripts/crm-local-build-state.mjs",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "build-state", "provenance"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/crm-local-module-catalog.mjs",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "module-catalog", "launcher"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/crm-local-module-catalog.test.mjs",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "test", "module-catalog"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/crm-local-persona-runtime.sh",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "persona", "runtime"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/crm-local-runtime-policy.mjs",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "runtime", "policy"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/install-shared-codex-shortcuts.ps1",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "operator", "shortcut"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/open-crm-local-browser.ps1",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "browser", "launcher"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/run-local-crm.sh",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "launcher", "shell"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/run-local-whatsapp-orchestrator.sh",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "whatsapp", "launcher"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/run-shared-codex-shortcut.ps1",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "operator", "shortcut"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/runtime/prepare-native-source-release.sh",
+      "status": "M",
+      "primary_classification": "livia_native",
+      "labels": ["native-runtime", "release-preparation", "livia"],
+      "related_prs": [892],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "scripts/runtime/test-prepare-native-source-release.sh",
+      "status": "M",
+      "primary_classification": "livia_native",
+      "labels": ["native-runtime", "test", "release-preparation"],
+      "related_prs": [892],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "scripts/tests/crm-local-build-state.test.mjs",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "test", "build-state"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/tests/crm-local-dual-persona.test.mjs",
+      "status": "M",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "test", "persona"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "scripts/tests/crm-local-isolation-hooks.test.mjs",
+      "status": "A",
+      "primary_classification": "crm_local",
+      "labels": ["crm-local", "test", "isolation"],
+      "related_prs": [920],
+      "ponto_impact": "local_only"
+    },
+    {
+      "path": "website/package-lock.json",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "dependencies", "meta"],
+      "related_prs": [893],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/package.json",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "scripts", "meta"],
+      "related_prs": [893],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/src/app/api/booking/request/route.ts",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "booking", "meta-capi"],
+      "related_prs": [893],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/src/app/api/whatsapp/redirect/route.ts",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "whatsapp", "redirect"],
+      "related_prs": [904, 915],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/src/components/BookingFlow.tsx",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "booking", "meta"],
+      "related_prs": [893],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/src/components/TrackedWhatsappLink.tsx",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "whatsapp", "tracking"],
+      "related_prs": [910],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/src/lib/metaEventContracts.ts",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "meta-capi", "event-contract"],
+      "related_prs": [893],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/src/lib/whatsappTracking.ts",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "whatsapp", "tracking"],
+      "related_prs": [904, 913, 915],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/tests/conversions.test.ts",
+      "status": "A",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "test", "conversion"],
+      "related_prs": [893],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/tests/metaConversionsApi.test.ts",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "test", "meta-capi"],
+      "related_prs": [893],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/tests/metaRouteContracts.test.ts",
+      "status": "A",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "test", "route-contract"],
+      "related_prs": [893],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/tests/trackedWhatsappLink.test.ts",
+      "status": "A",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "test", "whatsapp"],
+      "related_prs": [910],
+      "ponto_impact": "none"
+    },
+    {
+      "path": "website/tests/whatsappTracking.test.ts",
+      "status": "M",
+      "primary_classification": "website_meta_whatsapp",
+      "labels": ["website", "test", "whatsapp"],
+      "related_prs": [904, 913, 915],
+      "ponto_impact": "none"
+    }
+  ]
+}

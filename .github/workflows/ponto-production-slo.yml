@@ -1,0 +1,159 @@
+name: Ponto production SLO
+run-name: Ponto SLO ${{ inputs.stage }} ${{ inputs.release_sha }} orchestrator=${{ inputs.orchestrator_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Live stage under observation
+        required: true
+        type: choice
+        options: [pilot, canary, production, rollback]
+      release_sha:
+        description: Immutable promoted SHA
+        required: true
+        type: string
+      orchestrator_run_id:
+        description: Ponto coordinator correlation ID
+        required: true
+        type: string
+      core_version_id:
+        description: Exact Core Worker version selected for the observed cohort
+        required: true
+        type: string
+      timekeeping_version_id:
+        description: Exact Timekeeping Worker version selected by Core
+        required: true
+        type: string
+      identity_version_id:
+        description: Exact Identity/Workforce Worker version selected for contract proof
+        required: true
+        type: string
+      pages_deployment_id:
+        description: Exact CRM Pages deployment attested by the publisher
+        required: true
+        type: string
+
+concurrency:
+  group: ponto-production-slo
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  consultor-journey:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.stage != 'rollback' }}
+    runs-on: ${{ fromJSON(vars.PONTO_PILOT_RUNNER_LABELS_JSON || '["self-hosted","ponto-pilot"]') }}
+    environment: production
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 1
+      - name: Run external read-only CONSULTOR journey
+        env:
+          PONTO_PILOT_LOGIN: ${{ secrets.PONTO_PILOT_LOGIN }}
+          PONTO_PILOT_PASSWORD: ${{ secrets.PONTO_PILOT_PASSWORD }}
+          PONTO_RELEASE_SHA: ${{ inputs.release_sha }}
+          PONTO_RELEASE_STAGE: ${{ inputs.stage }}
+          PONTO_RELEASE_CRM_URL: https://crm.skincos.com.br
+          PONTO_RELEASE_SLO_REPORT: ${{ runner.temp }}/ponto-production-slo.json
+          PONTO_EXPECTED_CORE_VERSION_ID: ${{ inputs.core_version_id }}
+          PONTO_EXPECTED_TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
+          PONTO_EXPECTED_IDENTITY_VERSION_ID: ${{ inputs.identity_version_id }}
+          PONTO_EXPECTED_PAGES_DEPLOYMENT_ID: ${{ inputs.pages_deployment_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: node .github/scripts/ponto-production-journey.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-slo-${{ inputs.stage }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/ponto-production-slo.json
+          retention-days: 90
+          if-no-files-found: error
+  rollback-observation:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.stage == 'rollback' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 1
+      - name: Attest exact rollback versions and Pages deployment from Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
+          EXPECTED_CORE_VERSION_ID: ${{ inputs.core_version_id }}
+          EXPECTED_TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
+          EXPECTED_IDENTITY_VERSION_ID: ${{ inputs.identity_version_id }}
+          EXPECTED_PAGES_DEPLOYMENT_ID: ${{ inputs.pages_deployment_id }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID EXPECTED_CORE_VERSION_ID EXPECTED_TIMEKEEPING_VERSION_ID EXPECTED_IDENTITY_VERSION_ID EXPECTED_PAGES_DEPLOYMENT_ID; do
+            [[ -n "${!name:-}" ]] || { echo "Missing rollback attestation input: $name"; exit 1; }
+          done
+          npx --yes wrangler@4.112.0 deployments status --name skincos-ponto-core --json > "$RUNNER_TEMP/core-status.json"
+          npx --yes wrangler@4.112.0 deployments status --name skincos-timekeeping --json > "$RUNNER_TEMP/timekeeping-status.json"
+          npx --yes wrangler@4.112.0 deployments status --name skincos-insumos --json > "$RUNNER_TEMP/identity-status.json"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PAGES_PROJECT/deployments" \
+            > "$RUNNER_TEMP/pages-status.json"
+          node - "$RUNNER_TEMP/core-status.json" "$RUNNER_TEMP/timekeeping-status.json" "$RUNNER_TEMP/identity-status.json" "$RUNNER_TEMP/pages-status.json" "$RUNNER_TEMP/rollback-control-plane.json" <<'NODE'
+          const fs = require("fs");
+          const uuid = /^[0-9a-f-]{36}$/i;
+          const exactWorker = (file, expected, name) => {
+            if (!uuid.test(expected)) throw new Error(`${name} expected version is invalid`);
+            const payload = JSON.parse(fs.readFileSync(file, "utf8"));
+            const versions = payload.versions || payload.latest?.versions || [];
+            if (versions.length !== 1 || String(versions[0]?.version_id || versions[0]?.id || "").toLowerCase() !== expected.toLowerCase() || Number(versions[0]?.percentage) !== 100) {
+              throw new Error(`${name} is not exactly 100 percent on the attested incumbent`);
+            }
+          };
+          exactWorker(process.argv[2], process.env.EXPECTED_CORE_VERSION_ID, "Core");
+          exactWorker(process.argv[3], process.env.EXPECTED_TIMEKEEPING_VERSION_ID, "Timekeeping");
+          exactWorker(process.argv[4], process.env.EXPECTED_IDENTITY_VERSION_ID, "Identity");
+          const pagesPayload = JSON.parse(fs.readFileSync(process.argv[5], "utf8"));
+          if (pagesPayload.success !== true) throw new Error("Pages deployments API failed");
+          const production = (pagesPayload.result || []).filter(item => item.environment === "production").sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
+          if (String(production[0]?.id || "").toLowerCase() !== process.env.EXPECTED_PAGES_DEPLOYMENT_ID.toLowerCase()) throw new Error("latest production Pages deployment differs");
+          fs.writeFileSync(process.argv[6], `${JSON.stringify({
+            passed: true,
+            coreVersionId: process.env.EXPECTED_CORE_VERSION_ID,
+            timekeepingVersionId: process.env.EXPECTED_TIMEKEEPING_VERSION_ID,
+            identityVersionId: process.env.EXPECTED_IDENTITY_VERSION_ID,
+            pagesDeploymentId: process.env.EXPECTED_PAGES_DEPLOYMENT_ID,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -f "$RUNNER_TEMP/core-status.json" "$RUNNER_TEMP/timekeeping-status.json" "$RUNNER_TEMP/identity-status.json" "$RUNNER_TEMP/pages-status.json"
+      - name: Observe rolled-back health and fail-closed state
+        env:
+          PONTO_RELEASE_SHA: ${{ inputs.release_sha }}
+          PONTO_RELEASE_STAGE: rollback
+          PONTO_RELEASE_CRM_URL: https://crm.skincos.com.br
+          PONTO_RELEASE_SLO_REPORT: ${{ runner.temp }}/ponto-production-slo.json
+          PONTO_EXPECTED_CORE_VERSION_ID: ${{ inputs.core_version_id }}
+          PONTO_EXPECTED_TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
+          PONTO_EXPECTED_IDENTITY_VERSION_ID: ${{ inputs.identity_version_id }}
+          PONTO_EXPECTED_PAGES_DEPLOYMENT_ID: ${{ inputs.pages_deployment_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PONTO_ROLLBACK_CONTROL_PLANE_ATTESTATION: ${{ runner.temp }}/rollback-control-plane.json
+        run: node .github/scripts/ponto-production-journey.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-slo-${{ inputs.stage }}-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/ponto-production-slo.json
+          retention-days: 90
+          if-no-files-found: error

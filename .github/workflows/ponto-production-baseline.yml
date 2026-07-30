@@ -1,0 +1,186 @@
+name: Ponto production baseline
+run-name: Ponto baseline ${{ inputs.release_sha }} staging=${{ inputs.staging_run_id }} orchestrator=${{ inputs.orchestrator_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Immutable main candidate whose staging run precedes pilot
+        required: true
+        type: string
+      staging_run_id:
+        description: Exact successful Ponto staging coordinator run
+        required: true
+        type: string
+      orchestrator_run_id:
+        description: Pilot coordinator correlation ID
+        required: true
+        type: string
+
+concurrency:
+  group: ponto-production-baseline-${{ inputs.release_sha }}-${{ inputs.staging_run_id }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  capture:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      baseline_run_id: ${{ steps.baseline.outputs.baseline_run_id }}
+      baseline_sha256: ${{ steps.baseline.outputs.baseline_sha256 }}
+      baseline_timekeeping_version_id: ${{ steps.baseline.outputs.baseline_timekeeping_version_id }}
+      baseline_timekeeping_deployment_id: ${{ steps.baseline.outputs.baseline_timekeeping_deployment_id }}
+      baseline_core_version_id: ${{ steps.baseline.outputs.baseline_core_version_id }}
+      baseline_core_deployment_id: ${{ steps.baseline.outputs.baseline_core_deployment_id }}
+      baseline_identity_version_id: ${{ steps.baseline.outputs.baseline_identity_version_id }}
+      baseline_identity_deployment_id: ${{ steps.baseline.outputs.baseline_identity_deployment_id }}
+      baseline_pages_deployment_id: ${{ steps.baseline.outputs.baseline_pages_deployment_id }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Verify exact cataloged production Ponto Core bootstrap predecessor
+        id: core_bootstrap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          mapfile -t expected < <(node --input-type=module - <<'NODE'
+          import fs from "node:fs";
+          const catalog = JSON.parse(fs.readFileSync("platform/deploy/operational-units.json", "utf8"));
+          const bootstrap = catalog.units.find(unit => unit.id === "ponto-core-baseline")?.promotion?.bootstrapEvidence;
+          const artifact = bootstrap?.artifacts?.production;
+          for (const value of [
+            bootstrap?.workflowRunId,
+            artifact?.id,
+            bootstrap?.sourceSha,
+            artifact?.deploymentId,
+            artifact?.versionId,
+            artifact?.digest,
+            artifact?.worker,
+          ]) {
+            if (!value || /[\r\n]/.test(String(value))) throw new Error("production bootstrap catalog entry is invalid");
+            process.stdout.write(`${value}\n`);
+          }
+          NODE
+          )
+          [[ "${#expected[@]}" == 7 ]] || { echo 'Incomplete production bootstrap catalog entry'; exit 1; }
+          run_id="${expected[0]}"
+          artifact_id="${expected[1]}"
+          source_sha="${expected[2]}"
+          deployment_id="${expected[3]}"
+          version_id="${expected[4]}"
+          artifact_digest="${expected[5]}"
+          worker="${expected[6]}"
+          evidence_dir="$RUNNER_TEMP/ponto-core-bootstrap-production"
+          mkdir -p "$evidence_dir/unpacked"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$evidence_dir/run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" > "$evidence_dir/artifact.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$evidence_dir/artifact.zip"
+          unzip -q "$evidence_dir/artifact.zip" -d "$evidence_dir/unpacked"
+          mapfile -t evidence_files < <(find "$evidence_dir/unpacked" -type f -name evidence.json -print)
+          [[ "${#evidence_files[@]}" == 1 ]] || { echo 'Bootstrap artifact must contain exactly one evidence.json'; exit 1; }
+          node .github/scripts/ponto-core-bootstrap-evidence.mjs verify production \
+            "${evidence_files[0]}" "$evidence_dir/run.json" "$evidence_dir/artifact.json" \
+            platform/deploy/operational-units.json
+          PONTO_BOOTSTRAP_TARGET=production \
+          PONTO_BOOTSTRAP_SOURCE_SHA="$source_sha" \
+          PONTO_BOOTSTRAP_LIVE_FILE="$evidence_dir/live.json" \
+            node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import { remoteSnapshot } from "./.github/scripts/ponto-core-baseline-publisher.mjs";
+          const snapshot = await remoteSnapshot({
+            accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+            apiToken: process.env.CLOUDFLARE_API_TOKEN,
+            baselineSha: process.env.PONTO_BOOTSTRAP_SOURCE_SHA,
+            target: process.env.PONTO_BOOTSTRAP_TARGET,
+          });
+          fs.writeFileSync(process.env.PONTO_BOOTSTRAP_LIVE_FILE, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          node - "$evidence_dir/live.json" "$deployment_id" "$version_id" <<'NODE'
+          const fs = require("fs");
+          const live = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (
+            live?.exists !== true
+            || live?.attestation?.activeDeploymentId !== process.argv[3]
+            || live?.attestation?.activeVersionId !== process.argv[4]
+          ) throw new Error("live production Ponto Core differs from the exact cataloged bootstrap predecessor");
+          NODE
+          echo "bootstrap_live_attested=true" >> "$GITHUB_OUTPUT"
+          rm -f "$evidence_dir/artifact.zip"
+      - name: Verify immutable source and exact staging predecessor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && "$STAGING_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'Invalid baseline source/predecessor'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo 'Baseline checkout differs'; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'Baseline SHA is not reachable from main'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ponto-progressive-release.yml" > "$RUNNER_TEMP/staging-workflow.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGING_RUN_ID" > "$RUNNER_TEMP/staging-run.json"
+          node - "$RUNNER_TEMP/staging-workflow.json" "$RUNNER_TEMP/staging-run.json" <<'NODE'
+          const fs = require("fs");
+          const workflow = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const run = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (
+            workflow.state !== "active"
+            || workflow.path !== ".github/workflows/ponto-progressive-release.yml"
+            || run.workflow_id !== workflow.id
+            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.status !== "completed"
+            || run.conclusion !== "success"
+            || run.event !== "workflow_dispatch"
+            || run.head_branch !== "main"
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) throw new Error("baseline staging predecessor provenance is invalid");
+          NODE
+          mkdir -p "$RUNNER_TEMP/staging-evidence"
+          gh run download "$STAGING_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "ponto-release-evidence-staging-$RELEASE_SHA" --dir "$RUNNER_TEMP/staging-evidence"
+          PONTO_EXPECTED_STAGE=staging PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-release-evidence.mjs verify "$RUNNER_TEMP/staging-evidence/ponto-release-evidence.json"
+          rm -rf "$RUNNER_TEMP/staging-evidence"
+          rm -f "$RUNNER_TEMP/staging-workflow.json" "$RUNNER_TEMP/staging-run.json"
+      - name: Capture exact incumbent control-plane identities and external maintenance health
+        env:
+          PONTO_BASELINE_RELEASE_SHA: ${{ inputs.release_sha }}
+          PONTO_BASELINE_STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+          PONTO_BASELINE_ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          PONTO_CORE_BOOTSTRAP_WORKFLOW_RUN_ID: ${{ steps.core_bootstrap.outputs.bootstrap_workflow_run_id }}
+          PONTO_CORE_BOOTSTRAP_ARTIFACT_ID: ${{ steps.core_bootstrap.outputs.bootstrap_artifact_id }}
+          PONTO_CORE_BOOTSTRAP_ARTIFACT_DIGEST: ${{ steps.core_bootstrap.outputs.bootstrap_artifact_digest }}
+          PONTO_CORE_BOOTSTRAP_SOURCE_SHA: ${{ steps.core_bootstrap.outputs.bootstrap_source_sha }}
+          PONTO_CORE_BOOTSTRAP_DEPLOYMENT_ID: ${{ steps.core_bootstrap.outputs.bootstrap_deployment_id }}
+          PONTO_CORE_BOOTSTRAP_VERSION_ID: ${{ steps.core_bootstrap.outputs.bootstrap_version_id }}
+          PONTO_CORE_BOOTSTRAP_LIVE_ATTESTED: ${{ steps.core_bootstrap.outputs.bootstrap_live_attested }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'skincos' }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: node .github/scripts/ponto-production-baseline.mjs capture "$RUNNER_TEMP/ponto-production-baseline.json"
+      - name: Export immutable baseline identities before publication
+        id: baseline
+        env:
+          PONTO_EXPECTED_BASELINE_RELEASE_SHA: ${{ inputs.release_sha }}
+          PONTO_EXPECTED_BASELINE_STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+          PONTO_EXPECTED_BASELINE_RUN_ID: ${{ github.run_id }}
+          PONTO_EXPECTED_BASELINE_REPOSITORY: ${{ github.repository }}
+        run: node .github/scripts/ponto-production-baseline.mjs verify "$RUNNER_TEMP/ponto-production-baseline.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-production-baseline-${{ inputs.release_sha }}-${{ inputs.staging_run_id }}
+          path: ${{ runner.temp }}/ponto-production-baseline.json
+          retention-days: 90
+          if-no-files-found: error
