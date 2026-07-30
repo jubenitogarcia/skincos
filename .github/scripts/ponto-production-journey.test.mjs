@@ -227,6 +227,7 @@ globalThis.fetch = async (input, init = {}) => {
       PONTO_RELEASE_PROBE_CAPABILITY: capabilityFile,
       PONTO_ORCHESTRATOR_RUN_ID: "123",
       GITHUB_RUN_ID: "456",
+      RUNNER_NAME: runnerName,
       PONTO_RUNNER_NAME: runnerName,
       PONTO_PILOT_RUNNER_ISOLATION_REF: runnerIsolationRef,
       PONTO_PILOT_NETWORK_CONTEXT_CUSTODY_REF: networkContextRef,
