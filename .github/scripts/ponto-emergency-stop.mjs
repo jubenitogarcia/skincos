@@ -17,17 +17,17 @@ const NON_TERMINAL = new Set(NON_TERMINAL_STATUSES);
 const ALLOWED_HIGH_RISK_EVENTS = new Set(["workflow_dispatch", "schedule"]);
 
 export const HIGH_RISK_WORKFLOWS = Object.freeze([
-  { path: ".github/workflows/deploy-timekeeping.yml", title: /^Timekeeping (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
-  { path: ".github/workflows/deploy-core-workers.yml", title: /^Core (?:api|inventory|all) (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
-  { path: ".github/workflows/deploy-crm-pages.yml", title: /^CRM Pages (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
-  { path: ".github/workflows/module-availability.yml", title: /^Module (?:finance|timekeeping) (staging|production)(?:\s|$)/ },
-  { path: ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml", title: /^Attest Ponto Workers (staging|production)(?:\s|$)/ },
-  { path: ".github/workflows/cloudflare-pages-sync-ponto.yml", title: /^Attest CRM Pages (staging|production)(?:\s|$)/ },
-  { path: ".github/workflows/ponto-core-baseline-publisher.yml", targets: ["staging", "production"] },
-  { path: ".github/workflows/timekeeping-staging-journey.yml", targets: ["staging"] },
-  { path: ".github/workflows/ponto-staging-rollback-drill.yml", targets: ["staging"] },
-  { path: ".github/workflows/ponto-production-baseline.yml", targets: ["production"] },
-  { path: ".github/workflows/ponto-production-slo.yml", targets: ["production"] },
+  { path: ".github/workflows/deploy-timekeeping.yml", name: "Deploy Workforce Timekeeping", title: /^Timekeeping (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
+  { path: ".github/workflows/deploy-core-workers.yml", name: "Deploy Core Worker", title: /^Core (?:api|inventory|all) (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
+  { path: ".github/workflows/deploy-crm-pages.yml", name: "Deploy CRM (Cloudflare Pages)", title: /^CRM Pages (preview|staging|pilot|canary|production|rollback)(?:\s|$)/ },
+  { path: ".github/workflows/module-availability.yml", name: "Set module availability", title: /^Module (?:finance|timekeeping) (staging|production)(?:\s|$)/ },
+  { path: ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml", name: "Attest Ponto Worker secret custody", title: /^Attest Ponto Workers (staging|production)(?:\s|$)/ },
+  { path: ".github/workflows/cloudflare-pages-sync-ponto.yml", name: "Attest CRM Pages env (Timekeeping)", title: /^Attest CRM Pages (staging|production)(?:\s|$)/ },
+  { path: ".github/workflows/ponto-core-baseline-publisher.yml", name: "Bootstrap private Ponto Core rollback baseline", targets: ["staging", "production"] },
+  { path: ".github/workflows/timekeeping-staging-journey.yml", name: "Timekeeping authenticated staging journey", targets: ["staging"] },
+  { path: ".github/workflows/ponto-staging-rollback-drill.yml", name: "Ponto staging rollback drill", targets: ["staging"] },
+  { path: ".github/workflows/ponto-production-baseline.yml", name: "Ponto production baseline", targets: ["production"] },
+  { path: ".github/workflows/ponto-production-slo.yml", name: "Ponto production SLO", targets: ["production"] },
 ]);
 
 export const targetForStage = (stage) => stage === "staging" ? "staging" : "production";
@@ -58,6 +58,7 @@ export async function loadCanonicalHighRiskWorkflows({ repository, request }) {
     if (
       !isInventoryWorkflowState(workflow?.state)
       || workflow?.path !== specification.path
+      || workflow?.name !== specification.name
       || !Number.isInteger(workflow?.id)
       || byId.has(workflow.id)
     ) {
@@ -125,16 +126,17 @@ export function classifyHighRiskRun(run, {
 export function parseCoordinator(run, {
   repository,
   workflowId,
+  workflowName,
   target,
 }) {
   const match = COORDINATOR_TITLE.exec(String(run?.display_title || ""));
   if (
     !match
+    || workflowName !== "Ponto progressive release"
     || run?.workflow_id !== workflowId
     || run?.path !== ".github/workflows/ponto-progressive-release.yml"
     || run?.event !== "workflow_dispatch"
     || run?.head_branch !== "main"
-    || run?.name !== "Ponto progressive release"
     || run?.repository?.full_name !== repository
     || run?.head_repository?.full_name !== repository
     || String(run?.id || "") !== match[3]
@@ -214,6 +216,7 @@ if (invokedAsScript) {
   if (
     !isInventoryWorkflowState(workflow?.state)
     || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
+    || workflow?.name !== "Ponto progressive release"
     || !Number.isInteger(workflow?.id)
   ) throw new Error("canonical Ponto coordinator workflow is unavailable");
   const highRiskWorkflows = await loadCanonicalHighRiskWorkflows({ repository, request });
@@ -283,6 +286,7 @@ if (invokedAsScript) {
       const parsed = parseCoordinator(coordinatorRun, {
         repository,
         workflowId: workflow.id,
+        workflowName: workflow.name,
         target,
       });
       if (!parsed) continue;
@@ -557,6 +561,7 @@ if (invokedAsScript) {
       const parsed = parseCoordinator(run, {
         repository,
         workflowId: workflow.id,
+        workflowName: workflow.name,
         target,
       });
       if (!parsed) continue;
@@ -590,6 +595,7 @@ if (invokedAsScript) {
       const parsed = parseCoordinator(coordinatorRun, {
         repository,
         workflowId: workflow.id,
+        workflowName: workflow.name,
         target,
       });
       if (!parsed) {

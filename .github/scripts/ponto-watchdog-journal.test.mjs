@@ -72,6 +72,7 @@ const scopedRequest = (rows, extra = async () => undefined) => async (pathname) 
     return {
       id: 900,
       path: ".github/workflows/ponto-progressive-release.yml",
+      name: "Ponto progressive release",
       state: "active",
     };
   }

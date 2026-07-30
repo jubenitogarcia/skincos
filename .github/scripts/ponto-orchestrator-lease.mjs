@@ -563,6 +563,7 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage, cur
   if (
     workflow?.state !== "active"
     || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
+    || workflow?.name !== "Ponto progressive release"
     || String(run?.id || "") !== orchestratorRunId
     || run?.workflow_id !== workflow.id
     || run?.path !== workflow.path
@@ -573,7 +574,6 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage, cur
     || run?.head_branch !== "main"
     || run?.head_sha !== currentHeadSha
     || run?.head_sha !== releaseSha
-    || run?.name !== "Ponto progressive release"
     || run?.repository?.full_name !== repository
     || String(run?.repository?.id || "") !== repositoryId
     || run?.head_repository?.full_name !== repository

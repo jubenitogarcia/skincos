@@ -82,6 +82,7 @@ jobs:
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/timekeeping-staging-journey.yml"
+            || workflow.name !== "Timekeeping authenticated staging journey"
             || run.workflow_id !== workflow.id
             || run.path !== workflow.path
             || run.status !== "completed"

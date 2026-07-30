@@ -1,6 +1,7 @@
 {
   "wait_timer": 0,
   "prevent_self_review": true,
+  "can_admins_bypass": false,
   "reviewers": [
     {
       "type": "User",

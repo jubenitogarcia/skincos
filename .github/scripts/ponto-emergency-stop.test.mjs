@@ -20,6 +20,7 @@ import { createCapabilityCheck } from "./ponto-orchestrator-lease.mjs";
 
 const repository = "skincos/skincos";
 const workflowId = 123;
+const workflowName = "Ponto progressive release";
 const sha = "a".repeat(40);
 const repositoryId = "42";
 const emergencyScript = fileURLToPath(new URL("./ponto-emergency-stop.mjs", import.meta.url));
@@ -44,7 +45,7 @@ const run = (stage, overrides = {}) => ({
   event: "workflow_dispatch",
   head_branch: "main",
   head_sha: sha,
-  name: "Ponto progressive release",
+  name: `Ponto ${stage} ${sha} orchestrator=456`,
   display_title: `Ponto ${stage} ${sha} orchestrator=456`,
   status: "in_progress",
   conclusion: null,
@@ -76,11 +77,14 @@ test("emergency target mapping keeps staging isolated from every live stage", ()
 });
 
 test("coordinator discovery accepts only exact canonical correlated runs", () => {
-  assert.equal(parseCoordinator(run("pilot"), { repository, workflowId, target: "production" })?.runId, "456");
-  assert.equal(parseCoordinator(run("staging"), { repository, workflowId, target: "production" }), null);
-  assert.equal(parseCoordinator(run("pilot", { head_sha: "b".repeat(40) }), { repository, workflowId, target: "production" }), null);
-  assert.equal(parseCoordinator(run("pilot", { path: ".github/workflows/other.yml" }), { repository, workflowId, target: "production" }), null);
-  assert.equal(parseCoordinator(run("pilot", { display_title: `Ponto pilot ${sha} orchestrator=999` }), { repository, workflowId, target: "production" }), null);
+  const options = { repository, workflowId, workflowName, target: "production" };
+  assert.equal(parseCoordinator(run("pilot"), options)?.runId, "456");
+  assert.equal(parseCoordinator(run("pilot", { name: "live dynamic title" }), options)?.runId, "456");
+  assert.equal(parseCoordinator(run("pilot"), { ...options, workflowName: "Renamed workflow" }), null);
+  assert.equal(parseCoordinator(run("staging"), options), null);
+  assert.equal(parseCoordinator(run("pilot", { head_sha: "b".repeat(40) }), options), null);
+  assert.equal(parseCoordinator(run("pilot", { path: ".github/workflows/other.yml" }), options), null);
+  assert.equal(parseCoordinator(run("pilot", { display_title: `Ponto pilot ${sha} orchestrator=999` }), options), null);
 });
 
 test("GitHub cancellation acknowledgements are treated as bodyless success", () => {
@@ -112,7 +116,12 @@ test("canonical high-risk allowlist covers every Ponto workflow that can hydrate
     request: async pathname => {
       const file = decodeURIComponent(pathname.split("/").at(-1));
       const entry = HIGH_RISK_WORKFLOWS.find(candidate => candidate.path.endsWith(`/${file}`));
-      return { id: nextId += 1, state: "active", path: entry?.path };
+      return {
+        id: nextId += 1,
+        state: "active",
+        path: entry?.path,
+        name: entry?.name,
+      };
     },
   });
   assert.equal(workflows.size, HIGH_RISK_WORKFLOWS.length);
@@ -134,6 +143,7 @@ test("emergency inventory accepts exact active and disabled canonical workflow s
         id: nextId += 1,
         state: nextId % 2 ? "active" : "disabled_manually",
         path: entry?.path,
+        name: entry?.name,
       };
     },
   });
@@ -262,6 +272,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
           id: rootId,
           state: "disabled_manually",
           path: ".github/workflows/ponto-progressive-release.yml",
+          name: workflowName,
         });
         return;
       }
@@ -272,6 +283,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
           id: workflowIds.get(file),
           state: "disabled_manually",
           path: specification.path,
+          name: specification.name,
         });
         return;
       }
@@ -289,7 +301,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
           event: "workflow_dispatch",
           head_branch: "main",
           head_sha: sha,
-          name: "Ponto progressive release",
+          name: `Ponto staging ${sha} orchestrator=8001`,
           display_title: `Ponto staging ${sha} orchestrator=8001`,
           run_attempt: 1,
           status: "completed",
@@ -380,7 +392,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
         event: "workflow_dispatch",
         head_branch: "main",
         head_sha: sha,
-        name: "Ponto progressive release",
+        name: `Ponto staging ${sha} orchestrator=8001`,
         display_title: `Ponto staging ${sha} orchestrator=8001`,
         run_attempt: 1,
         status: "completed",

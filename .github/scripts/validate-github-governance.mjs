@@ -52,8 +52,12 @@ if (environmentBranchPolicy.name !== "main" || environmentBranchPolicy.type !== 
 
 for (const environmentName of ["staging", "production"]) {
   const environment = readJson(`.github/governance/environments/${environmentName}.json`);
-  if (environment.wait_timer !== 0 || environment.prevent_self_review !== true) {
-    fail(`${environmentName} must require a self-review-safe deployment approval without a wait timer`);
+  if (
+    environment.wait_timer !== 0
+    || environment.prevent_self_review !== true
+    || environment.can_admins_bypass !== false
+  ) {
+    fail(`${environmentName} must require a non-bypassable self-review-safe deployment approval without a wait timer`);
   }
   if (
     environment.reviewers?.length !== 1 ||

@@ -271,6 +271,7 @@ jobs:
           if (
             workflow?.state !== "active"
             || workflow?.path !== ".github/workflows/ponto-waf-security.yml"
+            || workflow?.name !== "Ponto WAF security"
             || run?.workflow_id !== workflow.id
             || run?.path !== workflow.path
             || run?.status !== "completed"
@@ -279,7 +280,6 @@ jobs:
             || run?.run_attempt !== 1
             || run?.head_branch !== "main"
             || run?.head_sha !== process.env.GITHUB_SHA
-            || run?.name !== "Ponto WAF security"
             || run?.display_title !== "Ponto WAF security probe source="
             || run?.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run?.head_repository?.full_name !== process.env.GITHUB_REPOSITORY

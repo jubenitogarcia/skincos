@@ -140,7 +140,6 @@ jobs:
             conclusion: "success",
             event: "workflow_dispatch",
             head_branch: "main",
-            name: "Ponto progressive release",
           };
           for (const [key, value] of Object.entries(expected)) {
             if (run[key] !== value) throw new Error(`invalid predecessor ${key}`);
@@ -148,7 +147,11 @@ jobs:
           if (run.repository?.full_name !== process.env.GITHUB_REPOSITORY || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY) {
             throw new Error("predecessor repository differs");
           }
-          if (workflow.state !== "active" || workflow.path !== ".github/workflows/ponto-progressive-release.yml") {
+          if (
+            workflow.state !== "active"
+            || workflow.path !== ".github/workflows/ponto-progressive-release.yml"
+            || workflow.name !== "Ponto progressive release"
+          ) {
             throw new Error("canonical predecessor workflow is not active at the expected path");
           }
           if (run.workflow_id !== workflow.id) throw new Error("predecessor workflow id differs");
@@ -190,13 +193,13 @@ jobs:
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/ponto-production-baseline.yml"
+            || workflow.name !== "Ponto production baseline"
             || run.workflow_id !== workflow.id
             || run.path !== workflow.path
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
-            || run.name !== "Ponto production baseline"
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
           ) throw new Error("production baseline run provenance is invalid");

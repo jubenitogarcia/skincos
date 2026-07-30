@@ -95,6 +95,7 @@ jobs:
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/ponto-progressive-release.yml"
+            || workflow.name !== "Ponto progressive release"
             || run.workflow_id !== workflow.id
             || run.path !== workflow.path
             || run.status !== "completed"

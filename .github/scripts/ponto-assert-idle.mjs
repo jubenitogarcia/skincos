@@ -29,6 +29,7 @@ const workflow = await request(`/repos/${repository}/actions/workflows/ponto-pro
 if (
   !isInventoryWorkflowState(workflow?.state)
   || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
+  || workflow?.name !== "Ponto progressive release"
   || !Number.isInteger(workflow?.id)
 ) throw new Error("canonical Ponto coordinator workflow is unavailable");
 const active = new Map();
@@ -41,6 +42,7 @@ for (const status of NON_TERMINAL_STATUSES) {
       const parsed = parseCoordinator(run, {
         repository,
         workflowId: workflow.id,
+        workflowName: workflow.name,
         target,
       });
       if (parsed && parsed.status !== "completed") active.set(parsed.runId, parsed);
