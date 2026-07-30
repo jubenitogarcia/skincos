@@ -10,6 +10,7 @@ const {
   ACCESSIBILITY_VERIFIER_MARKERS,
   driveAuditForExecution,
   notificationForExecution,
+  reconcileAuditTargets,
   verifierEnvironment,
   buildGraphReplayEnvironment,
 } = require('../scripts/livia/qa-runner');
@@ -64,6 +65,54 @@ test('qa audit reads the notification node that actually executed', () => {
   assert.equal(result.nodeName, 'Inform Success (2)');
   assert.equal(result.notification.ok, true);
   assert.equal(result.notification.result.message_id, 42);
+});
+
+test('qa audit reconciles persisted media and accessibility contracts by platform and unit', () => {
+  const accessibilityContract = {
+    schema: 'livia.media-alt-text.v1',
+    orderedBy: 'groupOrder',
+    items: [{ sourceMediaId: 'media-1', semanticJobKey: 'livia:v2:one', mediaKind: 'video', support: 'unsupported' }],
+  };
+  const mediaEvidenceContract = {
+    schema: 'livia.media-evidence.v1',
+    orderedBy: 'groupOrder',
+    items: [{ sourceMediaId: 'media-1', semanticJobKey: 'livia:v2:one', providerMediaId: 'remote-1', mediaKind: 'video', groupOrder: 0 }],
+  };
+  const runData = {
+    'Collect Publish Results': [{ data: { main: [[{ json: { publishVerification: { targets: [{
+      platform: 'instagram',
+      unit: 'bss',
+      providerObjectId: 'object-1',
+      providerMediaId: 'remote-1',
+      expected: { caption: 'persisted caption' },
+      submitted: { coverUrl: 'https://media.example.test/cover.jpg' },
+      accessibilityContract,
+      mediaEvidenceContract,
+    }] } } }]] } }],
+  };
+  const [target] = reconcileAuditTargets(runData, [{
+    platform: 'instagram',
+    unit: 'bss',
+    providerObjectId: 'object-1',
+    providerMediaId: 'remote-1',
+    expected: { caption: 'derived caption' },
+    submitted: {},
+  }]);
+  assert.deepEqual(target.accessibilityContract, accessibilityContract);
+  assert.deepEqual(target.mediaEvidenceContract, mediaEvidenceContract);
+  assert.equal(target.expected.caption, 'persisted caption');
+  assert.equal(target.submitted.coverUrl, 'https://media.example.test/cover.jpg');
+});
+
+test('qa audit fails closed when the persisted target conflicts with the HTTP reconstruction', () => {
+  const runData = {
+    'Collect Publish Results': [{ data: { main: [[{ json: { publishVerification: { targets: [{
+      platform: 'instagram', unit: 'bss', providerObjectId: 'different-object', providerMediaId: 'remote-1',
+    }] } } }]] } }],
+  };
+  assert.throws(() => reconcileAuditTargets(runData, [{
+    platform: 'instagram', unit: 'bss', providerObjectId: 'object-1', providerMediaId: 'remote-1',
+  }]), /conflicting providerObjectId/);
 });
 
 test('qa audit exposes legacy carousel Drive marks that silently omitted child files', () => {
