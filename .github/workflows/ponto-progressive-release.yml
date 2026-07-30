@@ -203,29 +203,52 @@ jobs:
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for custody attestation'; exit 1; }
           target=production
           [[ "$STAGE" == staging ]] && target=staging
-          gh api "repos/$GITHUB_REPOSITORY/environments/$target/secrets" > "$RUNNER_TEMP/ponto-root-secret-names.json"
-          node - "$RUNNER_TEMP/ponto-root-secret-names.json" <<'NODE'
+          gh api "repos/$GITHUB_REPOSITORY/environments/$target/secrets" > "$RUNNER_TEMP/ponto-root-environment-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/secrets" > "$RUNNER_TEMP/ponto-root-repository-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$target/variables" > "$RUNNER_TEMP/ponto-root-environment-variables.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables" > "$RUNNER_TEMP/ponto-root-repository-variables.json"
+          node - \
+            "$RUNNER_TEMP/ponto-root-environment-secrets.json" \
+            "$RUNNER_TEMP/ponto-root-repository-secrets.json" \
+            "$RUNNER_TEMP/ponto-root-environment-variables.json" \
+            "$RUNNER_TEMP/ponto-root-repository-variables.json" <<'NODE'
           const fs = require("fs");
-          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const names = new Set((payload.secrets || []).map(item => item.name));
+          const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
+          const environmentSecrets = names(process.argv[2], "secrets");
+          const repositorySecrets = names(process.argv[3], "secrets");
+          const environmentVariables = names(process.argv[4], "variables");
+          const repositoryVariables = names(process.argv[5], "variables");
           for (const name of ["PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
-            if (!names.has(name)) throw new Error(`${name} must be owned by the selected GitHub environment; repository fallback is refused`);
+            if (!environmentSecrets.has(name)) throw new Error(`${name} must be owned by the selected GitHub environment; repository fallback is refused`);
+          }
+          if (
+            !repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+            || environmentSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+          ) throw new Error("shared root attestation key must exist only at repository scope");
+          for (const name of ["PONTO_PROFILE_DATA_KEY_CUSTODY_REF", "PONTO_IDEMPOTENCY_KEY_CUSTODY_REF"]) {
+            if (!environmentVariables.has(name)) throw new Error(`${name} must be owned by the selected GitHub environment`);
+          }
+          if (
+            !repositoryVariables.has("PONTO_ROOT_ATTESTATION_KEY_ID")
+            || environmentVariables.has("PONTO_ROOT_ATTESTATION_KEY_ID")
+          ) {
+            throw new Error("shared root attestation key ID must exist only at repository scope");
           }
           NODE
-          rm -f "$RUNNER_TEMP/ponto-root-secret-names.json"
+          rm -f \
+            "$RUNNER_TEMP/ponto-root-environment-secrets.json" \
+            "$RUNNER_TEMP/ponto-root-repository-secrets.json" \
+            "$RUNNER_TEMP/ponto-root-environment-variables.json" \
+            "$RUNNER_TEMP/ponto-root-repository-variables.json"
       - name: Preflight production custody, approved cohort, and online pilot runner
         if: ${{ contains(fromJSON('["pilot","canary","production"]'), inputs.stage) }}
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          PONTO_PILOT_LOGIN: ${{ secrets.PONTO_PILOT_LOGIN }}
-          PONTO_PILOT_PASSWORD: ${{ secrets.PONTO_PILOT_PASSWORD }}
-          PONTO_PILOT_COHORT_JSON: ${{ secrets.PONTO_PILOT_COHORT_JSON }}
           REQUIRED_RUNNER_LABELS_JSON: ${{ vars.PONTO_PILOT_RUNNER_LABELS_JSON }}
           CANARY_COHORT_PERCENTAGE: ${{ vars.PONTO_CANARY_COHORT_PERCENTAGE }}
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments and Actions read is required'; exit 1; }
-          [[ -n "${PONTO_PILOT_LOGIN:-}" && -n "${PONTO_PILOT_PASSWORD:-}" && -n "${PONTO_PILOT_COHORT_JSON:-}" ]] || { echo 'Approved pilot identity/cohort values are absent'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/environments/production/secrets" > "$RUNNER_TEMP/production-secret-names.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runners" > "$RUNNER_TEMP/repository-runners.json"
           node - "$RUNNER_TEMP/production-secret-names.json" "$RUNNER_TEMP/repository-runners.json" "$PONTO_ARTIFACT_DIR/cohort-summary.json" <<'NODE'
@@ -235,35 +258,23 @@ jobs:
           for (const name of ["PONTO_PILOT_LOGIN", "PONTO_PILOT_PASSWORD", "PONTO_PILOT_COHORT_JSON", "PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
             if (!names.has(name)) throw new Error(`${name} must be owned by the production environment`);
           }
-          const cohort = JSON.parse(process.env.PONTO_PILOT_COHORT_JSON);
-          const keys = ["pilotEmployeeRefs", "pilotIdentityLoginRefs", "pilotIdentityRefs", "pilotNetworkContexts", "pilotUnits"];
-          if (JSON.stringify(Object.keys(cohort).sort()) !== JSON.stringify([...keys].sort())) throw new Error("cohort contains unapproved fields");
-          const opaque = /^v1:[A-Za-z0-9_-]{43}$/;
-          const limits = { pilotEmployeeRefs: 100, pilotIdentityLoginRefs: 100, pilotIdentityRefs: 100, pilotNetworkContexts: 20, pilotUnits: 20 };
-          for (const key of keys) {
-            if (!Array.isArray(cohort[key]) || !cohort[key].length || cohort[key].length > limits[key] || new Set(cohort[key]).size !== cohort[key].length) throw new Error(`invalid ${key}`);
-          }
-          for (const key of ["pilotEmployeeRefs", "pilotIdentityLoginRefs", "pilotIdentityRefs", "pilotNetworkContexts"]) {
-            if (cohort[key].some(value => !opaque.test(value))) throw new Error(`${key} references are not opaque`);
-          }
-          if (cohort.pilotUnits.some(value => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(value))) throw new Error("pilotUnits contains an invalid unit key");
           const requiredLabels = JSON.parse(process.env.REQUIRED_RUNNER_LABELS_JSON || "[]");
           if (!Array.isArray(requiredLabels) || !requiredLabels.length || requiredLabels.some(value => typeof value !== "string" || !value)) throw new Error("PONTO_PILOT_RUNNER_LABELS_JSON is absent or invalid");
           const runners = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).runners || [];
           const ready = runners.some(runner => runner.status === "online" && !runner.busy && requiredLabels.every(label => (runner.labels || []).some(item => item.name === label)));
           if (!ready) throw new Error("no online idle runner has the exact approved pilot labels");
-          if (process.env.STAGE === "pilot" && (cohort.pilotEmployeeRefs.length !== 1 || cohort.pilotIdentityRefs.length !== 1 || cohort.pilotIdentityLoginRefs.length !== 1 || cohort.pilotNetworkContexts.length !== 1 || cohort.pilotUnits.length !== 1)) throw new Error("pilot cohort must contain exactly one employee, Identity, Identity login, network context and unit");
           if (process.env.STAGE === "canary") {
             const percentage = Number(process.env.CANARY_COHORT_PERCENTAGE);
             if (!Number.isInteger(percentage) || percentage < 1 || percentage > 100) throw new Error("PONTO_CANARY_COHORT_PERCENTAGE must be 1..100");
           }
           fs.writeFileSync(process.argv[4], `${JSON.stringify({
             configured: true,
-            grants: cohort.pilotEmployeeRefs.length,
-            identityGrants: cohort.pilotIdentityRefs.length,
-            loginGrants: cohort.pilotIdentityLoginRefs.length,
-            units: cohort.pilotUnits.length,
-            contexts: cohort.pilotNetworkContexts.length,
+            valuesHydratedOnCoordinator: false,
+            validatedByName: true,
+            validationDeferredToModuleTransition: true,
+            validationDeferredToApprovedRunner: true,
+            approvedRunnerAvailable: true,
+            runnerLabelCount: requiredLabels.length,
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
           rm -f "$RUNNER_TEMP/production-secret-names.json" "$RUNNER_TEMP/repository-runners.json"
@@ -289,19 +300,22 @@ jobs:
             "$ruleset" \
             "$PONTO_ARTIFACT_DIR/edge-guard/ponto-edge-override-guard.json"
           rm -f "$ruleset"
-      - name: Attest exact Ponto Core staging bootstrap before any candidate mutation
-        if: ${{ inputs.stage == 'staging' }}
+      - name: Attest exact Ponto Core bootstrap before any candidate mutation
+        if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
         env:
           GH_TOKEN: ${{ github.token }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
+          target=staging
+          [[ "$STAGE" == pilot ]] && target=production
+          export PONTO_BOOTSTRAP_TARGET="$target"
           mapfile -t expected < <(node --input-type=module - <<'NODE'
           import fs from "node:fs";
           const catalog = JSON.parse(fs.readFileSync("platform/deploy/operational-units.json", "utf8"));
           const bootstrap = catalog.units.find(unit => unit.id === "ponto-core-baseline")?.promotion?.bootstrapEvidence;
-          const artifact = bootstrap?.artifacts?.staging;
+          const artifact = bootstrap?.artifacts?.[process.env.PONTO_BOOTSTRAP_TARGET];
           for (const value of [
             bootstrap?.workflowRunId,
             artifact?.id,
@@ -315,14 +329,14 @@ jobs:
           }
           NODE
           )
-          [[ "${#expected[@]}" == 6 ]] || { echo 'Incomplete staging bootstrap catalog entry'; exit 1; }
+          [[ "${#expected[@]}" == 6 ]] || { echo "Incomplete $target bootstrap catalog entry"; exit 1; }
           run_id="${expected[0]}"
           artifact_id="${expected[1]}"
           source_sha="${expected[2]}"
           deployment_id="${expected[3]}"
           version_id="${expected[4]}"
           artifact_digest="${expected[5]}"
-          evidence_dir="$RUNNER_TEMP/ponto-core-bootstrap-staging"
+          evidence_dir="$RUNNER_TEMP/ponto-core-bootstrap-$target"
           proof_dir="$PONTO_ARTIFACT_DIR/bootstrap-core"
           mkdir -p "$evidence_dir/unpacked" "$proof_dir"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$evidence_dir/run.json"
@@ -331,10 +345,9 @@ jobs:
           unzip -q "$evidence_dir/artifact.zip" -d "$evidence_dir/unpacked"
           mapfile -t evidence_files < <(find "$evidence_dir/unpacked" -type f -name evidence.json -print)
           [[ "${#evidence_files[@]}" == 1 ]] || { echo 'Bootstrap artifact must contain exactly one evidence.json'; exit 1; }
-          node .github/scripts/ponto-core-bootstrap-evidence.mjs verify staging \
+          node .github/scripts/ponto-core-bootstrap-evidence.mjs verify "$target" \
             "${evidence_files[0]}" "$evidence_dir/run.json" "$evidence_dir/artifact.json" \
             platform/deploy/operational-units.json
-          PONTO_BOOTSTRAP_TARGET=staging \
           PONTO_BOOTSTRAP_SOURCE_SHA="$source_sha" \
           PONTO_BOOTSTRAP_LIVE_FILE="$evidence_dir/live.json" \
             node --input-type=module <<'NODE'
@@ -356,10 +369,10 @@ jobs:
             live?.exists !== true
             || live?.attestation?.activeDeploymentId !== expectedDeployment
             || live?.attestation?.activeVersionId !== expectedVersion
-          ) throw new Error("live staging Ponto Core differs from the exact cataloged bootstrap predecessor");
+          ) throw new Error(`live ${process.env.PONTO_BOOTSTRAP_TARGET} Ponto Core differs from the exact cataloged bootstrap predecessor`);
           fs.writeFileSync(outputFile, `${JSON.stringify({
             schemaVersion: 1,
-            target: "staging",
+            target: process.env.PONTO_BOOTSTRAP_TARGET,
             workflowRunId: runId,
             artifactId,
             artifactDigest,
@@ -373,30 +386,8 @@ jobs:
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
           rm -f "$evidence_dir/artifact.zip"
-      - name: Put Ponto in maintenance before staging or live mutation
-        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          node - "$RUNNER_TEMP/module-maintenance.json" <<'NODE'
-          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({
-            module: "timekeeping",
-            target: process.env.STAGE === "staging" ? "staging" : "production",
-            state: "maintenance",
-            message: "Ponto release in progress.",
-            orchestrator_run_id: process.env.GITHUB_RUN_ID,
-          }));
-          NODE
-          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-maintenance.json" "$PONTO_ARTIFACT_DIR/runs/module-maintenance.json"
-          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-maintenance.json")"
-          target="$STAGE"; [[ "$target" == staging ]] || target=production
-          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/pre-mutation-maintenance"
-          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
-            --name "module-transition-timekeeping-$target-maintenance-$GITHUB_RUN_ID" \
-            --dir "$PONTO_ARTIFACT_DIR/module-transitions/pre-mutation-maintenance"
-      - name: Provision isolated target values before staging or first pilot
+      - name: Prove selected root separation before any candidate mutation
         if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
-        id: provision
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -406,19 +397,31 @@ jobs:
           staging_run=''
           [[ "$target" == production ]] && staging_run="$PREDECESSOR_RUN_ID"
           node - "$RUNNER_TEMP/provision-workers.json" "$target" "$staging_run" <<'NODE'
-          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ target: process.argv[3], release_sha: process.env.RELEASE_SHA, staging_run_id: process.argv[4] }));
+          const fs = require("fs");
+          fs.writeFileSync(process.argv[2], JSON.stringify({
+            target: process.argv[3],
+            release_sha: process.env.RELEASE_SHA,
+            staging_run_id: process.argv[4],
+          }));
           NODE
-          node .github/scripts/ponto-dispatch-workflow.mjs cloudflare-workers-sync-ponto-secrets.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/provision-workers.json" "$PONTO_ARTIFACT_DIR/runs/provision-workers.json"
-          node - "$RUNNER_TEMP/provision-pages.json" "$target" "$staging_run" <<'NODE'
-          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({ target: process.argv[3], release_sha: process.env.RELEASE_SHA, staging_run_id: process.argv[4] }));
-          NODE
-          node .github/scripts/ponto-dispatch-workflow.mjs cloudflare-pages-sync-ponto.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/provision-pages.json" "$PONTO_ARTIFACT_DIR/runs/provision-pages.json"
-          pages_provision_run_id="$(node -e "process.stdout.write(String(require(process.argv[1]).runId||''))" "$PONTO_ARTIFACT_DIR/runs/provision-pages.json")"
-          mkdir -p "$PONTO_ARTIFACT_DIR/provisioning/pages"
-          gh run download "$pages_provision_run_id" --repo "$GITHUB_REPOSITORY" \
-            --name "ponto-pages-secret-attestation-$target-$RELEASE_SHA" \
-            --dir "$PONTO_ARTIFACT_DIR/provisioning/pages"
-      - name: Resolve once and reuse the immutable pre-pilot production baseline
+          node .github/scripts/ponto-dispatch-workflow.mjs \
+            cloudflare-workers-sync-ponto-secrets.yml \
+            "$GITHUB_RUN_ID" \
+            "$RUNNER_TEMP/provision-workers.json" \
+            "$PONTO_ARTIFACT_DIR/runs/provision-workers.json"
+          worker_custody_run_id="$(node -e "process.stdout.write(String(require(process.argv[1]).runId||''))" "$PONTO_ARTIFACT_DIR/runs/provision-workers.json")"
+          mkdir -p "$PONTO_ARTIFACT_DIR/provisioning/workers"
+          gh run download "$worker_custody_run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-root-custody-$target-$RELEASE_SHA" \
+            --dir "$PONTO_ARTIFACT_DIR/provisioning/workers"
+          mapfile -t custody_files < <(find "$PONTO_ARTIFACT_DIR/provisioning/workers" -type f -name root-custody.json -print)
+          [[ "${#custody_files[@]}" == 1 ]] || { echo 'Root custody artifact must contain exactly one root-custody.json'; exit 1; }
+          node .github/scripts/ponto-root-custody.mjs verify \
+            "$target" \
+            "$RELEASE_SHA" \
+            "${custody_files[0]}"
+          echo "PONTO_ROOT_CUSTODY_RUN_ID=$worker_custody_run_id" >> "$GITHUB_ENV"
+      - name: Resolve and verify the immutable production baseline before pilot mutation
         if: inputs.stage == 'pilot'
         id: baseline
         env:
@@ -489,6 +492,52 @@ jobs:
             node .github/scripts/ponto-production-baseline.mjs verify "$PONTO_ARTIFACT_DIR/baseline/ponto-production-baseline.json"
           echo "PONTO_BASELINE_RUN_ID=$baseline_run_id" >> "$GITHUB_ENV"
           rm -f "$RUNNER_TEMP/baseline-workflow.json" "$RUNNER_TEMP/baseline-runs.json" "$RUNNER_TEMP/reused-baseline-run.json"
+      - name: Put Ponto in maintenance before staging or live mutation
+        if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node - "$RUNNER_TEMP/module-maintenance.json" <<'NODE'
+          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({
+            module: "timekeeping",
+            target: process.env.STAGE === "staging" ? "staging" : "production",
+            state: "maintenance",
+            message: "Ponto release in progress.",
+            orchestrator_run_id: process.env.GITHUB_RUN_ID,
+          }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs module-availability.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/module-maintenance.json" "$PONTO_ARTIFACT_DIR/runs/module-maintenance.json"
+          run_id="$(node -e "process.stdout.write(require(process.argv[1]).runId)" "$PONTO_ARTIFACT_DIR/runs/module-maintenance.json")"
+          target="$STAGE"; [[ "$target" == staging ]] || target=production
+          mkdir -p "$PONTO_ARTIFACT_DIR/module-transitions/pre-mutation-maintenance"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "module-transition-timekeeping-$target-maintenance-$GITHUB_RUN_ID" \
+            --dir "$PONTO_ARTIFACT_DIR/module-transitions/pre-mutation-maintenance"
+      - name: Provision isolated target values before staging or first pilot
+        if: ${{ inputs.stage == 'staging' || inputs.stage == 'pilot' }}
+        id: provision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          target="$STAGE"
+          [[ "$target" == pilot ]] && target=production
+          staging_run=''
+          [[ "$target" == production ]] && staging_run="$PREDECESSOR_RUN_ID"
+          node - "$RUNNER_TEMP/provision-pages.json" "$target" "$staging_run" <<'NODE'
+          const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify({
+            target: process.argv[3],
+            release_sha: process.env.RELEASE_SHA,
+            staging_run_id: process.argv[4],
+            root_custody_run_id: process.env.PONTO_ROOT_CUSTODY_RUN_ID,
+          }));
+          NODE
+          node .github/scripts/ponto-dispatch-workflow.mjs cloudflare-pages-sync-ponto.yml "$GITHUB_RUN_ID" "$RUNNER_TEMP/provision-pages.json" "$PONTO_ARTIFACT_DIR/runs/provision-pages.json"
+          pages_provision_run_id="$(node -e "process.stdout.write(String(require(process.argv[1]).runId||''))" "$PONTO_ARTIFACT_DIR/runs/provision-pages.json")"
+          mkdir -p "$PONTO_ARTIFACT_DIR/provisioning/pages"
+          gh run download "$pages_provision_run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-pages-secret-attestation-$target-$RELEASE_SHA" \
+            --dir "$PONTO_ARTIFACT_DIR/provisioning/pages"
       - name: Pin exported Worker deployment and version identities for every pilot publisher
         if: inputs.stage == 'pilot'
         env:
@@ -534,6 +583,12 @@ jobs:
           const fs = require("fs");
           const inputs = { target: process.env.STAGE, release_scope: "ponto", release_sha: process.env.RELEASE_SHA, orchestrator_run_id: process.env.GITHUB_RUN_ID };
           if (process.env.STAGE === "staging") inputs.preview_run_id = process.env.PREDECESSOR_RUN_ID;
+          if (["staging", "pilot"].includes(process.env.STAGE)) {
+            if (!/^[0-9]+$/.test(process.env.PONTO_ROOT_CUSTODY_RUN_ID || "")) {
+              throw new Error("staging and pilot require the exact pre-mutation root custody run");
+            }
+            inputs.root_custody_run_id = process.env.PONTO_ROOT_CUSTODY_RUN_ID;
+          }
           if (["pilot", "canary", "production", "rollback"].includes(process.env.STAGE)) {
             inputs.predecessor_run_id = process.env.PREDECESSOR_RUN_ID;
             inputs.rollback_from_stage = process.env.ROLLBACK_FROM_STAGE;
@@ -904,6 +959,42 @@ jobs:
             identityWorkforce: read(path.join(root, "surfaces/identity/surface.json")),
             crmPages: read(path.join(root, "surfaces/pages/surface.json")),
           };
+          if (process.env.STAGE === "staging" || process.env.STAGE === "pilot") {
+            const preflightFile = path.join(root, "provisioning/workers/root-custody.json");
+            const preflightRaw = fs.readFileSync(preflightFile);
+            const preflight = JSON.parse(preflightRaw);
+            const { provenance, ...surfaceAttestation } = surfaces.timekeeping.rootCustody || {};
+            const target = process.env.STAGE === "staging" ? "staging" : "production";
+            const expectedProvenance = {
+              workflowRunId: String(process.env.PONTO_ROOT_CUSTODY_RUN_ID || ""),
+              coordinatorRunId: String(process.env.GITHUB_RUN_ID),
+              workflowPath: ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
+              artifactName: `ponto-root-custody-${target}-${process.env.RELEASE_SHA}`,
+              repository: process.env.GITHUB_REPOSITORY,
+              attestationSha256: crypto.createHash("sha256").update(preflightRaw).digest("hex"),
+            };
+            if (JSON.stringify(preflight) !== JSON.stringify(surfaceAttestation)) {
+              throw new Error("Timekeeping root custody differs from the pre-mutation attestation");
+            }
+            if (
+              !provenance
+              || Object.entries(expectedProvenance).some(([key, value]) => provenance[key] !== value)
+              || !/^[1-9][0-9]*$/.test(String(provenance.artifactId || ""))
+              || !/^[0-9a-f]{64}$/.test(String(provenance.artifactDigest || ""))
+              || Object.keys(provenance).sort().join(",") !== [
+                "artifactDigest",
+                "artifactId",
+                "artifactName",
+                "attestationSha256",
+                "coordinatorRunId",
+                "repository",
+                "workflowPath",
+                "workflowRunId",
+              ].sort().join(",")
+            ) {
+              throw new Error("Timekeeping root custody provenance differs from the exact pre-mutation artifact");
+            }
+          }
           fs.writeFileSync(path.join(root, "surfaces.json"), JSON.stringify(surfaces));
           const checkpoints = Object.fromEntries([
             ["timekeeping", surfaces.timekeeping.checkpoint],

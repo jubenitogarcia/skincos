@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { rootCustodyPayloadDigest } from "./ponto-root-custody.mjs";
 
 const script = path.resolve(import.meta.dirname, "ponto-release-evidence.mjs");
 const sha = "a".repeat(40);
@@ -38,8 +39,39 @@ const workerSurface = (unit, stage, url) => ({
     candidateTag: `ponto:${unit}:${sha}`,
     url,
 });
-const liveSurfaces = (stage) => ({
-  timekeeping: { ...workerSurface("timekeeping", stage, "https://api.skincos.com.br/api/ponto/health"), ...(stage === "pilot" ? { baselineRunId: "250" } : {}) },
+const liveSurfaces = (stage) => {
+  const rootCustody = {
+      schemaVersion: 1,
+      target: stage === "staging" ? "staging" : "production",
+      releaseSha: sha,
+      profileDigest: "d".repeat(64),
+      idempotencyDigest: "e".repeat(64),
+      attestationKeyCommitment: "f".repeat(64),
+      profileCustodyRef: `vault:v1:${(stage === "staging" ? "p" : "q").repeat(43)}`,
+      idempotencyCustodyRef: `vault:v1:${(stage === "staging" ? "i" : "j").repeat(43)}`,
+      attestationKeyId: `vault:v1:${"k".repeat(43)}`,
+      distinctWithinTarget: true,
+      distinctFromStaging: stage === "staging" ? null : true,
+      algorithm: "hmac-sha256-v2",
+      credentialsIncluded: false,
+      piiIncluded: false,
+  };
+  rootCustody.provenance = {
+    workflowRunId: "201",
+    coordinatorRunId: "200",
+    workflowPath: ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
+    artifactId: "202",
+    artifactDigest: "9".repeat(64),
+    attestationSha256: rootCustodyPayloadDigest(rootCustody),
+    artifactName: `ponto-root-custody-${stage === "staging" ? "staging" : "production"}-${sha}`,
+    repository: "skincos/skincos",
+  };
+  return ({
+  timekeeping: {
+    ...workerSurface("timekeeping", stage, "https://api.skincos.com.br/api/ponto/health"),
+    ...(stage === "pilot" ? { baselineRunId: "250" } : {}),
+    rootCustody,
+  },
   coreApi: { ...workerSurface("coreApi", stage, "https://api.skincos.com.br/health"), ...(stage === "pilot" ? { baselineRunId: "250" } : {}) },
   identityWorkforce: { ...workerSurface("identityWorkforce", stage, "https://api.skincos.com.br/insumos/health"), ...(stage === "pilot" ? { baselineRunId: "250" } : {}) },
   crmPages: {
@@ -52,7 +84,8 @@ const liveSurfaces = (stage) => ({
     candidateTag: `ponto:crmPages:${sha}`,
     url: "https://crm.skincos.com.br",
   },
-});
+  });
+};
 const rollbackSummary = (executed = false) => ({
   executed,
   timekeepingVersionId: uuid2,
@@ -89,6 +122,11 @@ const stagingBootstrapCore = () => ({
   },
   credentialsIncluded: false,
   piiIncluded: false,
+});
+const productionBootstrapCore = () => ({
+  ...stagingBootstrapCore(),
+  target: "production",
+  artifactId: "8747532031",
 });
 const edgeGuard = (stage) => {
   const summary = {
@@ -222,6 +260,7 @@ test("writes and verifies schema v2 pilot evidence with a digested predecessor",
     PONTO_PREDECESSOR_FILE: staging,
     PONTO_RELEASE_SURFACES_JSON: JSON.stringify(liveSurfaces("pilot")),
     PONTO_RELEASE_EDGE_GUARD_JSON: JSON.stringify(edgeGuard("pilot")),
+    PONTO_RELEASE_BOOTSTRAP_CORE_JSON: JSON.stringify(productionBootstrapCore()),
     PONTO_RELEASE_CHECKPOINT_JSON: JSON.stringify({ timekeeping: { artifactName: `timekeeping-production-pre-migration-${sha}`, sha256: digest, releaseSha: sha } }),
     PONTO_RELEASE_SLO_JSON: JSON.stringify({ passed: true, samples: 10, errors: 0, p95Ms: 400, windowSeconds: 300, digest }),
     PONTO_RELEASE_ROLLBACK_JSON: JSON.stringify(rollbackSummary()),
@@ -281,6 +320,7 @@ test("rejects identity or network material in a sanitised artifact", () => {
     PONTO_PREDECESSOR_FILE: staging,
     PONTO_RELEASE_SURFACES_JSON: JSON.stringify(liveSurfaces("pilot")),
     PONTO_RELEASE_EDGE_GUARD_JSON: JSON.stringify(edgeGuard("pilot")),
+    PONTO_RELEASE_BOOTSTRAP_CORE_JSON: JSON.stringify(productionBootstrapCore()),
     PONTO_RELEASE_CHECKPOINT_JSON: JSON.stringify({ timekeeping: { artifactName: "checkpoint", sha256: digest, releaseSha: sha } }),
     PONTO_RELEASE_COHORT_SUMMARY_JSON: JSON.stringify({ employeeRefs: ["private"] }),
     PONTO_RELEASE_SLO_JSON: JSON.stringify({ passed: true, samples: 1, errors: 0, p95Ms: 1, windowSeconds: 1, digest }),
@@ -306,6 +346,7 @@ test("accepts an executed rollback from a live progressive stage", () => {
     PONTO_PREDECESSOR_FILE: staging,
     PONTO_RELEASE_SURFACES_JSON: JSON.stringify(liveSurfaces("pilot")),
     PONTO_RELEASE_EDGE_GUARD_JSON: JSON.stringify(edgeGuard("pilot")),
+    PONTO_RELEASE_BOOTSTRAP_CORE_JSON: JSON.stringify(productionBootstrapCore()),
     PONTO_RELEASE_CHECKPOINT_JSON: JSON.stringify({ timekeeping: { artifactName: "checkpoint", sha256: digest, releaseSha: sha } }),
     PONTO_RELEASE_SLO_JSON: JSON.stringify({ passed: true, samples: 1, errors: 0, p95Ms: 1, windowSeconds: 1, digest }),
     PONTO_RELEASE_ROLLBACK_JSON: JSON.stringify(rollbackSummary()),

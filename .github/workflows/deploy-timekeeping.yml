@@ -19,21 +19,25 @@ on:
         required: false
         type: string
       staging_run_id:
-        description: Retained for the generic promotion contract; Ponto live stages use predecessor_run_id
+        description: Retained for the immutable promotion contract; Ponto live stages use predecessor_run_id
         required: false
         type: string
       release_scope:
-        description: General Timekeeping release or the governed Ponto composite release
+        description: Governed Ponto composite release; only preview is independently dispatchable
         required: true
-        default: general
+        default: ponto
         type: choice
-        options: [general, ponto]
+        options: [ponto]
       predecessor_run_id:
         description: Required for pilot, canary, production, and rollback
         required: false
         type: string
       baseline_run_id:
         description: Required for pilot; immutable production incumbent baseline
+        required: false
+        type: string
+      root_custody_run_id:
+        description: Required for staging and pilot; exact successful pre-mutation root-custody child run
         required: false
         type: string
       rollback_from_stage:
@@ -70,7 +74,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
     with:
-      required: ${{ inputs.release_scope == 'ponto' && inputs.target != 'preview' }}
+      required: ${{ inputs.target != 'preview' }}
       lease_key: timekeeping
       stage: ${{ inputs.orchestrator_stage || inputs.target }}
       release_sha: ${{ inputs.release_sha }}
@@ -190,8 +194,6 @@ jobs:
           MODULE_CONTROL_KV_ID: ${{ inputs.target == 'staging' && vars.MODULE_CONTROL_STAGING_KV_ID || vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
           ENABLE_PRODUCTION: ${{ vars.ENABLE_TIMEKEEPING_PRODUCTION_DEPLOY }}
           TIMEKEEPING_BACKUP_PASSPHRASE: ${{ secrets.TIMEKEEPING_BACKUP_PASSPHRASE }}
-          PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
-          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
         run: |
           set -euo pipefail
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_ID MODULE_CONTROL_KV_ID; do
@@ -204,16 +206,6 @@ jobs:
           fi
           if [[ "$TARGET" =~ ^(staging|pilot)$ ]]; then
             [[ -n "${TIMEKEEPING_BACKUP_PASSPHRASE:-}" ]] || { echo 'TIMEKEEPING_BACKUP_PASSPHRASE is required before migrations'; exit 1; }
-            node <<'NODE'
-          for (const name of ["PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
-            const value = String(process.env[name] || "");
-            if (
-              Buffer.byteLength(value, "utf8") < 32
-              || value !== value.trim()
-              || /[\r\n\0]/.test(value)
-            ) throw new Error(`${name} must be an environment-owned secret with at least 32 UTF-8 bytes and no surrounding/control whitespace`);
-          }
-          NODE
           fi
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
@@ -224,6 +216,61 @@ jobs:
           node-version: 22.12.0
           cache: npm
           cache-dependency-path: workforce/timekeeping/package-lock.json
+      - name: Fetch the exact staging root custody predecessor
+        if: ${{ inputs.target == 'pilot' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'pilot requires the exact staging predecessor'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence"
+          gh run download "$PREDECESSOR_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ponto-release-evidence-staging-$RELEASE_SHA" \
+            --dir "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence"
+          PONTO_EXPECTED_STAGE=staging \
+          PONTO_EXPECTED_SHA="$RELEASE_SHA" \
+          PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
+            node .github/scripts/ponto-release-evidence.mjs verify \
+              "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence/ponto-release-evidence.json"
+          node - \
+            "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence/ponto-release-evidence.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody/staging.json" <<'NODE'
+          const fs = require("fs");
+          const evidence = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const custody = evidence?.surfaces?.timekeeping?.rootCustody;
+          if (!custody) throw new Error("staging release evidence does not contain root custody");
+          fs.writeFileSync(process.argv[3], `${JSON.stringify(custody, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          rm -rf "$RUNNER_TEMP/timekeeping-root-custody/staging-evidence"
+      - name: Prove environment root separation before checkpoint or migration
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        env:
+          PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+          PONTO_ROOT_ATTESTATION_KEY_SHARED: ${{ secrets.PONTO_ROOT_ATTESTATION_KEY_SHARED }}
+          PONTO_PROFILE_DATA_KEY_CUSTODY_REF: ${{ vars.PONTO_PROFILE_DATA_KEY_CUSTODY_REF }}
+          PONTO_IDEMPOTENCY_KEY_CUSTODY_REF: ${{ vars.PONTO_IDEMPOTENCY_KEY_CUSTODY_REF }}
+          PONTO_ROOT_ATTESTATION_KEY_ID: ${{ vars.PONTO_ROOT_ATTESTATION_KEY_ID }}
+        run: |
+          set -euo pipefail
+          target=staging
+          [[ "$TARGET" == pilot ]] && target=production
+          mkdir -p "$RUNNER_TEMP/timekeeping-root-custody"
+          staging_args=()
+          if [[ "$target" == production ]]; then
+            [[ -f "$RUNNER_TEMP/timekeeping-root-custody/staging.json" ]] || {
+              echo 'exact staging root custody predecessor is absent'
+              exit 1
+            }
+            staging_args=("$RUNNER_TEMP/timekeeping-root-custody/staging.json")
+          fi
+          node .github/scripts/ponto-root-custody.mjs write \
+            "$target" \
+            "$RELEASE_SHA" \
+            "$RUNNER_TEMP/timekeeping-root-custody/root-custody.json" \
+            "${staging_args[@]}"
+          rm -f "$RUNNER_TEMP/timekeeping-root-custody/staging.json"
       - name: Test and render only the selected environment
         env:
           D1_ID: ${{ inputs.target == 'staging' && vars.TIMEKEEPING_D1_STAGING_ID || vars.TIMEKEEPING_D1_PRODUCTION_ID }}
@@ -250,19 +297,43 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for candidate secret custody attestation'; exit 1; }
-          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET_ENVIRONMENT/secrets?per_page=100" \
-            > "$RUNNER_TEMP/timekeeping-environment-secret-names.json"
-          node - "$RUNNER_TEMP/timekeeping-environment-secret-names.json" <<'NODE'
+          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET_ENVIRONMENT/secrets?per_page=100" > "$RUNNER_TEMP/timekeeping-environment-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/timekeeping-repository-secrets.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET_ENVIRONMENT/variables?per_page=100" > "$RUNNER_TEMP/timekeeping-environment-variables.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/timekeeping-repository-variables.json"
+          node - \
+            "$RUNNER_TEMP/timekeeping-environment-secrets.json" \
+            "$RUNNER_TEMP/timekeeping-repository-secrets.json" \
+            "$RUNNER_TEMP/timekeeping-environment-variables.json" \
+            "$RUNNER_TEMP/timekeeping-repository-variables.json" <<'NODE'
           const fs = require("fs");
-          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const names = new Set((payload.secrets || []).map(item => item.name));
+          const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
+          const environmentSecrets = names(process.argv[2], "secrets");
+          const repositorySecrets = names(process.argv[3], "secrets");
+          const environmentVariables = names(process.argv[4], "variables");
+          const repositoryVariables = names(process.argv[5], "variables");
           for (const name of ["PONTO_PROFILE_DATA_KEY", "PONTO_IDEMPOTENCY_KEY"]) {
-            if (!names.has(name)) {
+            if (!environmentSecrets.has(name)) {
               throw new Error(`${name} must exist in the selected GitHub environment; repository fallback is refused`);
             }
           }
+          if (
+            !repositorySecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+            || environmentSecrets.has("PONTO_ROOT_ATTESTATION_KEY_SHARED")
+          ) throw new Error("shared root attestation key must exist only at repository scope");
+          for (const name of ["PONTO_PROFILE_DATA_KEY_CUSTODY_REF", "PONTO_IDEMPOTENCY_KEY_CUSTODY_REF"]) {
+            if (!environmentVariables.has(name)) throw new Error(`${name} must exist in the selected GitHub environment`);
+          }
+          if (
+            !repositoryVariables.has("PONTO_ROOT_ATTESTATION_KEY_ID")
+            || environmentVariables.has("PONTO_ROOT_ATTESTATION_KEY_ID")
+          ) throw new Error("shared root attestation key ID must exist only at repository scope");
           NODE
-          rm -f "$RUNNER_TEMP/timekeeping-environment-secret-names.json"
+          rm -f \
+            "$RUNNER_TEMP/timekeeping-environment-secrets.json" \
+            "$RUNNER_TEMP/timekeeping-repository-secrets.json" \
+            "$RUNNER_TEMP/timekeeping-environment-variables.json" \
+            "$RUNNER_TEMP/timekeeping-repository-variables.json"
       - name: Attest remote Worker secrets before checkpoint or migration
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -351,6 +422,239 @@ jobs:
             ${{ steps.checkpoint.outputs.artifact }}.sha256
           retention-days: 90
           if-no-files-found: error
+      - name: Resolve exact root custody artifact before mutation
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROOT_CUSTODY_RUN_ID: ${{ inputs.root_custody_run_id }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$ROOT_CUSTODY_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'root_custody_run_id must be numeric'; exit 1; }
+          [[ "$ORCHESTRATOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'orchestrator_run_id must be numeric'; exit 1; }
+          target=staging
+          [[ "$TARGET" == pilot ]] && target=production
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ROOT_CUSTODY_RUN_ID" > "$RUNNER_TEMP/timekeeping-root-custody-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cloudflare-workers-sync-ponto-secrets.yml" > "$RUNNER_TEMP/timekeeping-root-custody-workflow.json"
+          node - \
+            "$RUNNER_TEMP/timekeeping-root-custody-run.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody-workflow.json" \
+            "$target" <<'NODE'
+          const fs = require("fs");
+          const run = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const workflow = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const target = process.argv[4];
+          const expectedTitle = `Attest Ponto Workers ${target} ${process.env.RELEASE_SHA} orchestrator=${process.env.ORCHESTRATOR_RUN_ID}`;
+          if (
+            workflow.state !== "active"
+            || workflow.path !== ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"
+            || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
+            || run.workflow_id !== workflow.id
+            || run.path !== `${workflow.path}@refs/heads/main`
+            || run.status !== "completed"
+            || run.conclusion !== "success"
+            || run.event !== "workflow_dispatch"
+            || run.head_branch !== "main"
+            || run.head_sha !== process.env.RELEASE_SHA
+            || run.name !== "Attest Ponto Worker secret custody"
+            || run.display_title !== expectedTitle
+            || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
+            || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
+          ) throw new Error("root custody run provenance differs from the governed pre-mutation child");
+          NODE
+          artifact_name="ponto-root-custody-$target-$RELEASE_SHA"
+          artifact_list="$RUNNER_TEMP/timekeeping-root-custody-artifacts.json"
+          artifact_metadata="$RUNNER_TEMP/timekeeping-root-custody-artifact.json"
+          artifact_provenance="$RUNNER_TEMP/timekeeping-root-custody-provenance.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ROOT_CUSTODY_RUN_ID/artifacts?per_page=100" > "$artifact_list"
+          artifact_id="$(
+            node - "$artifact_list" "$artifact_name" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const artifactName = process.argv[3];
+          const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : [];
+          if (!Number.isInteger(payload.total_count) || payload.total_count !== artifacts.length) {
+            throw new Error("root custody artifact listing is incomplete");
+          }
+          const matches = artifacts.filter(artifact => artifact?.name === artifactName);
+          if (matches.length !== 1 || !/^[1-9][0-9]*$/.test(String(matches[0]?.id || ""))) {
+            throw new Error("exactly one root custody artifact with a positive numeric ID is required");
+          }
+          process.stdout.write(String(matches[0].id));
+          NODE
+          )"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" > "$artifact_metadata"
+          node - \
+            "$artifact_list" \
+            "$artifact_metadata" \
+            "$artifact_provenance" \
+            "$artifact_name" \
+            "$artifact_id" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const artifact = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const outputFile = process.argv[4];
+          const artifactName = process.argv[5];
+          const artifactId = process.argv[6];
+          const listed = (payload.artifacts || []).filter(item => item?.name === artifactName);
+          const digest = String(artifact.digest || "");
+          const expiresAt = Date.parse(String(artifact.expires_at || ""));
+          if (
+            listed.length !== 1
+            || String(listed[0].id || "") !== artifactId
+            || String(artifact.id || "") !== artifactId
+            || artifact.name !== artifactName
+            || artifact.expired !== false
+            || !Number.isFinite(expiresAt)
+            || expiresAt <= Date.now()
+            || !/^sha256:[0-9a-f]{64}$/.test(digest)
+            || artifact.workflow_run?.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
+            || artifact.workflow_run?.head_sha !== process.env.RELEASE_SHA
+            || String(listed[0].digest || "") !== digest
+            || listed[0].workflow_run?.id !== artifact.workflow_run.id
+            || listed[0].workflow_run?.head_sha !== artifact.workflow_run.head_sha
+          ) {
+            throw new Error("root custody artifact metadata is not exact, current, and tied to the attested run");
+          }
+          const provenance = {
+            workflowRunId: String(process.env.ROOT_CUSTODY_RUN_ID),
+            coordinatorRunId: String(process.env.ORCHESTRATOR_RUN_ID),
+            workflowPath: ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
+            artifactId,
+            artifactDigest: digest.slice("sha256:".length),
+            artifactName,
+            repository: process.env.GITHUB_REPOSITORY,
+          };
+          fs.writeFileSync(outputFile, `${JSON.stringify(provenance, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          preflight_dir="$RUNNER_TEMP/timekeeping-root-custody/preflight"
+          mkdir -p "$preflight_dir/unpacked"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$preflight_dir/artifact.zip"
+          expected_artifact_digest="$(
+            node -e "process.stdout.write(require(process.argv[1]).artifactDigest)" "$artifact_provenance"
+          )"
+          downloaded_artifact_digest="$(sha256sum "$preflight_dir/artifact.zip" | cut -d' ' -f1)"
+          [[ "$downloaded_artifact_digest" == "$expected_artifact_digest" ]] || {
+            echo 'Downloaded root custody archive differs from the exact artifact metadata digest'
+            exit 1
+          }
+          unzip -q "$preflight_dir/artifact.zip" -d "$preflight_dir/unpacked"
+          mapfile -t custody_files < <(find "$preflight_dir/unpacked" -type f -name root-custody.json -print)
+          [[ "${#custody_files[@]}" == 1 ]] || { echo 'Root custody child artifact must contain exactly one root-custody.json'; exit 1; }
+          node .github/scripts/ponto-root-custody.mjs verify \
+            "$target" \
+            "$RELEASE_SHA" \
+            "${custody_files[0]}"
+          install -m 600 \
+            "${custody_files[0]}" \
+            "$RUNNER_TEMP/timekeeping-root-custody/preflight-root-custody.json"
+          rm -rf "$preflight_dir"
+          rm -f \
+            "$RUNNER_TEMP/timekeeping-root-custody-run.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody-workflow.json" \
+            "$artifact_list" \
+            "$artifact_metadata"
+      - name: Compare live root custody immediately before mutation
+        if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
+        env:
+          ROOT_CUSTODY_RUN_ID: ${{ inputs.root_custody_run_id }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+          PONTO_PROFILE_DATA_KEY: ${{ secrets.PONTO_PROFILE_DATA_KEY }}
+          PONTO_IDEMPOTENCY_KEY: ${{ secrets.PONTO_IDEMPOTENCY_KEY }}
+          PONTO_ROOT_ATTESTATION_KEY_SHARED: ${{ secrets.PONTO_ROOT_ATTESTATION_KEY_SHARED }}
+          PONTO_PROFILE_DATA_KEY_CUSTODY_REF: ${{ vars.PONTO_PROFILE_DATA_KEY_CUSTODY_REF }}
+          PONTO_IDEMPOTENCY_KEY_CUSTODY_REF: ${{ vars.PONTO_IDEMPOTENCY_KEY_CUSTODY_REF }}
+          PONTO_ROOT_ATTESTATION_KEY_ID: ${{ vars.PONTO_ROOT_ATTESTATION_KEY_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$ROOT_CUSTODY_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'root_custody_run_id must be numeric'; exit 1; }
+          [[ "$ORCHESTRATOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'orchestrator_run_id must be numeric'; exit 1; }
+          target=staging
+          [[ "$TARGET" == pilot ]] && target=production
+          node --input-type=module - \
+            "$RUNNER_TEMP/timekeeping-root-custody/preflight-root-custody.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody/root-custody.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody-provenance.json" \
+            "$target" <<'NODE'
+          import crypto from "node:crypto";
+          import fs from "node:fs";
+          import {
+            attestationKeyCommitment,
+            rootFingerprint,
+            validateRootCustody,
+          } from "./.github/scripts/ponto-root-custody.mjs";
+          const target = process.argv[5];
+          const options = { target, releaseSha: process.env.RELEASE_SHA };
+          const raw = fs.readFileSync(process.argv[2]);
+          const preflight = validateRootCustody(
+            JSON.parse(raw),
+            options,
+          );
+          const current = validateRootCustody(
+            JSON.parse(fs.readFileSync(process.argv[3], "utf8")),
+            options,
+          );
+          const artifactProvenance = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+          const canonicalRaw = Buffer.from(`${JSON.stringify(preflight, null, 2)}\n`, "utf8");
+          if (!raw.equals(canonicalRaw)) {
+            throw new Error("root custody artifact attestation is not canonical");
+          }
+          const provenance = {
+            ...artifactProvenance,
+            attestationSha256: crypto.createHash("sha256").update(canonicalRaw).digest("hex"),
+          };
+          const expectedProvenance = {
+            workflowRunId: String(process.env.ROOT_CUSTODY_RUN_ID),
+            coordinatorRunId: String(process.env.ORCHESTRATOR_RUN_ID),
+            workflowPath: ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml",
+            artifactName: `ponto-root-custody-${target}-${process.env.RELEASE_SHA}`,
+            repository: process.env.GITHUB_REPOSITORY,
+          };
+          if (
+            Object.entries(expectedProvenance).some(([key, value]) => provenance[key] !== value)
+            || !/^[1-9][0-9]*$/.test(String(provenance.artifactId || ""))
+            || !/^[0-9a-f]{64}$/.test(String(provenance.artifactDigest || ""))
+            || !/^[0-9a-f]{64}$/.test(String(provenance.attestationSha256 || ""))
+          ) {
+            throw new Error("root custody durable provenance is invalid");
+          }
+          const liveCommitment = {
+            profileDigest: rootFingerprint(
+              process.env.PONTO_PROFILE_DATA_KEY,
+              process.env.PONTO_ROOT_ATTESTATION_KEY_SHARED,
+            ),
+            idempotencyDigest: rootFingerprint(
+              process.env.PONTO_IDEMPOTENCY_KEY,
+              process.env.PONTO_ROOT_ATTESTATION_KEY_SHARED,
+            ),
+            attestationKeyCommitment: attestationKeyCommitment(
+              process.env.PONTO_ROOT_ATTESTATION_KEY_SHARED,
+            ),
+            profileCustodyRef: process.env.PONTO_PROFILE_DATA_KEY_CUSTODY_REF,
+            idempotencyCustodyRef: process.env.PONTO_IDEMPOTENCY_KEY_CUSTODY_REF,
+            attestationKeyId: process.env.PONTO_ROOT_ATTESTATION_KEY_ID,
+          };
+          if (
+            JSON.stringify(current) !== JSON.stringify(preflight)
+            || Object.entries(liveCommitment).some(([key, value]) => preflight[key] !== value)
+          ) {
+            throw new Error("current Timekeeping roots differ from the exact pre-mutation custody attestation");
+          }
+          const durable = validateRootCustody({
+            ...current,
+            provenance,
+          }, {
+            ...options,
+            requireProvenance: true,
+            repository: process.env.GITHUB_REPOSITORY,
+          });
+          fs.writeFileSync(process.argv[3], `${JSON.stringify(durable, null, 2)}\n`, { mode: 0o600 });
+          fs.chmodSync(process.argv[3], 0o600);
+          NODE
+          touch "$RUNNER_TEMP/timekeeping-root-custody-pre-mutation-attested"
+          rm -f \
+            "$RUNNER_TEMP/timekeeping-root-custody/preflight-root-custody.json" \
+            "$RUNNER_TEMP/timekeeping-root-custody-provenance.json"
       - name: Apply additive Timekeeping migrations
         if: ${{ inputs.target == 'staging' || inputs.target == 'pilot' }}
         env:
@@ -359,6 +663,7 @@ jobs:
         working-directory: workforce/timekeeping
         run: |
           set -euo pipefail
+          [[ -f "$RUNNER_TEMP/timekeeping-root-custody-pre-mutation-attested" ]] || { echo 'Exact root custody was not revalidated immediately before mutation'; exit 1; }
           if [[ "$TARGET" == staging ]]; then env_args=(--env staging); database=skincos-timekeeping-staging; else env_args=(); database=skincos-timekeeping; fi
           touch "$RUNNER_TEMP/timekeeping-migration-started"
           ./node_modules/.bin/wrangler d1 migrations apply "$database" --remote --config wrangler.toml "${env_args[@]}"
@@ -446,7 +751,8 @@ jobs:
             "$ROLLBACK_FROM_STAGE" \
             "$TIMEKEEPING_CANDIDATE_VERSION_ID" \
             "$TIMEKEEPING_INCUMBENT_VERSION_ID" \
-            "$GITHUB_ENV" <<'NODE'
+            "$GITHUB_ENV" \
+            "$RUNNER_TEMP/timekeeping-root-custody/root-custody.json" <<'NODE'
           const fs = require("fs");
           const [
             evidenceFile,
@@ -457,6 +763,7 @@ jobs:
             governedCandidateId,
             governedIncumbentId,
             githubEnv,
+            custodyFile,
           ] = process.argv.slice(2);
           const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
           const evidence = JSON.parse(fs.readFileSync(evidenceFile, "utf8"));
@@ -521,6 +828,9 @@ jobs:
               + `TIMEKEEPING_PREDECESSOR_CANDIDATE_PERCENT=${candidatePercent}\n`
               + `TIMEKEEPING_PREDECESSOR_INCUMBENT_PERCENT=${incumbentPercent}\n`,
           );
+          if (!surface?.rootCustody) throw new Error("Timekeeping predecessor lacks root custody evidence");
+          fs.mkdirSync(require("path").dirname(custodyFile), { recursive: true });
+          fs.writeFileSync(custodyFile, `${JSON.stringify(surface.rootCustody, null, 2)}\n`, { mode: 0o600 });
           NODE
           touch "$RUNNER_TEMP/timekeeping-live-predecessor-attested"
           rm -f "$predecessor_dir/ponto-release-evidence.json"
@@ -705,6 +1015,9 @@ jobs:
           const fs = require("fs");
           const path = require("path");
           const stage = process.env.TARGET;
+          const rootCustodyFile = process.env.RUNNER_TEMP + "/timekeeping-root-custody/root-custody.json";
+          if (!fs.existsSync(rootCustodyFile)) throw new Error("Timekeeping root custody evidence is absent");
+          const rootCustody = JSON.parse(fs.readFileSync(rootCustodyFile, "utf8"));
           const migrations = stage === "staging" || stage === "pilot"
             ? fs.readdirSync("workforce/timekeeping/migrations")
               .filter(name => /^\d+.*\.sql$/.test(name))
@@ -728,6 +1041,7 @@ jobs:
             candidatePercent: Number(process.env.CANDIDATE_PERCENT),
             incumbentPercent: Number(process.env.INCUMBENT_PERCENT),
             candidateTag: `ponto:timekeeping:${process.env.RELEASE_SHA}`,
+            rootCustody,
             url: stage === "staging" ? "https://api-staging.skincos.com.br/api/ponto/health" : "https://api.skincos.com.br/api/ponto/health",
             checkpoint: process.env.CHECKPOINT_DIGEST ? {
               artifactName: `timekeeping-${stage}-pre-migration-${process.env.RELEASE_SHA}`,

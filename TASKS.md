@@ -63,79 +63,81 @@ jornada autenticada atual continue válida.
 - [x] Publicar e validar staging com D1/secrets próprios (workflow histórico `29700256254`).
 - [x] Promover por workflow oficial e executar smoke produtivo somente leitura (evidência histórica `29700295125`; API `29700339758`; UI `29753110570`).
 
-### P0 — release atual (candidato final ainda não selecionado)
+### P0 — release atual (produção mantida fail-closed)
 
-- [x] Integrar o candidato por PR #886 em `main` como
-  `10b2197731d0210cf8fc8cd961f7a787d73bf650`, com todos os checks obrigatórios
-  verdes. Esta integração não é uma promoção de Worker, gateway ou Pages.
-- [x] Inventariar integralmente o delta posterior à PR #886. Entre
-  `10b21977…` e `66424871…`, o `main` recebeu: contrato/finalização/convergência
-  do canário Finance (PRs #891/#895/#898), guardas produtivas e migration
-  aditiva Finance (PR #890), observação e agendamento seguro de releases
-  estáveis do Orb/n8n (#888/#896), ACL do
-  preparador de release nativo da Livia (#892) e contrato de acessibilidade do
-  QA da Livia (#897). O delta total contém 29 arquivos: 17 de Finance, 8 de
-  Orb/n8n, 2 do QA da Livia e 2 do preparador nativo, com
-  `.github/scripts/validate-deploy-topology.mjs` compartilhado na guarda
-  Finance. Nenhum deles altera diretamente o runtime, migration ou workflow
-  de Ponto, mas a classificação anterior de “somente um arquivo Finance” era
-  incorreta.
-- [ ] Selecionar um único SHA imutável somente depois de integrar os controles
-  obrigatórios de pilot/canary. O gate canônico aceita SHA ancestral
-  alcançável a partir de `main`; portanto `10b21977…` é tecnicamente
-  promovível, mas não é mais automaticamente o candidato correto.
-- [x] Restaurar a navegação de CONSULTOR/EMPLOYEE para exatamente Atendimento e
-  Ponto, preservando a autorização no servidor.
-- [x] Cobrir a regressão de navegação e incluir seus arquivos no path filter de
-  Timekeeping CI.
-- [x] Criar jornada autenticada sintética, com fixture efêmera, teardown
-  específico por execução e evidência sanitizada.
-- [x] Tornar `PONTO_PROFILE_DATA_KEY` obrigatório nos sync/deploys e registrar
-  release SHA/environment no health do Worker.
-- [x] Manter `ENABLE_CORE_WORKERS_DEPLOY=true` somente em `staging`.
-  `production` voltou a `false` em `2026-07-29T22:17:37Z`, antes de qualquer
-  dispatch, e permanece fail-closed até existirem staging, pilot e canary
-  válidos.
-- [ ] Implementar e validar, antes de produção, afinidade entre versões do Core
-  API e Timekeeping, roteamento gradual, coorte piloto baseada em contexto de
-  rede, grants mínimos, interrupção automática e evidência externa de SLO. A
-  política progressiva atual marca Core Workers, CRM Pages e Timekeeping como
-  bloqueados enquanto esses controles não existirem. Corrigir também o default
-  fail-open `${ENABLE:-true}` do Core deploy, o checkpoint Timekeeping rotulado
-  com o SHA do dispatch em vez do release SHA e a ausência de inputs/gates
-  executáveis para pilot/canary.
-- [ ] Criar primeiro `PONTO_PROFILE_DATA_KEY` em `staging` por processo de
-  segredo aprovado; não gerar/copyar valor pelo código. Somente após staging
-  completo e autorização pré-produção separada, provisionar um valor
-  independente em `production`.
-- [ ] Desacoplar o deploy produtivo do Core API para Ponto do binding Finance
-  ausente. O `api/wrangler.toml` atual referencia `skincos-finance`, que não
-  existe e já causou Cloudflare `10143`; a correção não pode provisionar nem
-  ativar Finance sob este objetivo.
-- [ ] Fazer preview e staging do mesmo SHA para Timekeeping, Core API e CRM
-  Pages; executar a jornada sintética pelo URL imutável do Pages e confirmar
-  que o teardown preservou auditoria.
-- [ ] Exercitar `module-control:timekeeping` em staging (`maintenance` →
-  `active`) e registrar o rollback; só então tornar `active` explícito em
-  produção após promoção imutável, piloto e observação.
-- [x] Fechar explicitamente o Ponto produtivo em `maintenance` pelo workflow
-  canônico `30496220685`. A contenção/rollback operacional mantém essa chave
-  explicitamente em `maintenance`; ela não deve ser removida, pois o estado
-  ausente é fail-open. O conjunto incumbente preservado para rollback de
-  artefato é Timekeeping deployment
-  `0da32d7c-6d6f-4b54-a538-6b7c642e57de`, Core API version
-  `a1d6ddb0-905d-4784-9e77-d1231cd75e90` e CRM Pages deployment
-  `a77cf500-f272-4d37-87c2-c02f78352c4e`, sempre com a manutenção retida até
-  nova atestação. `/api/ponto/me` passou a responder
-  `503/MODULE_MAINTENANCE`; a readiness ainda responde 200 e precisa ser
-  corrigida para refletir o controle operacional.
-- [ ] Corrigir a reconciliação operacional: o inventário agregado encontrou um
-  CONSULTOR ativo no Core de staging sem Workforce ativo correspondente; em
-  produção não há CONSULTOR ativo elegível para o piloto. Não criar ou ativar
-  identidades sem a decisão de Identity/Workforce apropriada.
-- [ ] Não considerar produção, piloto, conclusão ou arquivamento provados até
-  existirem artefatos, health/version/gateway e jornada autenticada para o
-  mesmo SHA.
+- [x] Sanear e integrar a PR #894 como
+  `4a6d0cfced901c5297f76d141f5f7f1c18ea4a93`; os bloqueios antigos nela
+  descritos foram substituídos pelos controles e evidências atuais.
+- [x] Integrar a correção da PR #886 em
+  `10b2197731d0210cf8fc8cd961f7a787d73bf650`. Esse SHA é somente a base do
+  inventário e não é um candidato promovível pela cadeia atual.
+- [x] Inventariar integralmente o delta posterior à PR #886 até o `main`
+  observado em `0a2117904ba58eb45e1163fb0971c31e6b2a7d1e`: 58 commits,
+  30 first-parent e 109 paths líquidos (33 adicionados, 76 modificados, zero
+  removidos). A classificação disjunta cobre Ponto, ledgers, Finance,
+  compartilhado/multidomínio, Orb/n8n, Livia/native,
+  website/Meta/WhatsApp, observabilidade e CRM Local. O manifesto canônico é
+  `docs/project-state/ponto-post-886-delta.json`; a alegação anterior de
+  “somente um arquivo Finance” e o inventário de 29 paths estão revogados.
+- [x] Corrigir a seleção de origem: o release SHA precisa ser exatamente o
+  `GITHUB_SHA` do coordenador executado em `refs/heads/main`, além de ser o
+  checkout atual e alcançável por `main`. SHA ancestral não é aceito. Se
+  `main` avançar entre estágios, a cadeia precisa recomeçar em `preview`.
+- [x] Publicar e atestar o baseline privado de Ponto Core pela PR #919/run
+  `30512105626`, com source `0f3480dce1a170ac0f862fa392a95456af292a88`.
+  Staging ficou em deployment `d88aa85e-a90b-4fd0-b03b-14bf4c6fc248`,
+  version `0ee7a2fe-deff-4f37-bcda-c35ad54b68f3`; produção em deployment
+  `96aba9e3-fb02-48b4-bc38-ef6a7187328a`, version
+  `487f3c03-0159-4914-8d79-470fd1ef209d`. Ambos permanecem route-only, sem
+  routes, domains, `workers.dev` ou preview URLs.
+- [x] Exigir run, artifact ID/digest, deployment, version, bindings e
+  reatestação live exatos desse bootstrap antes da primeira mutação de staging
+  e antes da captura do baseline produtivo; drift interrompe a release.
+- [x] Restaurar a navegação de CONSULTOR/EMPLOYEE para exatamente Atendimento
+  e Ponto, preservando autorização server-side, regressão CI, fixture
+  sintética efêmera, teardown run-scoped e auditoria.
+- [x] Implementar os controles técnicos fail-closed: afinidade entre versões
+  de Timekeeping/Core/Identity/Pages, seleção privada por service binding,
+  coorte conjuntiva de identidade/unidade/rede, pilot/canary sem tráfego
+  público default, WAF como precondição externa, grants mínimos, checkpoints
+  pelo release SHA, migrations aditivas, SLO autenticado, reconciliação de
+  filhos, baseline completo antes da primeira mutation do pilot, atestação
+  opaca de separação dos roots antes de mutation, credenciais piloto somente
+  no runner self-hosted autorizado, interrupção automática, ownership e
+  rollback exato nas quatro superfícies.
+- [x] Isolar o Ponto Core do binding Finance e publicar o Pages staging
+  `ee5ab6dd-4bba-48da-96ea-38fa686f8691` no projeto `skincos-staging`
+  (`https://ee5ab6dd.skincos-staging.pages.dev`), mantendo produção separada.
+- [x] Manter `ENABLE_CORE_WORKERS_DEPLOY=false` e
+  `module-control:timekeeping=maintenance` em produção. O run canônico de
+  contenção é `30496220685`; nenhum pilot, canary ou deploy Ponto produtivo foi
+  executado nesta retomada.
+- [ ] Provisionar `PONTO_PROFILE_DATA_KEY` distinto e separadamente custodiado
+  primeiro em `staging`, somente por fonte/processo autorizado. Prover também
+  as referências opacas `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` e
+  `PONTO_IDEMPOTENCY_KEY_CUSTODY_REF` no environment. Um custodiante de
+  segurança deve registrar `PONTO_ROOT_ATTESTATION_KEY_SHARED` somente como
+  secret do repositório e `PONTO_ROOT_ATTESTATION_KEY_ID` somente como variable
+  do repositório. Não gerar em CI, ler, copiar entre ambientes ou versionar
+  nenhum valor secreto.
+- [ ] Criar e atestar as duas regras WAF externas e registrar
+  `CLOUDFLARE_ZONE_ID`, `PONTO_WAF_RULESET_ID`,
+  `PONTO_WAF_HEADER_RULE_ID` e `PONTO_WAF_CONTRACT_RULE_ID` no environment.
+- [ ] Executar `preview` e depois `staging` do mesmo `GITHUB_SHA` corrente,
+  incluindo checkpoints, migrations, jornada CONSULTOR autenticada,
+  `maintenance → active → maintenance`, teardown e drill real de rollback.
+- [ ] Somente depois do staging verde, provisionar um
+  `PONTO_PROFILE_DATA_KEY` distinto e separadamente custodiado em `production`,
+  com referências de cofre próprias e não reutilizadas; obter a designação
+  Identity/Workforce da identidade piloto e cadastrar os secrets de login e
+  coorte sem inventar vínculo ou expor PII.
+- [ ] Prover `PONTO_PILOT_RUNNER_LABELS_JSON`, um runner clínico online/idle e
+  `PONTO_CANARY_COHORT_PERCENTAGE`; habilitar as flags produtivas apenas no
+  estágio autorizado.
+- [ ] Completar pilot, canary, produção, observação pós-release e cleanup
+  somente com predecessores, health/version/gateway, SLO e jornada
+  autenticada do mesmo SHA. Até lá, a thread e produção permanecem abertas e
+  fail-closed.
 
 ## External/product follow-up
 

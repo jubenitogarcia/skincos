@@ -2,52 +2,74 @@
 
 ## P0 — Workforce Timekeeping production release is fail-closed
 
-PR #886 is integrated at
-`10b2197731d0210cf8fc8cd961f7a787d73bf650`, but no immutable release has
-completed the current preview/staging/pilot/canary/production chain. The
-production Core deploy flag was restored to
-`ENABLE_CORE_WORKERS_DEPLOY=false` at `2026-07-29T22:17:37Z`; staging remains
-enabled for a later governed operation. Production Ponto itself is explicitly
-in `maintenance` through canonical run `30496220685`.
+PR #894 and the private Ponto Core/Pages staging prerequisites are integrated,
+and the changeset carrying this entry implements the missing progressive
+release controls. No immutable candidate has completed the current
+preview/staging/pilot/canary/production chain. Production remains explicitly
+`module-control:timekeeping=maintenance` through canonical run `30496220685`
+and `ENABLE_CORE_WORKERS_DEPLOY=false`.
 
 The executable blockers, in required order, are:
 
-1. integrate and validate version affinity between Core API and Timekeeping,
-   gradual Worker routing, a network-context pilot cohort, minimal grants,
-   automatic interruption and external SLO evidence; make the Core gate
-   fail-closed when unset, label Timekeeping checkpoints with the promoted
-   release SHA, and add executable pilot/canary predecessors plus a
-   Ponto-specific Pages gate;
-2. provision `PONTO_PROFILE_DATA_KEY` in staging only from an approved secret
-   source/process, and move the other staging Ponto runtime secrets out of
-   shared repository scope; provision an independent production set only
-   after complete staging evidence and separate pre-production authorization;
-3. choose one immutable SHA reachable from `main` after those controls are
-   integrated, then prove the same SHA in Timekeeping, Core API and CRM Pages
-   preview/staging; first repair staging Pages, which currently routes its
-   canonical default to the production API and has no actor key;
-4. add a Ponto gateway-only Core API promotion path that does not require the
-   nonexistent `skincos-finance` Worker or mutate/provision Finance; the
-   current production binding already caused Cloudflare `10143`;
-5. exercise `module-control:timekeeping` through maintenance, active and
-   rollback in staging and complete the synthetic authenticated journey with
-   audit-preserving teardown;
-6. reconcile or designate an eligible pilot through Identity/Workforce. The
-   aggregate inventory currently has no active production CONSULTOR with an
-   active Workforce counterpart, and staging has one Core CONSULTOR without
-   that counterpart;
-7. complete separately evidenced pilot and canary predecessors before any
-   production deployment, migration, grant or activation.
+1. An authorized Cloudflare owner must create/enable the exact zone-scoped WAF
+   block rules and register `CLOUDFLARE_ZONE_ID`, `PONTO_WAF_RULESET_ID`,
+   `PONTO_WAF_HEADER_RULE_ID` and `PONTO_WAF_CONTRACT_RULE_ID`. The gate
+   requires external 403 probes for both public version-selection headers and
+   `/insumos/health/workforce-contract`; no Worker-side bypass is accepted.
+2. An authorized secret custodian must provision a distinct, separately
+   custodied `PONTO_PROFILE_DATA_KEY` in the GitHub `staging` environment from
+   an approved source, plus environment variables
+   `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` and
+   `PONTO_IDEMPOTENCY_KEY_CUSTODY_REF` containing distinct opaque approved-vault
+   references. A security custodian must provision
+   `PONTO_ROOT_ATTESTATION_KEY_SHARED` only as a repository secret and
+   `PONTO_ROOT_ATTESTATION_KEY_ID` only as a repository variable. Do not
+   generate in CI, print, copy application roots across environments or
+   version a secret value.
+3. With (1) and (2) present, execute `preview` and then `staging` using exactly
+   the coordinator `GITHUB_SHA` on the current `main`. The staging predecessor
+   must include all four surfaces, checkpoints, additive migrations,
+   maintenance/active transitions, authenticated CONSULTOR navigation and
+   server-side authorization, audit-preserving teardown and the real
+   incumbent/candidate rollback drill. Any main advancement requires a fresh
+   preview.
+4. Only after staging passes and separate pre-production authorization, an
+   authorized custodian must provision a different, separately custodied
+   `PONTO_PROFILE_DATA_KEY` in `production`, with production-only custody
+   references that do not reuse either staging reference.
+5. Identity/Workforce must designate an existing eligible pilot and authorize
+   the minimal unit/network cohort. Then environment owners may register
+   `PONTO_PILOT_LOGIN`, `PONTO_PILOT_PASSWORD` and
+   `PONTO_PILOT_COHORT_JSON`; do not invent or activate a collaborator.
+6. Provide a clinic-network self-hosted runner matching
+   `PONTO_PILOT_RUNNER_LABELS_JSON`, online and idle, plus a reviewed
+   `PONTO_CANARY_COHORT_PERCENTAGE`. The current repository runner inventory is
+   zero.
+7. Enable production deploy flags only for the authorized stage, then complete
+   pilot, canary, production and the post-release observation window with the
+   exact predecessor artifacts and SLOs. Restore maintenance and exact
+   incumbents on any threshold or ownership failure.
 
 `PONTO_PROFILE_DATA_KEY` is absent by name from accessible GitHub
-staging/production metadata and both incumbent Timekeeping Workers.
-`module-control:timekeeping` is absent in staging and explicitly
-`maintenance` in production. Production `/api/ponto/me` returns
-`503/MODULE_MAINTENANCE`, while readiness incorrectly remains 200 and is a
-release-control defect. Incumbent health/version responses do not attest a
-candidate release.
-No production Ponto dispatch, migration, D1/KV write, pilot or canary is
-authorized by the current evidence.
+staging/production metadata. `PONTO_ROOT_ATTESTATION_KEY_SHARED`,
+`PONTO_ROOT_ATTESTATION_KEY_ID`, `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` and
+`PONTO_IDEMPOTENCY_KEY_CUSTODY_REF` are also absent at their required scopes.
+The required WAF variables/rules, approved
+production pilot inputs and runner labels are also absent; production has no
+`ENABLE_TIMEKEEPING_PRODUCTION_DEPLOY` and keeps the Core flag false.
+`PONTO_IDEMPOTENCY_KEY` is present by name in both environments, but presence
+does not prove the missing profile-key custody or a successful release. Secret
+values were not read. No production Ponto dispatch, migration, D1/KV write,
+pilot or canary is authorized by the current evidence.
+
+The technical defects recorded in the older section—Finance-coupled Ponto
+Core, wrong staging Pages target, fail-open deploy default, dispatch-SHA
+checkpoint labels, missing version affinity, missing executable predecessors,
+readiness ignoring maintenance, arbitrary Core incumbent capture, late
+production-baseline verification, hosted-coordinator pilot credentials and
+unproved key separation—are closed by the reviewed source in the changeset
+containing this entry. They must still pass hosted checks and the ordered
+workflow; they are not external permission to skip items 1–7.
 
 ## Resolved — Insumos unit access P0
 

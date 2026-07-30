@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 const [mode, file] = process.argv.slice(2);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{40}$/i;
+const VALID_INITIAL_STATES = new Set(["active", "maintenance"]);
 const required = (name) => {
   const value = String(process.env[name] || "").trim();
   if (!value) throw new Error(`missing ${name}`);
@@ -42,7 +43,15 @@ const validate = (baseline) => {
       && baseline.bootstrapCore?.versionId === baseline.surfaces.coreApi.versionId,
     "Core bootstrap live predecessor differs from the captured Core incumbent",
   );
-  assert(baseline.health?.passed === true && baseline.health?.state === "maintenance", "baseline external maintenance health did not pass");
+  const initialState = String(baseline.health?.state || "");
+  assert(
+    baseline.health?.passed === true && VALID_INITIAL_STATES.has(initialState),
+    "baseline initial module state must be active or maintenance",
+  );
+  assert(
+    baseline.health?.ready === (initialState === "active"),
+    "baseline initial readiness is inconsistent with module state",
+  );
   assert(baseline.credentialsIncluded === false && baseline.piiIncluded === false, "baseline privacy attestation is invalid");
   const { sha256, ...unsigned } = baseline;
   assert(/^[0-9a-f]{64}$/.test(String(sha256 || "")) && digest(unsigned) === sha256, "baseline digest differs");
@@ -127,10 +136,18 @@ if (mode === "capture") {
     && health?.dependencies?.module_control?.reason === "MODULE_MAINTENANCE"
     && dependencies.every(([name, dependency]) => name === "module_control" || dependency?.required !== true || dependency?.state === "healthy")
   );
+  const activeReady = healthResponse.status === 200
+    && health?.availability?.state === "active"
+    && health?.ok === true
+    && health?.ready === true
+    && hasDependencyContract
+    && health?.dependencies?.module_control?.state === "healthy"
+    && dependencies.every(([, dependency]) => dependency?.required !== true || dependency?.state === "healthy");
   const maintenanceOnly = healthResponse.status === 200
     && health?.availability?.state === "maintenance"
     && dependencyContractSafe;
-  assert(maintenanceOnly, "external Ponto health is not maintenance-only");
+  assert(activeReady || maintenanceOnly, "external Ponto initial health is not valid active or maintenance");
+  const initialState = activeReady ? "active" : "maintenance";
   const identityResponse = await fetch("https://api.skincos.com.br/insumos/health", {
     redirect: "manual",
     signal: AbortSignal.timeout(15_000),
@@ -181,7 +198,8 @@ if (mode === "capture") {
     bootstrapCore,
     health: {
       passed: true,
-      state: "maintenance",
+      state: initialState,
+      ready: activeReady,
       changedAt: String(health?.availability?.changedAt || ""),
       crmStatus: healthResponse.status,
       identityStatus: identityResponse.status,

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { validateRootCustody } from "./ponto-root-custody.mjs";
 
 const STAGES = ["preview", "staging", "pilot", "canary", "production", "rollback"];
 const PREDECESSOR = { staging: "preview", pilot: "staging", canary: "pilot", production: "canary" };
@@ -39,7 +40,7 @@ const assertSafeObject = (value, at = "root") => {
 const assertUuid = (value, name) => assert(UUID.test(String(value || "")), `${name} must be a UUID`);
 const assertSha256 = (value, name) => assert(SHA256.test(String(value || "")), `${name} must be a SHA-256 digest`);
 
-function validateSurfaces(surfaces, stage, sourceSha) {
+function validateSurfaces(surfaces, stage, sourceSha, repository) {
   assert(surfaces && typeof surfaces === "object" && !Array.isArray(surfaces), "surfaces must be an object");
   for (const unit of ["timekeeping", "coreApi", "identityWorkforce", "crmPages"]) {
     assert(surfaces[unit] && typeof surfaces[unit] === "object", `missing ${unit} surface`);
@@ -69,6 +70,13 @@ function validateSurfaces(surfaces, stage, sourceSha) {
     assert(surface.candidateTag === `ponto:${unit}:${sourceSha}`, `${unit}.candidateTag does not identify source SHA`);
     assert(HTTPS.test(String(surface.url || "")), `${unit}.url must be HTTPS`);
   }
+  validateRootCustody(surfaces.timekeeping.rootCustody, {
+    target: stage === "staging" ? "staging" : "production",
+    releaseSha: sourceSha,
+    requireStagingSeparation: stage !== "staging",
+    requireProvenance: true,
+    repository,
+  });
   assertUuid(surfaces.crmPages.deploymentId, "crmPages.deploymentId");
   assertUuid(surfaces.crmPages.rollbackDeploymentId, "crmPages.rollbackDeploymentId");
   assert(surfaces.crmPages.candidateTag === `ponto:crmPages:${sourceSha}`, "crmPages.candidateTag does not identify source SHA");
@@ -156,12 +164,13 @@ function validateEdgeGuard(edgeGuard, stage, sourceSha) {
 }
 
 function validateBootstrapCore(bootstrapCore, stage, surfaces) {
-  if (stage !== "staging") {
-    assert(bootstrapCore === null, `${stage} must not claim a direct staging Core bootstrap predecessor`);
+  if (!["staging", "pilot"].includes(stage)) {
+    assert(bootstrapCore === null, `${stage} must not claim a direct Core bootstrap predecessor`);
     return;
   }
-  assert(bootstrapCore && typeof bootstrapCore === "object" && !Array.isArray(bootstrapCore), "staging requires Core bootstrap evidence");
-  assert(bootstrapCore.schemaVersion === 1 && bootstrapCore.target === "staging", "Core bootstrap target is invalid");
+  const expectedTarget = stage === "staging" ? "staging" : "production";
+  assert(bootstrapCore && typeof bootstrapCore === "object" && !Array.isArray(bootstrapCore), `${stage} requires Core bootstrap evidence`);
+  assert(bootstrapCore.schemaVersion === 1 && bootstrapCore.target === expectedTarget, "Core bootstrap target is invalid");
   assert(/^[0-9]+$/.test(String(bootstrapCore.workflowRunId || "")), "Core bootstrap workflow run is invalid");
   assert(/^[0-9]+$/.test(String(bootstrapCore.artifactId || "")), "Core bootstrap artifact ID is invalid");
   assert(/^sha256:[0-9a-f]{64}$/.test(String(bootstrapCore.artifactDigest || "")), "Core bootstrap artifact digest is invalid");
@@ -171,7 +180,7 @@ function validateBootstrapCore(bootstrapCore, stage, surfaces) {
   assert(bootstrapCore.liveAttested === true, "Core bootstrap predecessor was not live-attested");
   assert(
     bootstrapCore.versionId === surfaces?.coreApi?.incumbentVersionId,
-    "Core bootstrap version differs from the staging incumbent",
+    `Core bootstrap version differs from the ${stage} incumbent`,
   );
   assert(
     bootstrapCore.liveAttestation?.activeDeploymentId === bootstrapCore.deploymentId
@@ -206,7 +215,7 @@ function validateEvidence(evidence) {
     assert(evidence.predecessor?.artifactName === `ponto-release-evidence-${evidence.predecessor.stage}-${evidence.sourceSha}`, "invalid predecessor artifact name");
     assertSha256(evidence.predecessor?.artifactSha256, "predecessor.artifactSha256");
   }
-  validateSurfaces(evidence.surfaces, evidence.stage, evidence.sourceSha);
+  validateSurfaces(evidence.surfaces, evidence.stage, evidence.sourceSha, evidence.repository);
   validateEdgeGuard(evidence.edgeGuard, evidence.stage, evidence.sourceSha);
   validateBootstrapCore(evidence.bootstrapCore, evidence.stage, evidence.surfaces);
   assert(Array.isArray(evidence.migrations), "migrations must be an array");

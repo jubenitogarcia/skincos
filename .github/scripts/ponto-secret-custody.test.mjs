@@ -32,10 +32,22 @@ test("Pages derivation and Timekeeping upload independently attest environment c
   );
   assert.match(
     workers,
-    /Attest environment-owned Timekeeping roots[\s\S]*PONTO_PROFILE_DATA_KEY[\s\S]*PONTO_IDEMPOTENCY_KEY[\s\S]*repository fallback is refused/,
+    /Verify selected environment root custody scopes[\s\S]*PONTO_PROFILE_DATA_KEY[\s\S]*PONTO_IDEMPOTENCY_KEY[\s\S]*repository fallback is refused[\s\S]*Attest environment-owned Timekeeping roots/,
   );
+  const workerRootStep = workers.slice(
+    workers.indexOf("Attest environment-owned Timekeeping roots"),
+    workers.indexOf("Attest remote secret names"),
+  );
+  assert.match(workerRootStep, /PONTO_ROOT_ATTESTATION_KEY_SHARED/);
+  assert.doesNotMatch(workerRootStep, /\b(?:gh|curl|npx)\s/);
   assert.match(
     timekeeping,
     /PONTO_PROFILE_DATA_KEY[\s\S]*PONTO_IDEMPOTENCY_KEY[\s\S]*repository fallback is refused/,
   );
+  const timekeepingRootStep = timekeeping.slice(
+    timekeeping.indexOf("Compare live root custody immediately before mutation"),
+    timekeeping.indexOf("Apply additive Timekeeping migrations"),
+  );
+  assert.match(timekeepingRootStep, /PONTO_ROOT_ATTESTATION_KEY_SHARED/);
+  assert.doesNotMatch(timekeepingRootStep, /\b(?:gh|curl|npx|unzip)\s/);
 });

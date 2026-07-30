@@ -41,6 +41,13 @@ Mutações same-origin exigem o token CSRF da sessão. A Pages Function envia um
 - `PONTO_IDEMPOTENCY_KEY`: fingerprint de retries;
 - `PONTO_TEMPLATES_KEY`: A256GCM dos templates biométricos;
 - `PONTO_PROFILE_DATA_KEY`: A256GCM de documentos, filiação, telefone e endereço do perfil canônico;
+- `PONTO_ROOT_ATTESTATION_KEY_SHARED`: chave de auditoria somente no escopo do
+  repositório GitHub; cria compromissos HMAC e nunca é implantada no runtime;
+- `PONTO_ROOT_ATTESTATION_KEY_ID`: referência opaca, somente como variable do
+  repositório, à versão custodiada da chave de auditoria;
+- `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` e
+  `PONTO_IDEMPOTENCY_KEY_CUSTODY_REF`: referências opacas distintas do cofre,
+  configuradas como variables próprias de cada environment;
 - `ESCALA_ACTOR_HMAC_KEY`: autenticação Timekeeping → Escala;
 - `TIMEKEEPING_BACKUP_PASSPHRASE`: cifra o checkpoint D1 criado pelo workflow antes de migrations remotas;
 - `PONTO_FACE_PUNCH_ENABLED`: mantém identificação facial desabilitada por padrão; só use `true` após aprovação operacional explícita. A interface também bloqueia temporariamente novas capturas faciais; as marcações usam PIN;
@@ -111,8 +118,22 @@ Use somente `.github/workflows/ponto-progressive-release.yml` para a composiçã
 de release. O coordenador não publica por conta própria: ele despacha e atesta
 os publishers canônicos de Timekeeping, Identity/Inventory, Core API e CRM
 Pages. Cada execução exige um SHA completo alcançável a partir de `main`; de
-staging em diante, exige também o run bem-sucedido do predecessor para o mesmo
-SHA.
+forma mais restritiva, esse SHA precisa ser exatamente o `GITHUB_SHA` do
+coordenador executado em `refs/heads/main` e o checkout atual. De staging em
+diante, exige também o run bem-sucedido do predecessor para o mesmo SHA. Se
+`main` avançar entre estágios, não continue com o ancestral: reinicie em
+`preview` usando o novo SHA.
+
+O primeiro release governado depende do baseline privado de Ponto Core
+publicado pela PR #919/run `30512105626` a partir do source revisado
+`0f3480dce1a170ac0f862fa392a95456af292a88`. O catálogo fixa artifact
+ID/digest, deployment e version independentes de staging e produção. Antes da
+primeira mutação de staging e antes de capturar o baseline do pilot, o
+coordenador baixa exatamente esses artefatos, valida run/path/head/repository e
+reateasta ao vivo peso 100%, mensagem/APP_VERSION, binding de Timekeeping,
+route-only, ausência de routes/domains, `workers.dev=false` e preview URLs
+desabilitadas. Drift bloqueia a operação; não recapture o candidato como
+incumbente nem substitua esse predecessor sem decisão revisada.
 
 `preview` executa testes e dry-runs sem deploy, migration, KV, secret ou dado.
 `staging` põe Ponto em manutenção antes da primeira mutação, captura checkpoints
@@ -132,8 +153,9 @@ incondicionalmente os headers de seleção de versão e a rota
 `/insumos/health/workforce-contract` em produção e staging; nem clientes nem
 Workers externos podem usá-los para escolher um candidato.
 A coorte exige uma identidade autorizada, uma unidade e um contexto de rede
-opaco. `canary` mantém a mesma afinidade, abre somente o percentual aprovado do
-Core e interrompe automaticamente em falha de publisher, jornada ou SLO. Nos
+opaco. `canary` mantém as versões candidatas em zero por cento de tráfego
+default e aplica o percentual aprovado somente ao bucketing protegido no
+Pages; interrompe automaticamente em falha de publisher, jornada ou SLO. Nos
 dois estágios, Identity/Inventory precisa provar auth/session, uma leitura
 autorizada representativa e o contrato HMAC v2 com Workforce. `production` só
 torna as quatro versões candidatas correntes e grava `active` depois da cadeia
@@ -148,7 +170,28 @@ versão candidata de Timekeeping por `wrangler versions upload --secrets-file`;
 `wrangler secret put` é proibido nesta cadeia porque implantaria imediatamente
 uma nova versão em 100%. Bindings remotos omitidos são herdados, verificados
 por nome/presença e exercitados por contratos funcionais; não são copiados para
-o runner. Alterar secret de Pages exige uma release de manutenção separada. O
+o runner. Antes de manutenção ou mutation, o preflight rejeita em tempo
+constante qualquer igualdade de bytes entre `PONTO_PROFILE_DATA_KEY` e
+`PONTO_IDEMPOTENCY_KEY`. A chave de auditoria
+`PONTO_ROOT_ATTESTATION_KEY_SHARED` existe somente como secret do repositório,
+sem override nos environments, e produz compromissos HMAC-SHA-256
+domain-separated. `PONTO_ROOT_ATTESTATION_KEY_ID` identifica opacamente a sua
+versão; um compromisso HMAC de label fixo prova que staging e produção usaram
+a mesma versão efetiva, mesmo se o metadado estiver incorreto. Cada environment
+também declara referências de cofre distintas para os dois roots. No pilot, os
+dois compromissos e as duas referências de produção precisam ser disjuntos dos
+de staging do mesmo SHA. A evidência preserva ainda run do produtor, artifact
+ID/digest e correlação do coordenador. Isso prova não reutilização dos bytes
+exatos sob a mesma chave de comparação e custódia declarada em referências
+separadas; não prova entropia nem descarta derivação correlacionada, que seguem
+responsabilidade do cofre/custodiante aprovado. Nenhum valor é impresso,
+transportado entre environments, gravado na evidência ou entregue ao runtime
+como chave de auditoria.
+O coordenador hospedado consulta login, password e coorte piloto somente por
+nome; as credenciais são hidratadas apenas no runner self-hosted autorizado que
+executa a jornada externa, e a coorte opaca somente no transition de
+module-control que precisa validá-la. Alterar secret de Pages exige uma release
+de manutenção separada. O
 Pages environment `preview` usa `https://api-staging.skincos.com.br`; nunca
 compartilhe upstream ou chave HMAC de produção com preview. O smoke produtivo
 permanece somente leitura e não aceita opção para criar marcações.

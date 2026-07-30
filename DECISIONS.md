@@ -2,28 +2,50 @@
 
 ## 2026-07-29 - Govern Ponto as a four-surface progressive release
 
-- Decision: one Ponto release selects a single full Git SHA that is reachable
-  from `main` and uses that immutable source on Timekeeping,
-  Identity/Inventory, Core API and CRM Pages. A successful health check or a
-  source merge on only one surface is not a release.
+- Decision: one Ponto release uses exactly the full `GITHUB_SHA` of the
+  coordinator executing on `refs/heads/main`, and that same immutable source
+  is used on Timekeeping, Identity/Inventory, Core API and CRM Pages.
+  Reachability from `main` and checkout equality remain additional checks;
+  an older reachable ancestor is not accepted. If `main` advances between
+  stages, the old chain cannot continue and a new `preview` must start from
+  the new coordinator SHA. A successful health check or a source merge on
+  only one surface is not a release.
 - Decision: `.github/workflows/ponto-progressive-release.yml` is the sole
   coordinator. It may dispatch and attest the canonical publishers, but it may
   not run Wrangler or mutate a deployment directly. The ordered chain is
   `preview → staging → pilot → canary → production`; every stage requires the
-  exact successful predecessor artifact for the same SHA.
+  exact successful predecessor artifact for the same SHA. The Timekeeping
+  publisher exposes only `release_scope=ponto`; a standalone dispatch is
+  permitted only for non-mutating `preview`, while every mutating target
+  requires the coordinator's single-use lease.
 - Decision: preview is non-mutating. Staging first closes Timekeeping, captures
   encrypted checkpoints, applies only additive migrations, publishes all four
   surfaces, writes an active schema-v2 control bound to the release SHA, runs
   an authenticated synthetic CONSULTOR journey, and tears down only its
   run-scoped data while retaining audit evidence.
 - Decision: pilot and canary use explicit Cloudflare Worker version affinity.
-  Timekeeping remains at zero-percent general traffic; Core starts at zero
-  percent for the exact pilot and five percent for canary; the signed network
-  context supplies the stable version key, and the selected Core version pins
-  the selected Timekeeping version. Identity/Inventory stays at zero-percent
-  general traffic until production. Exact version overrides must exercise its
-  candidate auth/session path, a representative authorized read and the
-  Identity → Workforce HMAC v2 contract during both pilot and canary.
+  Timekeeping, private Ponto Core and Identity/Inventory remain at zero-percent
+  default traffic during both stages. Protected CRM Pages service bindings
+  select their exact candidates only for the conjunctively authorized
+  identity, login, employee, unit and network context; canary bucketing is
+  applied there, never through a public Worker override. The selected Core
+  version pins the selected Timekeeping version. The protected path must
+  exercise candidate auth/session, a representative authorized read and the
+  Identity → Workforce HMAC v2 contract during pilot and canary.
+- Decision: the one-time private Ponto Core predecessor is the reviewed PR
+  #912 source `0f3480dce1a170ac0f862fa392a95456af292a88`, published by PR #919
+  run `30512105626`. The catalog pins its run, artifact IDs and digests plus
+  the exact staging and production deployment/version identities. Before any
+  staging candidate mutation and before the production pilot baseline is
+  captured, the workflow revalidates that provenance and reattests live
+  bindings, 100-percent weight and zero public exposure. Replacing this
+  predecessor is a policy change requiring an explicit reviewed decision; it
+  cannot be silently recaptured from the application candidate.
+- Decision: an enabled zone-scoped WAF block is a release precondition, not an
+  implementation fallback. It must reject public version-selection headers on
+  both API hosts and reject the public Workforce contract probe before any
+  staging or live mutation. Missing rule IDs, drift, a non-block action or a
+  failed external probe stops the chain while Ponto remains in maintenance.
 - Decision: production may open `active` only after the same Identity/Inventory
   candidate is published, all four candidates are attested, the authorized
   pilot identity and network-bound cohort have passed, and the external
@@ -41,21 +63,40 @@
   attested incumbent on Timekeeping, Identity/Inventory, Core API and CRM
   Pages before any reopening. Additive database migrations are not reversed
   during application rollback.
-- Decision: staging and production secret custody is independent. The
+- Decision: staging and production application-root custody is separate. The
   environment-owned `PONTO_PROFILE_DATA_KEY` may enter only the new
   Timekeeping candidate via `wrangler versions upload --secrets-file`; it may
   not be applied with `wrangler secret put`, because that creates and deploys a
   100-percent version. The environment-owned `PONTO_IDEMPOTENCY_KEY` is also
-  supplied only with that immutable candidate. Cross-surface actor,
-  network-context and release-probe keys are deterministic, domain-separated
-  HMAC derivations of that environment root; only the derived values are sent
-  to Timekeeping and Pages, after the coordinator has placed Ponto in
-  maintenance. This proves equality without exposing a value, copying a value
-  between environments, or adding another durable root secret. Other existing
-  Worker-only secrets are inherited remotely and proved by name/presence plus
-  functional contracts. Repository-scoped fallback, cross-environment
-  copying, ad hoc generated production roots and secret values in evidence are
-  forbidden.
+  supplied only with that immutable candidate. Before maintenance or any other
+  mutation, a constant-time comparison rejects byte equality between the
+  profile and idempotency roots. A repository-only audit secret
+  `PONTO_ROOT_ATTESTATION_KEY_SHARED`, with opaque repository variable
+  `PONTO_ROOT_ATTESTATION_KEY_ID`, creates domain-separated HMAC-SHA-256
+  commitments without containing either application root. The artifact also
+  records the environment-owned opaque vault references
+  `PONTO_PROFILE_DATA_KEY_CUSTODY_REF` and
+  `PONTO_IDEMPOTENCY_KEY_CUSTODY_REF`, plus the producing workflow run,
+  artifact ID/digest and coordinator correlation. Production is accepted only
+  when both of its commitments and both custody references are disjoint from
+  staging and the fixed-label key-version commitment proves that both
+  comparisons used the exact same audit-key version. The audit key is never
+  deployed to a runtime and an environment-level override is refused. This
+  proves non-reuse of exact bytes under one keyed comparison and declared
+  separate custody; it does not prove source entropy or rule out correlated
+  derivation, so the approved vault/custodian process remains mandatory.
+  Cross-surface actor, network-context and
+  release-probe keys are deterministic, domain-separated HMAC derivations of
+  the environment-owned idempotency root; only the derived values are sent to
+  Timekeeping and Pages after maintenance. Other existing Worker-only secrets
+  are inherited remotely and proved by name/presence plus functional
+  contracts. Repository-scoped fallback, cross-environment copying, ad hoc
+  generated production roots and secret values in logs/evidence are forbidden.
+- Decision: the GitHub-hosted coordinator checks pilot login, password and
+  cohort only by environment-owned secret name. It never hydrates their
+  values. Login/password are consumed only by the approved self-hosted
+  clinic-context SLO runner; the opaque cohort is validated only by the
+  environment-scoped module-control transition that needs it.
 - Impact: missing environment custody, an authorized Identity/Workforce pilot,
   the approved clinic-network runner, a required review, or a production
   enable flag blocks the next mutation while the live module stays

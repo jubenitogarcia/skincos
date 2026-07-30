@@ -167,6 +167,18 @@ for (const required of [
 const corePublisher = read('.github/workflows/deploy-core-workers.yml');
 const coordinator = read('.github/workflows/ponto-progressive-release.yml');
 const productionBaseline = read('.github/workflows/ponto-production-baseline.yml');
+const workerCustody = read('.github/workflows/cloudflare-workers-sync-ponto-secrets.yml');
+const pagesCustody = read('.github/workflows/cloudflare-pages-sync-ponto.yml');
+const timekeepingPublisher = read('.github/workflows/deploy-timekeeping.yml');
+const moduleAvailability = read('.github/workflows/module-availability.yml');
+if (
+  !timekeepingPublisher.includes('default: ponto')
+  || !timekeepingPublisher.includes('options: [ponto]')
+  || !timekeepingPublisher.includes("required: ${{ inputs.target != 'preview' }}")
+  || timekeepingPublisher.includes('options: [general, ponto]')
+) {
+  fail('Mutating Timekeeping releases must be coordinator-only; only preview may be independently dispatched');
+}
 for (const [source, label, gate, mutation] of [
   [
     corePublisher,
@@ -177,7 +189,7 @@ for (const [source, label, gate, mutation] of [
   [
     coordinator,
     'Ponto coordinator',
-    'Attest exact Ponto Core staging bootstrap before any candidate mutation',
+    'Attest exact Ponto Core bootstrap before any candidate mutation',
     'Put Ponto in maintenance before staging or live mutation',
   ],
   [
@@ -197,6 +209,89 @@ for (const [source, label, gate, mutation] of [
     || !source.includes('remoteSnapshot')
   ) {
     fail(`${label} must consume and live-reattest the exact bootstrap evidence before mutation`);
+  }
+}
+const rootGateIndex = coordinator.indexOf('Prove selected root separation before any candidate mutation');
+const baselineGateIndex = coordinator.indexOf('Resolve and verify the immutable production baseline before pilot mutation');
+const coordinatorMutationIndex = coordinator.indexOf('Put Ponto in maintenance before staging or live mutation');
+if (
+  rootGateIndex < 0
+  || baselineGateIndex < 0
+  || coordinatorMutationIndex < 0
+  || rootGateIndex >= coordinatorMutationIndex
+  || baselineGateIndex >= coordinatorMutationIndex
+  || !workerCustody.includes('ponto-root-custody.mjs write')
+  || !pagesCustody.includes('rootFingerprint')
+  || !timekeepingPublisher.includes('ponto-root-custody.mjs write')
+) {
+  fail('Ponto root separation must be attested across staging and production before mutation');
+}
+for (const [source, label] of [
+  [workerCustody, 'Worker custody'],
+  [pagesCustody, 'Pages custody'],
+  [timekeepingPublisher, 'Timekeeping publisher'],
+]) {
+  for (const expression of [
+    '${{ secrets.PONTO_ROOT_ATTESTATION_KEY_SHARED }}',
+    '${{ vars.PONTO_ROOT_ATTESTATION_KEY_ID }}',
+    '${{ vars.PONTO_IDEMPOTENCY_KEY_CUSTODY_REF }}',
+  ]) {
+    if (!source.includes(expression)) fail(`${label} is missing the exact root-custody binding: ${expression}`);
+  }
+  if (source.includes('${{ secrets.PONTO_ROOT_ATTESTATION_KEY }}')) {
+    fail(`${label} still accepts the retired unscoped root-attestation secret`);
+  }
+}
+for (const [source, label] of [
+  [workerCustody, 'Worker custody'],
+  [timekeepingPublisher, 'Timekeeping publisher'],
+]) {
+  if (!source.includes('${{ vars.PONTO_PROFILE_DATA_KEY_CUSTODY_REF }}')) {
+    fail(`${label} is missing the profile-root custody reference`);
+  }
+}
+const pagesUnsetIndex = pagesCustody.indexOf('unset PONTO_ROOT_ATTESTATION_KEY_SHARED PONTO_IDEMPOTENCY_KEY');
+const pagesCurlIndex = pagesCustody.indexOf('curl --fail --silent --show-error', pagesUnsetIndex);
+const pagesNpxIndex = pagesCustody.indexOf('npx --yes wrangler@4.112.0', pagesUnsetIndex);
+if (
+  !pagesCustody.includes('root_custody_run_id:')
+  || !pagesCustody.includes('attestationKeyCommitment')
+  || pagesUnsetIndex < 0
+  || pagesCurlIndex < 0
+  || pagesNpxIndex < 0
+  || pagesUnsetIndex >= pagesCurlIndex
+  || pagesUnsetIndex >= pagesNpxIndex
+) {
+  fail('Pages must validate exact keyed custody and unset application/audit roots before every external child command');
+}
+const timekeepingRootIndex = timekeepingPublisher.indexOf('Compare live root custody immediately before mutation');
+const timekeepingMigrationIndex = timekeepingPublisher.indexOf('Apply additive Timekeeping migrations');
+const timekeepingUploadIndex = timekeepingPublisher.indexOf('Upload immutable candidate version');
+if (
+  !timekeepingPublisher.includes('root_custody_run_id:')
+  || !timekeepingPublisher.includes('ROOT_CUSTODY_RUN_ID: ${{ inputs.root_custody_run_id }}')
+  || timekeepingRootIndex < 0
+  || timekeepingMigrationIndex < 0
+  || timekeepingUploadIndex < 0
+  || timekeepingRootIndex >= timekeepingMigrationIndex
+  || timekeepingRootIndex >= timekeepingUploadIndex
+  || !coordinator.includes('inputs.root_custody_run_id = process.env.PONTO_ROOT_CUSTODY_RUN_ID;')
+) {
+  fail('Timekeeping must consume and revalidate the exact coordinator custody run before migration/upload');
+}
+if (
+  !moduleAvailability.includes("runs-on: ${{ inputs.module == 'timekeeping' && contains(fromJSON('[\"canary\",\"active\"]'), inputs.state)")
+  || !moduleAvailability.includes("PONTO_PILOT_COHORT_JSON: ${{ inputs.module == 'timekeeping' && inputs.state == 'canary'")
+) {
+  fail('Timekeeping canary/active transitions must run on the approved self-hosted context and hydrate cohort only for canary');
+}
+for (const expression of [
+  '${{ secrets.PONTO_PILOT_LOGIN }}',
+  '${{ secrets.PONTO_PILOT_PASSWORD }}',
+  '${{ secrets.PONTO_PILOT_COHORT_JSON }}',
+]) {
+  if (coordinator.includes(expression)) {
+    fail(`Ponto coordinator must not hydrate pilot material on ubuntu-latest: ${expression}`);
   }
 }
 
