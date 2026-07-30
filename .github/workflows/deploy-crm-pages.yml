@@ -49,15 +49,21 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT_PROD: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
           PROJECT_STAGING: ${{ vars.CLOUDFLARE_PAGES_PROJECT_STAGING }}
-          BRANCH_NAME: ${{ inputs.target == 'staging' && 'staging' || 'main' }}
+          DEPLOY_TARGET: ${{ inputs.target }}
+          BRANCH_NAME: main
         run: |
           set -euo pipefail
-          if [[ "$BRANCH_NAME" == "staging" ]]; then
+          if [[ "$DEPLOY_TARGET" == "staging" ]]; then
             ENABLE="$ENABLE_STAGING"
             PROJECT="${PROJECT_STAGING:-skincos-staging}"
           else
             ENABLE="$ENABLE_PROD"
             PROJECT="${PROJECT_PROD:-skincos}"
+          fi
+          if [[ "$DEPLOY_TARGET" == staging ]]; then
+            [[ "$PROJECT" == skincos-staging ]] || { echo 'Staging requires the exact skincos-staging Pages project'; exit 1; }
+          else
+            [[ "$PROJECT" == skincos ]] || { echo 'Production requires the exact skincos Pages project'; exit 1; }
           fi
           if [[ "${ENABLE:-}" != "true" ]]; then
             echo "Deploy flag not enabled; skipping deploy."
@@ -72,6 +78,31 @@ jobs:
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
+      - name: Attest exact Pages project and production branch
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.guard.outputs.project }}
+          DEPLOY_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
+            > "$RUNNER_TEMP/pages-project.json"
+          node - "$RUNNER_TEMP/pages-project.json" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const expected = process.env.DEPLOY_TARGET === "staging" ? "skincos-staging" : "skincos";
+          const project = payload?.result;
+          if (
+            payload?.success !== true
+            || project?.name !== expected
+            || project?.subdomain !== `${expected}.pages.dev`
+            || project?.source?.config?.production_branch !== "main"
+          ) throw new Error("Pages project identity or production branch differs");
+          NODE
 
       - name: Checkout
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -93,11 +124,11 @@ jobs:
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
           ALLOW_FINANCE_PRODUCTION: ${{ vars.ENABLE_FINANCE_PRODUCTION_DEPLOY }}
-          BRANCH_NAME: ${{ inputs.target == 'staging' && 'staging' || 'main' }}
+          DEPLOY_TARGET: ${{ inputs.target }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ "$BRANCH_NAME" != "main" || "${ALLOW_FINANCE_PRODUCTION:-}" == "true" ]]; then
+          if [[ "$DEPLOY_TARGET" != "production" || "${ALLOW_FINANCE_PRODUCTION:-}" == "true" ]]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -134,6 +165,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PAGES_PROJECT: ${{ steps.guard.outputs.project }}
           BRANCH_NAME: ${{ steps.guard.outputs.branch }}
+          DEPLOY_TARGET: ${{ inputs.target }}
           # The deployment metadata must identify the immutable artifact that
           # passed the promotion gate, not the workflow-dispatch ref.
           GIT_SHA: ${{ needs.promotion.outputs.source_sha }}
@@ -141,7 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           PROJECT="${PAGES_PROJECT:-skincos}"
-          if [[ "$BRANCH_NAME" == "staging" ]]; then
+          if [[ "$DEPLOY_TARGET" == "staging" ]]; then
             # Pages reads only wrangler.toml from its working directory. This
             # checkout is ephemeral, so stage the isolated config in place
             # rather than letting the staging project inherit production
@@ -153,7 +185,7 @@ jobs:
         working-directory: crm/console
 
       - name: Smoke check Ponto (production)
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && steps.guard.outputs.branch == 'main' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && inputs.target == 'production' }}
         env:
           BASE_URL: https://crm.skincos.com.br
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
