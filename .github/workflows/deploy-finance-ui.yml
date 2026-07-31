@@ -75,19 +75,18 @@ jobs:
         run: |
           set -euo pipefail
           # crm/console/wrangler.toml belongs to the shell Pages deployment and
-          # contains Worker-only secret declarations. Finance is a separate
-          # Pages project; use an explicit, secret-free config so Wrangler
-          # cannot discover the shell config and reject the deployment.
-          FINANCE_PAGES_CONFIG="$RUNNER_TEMP/finance-pages.toml"
-          cat > "$FINANCE_PAGES_CONFIG" <<'EOF'
-          name = "skincos-finance-ui"
-          compatibility_date = "2026-07-23"
-          EOF
-          npx --yes wrangler@4.114.0 pages deploy dist-finance \
-            --config "$FINANCE_PAGES_CONFIG" \
+          # contains Worker-only secret declarations. Pages does not allow a
+          # custom config path, so deploy from a temporary directory without
+          # inheriting the shell config.
+          FINANCE_PAGES_DIR="$RUNNER_TEMP/finance-pages"
+          mkdir -p "$FINANCE_PAGES_DIR"
+          cp -R dist-finance/. "$FINANCE_PAGES_DIR/"
+          pushd "$FINANCE_PAGES_DIR" >/dev/null
+          npx --yes wrangler@4.114.0 pages deploy . \
             --project-name "$PROJECT" \
             --branch "$BRANCH" \
             --commit-hash "$RELEASE_SHA"
+          popd >/dev/null
         working-directory: crm/console
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'
