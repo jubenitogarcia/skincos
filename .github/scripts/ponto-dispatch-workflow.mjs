@@ -195,6 +195,7 @@ if (leaseKey) {
 }
 const workflowMetadata = await request(`/repos/${repository}/actions/workflows/${encodeURIComponent(workflow)}`);
 const expectedPath = `.github/workflows/${workflow}`;
+const pathMatchesMainRef = (actual, expected) => actual === expected || actual === `${expected}@refs/heads/main`;
 if (
   workflowMetadata?.state !== "active"
   || workflowMetadata?.path !== expectedPath
@@ -215,7 +216,7 @@ if (leaseKey) {
     || parentWorkflow?.path !== ".github/workflows/ponto-progressive-release.yml"
     || parentRun?.workflow_id !== parentWorkflow.id
     || String(parentRun?.id || "") !== correlation
-    || parentRun?.path !== `${parentWorkflow.path}@refs/heads/main`
+    || !pathMatchesMainRef(parentRun?.path, parentWorkflow.path)
     || parentRun?.run_attempt !== 1
     || parentRun?.status !== "in_progress"
     || parentRun?.conclusion != null
@@ -291,7 +292,7 @@ while (Date.now() - startedAt < timeoutMs) {
     const expectedDisplayTitle = expectedGovernedRunName(expectedPath, normalizedIntent);
     if (
       run.workflow_id !== workflowMetadata.id
-      || run.path !== `${expectedPath}@refs/heads/main`
+      || !pathMatchesMainRef(run.path, expectedPath)
       || run.run_attempt !== 1
       || run.status === "completed"
       || run.conclusion != null
@@ -447,7 +448,7 @@ if (run.status !== "completed") {
 }
 if (
   run.workflow_id !== workflowMetadata.id
-  || run.path !== `${expectedPath}@refs/heads/main`
+  || !pathMatchesMainRef(run.path, expectedPath)
   || run.run_attempt !== 1
   || run.head_sha !== orchestratorHeadSha
   || run.event !== "workflow_dispatch"
