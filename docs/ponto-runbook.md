@@ -367,6 +367,18 @@ IDs de versão/deployment. Rollback de importação segue
 
 ## Incidentes
 
+## Evidência de release e linhagem
+
+Cada promoção deve partir do `HEAD` atual de `main`, com um único SHA completo
+alcançável por merge canônico e com os checks obrigatórios associados ao mesmo
+commit. Antes de despachar `preview`, registre o SHA consultado e confirme que
+ele não mudou; se mudar, descarte o predecessor e repita o preview. A ausência
+de um check obrigatório no commit selecionado é bloqueio de linhagem, não motivo
+para promover um ancestral ou usar bypass administrativo. O coordenador deve
+preservar os IDs dos runs, digests dos artefatos, versões/deployments e o
+resultado de cada estágio no ledger privado; secrets, credenciais, PII e dados
+operacionais sintéticos nunca entram nesse registro.
+
 - Banco indisponível: readiness 503, bloquear marcações e orientar contingência auditada; não escrever JSON.
 - Facial indisponível: diferenciar indisponibilidade técnica de não cadastrado/não reconhecido; permitir PIN auditado com rate limit.
 - PIN bloqueado: aguardar `locked_until`; RH pode redefinir credencial, nunca consultar o PIN.
