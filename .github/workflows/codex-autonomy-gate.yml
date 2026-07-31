@@ -1,0 +1,86 @@
+name: Codex autonomy gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-autonomy-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: Classify change effect
+    runs-on: ubuntu-latest
+    outputs:
+      risk: ${{ steps.risk.outputs.risk }}
+      surfaces: ${{ steps.risk.outputs.surfaces }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: base
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base="${PR_BASE_SHA:-$BEFORE_SHA}"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then base="$(git rev-parse HEAD^)"; fi
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+      - id: risk
+        run: node scripts/codex-risk-classifier.mjs --base "${{ steps.base.outputs.sha }}" --head "$GITHUB_SHA" --output risk-report.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: codex-risk-report-${{ github.run_id }}
+          path: risk-report.json
+          retention-days: 30
+
+  focused-validation:
+    name: Focused validation
+    needs: classify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Baseline contract tests
+        run: |
+          set -euo pipefail
+          git diff --check
+          node --test scripts/tests/codex-autonomy-baseline.test.mjs
+      - name: GitHub governance contract
+        if: ${{ contains(needs.classify.outputs.surfaces, 'github-governance') }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/validate-github-governance.mjs
+          node --test .github/scripts/ponto-single-operator-governance.test.mjs
+      - name: Supervisor contract
+        if: ${{ contains(needs.classify.outputs.surfaces, 'codex-baseline') }}
+        run: python3 -m unittest discover -s .codex/hooks/tests -p 'test_skincos_supervisor_gate.py' -v
+      - name: Risk-selected release-manifest contract
+        if: ${{ needs.classify.outputs.risk == 'high' || needs.classify.outputs.risk == 'critical' }}
+        run: |
+          set -euo pipefail
+          node scripts/codex-release-manifest.mjs --source HEAD --surface codex-baseline --output /tmp/codex-release-manifest.json
+          test -s /tmp/codex-release-manifest.json
+
+  codex-autonomy-gate:
+    name: codex-autonomy-gate
+    if: ${{ always() }}
+    needs: [classify, focused-validation]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate required validation
+        env:
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          VALIDATION_RESULT: ${{ needs.focused-validation.result }}
+        run: |
+          set -euo pipefail
+          [[ "$CLASSIFY_RESULT" == success ]] || { echo "::error::risk classification did not complete"; exit 1; }
+          [[ "$VALIDATION_RESULT" == success ]] || { echo "::error::risk-selected validation did not complete"; exit 1; }
+          echo "Codex autonomy aggregate gate passed."

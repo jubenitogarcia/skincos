@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
+SNAPSHOT_SCHEMA_VERSION = 1
 MARKER_BEGIN = "SKINCOS_SUPERVISOR_STATE_BEGIN"
 MARKER_END = "SKINCOS_SUPERVISOR_STATE_END"
 ALLOWED_STATUSES = {
@@ -52,6 +53,29 @@ DEFAULT_CONFIG = {
     "orphan_grace_seconds": 5,
     "target_lease_ttl_seconds": 3600,
 }
+SNAPSHOT_INPUT_FIELDS = {
+    "schema_version",
+    "authorization_source",
+    "issue",
+    "branch",
+    "worktree",
+    "branch_worktree",
+    "checkpoint",
+    "remote_fingerprint",
+    "blocker_fingerprint",
+    "valid_evidence_refs",
+}
+SNAPSHOT_TOP_LEVEL_FIELDS = SNAPSHOT_INPUT_FIELDS - {"schema_version"}
+SNAPSHOT_STRING_FIELDS = (
+    "authorization_source",
+    "checkpoint",
+    "remote_fingerprint",
+    "blocker_fingerprint",
+)
+MAX_SNAPSHOT_STRING_LENGTH = 512
+MAX_EVIDENCE_REFS = 32
+MAX_EVIDENCE_REF_LENGTH = 384
+MAX_SNAPSHOT_ITEM_BYTES = 4096
 
 
 def utc_iso(now: float | None = None) -> str:
@@ -211,8 +235,6 @@ def validate_contract(contract: dict[str, Any], event_session: str) -> str | Non
     if status == "continue":
         if contract.get("objective_status") != "in_progress":
             return "continue requires objective_status=in_progress"
-        if not contract.get("progress_made"):
-            return "continue without progress is not eligible"
         if contract.get("next_item") in (None, "", {}):
             return "continue requires a concrete next_item"
         if contract.get("human_blocker") is not None or contract.get("credential_blocker") is not None:
@@ -233,6 +255,278 @@ def validate_contract(contract: dict[str, Any], event_session: str) -> str | Non
     ):
         return "production_authorization_required requires its boolean gate"
     return None
+
+
+def canonical_json(value: Any) -> tuple[str | None, str | None]:
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")), None
+    except (TypeError, ValueError) as exc:
+        return None, f"is not JSON-serializable: {type(exc).__name__}"
+
+
+def normalize_snapshot_string(
+    value: Any,
+    field: str,
+    *,
+    allow_integer: bool = False,
+) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    if allow_integer and isinstance(value, int) and not isinstance(value, bool):
+        value = str(value)
+    if not isinstance(value, str):
+        return None, f"session snapshot {field} must be a string or null"
+    normalized = value.strip()
+    if not normalized:
+        return None, f"session snapshot {field} must not be empty"
+    if len(normalized) > MAX_SNAPSHOT_STRING_LENGTH:
+        return None, f"session snapshot {field} exceeds the compact size limit"
+    return normalized, None
+
+
+def normalize_snapshot_refs(value: Any, field: str) -> tuple[list[str] | None, str | None]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        return None, f"session snapshot {field} must be a list of strings"
+    if len(value) > MAX_EVIDENCE_REFS:
+        return None, f"session snapshot {field} exceeds the compact item limit"
+    normalized: set[str] = set()
+    for item in value:
+        candidate = item.strip()
+        if not candidate:
+            return None, f"session snapshot {field} cannot contain empty references"
+        if len(candidate) > MAX_EVIDENCE_REF_LENGTH:
+            return None, f"session snapshot {field} contains an oversized reference"
+        normalized.add(candidate)
+    return sorted(normalized), None
+
+
+def extract_snapshot_declaration(contract: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    raw = contract.get("session_snapshot")
+    declared: dict[str, Any] = {}
+    if raw is not None:
+        if not isinstance(raw, dict):
+            return None, "session_snapshot must be a JSON object"
+        unknown = sorted(set(raw) - SNAPSHOT_INPUT_FIELDS)
+        if unknown:
+            return None, f"session_snapshot contains unsupported fields: {', '.join(unknown)}"
+        if raw.get("schema_version", SNAPSHOT_SCHEMA_VERSION) != SNAPSHOT_SCHEMA_VERSION:
+            return None, "session_snapshot schema_version is unsupported"
+        declared.update({key: value for key, value in raw.items() if key != "schema_version"})
+    for field in SNAPSHOT_TOP_LEVEL_FIELDS:
+        if field not in contract:
+            continue
+        value = contract[field]
+        if field in declared and declared[field] != value:
+            return None, f"session snapshot {field} conflicts between top-level and session_snapshot"
+        declared[field] = value
+    return declared, None
+
+
+def normalize_branch_worktree(
+    declared: dict[str, Any],
+    existing: dict[str, Any],
+) -> tuple[dict[str, str | None] | None, str | None]:
+    result = {
+        "branch": existing.get("branch"),
+        "worktree": existing.get("worktree"),
+    }
+    raw_pair = declared.get("branch_worktree")
+    if raw_pair is not None:
+        if not isinstance(raw_pair, dict):
+            return None, "session snapshot branch_worktree must be an object"
+        unknown = sorted(set(raw_pair) - {"branch", "worktree"})
+        if unknown:
+            return None, f"session snapshot branch_worktree contains unsupported fields: {', '.join(unknown)}"
+        for field, value in raw_pair.items():
+            if field in declared and declared[field] != value:
+                return None, f"session snapshot {field} conflicts with branch_worktree"
+            result[field] = value
+    for field in ("branch", "worktree"):
+        if field in declared:
+            result[field] = declared[field]
+        normalized, error = normalize_snapshot_string(result[field], f"branch_worktree.{field}")
+        if error:
+            return None, error
+        result[field] = normalized
+    return result, None
+
+
+def validate_snapshot_item(value: Any, field: str) -> str | None:
+    serialized, error = canonical_json(value)
+    if error:
+        return f"session snapshot {field} {error}"
+    if serialized is None or len(serialized.encode("utf-8")) > MAX_SNAPSHOT_ITEM_BYTES:
+        return f"session snapshot {field} exceeds the compact size limit"
+    return None
+
+
+def build_session_snapshot(
+    contract: dict[str, Any],
+    previous: dict[str, Any] | None,
+    *,
+    session_key: str,
+    mission_id: str,
+    root_turn_id: str,
+    now: float,
+    is_root: bool,
+) -> tuple[dict[str, Any] | None, str | None]:
+    declared, error = extract_snapshot_declaration(contract)
+    if error or declared is None:
+        return None, error
+
+    context: dict[str, Any] = {
+        "authorization_source": None,
+        "issue": None,
+        "branch_worktree": {"branch": None, "worktree": None},
+        "checkpoint": None,
+        "remote_fingerprint": None,
+        "blocker_fingerprint": None,
+        "valid_evidence_refs": [],
+    }
+    if previous and not is_root:
+        for field in (
+            "authorization_source",
+            "issue",
+            "branch_worktree",
+            "checkpoint",
+            "remote_fingerprint",
+            "blocker_fingerprint",
+            "valid_evidence_refs",
+        ):
+            context[field] = previous.get(field)
+
+    for field in SNAPSHOT_STRING_FIELDS:
+        if field not in declared:
+            continue
+        normalized, field_error = normalize_snapshot_string(declared[field], field)
+        if field_error:
+            return None, field_error
+        context[field] = normalized
+    if "issue" in declared:
+        normalized, field_error = normalize_snapshot_string(declared["issue"], "issue", allow_integer=True)
+        if field_error:
+            return None, field_error
+        context["issue"] = normalized
+
+    branch_worktree, field_error = normalize_branch_worktree(
+        declared,
+        context["branch_worktree"] if isinstance(context["branch_worktree"], dict) else {},
+    )
+    if field_error or branch_worktree is None:
+        return None, field_error
+    context["branch_worktree"] = branch_worktree
+
+    if "valid_evidence_refs" in declared:
+        references, field_error = normalize_snapshot_refs(declared["valid_evidence_refs"], "valid_evidence_refs")
+        if field_error or references is None:
+            return None, field_error
+        context["valid_evidence_refs"] = references
+    elif is_root:
+        references, field_error = normalize_snapshot_refs(contract["evidence_refs"], "valid_evidence_refs")
+        if field_error or references is None:
+            return None, field_error
+        context["valid_evidence_refs"] = references
+
+    for field in ("completed_item", "next_item"):
+        field_error = validate_snapshot_item(contract.get(field), field)
+        if field_error:
+            return None, field_error
+    evidence_refs, field_error = normalize_snapshot_refs(contract["evidence_refs"], "evidence_refs")
+    if field_error or evidence_refs is None:
+        return None, field_error
+
+    progress_material = {
+        "completed_item": contract.get("completed_item"),
+        "next_item": contract.get("next_item"),
+        "evidence_refs": evidence_refs,
+        "checkpoint": context["checkpoint"],
+        "remote_fingerprint": context["remote_fingerprint"],
+        "valid_evidence_refs": context["valid_evidence_refs"],
+    }
+    serialized, field_error = canonical_json(progress_material)
+    if field_error or serialized is None:
+        return None, f"session snapshot progress fingerprint {field_error or 'could not be created'}"
+
+    return {
+        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "session_key": session_key,
+        "mission_id": mission_id,
+        "root_turn_id": root_turn_id,
+        "updated_at": utc_iso(now),
+        "authorization_source": context["authorization_source"],
+        "issue": context["issue"],
+        "branch_worktree": context["branch_worktree"],
+        "checkpoint": context["checkpoint"],
+        "remote_fingerprint": context["remote_fingerprint"],
+        "blocker_fingerprint": context["blocker_fingerprint"],
+        "valid_evidence_refs": context["valid_evidence_refs"],
+        "completed_item": contract.get("completed_item"),
+        "next_item": contract.get("next_item"),
+        "progress_fingerprint": digest(serialized),
+    }, None
+
+
+def validate_stored_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    session_key: str,
+    mission_id: str,
+) -> str | None:
+    if snapshot.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
+        return "session snapshot schema_version is unsupported"
+    if snapshot.get("session_key") != session_key:
+        return "session snapshot does not belong to this session"
+    if snapshot.get("mission_id") != mission_id:
+        return "session snapshot does not belong to the active mission"
+    for field in SNAPSHOT_STRING_FIELDS:
+        _, error = normalize_snapshot_string(snapshot.get(field), field)
+        if error:
+            return error
+    _, error = normalize_snapshot_string(snapshot.get("issue"), "issue", allow_integer=True)
+    if error:
+        return error
+    branch_worktree = snapshot.get("branch_worktree")
+    if not isinstance(branch_worktree, dict) or set(branch_worktree) != {"branch", "worktree"}:
+        return "session snapshot branch_worktree is invalid"
+    _, error = normalize_branch_worktree({}, branch_worktree)
+    if error:
+        return error
+    _, error = normalize_snapshot_refs(snapshot.get("valid_evidence_refs"), "valid_evidence_refs")
+    if error:
+        return error
+    for field in ("completed_item", "next_item"):
+        error = validate_snapshot_item(snapshot.get(field), field)
+        if error:
+            return error
+    fingerprint = snapshot.get("progress_fingerprint")
+    if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+        return "session snapshot progress_fingerprint is invalid"
+    return None
+
+
+def continuation_change_reason(
+    contract: dict[str, Any],
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+    *,
+    is_root: bool,
+) -> tuple[str | None, str | None]:
+    if is_root:
+        if contract["progress_made"]:
+            return "initial_measurable_progress", None
+        return None, "continue without progress has no prior session snapshot to prove a changed blocker"
+    if previous is None:
+        return None, "continued Stop event has no recoverable session snapshot"
+
+    progress_changed = current["progress_fingerprint"] != previous.get("progress_fingerprint")
+    blocker_changed = current["blocker_fingerprint"] != previous.get("blocker_fingerprint")
+    if contract["progress_made"] and progress_changed:
+        return "measurable_progress", None
+    if blocker_changed:
+        return "blocker_changed", None
+    if contract["progress_made"]:
+        return None, "measurable progress fingerprint did not change; unchanged work will not be repeated"
+    return None, "blocker fingerprint did not change; unchanged work will not be repeated"
 
 
 def skill_tree_hash(root: Path) -> str | None:
@@ -456,6 +750,7 @@ def continuation_prompt(
     max_cycles: int,
     completed_item: Any,
     next_item: Any,
+    snapshot: dict[str, Any],
 ) -> str:
     context = {
         "session_id": session_id,
@@ -464,16 +759,31 @@ def continuation_prompt(
         "max_cycles": max_cycles,
         "completed_item": completed_item,
         "next_item": next_item,
+        "session_snapshot": {
+            "authorization_source": snapshot["authorization_source"],
+            "issue": snapshot["issue"],
+            "branch_worktree": snapshot["branch_worktree"],
+            "checkpoint": snapshot["checkpoint"],
+            "remote_fingerprint": snapshot["remote_fingerprint"],
+            "blocker_fingerprint": snapshot["blocker_fingerprint"],
+            "valid_evidence_refs": snapshot["valid_evidence_refs"],
+        },
     }
     return (
         "$skincos-project-orchestrator supervisor-cycle\n\n"
         "Continue the same explicit SKINCOS mission in this thread. Reconstruct the original "
         "objective and added commitments from the thread and canonical project sources. "
         "Reconcile real Git, PR, CI, environment and runtime state; then execute only the next "
-        "minimum safe eligible milestone. Do not repeat completed work. Never mutate production, "
-        "production secrets, production migrations, real users, grants or production feature "
-        "flags without a new, explicit, specific user authorization. End with exactly one "
-        f"{MARKER_BEGIN}/{MARKER_END} structured contract.\n"
+        "minimum safe eligible milestone within the mission's persistent authorization. Do not "
+        "repeat completed work or invent scope. Never mutate production, production secrets, "
+        "production migrations, real users, grants or production feature flags without the "
+        "mission authorization and applicable domain gates, platform permission, rollback and "
+        "evidence; a missing gate is a concrete technical blocker, not a request for duplicate "
+        "authorization. End with exactly one "
+        f"{MARKER_BEGIN}/{MARKER_END} structured contract. Preserve the session snapshot context "
+        "and valid evidence unless the new state proves a replacement. Do not repeat unchanged "
+        "work: another continuation requires a changed measurable-progress fingerprint or a changed "
+        "blocker_fingerprint.\n"
         f"Supervisor gate context: {json.dumps(context, ensure_ascii=False, sort_keys=True)}"
     )
 
@@ -605,11 +915,65 @@ def process(
                 )
                 return safe_allow("SKINCOS supervisor safety stop: mission_id changed during automatic continuation")
 
+        snapshot_path = runtime_root / "snapshots" / f"{session_key}.json"
+        previous_snapshot: dict[str, Any] | None = None
+        if stop_hook_active:
+            previous_snapshot = read_json(snapshot_path) if snapshot_path.exists() else None
+            if snapshot_path.exists() and previous_snapshot is None:
+                mark_event(
+                    shared_root / "processed-events",
+                    event_key,
+                    {**event_record, "result": "corrupt_session_snapshot", "mission_id": mission_id},
+                )
+                return safe_allow("SKINCOS supervisor safety stop: session snapshot is corrupt")
+            if previous_snapshot is None:
+                mark_event(
+                    shared_root / "processed-events",
+                    event_key,
+                    {**event_record, "result": "missing_session_snapshot", "mission_id": mission_id},
+                )
+                return safe_allow(
+                    "SKINCOS supervisor recursion stop: continued Stop event has no recoverable session snapshot"
+                )
+            snapshot_error = validate_stored_snapshot(
+                previous_snapshot,
+                session_key=session_key,
+                mission_id=mission_id,
+            )
+            if snapshot_error:
+                mark_event(
+                    shared_root / "processed-events",
+                    event_key,
+                    {**event_record, "result": "invalid_session_snapshot", "mission_id": mission_id},
+                )
+                return safe_allow(f"SKINCOS supervisor safety stop: {snapshot_error}")
+
+        snapshot, snapshot_error = build_session_snapshot(
+            contract,
+            previous_snapshot,
+            session_key=session_key,
+            mission_id=mission_id,
+            root_turn_id=str(mission.get("root_turn_id") or turn_id),
+            now=now,
+            is_root=not stop_hook_active,
+        )
+        if snapshot_error or snapshot is None:
+            mark_event(
+                shared_root / "processed-events",
+                event_key,
+                {**event_record, "result": "invalid_session_snapshot", "mission_id": mission_id},
+            )
+            return safe_allow(f"SKINCOS supervisor safety stop: {snapshot_error}")
+
         status = str(contract["orchestration_status"])
         if status != "continue":
             mission["status"] = status
             mission["completed_at"] = utc_iso(now)
             mission["terminal_contract"] = contract
+            mission["snapshot_key"] = session_key
+            mission["last_progress_fingerprint"] = snapshot["progress_fingerprint"]
+            mission["last_blocker_fingerprint"] = snapshot["blocker_fingerprint"]
+            atomic_write_json(snapshot_path, snapshot)
             atomic_write_json(mission_path, mission)
             release_target_lease(shared_root, mission.get("target_key"), session_key)
             mark_event(
@@ -633,6 +997,10 @@ def process(
         if cycles_used >= config["max_cycles"]:
             mission["status"] = "cycle_budget_exhausted"
             mission["budget_exhausted_at"] = utc_iso(now)
+            mission["snapshot_key"] = session_key
+            mission["last_progress_fingerprint"] = snapshot["progress_fingerprint"]
+            mission["last_blocker_fingerprint"] = snapshot["blocker_fingerprint"]
+            atomic_write_json(snapshot_path, snapshot)
             atomic_write_json(mission_path, mission)
             release_target_lease(shared_root, mission.get("target_key"), session_key)
             mark_event(
@@ -652,6 +1020,20 @@ def process(
                 {**event_record, "result": "cooldown", "mission_id": mission_id},
             )
             return safe_allow("SKINCOS supervisor cooldown prevented an overlapping continuation")
+
+        change_reason, eligibility_error = continuation_change_reason(
+            contract,
+            previous_snapshot,
+            snapshot,
+            is_root=not stop_hook_active,
+        )
+        if eligibility_error:
+            mark_event(
+                shared_root / "processed-events",
+                event_key,
+                {**event_record, "result": "unchanged_work", "mission_id": mission_id},
+            )
+            return safe_allow(f"SKINCOS supervisor continuation stop: {eligibility_error}")
 
         new_target_key = target_identity(contract["next_item"])
         old_target_key = mission.get("target_key")
@@ -689,9 +1071,13 @@ def process(
                 "last_turn_id": turn_id,
                 "last_event_key": event_key,
                 "target_key": new_target_key,
+                "snapshot_key": session_key,
+                "last_progress_fingerprint": snapshot["progress_fingerprint"],
+                "last_blocker_fingerprint": snapshot["blocker_fingerprint"],
                 "status": "in_progress",
             }
         )
+        atomic_write_json(snapshot_path, snapshot)
         atomic_write_json(mission_path, mission)
         append_event(
             runtime_root,
@@ -702,6 +1088,9 @@ def process(
                 "status": "continue",
                 "cycle": cycle,
                 "target_key": new_target_key,
+                "continuation_reason": change_reason,
+                "progress_fingerprint": snapshot["progress_fingerprint"],
+                "blocker_fingerprint": snapshot["blocker_fingerprint"],
                 "action": "block_and_continue",
             },
         )
@@ -713,6 +1102,7 @@ def process(
                 config["max_cycles"],
                 contract.get("completed_item"),
                 contract.get("next_item"),
+                snapshot,
             )
         )
     finally:

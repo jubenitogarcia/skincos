@@ -129,11 +129,145 @@ class GateFixture(unittest.TestCase):
             socket.gethostname(),
         )
 
+    def snapshot_path(self, session_id: str = "session-1") -> Path:
+        return self.runtime / "snapshots" / f"{gate.digest(session_id)}.json"
+
+    def read_snapshot(self, session_id: str = "session-1") -> dict[str, object]:
+        return json.loads(self.snapshot_path(session_id).read_text(encoding="utf-8"))
+
     def test_continue_blocks_and_invokes_supervisor_cycle(self) -> None:
         result = self.run_gate(self.payload())
         self.assertEqual(result["decision"], "block")
         self.assertIn("$skincos-project-orchestrator supervisor-cycle", result["reason"])
         self.assertIn('"cycle": 1', result["reason"])
+
+    def test_compact_session_snapshot_persists_and_reaches_continuation_prompt(self) -> None:
+        contract = self.contract(
+            session_snapshot={
+                "authorization_source": "issue:942-user-mission",
+                "issue": 942,
+                "branch_worktree": {
+                    "branch": "codex/admin/codex-autonomy-baseline",
+                    "worktree": "C:/CodexShared/Worktrees/skincos/admin/codex-autonomy-baseline",
+                },
+                "checkpoint": "checkpoint:before-supervisor-change",
+                "remote_fingerprint": "remote:main-16cace3",
+                "blocker_fingerprint": "blocker:initial",
+                "valid_evidence_refs": ["ci:baseline-green", "artifact:baseline"],
+            }
+        )
+        result = self.run_gate(self.payload(contract))
+        self.assertEqual(result["decision"], "block")
+        snapshot = self.read_snapshot()
+        self.assertEqual(snapshot["authorization_source"], "issue:942-user-mission")
+        self.assertEqual(snapshot["issue"], "942")
+        self.assertEqual(
+            snapshot["branch_worktree"],
+            {
+                "branch": "codex/admin/codex-autonomy-baseline",
+                "worktree": "C:/CodexShared/Worktrees/skincos/admin/codex-autonomy-baseline",
+            },
+        )
+        self.assertEqual(snapshot["checkpoint"], "checkpoint:before-supervisor-change")
+        self.assertEqual(snapshot["remote_fingerprint"], "remote:main-16cace3")
+        self.assertEqual(snapshot["valid_evidence_refs"], ["artifact:baseline", "ci:baseline-green"])
+        self.assertIn("issue:942-user-mission", result["reason"])
+        self.assertIn("remote:main-16cace3", result["reason"])
+
+    def test_continued_snapshot_preserves_omitted_context_after_measurable_progress(self) -> None:
+        self.write_config(cooldown_seconds=0)
+        initial = self.contract(
+            session_snapshot={
+                "authorization_source": "issue:942-user-mission",
+                "issue": "#942",
+                "branch": "codex/admin/codex-autonomy-baseline",
+                "worktree": "C:/CodexShared/Worktrees/skincos/admin/codex-autonomy-baseline",
+                "checkpoint": "checkpoint:before-change",
+                "remote_fingerprint": "remote:main-before",
+                "valid_evidence_refs": ["artifact:before"],
+            }
+        )
+        first = self.run_gate(self.payload(initial, turn_id="root-1"))
+        self.assertEqual(first["decision"], "block")
+        progressed = self.contract(
+            completed_item="commit:supervisor-snapshot",
+            evidence_refs=["commit:supervisor-snapshot"],
+        )
+        second = self.run_gate(
+            self.payload(progressed, turn_id="auto-2", stop_hook_active=True),
+            now=self.now + 10,
+        )
+        self.assertEqual(second["decision"], "block")
+        snapshot = self.read_snapshot()
+        self.assertEqual(snapshot["authorization_source"], "issue:942-user-mission")
+        self.assertEqual(snapshot["issue"], "#942")
+        self.assertEqual(snapshot["branch_worktree"]["branch"], "codex/admin/codex-autonomy-baseline")
+        self.assertEqual(snapshot["checkpoint"], "checkpoint:before-change")
+        self.assertEqual(snapshot["remote_fingerprint"], "remote:main-before")
+        self.assertEqual(snapshot["valid_evidence_refs"], ["artifact:before"])
+
+    def test_claimed_progress_without_changed_fingerprint_does_not_repeat_work(self) -> None:
+        self.write_config(cooldown_seconds=0)
+        contract = self.contract(
+            session_snapshot={
+                "remote_fingerprint": "remote:main-unchanged",
+                "valid_evidence_refs": ["artifact:unchanged"],
+            }
+        )
+        first = self.run_gate(self.payload(contract, turn_id="root-1"))
+        self.assertEqual(first["decision"], "block")
+        repeated = self.run_gate(
+            self.payload(contract, turn_id="auto-2", stop_hook_active=True),
+            now=self.now + 10,
+        )
+        self.assertTrue(repeated["continue"])
+        self.assertIn("measurable progress fingerprint did not change", repeated["stopReason"])
+        self.assertIn("unchanged work will not be repeated", repeated["stopReason"])
+
+    def test_root_continue_without_measurable_progress_is_not_eligible(self) -> None:
+        result = self.run_gate(
+            self.payload(self.contract(progress_made=False), turn_id="root-without-progress")
+        )
+        self.assertTrue(result["continue"])
+        self.assertIn("continue without progress has no prior session snapshot", result["stopReason"])
+
+    def test_changed_or_resolved_blocker_allows_one_non_progress_continuation(self) -> None:
+        self.write_config(cooldown_seconds=0)
+        initial = self.contract(session_snapshot={"blocker_fingerprint": "blocker:ci-running"})
+        first = self.run_gate(self.payload(initial, turn_id="root-1"))
+        self.assertEqual(first["decision"], "block")
+        resolved = self.contract(
+            progress_made=False,
+            session_snapshot={"blocker_fingerprint": None},
+        )
+        second = self.run_gate(
+            self.payload(resolved, turn_id="auto-2", stop_hook_active=True),
+            now=self.now + 10,
+        )
+        self.assertEqual(second["decision"], "block")
+        self.assertIsNone(self.read_snapshot()["blocker_fingerprint"])
+        repeated = self.run_gate(
+            self.payload(resolved, turn_id="auto-3", stop_hook_active=True),
+            now=self.now + 20,
+        )
+        self.assertTrue(repeated["continue"])
+        self.assertIn("blocker fingerprint did not change", repeated["stopReason"])
+
+    def test_corrupt_session_snapshot_stops_active_continuation_without_overwrite(self) -> None:
+        self.write_config(cooldown_seconds=0)
+        first = self.run_gate(self.payload(turn_id="root-1"))
+        self.assertEqual(first["decision"], "block")
+        path = self.snapshot_path()
+        path.write_text("{bad", encoding="utf-8")
+
+        result = self.run_gate(
+            self.payload(turn_id="auto-2", stop_hook_active=True),
+            now=self.now + 10,
+        )
+
+        self.assertTrue(result["continue"])
+        self.assertIn("session snapshot is corrupt", result["stopReason"])
+        self.assertEqual(path.read_text(encoding="utf-8"), "{bad")
 
     def test_complete_allows_terminal_stop(self) -> None:
         result = self.run_gate(self.payload(self.contract("complete")))
