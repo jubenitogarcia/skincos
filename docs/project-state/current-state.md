@@ -1,6 +1,6 @@
 # Current state
 
-## Workforce Timekeeping — both environments in maintenance; local successor evolving and uncommitted — 2026-07-30T11:14Z
+## Workforce Timekeeping — both environments in maintenance; PR #933 open — 2026-07-31T13:46Z
 
 This entry supersedes the 2026-07-29 Ponto section below. The reconstruction
 started from `origin/main` through PR #920 and was repeated read-only after PR
@@ -34,8 +34,10 @@ candidate-controlled checkout boundary in the reusable lease gate, privileged
 production baseline/SLO workflows without their own single-use capabilities,
 six omitted baseline provenance outputs, a physical CRM Pages concurrency race
 and no immediate persistent emergency latch outside the long release-custody
-queue. A corrective package is local on
-`codex/admin/ponto-release-evidence`: trusted-main execution and exact SHA
+queue. The corrective package is frozen and published in PR #933 from
+`codex/admin/ponto-release-evidence-successor`, head
+`48c23ad77b21c685ca470a87a59eb71a0e88c010`, based on current `origin/main`
+`35aa17dbfe21f9b9a7571a786f03a56186e75fff`: trusted-main execution and exact SHA
 verification precede lease consumption; production baseline/SLO have
 independent leases; all seven baseline outputs are written; Pages mutations
 serialize on the physical target; and manual fail-close gains a separate
@@ -57,7 +59,8 @@ controls `ENABLE_PONTO_CRM_PAGES_DEPLOY`,
 `PONTO_TIMEKEEPING_D1_STAGING_ID`,
 `PONTO_TIMEKEEPING_D1_PRODUCTION_ID`,
 `PONTO_MODULE_CONTROL_STAGING_KV_ID` and
-`PONTO_MODULE_CONTROL_PRODUCTION_KV_ID`; they are local and unprovisioned.
+`PONTO_MODULE_CONTROL_PRODUCTION_KV_ID`; the consuming controls are on PR #933
+and remain unprovisioned/unenabled.
 General Pages still uses `CRM_PAGES_PROJECT` /
 `CRM_PAGES_PROJECT_STAGING`.
 
@@ -94,7 +97,7 @@ production. There is no reviewed broker endpoint or response key for either
 target. Staging remains blocked until a reviewed decision fixes those identities
 and authorized custody provisions the endpoints, credentials and keys.
 
-The evolving local successor also adds two fail-closed contracts. First, Pages
+The PR #933 corrective package also adds two fail-closed contracts. First, Pages
 validates the release-probe HMAC before Identity access; v2 binds pilot/canary to
 stage, coordinator run and workflow run, while v1 is staging-only. Pages then
 uses a server-signed actor through private Ponto Core to consume the external
@@ -108,12 +111,13 @@ teardown fails and preserves the primary probe error without including
 credentials or PII.
 
 These contracts passed targeted local tests and an independent local security
-read found no residual P0/P1 in that six-file scope, but the worktree continues
-to change. No final path/test-count freeze is recorded. Corrective `commit_sha`,
-successor PR, hosted checks, valid review, merge and `selected_release_sha`
-remain `null`/pending. The emergency overlay, watchdog, automatic rollback and
-manual broker kill switch are explicitly non-operational: broker policy and
-keys, a clinic runner and independent external freeze/recovery proof are absent.
+read found no residual P0/P1 in that six-file scope. The branch freeze is 30
+changed files (730 additions and 1,602 deletions), with corrective
+`commit_sha=48c23ad77b21c685ca470a87a59eb71a0e88c010` in PR #933. Hosted checks,
+valid independent review and merge remain pending; `selected_release_sha` is
+still null. The emergency overlay, watchdog, automatic rollback and manual
+broker kill switch remain explicitly non-operational: broker policy and keys, a
+clinic runner and independent external freeze/recovery proof are absent.
 
 The local watchdog is intended to close a rerun of the canonical coordinator
 only after integration and broker provisioning; it is not current automatic
@@ -131,7 +135,8 @@ The proposed reconciliation covers correlated children even if their coordinator
 became terminal and is designed to rescan/inactivate a late-issued capability,
 but that behavior is not hosted or live evidence. Historical child
 definitions must remain externally fenced through expiry. The new protections
-remain local/pending until commit, reviewed PR, hosted checks and merge.
+are published on PR #933 and remain pending only hosted checks, independent
+review and canonical merge.
 
 The checkpointed GitHub environment-variable containment and staging fence were
 complete at

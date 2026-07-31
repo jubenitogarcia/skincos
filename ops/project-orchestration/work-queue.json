@@ -1,20 +1,20 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-30T11:14:09.503Z",
-  "source_main_sha": null,
-  "source_main_state": "pending-final-reconstruction-before-successor-freeze",
+  "authoritative_at": "2026-07-31T13:46:29Z",
+  "source_main_sha": "35aa17dbfe21f9b9a7571a786f03a56186e75fff",
+  "source_main_state": "reconstructed-current-main-pr-933-open-before-merge",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
       "objective": "Complete the governed Workforce Timekeeping release through preview, staging, pilot, canary and production on one immutable source SHA.",
       "priority": 1100,
-      "state": "production-replay-contained-both-environments-maintenance-local-successor-evolving-broker-policy-null-successor-pr-and-external-gates-pending",
+      "state": "production-replay-contained-both-environments-maintenance-pr-933-open-hosted-checks-review-merge-and-external-gates-pending",
       "dependencies": [
         "ponto-release-prerequisites"
       ],
       "blockers": [
-        "the local successor is still evolving; final path/test counts, corrective head, commit_sha and successor PR are not frozen, while hosted checks, valid review, merge and selected_release_sha remain null or pending",
-        "the release-probe and Identity-session contracts have targeted local validation: HMAC precedes login, pilot/canary v2 binds stage and run provenance, nonce acceptance is one UNIQUE D1 insert before Identity, same-nonce/different-body is rejected, Core owns Timekeeping affinity, and stale-cookie canonical 401 is mandatory after session revoke/logout; none is integrated or live",
+        "PR #933 is frozen at head 48c23ad77b21c685ca470a87a59eb71a0e88c010 over current main 35aa17dbfe21f9b9a7571a786f03a56186e75fff; hosted checks, valid independent review and canonical merge remain pending, and selected_release_sha is null",
+        "the release-probe and Identity-session contracts are implemented on PR #933: HMAC precedes login, pilot/canary v2 binds stage and run provenance, nonce acceptance is one UNIQUE D1 insert before Identity, same-nonce/different-body is rejected, Core owns Timekeeping affinity, and stale-cookie canonical 401 is mandatory after session revoke/logout; they are not live until merge",
         "the watchdog and automatic rollback are local proposals only; broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI are null for staging and production, broker endpoint/credential/keys and clinic runner are absent, and no independent external automatic freeze/recovery proof exists",
         "seven historical Timekeeping child runs and CRM Pages attempt-2 run 30491926800 retain their old definitions; live dispatch fences and both disabled legacy Ponto smokes must remain through expiry or reviewed replacement",
         "required WAF enforcement and the three immutable rule identifiers are unproven: CLOUDFLARE_ZONE_ID is present by name after checkpoint 14, but the visible zone listing exposed only managed rulesets, the custom entrypoint GET was unauthorized, both browser paths reached login without an authenticated session, and the post-merge security-token path still needs attestation",
@@ -108,13 +108,13 @@
           "state": "merged-all-hosted-checks-green-zero-unresolved-threads"
         },
         "post_merge_corrective_overlay": {
-          "branch": "codex/admin/ponto-release-evidence",
-          "base_main_sha": null,
-          "base_main_sha_state": "pending-final-reconstruction",
-          "commit_sha": null,
-          "pr": null,
+          "branch": "codex/admin/ponto-release-evidence-successor",
+          "base_main_sha": "35aa17dbfe21f9b9a7571a786f03a56186e75fff",
+          "base_main_sha_state": "current-origin-main-reconstructed",
+          "commit_sha": "48c23ad77b21c685ca470a87a59eb71a0e88c010",
+          "pr": 933,
           "selected_release_sha": null,
-          "state": "local-evolving-final-freeze-commit-pr-hosted-checks-review-and-merge-pending",
+          "state": "frozen-pr-open-hosted-checks-review-and-merge-pending",
           "controls": [
             "trusted main checkout and exact SHA before lease consumption",
             "independent production-baseline and production-slo leases",
@@ -150,19 +150,19 @@
             "PONTO_MODULE_CONTROL_STAGING_KV_ID",
             "PONTO_MODULE_CONTROL_PRODUCTION_KV_ID"
           ],
-          "ponto_only_control_names_state": "local-uncommitted-unprovisioned-not-live",
+          "ponto_only_control_names_state": "merged-to-branch-pr-open-unprovisioned-not-live",
           "general_pages_control_names": [
             "CRM_PAGES_PROJECT",
             "CRM_PAGES_PROJECT_STAGING"
           ],
-          "path_inventory_state": "pending-final-freeze",
-          "worktree_paths": null,
-          "tracked_modified_paths": null,
-          "untracked_new_paths": null,
-          "technical_paths": null,
-          "ledger_paths": null,
+          "path_inventory_state": "frozen-pr-933-30-files",
+          "worktree_paths": 30,
+          "tracked_modified_paths": 30,
+          "untracked_new_paths": 0,
+          "technical_paths": 22,
+          "ledger_paths": 8,
           "technical_path_inventory_ref": "docs/project-state/ponto-post-886-delta.json#pending_local_corrective_overlay",
-          "late_issued_capability_control": "local-proposal-not-operational-pending-broker-runner-external-recovery-and-hosted-proof",
+          "late_issued_capability_control": "implemented-pr-933-not-operational-pending-merge-broker-runner-external-recovery-and-hosted-proof",
           "emergency_overlay_contract": {
             "key": "module-control:timekeeping:emergency-latch",
             "deny_states": [

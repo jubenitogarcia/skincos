@@ -2,6 +2,30 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-31T13:46:29Z",
+      "surface": "github-ponto-corrective-successor-pr",
+      "scope": "Post-PR-921 corrective package publication and current-main reconciliation",
+      "state": "published-pr-open-hosted-checks-review-and-merge-pending",
+      "method": "Reconstructed the current origin/main and the dedicated successor worktree, preserved the worktree-specific gitdir despite the invalid shared core.worktree setting, verified a clean branch head, pushed the branch and created PR #933 through the GitHub API. No deployment, secret value, identity, D1/KV mutation or production flag was changed.",
+      "result": "origin/main is 35aa17dbfe21f9b9a7571a786f03a56186e75fff. Branch codex/admin/ponto-release-evidence-successor is 48c23ad77b21c685ca470a87a59eb71a0e88c010, six commits ahead, with 30 changed files (730 additions and 1,602 deletions). PR #933 is open and ready for hosted validation; the worktree is clean. Local Timekeeping (54), CRM lint/typecheck/test/build, architecture, topology, progressive-release, Ponto precondition, focused watchdog/lease/emergency/reconcile and supervisor checks passed as recorded in the PR body.",
+      "limitation": "Hosted checks, independent valid environment review, canonical merge and all external release predecessors remain pending. No selected release SHA exists; staging and production remain fail-closed in maintenance and no preview, pilot, canary or production release is claimed.",
+      "origin_main": "35aa17dbfe21f9b9a7571a786f03a56186e75fff",
+      "commit_sha": "48c23ad77b21c685ca470a87a59eb71a0e88c010",
+      "pr": 933,
+      "selected_release_sha": null,
+      "branch": "codex/admin/ponto-release-evidence-successor",
+      "changed_files": 30,
+      "additions": 730,
+      "deletions": 1602,
+      "validation": {
+        "local": "passed-as-listed-in-pr-body",
+        "hosted_checks": "pending",
+        "independent_review": "not-available",
+        "merge": "pending"
+      },
+      "next_action": "Wait for hosted checks, obtain a valid independent review without self-review or bypass, merge PR #933 canonically, reselect the exact merged main SHA, then re-run preview before staging."
+    },
+    {
       "observed_at": "2026-07-30T10:54:19Z",
       "surface": "github-actions-legacy-production-ponto-backend-smoke",
       "scope": "Contain obsolete protected-environment hydration by a read-only scheduled probe",

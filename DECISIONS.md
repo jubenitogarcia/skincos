@@ -1,11 +1,30 @@
 # DECISIONS
 
+## 2026-07-31 - Corrective package published as PR #933
+
+- Status: the post-PR-921 release-probe, Identity teardown, trusted execution,
+  capability, latch, broker, WAF, rollback and custody controls are frozen in
+  commit `48c23ad77b21c685ca470a87a59eb71a0e88c010` on
+  `codex/admin/ponto-release-evidence-successor`, based on current
+  `origin/main` `35aa17dbfe21f9b9a7571a786f03a56186e75fff`, and published in
+  PR #933. The worktree is clean. Hosted checks, an independent valid review
+  and canonical merge remain required; no release SHA is selected.
+- Decision: preserve staging and production fail-closed while PR #933 is open
+  and while broker, WAF, custody, reviewer, pilot identity, runner and external
+  SLO predecessors remain absent. No preview or deployment may consume the
+  branch head before the exact merged `main` SHA is reselected.
+- Evidence: the branch freeze is 30 changed files (730 additions and 1,602
+  deletions); local focused suites, CRM build/type/test and architecture,
+  topology and progressive-release validators passed. Hosted CI remains the
+  authority for actionlint, full security tooling and dependency-backed API
+  suites.
+
 ## 2026-07-30 - Proposed atomic release probe and mandatory Identity session teardown
 
-- Status: these contracts exist only in the evolving local successor. They have
-  targeted local validation but no immutable commit, PR, hosted checks, review,
-  merge or selected release SHA. Aggregate worktree/test counts remain pending
-  until the technical freeze.
+- Historical status at the 2026-07-30 observation: these contracts existed only
+  in the evolving local successor. They are now frozen and published in PR #933;
+  hosted checks, independent review, merge and selected release SHA remain
+  pending.
 - Decision: the private release probe validates its external HMAC before parsing
   credentials or contacting Identity. Signature v2 is mandatory for `pilot` and
   `canary` and binds timestamp, nonce, method, path, exact body digest, release

@@ -6,11 +6,11 @@ PR #894 and the private Ponto Core/Pages staging prerequisites are integrated.
 Its three residual conversations are resolved with zero unresolved threads.
 PR #921 integrated the missing progressive release controls at
 `aa9bfa6595b9cb12e7228f67f9606527bb375de2` after 19 green checks and
-eight resolved review conversations. A post-merge security/release recheck
-supersedes the claim that those controls are sufficient to dispatch: the
-trusted-checkout boundary, privileged baseline/SLO leases, baseline provenance
-outputs, Pages physical-target mutex and an immediate persistent kill switch
-still require a corrective reviewed merge.
+eight resolved review conversations. The post-merge security/release recheck
+is addressed by the frozen corrective package in PR #933, head
+`48c23ad77b21c685ca470a87a59eb71a0e88c010`, based on current `origin/main`
+`35aa17dbfe21f9b9a7571a786f03a56186e75fff`; hosted checks, independent review
+and canonical merge remain pending.
 
 At the read-only 2026-07-30T05:57:00Z historical snapshot, `origin/main` was
 `aa9bfa6595b9cb12e7228f67f9606527bb375de2`,
@@ -90,9 +90,9 @@ legacy schedule is not active external SLO evidence.
 
 The executable blockers, in required order, are:
 
-1. Stabilize and commit the evolving local P1/P2 corrective package on
-   `codex/admin/ponto-release-evidence`, publish it through a new reviewed PR,
-   pass hosted checks and merge it without bypass. The local, uncommitted state
+1. Complete PR #933 from
+   `codex/admin/ponto-release-evidence-successor`, pass hosted checks, obtain
+   an independent valid review and merge it without bypass. Its frozen state
    adds trusted-main execution before lease consumption; independent
    `production-baseline`/`production-slo` capabilities; all seven baseline
    provenance outputs; serialization of every physical CRM Pages mutation; and
@@ -150,9 +150,10 @@ The executable blockers, in required order, are:
    must pin both target identities before provisioning. Checkpoint:
    `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T073300-13-emergency-environments-before.md`.
 
-   The worktree is still evolving, so no final path/test count, corrective SHA
-   or successor PR is frozen. `commit_sha`, `pr` and `selected_release_sha`
-   remain `null`; hosted checks, valid review and merge are pending. Targeted
+    The worktree is frozen at 30 changed files (730 additions and 1,602
+    deletions) in `48c23ad77b21c685ca470a87a59eb71a0e88c010`, PR #933; hosted
+    checks, valid review and merge are pending, and `selected_release_sha`
+    remains `null`. Targeted
    local checks cover the new atomic release-probe and Identity teardown
    contracts, but this is not an aggregate final matrix or operational proof.
 
@@ -163,7 +164,8 @@ The executable blockers, in required order, are:
    choose a second key. Core owns Timekeeping affinity. Any login cookie triggers
    `finally` teardown by session revoke or logout, followed by mandatory
    canonical stale-cookie 401 verification; indeterminate teardown fails while
-   preserving the primary error. These safeguards are local/unmerged.
+    preserving the primary error. These safeguards are published on PR #933
+    but remain unmerged.
 
    The local watchdog is intended to close a rerun only after integration and
    broker provisioning; it is not operational automatic recovery. Historical child runs that predate correlation/attempt guards
@@ -181,7 +183,7 @@ The executable blockers, in required order, are:
    freeze/recovery proof are absent. Moreover,
    no source edit can rewrite those historical child definitions. Keep the
    external fences in place through their expiry and until the corrective
-   package is committed, hosted-validated and merged.
+    package is hosted-validated, independently reviewed and merged.
 2. An authorized Cloudflare security principal must inspect and attest the exact
    zone-scoped WAF block rules, create/enable them only if that inspection proves
    they are missing or disabled, and use the checkpointed

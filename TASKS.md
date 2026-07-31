@@ -133,10 +133,12 @@ jornada autenticada atual continue válida.
   CodeQL #4519 foi justificadamente classificado como falso positivo. O merge
   integra a primeira versão dos controles, mas ainda não seleciona um
   candidato.
-- [ ] Integrar, antes de qualquer `preview`, o pacote corretivo P1/P2 descoberto
-  no recheck pós-merge. Ele continua evoluindo somente no worktree local
-  `codex/admin/ponto-release-evidence`, sem commit, PR, hosted checks, review,
-  merge ou SHA selecionado:
+ - [x] Publicar o pacote corretivo P1/P2 descoberto no recheck pós-merge como
+  PR #933, com head imutável `48c23ad77b21c685ca470a87a59eb71a0e88c010`, sobre
+  `origin/main` `35aa17dbfe21f9b9a7571a786f03a56186e75fff`. A sucessora está
+  aberta, com o worktree limpo e aguardando apenas checks hospedados, revisão
+  independente e merge canônico; nenhum candidato de release foi selecionado.
+  O pacote contém:
   checkout trusted-main e comparação exata antes de consumir leases; leases
   independentes para baseline/SLO; todos os outputs de provenance do baseline;
   mutex físico de CRM Pages; e kill switch imediato com latch persistente,
@@ -151,12 +153,12 @@ jornada autenticada atual continue válida.
   intenção/ownership e rollback determinado de Pages; leitura e reattestation
   live do controle regular + emergency latch antes/depois do rollback;
   `emergencyLatchRef` exata na evidência; drift WAF pós-probe; journal de
-  watchdog correlacionado; e kill switch manual pelo broker. O inventário e a
-  matriz agregada ainda não estão congelados: contagens de paths/testes, head do
-  worktree e PR sucessora permanecem pendentes até a estabilização técnica.
-  `commit_sha`, `pr` e `selected_release_sha` continuam `null`.
-- [ ] Integrar a proteção one-time do release probe e o teardown de sessão do
-  Identity já implementados localmente. Pages valida primeiro o HMAC externo;
+  watchdog correlacionado; e kill switch manual pelo broker. O freeze atual
+  registra 30 arquivos alterados e 730 adições/1.602 remoções no head da PR;
+  `commit_sha=48c23ad77b21c685ca470a87a59eb71a0e88c010`, `pr=933` e
+  `selected_release_sha=null` porque a revisão e o merge ainda não ocorreram.
+ - [x] Integrar na sucessora a proteção one-time do release probe e o teardown
+  de sessão do Identity. Pages valida primeiro o HMAC externo;
   `pilot`/`canary` usam contrato v2 vinculado a stage, coordinator run e workflow
   run, enquanto v1 fica restrito ao drill de `staging`. Antes de qualquer login,
   o nonce é consumido por um único `INSERT` com unicidade no D1 existente via
@@ -166,8 +168,8 @@ jornada autenticada atual continue válida.
   o probe sempre tenta revogar a sessão corrente ou faz logout; só aceita
   teardown quando o cookie stale recebe o `401` canônico em `/auth/me`. Falha ou
   teardown indeterminado mantém o probe fail-closed e preserva o erro primário.
-  A validação foi somente local/targeted; integração, hosted checks e freeze
-  agregado continuam pendentes.
+  A validação local focada passou; checks hospedados, revisão independente e
+  merge da PR #933 continuam pendentes.
 - [ ] Provisionar e atestar separadamente o broker de fechamento externo nos
   environments `ponto-emergency-staging` e `ponto-emergency-production`:
   secret `PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL` e variables
