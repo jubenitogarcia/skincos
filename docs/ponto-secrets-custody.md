@@ -19,6 +19,9 @@ repository secrets nem ser copiados entre environments. Workflows validam
 presença, escopo, fingerprints e custódia; o valor nunca é impresso nem
 transportado pela evidência pública.
 
+A reattestação do broker permanece close-only e só atualiza a referência de
+execução da evidência enquanto o latch continua fechado.
+
 ## Cloudflare Workers
 
 Os brokers `skincos-ponto-emergency-staging` e

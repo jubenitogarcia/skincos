@@ -329,6 +329,10 @@ Somente `.github/workflows/ponto-emergency-latch-reset.yml` pode escrever
 `latched=false`. O reset exige manutenção regular, superfície governada idle e
 evidências imutáveis de latch/reconciliação; depois do reset, o módulo continua
 em manutenção. Fechamento manual e automático escrevem somente `latched=true`.
+Uma nova operação `latch-true` enquanto o broker já está fechado é uma
+reattestação close-only: atualiza apenas o proprietário da evidência e mantém
+`latched=1`; ela não abre, ativa ou limpa o controle. `maintenance` continua
+owner-bound e recusa um proprietário divergente.
 Não delete a chave, não trate ausência como aberta e não escreva `false` em
 script, migration ou publisher alternativo.
 
