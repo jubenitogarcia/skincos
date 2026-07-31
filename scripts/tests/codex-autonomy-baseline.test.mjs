@@ -22,10 +22,18 @@ test("a localized website correction does not require unrelated domain tests", (
   assert.deepEqual(report.affectedSurfaces, ["website"]);
 });
 
-test("auth and sensitive data paths remain critical", () => {
+test("ordinary auth and migration paths are elevated, not exceptional by default", () => {
   const report = classifyFiles(policy, ["crm/api/auth/session.ts", "workforce/timekeeping/migrations/0009_add_column.sql"]);
-  assert.equal(report.risk, "critical");
-  assert.ok(report.requiredChecks.includes("sensitive-change-preflight"));
+  assert.equal(report.risk, "high");
+  assert.ok(report.requiredChecks.includes("rollback-plan"));
+  assert.ok(report.skippedChecks.includes("staging-smoke"));
+});
+
+test("exceptional paths are explicit rather than inferred from every workflow or secret", () => {
+  const ordinary = classifyFiles(policy, [".github/workflows/codex-autonomy-gate.yml", "ops/codex/risk-policy.json"]);
+  assert.equal(ordinary.risk, "high");
+  const exceptional = classifyFiles(policy, ["ops/real-data-destructive-migration.md"]);
+  assert.equal(exceptional.risk, "critical");
 });
 
 test("release input digest ignores unrelated documentation but invalidates relevant input", () => {

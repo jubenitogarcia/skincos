@@ -28,9 +28,10 @@ observability and a documented service lifecycle.
   `last_assistant_message`.
 - Per-session exclusive lock with PID, host and timestamp metadata. A same-host
   dead lock or expired remote lock is quarantined, never blindly deleted.
-- Per-mission cycle budget: eight continuations by default. A fresh explicit
-  user turn (`stop_hook_active=false`) starts a new budget; generated turns do
-  not.
+- Continuation is progress-based: a changed measurable-progress or blocker
+  fingerprint is required before another turn. The 64-cycle limit is an
+  emergency-only guard, not the normal pacing mechanism; a repeated fingerprint
+  stops with a focal-diagnosis/different-approach instruction.
 - Two-second cooldown and one-hour milestone leases. Leases live under the Git
   common directory so sibling worktrees cannot automatically take the same
   `next_item`.
@@ -41,6 +42,9 @@ observability and a documented service lifecycle.
 - A continued Stop without recoverable mission state, invalid JSON, missing
   fields, no progress, missing next item, corrupt state or internal error
   safely ends instead of starting work.
+- SessionStart, PreCompact, PostCompact and SessionEnd lifecycle hooks record
+  sanitized hashes and compaction checkpoints under ignored `.codex/runtime/`
+  state; prompt content and credentials are never persisted.
 - The gate never executes project or production commands. Its generated prompt
   explicitly preserves the original authorization boundary.
 

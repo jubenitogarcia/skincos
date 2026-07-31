@@ -48,10 +48,12 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+      - name: Proportional diff check
+        run: git diff --check
       - name: Baseline contract tests
+        if: ${{ contains(needs.classify.outputs.surfaces, 'codex-baseline') }}
         run: |
           set -euo pipefail
-          git diff --check
           node --test scripts/tests/codex-autonomy-baseline.test.mjs
       - name: GitHub governance contract
         if: ${{ contains(needs.classify.outputs.surfaces, 'github-governance') }}
@@ -63,7 +65,7 @@ jobs:
         if: ${{ contains(needs.classify.outputs.surfaces, 'codex-baseline') }}
         run: python3 -m unittest discover -s .codex/hooks/tests -p 'test_skincos_supervisor_gate.py' -v
       - name: Risk-selected release-manifest contract
-        if: ${{ needs.classify.outputs.risk == 'high' || needs.classify.outputs.risk == 'critical' }}
+        if: ${{ (needs.classify.outputs.risk == 'high' || needs.classify.outputs.risk == 'critical') && contains(needs.classify.outputs.surfaces, 'codex-baseline') }}
         run: |
           set -euo pipefail
           node scripts/codex-release-manifest.mjs --source HEAD --surface codex-baseline --output /tmp/codex-release-manifest.json

@@ -3,19 +3,23 @@
   "defaultRisk": "medium",
   "levels": {
     "low": {
+      "label": "low",
       "requiredChecks": ["diff-check", "static-parse"],
-      "skippedChecks": ["module-test", "module-build", "integration", "staging-smoke", "deep-security-scan"]
+      "skippedChecks": ["module-test", "focused-test", "module-build", "integration", "staging-smoke", "deep-security-scan"]
     },
     "medium": {
-      "requiredChecks": ["diff-check", "focused-test", "module-build-or-typecheck"],
-      "skippedChecks": ["unrelated-module-test", "staging-smoke", "deep-security-scan"]
+      "label": "normal",
+      "requiredChecks": ["diff-check", "one-focused-test-or-build"],
+      "skippedChecks": ["unrelated-module-test", "full-suite", "staging-smoke", "deep-security-scan"]
     },
     "high": {
-      "requiredChecks": ["diff-check", "focused-test", "module-build-or-typecheck", "domain-integration", "staging-smoke", "rollback-plan"],
-      "skippedChecks": ["unrelated-domain-test"]
+      "label": "elevated",
+      "requiredChecks": ["diff-check", "focused-test-or-focal-journey", "rollback-plan"],
+      "skippedChecks": ["unrelated-domain-test", "full-suite", "staging-smoke", "deep-security-scan"]
     },
     "critical": {
-      "requiredChecks": ["diff-check", "focused-test", "module-build-or-typecheck", "domain-integration", "staging-smoke", "rollback-plan", "sensitive-change-preflight", "post-change-evidence"],
+      "label": "exceptional",
+      "requiredChecks": ["diff-check", "focal-validation", "rollback-plan", "exceptional-stop"],
       "skippedChecks": []
     }
   },
@@ -54,13 +58,18 @@
   "classificationRules": [
     {
       "risk": "critical",
-      "reason": "Authentication, sessions, permissions, root-secret custody, payment, irreversible migration, or production mutation surface changed.",
-      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/*irreversible*", "**/migrations/**", "**/*migration*", ".github/governance/**"]
+      "reason": "An explicitly exceptional irreversible, destructive, real-data, financial-ledger, or credential-exposure path changed.",
+      "patterns": ["**/*irreversible*", "**/*destructive*", "**/*real-data*", "**/*production-delete*", "**/*financial-ledger*", "**/*credential-exposure*"]
     },
     {
       "risk": "high",
-      "reason": "Runtime, deployment, workflow, Worker, database, tracking, or externally integrated surface changed.",
-      "patterns": [".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "platform/**", "ops/runtime/**", "website/**/api/**", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**"]
+      "reason": "Authentication, sessions, permissions, secrets, migrations, payment, deployment, workflow, Worker, database, tracking, or externally integrated surface changed and needs a focal check plus rollback.",
+      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/migrations/**", "**/*migration*", ".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "platform/**", "ops/runtime/**", "website/**/api/**", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**"]
+    },
+    {
+      "risk": "medium",
+      "reason": "Codex or governance implementation changed without an elevated executable or exceptional path.",
+      "patterns": [".codex/**", "skills/**", "scripts/codex-*.mjs", "scripts/codex-*.sh", "scripts/*codex*.ps1", "ops/codex/**", ".github/governance/**"]
     },
     {
       "risk": "low",

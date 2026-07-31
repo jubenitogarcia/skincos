@@ -47,7 +47,9 @@ REQUIRED_FIELDS = {
 DEFAULT_CONFIG = {
     "schema_version": 1,
     "enabled": True,
-    "max_cycles": 8,
+    "max_cycles": 64,
+    "emergency_cycle_limit": 64,
+    "cycle_limit_mode": "emergency-only",
     "cooldown_seconds": 2,
     "session_lock_ttl_seconds": 180,
     "orphan_grace_seconds": 5,
@@ -178,6 +180,7 @@ def load_config(repo_root: Path) -> tuple[dict[str, Any] | None, str | None]:
             raise ValueError("unsupported schema")
         for key in (
             "max_cycles",
+            "emergency_cycle_limit",
             "cooldown_seconds",
             "session_lock_ttl_seconds",
             "orphan_grace_seconds",
@@ -188,6 +191,10 @@ def load_config(repo_root: Path) -> tuple[dict[str, Any] | None, str | None]:
                 raise ValueError(f"{key} must not be negative")
         if merged["max_cycles"] < 1:
             raise ValueError("max_cycles must be at least 1")
+        if merged["emergency_cycle_limit"] < merged["max_cycles"]:
+            raise ValueError("emergency_cycle_limit must be at least max_cycles")
+        if merged.get("cycle_limit_mode") != "emergency-only":
+            raise ValueError("cycle_limit_mode must be emergency-only")
         if not isinstance(merged["enabled"], bool):
             raise ValueError("enabled must be boolean")
     except (KeyError, TypeError, ValueError) as exc:
@@ -525,8 +532,8 @@ def continuation_change_reason(
     if blocker_changed:
         return "blocker_changed", None
     if contract["progress_made"]:
-        return None, "measurable progress fingerprint did not change; unchanged work will not be repeated"
-    return None, "blocker fingerprint did not change; unchanged work will not be repeated"
+        return None, "measurable progress fingerprint did not change; focal diagnosis or a different approach is required; unchanged work will not be repeated"
+    return None, "blocker fingerprint did not change; focal diagnosis or a different approach is required; unchanged work will not be repeated"
 
 
 def skill_tree_hash(root: Path) -> str | None:
@@ -747,7 +754,7 @@ def continuation_prompt(
     session_id: str,
     mission_id: str,
     cycle: int,
-    max_cycles: int,
+    emergency_cycle_limit: int,
     completed_item: Any,
     next_item: Any,
     snapshot: dict[str, Any],
@@ -756,7 +763,7 @@ def continuation_prompt(
         "session_id": session_id,
         "mission_id": mission_id,
         "cycle": cycle,
-        "max_cycles": max_cycles,
+        "emergency_cycle_limit": emergency_cycle_limit,
         "completed_item": completed_item,
         "next_item": next_item,
         "session_snapshot": {
@@ -994,7 +1001,8 @@ def process(
             return safe_allow(f"SKINCOS supervisor terminal state: {status}")
 
         cycles_used = int(mission.get("cycles_used", 0))
-        if cycles_used >= config["max_cycles"]:
+        emergency_cycle_limit = int(config.get("emergency_cycle_limit", config["max_cycles"]))
+        if cycles_used >= emergency_cycle_limit:
             mission["status"] = "cycle_budget_exhausted"
             mission["budget_exhausted_at"] = utc_iso(now)
             mission["snapshot_key"] = session_key
@@ -1009,7 +1017,7 @@ def process(
                 {**event_record, "result": "cycle_budget_exhausted", "mission_id": mission_id},
             )
             return safe_allow(
-                "SKINCOS supervisor cycle budget exhausted; issue a new explicit user request to start a fresh budget"
+                "SKINCOS supervisor emergency cycle budget exhausted; issue a new explicit user request to start a fresh budget"
             )
 
         last_at = mission.get("last_continuation_at_epoch")
@@ -1099,7 +1107,7 @@ def process(
                 session_id,
                 mission_id,
                 cycle,
-                config["max_cycles"],
+                emergency_cycle_limit,
                 contract.get("completed_item"),
                 contract.get("next_item"),
                 snapshot,
