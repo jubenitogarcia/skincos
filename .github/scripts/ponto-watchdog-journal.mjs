@@ -236,7 +236,7 @@ export async function reconstructWatchdogJournal({
   );
   if (
     String(coordinator?.id || "") !== String(coordinatorRunId)
-    || coordinator?.path !== ".github/workflows/ponto-progressive-release.yml@refs/heads/main"
+    || ![".github/workflows/ponto-progressive-release.yml", ".github/workflows/ponto-progressive-release.yml@refs/heads/main"].includes(coordinator?.path)
     || coordinator?.event !== "workflow_dispatch"
     || coordinator?.head_branch !== "main"
     || String(coordinator?.head_sha || "").toLowerCase() !== releaseSha

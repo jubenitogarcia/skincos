@@ -14,13 +14,13 @@ const workflow = {
 const run = {
   id: 99,
   workflow_id: 7,
-  path: ".github/workflows/ponto-progressive-release.yml@refs/heads/main",
+  path: ".github/workflows/ponto-progressive-release.yml",
   status: "completed",
   conclusion: "failure",
   event: "workflow_dispatch",
   head_branch: "main",
   head_sha: sha,
-  name: "Ponto progressive release",
+  name: `Ponto staging ${sha} orchestrator=99`,
   display_title: `Ponto staging ${sha} orchestrator=99`,
   run_attempt: 1,
   repository: { full_name: repository, id: 42 },
@@ -84,6 +84,7 @@ test("watchdog audits a preview rerun without assigning a live target or closing
       ...run,
       run_attempt: 2,
       conclusion,
+      name: `Ponto preview ${sha} orchestrator=99`,
       display_title: `Ponto preview ${sha} orchestrator=99`,
     };
     const context = await validateWatchdogContext(input({

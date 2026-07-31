@@ -227,7 +227,7 @@ if (leaseKey) {
     || parentRun?.repository?.full_name !== repository
     || parentRun?.head_repository?.full_name !== repository
     || String(parentRun?.head_repository?.id || "") !== repositoryId
-    || parentRun?.name !== "Ponto progressive release"
+    || parentRun?.name !== `Ponto ${process.env.STAGE} ${orchestratorHeadSha} orchestrator=${correlation}`
     || parentRun?.display_title !== `Ponto ${process.env.STAGE} ${orchestratorHeadSha} orchestrator=${correlation}`
   ) throw new Error("active Ponto coordinator cannot issue a child-bound capability");
 }
@@ -299,7 +299,7 @@ while (Date.now() - startedAt < timeoutMs) {
       || run.event !== "workflow_dispatch"
       || run.head_branch !== "main"
       || run.head_sha !== orchestratorHeadSha
-      || run.name !== workflowMetadata.name
+      || run.name !== expectedDisplayTitle
       || run.display_title !== expectedDisplayTitle
       || String(run?.repository?.id || "") !== repositoryId
       || run?.repository?.full_name !== repository
@@ -460,7 +460,7 @@ if (
 }
 if (leaseKey && (
   String(run.id) !== persistedRunId
-  || run.name !== workflowMetadata.name
+  || run.name !== expectedGovernedRunName(expectedPath, normalizedIntent)
   || run.display_title !== expectedGovernedRunName(expectedPath, normalizedIntent)
   || String(run?.repository?.id || "") !== repositoryId
   || run?.repository?.full_name !== repository
