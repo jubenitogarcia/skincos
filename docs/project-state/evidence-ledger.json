@@ -1451,6 +1451,20 @@
       "execution": 350,
       "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\livia-carousel-pr939-post-restore-20260731T123400-0300",
       "rollback_checkpoint_sha256": "ac8f12e006b0b2af1cca3bd3d5f9704e3183193c8d672e7641a7d777263ed2f1"
+    },
+    {
+      "observed_at": "2026-07-31T15:57:00Z",
+      "surface": "production-runtime-and-drive-followup",
+      "scope": "livia-scheduled-carousel-followup-351",
+      "state": "scheduled-trigger-success-no-media-schedule-restored",
+      "method": "Canonical Drive re-list/search; active execution preflight; temporary schedule version with expected-version transaction; structural validation; controlled Orb drain/restart; Schedule Trigger execution 351; QA audit; restore version transaction; manifest audit-live; local/public health and journal probes",
+      "result": "Execution 351 ran in trigger mode from 2026-07-31T12:52:55.232-03 to 12:53:00.311-03 and ended at List Files with plannedJobs=0, httpCalls=0 and zero targets. The canonical Drive folder 1Dq_1TeD4RCQAaYFSarXA7c63nDvtUvE9 still contained 57 historical files; no file created or modified after the latest published group was visible, and global media searches were empty. The daily schedule was restored to field days at 13:26 in active version d3f4bd2a-f11c-4bc6-9b70-33fdf0f6a9d7. The immutable release remains 01d2b6d1f79a9017e0a87efa2a1a32f82eed219f, workflow hash cca251e26fc87957f341abb264571025a00a142a4162be8d98b6338ae213afbb, current manifest SHA-256 25a4dcb08cdf20158fd2dc93ee4f3709eb4ab6e3370e4e5397218608a8fcecd2, audit-live mutableRuntimeReferences=0, local/public health 200, and no warning journal entries after the restart.",
+      "limitation": "No unpublished carousel was available to publish; no gateway, Drive mark, notification or social publication was created. The next real acceptance requires the new Drive file IDs to become visible to the same credentials used by List Files.",
+      "sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
+      "workflow_version": "d3f4bd2a-f11c-4bc6-9b70-33fdf0f6a9d7",
+      "execution": 351,
+      "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\livia-carousel-followup-post-restore-20260731T125600-0300",
+      "rollback_checkpoint_sha256": "9702EE69E5B398706FDC9A4E515C6F02FC3E5D32FC596E39EF6E72705B05D3ED"
     }
   ]
 }

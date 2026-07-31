@@ -1759,3 +1759,28 @@ Checkpoint pós-restore íntegro:
 `ac8f12e006b0b2af1cca3bd3d5f9704e3183193c8d672e7641a7d777263ed2f1`.
 O aceite end-to-end de um carrossel inédito continua pendente até o novo
 arquivo aparecer no Drive canônico; a mídia histórica não deve ser usada.
+
+## Livia — verificação agendada posterior e restauração final — 2026-07-31
+
+Após a janela inicial, a agenda temporária foi executada novamente somente
+para confirmar o caminho produtivo. A execução `351` (`trigger`) terminou em
+`success` de 12:52:55.232 a 12:53:00.311 (-03), no nó `List Files`, com
+`plannedJobs=0`, `httpCalls=0`, zero destinos e nenhuma mutação no Drive.
+O próprio n8n, além do conector de Drive, retornou zero arquivos elegíveis;
+portanto nenhum carrossel histórico foi reutilizado.
+
+A agenda foi restaurada por transação versionada para
+`d3f4bd2a-f11c-4bc6-9b70-33fdf0f6a9d7`, mantendo `field: days` às 13:26, e o
+Orb foi reiniciado somente pelo `orb-safe-restart.sh` após drenagem. A versão
+ativa continua pinada ao release imutável
+`01d2b6d1f79a9017e0a87efa2a1a32f82eed219f`; o manifesto atual tem SHA-256
+`25a4dcb08cdf20158fd2dc93ee4f3709eb4ab6e3370e4e5397218608a8fcecd2` e
+`audit-live` confirmou `mutableRuntimeReferences=0`. Healthchecks local e
+público permaneceram HTTP 200 e não houve warning novo no journal.
+
+Checkpoint pós-restauração:
+`C:\CodexRuntime\operator\admin\skincos\checkpoints\livia-carousel-followup-post-restore-20260731T125600-0300`, índice SHA-256
+`9702EE69E5B398706FDC9A4E515C6F02FC3E5D32FC596E39EF6E72705B05D3ED`.
+O aceite end-to-end de carrossel inédito segue pendente exclusivamente pela
+ausência dos novos IDs no Drive canônico; não há correção de código pendente
+nem impacto no caminho de Reel comprovado anteriormente.
