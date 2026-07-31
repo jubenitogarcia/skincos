@@ -1,6 +1,59 @@
 # Current state
 
-## Workforce Timekeeping — both environments in maintenance; PR #933 open — 2026-07-31T13:46Z
+## Reconciliacao atual — `origin/main` `28747bb5109407856bd3cb700d91f7f3cb981a69` — 2026-07-31T14:37Z
+
+Este bloco supersede qualquer afirmacao abaixo que trate `35aa17db...`,
+`6894e0b...` ou uma PR aberta como estado atual. A PR #933 foi integrada em
+2026-07-31T13:56:06Z com merge SHA `a70fe64...`; os checks hospedados da PR
+ficaram verdes. A PR #934, que apenas restaurou a compatibilidade do gateway WSL,
+foi integrada em `28747bb...` com checks verdes. A lista de PRs integradas apos
+#815, incluindo #930/#931/#933/#934, foi revalidada no GitHub. As frentes independentes #736 e #764 continuam
+abertas em modo draft: #736 head `76492a20cf0ec89cdacc25a9bccfb23b510beef5`
+esta `DIRTY`, e #764 head `0b558f6815c4a5a8c3c23a7f15d0926d997e2f01` esta
+`BEHIND`; nenhuma delas foi alterada nesta reconciliacao.
+
+Financeiro: `experimental`, desativado (`module_enabled=false`), sem grants de
+usuarios reais, sem piloto e sem recursos produtivos. A ultima cadeia completa
+de staging e `ba16cb4a845e8f96032476a3a2828fc1fb22b399`: Worker
+`30503675254`, UI `30503676485`, CRM Pages `30503679551`, canary
+`30504263595` e identidade/smoke `30504380888`, todos concluidos com sucesso.
+O run `30583405735` usou `35aa17db...` somente no Worker; o run
+`30583462825` permanece waiting e nao ha UI/Pages/canary correspondente ao
+`28747bb...`. Portanto nao existe uma promocao de staging do SHA atual.
+
+Cloudflare confirmou, somente por metadados, D1 `skincos-finance-staging`
+(`3059c887-76bf-4200-8d9c-6f02b8fa6d42`), KV de staging
+`SKINCOS_FINANCE_STAGING_FLAGS` (`3013d687...`) e Pages
+`skincos-finance-ui-staging`. A consulta de deployments do Worker
+`skincos-finance` respondeu erro `10007` (Worker inexistente); a lista D1/KV e
+de Pages nao contem os equivalentes produtivos. A configuracao versionada ainda
+declara nomes/bindings, mas isso nao e prova de recurso live.
+
+Rollback, kill switch, restore scratch Finance e restore offsite PostgreSQL
+continuam comprovados apenas para os artefatos registrados, incluindo PR #908 e
+`20260729T2255Z-postgresql-fresh`. O historico `audit returned 503` da run
+`30168648150` foi um abort/canary antigo e nao e bloqueio atual; nao ha nova
+reproducao no SHA `28747bb...`.
+
+Observabilidade: o ledger de alerta humano e recuperacao permanece valido como
+evidencia historica. O estado operacional atual nao e continuo: a instalacao
+privada registra `operator-run-key`, nao ha Scheduled Task nem processo
+`SkincosObservability*`, e `monitor-health.json` teve ultimo sucesso em
+`2026-07-30T18:30:37Z`. A proxima acao segura e restabelecer e verificar o
+supervisor externo; nao deve haver alegacao de monitoramento continuo ate entao.
+
+Ponto: #930/#931/#933 estao integradas no `28747bb...`, mas os controles
+fail-closed nao selecionam release nem fecham os gates externos. Broker/WAF,
+runner, custodia de chaves e evidencia nova de staging continuam necessarios.
+Insumos P0 permanece resolvido; Identity segue em modo de compatibilidade; os
+demais modulos continuam nas maturidades do catalogo, sem promocao inferida por
+health ou codigo integrado.
+
+## Historical Ponto snapshot before PR #933 merge — 2026-07-31T13:46Z
+
+The pre-merge wording below is retained for audit history only. PR #933 is now
+merged as `a70fe64c87f2c09c96022c0b18b0b05c9d68d979`; the authoritative current
+state is the reconciliation block above.
 
 This entry supersedes the 2026-07-29 Ponto section below. The reconstruction
 started from `origin/main` through PR #920 and was repeated read-only after PR
