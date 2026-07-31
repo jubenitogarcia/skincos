@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "ponto:governance:test": "node .github/scripts/ponto-single-operator-governance.test.mjs",
     "observability:validate": "node scripts/observability/validate-catalog.mjs",
     "architecture:validate": "node ./.github/scripts/validate-architecture.mjs && node ./.github/scripts/validate-module-catalog.mjs && node ./.github/scripts/validate-domain-boundaries.mjs",
     "architecture:test": "npm run architecture:validate",

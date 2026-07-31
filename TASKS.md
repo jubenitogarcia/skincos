@@ -1,12 +1,13 @@
 # TASKS
 
-## Reconciliacao autoritativa — `origin/main` `28747bb5109407856bd3cb700d91f7f3cb981a69` — 2026-07-31
+## Reconciliacao autoritativa — `origin/main` `01d2b6d1f79a9017e0a87efa2a1a32f82eed219f` — 2026-07-31
 
 Esta e a fonte atual para o ciclo. O checkout compartilhado tinha alteracoes
 nao relacionadas preservadas fora desta PR em
 `C:\CodexRuntime\operator\admin\skincos\reconciliation-20260731`; elas nao
-foram misturadas. A PR #933 foi integrada como `a70fe64c...` e a PR #934 como
-`28747bb...`, ambas com checks verdes.
+foram misturadas. A PR #933 foi integrada como `a70fe64c...` e as PRs
+#934/#936/#937/#938/#939 tambem foram integradas com checks verdes; `01d2b6d1...`
+e o main atual.
 
 - Insumos P0 permanece resolvido por #847/#848; nao ha novo sintoma ou escrita
   nesta reconciliacao.
@@ -27,11 +28,13 @@ foram misturadas. A PR #933 foi integrada como `a70fe64c...` e a PR #934 como
   artefatos de alerta/recuperacao permanecem, mas a instalacao atual e somente
   Run key, sem Scheduled Task/processo ativo, e o ultimo health privado e
   `2026-07-30T18:30:37Z`.
-- Ponto: #930/#931/#933 estao integradas e #934 corrigiu apenas o gateway WSL;
-  controles de release estao no main,
-  mas nao existe SHA selecionado nem evidencia nova de staging/producao apos
-  a integracao. Broker externo, WAF e custodia de chaves continuam gates
-  externos fail-closed.
+- Ponto: #930/#931/#933 estao integradas; o delta posterior em #934/#936/#937/
+  #938/#939 e nao-Ponto. Esta branch prepara a decisao governada
+  `single-operator-codex` (sem reviewer humano, sem bypass administrativo,
+  main-only, checks obrigatorios, merge canonico, custodia separada e rollback
+  automatico). Ate essa PR ser integrada e os controles externos comprovados,
+  nao existe SHA selecionado nem evidencia nova de staging/producao; broker,
+  WAF, runner, identidade piloto e custodia permanecem fail-closed.
 
 Proximo marco seguro: revalidar a observabilidade continua e, depois, executar
 preview/staging completos do Financeiro no SHA entao atual, sempre com SHA

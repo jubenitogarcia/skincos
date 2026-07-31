@@ -3,6 +3,46 @@
   "sourceBranch": "main",
   "stages": ["preview", "staging", "pilot", "canary", "production"],
   "stagePredecessor": {"staging": "preview", "pilot": "staging", "canary": "pilot", "production": "canary"},
+  "governance": {
+    "authorizationModel": "single-operator-codex",
+    "operatorLogin": "jubenitogarcia",
+    "humanReviewerRequired": false,
+    "mainOnly": true,
+    "canonicalMergedPullRequestRequired": true,
+    "administratorBypassAllowed": false,
+    "requiredChecks": [
+      "CI Smoke (Assert)",
+      "Central E2E Smoke",
+      "JS/TS Checks (workspace)",
+      "Dependency Audit (JS/TS)",
+      "Scan for secrets (Gitleaks)"
+    ],
+    "environmentProtection": {
+      "staging": {
+        "requiredReviewers": 0,
+        "preventSelfReview": false,
+        "protectedBranches": false,
+        "customBranchPolicies": true,
+        "requiredBranch": "main"
+      },
+      "production": {
+        "requiredReviewers": 0,
+        "preventSelfReview": false,
+        "protectedBranches": false,
+        "customBranchPolicies": true,
+        "requiredBranch": "main"
+      }
+    },
+    "attestation": {
+      "codexWorkflow": ".github/workflows/ponto-progressive-release.yml",
+      "immutableSource": "release_sha equals the current main commit and is ancestor-reachable",
+      "targetBoundCapabilities": true,
+      "splitCustody": true,
+      "sanitizedArtifacts": true,
+      "automaticRollback": true,
+      "noAdministrativeBypass": true
+    }
+  },
   "controls": {
     "immutableSource": "release-source-<sha> artifact and source SHA reachable from main",
     "featureFlag": "module-specific flag remains disabled until the approved stage",

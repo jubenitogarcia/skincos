@@ -1,5 +1,23 @@
 # Current state
 
+## Reconciliacao autoritativa — `origin/main` `01d2b6d1f79a9017e0a87efa2a1a32f82eed219f` — 2026-07-31T15:00Z
+
+As PRs #933, #934, #936, #937, #938 e #939 estao integradas; o HEAD atual e
+`01d2b6d1...` e o delta apos #933 e nao-Ponto. A branch
+`codex/admin/ponto-single-operator-governance` contem a proposta ainda nao
+mergeada para governanca `single-operator-codex`: main-only, PR canonica
+mergeada, SHA imutavel, checks obrigatorios, sem bypass administrativo, sem
+reviewer humano, custodia separada, WAF/broker fail-closed e rollback
+automatico. Nao ha SHA final selecionado, nem preview/staging/pilot/canary ou
+producao neste HEAD.
+
+O estado remoto permanece fail-closed: staging e producao em
+`module-control:timekeeping=maintenance`; os Workers e Pages observados nao
+carregam este SHA; as migrations D1 0001--0008 existem nos dois bancos; o
+emergency latch, broker, WAF customizado, runner JIT, identidade piloto e
+custodias Ponto ainda nao foram comprovados/provisionados. Readiness 200 nao e
+prova de jornada autenticada.
+
 ## Reconciliacao atual — `origin/main` `28747bb5109407856bd3cb700d91f7f3cb981a69` — 2026-07-31T14:37Z
 
 Este bloco supersede qualquer afirmacao abaixo que trate `35aa17db...`,

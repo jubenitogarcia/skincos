@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-31T14:37:00Z",
-  "source_main_sha": "28747bb5109407856bd3cb700d91f7f3cb981a69",
-  "source_main_state": "reconciled-current-main-pr-934-merged-no-finance-current-sha-staging-chain",
+  "authoritative_at": "2026-07-31T15:00:00Z",
+  "source_main_sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
+  "source_main_state": "reconciled-current-main-pr-939-merged-ponto-single-operator-governance-pending",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
@@ -19,7 +19,7 @@
         "seven historical Timekeeping child runs and CRM Pages attempt-2 run 30491926800 retain their old definitions; live dispatch fences and both disabled legacy Ponto smokes must remain through expiry or reviewed replacement",
         "required WAF enforcement and the three immutable rule identifiers are unproven: CLOUDFLARE_ZONE_ID is present by name after checkpoint 14, but the visible zone listing exposed only managed rulesets, the custom entrypoint GET was unauthorized, both browser paths reached login without an authenticated session, and the post-merge security-token path still needs attestation",
         "governed capability custody is unprovisioned: each target environment needs a distinct PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY and the repository needs only PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON verifier metadata",
-        "staging and production now require main-only custom branch policies, can_admins_bypass=false and prevent_self_review=true, but the sole repository collaborator is the owner reviewer, GITHUB_TOKEN can_approve_pull_request_reviews=false, no authorized app/bot approver is proved and no independent reviewer is available",
+        "staging and production currently retain the legacy required-reviewer environment rule; the single-operator Codex policy is implemented on branch codex/admin/ponto-single-operator-governance but is not yet merged or applied remotely",
         "scheduled production Ponto Smoke run 30521686413 correctly detects ready=false under maintenance but is not successful external production SLO evidence; UI Smoke run 30518888970 is not an authenticated authorized-user journey",
         "authorized profile-key custody, target-environment root-attestation and Pages-intent keys, repository public/key-id metadata and per-environment custody references are absent",
         "the historical GESTOR account behind the removed legacy repository smoke credentials has not been identified or revoked",
@@ -57,7 +57,7 @@
         "explicit module-control active state and staging rollback drill",
         "version affinity, gradual routing, network-context cohort, minimal grants, automatic interruption and external SLO evidence for pilot and canary",
         "distinct PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY presence by name in each target environment and repository PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON public metadata, without reading private values",
-        "independent staging/production deployment reviewer or protection rule with no administrator bypass, separately from an Identity/Workforce-valid pilot designation",
+        "merged single-operator Codex environment-governance policy with no required reviewer, no administrator bypass, main-only admission and exact required checks, separately from an Identity/Workforce-valid pilot designation",
         "PONTO_ROOT_ATTESTATION_KEY_SHARED present only in protected target environments with one effective version, repository metadata PONTO_ROOT_ATTESTATION_KEY_ID, target-environment-only PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY, distinct approved-vault references and durable producer run/artifact provenance",
         "production checkpoint, deployment/version, health/readiness, authenticated pilot and post-release observation"
       ],
