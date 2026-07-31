@@ -1783,6 +1783,44 @@ público permaneceram HTTP 200 e não houve warning novo no journal.
 Checkpoint pós-restauração:
 `C:\CodexRuntime\operator\admin\skincos\checkpoints\livia-carousel-followup-post-restore-20260731T125600-0300`, índice SHA-256
 `9702EE69E5B398706FDC9A4E515C6F02FC3E5D32FC596E39EF6E72705B05D3ED`.
-O aceite end-to-end de carrossel inédito segue pendente exclusivamente pela
-ausência dos novos IDs no Drive canônico; não há correção de código pendente
-nem impacto no caminho de Reel comprovado anteriormente.
+Esse checkpoint registra o estado do follow-up antes da correlação retrospectiva
+da execução `349`; a ausência de itens elegíveis em `350`, `351` e `352` é um
+no-op esperado depois de os arquivos terem sido marcados como publicados, não
+uma prova de que o carrossel não existiu. Não há correção de código pendente nem
+impacto no caminho de Reel comprovado anteriormente.
+
+## Livia — encerramento da correlação do carrossel `3107260830` — 2026-07-31
+
+A execução real `349` (modo `trigger`, 11:20:23.728–11:32:37.100 -03,
+`success`) consumiu exatamente os oito arquivos do grupo `dt:3107260830` na
+pasta canônica `07` (`1Dq_1TeD4RCQAaYFSarXA7c63nDvtUvE9`). Os IDs foram
+correlacionados com `Prepare Media Items`, `Write File`, `Prepare Livia Visual
+Contract` e `Update File`, preservando `groupOrder` de 0 a 7 e `quantity=8`.
+Após a verificação externa, cada arquivo recebeu `properties.published=true`;
+o ledger de publicação contém oito registros de mídia e um registro de grupo,
+com 64 jobs concluídos e 64 chaves semânticas/IDs remotos únicos nos respectivos
+passos.
+
+O verificador do release imutável confirmou seis destinos, todos `verified`,
+com estes IDs/URLs canônicos: Instagram BSS `18122726122759652`
+([DbdePoEG8vr](https://www.instagram.com/p/DbdePoEG8vr/)); Facebook BSS
+`185513961319461_122301457250185094`
+([post](https://www.facebook.com/185513961319461/posts/122301457250185094));
+Threads BSS `18005017940951424`
+([DbdeikGm-GA](https://www.threads.com/@espacofacial_barrashoppingsul/post/DbdeikGm-GA));
+Instagram NH `18025511735849121`
+([DbdetGhkeOU](https://www.instagram.com/p/DbdetGhkeOU/)); Facebook NH
+`108464268875460_974304515632190`
+([post](https://www.facebook.com/108464268875460/posts/974304515632190)); e
+Threads NH `18092649344387099`
+([DbdfAkylmEr](https://www.threads.com/@espacofacial_novohamburgo/post/DbdfAkylmEr)).
+Não há `contentDeliveryGaps`, gaps de Drive ou avisos de API; a notificação
+`Inform Success (2)` foi entregue e o cleanup alcançou `Cleanup Temp Files`.
+
+As execuções posteriores `350`, `351` e `352` foram gatilhos `success` legítimos
+que terminaram em `List Files`, com cinco pastas lidas, zero itens elegíveis,
+zero jobs, zero chamadas HTTP, zero marcações, zero notificações e zero cleanup.
+O workflow permanece ativo na versão histórica
+`d3f4bd2a-f11c-4bc6-9b70-33fdf0f6a9d7`, pinado ao release imutável
+`01d2b6d1f79a9017e0a87efa2a1a32f82eed219f`; o schedule diário continua
+`field: days`, 13:26, e os healthchecks local/público permanecem HTTP 200.
