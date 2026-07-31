@@ -1486,6 +1486,31 @@
       "execution": 351,
       "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\livia-carousel-followup-post-restore-20260731T125600-0300",
       "rollback_checkpoint_sha256": "9702EE69E5B398706FDC9A4E515C6F02FC3E5D32FC596E39EF6E72705B05D3ED"
+    },
+    {
+      "observed_at": "2026-07-31T23:55:00Z",
+      "surface": "github-actions-cloudflare-finance-staging-and-production-foundation",
+      "scope": "Finance current-main immutable promotion and disabled production foundation",
+      "state": "experimental-staging-and-foundation-proven-pilot-approval-pending",
+      "method": "Explicitly selected main SHA 1a8eeec5a188301635603a3ecbd2eb4c8b18368c; canonical candidate, Worker/UI preview and staging, synthetic canary, controlled abort/kill-switch, guarded production Worker/UI promotion, read-only health/readiness/binding/D1 checks and external monitor drill.",
+      "result": "Candidate 30673147811, Worker/UI preview 30673438315/30673439481, staging 30673466768/30673467862 and canary 30673602091 completed on the same SHA. Canary recorded 22 samples, p95 192 ms and zero threshold breaches; authenticated import decision/replay/conflict/audit/undo and synthetic cleanup passed. Abort drill 30673708958 intentionally breached the error limit, executed kill switch and restored the disabled baseline. Production foundation Worker/UI runs 30673820551/30673971801 use the same SHA; health/readiness and API binding returned 200, production D1 reported module_enabled=false, zero real grants and zero audit rows, and the deploy permission was restored to false.",
+      "limitation": "Finance remains experimental and disabled; no real user, grant, cohort, flag or business data changed. Nominal pilot approval is the only current Finance gate. The historical audit returned 503 is superseded by current canary audit 200. origin/main later advanced to 3682518e69840c34904fae5f1432917ffd04217a in security-only PR #974; that commit was not mixed into this immutable artifact. The production API itself was not republished in this change; its binding now reaches the current Finance Worker.",
+      "sha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
+      "origin_main_at_selection": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
+      "origin_main_current": "3682518e69840c34904fae5f1432917ffd04217a",
+      "runs": [30673147811, 30673438315, 30673439481, 30673466768, 30673467862, 30673602091, 30673708958, 30673820551, 30673971801],
+      "rollback_sha": "6acbd485...",
+      "evidence_ref": "https://github.com/jubenitogarcia/skincos/actions/runs/30673820551 (sanitized preflight artifact 8809724860; post-deploy checks recorded in run logs)"
+    },
+    {
+      "observed_at": "2026-07-31T23:20:00Z",
+      "surface": "external-observability-runtime",
+      "scope": "Continuous monitor, dashboard, human alert and recovery",
+      "state": "operator-run-key-continuous-with-event-log-limitation",
+      "method": "Installed external supervisor/dashboard outside GitHub and Cloudflare; loopback health; catalog validation; controlled failure twice followed by two healthy probes.",
+      "result": "installation.json reports execution_mode=operator-run-key and startup=automatic. Exactly one supervisor and dashboard were running; dashboard health returned ok=true with 30-day retention. notifications.jsonl recorded confirmed alert and resolved transitions with Windows human-message delivery and healthy module list including Finance production foundation.",
+      "limitation": "The non-elevated operator session could not write the Windows Application Event Log (event_log_delivery=failed); no Event Log delivery is claimed. Runtime evidence remains private and contains no tokens or personal data.",
+      "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\observability\\notifications.jsonl"
     }
   ]
 }

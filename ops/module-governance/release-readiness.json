@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "assessedAt": "2026-07-31T14:37:00Z",
+  "assessedAt": "2026-07-31T23:55:00Z",
   "assessmentRule": "A live endpoint, historical deployment, or local test alone does not make a module releasable. A module is released only when its catalog maturity and reviewed promotion evidence satisfy the target gate.",
   "enterpriseGate": ["explicit feature flag defaulting to off", "least-privilege pilot group", "non-production or approved seed data", "operator training and named support channel", "safe manual fallback", "measurable success criteria", "tested rapid rollback", "backup, restore and independent monitoring evidence"],
   "classification": [
@@ -8,7 +8,7 @@
     { "id": "api", "currentUse": "Production gateway health returned 200 on 2026-07-23", "decision": "hold", "reason": "Core transport, not a separately releasable product capability; deployed health contract is legacy." },
     { "id": "booking", "currentUse": "Public booking paths are registered", "decision": "hold", "reason": "No approved pilot flag or restore evidence." },
     { "id": "crm", "currentUse": "CRM console returned 200 on 2026-07-23", "decision": "hold", "reason": "Console health returned HTML, so API readiness and independent monitoring are not evidenced." },
-    { "id": "finance", "currentUse": "Last complete staging chain is ba16cb4a845e8f96032476a3a2828fc1fb22b399 (Worker/UI/CRM Pages plus canary and synthetic identity smoke); origin/main is now 28747bb5109407856bd3cb700d91f7f3cb981a69 without a matching full staging chain. The module remains disabled and production resources are absent.", "decision": "blocked-current-main-staging-chain-observability-and-named-pilot-approval", "reason": "Rollback, kill switch, Finance D1/KV scratch restore and fresh PostgreSQL offsite restore remain valid for recorded artifacts. Current-main preview/staging/canary evidence, continuous external monitor operation and named approval are still required; production provisioning is separately authorized only." },
+    { "id": "finance", "currentUse": "The explicitly selected main SHA 1a8eeec5a188301635603a3ecbd2eb4c8b18368c passed the canonical candidate, Worker/UI preview and staging, synthetic canary and controlled abort/kill-switch drill (runs 30673147811, 30673438315, 30673439481, 30673466768, 30673467862, 30673602091 and 30673708958). The isolated production foundation was promoted with the same SHA (Worker 30673820551, UI 30673971801) but remains disabled with zero real grants. origin/main later advanced to 3682518e69840c34904fae5f1432917ffd04217a in security-only PR #974.", "decision": "blocked-named-pilot-approval", "reason": "Staging rollback, kill switch, Finance scratch restore, fresh PostgreSQL offsite restore and continuous external monitor evidence are current. Only the nominal pilot package approval (owners, unit/cohort, window, support, training and abort criteria) remains before any activation; no production pilot is authorized by this record." },
     { "id": "identity", "currentUse": "Compatibility authentication path remains in use", "decision": "hold", "reason": "Identity is not independently deployed and must not be released as a new service until its cutover gate is complete." },
     { "id": "integration", "currentUse": "Operator-managed connector executors", "decision": "hold", "reason": "Provider-specific release controls and recovery evidence are incomplete." },
     { "id": "inventory", "currentUse": "Production health returned 200 on 2026-07-23", "decision": "candidate-after-finance", "reason": "No disabled-by-default Inventory module flag, independent restore drill or external monitor evidence." },
@@ -24,7 +24,7 @@
   ],
   "releaseCandidates": [
     {
-      "id": "finance", "order": 1, "targetState": "pilot", "status": "blocked-pending-evidence",
+      "id": "finance", "order": 1, "targetState": "pilot", "status": "blocked-pending-named-approval",
       "featureFlag": "finance_settings.module_enabled=false; enable only with an explicit finance_access_grant and CRM allowedModules=finance",
       "pilotGroup": "One named internal finance operator, one backup reviewer and one non-personal test unit; identities and unit are recorded only in the private approval ticket.",
       "initialData": "Create a pilot-only chart of accounts, one test supplier, one test customer and balanced opening entries in isolated Finance D1. Do not import historical or personal-finance data.",
@@ -33,7 +33,7 @@
       "support": "Primary: designated private Skincos operations channel; escalation: finance owner @jubenitogarcia; incident record in the private operator runtime.",
       "successCriteria": "Five business days with 100% pilot reconciliation, no unauthorized access, no duplicate movement, p95 bootstrap/read within 1 s, and a successful staged rollback exercise.",
       "rollback": "Set module_enabled=false, remove pilot grants, stop imports, notify pilot users, reconcile pending references manually, and retain additive schema. Restore only via the Finance D1 runbook.",
-      "requiredEvidence": ["Finance Worker deployed first to staging and its gateway binding verified", "independent external health/readiness monitor and alert route", "encrypted offsite Finance D1 backup", "isolated Finance restore drill with retained evidence", "authenticated staging import and UI smoke", "named pilot approval"]
+      "requiredEvidence": ["Finance Worker deployed first to staging and its gateway binding verified (runs 30673466768 and 30673820551)", "independent external health/readiness monitor and alert route (operator-run-key, controlled alert/resolution)", "encrypted offsite Finance D1 backup", "isolated Finance restore drill with retained evidence", "authenticated staging import and UI smoke (run 30673602091)", "named pilot approval"]
     },
     {
       "id": "workforce", "order": 2, "targetState": "pilot", "status": "blocked-pending-evidence",

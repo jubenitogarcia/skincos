@@ -1,5 +1,26 @@
 # Release, canary e recuperação do Financeiro
 
+## Evidencia autoritativa atual — 2026-07-31T23:55Z
+
+O SHA Finance explicitamente selecionado foi
+`1a8eeec5a188301635603a3ecbd2eb4c8b18368c`. A cadeia canonica comprovada e
+candidata `30673147811`, previews Worker/UI `30673438315`/`30673439481`,
+staging Worker/UI `30673466768`/`30673467862`, canary `30673602091` e
+abort/kill switch `30673708958`. O canary autenticado passou com 22 amostras,
+p95 de 192 ms,
+zero breaches, replay idempotente, conflito explicito, auditoria e undo. O
+abort drill falhou apenas na assercao final intencional de limite excedido e
+restaurou a baseline desativada.
+
+A fundacao produtiva isolada foi promovida pelo mesmo SHA (Worker
+`30673820551`, UI `30673971801`) e permanece desativada: `module_enabled=false`,
+zero grants reais, health/readiness 200 e flag de deploy restaurada para
+`false`. O rollback conhecido e `6acbd485...`. A main avancou posteriormente
+para `3682518e69840c34904fae5f1432917ffd04217a` no PR #974 security-only; esse
+SHA nao foi misturado ao artefato. Esta evidencia nao e aprovacao
+de piloto; faltam somente ficha nominal, unidade/coorte, janela, suporte,
+treinamento e criterios de abort aprovados.
+
 ## Ordem obrigatória
 
 1. No primeiro uso de staging, executar `deploy-finance.yml` com `bootstrap_service_secret=true`; nas execuções posteriores, manter esse campo como `false`. O Worker Financeiro deve existir antes de um gateway poder declarar sua service binding.

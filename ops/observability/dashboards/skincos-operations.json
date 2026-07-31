@@ -3,7 +3,7 @@
   "uid": "skincos-operations",
   "tags": ["skincos", "operations", "external-monitor"],
   "description": "Import into Grafana when provisioned. The running Windows monitor also produces a dependency-free HTML dashboard from the same catalog.",
-  "templating": { "list": [{ "name": "environment", "type": "custom", "query": "production,staging" }, { "name": "unit", "type": "custom", "query": "api,crm-pages,escala,orb,finance,timekeeping" }] },
+  "templating": { "list": [{ "name": "environment", "type": "custom", "query": "production,staging" }, { "name": "unit", "type": "custom", "query": "api,crm-pages,escala,orb,finance,finance-production,timekeeping" }] },
   "panels": [
     { "title": "Availability by unit", "type": "stat", "query": "skincos_probe_success{environment=\"$environment\",unit=~\"$unit\"}" },
     { "title": "Probe latency", "type": "timeseries", "query": "skincos_probe_duration_ms{environment=\"$environment\",unit=~\"$unit\"}" },
