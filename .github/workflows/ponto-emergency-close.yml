@@ -97,6 +97,7 @@ jobs:
           node - "$directory/maintenance.json" \
             "$directory/overlay-expectation.json" \
             "$directory/control-fallback-expectation.json" <<'NODE'
+          (async () => {
           const fs = require("fs");
           const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const headers = { accept: "application/json", "cache-control": "no-cache" };
