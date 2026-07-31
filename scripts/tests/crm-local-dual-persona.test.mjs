@@ -592,6 +592,8 @@ test('immutable source and build cache are keyed by the exact source fingerprint
   assert.match(launcher, /não corresponde à impressão solicitada; ela não será alterada/)
   assert.match(launcher, /\$crmBuildCacheRoot = Join-Path \$operatorRuntimeRoot "cache\\crm-local\\builds"/)
   assert.match(launcher, /Get-CrmInstanceBuildPaths -SourceFingerprint/)
+  assert.match(launcher, /function Convert-CrmSourceOriginToWsl/)
+  assert.match(launcher, /"--source-origin", \(Convert-CrmSourceOriginToWsl -SourceOrigin \$SourceOrigin\)/)
   assert.match(launcher, /\$sourceOrigin = "\{0\}__\{1\}" -f \$sourceRoot, \(\[string\]\$spec\.runtimeId\)/)
   assert.match(launcher, /Local\\SkincosCrmPersonaSource-\$\(\$Persona\.ToLowerInvariant\(\)\)/)
   assert.match(launcher, /function Assert-CrmLocalLauncherContract/)
