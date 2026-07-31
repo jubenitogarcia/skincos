@@ -230,6 +230,7 @@ jobs:
         env:
           TARGET: ${{ inputs.target }}
           STAGING_WORKER_URL: ${{ vars.FINANCE_STAGING_WORKER_URL }}
+          FINANCE_PRODUCTION_WORKER_URL: ${{ vars.FINANCE_PRODUCTION_WORKER_URL }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail

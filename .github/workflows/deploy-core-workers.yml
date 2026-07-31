@@ -737,6 +737,7 @@ jobs:
           BOOTSTRAP_FINANCE_CONTEXT: ${{ inputs.bootstrap_finance_context }}
           RELEASE_SCOPE: ${{ inputs.release_scope }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
+          TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
         run: |
           set -euo pipefail
           if [[ "$TARGET" == "staging" ]]; then
