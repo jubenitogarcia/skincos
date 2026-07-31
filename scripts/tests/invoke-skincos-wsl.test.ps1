@@ -124,6 +124,21 @@ Assert-Contains `
     -Expected "bash -- 'scripts/codex-context.sh' '--online'" `
     -Message "ScriptPath must normalize and invoke a repository-relative shell script"
 
+$workingDirectoryInvocation = New-SkincosWslInvocation `
+    -Mode Executable `
+    -Target "node" `
+    -ProjectRoot "C:\CodexShared\Projetos\skincos" `
+    -WorkingDirectory "crm/console" `
+    -Argument @("--version") `
+    -SkipBootstrapCheck `
+    -SkipNodeCheck `
+    -SkipNpmCheck `
+    -SkipGitCheck
+Assert-Contains `
+    -Value $workingDirectoryInvocation.BashCommand `
+    -Expected "cd -- 'crm/console'" `
+    -Message "WorkingDirectory must remain repository-relative and be applied before the typed command"
+
 $python = New-SkincosWslInvocation `
     -Mode PythonScript `
     -Target "integration/ef/selftest.py" `

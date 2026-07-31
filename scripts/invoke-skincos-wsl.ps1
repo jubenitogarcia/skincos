@@ -32,6 +32,10 @@ param(
 
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
 
+    # The typed wrapper supplies this for process-control helpers.  Keep it
+    # repository-relative so a caller cannot escape the approved checkout.
+    [string]$WorkingDirectory = ".",
+
     [string]$WslExecutable = "wsl.exe",
 
     [Alias("Environment", "EnvironmentVariable", "EnvironmentVariables")]
@@ -142,6 +146,37 @@ function Resolve-SafeRepoRelativePath {
         throw "$ParameterName must identify a $RequiredExtension file. Received: $Path"
     }
 
+    return $normalized
+}
+
+function Resolve-SafeWorkingDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or
+        $Path.Contains([char]0) -or
+        $Path.Contains("`r") -or
+        $Path.Contains("`n")) {
+        throw "WorkingDirectory must be a repository-relative path."
+    }
+
+    $normalized = $Path.Replace('\', '/')
+    if ($normalized -match '^[A-Za-z]:' -or $normalized.StartsWith('/')) {
+        throw "WorkingDirectory must be relative to ProjectRoot. Received: $Path"
+    }
+    if ($normalized.Contains('//')) {
+        throw "WorkingDirectory contains an ambiguous empty path segment. Received: $Path"
+    }
+    while ($normalized.StartsWith('./')) {
+        $normalized = $normalized.Substring(2)
+    }
+    if ([string]::IsNullOrWhiteSpace($normalized) -or $normalized -eq '.') {
+        return '.'
+    }
+    if (@($normalized.Split('/')) -contains '..') {
+        throw "WorkingDirectory may not traverse outside ProjectRoot. Received: $Path"
+    }
     return $normalized
 }
 
@@ -257,6 +292,7 @@ function New-SkincosWslInvocation {
         [string]$Mode,
         [Parameter(Mandatory = $true)][string]$Target,
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [string]$WorkingDirectory = ".",
         [AllowEmptyCollection()][string[]]$Argument = @(),
         [AllowEmptyCollection()][string[]]$EnvVar = @(),
         [switch]$SkipBootstrapCheck,
@@ -296,6 +332,7 @@ function New-SkincosWslInvocation {
     if ($repoMountPath -notmatch '^/mnt/[a-z](?:/|$)') {
         throw "ProjectRoot must be an absolute Windows drive path. Received: $ProjectRoot"
     }
+    $normalizedWorkingDirectory = Resolve-SafeWorkingDirectory -Path $WorkingDirectory
 
     # Resolve every environment entry before any WSL process can start.
     $resolvedEnvironment = [System.Collections.Generic.List[object]]::new()
@@ -366,6 +403,11 @@ function New-SkincosWslInvocation {
     }
 
     $bashLines.Add("cd -- $safeRepoLiteral")
+    if ($normalizedWorkingDirectory -ne '.') {
+        $workingDirectoryLiteral = Convert-ToBashLiteral -Value $normalizedWorkingDirectory
+        $bashLines.Add("if [[ ! -d $workingDirectoryLiteral ]]; then printf '%s\\n' 'WorkingDirectory was not found below ProjectRoot.' >&2; exit 1; fi")
+        $bashLines.Add("cd -- $workingDirectoryLiteral")
+    }
 
     $targetLiteral = Convert-ToBashLiteral -Value $normalizedTarget
     $argumentSuffix = if ([string]::IsNullOrEmpty($argumentText)) { "" } else { " $argumentText" }
@@ -461,6 +503,7 @@ $invocation = New-SkincosWslInvocation `
     -Mode $mode `
     -Target $target `
     -ProjectRoot $ProjectRoot `
+    -WorkingDirectory $WorkingDirectory `
     -Argument $Argument `
     -EnvVar $EnvVar `
     -SkipBootstrapCheck:$SkipBootstrapCheck `
