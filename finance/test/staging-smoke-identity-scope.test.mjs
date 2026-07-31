@@ -30,8 +30,13 @@ test('synthetic Finance identity preserves only the explicit Finance module in t
 
   assert.match(provision.core, /'INJETOR'/);
   assert.match(provision.core, /'\["finance"\]'/);
+  assert.match(provision.core, /UPDATE crm_users SET/);
+  assert.match(provision.core, /WHERE username='finance-staging-smoke' AND ativo=0/);
+  assert.match(provision.core, /WHERE NOT EXISTS \(SELECT 1 FROM crm_users/);
   assert.doesNotMatch(provision.core, /'CONSULTOR'/);
   assert.match(rotation.core, /role='INJETOR'/);
   assert.match(rotation.core, /allowed_modules_json='\["finance"\]'/);
+  assert.match(provision.finance, /ON CONFLICT\(username,scope_id\) DO UPDATE/);
+  assert.match(rotation.finance, /ON CONFLICT\(username,scope_id\) DO UPDATE/);
   assert.match(rotation.finance, /finance_access_grant/);
 });

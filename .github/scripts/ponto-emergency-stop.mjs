@@ -131,10 +131,10 @@ export function parseCoordinator(run, {
   if (
     !match
     || run?.workflow_id !== workflowId
-    || run?.path !== ".github/workflows/ponto-progressive-release.yml@refs/heads/main"
+    || ![".github/workflows/ponto-progressive-release.yml", ".github/workflows/ponto-progressive-release.yml@refs/heads/main"].includes(run?.path)
     || run?.event !== "workflow_dispatch"
     || run?.head_branch !== "main"
-    || run?.name !== "Ponto progressive release"
+    || run?.name !== `Ponto ${match[1]} ${match[2]} orchestrator=${match[3]}`
     || run?.repository?.full_name !== repository
     || run?.head_repository?.full_name !== repository
     || String(run?.id || "") !== match[3]

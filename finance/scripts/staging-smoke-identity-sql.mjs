@@ -47,13 +47,16 @@ if (action === 'provision') {
   coreSql = [
     // Cloudflare D1's remote SQL API rejects explicit transaction control.
     // Each generated file is submitted as a single D1 request by the canonical
-    // workflow, so leave transaction ownership to the D1 service.
-    `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version) VALUES(${quote(username)},${quote('finance-staging-smoke@staging.invalid')},${quote('Finance staging smoke (synthetic)')},${quote(passwordHash())},'INJETOR','',${quote(JSON.stringify(['novo-hamburgo']))},${quote(JSON.stringify(['finance']))},1,${quote(now)},${quote(now)},1);`,
-    audit('FINANCE_SMOKE_IDENTITY_PROVISIONED', null, { ...baseline, active: true }),
+    // workflow, so leave transaction ownership to the D1 service. Provision is
+    // safe for the one known synthetic username even when a previous revoke
+    // left its inactive row behind: reactivate that row, otherwise insert it.
+    `UPDATE crm_users SET email=${quote('finance-staging-smoke@staging.invalid')},display_name=${quote('Finance staging smoke (synthetic)')},password_hash=${quote(passwordHash())},role='INJETOR',photo_url='',allowed_units_json=${quote(JSON.stringify(['novo-hamburgo']))},allowed_modules_json=${quote(JSON.stringify(['finance']))},ativo=1,updated_at=${quote(now)},session_version=COALESCE(session_version,0)+1 WHERE username=${quote(username)} AND ativo=0;`,
+    `INSERT INTO crm_users(username,email,display_name,password_hash,role,photo_url,allowed_units_json,allowed_modules_json,ativo,created_at,updated_at,session_version) SELECT ${quote(username)},${quote('finance-staging-smoke@staging.invalid')},${quote('Finance staging smoke (synthetic)')},${quote(passwordHash())},'INJETOR','',${quote(JSON.stringify(['novo-hamburgo']))},${quote(JSON.stringify(['finance']))},1,${quote(now)},${quote(now)},1 WHERE NOT EXISTS (SELECT 1 FROM crm_users WHERE username=${quote(username)});`,
+    audit('FINANCE_SMOKE_IDENTITY_PROVISIONED_OR_REACTIVATED', null, { ...baseline, active: true }),
   ].join('\n');
   financeSql = [
-    `INSERT INTO finance_access_grants(id,username,scope_id,permission,created_at,created_by) VALUES(${quote('finance-staging-smoke-operator-nh')},${quote(username)},${quote(scopeId)},'operator',${quote(now)},${quote(technicalActor)});`,
-    financeAudit('FINANCE_SMOKE_GRANT_PROVISIONED', null, { ...baseline, permission: 'operator' }),
+    `INSERT INTO finance_access_grants(id,username,scope_id,permission,created_at,created_by) VALUES(${quote('finance-staging-smoke-operator-nh')},${quote(username)},${quote(scopeId)},'operator',${quote(now)},${quote(technicalActor)}) ON CONFLICT(username,scope_id) DO UPDATE SET permission='operator',created_at=${quote(now)},created_by=${quote(technicalActor)};`,
+    financeAudit('FINANCE_SMOKE_GRANT_PROVISIONED_OR_REACTIVATED', null, { ...baseline, permission: 'operator' }),
   ].join('\n');
 } else if (action === 'rotate') {
   coreSql = [
@@ -61,6 +64,7 @@ if (action === 'provision') {
     audit('FINANCE_SMOKE_IDENTITY_ROTATED', { active: true }, { ...baseline, active: true }),
   ].join('\n');
   financeSql = [
+    `INSERT INTO finance_access_grants(id,username,scope_id,permission,created_at,created_by) VALUES(${quote('finance-staging-smoke-operator-nh')},${quote(username)},${quote(scopeId)},'operator',${quote(now)},${quote(technicalActor)}) ON CONFLICT(username,scope_id) DO UPDATE SET permission='operator',created_at=${quote(now)},created_by=${quote(technicalActor)};`,
     financeAudit('FINANCE_SMOKE_GRANT_ROTATION_CONFIRMED', { permission: 'operator' }, { ...baseline, permission: 'operator' }),
   ].join('\n');
 } else {

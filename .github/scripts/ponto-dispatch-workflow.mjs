@@ -31,6 +31,15 @@ export const dispatchTimeoutMsFor = (workflow, configuredTimeoutMs) => Math.max(
   minimumDispatchTimeoutMsByWorkflow[workflow] || 0,
 );
 
+export function assertMainShaUnchanged(orchestratorSha, mainSha) {
+  const expected = String(orchestratorSha || "").trim().toLowerCase();
+  const observed = String(mainSha || "").trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(expected) || observed !== expected) {
+    throw new Error("main advanced after the immutable Ponto coordinator was selected");
+  }
+  return expected;
+}
+
 export function governedLeaseKeyFor(workflow, inputs) {
   if (workflow === "deploy-timekeeping.yml" && inputs.target !== "preview") return "timekeeping";
   if (
@@ -150,6 +159,9 @@ const request = async (pathname, init = {}) => {
   return readGitHubResponse(response);
 };
 
+const currentMain = await request(`/repos/${repository}/commits/main`);
+assertMainShaUnchanged(orchestratorHeadSha, currentMain?.sha);
+
 const inputs = JSON.parse(fs.readFileSync(inputsFile, "utf8"));
 inputs.orchestrator_run_id = correlation;
 const leaseKey = governedLeaseKeyFor(workflow, inputs);
@@ -227,7 +239,7 @@ if (leaseKey) {
     || parentRun?.repository?.full_name !== repository
     || parentRun?.head_repository?.full_name !== repository
     || String(parentRun?.head_repository?.id || "") !== repositoryId
-    || parentRun?.name !== "Ponto progressive release"
+    || parentRun?.name !== `Ponto ${process.env.STAGE} ${orchestratorHeadSha} orchestrator=${correlation}`
     || parentRun?.display_title !== `Ponto ${process.env.STAGE} ${orchestratorHeadSha} orchestrator=${correlation}`
   ) throw new Error("active Ponto coordinator cannot issue a child-bound capability");
 }
@@ -299,7 +311,7 @@ while (Date.now() - startedAt < timeoutMs) {
       || run.event !== "workflow_dispatch"
       || run.head_branch !== "main"
       || run.head_sha !== orchestratorHeadSha
-      || run.name !== workflowMetadata.name
+      || run.name !== expectedDisplayTitle
       || run.display_title !== expectedDisplayTitle
       || String(run?.repository?.id || "") !== repositoryId
       || run?.repository?.full_name !== repository
@@ -460,7 +472,7 @@ if (
 }
 if (leaseKey && (
   String(run.id) !== persistedRunId
-  || run.name !== workflowMetadata.name
+  || run.name !== expectedGovernedRunName(expectedPath, normalizedIntent)
   || run.display_title !== expectedGovernedRunName(expectedPath, normalizedIntent)
   || String(run?.repository?.id || "") !== repositoryId
   || run?.repository?.full_name !== repository
