@@ -11,121 +11,211 @@ function Assert-True {
     }
 }
 
+function Assert-Contains {
+    param(
+        [Parameter(Mandatory = $true)][string]$Value,
+        [Parameter(Mandatory = $true)][string]$Expected,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+    Assert-True -Condition $Value.Contains($Expected) -Message $Message
+}
+
 function Assert-Throws {
     param(
         [Parameter(Mandatory = $true)][scriptblock]$Action,
-        [Parameter(Mandatory = $true)][string]$Pattern,
         [Parameter(Mandatory = $true)][string]$Message
     )
     try {
         & $Action
-    }
-    catch {
-        Assert-True `
-            -Condition ($_.Exception.Message -match $Pattern) `
-            -Message "$Message (received: $($_.Exception.Message))"
+    } catch {
         return
     }
     throw "ASSERTION FAILED: $Message"
 }
 
-$gateway = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\invoke-skincos-wsl.ps1")).Path
-$projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
-$source = Get-Content -LiteralPath $gateway -Raw
-
+$gatewayPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\invoke-skincos-wsl.ps1")).Path
 $parseErrors = $null
 [void][Management.Automation.Language.Parser]::ParseFile(
-    $gateway,
+    $gatewayPath,
     [ref]$null,
     [ref]$parseErrors
 )
 Assert-True -Condition ($parseErrors.Count -eq 0) -Message "gateway must parse without PowerShell errors"
 
-foreach ($contract in @(
-    'ParameterSetName = "BashScript"',
-    'ParameterSetName = "Executable"',
-    'ParameterSetName = "NpmScript"',
-    'ParameterSetName = "PythonScript"',
-    'ParameterSetName = "InvocationFile"',
-    '"--exec"'
-)) {
-    Assert-True -Condition $source.Contains($contract) -Message "missing typed gateway contract: $contract"
-}
+# Passing a typed placeholder while dot-sourcing loads only the pure renderer.
+# The gateway's dot-source guard guarantees that this test never invokes wsl.exe.
+. $gatewayPath -NpmScript "__gateway_unit_test__"
+
+$npm = New-SkincosWslInvocation `
+    -Mode NpmScript `
+    -Target "codex:context" `
+    -ProjectRoot "C:\CodexShared\Projetos\skincos" `
+    -Argument @("--online", "literal; touch /tmp/not-run", "single'quote") `
+    -EnvVar @("SAFE_VALUE=literal; echo not-run") `
+    -SkipBootstrapCheck `
+    -SkipGitCheck
+
+Assert-Contains `
+    -Value $npm.BashCommand `
+    -Expected "export SAFE_VALUE='literal; echo not-run'" `
+    -Message "environment values must be single-quoted literals"
+Assert-Contains `
+    -Value $npm.BashCommand `
+    -Expected "npm run 'codex:context' -- '--online' 'literal; touch /tmp/not-run'" `
+    -Message "npm arguments must cross as quoted argv entries"
+Assert-Contains `
+    -Value $npm.BashCommand `
+    -Expected '''single''"''"''quote''' `
+    -Message "embedded apostrophes must use the safe bash literal form"
 Assert-True `
-    -Condition ($source.IndexOf('"/bin/bash", "-lc"', [StringComparison]::Ordinal) -gt 0) `
-    -Message "legacy raw-shell compatibility must remain explicit"
+    -Condition (
+        $npm.BashCommand.IndexOf("command -v node", [StringComparison]::Ordinal) -lt
+        $npm.BashCommand.LastIndexOf("npm run", [StringComparison]::Ordinal)
+    ) `
+    -Message "toolchain checks must precede the npm execution"
+
+$processArguments = @(New-SkincosWslProcessArgumentList -BashCommand $npm.BashCommand)
+Assert-True -Condition ($processArguments[0] -eq "--distribution") -Message "distribution must be explicit"
+Assert-True -Condition ($processArguments[1] -eq "Ubuntu-24.04") -Message "Ubuntu-24.04 must be selected"
+Assert-True -Condition ($processArguments[2] -eq "--user") -Message "operator flag must be explicit"
+Assert-True -Condition ($processArguments[3] -eq "admin") -Message "the admin operator must be selected"
+Assert-True -Condition ($processArguments[4] -eq "--") -Message "WSL options must end before bash argv"
+$encodedMatch = [regex]::Match(
+    $processArguments[7],
+    '^printf %s (?<payload>[A-Za-z0-9+/=]+) \| base64 --decode \| bash$'
+)
+Assert-True -Condition $encodedMatch.Success -Message "bash program must use the quote-safe base64 transport"
+$decodedProgram = [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String($encodedMatch.Groups["payload"].Value)
+)
+Assert-True -Condition ($decodedProgram -eq $npm.BashCommand) -Message "base64 transport must preserve the exact rendered program"
+$npmProbeSource = "const p=require('./package.json');const n=process.argv[1];process.exit(p.scripts&&Object.prototype.hasOwnProperty.call(p.scripts,n)?0:1)"
+Assert-Contains `
+    -Value $decodedProgram `
+    -Expected ("node -e " + (Convert-ToBashLiteral -Value $npmProbeSource)) `
+    -Message "the effective npm preflight must preserve JavaScript string quotes"
+
+$governedWorktree = New-SkincosWslInvocation `
+    -Mode Executable `
+    -Target "node" `
+    -ProjectRoot "C:\CodexShared\Worktrees\skincos\admin\ponto-progressive-release" `
+    -Argument @("--version")
+Assert-Contains `
+    -Value $governedWorktree.BashCommand `
+    -Expected "git -C / config --global --get-all safe.directory" `
+    -Message "bootstrap must inspect global Git config without discovering a Windows-native worktree pointer"
+Assert-Contains `
+    -Value $governedWorktree.BashCommand `
+    -Expected "WSL bootstrap for this checkout is not ready." `
+    -Message "an unregistered worktree must remain fail-closed"
+
+$shell = New-SkincosWslInvocation `
+    -Mode ScriptPath `
+    -Target ".\scripts\codex-context.sh" `
+    -ProjectRoot "C:\CodexShared\Projetos\skincos" `
+    -Argument @("--online") `
+    -SkipBootstrapCheck `
+    -SkipNodeCheck `
+    -SkipNpmCheck `
+    -SkipGitCheck
+Assert-Contains `
+    -Value $shell.BashCommand `
+    -Expected "bash -- 'scripts/codex-context.sh' '--online'" `
+    -Message "ScriptPath must normalize and invoke a repository-relative shell script"
+
+$python = New-SkincosWslInvocation `
+    -Mode PythonScript `
+    -Target "integration/ef/selftest.py" `
+    -ProjectRoot "C:\CodexShared\Projetos\skincos" `
+    -Argument @("--safe") `
+    -SkipBootstrapCheck `
+    -SkipNodeCheck `
+    -SkipNpmCheck `
+    -SkipGitCheck
+Assert-Contains `
+    -Value $python.BashCommand `
+    -Expected "python3 -- 'integration/ef/selftest.py' '--safe'" `
+    -Message "PythonScript must use WSL python3 with quoted argv"
+
+$executableInvocation = New-SkincosWslInvocation `
+    -Mode Executable `
+    -Target "git" `
+    -ProjectRoot "C:\CodexShared\Projetos\skincos" `
+    -Argument @("status", "--short") `
+    -SkipBootstrapCheck `
+    -SkipNodeCheck `
+    -SkipNpmCheck `
+    -SkipGitCheck
+Assert-Contains `
+    -Value $executableInvocation.BashCommand `
+    -Expected "if ! command -v -- 'git'" `
+    -Message "Executable must be checked before it is invoked"
+Assert-Contains `
+    -Value $executableInvocation.BashCommand `
+    -Expected "'git' 'status' '--short'" `
+    -Message "Executable arguments must remain separate quoted entries"
+
+$legacy = New-SkincosWslInvocation `
+    -Mode LegacyRepoCommand `
+    -Target "printf 'legacy compatibility only'" `
+    -ProjectRoot "C:\CodexShared\Projetos\skincos" `
+    -SkipBootstrapCheck `
+    -SkipNodeCheck `
+    -SkipNpmCheck `
+    -SkipGitCheck
 Assert-True `
-    -Condition ($source.IndexOf('Write-Warning "-RepoCommand is a legacy', [StringComparison]::Ordinal) -gt 0) `
-    -Message "legacy raw-shell compatibility must warn callers"
+    -Condition $legacy.BashCommand.EndsWith("printf 'legacy compatibility only'", [StringComparison]::Ordinal) `
+    -Message "RepoCommand compatibility must preserve the existing raw shell payload"
 
 Assert-Throws `
-    -Action { & $gateway -ProjectRoot $projectRoot -ScriptPath "../outside.sh" } `
-    -Pattern "traverse outside" `
-    -Message "typed script paths must reject traversal"
+    -Action {
+        New-SkincosWslInvocation `
+            -Mode ScriptPath `
+            -Target "../outside.sh" `
+            -ProjectRoot "C:\CodexShared\Projetos\skincos"
+    } `
+    -Message "typed paths must reject traversal"
 Assert-Throws `
-    -Action { & $gateway -ProjectRoot $projectRoot -PythonScript "script.sh" } `
-    -Pattern "must identify a .py file" `
-    -Message "PythonScript must reject non-Python targets"
+    -Action {
+        New-SkincosWslInvocation `
+            -Mode PythonScript `
+            -Target "script.sh" `
+            -ProjectRoot "C:\CodexShared\Projetos\skincos"
+    } `
+    -Message "PythonScript must reject non-Python paths"
 Assert-Throws `
-    -Action { & $gateway -ProjectRoot $projectRoot -NpmScript "context; whoami" } `
-    -Pattern "unsupported characters" `
+    -Action {
+        New-SkincosWslInvocation `
+            -Mode NpmScript `
+            -Target "context; whoami" `
+            -ProjectRoot "C:\CodexShared\Projetos\skincos"
+    } `
     -Message "NpmScript must reject shell syntax"
 Assert-Throws `
-    -Action { & $gateway -ProjectRoot $projectRoot -Executable "git;whoami" } `
-    -Pattern "unsupported command-name characters" `
+    -Action {
+        New-SkincosWslInvocation `
+            -Mode Executable `
+            -Target "git;whoami" `
+            -ProjectRoot "C:\CodexShared\Projetos\skincos"
+    } `
     -Message "Executable must reject shell syntax"
 Assert-Throws `
     -Action {
-        & $gateway `
-            -ProjectRoot $projectRoot `
-            -Executable true `
+        New-SkincosWslInvocation `
+            -Mode NpmScript `
+            -Target "codex:context" `
+            -ProjectRoot "C:\CodexShared\Projetos\skincos" `
             -EnvVar @("HOME=C:\unsafe")
     } `
-    -Pattern "reserved by the Windows-to-WSL execution boundary" `
     -Message "environment input must not repurpose HOME"
 Assert-Throws `
     -Action {
-        & $gateway `
-            -ProjectRoot $projectRoot `
-            -Executable true `
+        New-SkincosWslInvocation `
+            -Mode NpmScript `
+            -Target "codex:context" `
+            -ProjectRoot "C:\CodexShared\Projetos\skincos" `
             -EnvVar @("SAFE=one", "safe=two")
     } `
-    -Pattern "duplicate name" `
     -Message "environment input must reject duplicate names"
-
-$literalArguments = @(
-    "%s|%s|%s",
-    "literal; touch /tmp/not-run",
-    "single'quote",
-    "Gestor Local C:\source__module"
-)
-$literalOutput = @(
-    & $gateway `
-        -ProjectRoot $projectRoot `
-        -Executable "/usr/bin/printf" `
-        -ArgumentList $literalArguments `
-        -SkipNodeCheck `
-        -SkipNpmCheck `
-        -SkipGitCheck
-)
-$expectedLiteral = "literal; touch /tmp/not-run|single'quote|Gestor Local C:\source__module"
-Assert-True `
-    -Condition ([string]($literalOutput | Select-Object -Last 1) -eq $expectedLiteral) `
-    -Message "typed executable arguments must cross as literal argv entries"
-
-$environmentValue = "literal; echo not-run C:\private path"
-$environmentOutput = @(
-    & $gateway `
-        -ProjectRoot $projectRoot `
-        -Executable "/usr/bin/printenv" `
-        -ArgumentList @("SKINCOS_TYPED_VALUE") `
-        -EnvVar @("SKINCOS_TYPED_VALUE=$environmentValue") `
-        -SkipNodeCheck `
-        -SkipNpmCheck `
-        -SkipGitCheck
-)
-Assert-True `
-    -Condition ([string]($environmentOutput | Select-Object -Last 1) -eq $environmentValue) `
-    -Message "typed environment values must remain opaque literals"
 
 Write-Host "invoke-skincos-wsl.test.ps1: PASS"

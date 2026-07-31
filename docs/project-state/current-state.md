@@ -1,135 +1,6 @@
 # Current state
 
-## Workforce Timekeeping — complete four-surface preview; staging still fail-closed — 2026-07-30T17:41:30Z
-
-This is the authoritative Ponto entry and supersedes the older release entries
-below. PR #924 integrated the post-#921 corrective package as
-`91f6e9033fed8a186ef2e93be070db3ed896fdd3`; PRs #927 and #929 then corrected
-the GitHub REST run contract and pnpm bootstrap. PR #930 closed the final
-observed Corepack signing-key failure: final head
-`872f1b10c9bd64e1768fa0e8777d992e2658240b` passed all 14 hosted checks,
-independent local security reviews found zero P0/P1/P2, Codex found no major
-issue on that exact head, and protected `main` merged it without bypass as
-`71c54b1d406317c614dc33e48ced170458fbd707`.
-
-Coordinator run `30566547605` selected that exact `main` SHA and completed
-successfully. Source job `90952396490` and orchestrator job `90952445595`
-passed; recovery jobs were correctly skipped. All four canonical dry-run
-children completed on the same immutable SHA:
-
-- Timekeeping run `30566594811`, job `90952777570`, surface artifact
-  `8769104630` and promotion artifact `8769104027`;
-- Identity/Inventory run `30566729991`, job `90953095462`, surface artifact
-  `8769138110` and promotion artifact `8769137752`;
-- Core API run `30566806246`, job `90953342171`, surface artifact `8769175430`
-  and promotion artifact `8769175021`;
-- CRM Pages run `30566905155`, job `90953758618`, surface artifact
-  `8769241946` and promotion artifact `8769241662`.
-
-The coordinator retained combined preview evidence artifact `8769249449`
-(`sha256:7458fce0e783647c66c1b634515b0099590cfd43d5ed09c306a3bc9516543b62`)
-and sanitized run ledger `8769249808`
-(`sha256:83268fc89fb64bc357ad6ac6a52d97dd8942fa74101cd784ba97466fd1b2baf4`),
-plus consolidated promotion artifacts `8769248202`, `8769248512`,
-`8769248832` and `8769249135`. The private checkpoint
-`C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T144137-20-complete-preview.md`
-records every child digest. Preview was non-mutating: it did not deploy
-Workers or Pages, apply a migration, write D1/KV, transition module-control,
-select a pilot, run an authenticated hosted journey, or execute
-pilot/canary/production.
-
-The successful coordinator automatically triggered watchdog run
-`30567091382`. Its context job `90954219518` failed with `failed coordinator
-provenance is invalid` because the workflow admitted every completed
-first-attempt coordinator while its validator intentionally accepts only
-failure/cancelled/timed-out first attempts or any unauthorized rerun. All
-emergency jobs skipped, so no latch, broker, rollback or live mutation ran.
-PR #931 moves that contract to job admission: successful
-first-attempt coordinators are skipped; failure, cancellation, timeout and
-every rerun remain governed. Focused watchdog tests pass 9/9. Because
-integrating this correction advances `main`, its exact merge SHA requires a
-fresh complete preview before staging.
-
-Live Cloudflare remains unchanged and deliberately closed. Both
-`module-control:timekeeping` values are `maintenance`; the emergency-latch key
-is absent in both namespaces. Timekeeping D1 journals remain exactly
-`0001`–`0008` and Identity/Inventory exactly `0001`–`0018` in staging and
-production. The existing Timekeeping, Core API, Identity and Pages deployments
-remain incumbents rather than the preview SHA. Required WAF behavior is absent
-(12/12 public block probes failed); the authenticated account inventory exposes
-only managed rulesets and no custom `http_request_firewall_custom` ruleset.
-Timekeeping workers.dev/previews remain public, readiness still returns a
-false-positive 200 during maintenance and staging Pages reports
-`actorKeyConfigured=false`.
-
-GitHub remains fail-closed for deployment: staging/production admit only
-`main`, have `can_admins_bypass=false`, and require the sole owner reviewer
-while forbidding self-review. There is no independent collaborator/app reviewer
-and zero self-hosted runners. The Cloudflare D1, KV, Pages and Worker resources
-exist, and the six Ponto-only D1/KV/Pages repository selectors plus
-`CLOUDFLARE_ZONE_ID` are present by name. The four enable flags remain
-false/absent under the historical rerun fences; selector presence alone neither
-deploys nor authorizes release. Name-only inventory also confirms that approved profile/root/
-capability/Pages-intent custody, WAF split-custody tokens and rule IDs, broker
-URL/credential/custody, pilot credentials/cohort, clinic runner selector/key
-and canary percentage remain absent at governed scopes. No secret values or
-PII were read. Identity/Workforce still provides no authorized eligible pilot.
-The successful preview is therefore valid evidence only; staging, pilot,
-canary and production remain ineligible.
-
-## Codex Windows native / PowerShell gateway — integrated and validated locally — 2026-07-30T16:21Z
-
-The Windows-native delivery is integrated through PR #925. Technical commit
-`ed8c20b109137a39d35345341ef04dc89b5eff86` and the current-main reconciliation
-`72036d433ca64578359774e82db0eb57207a5294` merged without bypass at
-`076bf6e3bc09cbd7ce55a6d79d036a09f4c1ce56`. All 19 hosted checks passed;
-the ready PR was `CLEAN` and `MERGEABLE`, with no review or comment pending.
-The typed `invoke-skincos-wsl.ps1` gateway keeps Codex, authentication, plugins,
-browser and the integrated terminal native on Windows/PowerShell, while
-Ubuntu-24.04 owns SKINCOS Node, npm, Python, Playwright, Wrangler, PostgreSQL
-and systemd execution. Windows-native Node and Python remain available only
-for general Codex tooling.
-
-Post-merge application exposed a Finance stop regression: its nested CRM stop
-inherited the default `gestor/full` manifest root. Commit
-`3260b98cff6ce440b97cb00d19ab5fa9529975cb` isolates both Finance start and stop
-under `FINANCE_LOCAL_RUNTIME_ROOT/crm`; PR #926 passed all 13 hosted checks and
-merged without bypass at `abe56a171e5a0ad3b79885ca0fda9bfae819b011`.
-The real stop path now leaves the canonical full manifest on the same target
-commit and writes the Finance `finance-local--crm` manifest separately.
-
-The machine is applied from canonical `origin/main`
-`abe56a171e5a0ad3b79885ca0fda9bfae819b011`, not a selected preview.
-`active-source.json` is absent. The exact merged source performed a clean
-frontend build, started local Insumos, Workforce/Timekeeping and the WhatsApp
-adapter, passed the strict Pages shell gate for all 14 modules and opened
-Chrome only after approval. The final gate report is
-`C:\CodexRuntime\operator\admin\skincos\runtime\crm-local\instances\gestor\full\logs\crm-local-gate-20260730-131800.json`.
-The final consecutive action explicitly reused the ready runtime in 7.68
-seconds. Its manifest is `ready`, release-affine to the merge, and all five
-recorded PID/start-tick identities are live. Pages health/auth,
-release-affine Timekeeping readiness, WhatsApp and the Pages Insumos proxy
-return 200; the direct Insumos adapter returns the expected fail-closed 401.
-
-The user Start Menu shortcut is `CRM – Local` / `CrmLocal`, targets the
-PowerShell launcher in `C:\CodexShared\Projetos\skincos`, and the inaccessible
-shared Start Menu root contains zero `.lnk` files, so it exposes no stale
-duplicate. The persistent Playwright cache remains under
-`C:\CodexRuntime\operator\admin\skincos\cache\playwright`. All 56
-launcher/build/boundary tests, both gateway PowerShell harnesses, PowerShell,
-Bash and TOML parsing, architecture validation and `git diff --check` passed;
-the Windows delivery worktrees contain zero `node_modules`, and the
-WSL-unavailable harness fails before service start. Private bindings stay
-owner-only and outside Git.
-
-This is local operator tooling only. No deployment workflow, production
-service, Cloudflare resource, database or remote configuration changed. The
-pre-existing Timekeeping dependency audit remains tracked as three high and
-zero critical findings; no `--force` remediation was used. The only remaining
-external gate is the supported Codex application restart and same-task UI
-reproduction; no repository setting can substitute for that client test.
-
-## Workforce Timekeeping — both environments in maintenance; local successor evolving and uncommitted — 2026-07-30T11:14Z
+## Workforce Timekeeping — both environments in maintenance; PR #933 open — 2026-07-31T13:46Z
 
 This entry supersedes the 2026-07-29 Ponto section below. The reconstruction
 started from `origin/main` through PR #920 and was repeated read-only after PR
@@ -163,8 +34,10 @@ candidate-controlled checkout boundary in the reusable lease gate, privileged
 production baseline/SLO workflows without their own single-use capabilities,
 six omitted baseline provenance outputs, a physical CRM Pages concurrency race
 and no immediate persistent emergency latch outside the long release-custody
-queue. A corrective package is local on
-`codex/admin/ponto-release-evidence`: trusted-main execution and exact SHA
+queue. The corrective package is frozen and published in PR #933 from
+`codex/admin/ponto-release-evidence-successor`, head
+`48c23ad77b21c685ca470a87a59eb71a0e88c010`, based on current `origin/main`
+`35aa17dbfe21f9b9a7571a786f03a56186e75fff`: trusted-main execution and exact SHA
 verification precede lease consumption; production baseline/SLO have
 independent leases; all seven baseline outputs are written; Pages mutations
 serialize on the physical target; and manual fail-close gains a separate
@@ -186,7 +59,8 @@ controls `ENABLE_PONTO_CRM_PAGES_DEPLOY`,
 `PONTO_TIMEKEEPING_D1_STAGING_ID`,
 `PONTO_TIMEKEEPING_D1_PRODUCTION_ID`,
 `PONTO_MODULE_CONTROL_STAGING_KV_ID` and
-`PONTO_MODULE_CONTROL_PRODUCTION_KV_ID`; they are local and unprovisioned.
+`PONTO_MODULE_CONTROL_PRODUCTION_KV_ID`; the consuming controls are on PR #933
+and remain unprovisioned/unenabled.
 General Pages still uses `CRM_PAGES_PROJECT` /
 `CRM_PAGES_PROJECT_STAGING`.
 
@@ -223,7 +97,7 @@ production. There is no reviewed broker endpoint or response key for either
 target. Staging remains blocked until a reviewed decision fixes those identities
 and authorized custody provisions the endpoints, credentials and keys.
 
-The evolving local successor also adds two fail-closed contracts. First, Pages
+The PR #933 corrective package also adds two fail-closed contracts. First, Pages
 validates the release-probe HMAC before Identity access; v2 binds pilot/canary to
 stage, coordinator run and workflow run, while v1 is staging-only. Pages then
 uses a server-signed actor through private Ponto Core to consume the external
@@ -237,12 +111,13 @@ teardown fails and preserves the primary probe error without including
 credentials or PII.
 
 These contracts passed targeted local tests and an independent local security
-read found no residual P0/P1 in that six-file scope, but the worktree continues
-to change. No final path/test-count freeze is recorded. Corrective `commit_sha`,
-successor PR, hosted checks, valid review, merge and `selected_release_sha`
-remain `null`/pending. The emergency overlay, watchdog, automatic rollback and
-manual broker kill switch are explicitly non-operational: broker policy and
-keys, a clinic runner and independent external freeze/recovery proof are absent.
+read found no residual P0/P1 in that six-file scope. The branch freeze is 30
+changed files (730 additions and 1,602 deletions), with corrective
+`commit_sha=48c23ad77b21c685ca470a87a59eb71a0e88c010` in PR #933. Hosted checks,
+valid independent review and merge remain pending; `selected_release_sha` is
+still null. The emergency overlay, watchdog, automatic rollback and manual
+broker kill switch remain explicitly non-operational: broker policy and keys, a
+clinic runner and independent external freeze/recovery proof are absent.
 
 The local watchdog is intended to close a rerun of the canonical coordinator
 only after integration and broker provisioning; it is not current automatic
@@ -260,7 +135,8 @@ The proposed reconciliation covers correlated children even if their coordinator
 became terminal and is designed to rescan/inactivate a late-issued capability,
 but that behavior is not hosted or live evidence. Historical child
 definitions must remain externally fenced through expiry. The new protections
-remain local/pending until commit, reviewed PR, hosted checks and merge.
+are published on PR #933 and remain pending only hosted checks, independent
+review and canonical merge.
 
 The checkpointed GitHub environment-variable containment and staging fence were
 complete at
@@ -446,12 +322,9 @@ source declaring it disabled. Production `/api/ponto/readiness` still returns
 version-selection header returned 200, while
 `/insumos/health/workforce-contract` returned 401 rather than the required
 edge-generated 403; therefore the required WAF enforcement was not observed.
-At this historical snapshot, that principal did not establish whether an
-inaccessible custom rule object existed: its zone listing exposed only managed
-rulesets and its custom-entrypoint GET was unauthorized. The authoritative
-entry above supersedes this limitation with the later authenticated account
-inventory, which found no custom `http_request_firewall_custom` ruleset and
-confirmed functional absence through the 12/12 failed block probes.
+This does not establish whether an inaccessible custom rule object exists. The
+zone ruleset listing exposed only managed rulesets, and the custom entrypoint
+GET was not authorized for the available principal.
 The Codex in-app browser and the existing Chrome profile both reached only the
 Cloudflare login screen, with no authenticated dashboard session; no credential
 was entered and no mutation was attempted. Rule inspection/attestation remains

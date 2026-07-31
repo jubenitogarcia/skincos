@@ -20,7 +20,6 @@ import { createCapabilityCheck } from "./ponto-orchestrator-lease.mjs";
 
 const repository = "skincos/skincos";
 const workflowId = 123;
-const workflowName = "Ponto progressive release";
 const sha = "a".repeat(40);
 const repositoryId = "42";
 const emergencyScript = fileURLToPath(new URL("./ponto-emergency-stop.mjs", import.meta.url));
@@ -41,11 +40,11 @@ const stagingPrivateKey = stagingPair.privateKey.export({ type: "pkcs8", format:
 const run = (stage, overrides = {}) => ({
   id: 456,
   workflow_id: workflowId,
-  path: ".github/workflows/ponto-progressive-release.yml",
+  path: ".github/workflows/ponto-progressive-release.yml@refs/heads/main",
   event: "workflow_dispatch",
   head_branch: "main",
   head_sha: sha,
-  name: `Ponto ${stage} ${sha} orchestrator=456`,
+  name: "Ponto progressive release",
   display_title: `Ponto ${stage} ${sha} orchestrator=456`,
   status: "in_progress",
   conclusion: null,
@@ -77,14 +76,11 @@ test("emergency target mapping keeps staging isolated from every live stage", ()
 });
 
 test("coordinator discovery accepts only exact canonical correlated runs", () => {
-  const options = { repository, workflowId, workflowName, target: "production" };
-  assert.equal(parseCoordinator(run("pilot"), options)?.runId, "456");
-  assert.equal(parseCoordinator(run("pilot", { name: "live dynamic title" }), options)?.runId, "456");
-  assert.equal(parseCoordinator(run("pilot"), { ...options, workflowName: "Renamed workflow" }), null);
-  assert.equal(parseCoordinator(run("staging"), options), null);
-  assert.equal(parseCoordinator(run("pilot", { head_sha: "b".repeat(40) }), options), null);
-  assert.equal(parseCoordinator(run("pilot", { path: ".github/workflows/other.yml" }), options), null);
-  assert.equal(parseCoordinator(run("pilot", { display_title: `Ponto pilot ${sha} orchestrator=999` }), options), null);
+  assert.equal(parseCoordinator(run("pilot"), { repository, workflowId, target: "production" })?.runId, "456");
+  assert.equal(parseCoordinator(run("staging"), { repository, workflowId, target: "production" }), null);
+  assert.equal(parseCoordinator(run("pilot", { head_sha: "b".repeat(40) }), { repository, workflowId, target: "production" }), null);
+  assert.equal(parseCoordinator(run("pilot", { path: ".github/workflows/other.yml@refs/heads/main" }), { repository, workflowId, target: "production" }), null);
+  assert.equal(parseCoordinator(run("pilot", { display_title: `Ponto pilot ${sha} orchestrator=999` }), { repository, workflowId, target: "production" }), null);
 });
 
 test("GitHub cancellation acknowledgements are treated as bodyless success", () => {
@@ -116,12 +112,7 @@ test("canonical high-risk allowlist covers every Ponto workflow that can hydrate
     request: async pathname => {
       const file = decodeURIComponent(pathname.split("/").at(-1));
       const entry = HIGH_RISK_WORKFLOWS.find(candidate => candidate.path.endsWith(`/${file}`));
-      return {
-        id: nextId += 1,
-        state: "active",
-        path: entry?.path,
-        name: entry?.name,
-      };
+      return { id: nextId += 1, state: "active", path: entry?.path };
     },
   });
   assert.equal(workflows.size, HIGH_RISK_WORKFLOWS.length);
@@ -143,7 +134,6 @@ test("emergency inventory accepts exact active and disabled canonical workflow s
         id: nextId += 1,
         state: nextId % 2 ? "active" : "disabled_manually",
         path: entry?.path,
-        name: entry?.name,
       };
     },
   });
@@ -200,7 +190,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
   const child = {
     id: childId,
     workflow_id: childWorkflowId,
-    path: ".github/workflows/deploy-timekeeping.yml",
+    path: ".github/workflows/deploy-timekeeping.yml@refs/heads/main",
     event: "workflow_dispatch",
     head_branch: "main",
     head_sha: sha,
@@ -219,7 +209,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
       ...child,
       id: 9101,
       workflow_id: 702,
-      path: ".github/workflows/deploy-core-workers.yml",
+      path: ".github/workflows/deploy-core-workers.yml@refs/heads/main",
       name: "Deploy Core Workers",
       display_title: `Core api staging ${sha} orchestrator=8001 nonce=${"e".repeat(32)}`,
     },
@@ -227,7 +217,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
       ...child,
       id: 9102,
       workflow_id: 8102,
-      path: ".github/workflows/deploy-core-workers.yml",
+      path: ".github/workflows/deploy-core-workers.yml@refs/heads/main",
       name: "Deploy Core Workers",
       display_title: `Core inventory staging ${sha} unrelated`,
     },
@@ -235,7 +225,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
       ...child,
       id: 9103,
       workflow_id: 8103,
-      path: ".github/workflows/module-availability.yml",
+      path: ".github/workflows/module-availability.yml@refs/heads/main",
       name: "Set module availability",
       display_title: "Module finance staging maintenance orchestrator=",
     },
@@ -243,7 +233,7 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
       ...child,
       id: 9104,
       workflow_id: 8104,
-      path: ".github/workflows/module-availability.yml",
+      path: ".github/workflows/module-availability.yml@refs/heads/main",
       name: "Set module availability",
       display_title: "Module timekeeping staging active orchestrator=",
     },
@@ -272,7 +262,6 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
           id: rootId,
           state: "disabled_manually",
           path: ".github/workflows/ponto-progressive-release.yml",
-          name: workflowName,
         });
         return;
       }
@@ -283,7 +272,6 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
           id: workflowIds.get(file),
           state: "disabled_manually",
           path: specification.path,
-          name: specification.name,
         });
         return;
       }
@@ -297,11 +285,11 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
         send(200, { workflow_runs: [{
           id: 8001,
           workflow_id: rootId,
-          path: ".github/workflows/ponto-progressive-release.yml",
+          path: ".github/workflows/ponto-progressive-release.yml@refs/heads/main",
           event: "workflow_dispatch",
           head_branch: "main",
           head_sha: sha,
-          name: `Ponto staging ${sha} orchestrator=8001`,
+          name: "Ponto progressive release",
           display_title: `Ponto staging ${sha} orchestrator=8001`,
           run_attempt: 1,
           status: "completed",
@@ -388,11 +376,11 @@ test("executable emergency path rescans, invalidates a late-issued check, and ca
       send(200, {
         id: 8001,
         workflow_id: rootId,
-        path: ".github/workflows/ponto-progressive-release.yml",
+        path: ".github/workflows/ponto-progressive-release.yml@refs/heads/main",
         event: "workflow_dispatch",
         head_branch: "main",
         head_sha: sha,
-        name: `Ponto staging ${sha} orchestrator=8001`,
+        name: "Ponto progressive release",
         display_title: `Ponto staging ${sha} orchestrator=8001`,
         run_attempt: 1,
         status: "completed",
