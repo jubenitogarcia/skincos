@@ -88,6 +88,8 @@ jobs:
       - name: Prove the externally observable fail-close
         env:
           PONTO_MODULE_HEALTH_URL: ${{ inputs.target == 'production' && 'https://api.skincos.com.br/api/ponto/health' || 'https://api-staging.skincos.com.br/api/ponto/health' }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           directory="$RUNNER_TEMP/ponto-manual-emergency-close"
@@ -96,13 +98,32 @@ jobs:
             "$directory/control-fallback-expectation.json" <<'NODE'
           const fs = require("fs");
           const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const headers = { accept: "application/json", "cache-control": "no-cache" };
+          if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
+            if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) {
+              throw new Error("partial Cloudflare Access credential");
+            }
+            headers["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
+            headers["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
+          }
+          const probe = new URL(process.env.PONTO_MODULE_HEALTH_URL);
+          probe.searchParams.set("emergency_close_probe", process.env.GITHUB_RUN_ID);
+          const response = await fetch(probe, { headers });
+          const body = await response.json().catch(() => null);
+          const availability = body?.availability;
+          if (
+            response.status !== 200
+            || availability?.state !== "maintenance"
+            || availability?.source !== "control"
+            || !Number.isFinite(Date.parse(String(availability?.changedAt || "")))
+          ) throw new Error("live Ponto health did not prove maintenance under the closed latch");
           fs.writeFileSync(process.argv[3], `${JSON.stringify({
             state: "maintenance",
             changedAt: maintenance.latchChangedAt,
           })}\n`, { mode: 0o600 });
           fs.writeFileSync(process.argv[4], `${JSON.stringify({
             state: "maintenance",
-            changedAt: maintenance.controlChangedAt,
+            changedAt: availability.changedAt,
             source: "control",
           })}\n`, { mode: 0o600 });
           NODE
