@@ -111,7 +111,15 @@ async function handle(request, env) {
   try {
     const current = await env.DB.prepare("SELECT latched, changed_at, stop_run_id, emergency_run_id FROM broker_state WHERE id = 'timekeeping'").first();
     const now = new Date().toISOString();
-    if (current?.latched === 1 && (current.stop_run_id !== payload.coordinatorRunId || current.emergency_run_id !== payload.emergencyRunId)) return bad("emergency latch already owned", 409);
+    // A close-only re-attestation may transfer the recorded owner while the
+    // latch is already closed. This never opens the module: it only refreshes
+    // the broker-backed evidence so a later protected reset can reference the
+    // current emergency run. Maintenance remains owner-bound below.
+    if (
+      current?.latched === 1
+      && payload.operation !== "latch-true"
+      && (current.stop_run_id !== payload.coordinatorRunId || current.emergency_run_id !== payload.emergencyRunId)
+    ) return bad("emergency latch already owned", 409);
     if (payload.operation === "latch-true") {
       await env.DB.prepare("UPDATE broker_state SET latched = 1, changed_at = ?, stop_run_id = ?, emergency_run_id = ? WHERE id = 'timekeeping'").bind(now, payload.coordinatorRunId, payload.emergencyRunId).run();
     } else {
