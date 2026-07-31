@@ -1705,3 +1705,39 @@ continua pré-Graph por `marketing_consent_denied`. Não restam booking nem
 clique sintético. O destino live de Google Ads para `Contact` não está
 configurado; a preservação de seus parâmetros foi comprovada no contrato de
 regressão, não por uma conversão Google live.
+
+## Livia — PR #939, bundle isolado e preflight do novo carrossel — 2026-07-31
+
+A PR #939 foi integrada com todos os checks verdes no merge commit
+`01d2b6d1f79a9017e0a87efa2a1a32f82eed219f`. A correção concede leitura do
+script `patch-livia-job-graph-payload-file.js` ao usuário `postgres` durante o
+estágio nativo; não altera o contrato de mídia nem os nós específicos de
+Reel. O bundle produzido exatamente desse merge foi arquivado em
+`C:\CodexRuntime\operator\admin\skincos\native-releases\01d2b6d1f79a9017e0a87efa2a1a32f82eed219f`, com archive SHA-256
+`c083bb444a71b1031f6ec0ad601e60db62a5940ad3bbc4ecda2fa1a14244e0c3` e
+linhagem SHA-256 `2fc7e38fe254a318126d95b17b89b2bf3a5372655533282354fbda819b4ef14e`.
+
+O Livia foi repinado de forma transacional para a versão histórica
+`d11e34fa-7992-4c07-9fba-e212fffe1d8a`, com manifesto no bundle imutável
+`01d2b6d1f79a9017e0a87efa2a1a32f82eed219f`. O manifesto tem workflow hash
+`cca251e26fc87957f341abb264571025a00a142a4162be8d98b6338ae213afbb` e
+`audit-live` confirmou `mutableRuntimeReferences=0` nos cinco workflows ativos.
+O ponteiro global permaneceu em `f0200ee0aebe8d9f479179237435ed8727ce9458`;
+nenhum outro workflow foi repinado.
+
+Para testar somente o caminho produtivo do scheduler, foi criada uma versão
+temporária às 12:30 e o Orb foi reiniciado exclusivamente pelo
+`orb-safe-restart.sh`, após drenagem. A execução real `350` foi `trigger`,
+`success`, de 12:30:19 a 12:30:26 (-03), mas terminou em `List Files` com zero
+itens, zero jobs e zero chamadas HTTP. A pasta canônica do Drive
+(`1Dq_1TeD4RCQAaYFSarXA7c63nDvtUvE9`) continha 57 itens; os oito PNGs mais
+recentes pertencem ao grupo já publicado `3107260830` da execução 349 e não
+foram reutilizados. O schedule diário foi restaurado para `field: days` às
+13:26 na versão histórica acima, com novo restart seguro. Não houve gateway,
+mutação do Drive, notificação ou publicação duplicada nessa tentativa.
+
+Checkpoint pós-restore íntegro:
+`C:\CodexRuntime\operator\admin\skincos\checkpoints\livia-carousel-pr939-post-restore-20260731T123400-0300`, índice SHA-256
+`ac8f12e006b0b2af1cca3bd3d5f9704e3183193c8d672e7641a7d777263ed2f1`.
+O aceite end-to-end de um carrossel inédito continua pendente até o novo
+arquivo aparecer no Drive canônico; a mídia histórica não deve ser usada.
