@@ -259,7 +259,7 @@ jobs:
               if (!Array.isArray(keys) || keys.some((entry) => entry?.name === process.env.EXPECTED_KEY)) {
                 throw new Error("module-control prior value exists but could not be read");
               }
-              NODE
+          NODE
               printf '{}\n' > "$prior"
             fi
           fi
