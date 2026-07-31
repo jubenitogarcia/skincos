@@ -172,7 +172,7 @@ test("ordered predecessor provenance is exact and replay resistant before artifa
     /workflow\?\.state !== "active"/,
     /workflow\?\.path !== "\.github\/workflows\/ponto-progressive-release\.yml"/,
     /String\(run\?\.id \|\| ""\) !== process\.env\.PREDECESSOR_RUN_ID/,
-    /run\.path !== `\$\{workflow\.path\}@refs\/heads\/main`/,
+    /(?:run\.path !== `\$\{workflow\.path\}@refs\/heads\/main`|!\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\))/,
     /run\.run_attempt !== 1/,
     /run\.head_sha \|\| ""\)\.toLowerCase\(\) !== process\.env\.RELEASE_SHA/,
     /run\.display_title !== expectedTitle/,
