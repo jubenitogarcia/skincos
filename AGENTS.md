@@ -6,8 +6,13 @@
   is reserved for system services and must not be used interactively.
 - This clone remains the source of truth for project context, not for secrets or
   Codex authentication state.
-- Before changing anything, read `AGENTS.md`, `CODEX_CONTEXT.md`, `TASKS.md`,
-  and `DECISIONS.md`, then inspect `git status`.
+- Antes de editar, leia `AGENTS.md` e a
+  [política de autonomia](docs/decisions/codex-autonomy-policy.md), carregue o
+  snapshot operacional canônico quando disponível e inspecione `git status`.
+  Em missão raiz ou snapshot ausente/desatualizado, reconstrua somente o
+  contexto e os dados remotos necessários; use `CODEX_CONTEXT.md`, `TASKS.md`
+  e `DECISIONS.md` como contexto durável/histórico, não como cópias
+  obrigatórias de estado volátil.
 - Use branches in the format `codex/admin/<task-slug>`.
 - Prefer worktrees under `C:\CodexShared\Worktrees\skincos\admin\<task-slug>`
   when more than one Codex task may work in parallel.
@@ -48,7 +53,8 @@
 ## Default Codex App Startup
 
 - For non-trivial work in this repo, start by running or mentally applying
-  `npm run codex:context` unless the request is obviously self-contained.
+  `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:context`
+  unless the request is obviously self-contained.
 - For production-facing, deploy, tracking, auth, CRM, or Cloudflare work, also
   run the targeted preflight/checks before claiming completion.
 - Prefer repo evidence and live endpoints over generic assumptions.
@@ -62,9 +68,12 @@
   staging evidence instead of stopping at a report.
 - In `supervisor-cycle`, keep orchestration intelligence in the Skill and use
   the project `Stop` hook only as a deterministic structured-state gate. A
-  continued cycle never expands authorization: production, secrets, real
-  users, grants, migrations and production feature flags still require a new,
-  explicit and specific user authorization.
+  continued cycle never invents or expands scope: it carries the persistent
+  authorization already granted by the current mission under the autonomy
+  policy. Production, secrets, real users, grants, migrations and production
+  flags still require applicable domain gates, real platform permission,
+  rollback and evidence; a missing gate is a concrete blocker, not a reason to
+  ask again for permission.
 
 ## Source of Truth
 
@@ -82,7 +91,8 @@
   [docs/decisions/operational-change-policy.md](docs/decisions/operational-change-policy.md).
   It is mandatory for branches/PRs, flags, migrations, rollback, validation,
   and every staging or production action. A missing explicit pre-production
-  validation record means production changes are not authorized.
+  validation record means a production change is not technically eligible; it
+  does not revoke authorization already granted by the mission.
 - When the user asks for a live fix, prioritize fix, deploy, and online
   verification.
 - Before deploys, inspect the intended target, current git state, and relevant
@@ -144,18 +154,18 @@
 
 ## Standard Commands
 
-- Context snapshot: `npm run codex:context`
-- Online context snapshot: `npm run codex:context:online`
-- Shared workspace bootstrap: `npm run codex:shared:setup`
-- Shared workspace validation: `npm run codex:shared:validate`
-- Shared workspace status: `npm run codex:shared:status`
-- Shared worktree creation: `powershell -ExecutionPolicy Bypass -File .\scripts\new-shared-worktree.ps1 -TaskSlug <slug>`
-- New thread bootstrap prompt: `powershell -ExecutionPolicy Bypass -File .\scripts\print-codex-thread-bootstrap.ps1 -TaskSlug <slug> -TaskBrief "<tarefa>"`
-- Autonomy/deploy preflight: `npm run codex:preflight`
-- Site fast check: `npm run codex:site:check`
-- Site release check: `npm run codex:site:release-check`
-- Site EF CRM smoke: `npm run codex:crm:site-smoke`
-- Meta Ads CRM smoke: `npm run codex:crm:meta-ads-smoke`
+- Context snapshot: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:context`
+- Online context snapshot: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:context:online`
+- Shared workspace bootstrap: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-shared-codex-workspace.ps1`
+- Shared workspace validation: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-shared-codex-workspace.ps1`
+- Shared workspace status: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\show-shared-codex-status.ps1`
+- Shared worktree creation: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\new-shared-worktree.ps1 -TaskSlug <slug>`
+- New thread bootstrap prompt: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\print-codex-thread-bootstrap.ps1 -TaskSlug <slug> -TaskBrief "<tarefa>"`
+- Autonomy/deploy preflight: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:preflight`
+- Site fast check: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:site:check`
+- Site release check: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:site:release-check`
+- Site EF CRM smoke: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:crm:site-smoke`
+- Meta Ads CRM smoke: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\invoke-skincos-wsl.ps1 -ProjectRoot (Get-Location).Path -NpmScript codex:crm:meta-ads-smoke`
 
 ## Interpretation Defaults
 
@@ -189,6 +199,6 @@
 - Use Playwright for synthetic user journeys, axe for automatic accessibility,
   Chrome DevTools and Lighthouse for performance, Storybook before creating
   shared components, and Figma only when an approved design is available.
-- Do not access production without explicit authorization. Keep audit fixtures
-  synthetic, keep artifacts out of Git, and perform independent validation after
-  any implementation.
+- Do not access production without authorization applicable under the autonomy
+  policy. Keep audit fixtures synthetic, keep artifacts out of Git, and perform
+  independent validation after any implementation.
