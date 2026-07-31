@@ -4,6 +4,12 @@ This project is set up so Codex can implement, validate, ship, and verify change
 
 For Codex App plugin routing, local Browser QA, Sites prototyping, and headless agent commands, see `docs/codex-app-native.md`.
 
+The delivery-first local entry point is `scripts/run-skincos-codex.ps1`. It
+launches the CLI with the `skincos-autonomous` profile, `approval_policy=never`,
+trusted SKINCOS roots, and live search enabled. The desktop App does not expose
+the `--profile` switch, so the profile claim is limited to this supported CLI
+launcher unless App configuration is explicitly overridden.
+
 ## What must stay valid
 
 - WSL GitHub CLI auth for this repo: `gh auth status`
@@ -56,7 +62,7 @@ Preferred flow:
 2. Codex implements changes and validates locally.
 3. Codex pushes and opens a PR.
 4. GitHub checks and security gates run.
-5. Codex só faz merge após os checks obrigatórios, a revisão de vulnerabilidades críticas/altas alcançáveis, o rollback e as superfícies afetadas estarem confirmados.
+5. Codex uses the smallest gate selected by the changed paths: static/diff checks for docs, one focused test or build for normal code, and a focal journey plus rollback for elevated changes. Full suites, staging drills, deep scans and unrelated modules are not ritual merge gates.
 6. After-merge deploy workflows reconcile CRM Pages and Workers. The native CRM runtime is promoted through the controlled Linux release procedure.
 7. Codex verifies production health endpoints.
 
@@ -116,3 +122,9 @@ Codex can operate the repo, CI, deploys, and Cloudflare resources when credentia
 - Approving new third-party billing or paid products.
 - Providing fresh OAuth consent when a provider requires browser login.
 - Deciding whether to grant broader permissions than the documented token scope.
+
+Normal reversible technical work does not require a second confirmation loop once
+the active mission authorizes it. Stop only for MFA/reauthentication that the
+available tools cannot complete, genuinely unprovisionable permission, billing
+or procurement, medical/legal/labor/commercial decisions, irreversible real-data
+destruction, or unrelated product scope.
