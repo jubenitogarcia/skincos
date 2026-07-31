@@ -72,7 +72,21 @@ jobs:
           PROJECT: ${{ inputs.target == 'production' && vars.FINANCE_UI_PAGES_PROJECT_PRODUCTION || vars.FINANCE_UI_PAGES_PROJECT_STAGING }}
           BRANCH: ${{ inputs.target == 'production' && 'main' || 'staging' }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
-        run: npx --yes wrangler@4.114.0 pages deploy dist-finance --project-name "$PROJECT" --branch "$BRANCH" --commit-hash "$RELEASE_SHA"
+        run: |
+          set -euo pipefail
+          # crm/console/wrangler.toml belongs to the shell Pages deployment and
+          # contains Worker-only secret declarations. Pages does not allow a
+          # custom config path, so deploy from a temporary directory without
+          # inheriting the shell config.
+          FINANCE_PAGES_DIR="$RUNNER_TEMP/finance-pages"
+          mkdir -p "$FINANCE_PAGES_DIR"
+          cp -R dist-finance/. "$FINANCE_PAGES_DIR/"
+          pushd "$FINANCE_PAGES_DIR" >/dev/null
+          npx --yes wrangler@4.114.0 pages deploy . \
+            --project-name "$PROJECT" \
+            --branch "$BRANCH" \
+            --commit-hash "$RELEASE_SHA"
+          popd >/dev/null
         working-directory: crm/console
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'

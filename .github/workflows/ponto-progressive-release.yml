@@ -172,7 +172,7 @@ jobs:
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
             || String(run.head_sha || "").toLowerCase() !== process.env.RELEASE_SHA
-            || run.name !== "Ponto progressive release"
+            || run.name !== expectedTitle
             || run.display_title !== expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || String(run.repository?.id || "") !== process.env.GITHUB_REPOSITORY_ID

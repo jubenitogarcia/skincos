@@ -329,6 +329,10 @@ Somente `.github/workflows/ponto-emergency-latch-reset.yml` pode escrever
 `latched=false`. O reset exige manutenção regular, superfície governada idle e
 evidências imutáveis de latch/reconciliação; depois do reset, o módulo continua
 em manutenção. Fechamento manual e automático escrevem somente `latched=true`.
+Uma nova operação `latch-true` enquanto o broker já está fechado é uma
+reattestação close-only: atualiza apenas o proprietário da evidência e mantém
+`latched=1`; ela não abre, ativa ou limpa o controle. `maintenance` continua
+owner-bound e recusa um proprietário divergente.
 Não delete a chave, não trate ausência como aberta e não escreva `false` em
 script, migration ou publisher alternativo.
 
@@ -366,6 +370,18 @@ IDs de versão/deployment. Rollback de importação segue
 `C:\CodexRuntime\operator\admin\skincos\timekeeping`, nunca no repositório.
 
 ## Incidentes
+
+## Evidência de release e linhagem
+
+Cada promoção deve partir do `HEAD` atual de `main`, com um único SHA completo
+alcançável por merge canônico e com os checks obrigatórios associados ao mesmo
+commit. Antes de despachar `preview`, registre o SHA consultado e confirme que
+ele não mudou; se mudar, descarte o predecessor e repita o preview. A ausência
+de um check obrigatório no commit selecionado é bloqueio de linhagem, não motivo
+para promover um ancestral ou usar bypass administrativo. O coordenador deve
+preservar os IDs dos runs, digests dos artefatos, versões/deployments e o
+resultado de cada estágio no ledger privado; secrets, credenciais, PII e dados
+operacionais sintéticos nunca entram nesse registro.
 
 - Banco indisponível: readiness 503, bloquear marcações e orientar contingência auditada; não escrever JSON.
 - Facial indisponível: diferenciar indisponibilidade técnica de não cadastrado/não reconhecido; permitir PIN auditado com rate limit.
