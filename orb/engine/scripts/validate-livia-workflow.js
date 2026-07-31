@@ -274,6 +274,7 @@ function validateContracts() {
   const buildQueue = codeOf('Build Publish Queue');
   const bqBuildPlatformJobGraph = codeOf('BQ - Build Platform Job Graph');
   const bqBuildPlatformJobGraphCommand = commandOf('BQ - Build Platform Job Graph');
+  const publicationWindowGuard = codeOf('Assert Livia Publication Window');
   const bqSeedPublishState = codeOf('BQ - Seed Publish State');
   const bqValidateJobGraph = codeOf('BQ - Validate Job Graph');
   const switchOutput = String(getNode('Switch Publish Route')?.parameters?.output || '');
@@ -347,6 +348,9 @@ function validateContracts() {
     assert(typeOf('BQ - Build Platform Job Graph') === 'n8n-nodes-base.executeCommand', 'BQ - Build Platform Job Graph must be externalized as Execute Command');
     assert(bqBuildPlatformJobGraphCommand.includes('build-platform-job-graph.js'), 'BQ - Build Platform Job Graph must delegate to scripts/livia/build-platform-job-graph.js');
     assert(bqBuildPlatformJobGraphCommand.includes('--payload'), 'BQ - Build Platform Job Graph command must pass the input payload to the external script');
+    assert(bqBuildPlatformJobGraphCommand.includes('--payload-file'), 'BQ - Build Platform Job Graph must transport the payload through the private file contract');
+    assert(!bqBuildPlatformJobGraphCommand.includes('JSON.stringify(payload)'), 'BQ - Build Platform Job Graph must not embed the full payload in argv');
+    assert(publicationWindowGuard.includes('_liviaBuildJobGraphPayloadFile') && publicationWindowGuard.includes('fs.renameSync'), 'Assert Livia Publication Window must atomically persist the job-graph payload before Execute Command');
     assert(!/\/opt\/skincos\/current\/source|\b(?:ORB_ROOT|N8N_ROOT)\b/.test(bqBuildPlatformJobGraphCommand), 'BQ - Build Platform Job Graph must use an immutable workflow runtime root.');
     assert(/\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine/.test(bqBuildPlatformJobGraphCommand), 'BQ - Build Platform Job Graph must use a pinned immutable release root.');
     assert(bqBuildPlatformJobGraphCommand.length < 2500, `BQ - Build Platform Job Graph command must stay small enough for stable expression parsing (${bqBuildPlatformJobGraphCommand.length} chars)`);

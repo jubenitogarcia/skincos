@@ -22,6 +22,7 @@ test('production candidate builder applies every Livia fail-closed patch as one 
     'token-vault-preflight',
     'accessibility-contract',
     'facebook-carousel-contract',
+    'job-graph-payload-file',
     'runtime-isolation',
   ]);
   assert.equal(nodes.has('Merge Drive Result and Context'), false);
@@ -32,6 +33,11 @@ test('production candidate builder applies every Livia fail-closed patch as one 
   assert.match(nodes.get('Prepare HTTP Publish Request').parameters.jsCode, /sourceMediaCount/);
   assert.match(nodes.get('Prepare HTTP Publish Request').parameters.jsCode, /perdeu a ordem ou identidade semântica/);
   assert.match(nodes.get('Collect Publish Results').parameters.jsCode, /mediaEvidenceContract/);
+  assert.match(nodes.get('Assert Livia Publication Window').parameters.jsCode, /_liviaBuildJobGraphPayloadFile/);
+  assert.match(nodes.get('Assert Livia Publication Window').parameters.jsCode, /fs\.renameSync/);
+  assert.doesNotMatch(nodes.get('Assert Livia Publication Window').parameters.jsCode, /process\.pid/);
+  assert.match(nodes.get('BQ - Build Platform Job Graph').parameters.command, /--payload-file/);
+  assert.doesNotMatch(nodes.get('BQ - Build Platform Job Graph').parameters.command, /JSON\.stringify\(payload\)/);
 
   for (const node of workflow.nodes.filter((node) => node.type === 'n8n-nodes-base.executeCommand')) {
     const command = String(node.parameters?.command || '');
