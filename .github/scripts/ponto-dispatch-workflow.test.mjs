@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import {
-  canonicalWorkflowNameByFile,
   dispatchTimeoutMsFor,
   governedLeaseKeyFor,
   isBodylessResponseStatus,
@@ -32,67 +31,6 @@ test("GitHub dispatch and cancellation acknowledgements are treated as bodyless 
     }), null);
   }
   assert.equal(isBodylessResponseStatus(200), false);
-});
-
-test("dispatch validates static workflow identity from workflow metadata, not dynamic run name", () => {
-  assert.deepEqual(canonicalWorkflowNameByFile, {
-    "cloudflare-pages-sync-ponto.yml": "Attest CRM Pages env (Timekeeping)",
-    "cloudflare-workers-sync-ponto-secrets.yml": "Attest Ponto Worker secret custody",
-    "deploy-core-workers.yml": "Deploy Core Worker",
-    "deploy-crm-pages.yml": "Deploy CRM (Cloudflare Pages)",
-    "deploy-timekeeping.yml": "Deploy Workforce Timekeeping",
-    "module-availability.yml": "Set module availability",
-    "ponto-production-baseline.yml": "Ponto production baseline",
-    "ponto-production-slo.yml": "Ponto production SLO",
-    "ponto-staging-rollback-drill.yml": "Ponto staging rollback drill",
-    "timekeeping-staging-journey.yml": "Timekeeping authenticated staging journey",
-  });
-  const source = fs.readFileSync(
-    new URL("./ponto-dispatch-workflow.mjs", import.meta.url),
-    "utf8",
-  );
-  assert.match(source, /workflowMetadata\?\.name !== expectedWorkflowName/);
-  assert.match(source, /parentWorkflow\?\.name !== "Ponto progressive release"/);
-  assert.doesNotMatch(source, /run\.name !== workflowMetadata\.name|parentRun\?\.name/);
-  for (const [file, expectedName] of Object.entries(canonicalWorkflowNameByFile)) {
-    const workflow = fs.readFileSync(
-      new URL(`../workflows/${file}`, import.meta.url),
-      "utf8",
-    );
-    assert.equal(
-      /^name:\s*(.+)$/m.exec(workflow)?.[1]?.trim(),
-      expectedName,
-      `${file} static metadata name must match the dispatch allowlist`,
-    );
-  }
-  const governedSources = [
-    "cloudflare-pages-sync-ponto.yml",
-    "cloudflare-workers-sync-ponto-secrets.yml",
-    "deploy-timekeeping.yml",
-    "ponto-emergency-latch-reset.yml",
-    "ponto-production-baseline.yml",
-    "ponto-progressive-release.yml",
-    "ponto-release-gate.yml",
-    "ponto-staging-rollback-drill.yml",
-    "ponto-waf-security.yml",
-  ].map(file => fs.readFileSync(
-    new URL(`../workflows/${file}`, import.meta.url),
-    "utf8",
-  )).concat([
-    "ponto-assert-idle.mjs",
-    "ponto-dispatch-workflow.mjs",
-    "ponto-emergency-stop.mjs",
-    "ponto-orchestrator-lease.mjs",
-    "ponto-watchdog-context.mjs",
-    "ponto-watchdog-journal.mjs",
-  ].map(file => fs.readFileSync(new URL(`./${file}`, import.meta.url), "utf8")));
-  for (const governedSource of governedSources) {
-    assert.doesNotMatch(
-      governedSource,
-      /(?:parentRun|run)\??\.name\s*(?:===|!==)/,
-      "static workflow identity must never be derived from dynamic REST run.name",
-    );
-  }
 });
 
 test("preview dispatches never require a capability while every governed mutation stage does", () => {

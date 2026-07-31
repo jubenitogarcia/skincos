@@ -164,6 +164,12 @@ test("committed unresolved broker identity fails closed before network use", asy
   await assert.rejects(
     attestEmergencyBroker({
       env,
+      brokerPolicy: {
+        url: null,
+        custodyRef: null,
+        responseKeyId: null,
+        responsePublicKeyPem: null,
+      },
       fetchImpl: async () => {
         called = true;
         return new Response();

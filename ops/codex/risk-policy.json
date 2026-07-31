@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "defaultRisk": "medium",
+  "levels": {
+    "low": {
+      "requiredChecks": ["diff-check", "static-parse"],
+      "skippedChecks": ["module-test", "module-build", "integration", "staging-smoke", "deep-security-scan"]
+    },
+    "medium": {
+      "requiredChecks": ["diff-check", "focused-test", "module-build-or-typecheck"],
+      "skippedChecks": ["unrelated-module-test", "staging-smoke", "deep-security-scan"]
+    },
+    "high": {
+      "requiredChecks": ["diff-check", "focused-test", "module-build-or-typecheck", "domain-integration", "staging-smoke", "rollback-plan"],
+      "skippedChecks": ["unrelated-domain-test"]
+    },
+    "critical": {
+      "requiredChecks": ["diff-check", "focused-test", "module-build-or-typecheck", "domain-integration", "staging-smoke", "rollback-plan", "sensitive-change-preflight", "post-change-evidence"],
+      "skippedChecks": []
+    }
+  },
+  "surfaces": [
+    {
+      "id": "documentation",
+      "patterns": ["AGENTS.md", "CODEX_CONTEXT.md", "TASKS.md", "DECISIONS.md", "docs/**", "**/*.md"],
+      "releaseInput": false
+    },
+    {
+      "id": "codex-baseline",
+      "patterns": [".codex/**", "skills/**", "scripts/codex-*.mjs", "scripts/codex-*.sh", "scripts/*codex*.ps1", "ops/codex/**"],
+      "releaseInput": true
+    },
+    {
+      "id": "github-governance",
+      "patterns": [".github/governance/**", ".github/workflows/**", ".github/scripts/**"],
+      "releaseInput": true
+    },
+    {
+      "id": "timekeeping",
+      "patterns": ["workforce/timekeeping/**", "crm/console/**", "crm/api/**", "api/**"],
+      "releaseInput": true
+    },
+    {
+      "id": "website",
+      "patterns": ["website/**", "booking/**"],
+      "releaseInput": true
+    },
+    {
+      "id": "runtime",
+      "patterns": ["platform/**", "ops/runtime/**", "orb/**", "messaging/**", "service/**"],
+      "releaseInput": true
+    }
+  ],
+  "classificationRules": [
+    {
+      "risk": "critical",
+      "reason": "Authentication, sessions, permissions, root-secret custody, payment, irreversible migration, or production mutation surface changed.",
+      "patterns": ["**/auth/**", "**/*auth*", "**/*session*", "**/*permission*", "**/*secret*", "**/*credential*", "**/*payment*", "**/*billing*", "**/*root*key*", "**/*irreversible*", "**/migrations/**", "**/*migration*", ".github/governance/**"]
+    },
+    {
+      "risk": "high",
+      "reason": "Runtime, deployment, workflow, Worker, database, tracking, or externally integrated surface changed.",
+      "patterns": [".github/workflows/**", ".github/scripts/**", "workforce/**", "api/**", "crm/api/**", "platform/**", "ops/runtime/**", "website/**/api/**", "**/wrangler*.toml", "**/worker*.{js,mjs,ts}", "**/d1/**"]
+    },
+    {
+      "risk": "low",
+      "reason": "Documentation, issue/ledger, or static project guidance changed without an executable surface.",
+      "patterns": ["**/*.md", "docs/**", "TASKS.md", "DECISIONS.md", "CODEX_CONTEXT.md", "ops/project-orchestration/**", "docs/project-state/**"]
+    }
+  ],
+  "releaseSharedInputs": ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", ".github/governance/progressive-release-policy.json", "ops/codex/risk-policy.json"]
+}

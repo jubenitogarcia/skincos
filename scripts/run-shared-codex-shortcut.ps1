@@ -500,6 +500,19 @@ function Get-CrmLocalSourceOrigin {
     return "{0}__{1}" -f $sourceRoot, $Module.Trim().ToLowerInvariant()
 }
 
+function Convert-CrmSourceOriginToWsl {
+    param([Parameter(Mandatory = $true)][string]$SourceOrigin)
+
+    # Runtime manifests are written inside Ubuntu, so a source origin that
+    # crosses the typed Windows -> WSL boundary must use the same canonical
+    # path form before it is compared by the Node policy.  The module suffix
+    # (for example ``__crm-shell``) intentionally remains part of the value.
+    if ($SourceOrigin -match '^[A-Za-z]:[\\/]') {
+        return Convert-WindowsPathToWsl -Path $SourceOrigin
+    }
+    return ($SourceOrigin -replace '\\', '/')
+}
+
 function Apply-CrmLocalSourceSnapshot {
     param(
         [Parameter(Mandatory = $true)][object]$Snapshot,
@@ -963,7 +976,7 @@ function Get-CrmPersonaDecision {
         "--build-state", $buildStateWsl,
         "--target", $TargetCommit,
         "--source-fingerprint", $SourceFingerprint,
-        "--source-origin", $SourceOrigin,
+        "--source-origin", (Convert-CrmSourceOriginToWsl -SourceOrigin $SourceOrigin),
         "--persona", $Persona.ToUpperInvariant(),
         "--runtime-id", $RuntimeId,
         "--module", $Module,
@@ -1886,7 +1899,7 @@ function Get-CrmInstanceDecision {
         "--build-state", $buildStateWsl,
         "--target", $TargetCommit,
         "--source-fingerprint", $SourceFingerprint,
-        "--source-origin", $SourceOrigin,
+        "--source-origin", (Convert-CrmSourceOriginToWsl -SourceOrigin $SourceOrigin),
         "--persona", ([string]$Spec.roleKey),
         "--runtime-id", ([string]$Spec.runtimeId),
         "--module", ([string]$Spec.module),

@@ -2,7 +2,10 @@
 
 **Status:** obrigatória  
 **Aplica-se a:** todo código, configuração, migration, workflow, feature flag, integração ou operação que possa alterar comportamento em staging ou produção.  
-**Fonte de execução:** complementa `AGENTS.md`; em conflito, prevalece a instrução mais restritiva.
+**Fonte de execução:** aplica os gates técnicos de domínio e complementa a
+[política de autonomia do Codex](codex-autonomy-policy.md). A política de
+autonomia resolve autorização; esta política resolve elegibilidade técnica,
+validação e rollback.
 
 ## 1. Unidade de trabalho: branch e PR curtos
 
@@ -16,7 +19,7 @@
 ## 2. Módulos não liberados não são publicados automaticamente
 
 - Todo módulo novo ou ainda não liberado começa **desativado por padrão**.
-- Merge, push em `main`, reconcile, deploy de infraestrutura ou atualização de dependência não autoriza ativar UI, rota mutável, workflow, grant ou dado de módulo não liberado.
+- Merge, push em `main`, reconcile, deploy de infraestrutura ou atualização de dependência não tornam elegível ativar UI, rota mutável, workflow, grant ou dado de módulo não liberado.
 - Exposição a uma coorte exige, de forma independente:
   1. flag global do módulo;
   2. grant explícito de módulo ao usuário ou serviço;
@@ -26,6 +29,9 @@
 - Papel genérico, lista vazia, feature flag de frontend ou URL direta não são bypass de autorização.
 - Pipeline que possa publicar módulo não liberado exige guarda explícita e falha fechada quando faltar autorização de release. A guarda registra o motivo de skip sem vazar segredos.
 - Ativar workflow com efeito externo, grant, rota de escrita ou flag de produção é mudança de produção, mesmo sem novo deploy.
+- Autorização persistente da missão não dispensa flag, grant, coorte, versão,
+  pré-produção ou rollback exigidos neste domínio; a falta deles é um blocker
+  técnico, não uma nova decisão humana.
 
 ## 3. Migrations: somente aditivas
 
@@ -71,6 +77,11 @@ Antes de produção, o PR ou registro de release declara:
 
 Testes não criam booking, cobrança, campanha, mensagem ou dado real sem janela aprovada e alvo seguro.
 
+O nível de risco escolhe testes, gates, checkpoints e rollback. Ele não anula
+uma autorização persistente aplicável à missão nem exige nova autorização
+humana; um gate ausente torna a ação tecnicamente inelegível e deve ser
+registrado como blocker verificável.
+
 ## 7. Gate obrigatório antes de produção
 
 Nenhuma mudança de produção ocorre enquanto faltar:
@@ -84,15 +95,29 @@ Nenhuma mudança de produção ocorre enquanto faltar:
 7. validação pré-produção explícita no PR, release ou evidência operacional;
 8. plano de smoke pós-mudança e responsável.
 
-A validação explícita registra data/hora, alvo, versão, evidências, resultado, risco remanescente e decisão de prosseguir. Sem isso, só diagnóstico ou validação read-only são autorizados.
+A validação explícita registra data/hora, alvo, versão, evidências, resultado,
+risco remanescente e decisão de prosseguir. Sem isso, a ação de produção
+permanece tecnicamente inelegível. Quando a missão vigente já a autorizou, não
+se pede nova autorização: registra-se o requisito técnico pendente e a menor
+ação segura que o satisfaz.
 
 ## 8. Obrigações de agentes Codex
 
-Antes de editar, o agente lê `AGENTS.md`, esta política, `CODEX_CONTEXT.md`, `TASKS.md`, `DECISIONS.md` e Git status.
+Antes de editar, o agente lê `AGENTS.md`, esta política e a
+[política de autonomia](codex-autonomy-policy.md), carrega o snapshot
+operacional canônico quando existir e inspeciona o status do Git. Em missão raiz
+ou snapshot ausente/desatualizado, reconstrói somente as fontes contextuais e
+remotas necessárias, incluindo `CODEX_CONTEXT.md`, `TASKS.md` e
+`DECISIONS.md` quando aplicáveis. Esses documentos são contexto durável e
+histórico, não cópias obrigatórias de estado volátil.
 
 No plano de trabalho, declara objetivo único, superfícies, risco, flag/coorte, migration/expand-contract e validações/rollback — ou justifica a não aplicabilidade.
 
 Antes de concluir, informa o que foi validado, o que não foi validado e por quê. Não alega produção pronta com base apenas em testes locais, merge ou healthcheck.
+
+Autorização vem da missão conforme a política de autonomia. Esta política nunca
+solicita autorização duplicada; ela exige que permissões reais, controles da
+plataforma e gates de domínio sejam comprovados antes da ação correspondente.
 
 ## 9. Evidência mínima
 
@@ -104,4 +129,3 @@ A evidência fica no PR, workflow, release ou diretório privado do operador; nu
 - Flag/coorte: nome, default, escopo e quantidade agregada de grants quando sensível.
 - Rollback: versão de retorno, gatilho e smoke.
 - Produção: smoke final e riscos remanescentes.
-

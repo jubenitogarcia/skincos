@@ -9,6 +9,28 @@ const failures = [];
 const fail = (message) => failures.push(message);
 
 if (policy.schemaVersion !== 1 || policy.sourceBranch !== "main") fail("policy must use main as its only release source");
+const governance = policy.governance;
+if (
+  governance?.authorizationModel !== "single-operator-codex"
+  || governance?.humanReviewerRequired !== false
+  || governance?.mainOnly !== true
+  || governance?.canonicalMergedPullRequestRequired !== true
+  || governance?.administratorBypassAllowed !== false
+  || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(String(governance?.operatorLogin || ""))
+) fail("policy must declare the single-operator Codex governance contract");
+const expectedChecks = ["CI Smoke (Assert)", "Central E2E Smoke", "JS/TS Checks (workspace)", "Dependency Audit (JS/TS)", "Scan for secrets (Gitleaks)"];
+if (JSON.stringify(governance?.requiredChecks) !== JSON.stringify(expectedChecks)) fail("single-operator governance required checks drifted from branch protection");
+for (const target of ["staging", "production"]) {
+  const protection = governance?.environmentProtection?.[target];
+  if (
+    protection?.requiredReviewers !== 0
+    || protection?.preventSelfReview !== false
+    || protection?.protectedBranches !== false
+    || protection?.customBranchPolicies !== true
+    || protection?.requiredBranch !== "main"
+  ) fail(`${target} environment must use the reviewed single-operator protection contract`);
+}
+if (governance?.attestation?.noAdministrativeBypass !== true || governance?.attestation?.automaticRollback !== true) fail("single-operator attestation must retain no-bypass and automatic rollback");
 if (JSON.stringify(policy.stages) !== JSON.stringify(["preview", "staging", "pilot", "canary", "production"])) fail("policy stages must be preview, staging, pilot, canary, production in order");
 for (const [stage, predecessor] of Object.entries({ staging: "preview", pilot: "staging", canary: "pilot", production: "canary" })) {
   if (policy.stagePredecessor?.[stage] !== predecessor) fail(`${stage} must require ${predecessor} evidence`);
@@ -24,6 +46,9 @@ for (const required of ["branches: [main]", "git merge-base --is-ancestor", "git
 const gate = read(".github/workflows/promotion-gate.yml");
 if (!gate.includes("fetch-depth: 0")) fail("promotion gate must fetch complete main history before validating an immutable rollback SHA");
 for (const required of ["release_sha", "Verify predecessor evidence", "promotion-evidence.mjs verify", "source_sha"]) if (!gate.includes(required)) fail(`immutable promotion gate is missing ${required}`);
+const coordinator = read(".github/workflows/ponto-progressive-release.yml");
+for (const required of ["single-operator Codex governance", "canonical merged PR and required checks", "ponto-environment-protection.mjs"]) if (!coordinator.includes(required)) fail(`Ponto coordinator is missing ${required}`);
+if (coordinator.includes("Require the independent no-review true-only emergency close path")) fail("Ponto coordinator still names the retired independent-review gate");
 const availability = read(".github/workflows/module-availability.yml");
 if (!availability.includes("^[0-9a-fA-F]{32}$")) fail("module availability must validate Cloudflare KV namespace IDs as 32 hexadecimal characters");
 if (failures.length) {

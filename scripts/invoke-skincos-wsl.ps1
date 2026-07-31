@@ -1,9 +1,5 @@
-[CmdletBinding(DefaultParameterSetName = "LegacyCommand")]
+[CmdletBinding(DefaultParameterSetName = "LegacyRepoCommand")]
 param(
-    [Parameter(Mandatory = $true, ParameterSetName = "LegacyCommand")]
-    [ValidateNotNullOrEmpty()]
-    [string]$RepoCommand,
-
     [Parameter(Mandatory = $true, ParameterSetName = "BashScript")]
     [ValidateNotNullOrEmpty()]
     [string]$ScriptPath,
@@ -20,28 +16,32 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$PythonScript,
 
-    [Parameter(Mandatory = $true, ParameterSetName = "InvocationFile")]
+    # Raw shell text is retained only for existing shortcut compatibility.
+    # New callers must use one of the typed parameter sets above.
+    [Parameter(Mandatory = $true, ParameterSetName = "LegacyRepoCommand")]
     [ValidateNotNullOrEmpty()]
-    [string]$InvocationFile,
+    [string]$RepoCommand,
 
     [Parameter(ParameterSetName = "BashScript")]
     [Parameter(ParameterSetName = "Executable")]
     [Parameter(ParameterSetName = "NpmScript")]
     [Parameter(ParameterSetName = "PythonScript")]
-    [Alias("Argument", "Arguments")]
+    [Alias("Arguments", "ArgumentList")]
     [AllowEmptyCollection()]
-    [string[]]$ArgumentList = @(),
+    [string[]]$Argument = @(),
 
-    [string]$WorkingDirectory = ".",
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
+
+    # The typed wrapper supplies this for process-control helpers.  Keep it
+    # repository-relative so a caller cannot escape the approved checkout.
+    [string]$WorkingDirectory = ".",
+
+    [string]$WslExecutable = "wsl.exe",
 
     [Alias("Environment", "EnvironmentVariable", "EnvironmentVariables")]
     [AllowEmptyCollection()]
     [string[]]$EnvVar = @(),
 
-    [string]$Distro = "Ubuntu-24.04",
-    [string]$LinuxUser = "admin",
-    [string]$WslExecutable = "wsl.exe",
     [switch]$SkipBootstrapCheck,
     [switch]$SkipNodeCheck,
     [switch]$SkipNpmCheck,
@@ -52,6 +52,8 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+$script:SkincosWslDistribution = "Ubuntu-24.04"
+$script:SkincosWslOperator = "admin"
 $script:BlockedEnvironmentNames = @(
     "BASH_ENV",
     "CDPATH",
@@ -98,6 +100,10 @@ function Convert-ToBashLiteral {
     if ($Value.Contains([char]0)) {
         throw "NUL bytes are not supported at the Windows-to-WSL boundary."
     }
+
+    if ($Value.Contains([char]0)) {
+        throw "NUL bytes are not supported at the Windows-to-WSL boundary."
+    }
     return "'" + $Value.Replace("'", "'""'""'") + "'"
 }
 
@@ -122,18 +128,54 @@ function Resolve-SafeRepoRelativePath {
     if ($normalized.Contains('//')) {
         throw "$ParameterName contains an ambiguous empty path segment. Received: $Path"
     }
+
     while ($normalized.StartsWith('./')) {
         $normalized = $normalized.Substring(2)
     }
     if ([string]::IsNullOrWhiteSpace($normalized) -or $normalized -eq '.') {
         throw "$ParameterName must identify a file below ProjectRoot."
     }
-    if (@($normalized.Split('/')) -contains '..') {
+
+    $segments = @($normalized.Split('/'))
+    if ($segments -contains '..') {
         throw "$ParameterName may not traverse outside ProjectRoot. Received: $Path"
     }
+
     if (-not [string]::IsNullOrWhiteSpace($RequiredExtension) -and
         -not $normalized.EndsWith($RequiredExtension, [StringComparison]::OrdinalIgnoreCase)) {
         throw "$ParameterName must identify a $RequiredExtension file. Received: $Path"
+    }
+
+    return $normalized
+}
+
+function Resolve-SafeWorkingDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or
+        $Path.Contains([char]0) -or
+        $Path.Contains("`r") -or
+        $Path.Contains("`n")) {
+        throw "WorkingDirectory must be a repository-relative path."
+    }
+
+    $normalized = $Path.Replace('\', '/')
+    if ($normalized -match '^[A-Za-z]:' -or $normalized.StartsWith('/')) {
+        throw "WorkingDirectory must be relative to ProjectRoot. Received: $Path"
+    }
+    if ($normalized.Contains('//')) {
+        throw "WorkingDirectory contains an ambiguous empty path segment. Received: $Path"
+    }
+    while ($normalized.StartsWith('./')) {
+        $normalized = $normalized.Substring(2)
+    }
+    if ([string]::IsNullOrWhiteSpace($normalized) -or $normalized -eq '.') {
+        return '.'
+    }
+    if (@($normalized.Split('/')) -contains '..') {
+        throw "WorkingDirectory may not traverse outside ProjectRoot. Received: $Path"
     }
     return $normalized
 }
@@ -145,27 +187,34 @@ function Resolve-SafeExecutable {
         $Value.Contains([char]0) -or
         $Value.Contains("`r") -or
         $Value.Contains("`n")) {
-        throw "Executable must be a non-empty command name or approved path."
+        throw "Executable must be a non-empty command name or repository-relative path."
     }
+
     if ($Value -match '^/(?:usr/)?bin/[A-Za-z0-9_][A-Za-z0-9_.+-]*$') {
         return $Value
     }
     if ($Value.Contains('/') -or $Value.Contains('\')) {
         return Resolve-SafeRepoRelativePath -Path $Value -ParameterName "Executable"
     }
+
     if ($Value -notmatch '^[A-Za-z0-9_][A-Za-z0-9_.+-]*$') {
         throw "Executable contains unsupported command-name characters. Received: $Value"
     }
+
     return $Value
 }
 
 function Resolve-EnvVarEntry {
-    param([Parameter(Mandatory = $true)][string]$Entry)
+    param(
+        [Parameter(Mandatory = $true)][string]$Entry,
+        [switch]$ExpandWindowsEnvironmentVariables
+    )
 
     $separator = $Entry.IndexOf('=')
     if ($separator -le 0) {
         throw "EnvVar entry must use NAME=value format."
     }
+
     $name = $Entry.Substring(0, $separator).Trim()
     if ($name -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
         throw "EnvVar name is invalid: $name"
@@ -173,9 +222,15 @@ function Resolve-EnvVarEntry {
     if ($script:BlockedEnvironmentNames -contains $name.ToUpperInvariant()) {
         throw "EnvVar $name is reserved by the Windows-to-WSL execution boundary."
     }
+
     $value = $Entry.Substring($separator + 1)
-    if ($value.Contains([char]0)) {
-        throw "EnvVar $name contains a NUL byte."
+    if ($ExpandWindowsEnvironmentVariables) {
+        # Preserve the historical RepoCommand behavior without applying implicit
+        # Windows expansion to the new typed boundary.
+        $value = [Environment]::ExpandEnvironmentVariables($value)
+    }
+    if ($value -match '^[A-Za-z]:[\\/]') {
+        $value = Convert-WindowsPathToWsl -Path $value
     }
     return [pscustomobject]@{
         Name = $name
@@ -183,157 +238,104 @@ function Resolve-EnvVarEntry {
     }
 }
 
-function Assert-RelativeLinuxPath {
+function Resolve-WindowsWorktreeEnvironment {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $gitMarker = Join-Path $RepoRoot ".git"
+    if (-not (Test-Path -LiteralPath $gitMarker -PathType Leaf)) {
+        return @()
+    }
+
+    $markerText = (Get-Content -LiteralPath $gitMarker -Raw).Trim()
+    if ($markerText -notmatch '^gitdir:\s*(?<path>.+)$') {
+        throw "The Windows worktree has an invalid .git pointer: '$gitMarker'."
+    }
+
+    $gitDirectory = $Matches.path.Trim()
+    if (-not [IO.Path]::IsPathRooted($gitDirectory)) {
+        $gitDirectory = Join-Path $RepoRoot $gitDirectory
+    }
+    $gitDirectory = [IO.Path]::GetFullPath($gitDirectory)
+    $approvedRoot = [IO.Path]::GetFullPath(
+        "C:\CodexShared\Projetos\skincos\.git\worktrees"
+    ).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if (-not $gitDirectory.StartsWith(
+        $approvedRoot + [IO.Path]::DirectorySeparatorChar,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "The Windows worktree .git pointer is outside the approved shared repository: '$gitDirectory'."
+    }
+
+    return @(
+        "GIT_DIR=$(Convert-WindowsPathToWsl -Path $gitDirectory)",
+        "GIT_WORK_TREE=$(Convert-WindowsPathToWsl -Path $RepoRoot)"
+    )
+}
+
+function Join-BashArguments {
+    param([AllowEmptyCollection()][string[]]$Values = @())
+
+    $quoted = [System.Collections.Generic.List[string]]::new()
+    foreach ($value in $Values) {
+        if ($null -eq $value) {
+            throw "Argument entries may not be null."
+        }
+        $quoted.Add((Convert-ToBashLiteral -Value $value))
+    }
+    return ($quoted -join " ")
+}
+
+function New-SkincosWslInvocation {
     param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Label
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("BashScript", "Executable", "NpmScript", "PythonScript", "LegacyRepoCommand")]
+        [string]$Mode,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [string]$WorkingDirectory = ".",
+        [AllowEmptyCollection()][string[]]$Argument = @(),
+        [AllowEmptyCollection()][string[]]$EnvVar = @(),
+        [switch]$SkipBootstrapCheck,
+        [switch]$SkipNodeCheck,
+        [switch]$SkipNpmCheck,
+        [switch]$SkipGitCheck,
+        [switch]$SkipRepoCheck
     )
 
-    if ([string]::IsNullOrWhiteSpace($Path) -or
-        $Path.Contains([char]0) -or
-        $Path.Contains("`r") -or
-        $Path.Contains("`n")) {
-        throw "$Label must be a non-empty Linux path without control characters."
-    }
-    if ($Path -match '(^|/)\.\.(/|$)') {
-        throw "$Label cannot escape the selected project root: '$Path'."
-    }
-}
-
-function Resolve-InvocationFile {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
-    $allowedRoots = @(
-        (Join-Path $env:LOCALAPPDATA "Codex\skincos\tmp"),
-        "C:\CodexRuntime\operator\admin\skincos\tmp"
-    )
-    $allowed = $false
-    foreach ($root in $allowedRoots) {
-        $fullRoot = [IO.Path]::GetFullPath($root).TrimEnd([IO.Path]::DirectorySeparatorChar)
-        if ($resolvedPath.StartsWith(
-            $fullRoot + [IO.Path]::DirectorySeparatorChar,
-            [StringComparison]::OrdinalIgnoreCase
-        )) {
-            $allowed = $true
-            break
-        }
-    }
-    if (-not $allowed) {
-        throw "Detached WSL invocation files are allowed only in the private Codex runtime: '$resolvedPath'."
-    }
-    return $resolvedPath
-}
-
-function Invoke-WslCapture {
-    param(
-        [Parameter(Mandatory = $true)][System.Management.Automation.CommandInfo]$Wsl,
-        [Parameter(Mandatory = $true)][string[]]$Arguments
-    )
-
-    $previousErrorPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $output = @(& $Wsl.Source @Arguments 2>&1)
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $previousErrorPreference
-    }
-    return [pscustomobject]@{
-        ExitCode = $exitCode
-        Output = $output
-    }
-}
-
-$invocationMode = $PSCmdlet.ParameterSetName
-$invocationFileToRemove = $null
-$commandExitCode = 1
-
-try {
-    if ($invocationMode -eq "InvocationFile") {
-        $invocationFileToRemove = Resolve-InvocationFile -Path $InvocationFile
-        $spec = Get-Content -LiteralPath $invocationFileToRemove -Raw | ConvertFrom-Json
-        if ([int]$spec.version -ne 1) {
-            throw "Unsupported detached WSL invocation version '$($spec.version)'."
-        }
-        $invocationMode = [string]$spec.mode
-        if ($invocationMode -notin @("BashScript", "Executable", "NpmScript", "PythonScript")) {
-            throw "Unsupported detached WSL invocation mode '$invocationMode'."
-        }
-
-        $ProjectRoot = [string]$spec.projectRoot
-        $WorkingDirectory = if ([string]::IsNullOrWhiteSpace([string]$spec.workingDirectory)) {
-            "."
-        } else {
-            [string]$spec.workingDirectory
-        }
-        $ArgumentList = @($spec.argumentList | ForEach-Object { [string]$_ })
-        $EnvVar = @($spec.envVar | ForEach-Object { [string]$_ })
-        $Distro = if ([string]::IsNullOrWhiteSpace([string]$spec.distro)) {
-            "Ubuntu-24.04"
-        } else {
-            [string]$spec.distro
-        }
-        $LinuxUser = if ([string]::IsNullOrWhiteSpace([string]$spec.linuxUser)) {
-            "admin"
-        } else {
-            [string]$spec.linuxUser
-        }
-        $SkipBootstrapCheck = [bool]$spec.skipBootstrapCheck
-        $SkipNodeCheck = [bool]$spec.skipNodeCheck
-        $SkipNpmCheck = [bool]$spec.skipNpmCheck
-        $SkipGitCheck = [bool]$spec.skipGitCheck
-        $SkipRepoCheck = [bool]$spec.skipRepoCheck
-
-        switch ($invocationMode) {
-            "BashScript" { $ScriptPath = [string]$spec.target }
-            "Executable" { $Executable = [string]$spec.target }
-            "NpmScript" { $NpmScript = [string]$spec.target }
-            "PythonScript" { $PythonScript = [string]$spec.target }
-        }
+    if ([string]::IsNullOrWhiteSpace($Target) -or $Target.Contains([char]0)) {
+        throw "$Mode target must not be empty and may not contain NUL bytes."
     }
 
-    if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
-        throw "ProjectRoot is required."
-    }
-    if (-not (Test-Path -LiteralPath $ProjectRoot -PathType Container)) {
-        throw "ProjectRoot does not exist on Windows: $ProjectRoot"
-    }
-    $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
-    if ($Distro -ne "Ubuntu-24.04") {
-        throw "Skincos actions must use the encapsulated Ubuntu-24.04 backend. Received: '$Distro'."
-    }
-    if ($LinuxUser -ne "admin") {
-        throw "Skincos actions must use the interactive WSL operator 'admin'. Received: '$LinuxUser'."
-    }
-
-    foreach ($argumentValue in $ArgumentList) {
-        if ($null -eq $argumentValue -or $argumentValue.Contains([char]0)) {
-            throw "ArgumentList entries may not be null or contain NUL bytes."
-        }
-    }
-
-    switch ($invocationMode) {
+    $normalizedTarget = switch ($Mode) {
         "BashScript" {
-            $ScriptPath = Resolve-SafeRepoRelativePath `
-                -Path $ScriptPath -ParameterName "ScriptPath" -RequiredExtension ".sh"
-        }
-        "Executable" {
-            $Executable = Resolve-SafeExecutable -Value $Executable
-        }
-        "NpmScript" {
-            if ($NpmScript -notmatch '^[A-Za-z0-9][A-Za-z0-9:_-]*$') {
-                throw "NpmScript contains unsupported characters: '$NpmScript'."
-            }
+            Resolve-SafeRepoRelativePath -Path $Target -ParameterName "ScriptPath" -RequiredExtension ".sh"
         }
         "PythonScript" {
-            $PythonScript = Resolve-SafeRepoRelativePath `
-                -Path $PythonScript -ParameterName "PythonScript" -RequiredExtension ".py"
+            Resolve-SafeRepoRelativePath -Path $Target -ParameterName "PythonScript" -RequiredExtension ".py"
+        }
+        "NpmScript" {
+            if ($Target -notmatch '^[A-Za-z0-9][A-Za-z0-9:_-]*$') {
+                throw "NpmScript contains unsupported characters. Received: $Target"
+            }
+            $Target
+        }
+        "Executable" {
+            Resolve-SafeExecutable -Value $Target
+        }
+        "LegacyRepoCommand" {
+            $Target
         }
     }
 
-    $resolvedUserEnvironment = [System.Collections.Generic.List[object]]::new()
+    $argumentText = Join-BashArguments -Values $Argument
+    $repoMountPath = Convert-WindowsPathToWsl -Path $ProjectRoot
+    if ($repoMountPath -notmatch '^/mnt/[a-z](?:/|$)') {
+        throw "ProjectRoot must be an absolute Windows drive path. Received: $ProjectRoot"
+    }
+    $normalizedWorkingDirectory = Resolve-SafeWorkingDirectory -Path $WorkingDirectory
+
+    # Resolve every environment entry before any WSL process can start.
+    $resolvedEnvironment = [System.Collections.Generic.List[object]]::new()
     $seenEnvironmentNames = [System.Collections.Generic.HashSet[string]]::new(
         [StringComparer]::OrdinalIgnoreCase
     )
@@ -341,213 +343,195 @@ try {
         if ($null -eq $entry) {
             throw "EnvVar entries may not be null."
         }
-        $resolved = Resolve-EnvVarEntry -Entry $entry
+        $resolved = Resolve-EnvVarEntry `
+            -Entry $entry `
+            -ExpandWindowsEnvironmentVariables:($Mode -eq "LegacyRepoCommand")
         if (-not $seenEnvironmentNames.Add($resolved.Name)) {
             throw "EnvVar contains a duplicate name: $($resolved.Name)"
         }
-        $resolvedUserEnvironment.Add($resolved)
+        $resolvedEnvironment.Add($resolved)
     }
 
-    $wsl = Get-Command $WslExecutable -ErrorAction SilentlyContinue
-    if (-not $wsl) {
-        throw "WSL is unavailable: '$WslExecutable' was not found. No Skincos service was started."
-    }
+    $bashLines = [System.Collections.Generic.List[string]]::new()
+    $bashLines.Add("set -euo pipefail")
 
-    $distroProbe = Invoke-WslCapture -Wsl $wsl -Arguments @("-l", "-q")
-    $installedDistros = @($distroProbe.Output |
-        ForEach-Object { ([string]$_ -replace [char]0, "").Trim() } |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($distroProbe.ExitCode -ne 0 -or $installedDistros -notcontains $Distro) {
-        throw "WSL distro '$Distro' is unavailable. No Skincos service was started."
-    }
-
-    $identityProbe = Invoke-WslCapture -Wsl $wsl -Arguments @(
-        "-d", $Distro, "-u", $LinuxUser, "--exec", "/usr/bin/id", "-un"
-    )
-    $resolvedLinuxUser = [string]($identityProbe.Output | Select-Object -Last 1)
-    if ($identityProbe.ExitCode -ne 0 -or $resolvedLinuxUser.Trim() -ne $LinuxUser) {
-        throw "WSL operator '$LinuxUser' is unavailable in '$Distro'. No Skincos service was started."
-    }
-
-    $repoMountPath = (Convert-WindowsPathToWsl -Path $ProjectRoot).TrimEnd("/")
-    if ($repoMountPath -notmatch '^/mnt/[a-z](?:/|$)') {
-        throw "ProjectRoot must resolve to an absolute Windows drive path. Received: '$ProjectRoot'."
-    }
-
-    $implicitEnv = @()
-    $windowsGitMarker = Join-Path $ProjectRoot ".git"
-    if (Test-Path -LiteralPath $windowsGitMarker -PathType Leaf) {
-        $gitMarker = (Get-Content -LiteralPath $windowsGitMarker -Raw).Trim()
-        if ($gitMarker -notmatch '^gitdir:\s*(?<path>.+)$') {
-            throw "The Windows worktree has an invalid .git pointer: '$windowsGitMarker'."
-        }
-        $windowsGitDirectory = $Matches.path.Trim()
-        if (-not [IO.Path]::IsPathRooted($windowsGitDirectory)) {
-            $windowsGitDirectory = Join-Path $ProjectRoot $windowsGitDirectory
-        }
-        $windowsGitDirectory = [IO.Path]::GetFullPath($windowsGitDirectory)
-        $approvedGitDirectoryRoot = [IO.Path]::GetFullPath(
-            "C:\CodexShared\Projetos\skincos\.git\worktrees"
-        ).TrimEnd([IO.Path]::DirectorySeparatorChar)
-        if (-not $windowsGitDirectory.StartsWith(
-            $approvedGitDirectoryRoot + [IO.Path]::DirectorySeparatorChar,
-            [StringComparison]::OrdinalIgnoreCase
-        )) {
-            throw "The Windows worktree .git pointer is outside the approved shared repository: '$windowsGitDirectory'."
-        }
-        $implicitEnv = @(
-            "GIT_DIR=$(Convert-WindowsPathToWsl -Path $windowsGitDirectory)",
-            "GIT_WORK_TREE=$repoMountPath"
-        )
-    }
-
-    Assert-RelativeLinuxPath -Path $WorkingDirectory -Label "WorkingDirectory"
-    if ($WorkingDirectory.StartsWith("/")) {
-        if ($WorkingDirectory -ne $repoMountPath -and
-            -not $WorkingDirectory.StartsWith($repoMountPath + "/", [StringComparison]::Ordinal)) {
-            throw "WorkingDirectory must remain inside '$repoMountPath': '$WorkingDirectory'."
-        }
-        $executionDirectory = $WorkingDirectory.TrimEnd("/")
-    }
-    else {
-        $relativeWorkingDirectory = ($WorkingDirectory -replace '\\', '/').Trim("/")
-        $executionDirectory = if (
-            [string]::IsNullOrWhiteSpace($relativeWorkingDirectory) -or
-            $relativeWorkingDirectory -eq "."
-        ) {
-            $repoMountPath
-        }
-        else {
-            "$repoMountPath/$relativeWorkingDirectory"
-        }
-    }
-
+    $safeRepoLiteral = Convert-ToBashLiteral -Value $repoMountPath
+    $implicitEnvironment = @(Resolve-WindowsWorktreeEnvironment -RepoRoot $ProjectRoot)
+    # Resolve-WindowsWorktreeEnvironment refuses any .git pointer outside the
+    # canonical shared repository worktree directory.  Once it has succeeded,
+    # the exact worktree is as trustworthy for WSL Git registration as the
+    # canonical checkout; requiring a manual WSL safe.directory entry here
+    # made every newly created approved worktree fail its first typed command.
+    $approvedSharedWorktree = $implicitEnvironment.Count -gt 0
     if (-not $SkipRepoCheck) {
-        $repoProbe = Invoke-WslCapture -Wsl $wsl -Arguments @(
-            "-d", $Distro, "-u", $LinuxUser, "--exec", "/usr/bin/test", "-d", $repoMountPath
-        )
-        if ($repoProbe.ExitCode -ne 0) {
-            throw "Skincos project root is unavailable in WSL at '$repoMountPath'. No service was started."
-        }
-        $workingDirectoryProbe = Invoke-WslCapture -Wsl $wsl -Arguments @(
-            "-d", $Distro, "-u", $LinuxUser, "--exec", "/usr/bin/test", "-d", $executionDirectory
-        )
-        if ($workingDirectoryProbe.ExitCode -ne 0) {
-            throw "WSL working directory is unavailable at '$executionDirectory'. No service was started."
-        }
+        $message = Convert-ToBashLiteral -Value "Shared repo not found at $repoMountPath."
+        $bashLines.Add("if [[ ! -d $safeRepoLiteral ]]; then printf '%s\n' $message >&2; exit 1; fi")
+    }
+    if (-not $SkipGitCheck) {
+        $bashLines.Add("if ! command -v git >/dev/null 2>&1; then printf '%s\n' 'git is not available in Ubuntu-24.04.' >&2; exit 1; fi")
     }
 
-    $toolChecks = [System.Collections.Generic.List[string]]::new()
-    if (-not $SkipGitCheck) { $toolChecks.Add("git") }
-    if (-not $SkipNodeCheck -or $invocationMode -eq "NpmScript") { $toolChecks.Add("node") }
-    if (-not $SkipNpmCheck -or $invocationMode -eq "NpmScript") { $toolChecks.Add("npm") }
-    if ($invocationMode -eq "PythonScript") { $toolChecks.Add("python3") }
-    foreach ($tool in @($toolChecks | Select-Object -Unique)) {
-        $toolProbe = Invoke-WslCapture -Wsl $wsl -Arguments @(
-            "-d", $Distro, "-u", $LinuxUser, "--exec", "/usr/bin/which", $tool
-        )
-        if ($toolProbe.ExitCode -ne 0) {
-            throw "'$tool' is unavailable in Ubuntu-24.04. Fix the WSL toolchain before running Skincos actions."
-        }
+    $requiresNode = (-not $SkipNodeCheck) -or $Mode -eq "NpmScript"
+    $requiresNpm = (-not $SkipNpmCheck) -or $Mode -eq "NpmScript"
+    if ($requiresNode) {
+        $bashLines.Add("if ! command -v node >/dev/null 2>&1; then printf '%s\n' 'node is not available in Ubuntu-24.04.' >&2; exit 1; fi")
+    }
+    if ($requiresNpm) {
+        $bashLines.Add("if ! command -v npm >/dev/null 2>&1; then printf '%s\n' 'npm is not available in Ubuntu-24.04.' >&2; exit 1; fi")
     }
 
     if (-not $SkipBootstrapCheck) {
-        $safeDirectoryProbe = Invoke-WslCapture -Wsl $wsl -Arguments @(
-            "-d", $Distro, "-u", $LinuxUser, "--cd", "/",
-            "--exec", "/usr/bin/git", "config", "--global", "--get-all", "safe.directory"
-        )
-        $safeDirectories = @($safeDirectoryProbe.Output | ForEach-Object { ([string]$_).Trim() })
-        $canonicalRepoMount = "/mnt/c/CodexShared/Projetos/skincos"
-        $sharedWorktreeMount = "/mnt/c/CodexShared/Worktrees/skincos/admin/"
-        $privatePreviewMount = "/mnt/c/CodexRuntime/operator/admin/skincos/source/"
-        $nativePreviewMount = "/home/admin/.local/state/skincos/crm-local-preview-source/"
+        $canonicalRepoMount = '/mnt/c/CodexShared/Projetos/skincos'
+        $privatePreviewMount = '/mnt/c/CodexRuntime/operator/admin/skincos/source/'
         $trustedPreview = $repoMountPath -eq $canonicalRepoMount -or
-            $repoMountPath.StartsWith($sharedWorktreeMount, [StringComparison]::OrdinalIgnoreCase) -or
+            $approvedSharedWorktree -or
             $repoMountPath.StartsWith($privatePreviewMount, [StringComparison]::OrdinalIgnoreCase) -or
-            $repoMountPath.StartsWith($nativePreviewMount, [StringComparison]::Ordinal)
-
-        if ($safeDirectories -notcontains $repoMountPath) {
-            if (-not $trustedPreview) {
-                throw "WSL bootstrap for this checkout is not ready. Run the WslAccountBootstrap action first."
-            }
-            $safeDirectoryWrite = Invoke-WslCapture -Wsl $wsl -Arguments @(
-                "-d", $Distro, "-u", $LinuxUser, "--cd", "/",
-                "--exec", "/usr/bin/git", "config", "--global", "--add",
-                "safe.directory", $repoMountPath
+            $repoMountPath.StartsWith('/home/admin/.local/state/skincos/crm-local-preview-source/', [StringComparison]::Ordinal)
+        if ($trustedPreview) {
+            # CRM snapshots are purposefully created in unique private worktrees.
+            # Register only the canonical checkout and the private preview root.
+            $bashLines.Add("if ! git -C / config --global --get-all safe.directory 2>/dev/null | grep -Fxq $safeRepoLiteral; then git -C / config --global --add safe.directory $safeRepoLiteral; fi")
+        } else {
+            $bootstrapMessage = Convert-ToBashLiteral -Value (
+                "WSL bootstrap for this checkout is not ready. Run the approved shared-workspace setup first."
             )
-            if ($safeDirectoryWrite.ExitCode -ne 0) {
-                throw "Unable to register the approved WSL safe.directory '$repoMountPath'."
-            }
+            $bashLines.Add("if ! git -C / config --global --get-all safe.directory 2>/dev/null | grep -Fxq $safeRepoLiteral; then printf '%s\n' $bootstrapMessage >&2; exit 1; fi")
         }
     }
 
-    $resolvedEnv = @($implicitEnv)
-    foreach ($resolved in $resolvedUserEnvironment) {
-        $resolvedEnv += "$($resolved.Name)=$($resolved.Value)"
+    foreach ($implicit in $implicitEnvironment) {
+        $parts = $implicit.Split("=", 2)
+        $bashLines.Add("export $($parts[0])=" + (Convert-ToBashLiteral -Value $parts[1]))
+    }
+    foreach ($resolved in $resolvedEnvironment) {
+        $bashLines.Add(
+            "export $($resolved.Name)=" + (Convert-ToBashLiteral -Value ([string]$resolved.Value))
+        )
     }
 
-    $linuxCommand = @()
-    switch ($invocationMode) {
+    $bashLines.Add("cd -- $safeRepoLiteral")
+    if ($normalizedWorkingDirectory -ne '.') {
+        $workingDirectoryLiteral = Convert-ToBashLiteral -Value $normalizedWorkingDirectory
+        $bashLines.Add("if [[ ! -d $workingDirectoryLiteral ]]; then printf '%s\\n' 'WorkingDirectory was not found below ProjectRoot.' >&2; exit 1; fi")
+        $bashLines.Add("cd -- $workingDirectoryLiteral")
+    }
+
+    $targetLiteral = Convert-ToBashLiteral -Value $normalizedTarget
+    $argumentSuffix = if ([string]::IsNullOrEmpty($argumentText)) { "" } else { " $argumentText" }
+    switch ($Mode) {
         "BashScript" {
-            $linuxCommand = @("/usr/bin/env") + $resolvedEnv +
-                @("/bin/bash", $ScriptPath) + $ArgumentList
-        }
-        "Executable" {
-            $linuxCommand = @("/usr/bin/env") + $resolvedEnv +
-                @($Executable) + $ArgumentList
-        }
-        "NpmScript" {
-            $npmArguments = @("run", $NpmScript)
-            if ($ArgumentList.Count -gt 0) {
-                $npmArguments += "--"
-                $npmArguments += $ArgumentList
-            }
-            $linuxCommand = @("/usr/bin/env") + $resolvedEnv +
-                @("npm") + $npmArguments
+            $missingMessage = Convert-ToBashLiteral -Value "ScriptPath was not found below ProjectRoot."
+            $bashLines.Add("if [[ ! -f $targetLiteral ]]; then printf '%s\n' $missingMessage >&2; exit 1; fi")
+            $bashLines.Add("bash -- $targetLiteral$argumentSuffix")
         }
         "PythonScript" {
-            $linuxCommand = @("/usr/bin/env") + $resolvedEnv +
-                @("python3", $PythonScript) + $ArgumentList
+            $bashLines.Add("if ! command -v python3 >/dev/null 2>&1; then printf '%s\n' 'python3 is not available in Ubuntu-24.04.' >&2; exit 1; fi")
+            $missingMessage = Convert-ToBashLiteral -Value "PythonScript was not found below ProjectRoot."
+            $bashLines.Add("if [[ ! -f $targetLiteral ]]; then printf '%s\n' $missingMessage >&2; exit 1; fi")
+            $bashLines.Add("python3 -- $targetLiteral$argumentSuffix")
         }
-        "LegacyCommand" {
-            Write-Warning "-RepoCommand is a legacy raw-shell compatibility path. Use a typed invocation."
-            $bashLines = [System.Collections.Generic.List[string]]::new()
-            $bashLines.Add("set -euo pipefail")
-            foreach ($entry in $resolvedEnv) {
-                $parts = $entry.Split("=", 2)
-                $bashLines.Add("export $($parts[0])=" + (Convert-ToBashLiteral -Value $parts[1]))
+        "NpmScript" {
+            $bashLines.Add("if [[ ! -f package.json ]]; then printf '%s\n' 'package.json was not found at ProjectRoot.' >&2; exit 1; fi")
+            $probe = "const p=require('./package.json');const n=process.argv[1];process.exit(p.scripts&&Object.prototype.hasOwnProperty.call(p.scripts,n)?0:1)"
+            $probeLiteral = Convert-ToBashLiteral -Value $probe
+            $missingMessage = Convert-ToBashLiteral -Value "NpmScript is not declared in package.json."
+            $bashLines.Add("if ! node -e $probeLiteral -- $targetLiteral; then printf '%s\n' $missingMessage >&2; exit 1; fi")
+            $npmArgumentSuffix = if ([string]::IsNullOrEmpty($argumentText)) { "" } else { " -- $argumentText" }
+            $bashLines.Add("npm run $targetLiteral$npmArgumentSuffix")
+        }
+        "Executable" {
+            if ($normalizedTarget.Contains('/')) {
+                $missingMessage = Convert-ToBashLiteral -Value "Executable is not an executable file below ProjectRoot."
+                $bashLines.Add("if [[ ! -x $targetLiteral ]]; then printf '%s\n' $missingMessage >&2; exit 1; fi")
+            } else {
+                $missingMessage = Convert-ToBashLiteral -Value "Executable is not available in Ubuntu-24.04."
+                $bashLines.Add("if ! command -v -- $targetLiteral >/dev/null 2>&1; then printf '%s\n' $missingMessage >&2; exit 1; fi")
             }
-            $bashLines.Add("cd " + (Convert-ToBashLiteral -Value $executionDirectory))
-            $bashLines.Add($RepoCommand)
-            $linuxCommand = @("/bin/bash", "-lc", ($bashLines -join "`n"))
+            $bashLines.Add("$targetLiteral$argumentSuffix")
         }
-        default {
-            throw "Unsupported WSL invocation mode '$invocationMode'."
+        "LegacyRepoCommand" {
+            $bashLines.Add($normalizedTarget)
         }
     }
 
-    Write-Verbose "WSL backend: $Distro ($LinuxUser)"
-    Write-Verbose "Running in WSL directory: $executionDirectory"
-
-    $wslArguments = @(
-        "-d", $Distro, "-u", $LinuxUser, "--cd", $executionDirectory, "--exec"
-    ) + $linuxCommand
-    $previousErrorPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        & $wsl.Source @wslArguments
-        $commandExitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $previousErrorPreference
-    }
-}
-finally {
-    if ($invocationFileToRemove -and (Test-Path -LiteralPath $invocationFileToRemove)) {
-        Remove-Item -LiteralPath $invocationFileToRemove -Force -ErrorAction SilentlyContinue
+    return [pscustomobject]@{
+        Mode = $Mode
+        Target = $normalizedTarget
+        RepoMountPath = $repoMountPath
+        BashCommand = ($bashLines -join "`n")
     }
 }
 
-if ($commandExitCode -ne 0) {
-    exit $commandExitCode
+function New-SkincosWslProcessArgumentList {
+    param([Parameter(Mandatory = $true)][string]$BashCommand)
+
+    # wsl.exe applies an additional Windows command-line parsing pass before
+    # handing argv to Linux. Embedded shell quotes are otherwise stripped
+    # (for example require('./package.json') becomes require(./package.json)).
+    # Carry the rendered script as inert base64 and decode it inside the fixed
+    # Ubuntu/admin boundary instead of relying on cross-platform quote rules.
+    $bashBytes = [Text.Encoding]::UTF8.GetBytes($BashCommand)
+    $bashBase64 = [Convert]::ToBase64String($bashBytes)
+    $bootstrapCommand = "printf %s $bashBase64 | base64 --decode | bash"
+
+    return [string[]]@(
+        "--distribution",
+        $script:SkincosWslDistribution,
+        "--user",
+        $script:SkincosWslOperator,
+        "--",
+        "bash",
+        "-lc",
+        $bootstrapCommand
+    )
+}
+
+# Dot-sourcing is used only by the Windows-native unit test to exercise the
+# pure renderer without starting WSL.
+if ($MyInvocation.InvocationName -eq '.') {
+    return
+}
+
+if (-not (Test-Path -LiteralPath $ProjectRoot -PathType Container)) {
+    throw "ProjectRoot does not exist on Windows: $ProjectRoot"
+}
+$ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
+
+$mode = $PSCmdlet.ParameterSetName
+$target = switch ($mode) {
+    "BashScript" { $ScriptPath }
+    "Executable" { $Executable }
+    "NpmScript" { $NpmScript }
+    "PythonScript" { $PythonScript }
+    "LegacyRepoCommand" { $RepoCommand }
+}
+
+$invocation = New-SkincosWslInvocation `
+    -Mode $mode `
+    -Target $target `
+    -ProjectRoot $ProjectRoot `
+    -WorkingDirectory $WorkingDirectory `
+    -Argument $Argument `
+    -EnvVar $EnvVar `
+    -SkipBootstrapCheck:$SkipBootstrapCheck `
+    -SkipNodeCheck:$SkipNodeCheck `
+    -SkipNpmCheck:$SkipNpmCheck `
+    -SkipGitCheck:$SkipGitCheck `
+    -SkipRepoCheck:$SkipRepoCheck
+
+if ($mode -eq "LegacyRepoCommand") {
+    Write-Warning "-RepoCommand is a legacy raw-shell compatibility path. Use a typed invocation for new automation."
+}
+
+$wsl = Get-Command -Name $WslExecutable -CommandType Application -ErrorAction SilentlyContinue
+if (-not $wsl) {
+    throw "WSL is unavailable: '$WslExecutable' was not found. No Skincos service was started."
+}
+$wslArguments = New-SkincosWslProcessArgumentList -BashCommand $invocation.BashCommand
+
+Write-Host "Running as $script:SkincosWslOperator in $script:SkincosWslDistribution repo: $($invocation.RepoMountPath)"
+& $wsl.Source @wslArguments
+$wslExitCode = $LASTEXITCODE
+if ($wslExitCode -ne 0) {
+    exit $wslExitCode
 }
