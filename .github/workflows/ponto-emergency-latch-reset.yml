@@ -85,7 +85,7 @@ jobs:
             || workflow?.path !== ".github/workflows/ponto-emergency-close.yml"
             || String(run?.id || "") !== process.env.EMERGENCY_RUN_ID
             || run?.workflow_id !== workflow.id
-            || run?.path !== `${workflow.path}@refs/heads/main`
+            || run?.path !== workflow.path
             || run?.status !== "completed"
             || run?.conclusion !== "success"
             || run?.event !== "workflow_dispatch"
