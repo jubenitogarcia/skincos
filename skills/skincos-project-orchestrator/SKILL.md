@@ -17,25 +17,39 @@ Default mode is `resume-execute`: reconstruct state, choose one eligible priorit
   state, execute one minimum safe eligible milestone, persist evidence, and
   emit the machine-readable Stop-hook contract.
 
-Read `references/execution-loop.md`, `references/authorization-boundaries.md`,
+Read `docs/decisions/codex-autonomy-policy.md`,
+`references/execution-loop.md`, `references/authorization-boundaries.md`,
 and `references/evidence-model.md`. For `supervisor-cycle`, also read
 `references/supervisor-cycle.md` completely before acting.
 
 ## Loop
 
-1. Read `AGENTS.md`, `CODEX_CONTEXT.md`, `TASKS.md`, `DECISIONS.md`, `ops/project-orchestration/work-queue.json`, and ledgers. Fetch remote refs and inspect Git, worktrees, PR/CI, relevant deployments/runtime/D1/PostgreSQL.
-2. Run `scripts/collect-state.sh` or `.ps1`. If unavailable/failing, collect directly and repair the collector when safe; never depend on one collector.
+1. Read `AGENTS.md` and the autonomy policy, load the canonical operational snapshot when available, and inspect Git. On a root mission or an absent/stale snapshot, reconstruct only the relevant durable context, queue/ledger and remote sources; fetch refs and inspect the Git/worktree, PR/CI, deployment/runtime/D1/PostgreSQL surfaces needed by the mission.
+2. Run `scripts/collect-state.sh` or `.ps1` when available. If unavailable/failing, collect directly; do not repeat a broad reconstruction or depend on one collector when its valid inputs and blocker fingerprint have not changed.
 3. Classify local, branch, PR, main, preview, staging, production, or unproven. A 200 is not a journey; worktree is not main; merged PR is not staging; staging is not production.
-4. Select highest-priority eligible item (Finance gates first unless current evidence proves another prerequisite comes first). Define objective, scope, deliverables, allowed/prohibited actions, tests, evidence and done definition.
-5. Execute continuously: scoped fixes, tests, commit, push, small PR, terminal CI, fix introduced failures, and merge only when green/review-free/non-production. Do not stop after plan, commit, PR, running check, timeout, or first CI failure.
-6. Verify environment, update queue and `docs/project-state/{current-state.md,evidence-ledger.json,blockers.md}`. After compaction, reread and continue.
+4. Select the smallest eligible milestone within the current explicit mission. Define objective, scope, deliverables, allowed/prohibited actions, tests, evidence and done definition; do not switch to an unrelated queue item or invent a separate mission.
+5. Execute continuously: scoped fixes, tests, commit, push, single-purpose PR, terminal CI, introduced-failure fixes, merge when technical gates permit, and the authorized environment verification. Do not stop after plan, commit, PR, running check, timeout, or first CI failure.
+6. Verify the relevant environment and persist only material queue, generated-state, blocker and evidence changes. After compaction, load the snapshot and continue without duplicating volatile state across historical documents.
 
 ## Authorization
 
-`resume-execute` authorizes worktrees, branches, code/config/tests/docs, declared dependencies, commits, push/PR/merge, scratch resources, and reversible synthetic staging deploy/rollback/restore/canary/failure tests. It never authorizes production deploy/migration/data mutation/activation/secrets, purchases, repo transfer, business permissions, or real-user pilot. Preserve unrelated dirty work and keep PRs single-purpose.
+Authorization comes from the current explicit mission under
+`docs/decisions/codex-autonomy-policy.md`, not from an implicit
+`resume-execute` default. It persists through worktrees, compaction,
+CI, merge and supervisor continuation. Within the mission's declared scope, it
+may cover code/config/tests/docs, branches/PRs, GitHub, Cloudflare, synthetic
+resources, additive migrations, staging, canary, production, secrets and
+rollback. Secret values and PII are never exposed or versioned.
 
-Automatic continuation never broadens these boundaries. End every
-`supervisor-cycle` with exactly one delimited JSON contract defined in
-`references/supervisor-cycle.md`; use `continue` only after real progress and
-only with a concrete safe next item. A missing or ambiguous authorization is a
-terminal safety state, not permission to proceed.
+Domain policies decide technical eligibility: flags, grants, real platform
+permissions, migration safety, validation, evidence and rollback remain
+mandatory even for an authorized production action. Treat a missing gate as a
+specific technical blocker, not a request for duplicate authorization. Preserve
+unrelated dirty work and keep PRs single-purpose.
+
+Automatic continuation carries valid mission authorization but never broadens
+it. End every `supervisor-cycle` with exactly one delimited JSON contract
+defined in `references/supervisor-cycle.md`; use `continue` only after real
+progress and with a concrete safe next item. Stop for an ambiguous material
+scope, a non-bypassable platform trust/access boundary, or an explicit human
+exception defined by the mission; report the narrowest actionable blocker.

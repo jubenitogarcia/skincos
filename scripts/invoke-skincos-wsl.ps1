@@ -357,6 +357,12 @@ function New-SkincosWslInvocation {
 
     $safeRepoLiteral = Convert-ToBashLiteral -Value $repoMountPath
     $implicitEnvironment = @(Resolve-WindowsWorktreeEnvironment -RepoRoot $ProjectRoot)
+    # Resolve-WindowsWorktreeEnvironment refuses any .git pointer outside the
+    # canonical shared repository worktree directory.  Once it has succeeded,
+    # the exact worktree is as trustworthy for WSL Git registration as the
+    # canonical checkout; requiring a manual WSL safe.directory entry here
+    # made every newly created approved worktree fail its first typed command.
+    $approvedSharedWorktree = $implicitEnvironment.Count -gt 0
     if (-not $SkipRepoCheck) {
         $message = Convert-ToBashLiteral -Value "Shared repo not found at $repoMountPath."
         $bashLines.Add("if [[ ! -d $safeRepoLiteral ]]; then printf '%s\n' $message >&2; exit 1; fi")
@@ -378,6 +384,7 @@ function New-SkincosWslInvocation {
         $canonicalRepoMount = '/mnt/c/CodexShared/Projetos/skincos'
         $privatePreviewMount = '/mnt/c/CodexRuntime/operator/admin/skincos/source/'
         $trustedPreview = $repoMountPath -eq $canonicalRepoMount -or
+            $approvedSharedWorktree -or
             $repoMountPath.StartsWith($privatePreviewMount, [StringComparison]::OrdinalIgnoreCase) -or
             $repoMountPath.StartsWith('/home/admin/.local/state/skincos/crm-local-preview-source/', [StringComparison]::Ordinal)
         if ($trustedPreview) {

@@ -5,7 +5,8 @@ import test from "node:test";
 import { validatePontoEnvironmentProtection } from "./ponto-environment-protection.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
-const policy = JSON.parse(fs.readFileSync(path.join(root, ".github/governance/progressive-release-policy.json"), "utf8"));
+const readJson = (relativePath) => JSON.parse(fs.readFileSync(path.join(root, relativePath), "utf8"));
+const policy = readJson(".github/governance/progressive-release-policy.json");
 const governance = policy.governance;
 
 test("policy declares single-operator Codex without human review", () => {
@@ -21,6 +22,24 @@ test("policy declares single-operator Codex without human review", () => {
       customBranchPolicies: true,
       requiredBranch: "main",
     });
+  }
+});
+
+test("versioned target environments mirror the single-operator policy", () => {
+  const mainBranchPolicy = readJson(".github/governance/environments/main-branch-policy.json");
+  for (const target of ["staging", "production"]) {
+    const expected = governance.environmentProtection[target];
+    const environment = readJson(`.github/governance/environments/${target}.json`);
+    assert.equal(environment.wait_timer, 0);
+    assert.equal(environment.prevent_self_review, expected.preventSelfReview);
+    assert.equal(environment.can_admins_bypass, governance.administratorBypassAllowed);
+    assert.deepEqual(environment.reviewers, []);
+    assert.deepEqual(environment.deployment_branch_policy, {
+      protected_branches: expected.protectedBranches,
+      custom_branch_policies: expected.customBranchPolicies,
+    });
+    assert.equal(mainBranchPolicy.name, expected.requiredBranch);
+    assert.equal(mainBranchPolicy.type, "branch");
   }
 });
 
