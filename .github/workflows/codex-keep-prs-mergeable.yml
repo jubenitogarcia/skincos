@@ -42,6 +42,11 @@ jobs:
                 color: "FBCA04",
                 description: "GitHub mergeability state still computing/unknown.",
               },
+              enabled: {
+                name: "automerge/enabled",
+                color: "1D76DB",
+                description: "Auto-merge is enabled; GitHub will merge only after the aggregate required gate is green.",
+              },
             };
 
             const COMMENT_MARKERS = {
@@ -105,10 +110,32 @@ jobs:
               });
             }
 
+            async function enableAutoMerge(pr) {
+              if (pr.draft || !pr.node_id || pr.auto_merge) return;
+              try {
+                await github.graphql(
+                  `mutation EnableAutoMerge($pullRequestId: ID!) {
+                    enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: SQUASH}) {
+                      pullRequest { autoMergeRequest { enabledAt } }
+                    }
+                  }`,
+                  { pullRequestId: pr.node_id },
+                );
+                await addLabel(pr.number, LABELS.enabled.name);
+                core.info(`Enabled auto-merge for PR #${pr.number}`);
+              } catch (err) {
+                // Protected checks, merge queues, or a newly pushed commit may
+                // make auto-merge temporarily unavailable. The next bounded
+                // reconcile cycle retries without forcing a merge.
+                core.warning(`enable auto-merge failed for #${pr.number}: ${err?.message || err}`);
+              }
+            }
+
             // Ensure labels exist (best-effort).
             await ensureLabel(LABELS.updated);
             await ensureLabel(LABELS.conflict);
             await ensureLabel(LABELS.pending);
+            await ensureLabel(LABELS.enabled);
 
             const pulls = await github.paginate(github.rest.pulls.list, {
               owner,
@@ -189,5 +216,6 @@ jobs:
               // Keep conflict label unless it is clearly clean.
               if (mergeableState === "clean") {
                 await removeLabel(prNumber, LABELS.conflict.name);
+                await enableAutoMerge(full);
               }
             }

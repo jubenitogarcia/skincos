@@ -460,7 +460,10 @@ for (const {
     fail(`${workflow} must consume its own exact check-run single-use coordinator capability before privileged work`);
   }
 }
-const coordinatorProtectionIndex = coordinator.indexOf('Attest protected selected environment before issuing any capability');
+const coordinatorProtectionIndex = Math.max(
+  coordinator.indexOf('Attest single-operator Codex governance and protected environment before issuing any capability'),
+  coordinator.indexOf('Attest protected selected environment before issuing any capability'),
+);
 const coordinatorCapabilityIndex = coordinator.indexOf('Verify target-bound asymmetric child capability custody');
 const gateProtectionIndex = orchestratorGate.indexOf('Revalidate protected target environment before consuming authority');
 const protectedGateConsumeIndex = orchestratorGate.indexOf('Validate, transition, and confirm the exact child-bound coordinator capability');
@@ -475,7 +478,8 @@ if (
   || !orchestratorGate.includes('ponto-environment-protection.mjs')
   || !orchestratorGate.includes('deployment-branch-policies?per_page=100')
   || !orchestratorGate.includes('deployments: read')
-  || !environmentProtection.includes('reviewerRules[0]?.prevent_self_review !== true')
+  || !environmentProtection.includes('reviewerRules.length !== 0')
+  || !environmentProtection.includes('authorizationModel: "single-operator-codex"')
   || !environmentProtection.includes('environment?.can_admins_bypass !== false')
   || !environmentProtection.includes('policies[0]?.name !== "main"')
 ) {

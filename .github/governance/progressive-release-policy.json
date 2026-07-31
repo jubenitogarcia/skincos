@@ -3,6 +3,46 @@
   "sourceBranch": "main",
   "stages": ["preview", "staging", "pilot", "canary", "production"],
   "stagePredecessor": {"staging": "preview", "pilot": "staging", "canary": "pilot", "production": "canary"},
+  "governance": {
+    "authorizationModel": "single-operator-codex",
+    "operatorLogin": "jubenitogarcia",
+    "humanReviewerRequired": false,
+    "mainOnly": true,
+    "canonicalMergedPullRequestRequired": true,
+    "administratorBypassAllowed": false,
+    "requiredChecks": [
+      "CI Smoke (Assert)",
+      "Central E2E Smoke",
+      "JS/TS Checks (workspace)",
+      "Dependency Audit (JS/TS)",
+      "Scan for secrets (Gitleaks)"
+    ],
+    "environmentProtection": {
+      "staging": {
+        "requiredReviewers": 0,
+        "preventSelfReview": false,
+        "protectedBranches": false,
+        "customBranchPolicies": true,
+        "requiredBranch": "main"
+      },
+      "production": {
+        "requiredReviewers": 0,
+        "preventSelfReview": false,
+        "protectedBranches": false,
+        "customBranchPolicies": true,
+        "requiredBranch": "main"
+      }
+    },
+    "attestation": {
+      "codexWorkflow": ".github/workflows/ponto-progressive-release.yml",
+      "immutableSource": "release_sha equals the current main commit and is ancestor-reachable",
+      "targetBoundCapabilities": true,
+      "splitCustody": true,
+      "sanitizedArtifacts": true,
+      "automaticRollback": true,
+      "noAdministrativeBypass": true
+    }
+  },
   "controls": {
     "immutableSource": "release-source-<sha> artifact and source SHA reachable from main",
     "featureFlag": "module-specific flag remains disabled until the approved stage",
@@ -15,16 +55,16 @@
   },
   "emergencyBrokers": {
     "staging": {
-      "url": null,
-      "custodyRef": null,
-      "responseKeyId": null,
-      "responsePublicKeyPem": null
+      "url": "https://skincos-ponto-emergency-staging.skincos.workers.dev/close",
+      "custodyRef": "vault:v1:broker-staging",
+      "responseKeyId": "vault:v1:szkTTX-TmwZqyBiiWqkbpbPhSRja8oTTC3URT7DcPf8",
+      "responsePublicKeyPem": "-----BEGIN PUBLIC KEY-----\r\nMCowBQYDK2VwAyEADzK+P2iEBdfH38y2CYi8tpSDeJijbo2X/gTppnaKHb0=\r\n-----END PUBLIC KEY-----"
     },
     "production": {
-      "url": null,
-      "custodyRef": null,
-      "responseKeyId": null,
-      "responsePublicKeyPem": null
+      "url": "https://skincos-ponto-emergency-production.skincos.workers.dev/close",
+      "custodyRef": "vault:v1:broker-production",
+      "responseKeyId": "vault:v1:LMQHNNK69P-jxyrqX7t6GW5SKTcbjSfPJyUTqeFg5cI",
+      "responsePublicKeyPem": "-----BEGIN PUBLIC KEY-----\r\nMCowBQYDK2VwAyEAz6WYoXzGy5rqWcJIyG3d9bc2j3NoV66QEy5bVh2GEa8=\r\n-----END PUBLIC KEY-----"
     }
   },
   "pilotRunner": {

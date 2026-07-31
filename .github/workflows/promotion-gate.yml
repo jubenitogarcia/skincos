@@ -13,6 +13,8 @@ on:
     outputs:
       source_sha:
         value: ${{ jobs.gate.outputs.source_sha }}
+      release_input_digest:
+        value: ${{ jobs.gate.outputs.release_input_digest }}
 
 jobs:
   gate:
@@ -23,6 +25,7 @@ jobs:
       contents: read
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
+      release_input_digest: ${{ steps.identity.outputs.release_input_digest }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -48,7 +51,9 @@ jobs:
             echo "::error::$source_sha is not reachable from origin/main."
             exit 1
           }
+          release_input_digest="$(PROMOTION_UNIT='${{ inputs.unit }}' PROMOTION_SOURCE_SHA="$source_sha" node .github/scripts/promotion-evidence.mjs digest)"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "release_input_digest=$release_input_digest" >> "$GITHUB_OUTPUT"
       - name: Block unsupported staging target
         if: ${{ inputs.target == 'staging' && !inputs.staging_supported }}
         run: |
@@ -63,6 +68,7 @@ jobs:
           PROMOTION_UNIT: ${{ inputs.unit }}
           PROMOTION_EXPECTED_TARGET: ${{ inputs.target == 'staging' && 'preview' || 'staging' }}
           PROMOTION_EXPECTED_SHA: ${{ steps.identity.outputs.source_sha }}
+          PROMOTION_EXPECTED_RELEASE_INPUT_DIGEST: ${{ steps.identity.outputs.release_input_digest }}
         run: |
           set -euo pipefail
           [[ "$PREDECESSOR_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::A numeric predecessor run id is required."; exit 1; }
@@ -76,6 +82,7 @@ jobs:
           PROMOTION_TARGET: preview
           PROMOTION_SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
           PROMOTION_SOURCE_TREE: ${{ github.sha }}
+          PROMOTION_RELEASE_INPUT_DIGEST: ${{ steps.identity.outputs.release_input_digest }}
         run: |
           set -euo pipefail
           tree="$(git rev-parse "${PROMOTION_SOURCE_SHA}^{tree}")"

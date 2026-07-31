@@ -2,231 +2,85 @@
   "schema": 1,
   "entries": [
     {
-      "observed_at": "2026-07-30T17:51:13Z",
-      "surface": "github-protected-main-github-actions-complete-ponto-preview-and-watchdog-admission",
-      "scope": "PR #930 integration, complete exact-main four-surface preview and successful-run watchdog false-red correction",
-      "state": "complete-preview-successful-live-release-still-fail-closed-watchdog-success-admission-successor-pr-931",
-      "method": "Verified PR #930 protected merge, all 14 hosted checks and exact-head Codex result; dispatched the Ponto coordinator on the exact merge SHA; inspected all four child jobs and retained artifacts; inspected the automatically triggered watchdog failure; added a job-admission predicate and focused regression test so successful first-attempt coordinators are skipped while failed/cancelled/timed-out first attempts and every rerun remain governed. No secret value, PII, deployment, migration, D1/KV write, module-control transition or identity mutation was performed.",
-      "result": "PR #930 final head 872f1b10c9bd64e1768fa0e8777d992e2658240b passed all 14 hosted checks and Codex found no major issue on that exact head, then merged through protected main without bypass as 71c54b1d406317c614dc33e48ced170458fbd707. Coordinator 30566547605, source job 90952396490 and orchestrator job 90952445595 succeeded. Canonical children Timekeeping 30566594811, Identity/Inventory 30566729991, Core API 30566806246 and CRM Pages 30566905155 all completed on that exact SHA. Combined preview evidence 8769249449 has digest sha256:7458fce0e783647c66c1b634515b0099590cfd43d5ed09c306a3bc9516543b62; sanitized run ledger 8769249808 has digest sha256:83268fc89fb64bc357ad6ac6a52d97dd8942fa74101cd784ba97466fd1b2baf4. Automatically triggered watchdog run 30567091382 failed only in context job 90954219518 because the workflow admitted a successful first-attempt coordinator that its validator intentionally rejects; every emergency job skipped and no mutation occurred. The bounded admission fix keeps successful first attempts out of the watchdog while preserving close/recovery handling for failed, cancelled, timed-out or replayed runs; focused tests pass 9/9.",
-      "limitation": "Preview is dry-run evidence only and selected_release_sha remains null for live release. No staging deployment, additive migration checkpoint, authenticated CONSULTOR/EMPLOYEE journey, module-control drill, kill switch, rollback, pilot, canary, external SLO or production promotion occurred. Both module-control values remain maintenance. Independent deployment approval, approved secret custody, broker, WAF split custody and block proof, pilot identity/cohort, clinic JIT runner and external SLO remain absent. Any main advancement requires a fresh preview on the new exact coordinator GITHUB_SHA.",
-      "origin_main": "71c54b1d406317c614dc33e48ced170458fbd707",
-      "corepack_successor_pr": 930,
-      "corepack_successor_final_head": "872f1b10c9bd64e1768fa0e8777d992e2658240b",
-      "corepack_successor_merge_sha": "71c54b1d406317c614dc33e48ced170458fbd707",
-      "corepack_successor_hosted_checks": "14/14",
-      "preview_release_sha": "71c54b1d406317c614dc33e48ced170458fbd707",
+      "observed_at": "2026-07-31T16:30:00Z",
+      "surface": "github-cloudflare-ponto-broker",
+      "scope": "Integrate and attest independent close-only emergency brokers after single-operator governance",
+      "state": "merged-and-live-attested-fail-closed",
+      "method": "PR #945 canonical squash merge after hosted checks; Cloudflare D1 creation/schema, Worker deployment, secret names, encrypted-vault custody, signed HMAC/Ed25519 contract attestation and staging latch/maintenance exercise",
+      "result": "PR #945 merged as d34488afc5b8ea668241382e24f30c745798e033. Staging Worker skincos-ponto-emergency-staging version 472fb1ea-854c-4c7d-8467-d0036b3e95f7 uses D1 da4dfca3-3f5e-4044-a235-eb1b102a6ec1; production Worker skincos-ponto-emergency-production version b07892dc-5325-4f6e-90e1-ae3d50d17c5b uses D1 4b5e9087-7d33-46d0-aeb2-f1503c01db43. Functional attestation passed for both; staging exercise run IDs 910001/910002 left latch=true and control=maintenance.",
+      "limitation": "No application release SHA selected; WAF token/ruleset, JIT runner, Workforce pilot identity and external SLO remain absent. No production Ponto flag or migration was changed.",
+      "sha": "d34488afc5b8ea668241382e24f30c745798e033",
+      "pr": 945,
       "selected_release_sha": null,
-      "preview_run": 30566547605,
-      "preview_source_job": 90952396490,
-      "preview_orchestrator_job": 90952445595,
-      "preview_children": {
-        "timekeeping": {
-          "run": 30566594811,
-          "job": 90952777570,
-          "surface_artifact": 8769104630,
-          "promotion_artifact": 8769104027
-        },
-        "identity_inventory": {
-          "run": 30566729991,
-          "job": 90953095462,
-          "surface_artifact": 8769138110,
-          "promotion_artifact": 8769137752
-        },
-        "core_api": {
-          "run": 30566806246,
-          "job": 90953342171,
-          "surface_artifact": 8769175430,
-          "promotion_artifact": 8769175021
-        },
-        "crm_pages": {
-          "run": 30566905155,
-          "job": 90953758618,
-          "surface_artifact": 8769241946,
-          "promotion_artifact": 8769241662
-        }
-      },
-      "preview_evidence_artifact": {
-        "id": 8769249449,
-        "digest": "sha256:7458fce0e783647c66c1b634515b0099590cfd43d5ed09c306a3bc9516543b62"
-      },
-      "preview_runs_ledger_artifact": {
-        "id": 8769249808,
-        "digest": "sha256:83268fc89fb64bc357ad6ac6a52d97dd8942fa74101cd784ba97466fd1b2baf4"
-      },
-      "watchdog_success_false_red": {
-        "run": 30567091382,
-        "job": 90954219518,
-        "mutation": false,
-        "successor_pr": 931,
-        "fix": "context-job-skips-successful-first-attempt-coordinator-but-keeps-failed-cancelled-timed-out-and-rerun-admission",
-        "focused_tests": "9/9"
-      },
-      "module_control": {
-        "staging": "maintenance",
-        "production": "maintenance"
-      },
-      "repository_resource_selectors": {
-        "present_by_name": [
-          "PONTO_MODULE_CONTROL_STAGING_KV_ID",
-          "PONTO_MODULE_CONTROL_PRODUCTION_KV_ID",
-          "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING",
-          "PONTO_CLOUDFLARE_PAGES_PROJECT",
-          "PONTO_TIMEKEEPING_D1_STAGING_ID",
-          "PONTO_TIMEKEEPING_D1_PRODUCTION_ID",
-          "CLOUDFLARE_ZONE_ID"
-        ],
-        "enable_flags": "all-four-absent",
-        "release_authority": false
-      },
-      "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T144137-20-complete-preview.md",
-      "next_action": "Merge PR #931 without bypass. Because that merge advances main, execute a fresh four-surface preview on its exact merge SHA. Do not dispatch staging until all independent approval, WAF, custody, broker, runner, pilot and external-SLO predecessors are proved."
+      "validation": {
+        "hosted_checks": "passed",
+        "broker_staging_attestation": "passed",
+        "broker_production_attestation": "passed",
+        "staging_close_exercise": "passed-latch-true-maintenance",
+        "credentials_included": false,
+        "pii_included": false,
+        "secret_values_emitted": false
+      }
     },
     {
-      "observed_at": "2026-07-30T17:23:36Z",
-      "surface": "github-protected-main-github-actions-ponto-preview-and-local-corepack-successor",
-      "scope": "PR #929 integration, second exact-main replacement preview and bounded Identity Corepack signing-key successor",
-      "state": "pr-929-integrated-replacement-preview-failed-corepack-key-successor-pending-both-environments-maintenance-external-gates-open",
-      "method": "Verified the protected PR #929 merge, all hosted checks and exact-head Codex result; dispatched the Ponto coordinator on the exact merge SHA; inspected coordinator and child jobs plus retained Timekeeping artifacts; read the failed Identity job log without exposing secret values; reviewed the bounded three-job Corepack activation change. No live deployment, migration, secret, identity or module-control mutation was performed.",
-      "result": "PR #929 final head 019a34367f3e2e40387b3f50da74b35149ff5981 passed all 14 hosted checks and Codex reported no major issue on that exact head. It merged through protected main without bypass as 77f241ec20f8956fc7e9b20dd2b373518dafa7be. Replacement preview coordinator 30564873785 admitted that exact SHA. Timekeeping child 30564915304 succeeded and produced surface artifact 8768441812 (sha256:541edf288b8cb62ded320c08d3dfb71d28e219164e19bac834966a7b8fd95604) plus promotion artifact 8768441200 (sha256:6a7b0a45628672aa57acc8a00a4ba6195407ef4bcb1bc4bc69639f02b702f044). Identity/Inventory child 30565019029 failed in job 90947405936 before tests or dry-run because the Corepack bundled with Node 22.12 attempted direct pnpm metadata resolution with a stale signing key and returned Cannot find matching keyid. Core API and CRM Pages were skipped. The coordinator retained sanitized ledger artifact 8768476655 (sha256:90dc7777a40570b7c823344b876415727ae82d77812e7b32baec96b8ffc5eb02); the failed Identity child produced zero artifacts. The bounded successor reads inventory/package.json packageManager, requires an exact pnpm version, runs corepack prepare for that exact version, activates it and verifies pnpm --version before use in all three Identity jobs.",
-      "limitation": "The Corepack successor is not yet merged and no complete four-surface replacement preview has succeeded, so selected_release_sha remains null. The failed preview was dry-run only: no Worker or Pages deployment, migration, D1/KV write, module transition or other live mutation occurred. Both module-control values remain maintenance and all previously recorded independent approval, secret custody, broker, WAF, pilot, clinic runner and external SLO gates remain open. No secret value or PII was read.",
-      "origin_main": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
-      "pnpm_bootstrap_pr": 929,
-      "pnpm_bootstrap_final_head": "019a34367f3e2e40387b3f50da74b35149ff5981",
-      "pnpm_bootstrap_merge_sha": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
-      "pnpm_bootstrap_hosted_checks": "14/14",
+      "observed_at": "2026-07-31T15:00:00Z",
+      "surface": "github-ponto-single-operator-governance",
+      "scope": "Reconcile current main and replace the human-review environment gate with a verifiable single-operator Codex contract",
+      "state": "local-branch-pending-pr-no-remote-mutation",
+      "method": "Fetched origin/main; created the preserved governance worktree from 01d2b6d1; added policy, environment attestation, canonical merged-PR/check verification, focused tests and state documentation",
+      "result": "The branch is based on origin/main 01d2b6d1f79a9017e0a87efa2a1a32f82eed219f and retains main-only, immutable SHA, canonical PR, required checks, no administrator bypass, split custody, sanitized artifacts and automatic rollback. The focused governance test passed 3/3 and progressive-release validation passed.",
+      "limitation": "The policy PR is not yet published or merged; the remote environments still have the legacy required-reviewer rule, and no secret, identity, Cloudflare resource, flag, migration or deployment was changed.",
+      "sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
+      "branch": "codex/admin/ponto-single-operator-governance",
+      "worktree": "C:\\CodexShared\\Worktrees\\skincos\\admin\\ponto-single-operator-governance",
       "selected_release_sha": null,
-      "replacement_preview_run": 30564873785,
-      "replacement_preview_failed_job": 90946808121,
-      "replacement_timekeeping_run": 30564915304,
-      "replacement_identity_run": 30565019029,
-      "replacement_identity_failed_job": 90947405936,
-      "replacement_timekeeping_surface_artifact": {
-        "id": 8768441812,
-        "digest": "sha256:541edf288b8cb62ded320c08d3dfb71d28e219164e19bac834966a7b8fd95604"
-      },
-      "replacement_timekeeping_promotion_artifact": {
-        "id": 8768441200,
-        "digest": "sha256:6a7b0a45628672aa57acc8a00a4ba6195407ef4bcb1bc4bc69639f02b702f044"
-      },
-      "replacement_coordinator_ledger_artifact": {
-        "id": 8768476655,
-        "digest": "sha256:90dc7777a40570b7c823344b876415727ae82d77812e7b32baec96b8ffc5eb02"
-      },
-      "replacement_identity_artifact_count": 0,
-      "skipped_surfaces": [
-        "core-api",
-        "crm-pages"
-      ],
-      "corepack_activation_successor": {
-        "branch": "codex/admin/ponto-preview-corepack",
-        "base_main_sha": "77f241ec20f8956fc7e9b20dd2b373518dafa7be",
-        "state": "local-bounded-pr-merge-and-complete-preview-pending",
-        "checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\ponto-release\\checkpoints\\20260730T142303-19-corepack-preview-failure.md",
-        "package_manager_source": "inventory/package.json#packageManager",
-        "activation": "corepack-prepare-exact-version-activate",
-        "pre_use_verification": "pnpm-version-must-equal-exact-package-manager-pin",
-        "covered_jobs": 3
-      },
-      "module_control": {
-        "staging": "maintenance",
-        "production": "maintenance"
-      },
-      "next_action": "Integrate the bounded Corepack signing-key successor without bypass, fetch its exact protected-main merge SHA and rerun preview. Do not dispatch staging until that complete preview and all independent approval, WAF, custody, broker and remaining external predecessors are proved."
+      "validation": {
+        "ponto_governance_test": "passed-3-tests",
+        "progressive_release_validator": "passed",
+        "remote_mutation": false,
+        "credentials_included": false,
+        "pii_included": false
+      }
     },
     {
-      "observed_at": "2026-07-30T16:50:51Z",
-      "surface": "github-actions-cloudflare-workers-pages-d1-kv-environments-and-ponto-source",
-      "scope": "PR #927 integration, exact-main replacement preview and bounded Identity pnpm bootstrap successor",
-      "state": "pr-927-integrated-replacement-preview-failed-pnpm-successor-pending-both-environments-maintenance-external-gates-open",
-      "method": "Completed the protected PR #927 checks, exact-head Codex re-review and thread resolution; merged without bypass; dispatched preview on the exact merge SHA; inspected coordinator and child jobs/artifacts; reproduced the pnpm bootstrap ordering defect; removed only the invalid setup-node cache request from Identity preview/staging; ran focused and governed Ponto tests through the typed WSL gateway plus actionlint and diff checks.",
-      "result": "PR #927 final head 7d8945300903847167c0ba55234ab8458cfb240d passed all 14 hosted checks, both review threads were resolved and Codex reported no major issue on that exact head. It merged without bypass as 15ac662e0c3b01317d48270cd211d7910000ca5a. Replacement preview 30562834119 admitted that exact SHA. Timekeeping child 30562866947 succeeded and produced surface artifact 8767637805 (sha256:700a0e50241bd9272929cdcaf03166e0d800e24ebce1a7c0a81caab94df3c1fa) plus promotion artifact 8767637318 (sha256:a42e0bdd3056cc16c06c6662bde2e2a9cbb77fb9d626e12774ffd7e07eb31ea1). Identity/Inventory child 30562970927 failed in job 90940563185 before tests or dry-run with Unable to locate executable file: pnpm; Core API and CRM Pages were skipped, and no deployment, migration, D1/KV write or module transition occurred. The bounded successor removes that invalid cache request from both Identity preview and staging and invokes corepack pnpm from inventory in all three Identity jobs, where packageManager pins pnpm@9.15.4. Local readback resolved exactly 9.15.4; frozen install and Inventory tests passed 17/17. Focused tests passed 15/15, governed Ponto tests 212/212, actionlint 1.7.12 and git diff --check passed.",
-      "limitation": "The pnpm successor is not yet merged and no complete four-surface replacement preview has succeeded, so selected_release_sha is null. Both module-control values are maintenance; no live surface identifies current main 15ac662e0c3b01317d48270cd211d7910000ca5a. Emergency latch is absent, WAF block behavior failed 12/12 required probes, Timekeeping workers.dev/previews are public, readiness is a false-positive 200 during maintenance, staging Pages lacks its actor key, and no authenticated journey was executed. Independent deployment approval, approved secret custody, broker/WAF controls, pilot identity, JIT clinic runner and external SLO remain absent. No secret value or PII was read.",
-      "origin_main": "15ac662e0c3b01317d48270cd211d7910000ca5a",
-      "corrective_package_pr": 924,
-      "corrective_package_merge_sha": "91f6e9033fed8a186ef2e93be070db3ed896fdd3",
-      "rest_contract_pr": 927,
-      "rest_contract_first_commit": "4c895a4b",
-      "rest_contract_review_fix_commit": "c3131eb8",
-      "rest_contract_final_head": "7d8945300903847167c0ba55234ab8458cfb240d",
-      "rest_contract_merge_sha": "15ac662e0c3b01317d48270cd211d7910000ca5a",
-      "selected_release_sha": null,
-      "preview_run": 30556924556,
-      "preview_failed_job": 90919728697,
-      "timekeeping_preview_run": 30556988335,
-      "watchdog_run": 30558653559,
-      "replacement_preview_run": 30562834119,
-      "replacement_preview_failed_job": 90939975621,
-      "replacement_timekeeping_run": 30562866947,
-      "replacement_identity_run": 30562970927,
-      "replacement_identity_failed_job": 90940563185,
-      "replacement_timekeeping_surface_artifact": 8767637805,
-      "replacement_timekeeping_promotion_artifact": 8767637318,
-      "module_control": {
-        "staging": "maintenance",
-        "production": "maintenance",
-        "emergency_latch_staging": "absent",
-        "emergency_latch_production": "absent"
-      },
-      "migrations": {
-        "timekeeping_staging": "0001-0008",
-        "timekeeping_production": "0001-0008",
-        "identity_staging": "0001-0018",
-        "identity_production": "0001-0018"
-      },
-      "next_action": "Merge the bounded pnpm bootstrap successor without bypass, fetch its exact main merge SHA and rerun preview. Do not dispatch staging until that preview and independent approval, WAF, custody, broker and the remaining external predecessors are proved."
+      "observed_at": "2026-07-31T14:37:00Z",
+      "surface": "github-cloudflare-local-runtime-reconciliation",
+      "scope": "origin/main current state, Finance lineage, Ponto controls, observability custody and production resource inventory",
+      "state": "authoritative-current-main-reconciled-finance-experimental-ponto-external-gates-open-observability-continuity-unproven",
+      "method": "git fetch origin main; GitHub PR/run metadata; Wrangler read-only deployments, D1, KV and Pages project listings; private monitor installation/health/process inspection; JSON/source/document inspection",
+      "result": "origin/main is 28747bb5109407856bd3cb700d91f7f3cb981a69; PR #933 is merged as a70fe64c87f2c09c96022c0b18b0b05c9d68d979 and PR #934 is merged with green hosted checks. PRs #930/#931 are integrated; #736 remains open/draft at 76492a20cf0ec89cdacc25a9bccfb23b510beef5 with DIRTY merge state and #764 remains open/draft at 0b558f6815c4a5a8c3c23a7f15d0926d997e2f01 with BEHIND merge state; neither was changed. Finance complete staging evidence remains ba16cb4a845e8f96032476a3a2828fc1fb22b399 (runs 30503675254, 30503676485, 30503679551, 30504263595 and 30504380888), while no complete chain exists for 28747bb.... Wrangler returned Cloudflare 10007 for production skincos-finance; production Finance D1, control KV and Pages project are absent from metadata listings. Staging Finance D1/KV/Pages exist. Rollback, kill-switch, Finance scratch restore and fresh offsite PostgreSQL restore remain valid for their recorded artifacts. The historical audit returned 503 run 30168648150 is superseded by the later green canary and is not a current failure. The external monitor has operator-run-key installation but no Scheduled Task/process and monitor-health last succeeded at 2026-07-30T18:30:37Z, so continuous operation is not currently proven.",
+      "limitation": "No production mutation, secret read, flag/grant/user/data change, Cloudflare resource creation or deploy was performed. Versioned bindings prove configuration only, not live resources. Ponto controls are integrated but broker/WAF/runner/custody and a new staging release remain external gates.",
+      "sha": "28747bb5109407856bd3cb700d91f7f3cb981a69",
+      "pr": 934,
+      "runs": [30638287326,30638287321,30638287356,30638287332,30638287324,30638287330,30638748005,30504263595,30504380888],
+      "evidence_refs": [
+        "C:\\CodexRuntime\\operator\\admin\\skincos\\observability\\monitor-health.json",
+        "C:\\CodexRuntime\\operator\\admin\\skincos\\reconciliation-20260731"
+      ]
     },
     {
-      "observed_at": "2026-07-30T16:34:46Z",
-      "surface": "github-actions-cloudflare-workers-pages-d1-kv-environments-and-ponto-source",
-      "scope": "Post-PR-924 corrective integration, first preview diagnosis and bounded REST-contract successor",
-      "state": "pr-924-integrated-pr-927-open-preview-failed-both-environments-maintenance-external-gates-open",
-      "method": "Reconciled GitHub main, PRs, rulesets, environment protection, workflow runs, checks, collaborators, runners and name-only secret/variable inventories; queried Cloudflare Workers, Pages, D1 migrations, KV control/latch, WAF authorization and public endpoints read-only; reproduced the GitHub REST path/name contracts; ran governed tests, actionlint and architecture/topology/policy/security validators through the approved WSL gateway; completed an independent security diff review and re-review.",
-      "result": "PR #924 merged the post-#921 package as 91f6e9033fed8a186ef2e93be070db3ed896fdd3 with required checks green and review conversations resolved. Preview 30556924556 proved source and child Timekeeping run 30556988335 succeeded, producing artifacts 8765220008 (sha256:9f8e5b61c5ee4976639f52cacb8360b95966b325c7e2d178a85e67680460ebc6) and 8765219605 (sha256:b279a7634d3cf52bddd65c0913b11c391d81440a44b7cfa42848381c2624616c), but coordinator job 90919728697 failed because REST run.path is canonical without @refs/heads/main. Watchdog 30558653559 independently failed because run.name is dynamic under run-name. PR #927 initial head 5b8447a70c30e7011a9a48099d8e1222b72e5992 passed all 14 hosted checks. Codex review then found omitted can_admins_bypass=false environment payload metadata and remaining static run.name comparisons. Corrective commit c3131eb8 fixes both while retaining independent SHA/branch/workflow/repository/attempt/capability constraints and adding a regression guard. Governed tests passed 219/219; actionlint 1.7.12, syntax, architecture, topology, progressive policy, module, governance, JS security-exception and diff checks passed. Two independent follow-up reviews found no remaining P0/P1/P2.",
-      "limitation": "PR #927 is not yet merged and no replacement preview has run. selected_release_sha is null. Both module-control values are maintenance; no live surface identifies current main 46b97519adc056d31553531cf3f90ad5a324fc88. Emergency latch is absent, WAF block behavior failed 12/12 required probes, Timekeeping workers.dev/previews are public, readiness is a false-positive 200 during maintenance, staging Pages lacks its actor key, and no authenticated journey was executed. Independent deployment approval, approved secret custody, broker/WAF controls, pilot identity, JIT clinic runner and external SLO remain absent. No secret value or PII was read.",
-      "origin_main": "46b97519adc056d31553531cf3f90ad5a324fc88",
-      "corrective_package_pr": 924,
-      "corrective_package_merge_sha": "91f6e9033fed8a186ef2e93be070db3ed896fdd3",
-      "rest_contract_pr": 927,
-      "rest_contract_first_commit": "4c895a4b",
-      "rest_contract_review_fix_commit": "c3131eb8",
+      "observed_at": "2026-07-31T13:46:29Z",
+      "surface": "github-ponto-corrective-successor-pr",
+      "scope": "Post-PR-921 corrective package publication and current-main reconciliation",
+      "state": "published-pr-open-hosted-checks-review-and-merge-pending",
+      "method": "Reconstructed the current origin/main and the dedicated successor worktree, preserved the worktree-specific gitdir despite the invalid shared core.worktree setting, verified a clean branch head, pushed the branch and created PR #933 through the GitHub API. No deployment, secret value, identity, D1/KV mutation or production flag was changed.",
+      "result": "origin/main is 35aa17dbfe21f9b9a7571a786f03a56186e75fff. Branch codex/admin/ponto-release-evidence-successor is 48c23ad77b21c685ca470a87a59eb71a0e88c010, six commits ahead, with 30 changed files (730 additions and 1,602 deletions). PR #933 is open and ready for hosted validation; the worktree is clean. Local Timekeeping (54), CRM lint/typecheck/test/build, architecture, topology, progressive-release, Ponto precondition, focused watchdog/lease/emergency/reconcile and supervisor checks passed as recorded in the PR body.",
+      "limitation": "Hosted checks, independent valid environment review, canonical merge and all external release predecessors remain pending. No selected release SHA exists; staging and production remain fail-closed in maintenance and no preview, pilot, canary or production release is claimed.",
+      "origin_main": "35aa17dbfe21f9b9a7571a786f03a56186e75fff",
+      "commit_sha": "48c23ad77b21c685ca470a87a59eb71a0e88c010",
+      "pr": 933,
       "selected_release_sha": null,
-      "preview_run": 30556924556,
-      "preview_failed_job": 90919728697,
-      "timekeeping_preview_run": 30556988335,
-      "watchdog_run": 30558653559,
-      "module_control": {
-        "staging": "maintenance",
-        "production": "maintenance",
-        "emergency_latch_staging": "absent",
-        "emergency_latch_production": "absent"
+      "branch": "codex/admin/ponto-release-evidence-successor",
+      "changed_files": 30,
+      "additions": 730,
+      "deletions": 1602,
+      "validation": {
+        "local": "passed-as-listed-in-pr-body",
+        "hosted_checks": "pending",
+        "independent_review": "not-available",
+        "merge": "pending"
       },
-      "migrations": {
-        "timekeeping_staging": "0001-0008",
-        "timekeeping_production": "0001-0008",
-        "identity_staging": "0001-0018",
-        "identity_production": "0001-0018"
-      },
-      "next_action": "Merge PR #927 without bypass after hosted checks and review closure, fetch the exact new main SHA and rerun preview. Do not dispatch staging until independent approval, WAF, custody, broker and the remaining external predecessors are proved."
-    },
-    {
-      "observed_at": "2026-07-30T16:21:13Z",
-      "surface": "windows-native-codex-powershell-typed-ubuntu-24.04-gateway-canonical-private-crm-runtime",
-      "scope": "Integrated Windows-native Codex boundary, complete CRM Local action and post-merge Finance runtime isolation",
-      "state": "integrated-canonical-runtime-green-codex-client-restart-test-pending",
-      "method": "Reconstructed the dirty shared checkout and recovery evidence; delivered the Windows/WSL boundary from isolated worktrees; passed local typed-gateway, launcher, build, parser and boundary tests; followed PR #925 and post-merge corrective PR #926 through all hosted checks and protected merges; removed the persistent preview; applied the merged action surface and Start Menu shortcut; exercised clean build, strict gate, reuse, real stop, restart and fail-closed WSL behavior from canonical origin/main.",
-      "result": "PR #925 head 72036d433ca64578359774e82db0eb57207a5294 passed 19 hosted checks and merged at 076bf6e3bc09cbd7ce55a6d79d036a09f4c1ce56. Post-merge regression fix 3260b98cff6ce440b97cb00d19ab5fa9529975cb passed 13 hosted checks in PR #926 and merged at abe56a171e5a0ad3b79885ca0fda9bfae819b011. Canonical CRM Local at that final main SHA built cleanly, passed all 14 modules, opened Chrome only after the green gate and reused the ready runtime in 7.68 seconds. Its five PID identities and release-affine endpoints are live; direct Insumos remains 401 while its authenticated Pages proxy is 200. Finance stop now writes finance-local--crm separately and preserves gestor/full. Preview selection is absent, Playwright cache persists, the Windows delivery worktrees contain zero node_modules, and unavailable WSL fails before service start.",
-      "limitation": "No deployment applies: no production service, Cloudflare resource, database or remote configuration changed. The pre-existing Timekeeping audit remains three high and zero critical findings; no force remediation was used. A supported Codex application restart and same-task action reproduction remain an external client gate and cannot be proven by repository state.",
-      "technical_sha": "ed8c20b109137a39d35345341ef04dc89b5eff86",
-      "reconciled_head_sha": "72036d433ca64578359774e82db0eb57207a5294",
-      "delivery_merge_sha": "076bf6e3bc09cbd7ce55a6d79d036a09f4c1ce56",
-      "postmerge_fix_sha": "3260b98cff6ce440b97cb00d19ab5fa9529975cb",
-      "origin_main": "abe56a171e5a0ad3b79885ca0fda9bfae819b011",
-      "delivery_branch": "codex/admin/native-codex-wsl-gateway",
-      "delivery_pr": 925,
-      "postmerge_fix_branch": "codex/admin/native-codex-wsl-postmerge",
-      "postmerge_fix_pr": 926,
-      "gate_report": "C:\\CodexRuntime\\operator\\admin\\skincos\\runtime\\crm-local\\instances\\gestor\\full\\logs\\crm-local-gate-20260730-131800.json",
-      "next_action": "Restart Codex through the supported Windows client flow, confirm prior tasks/plugins and two CRM Local actions remain in this task, then archive the task or file client feedback if the routing defect reproduces."
+      "next_action": "Wait for hosted checks, obtain a valid independent review without self-review or bypass, merge PR #933 canonically, reselect the exact merged main SHA, then re-run preview before staging."
     },
     {
       "observed_at": "2026-07-30T10:54:19Z",
@@ -1601,6 +1455,37 @@
       "rollback_release": "6272becdfba7fc4ef82956ceeda6ab72fbab467b",
       "prohibited_pre_minimization_worker_version": "affdc496-a0f4-4177-93e8-79ffa19e04f4",
       "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\evidence\\meta-capi-final-verification-20260729.md"
+    },
+    {
+      "observed_at": "2026-07-31T15:34:00Z",
+      "surface": "production-runtime-and-drive-preflight",
+      "scope": "livia-pr939-isolated-bundle-and-new-carousel-scheduler-preflight",
+      "state": "bundle-repinned-schedule-restored-real-trigger-no-new-media",
+      "method": "PR #939 merge/check audit; exact-merge native archive and lineage SHA-256; stage-only native preparation; candidate structural validation; offline Livia tests; expected-version manifest transaction; safe Orb drain/restart; Schedule Trigger execution 350; canonical Drive folder listing; post-restore manifest audit and local/public health probes",
+      "result": "PR #939 merged as 01d2b6d1f79a9017e0a87efa2a1a32f82eed219f with all hosted checks green. Bundle archive SHA-256 c083bb444a71b1031f6ec0ad601e60db62a5940ad3bbc4ecda2fa1a14244e0c3 and lineage SHA-256 2fc7e38fe254a318126d95b17b89b2bf3a5372655533282354fbda819b4ef14e were verified. Active workflow WGXr4vYkv9UoJ8zc is d11e34fa-7992-4c07-9fba-e212fffe1d8a, pinned to release 01d2b6d1f79a9017e0a87efa2a1a32f82eed219f; audit-live reports zero mutable references. Execution 350 ran in trigger mode and succeeded from 2026-07-31T12:30:19.402-03 to 12:30:26.362-03, ending at List Files with plannedJobs=0 and httpCalls=0. Drive folder 1Dq_1TeD4RCQAaYFSarXA7c63nDvtUvE9 returned 57 historical items; no new carousel was visible, and the eight 3107260830 PNGs were not reused. Schedule was restored to field days at 13:26. Local and public health returned status ok.",
+      "limitation": "No unpublished carousel was available in the canonical Drive listing at the trigger window, so no media, gateway, Drive mark, notification or social publication was created. A real end-to-end carousel acceptance remains open and requires the new Drive file IDs before another scheduled trigger.",
+      "sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
+      "pr": 939,
+      "merge_sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
+      "workflow_version": "d11e34fa-7992-4c07-9fba-e212fffe1d8a",
+      "manifest_sha256": "cca251e26fc87957f341abb264571025a00a142a4162be8d98b6338ae213afbb",
+      "execution": 350,
+      "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\livia-carousel-pr939-post-restore-20260731T123400-0300",
+      "rollback_checkpoint_sha256": "ac8f12e006b0b2af1cca3bd3d5f9704e3183193c8d672e7641a7d777263ed2f1"
+    },
+    {
+      "observed_at": "2026-07-31T15:57:00Z",
+      "surface": "production-runtime-and-drive-followup",
+      "scope": "livia-scheduled-carousel-followup-351",
+      "state": "scheduled-trigger-success-no-media-schedule-restored",
+      "method": "Canonical Drive re-list/search; active execution preflight; temporary schedule version with expected-version transaction; structural validation; controlled Orb drain/restart; Schedule Trigger execution 351; QA audit; restore version transaction; manifest audit-live; local/public health and journal probes",
+      "result": "Execution 351 ran in trigger mode from 2026-07-31T12:52:55.232-03 to 12:53:00.311-03 and ended at List Files with plannedJobs=0, httpCalls=0 and zero targets. The canonical Drive folder 1Dq_1TeD4RCQAaYFSarXA7c63nDvtUvE9 still contained 57 historical files; no file created or modified after the latest published group was visible, and global media searches were empty. The daily schedule was restored to field days at 13:26 in active version d3f4bd2a-f11c-4bc6-9b70-33fdf0f6a9d7. The immutable release remains 01d2b6d1f79a9017e0a87efa2a1a32f82eed219f, workflow hash cca251e26fc87957f341abb264571025a00a142a4162be8d98b6338ae213afbb, current manifest SHA-256 25a4dcb08cdf20158fd2dc93ee4f3709eb4ab6e3370e4e5397218608a8fcecd2, audit-live mutableRuntimeReferences=0, local/public health 200, and no warning journal entries after the restart.",
+      "limitation": "No unpublished carousel was available to publish; no gateway, Drive mark, notification or social publication was created. The next real acceptance requires the new Drive file IDs to become visible to the same credentials used by List Files.",
+      "sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
+      "workflow_version": "d3f4bd2a-f11c-4bc6-9b70-33fdf0f6a9d7",
+      "execution": 351,
+      "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\livia-carousel-followup-post-restore-20260731T125600-0300",
+      "rollback_checkpoint_sha256": "9702EE69E5B398706FDC9A4E515C6F02FC3E5D32FC596E39EF6E72705B05D3ED"
     }
   ]
 }

@@ -142,12 +142,12 @@
       "id": "finance",
       "maturity": "experimental",
       "readiness": {
-        "assessedAt": "2026-07-30T00:13:34Z",
+        "assessedAt": "2026-07-31T14:37:00Z",
         "state": "experimental",
         "integratedImportStateMachine": "PR #815 / 32bf3ebb296ca95e3273bb4fed664480eb5642e5",
-        "stagingBaseline": "Current-main c277032db96ba96484522a19994a66cbb323a46d passed canonical candidate, Worker/UI/CRM Pages preview and staging plus synthetic authenticated import/UI canary; module_enabled=false after baseline restoration",
-        "provenCapabilities": ["staging rollback", "remote kill switch", "isolated scratch restore", "continuous external monitor and controlled human alert", "current-main immutable staging lineage and synthetic authenticated import/UI canary"],
-        "openGates": ["named pilot approval", "separately authorized production provisioning"],
+        "stagingBaseline": "The latest complete staging chain is ba16cb4a845e8f96032476a3a2828fc1fb22b399 (Worker/UI/CRM Pages, canary and synthetic identity smoke); current origin/main 28747bb5109407856bd3cb700d91f7f3cb981a69 has no matching full chain",
+        "provenCapabilities": ["staging rollback", "remote kill switch", "isolated scratch restore", "historical external monitor and controlled human alert evidence (current continuous process not proven)", "immutable staging lineage and synthetic authenticated import/UI canary for recorded SHAs"],
+        "openGates": ["current-main candidate/preview/staging/canary", "continuous external monitor process and alert-route verification", "named pilot approval", "separately authorized production provisioning"],
         "production": "not provisioned: skincos-finance Worker, D1, control KV and Finance UI project absent"
       },
       "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },

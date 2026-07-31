@@ -220,3 +220,5 @@ artifacts/
 .codex/hooks/**/__pycache__/
 .codex/hooks/**/*.py[co]
 .codex/runtime/
+ops/codex/current-state.json
+ops/codex/session-snapshot.json

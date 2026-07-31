@@ -91,12 +91,16 @@ Mutações same-origin exigem o token CSRF da sessão. A Pages Function envia um
   account/KV ID ou credencial ampla; as custody refs dos dois targets devem ser
   diferentes.
 
-Os nomes Ponto-only acima pertencem ao pacote integrado pela PR #924, mas o
-inventário remoto atual não os encontra provisionados; o broker também não
-está provisionado nem live. Os nomes
+Os nomes Ponto-only acima pertencem ao pacote integrado em #943/#945. Os
+brokers live são `skincos-ponto-emergency-staging` e
+`skincos-ponto-emergency-production`, cada um com D1 dedicado e secrets
+`BROKER_CREDENTIAL`/`RESPONSE_PRIVATE_KEY_PEM`; a política fixa URL, custody
+ref, response key ID e SPKI público. O exercício staging `910001/910002`
+foi atestado e deixou o latch monotônico fechado e o controle em maintenance.
+Os nomes
 gerais/legados usados na contenção externa atual
 continuam apenas como fences; não os trate como configuração do candidato nem
-os restaure antes da autorização de release. Seleção de
+os restaure antes do merge revisado e da autorização de release. Seleção de
 target não possui default: qualquer nome ausente, target fora de
 `staging|production` ou mistura entre os dois targets falha antes de hidratar
 credenciais ou mutar.
@@ -173,22 +177,13 @@ A trava `timekeeping_period_guards` é adquirida por data antes do cálculo e im
 
 ## Deploy e rollback
 
-> Estado em 2026-07-30: PRs #924/#927/#929/#930 integraram os controles e as
-> correções observadas sem bypass. O preview completo `30566547605` selecionou
-> exatamente o merge #930
-> `71c54b1d406317c614dc33e48ced170458fbd707`; Timekeeping
-> `30566594811`, Identity/Inventory `30566729991`, Core API `30566806246` e CRM
-> Pages `30566905155` passaram. Artifacts `8769249449` e `8769249808`
-> preservam a evidência combinada e o ledger sanitizado. Isso é dry-run, não
-> prova live nem autorização de staging. Staging e produção continuam
-> `module-control:timekeeping=maintenance`; a execução canônica
-> `30527767707` é somente evidência fail-close. Mantenha os fences externos e
-> não despache staging antes de reviewer independente, custódia, broker, WAF,
-> runner/coorte e SLO externos. Watchdog `30567091382` expôs que first-attempt
-> success também entrava no job de contexto e gerava false-red; a PR #931 pula
-> somente esse caso e preserva failure/cancelled/timed-out e
-> reruns. Como o merge dessa correção avança `main`, execute novo preview no
-> SHA exato antes de usar qualquer predecessor.
+> Estado em 2026-07-30: os controles de replay, overlay de emergência,
+> mutex/watchdog e os nomes Ponto-only descritos nesta seção existem apenas no
+> worktree local. Não há commit, PR, SHA candidato, hosted checks, merge,
+> provisioning ou prova live. Staging e produção continuam
+> `module-control:timekeeping=maintenance`; staging foi fechado pela execução
+> canônica `30527767707`, que é somente evidência fail-close, e os fences
+> externos registrados no checkpoint privado devem permanecer.
 
 Use somente `.github/workflows/ponto-progressive-release.yml` para a composição
 de release. O coordenador não publica por conta própria: ele despacha e atesta
@@ -199,14 +194,6 @@ coordenador executado em `refs/heads/main` e o checkout atual. De staging em
 diante, exige também o run bem-sucedido do predecessor para o mesmo SHA. Se
 `main` avançar entre estágios, não continue com o ancestral: reinicie em
 `preview` usando o novo SHA.
-
-Para objetos `workflow run` da API REST, compare `run.path` com o path canônico
-do workflow sem sufixo de ref. Valide `main` por `head_branch`, o artefato por
-`head_sha` e a identidade estática por `workflow.name/path/id`; `run.name`
-recebe o `run-name` dinâmico e não pode substituir workflow metadata. Continue
-exigindo repositório, evento, attempt, título/nonce, capability e predecessor
-exatos. O contexto `github.workflow_ref` é um contrato diferente e conserva
-`@refs/heads/main`.
 
 Toda mutation direta de Worker, Pages, secret de Pages, D1, KV ou
 module-control na cadeia Ponto usa o mutex global

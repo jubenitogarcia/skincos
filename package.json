@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "ponto:governance:test": "node .github/scripts/ponto-single-operator-governance.test.mjs",
     "observability:validate": "node scripts/observability/validate-catalog.mjs",
     "architecture:validate": "node ./.github/scripts/validate-architecture.mjs && node ./.github/scripts/validate-module-catalog.mjs && node ./.github/scripts/validate-domain-boundaries.mjs",
     "architecture:test": "npm run architecture:validate",
@@ -75,6 +76,10 @@
     "quality:critical": "npm run quality:frontend && npm run quality:website && npm run quality:backend:crm-api && npm run quality:backend:python && npm run quality:security",
     "codex:context": "bash ./scripts/codex-context.sh",
     "codex:context:online": "bash ./scripts/codex-context.sh --online",
+    "codex:autonomy:test": "node --test scripts/tests/codex-autonomy-baseline.test.mjs",
+    "codex:risk": "node ./scripts/codex-risk-classifier.mjs",
+    "codex:release-manifest": "node ./scripts/codex-release-manifest.mjs",
+    "codex:state": "node ./scripts/codex-current-state.mjs",
     "codex:preflight": "bash ./scripts/codex-preflight.sh",
     "codex:crm:site-smoke": "bash ./scripts/run-local-crm.sh --module site-tracking --meta-ads-scenario connected-ready --skip-build --exit-after-smoke",
     "codex:crm:meta-ads-smoke": "bash ./scripts/run-local-crm.sh --module meta-ads --skip-build --exit-after-smoke",

@@ -61,17 +61,17 @@ test("a pending dispatch only resolves to the same workflow at or after its requ
     dispatchRequestedAt: "2026-07-29T12:00:10.000Z",
   };
   assert.equal(matchesPendingDispatch({
-    path: ".github/workflows/deploy-crm-pages.yml",
+    path: ".github/workflows/deploy-crm-pages.yml@refs/heads/main",
     display_title: `CRM Pages staging ${"a".repeat(40)} orchestrator=12345 nonce=${"1".repeat(32)}`,
     created_at: "2026-07-29T12:00:11.000Z",
   }, pending), true);
   assert.equal(matchesPendingDispatch({
-    path: ".github/workflows/deploy-crm-pages.yml",
+    path: ".github/workflows/deploy-crm-pages.yml@refs/heads/main",
     display_title: `CRM Pages staging ${"a".repeat(40)} orchestrator=12345 nonce=${"1".repeat(32)}`,
     created_at: "2026-07-29T11:59:00.000Z",
   }, pending), false);
   assert.equal(matchesPendingDispatch({
-    path: ".github/workflows/module-availability.yml",
+    path: ".github/workflows/module-availability.yml@refs/heads/main",
     display_title: `Module timekeeping staging active orchestrator=12345 nonce=${"1".repeat(32)}`,
     created_at: "2026-07-29T12:00:11.000Z",
   }, pending), false);
@@ -81,7 +81,7 @@ test("ordinary recovery requires an exact journal run ID or nonce-bound pending 
   const generalCore = {
     id: 70001,
     workflow_id: 501,
-    path: ".github/workflows/deploy-core-workers.yml",
+    path: ".github/workflows/deploy-core-workers.yml@refs/heads/main",
     display_title: `Core api staging ${context.orchestratorHeadSha} orchestrator=12345 nonce=${"9".repeat(32)}`,
     created_at: "2026-07-29T12:00:11.000Z",
   };
@@ -172,7 +172,7 @@ test("ordered predecessor provenance is exact and replay resistant before artifa
     /workflow\?\.state !== "active"/,
     /workflow\?\.path !== "\.github\/workflows\/ponto-progressive-release\.yml"/,
     /String\(run\?\.id \|\| ""\) !== process\.env\.PREDECESSOR_RUN_ID/,
-    /run\.path !== workflow\.path/,
+    /(?:run\.path !== `\$\{workflow\.path\}@refs\/heads\/main`|!\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\))/,
     /run\.run_attempt !== 1/,
     /run\.head_sha \|\| ""\)\.toLowerCase\(\) !== process\.env\.RELEASE_SHA/,
     /run\.display_title !== expectedTitle/,

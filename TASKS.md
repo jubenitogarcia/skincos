@@ -1,5 +1,49 @@
 # TASKS
 
+## Reconciliacao autoritativa — `origin/main` `d34488afc5b8ea668241382e24f30c745798e033` — 2026-07-31
+
+Esta e a fonte atual para o ciclo. O checkout compartilhado tinha alteracoes
+nao relacionadas preservadas fora desta PR em
+`C:\CodexRuntime\operator\admin\skincos\reconciliation-20260731`; elas nao
+foram misturadas. As PRs #943 e #945 foram integradas em
+`16cace3c...` e `d34488af...`, respectivamente, alem de #934/#936/#937/#938/
+#939; todos os checks hospedados ficaram verdes e `d34488af...` e o main atual.
+
+- Insumos P0 permanece resolvido por #847/#848; nao ha novo sintoma ou escrita
+  nesta reconciliacao.
+- Financeiro permanece `experimental`, `module_enabled=false`, sem grants de
+  usuarios reais e sem piloto/producao. A cadeia completa mais recente validada
+  e `ba16cb4a845e8f96032476a3a2828fc1fb22b399` (Worker `30503675254`, UI
+  `30503676485`, CRM Pages `30503679551`, canary `30504263595`, smoke de
+  identidade `30504380888`). Ela nao e o `origin/main` atual. O Worker
+  `30583405735` em `35aa17db...` foi apenas uma execucao de Worker; nao ha
+  cadeia correspondente de UI/Pages/canary para `28747bb...`.
+- Rollback, kill switch, restore scratch de D1/KV e restore offsite de
+  PostgreSQL continuam evidencias validas dos SHAs/artefatos registrados;
+  `20260729T2255Z-postgresql-fresh` e PR #908 sao a evidencia offsite atual.
+  Isso nao autoriza producao nem piloto.
+- O alerta historico `audit returned 503` (run `30168648150`) e um resultado
+  superado pelo canary verde de `ba16cb...`; nao ha reproducao atual no
+  `28747bb...`. A observabilidade externa nao pode ser chamada de continua: os
+  artefatos de alerta/recuperacao permanecem, mas a instalacao atual e somente
+  Run key, sem Scheduled Task/processo ativo, e o ultimo health privado e
+  `2026-07-30T18:30:37Z`.
+- Ponto: #930/#931/#933/#943/#945 estao integradas; o delta posterior em
+  #934/#936/#937/#938/#939 e nao-Ponto. #943 estabeleceu a decisao governada
+  `single-operator-codex` (sem reviewer humano, sem bypass administrativo,
+  main-only, checks obrigatorios, merge canonico, custodia separada e rollback
+  automatico). #945 adicionou broker close-only independente com D1
+  transacional, nonce atomico, mutex e latch. Brokers staging/production foram
+  publicados e atestados sem expor segredos; ainda nao existe SHA selecionado
+  nem evidencia nova de staging/producao; WAF, runner, identidade piloto e
+  SLO externo permanecem fail-closed.
+
+Proximo marco seguro do Ponto: obter WAF least-privilege, runner JIT/attestation,
+identidade piloto Workforce e SLO externo; somente entao selecionar o HEAD
+imutavel e executar preview -> staging -> pilot -> canary -> production.
+Acoes proibidas: ativar flags ou alterar grants/usuarios/dados antes desses
+predecessores.
+
 ## Resolved P0 — incidente de acesso a Insumos
 
 - [x] **P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos.**
@@ -34,14 +78,18 @@
 
 ## Finance — authoritative reconciliation follow-up (2026-07-29)
 
-- [x] Confirm continuous external observability, a controlled human-alert
-  recovery, historical Finance rollback/kill-switch/scratch-restore evidence,
-  and the merged PR #815 import state machine.
-- [x] Promote current `origin/main` `c277032db96ba96484522a19994a66cbb323a46d`
-  through the canonical immutable candidate, Finance Worker/UI and CRM Pages
-  preview/staging paths. The synthetic authenticated import/UI canary passed in
-  run `30500922386` with zero threshold breaches; the workflow restored the
-  non-enabled staging baseline and synthetic grant.
+- [x] Confirm the historical external observability alert/recovery evidence,
+  Finance rollback/kill-switch/scratch-restore evidence, and the merged PR
+  #815 import state machine. Continuous monitor operation must be revalidated;
+  the current private installation has no active task/process.
+- [x] Preserve the historical current-main candidate
+  `c277032db96ba96484522a19994a66cbb323a46d` evidence and the later complete
+  staging chain `ba16cb4a845e8f96032476a3a2828fc1fb22b399` (Worker/UI/Pages,
+  canary and identity smoke). Neither is evidence for current `origin/main`
+  `a70fe64c87f2c09c96022c0b18b0b05c9d68d979`.
+- [ ] Promote the current `origin/main` SHA through candidate, preview and
+  staging for Worker, Finance UI and CRM Pages, then repeat the authenticated
+  canary before any pilot decision.
 - [x] Obtain a fresh provider-separated PostgreSQL ciphertext, verify
   integrity and restore it in isolated scratch. Drill
   `20260729T2255Z-postgresql-fresh` downloaded 90,908,667 bytes from the
@@ -133,10 +181,11 @@ jornada autenticada atual continue válida.
   CodeQL #4519 foi justificadamente classificado como falso positivo. O merge
   integra a primeira versão dos controles, mas ainda não seleciona um
   candidato.
-- [x] Integrar o pacote corretivo P1/P2 descoberto no recheck pós-#921 pela
-  PR #924, merge
-  `91f6e9033fed8a186ef2e93be070db3ed896fdd3` (head revisado
-  `c35aaf6892fea8ad5ae5745a82be55f24bd5a342`):
+ - [x] Integrar o pacote corretivo P1/P2 da PR #933. O head validado foi
+  `f50a5ee418c237b4a311dd095bceac4264b84c65` e o merge em `main` e
+  `28747bb5109407856bd3cb700d91f7f3cb981a69`; nenhum candidato de release foi
+  selecionado.
+  O pacote contém:
   checkout trusted-main e comparação exata antes de consumir leases; leases
   independentes para baseline/SLO; todos os outputs de provenance do baseline;
   mutex físico de CRM Pages; e kill switch imediato com latch persistente,
@@ -151,12 +200,11 @@ jornada autenticada atual continue válida.
   intenção/ownership e rollback determinado de Pages; leitura e reattestation
   live do controle regular + emergency latch antes/depois do rollback;
   `emergencyLatchRef` exata na evidência; drift WAF pós-probe; journal de
-  watchdog correlacionado; e kill switch manual pelo broker. O pacote congelado
-  passou 216/216 contratos governados, validação de sintaxe, actionlint,
-  arquitetura/topologia/política, dry-runs e security diff scan sem finding
-  remanescente; os required checks do merge ficaram verdes. Isso integra fonte
-  fail-closed, mas não provisiona custódia externa nem seleciona SHA de release.
-- [x] Integrar pela PR #924 a proteção one-time do release probe e o teardown
+  watchdog correlacionado; e kill switch manual pelo broker. O freeze atual
+  registra 30 arquivos alterados e 730 adições/1.602 remoções no head da PR;
+  `commit_sha=48c23ad77b21c685ca470a87a59eb71a0e88c010`, `pr=933` e
+  `selected_release_sha=null` porque a revisão e o merge ainda não ocorreram.
+ - [x] Integrar na sucessora a proteção one-time do release probe e o teardown
   de sessão do Identity. Pages valida primeiro o HMAC externo;
   `pilot`/`canary` usam contrato v2 vinculado a stage, coordinator run e workflow
   run, enquanto v1 fica restrito ao drill de `staging`. Antes de qualquer login,
@@ -167,72 +215,8 @@ jornada autenticada atual continue válida.
   o probe sempre tenta revogar a sessão corrente ou faz logout; só aceita
   teardown quando o cookie stale recebe o `401` canônico em `/auth/me`. Falha ou
   teardown indeterminado mantém o probe fail-closed e preserva o erro primário.
-  A integração e os hosted checks estão comprovados no merge #924; a jornada
-  real continua bloqueada até identidade/runner/custódia autorizados existirem.
-- [x] Integrar a PR #927 antes de repetir o `preview`. O primeiro `preview`
-  pós-#924, run `30556924556` no SHA `91f6e903...`, publicou e atestou
-  Timekeeping no child run `30556988335`, mas o coordenador falhou no job
-  `90919728697` porque a API REST retorna `run.path` canônico sem
-  `@refs/heads/main`. A sucessora preserva checks independentes de workflow ID,
-  branch, SHA, repositório, evento, attempt, título/nonce e capability; também
-  corrige o watchdog para validar o nome estático em workflow metadata, pois
-  `run.name` recebe o `run-name` dinâmico. O primeiro head publicado
-  `5b8447a70c30e7011a9a48099d8e1222b72e5992` passou 14 checks; o Codex review
-  encontrou dois P1s adicionais: `can_admins_bypass` ausente do payload e
-  comparações estáticas de `run.name` em outros validadores. O commit corretivo
-  `c3131eb8` define/valida o bypass como `false`, usa `workflow.name` canônico
-  em todas as superfícies e adiciona regressão contra reintrodução. A suíte
-  passou 219/219, actionlint/sintaxe/validadores ficaram verdes e duas revisões
-  locais independentes retornaram zero P0/P1/P2. O head final
-  `7d8945300903847167c0ba55234ab8458cfb240d` passou todos os 14 checks,
-  teve as duas conversas resolvidas e recebeu Codex re-review sem finding no
-  próprio head. A PR integrou sem bypass em
-  `15ac662e0c3b01317d48270cd211d7910000ca5a`, incluindo a proteção live dos
-  environments contra reaplicação do payload histórico mais fraco.
-- [x] Integrar a correção de bootstrap pnpm pela PR #929. O replacement preview
-  anterior `30562834119` usou o merge #927 `15ac662e...`; Timekeeping child
-  `30562866947` passou e publicou os artefatos `8767637805`/`8767637318`, mas
-  Identity/Inventory child `30562970927` falhou antes de testes ou dry-run
-  porque `actions/setup-node` pediu cache pnpm antes de o executável existir no
-  runner. A PR removeu o cache inválido e passou todos os 14 checks; Codex não
-  encontrou major issue no head exato
-  `019a34367f3e2e40387b3f50da74b35149ff5981`, que integrou sem bypass como
-  `77f241ec20f8956fc7e9b20dd2b373518dafa7be`.
-- [x] Integrar a sucessora de ativação Corepack e repetir o `preview` no SHA
-  exato resultante. O segundo replacement preview `30564873785` selecionou o
-  merge #929 `77f241ec...`; Timekeeping child `30564915304` passou e publicou
-  os artefatos `8768441812`
-  (`sha256:541edf288b8cb62ded320c08d3dfb71d28e219164e19bac834966a7b8fd95604`)
-  e `8768441200`
-  (`sha256:6a7b0a45628672aa57acc8a00a4ba6195407ef4bcb1bc4bc69639f02b702f044`).
-  Identity/Inventory child `30565019029` falhou no job `90947405936` antes de
-  testes ou dry-run porque o Corepack incluído no Node 22.12 tentou resolver
-  metadata de pnpm com uma signing key desatualizada (`Cannot find matching
-  keyid`). Core API e CRM Pages foram pulados e nenhuma superfície live,
-  migration ou controle foi alterado. A PR #930 lê o `packageManager` exato
-  de `inventory/package.json`, executa `corepack prepare` para essa versão e
-  confirma `pnpm --version` antes do primeiro uso nos três jobs Identity. Seu
-  head `872f1b10c9bd64e1768fa0e8777d992e2658240b` passou 14/14 checks,
-  exact-head Codex review sem major issue e integrou sem bypass como
-  `71c54b1d406317c614dc33e48ced170458fbd707`. O preview completo
-  `30566547605` selecionou exatamente esse SHA; Timekeeping
-  `30566594811`, Identity/Inventory `30566729991`, Core API `30566806246` e
-  CRM Pages `30566905155` passaram. Artifacts `8769249449` e `8769249808`
-  retêm evidência combinada e ledger sanitizado; o checkpoint privado
-  `C:\CodexRuntime\operator\admin\skincos\ponto-release\checkpoints\20260730T144137-20-complete-preview.md`
-  fixa todos os digests. Foi dry-run: nenhuma superfície live, migration,
-  escrita D1/KV ou module-control mudou. Staging continua bloqueado pelos
-  predecessores externos abaixo; qualquer avanço de `main` exige novo preview.
-- [ ] Integrar pela PR #931 a correção bounded de admissão do watchdog e
-  repetir o preview no SHA exato do merge.
-  O coordenador bem-sucedido `30566547605` disparou automaticamente o watchdog
-  `30567091382`; o context job `90954219518` falhou porque o job admitiu um
-  first attempt `success` que o validador corretamente recusa. Todos os jobs de
-  emergência foram pulados e nenhuma mutation ocorreu. A correção faz skip
-  somente de first-attempt success e continua admitindo failure, cancelled,
-  timed_out e qualquer rerun; o teste focado passa 9/9. O merge avançará
-  `main`, portanto o novo SHA exato precisa de preview completo antes de
-  staging.
+  A validação local e os checks hospedados passaram; broker externo, WAF,
+  custodia de chaves, runner e nova evidencia de staging continuam pendentes.
 - [ ] Provisionar e atestar separadamente o broker de fechamento externo nos
   environments `ponto-emergency-staging` e `ponto-emergency-production`:
   secret `PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL` e variables
@@ -252,8 +236,8 @@ jornada autenticada atual continue válida.
   sem decisão revisada que fixe os dois endpoints/identidades e sem as chaves
   provisionadas por custódia aprovada. Credencial Cloudflare/KV direta nesses
   environments é proibida.
-- [x] Integrar pela PR #924 o consumidor e o namespace fail-closed específico
-  de Ponto, mantendo qualquer habilitação separadamente autorizada:
+- [ ] Integrar o consumidor e concluir o namespace fail-closed específico de
+  Ponto, mantendo qualquer habilitação separadamente autorizada:
   `ENABLE_PONTO_CRM_PAGES_DEPLOY`,
   `ENABLE_PONTO_CRM_PAGES_DEPLOY_STAGING`,
   `PONTO_CLOUDFLARE_PAGES_PROJECT`,
@@ -269,14 +253,14 @@ jornada autenticada atual continue válida.
   `CLOUDFLARE_ZONE_ID` foram criados como sete variables não secretas do
   repositório e lidos de volta individualmente. Eles estavam ausentes antes e
   foram conferidos contra os recursos Cloudflare live; valores ficam apenas no
-  checkpoint privado. A reconsulta live mais recente confirmou presentes por
-  nome os seis selectors Ponto-only e `CLOUDFLARE_ZONE_ID`; as quatro flags
-  `ENABLE_PONTO_*` continuam ausentes. Esses IDs não selecionam candidato, não
-  desfazem os fences legados, não implantam nem habilitam o módulo. Pages geral
-  continua usando `CRM_PAGES_PROJECT` /
-  `CRM_PAGES_PROJECT_STAGING` nas definições antigas. A configuração deve ser
-  alterada somente por custódia aprovada para o estágio autorizado.
-- [x] Revisar e integrar pela PR #924 o overlay
+  checkpoint privado. As quatro flags `ENABLE_PONTO_*` permanecem sem
+  autorização de ativação e o código consumidor continua local. Esses IDs não
+  selecionam candidato, não desfazem os fences legados, não implantam nem
+  habilitam o módulo. Pages geral continua usando `CRM_PAGES_PROJECT` /
+  `CRM_PAGES_PROJECT_STAGING` nas definições antigas. A decisão revisável e o
+  runbook correspondentes seguem locais e sem efeito operacional antes do
+  merge.
+- [ ] Revisar e integrar o overlay
   `module-control:timekeeping:emergency-latch`: missing/unreadable/malformed ou
   `latched=true` nega; somente schema v1 explícito `latched=false` abre; o
   workflow de reset é o único writer de false e mantém o controle regular em
@@ -285,9 +269,9 @@ jornada autenticada atual continue válida.
   antes do mutex e fechar o controle regular depois da reconciliação quando o
   broker policy-bound estiver provisionado e funcionalmente atestado. Hoje não
   há broker endpoint/key, runner clínico nem prova de freeze/recovery externo
-  independente; portanto a fonte está integrada, mas automatic
-  interruption/rollback ainda não é operacional. GitHub Actions, monitor,
-  fences e recovery externos continuam predecessores obrigatórios.
+  independente; portanto não registrar automatic interruption/rollback como
+  pronto ou operacional. GitHub Actions, monitor, fences e recovery externos
+  continuam predecessores obrigatórios.
 - [x] Conter externamente o replay produtivo e aplicar fences de dispatch em
   staging em
   2026-07-30T06:57:00Z, após
@@ -307,7 +291,7 @@ jornada autenticada atual continue válida.
   deployment ou estado live foi alterado naquele instante; o recheck de 06:57
   manteve produção em `maintenance`, staging em `active` e o health de Pages em
   HTTP 200. O fechamento canônico posterior de staging está registrado abaixo.
-- [x] Integrar pela PR #924 a proteção permanente e manter contidos os child runs produtivos
+- [ ] Integrar a proteção permanente e manter contidos os child runs produtivos
   legados sem correlação até expirarem.
   Os sete runs Timekeeping production rerunnable identificados são
   `30420024733`, `30132172442`, `30132009676`, `29966286110`, `29959858249`,
@@ -316,14 +300,12 @@ jornada autenticada atual continue válida.
   do coordenador progressivo. O inventário de 30 dias encontrou 835 runs de
   Pages secret sync, 121 de Workers secret sync, 35 Timekeeping, 83 Core, 113
   CRM Pages deploy, sete module-control e um production baseline. O watchdog
-  integrado fecha um rerun do coordenador canônico e a suíte cobre a
-  invalidação terminal de capability emitida tardiamente; a correção REST da
-  PR #927 está integrada para esse caminho observar nomes e paths como a API os
-  entrega. Um child run
+  local agora fecha um rerun do coordenador canônico e a suíte cobre a
+  invalidação terminal de capability emitida tardiamente. Um child run
   histórico, porém, continua executando sua definição antiga; por isso esses
-  runs permanecem contidos pelos fences externos até expirar. Manter a
-  contenção acima e não restaurar suas variáveis antes dos controles externos
-  autorizados e dos predecessores da release.
+  runs permanecem contidos pelos fences externos até expirar. Até o pacote
+  local verde ser commitado, revisado em PR, validado pelos hosted checks e
+  mergeado, manter a contenção acima e não restaurar suas variáveis.
 - [x] Isolar o Ponto Core do binding Finance e publicar o Pages staging
   `ee5ab6dd-4bba-48da-96ea-38fa686f8691` no projeto `skincos-staging`
   (`https://ee5ab6dd.skincos-staging.pages.dev`), mantendo produção separada.
@@ -342,8 +324,7 @@ jornada autenticada atual continue válida.
   (prior ausente), o KV de staging registrou schema v2 `maintenance` em
   2026-07-30T08:43:14.511Z; edge health ficou `ok=false/ready=false`,
   `source=control`, e `/me` retornou 503. Produção permaneceu em manutenção.
-- [x] Reconciliar o live read-only após os merges #924–#926:
-  `main=abe56a171e5a0ad3b79885ca0fda9bfae819b011`,
+- [x] Reconciliar o live read-only após o merge: `main=aa9bfa6595...`,
   `selected_release_sha=null`, nenhum dos quatro live surfaces está nesse SHA,
   staging e produção estão agora `maintenance`. Os D1 Timekeeping de
   staging e produção journalizam exatamente `0001`–`0008` (8/8, sem migration
@@ -351,10 +332,8 @@ jornada autenticada atual continue válida.
   `/api/ponto/readiness` em produção ainda responde `200/ready=true` durante
   manutenção. Probes dos headers públicos proibidos retornaram 200 e o
   workforce contract retornou 401, não o 403 exigido na borda; portanto o
-  enforcement WAF exigido não foi observado: 12/12 probes obrigatórios falharam
-  nos dois hosts. A API Cloudflare respondeu 403/code 10000 para a leitura do
-  ruleset, então isso não prova se um objeto custom inacessível existe. Há zero
-  piloto produtivo elegível e zero runner self-hosted.
+  enforcement WAF exigido não foi observado. Isso não prova se um objeto custom
+  inacessível existe. Há zero piloto produtivo elegível.
 - [x] Confirmar a detecção externa da indisponibilidade fail-closed: o Ponto
   Smoke agendado production `30521686413`, em
   2026-07-30T07:04:44Z, falhou como esperado após cinco tentativas; o proxy
@@ -408,11 +387,12 @@ jornada autenticada atual continue válida.
   `CLOUDFLARE_ZONE_ID` já está presente por nome como variable não secreta do
   repositório e teve readback no checkpoint 14; os três IDs das regras continuam
   ausentes e nenhuma regra foi criada ou alterada.
-  A listagem autenticada mais recente da zona mostrou somente rulesets managed
-  e nenhum `http_request_firewall_custom`; 12/12 probes externas falharam, logo
-  o enforcement necessário está funcionalmente ausente. O endpoint custom
-  ainda precisa do principal split-custody canônico para aplicar e reatestar as
-  regras sem bypass no Worker. O secret
+  A listagem Cloudflare da zona mostrou somente rulesets managed; o GET do
+  custom entrypoint não foi autorizado. Tanto o browser interno do Codex quanto
+  o perfil Chrome existente chegaram somente ao login Cloudflare, sem sessão
+  autenticada; nenhuma credencial foi inserida e nenhuma mutação ocorreu. O
+  estado das regras continua não comprovado; o workflow com security token após
+  o merge deve atestá-lo, sem bypass no Worker. O secret
   `PONTO_WAF_READ_API_TOKEN` deve ser somente do repositório e
   `PONTO_WAF_WRITE_API_TOKEN` somente do environment `production`; ambos estão
   não provisionados e não podem usar `CLOUDFLARE_SECURITY_API_TOKEN` como

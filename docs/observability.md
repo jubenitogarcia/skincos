@@ -4,6 +4,17 @@ title: Observabilidade e SLOs
 
 # Observabilidade e SLOs
 
+## Estado verificado em 2026-07-31
+
+Este runbook descreve o contrato desejado; a reconstrucao atual nao confirma
+operacao continua. A instalacao privada registrada em
+`C:\CodexRuntime\operator\admin\skincos\observability\installation.json`
+esta em `operator-run-key`, mas nao ha Scheduled Task nem processo ativo
+`SkincosObservability*`. O ultimo `monitor-health.json` valido e de
+`2026-07-30T18:30:37Z`, com alerta/recuperacao historicos preservados. Antes de
+tratar qualquer modulo como monitorado continuamente, restabeleca o supervisor
+fora do GitHub, execute um alerta controlado e registre nova evidencia sanitizada.
+
 Este documento define os SLOs mínimos, a rota de alerta e a disciplina operacional para CRM, Website e Workers.
 
 ## Princípios

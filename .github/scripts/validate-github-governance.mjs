@@ -46,31 +46,57 @@ for (const requiredRule of ["deletion", "non_fast_forward", "pull_request", "req
 }
 
 const environmentBranchPolicy = readJson(".github/governance/environments/main-branch-policy.json");
-if (environmentBranchPolicy.name !== "main" || environmentBranchPolicy.type !== "branch") {
-  fail("environment branch policy must select exactly the main branch");
+const progressiveReleasePolicy = readJson(".github/governance/progressive-release-policy.json");
+const governance = progressiveReleasePolicy.governance;
+
+if (
+  governance?.authorizationModel !== "single-operator-codex"
+  || governance?.humanReviewerRequired !== false
+  || governance?.mainOnly !== true
+  || governance?.canonicalMergedPullRequestRequired !== true
+  || governance?.administratorBypassAllowed !== false
+) {
+  fail("progressive release policy must declare the canonical single-operator Codex governance");
 }
 
 for (const environmentName of ["staging", "production"]) {
   const environment = readJson(`.github/governance/environments/${environmentName}.json`);
+  const expected = governance?.environmentProtection?.[environmentName];
+  if (
+    !expected
+    || expected.requiredReviewers !== 0
+    || expected.preventSelfReview !== false
+    || expected.protectedBranches !== false
+    || expected.customBranchPolicies !== true
+    || expected.requiredBranch !== "main"
+  ) {
+    fail(`${environmentName} must be declared as a main-only zero-reviewer single-operator environment`);
+    continue;
+  }
   if (
     environment.wait_timer !== 0
-    || environment.prevent_self_review !== true
-    || environment.can_admins_bypass !== false
+    || environment.prevent_self_review !== expected.preventSelfReview
+    || environment.can_admins_bypass !== governance.administratorBypassAllowed
   ) {
-    fail(`${environmentName} must require a non-bypassable self-review-safe deployment approval without a wait timer`);
+    fail(`${environmentName} must mirror the no-bypass single-operator environment protection`);
   }
   if (
-    environment.reviewers?.length !== 1 ||
-    environment.reviewers[0]?.type !== "User" ||
-    environment.reviewers[0]?.id !== 199169872
+    !Array.isArray(environment.reviewers)
+    || environment.reviewers.length !== expected.requiredReviewers
   ) {
-    fail(`${environmentName} must preserve the fail-closed deployment reviewer`);
+    fail(`${environmentName} must mirror the zero-reviewer release policy`);
   }
   if (
-    environment.deployment_branch_policy?.protected_branches !== false ||
-    environment.deployment_branch_policy?.custom_branch_policies !== true
+    environment.deployment_branch_policy?.protected_branches !== expected.protectedBranches
+    || environment.deployment_branch_policy?.custom_branch_policies !== expected.customBranchPolicies
   ) {
-    fail(`${environmentName} must use the versioned custom main branch policy`);
+    fail(`${environmentName} must mirror the release policy branch protection`);
+  }
+  if (
+    environmentBranchPolicy.name !== expected.requiredBranch
+    || environmentBranchPolicy.type !== "branch"
+  ) {
+    fail(`${environmentName} must select only ${expected.requiredBranch} through the versioned branch policy`);
   }
 }
 
