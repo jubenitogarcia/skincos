@@ -10,7 +10,7 @@ const workflow = (name) => fs.readFileSync(
 test("coordinator and consumer attest live environment protection before authority", () => {
   const coordinator = workflow("ponto-progressive-release.yml");
   const issuerPreflight = coordinator.indexOf(
-    "Attest protected selected environment before issuing any capability",
+    "Attest single-operator Codex governance and protected environment before issuing any capability",
   );
   const issuerCustody = coordinator.indexOf(
     "Verify target-bound asymmetric child capability custody",
@@ -87,7 +87,7 @@ test("ordinary and watchdog rollback revalidate governance and use dedicated int
 test("emergency broker environments allow only the implicit protected-branch rule", () => {
   const source = workflow("ponto-progressive-release.yml");
   const start = source.indexOf(
-    "Require the independent no-review true-only emergency close path",
+    "Require the single-operator no-review true-only emergency close path",
   );
   const end = source.indexOf("Preflight production custody", start);
   const scoped = source.slice(start, end);
