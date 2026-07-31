@@ -43,7 +43,8 @@ $parseErrors = $null
 Assert-True -Condition ($parseErrors.Count -eq 0) -Message "gateway must parse without PowerShell errors"
 
 # Passing a typed placeholder while dot-sourcing loads only the pure renderer.
-# The gateway's dot-source guard guarantees that this test never invokes wsl.exe.
+# WSL_BOUNDARY_EXCEPTION: the renderer test exercises the gateway contract and
+# its dot-source guard guarantees that it never invokes the WSL process.
 . $gatewayPath -NpmScript "__gateway_unit_test__"
 
 $npm = New-SkincosWslInvocation `
@@ -110,7 +111,7 @@ Assert-Contains `
     -Message "an unregistered worktree must remain fail-closed"
 
 $shell = New-SkincosWslInvocation `
-    -Mode ScriptPath `
+    -Mode BashScript `
     -Target ".\scripts\codex-context.sh" `
     -ProjectRoot "C:\CodexShared\Projetos\skincos" `
     -Argument @("--online") `
@@ -170,7 +171,7 @@ Assert-True `
 Assert-Throws `
     -Action {
         New-SkincosWslInvocation `
-            -Mode ScriptPath `
+            -Mode BashScript `
             -Target "../outside.sh" `
             -ProjectRoot "C:\CodexShared\Projetos\skincos"
     } `

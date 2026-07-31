@@ -1,6 +1,6 @@
 [CmdletBinding(DefaultParameterSetName = "LegacyRepoCommand")]
 param(
-    [Parameter(Mandatory = $true, ParameterSetName = "ScriptPath")]
+    [Parameter(Mandatory = $true, ParameterSetName = "BashScript")]
     [ValidateNotNullOrEmpty()]
     [string]$ScriptPath,
 
@@ -22,15 +22,17 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$RepoCommand,
 
-    [Parameter(ParameterSetName = "ScriptPath")]
+    [Parameter(ParameterSetName = "BashScript")]
     [Parameter(ParameterSetName = "Executable")]
     [Parameter(ParameterSetName = "NpmScript")]
     [Parameter(ParameterSetName = "PythonScript")]
-    [Alias("Arguments")]
+    [Alias("Arguments", "ArgumentList")]
     [AllowEmptyCollection()]
     [string[]]$Argument = @(),
 
     [string]$ProjectRoot = "C:\CodexShared\Projetos\skincos",
+
+    [string]$WslExecutable = "wsl.exe",
 
     [Alias("Environment", "EnvironmentVariable", "EnvironmentVariables")]
     [AllowEmptyCollection()]
@@ -53,6 +55,8 @@ $script:BlockedEnvironmentNames = @(
     "CDPATH",
     "CODEX_HOME",
     "ENV",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
     "HOME",
     "LD_LIBRARY_PATH",
     "LD_PRELOAD",
@@ -151,6 +155,9 @@ function Resolve-SafeExecutable {
         throw "Executable must be a non-empty command name or repository-relative path."
     }
 
+    if ($Value -match '^/(?:usr/)?bin/[A-Za-z0-9_][A-Za-z0-9_.+-]*$') {
+        return $Value
+    }
     if ($Value.Contains('/') -or $Value.Contains('\')) {
         return Resolve-SafeRepoRelativePath -Path $Value -ParameterName "Executable"
     }
@@ -196,6 +203,40 @@ function Resolve-EnvVarEntry {
     }
 }
 
+function Resolve-WindowsWorktreeEnvironment {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $gitMarker = Join-Path $RepoRoot ".git"
+    if (-not (Test-Path -LiteralPath $gitMarker -PathType Leaf)) {
+        return @()
+    }
+
+    $markerText = (Get-Content -LiteralPath $gitMarker -Raw).Trim()
+    if ($markerText -notmatch '^gitdir:\s*(?<path>.+)$') {
+        throw "The Windows worktree has an invalid .git pointer: '$gitMarker'."
+    }
+
+    $gitDirectory = $Matches.path.Trim()
+    if (-not [IO.Path]::IsPathRooted($gitDirectory)) {
+        $gitDirectory = Join-Path $RepoRoot $gitDirectory
+    }
+    $gitDirectory = [IO.Path]::GetFullPath($gitDirectory)
+    $approvedRoot = [IO.Path]::GetFullPath(
+        "C:\CodexShared\Projetos\skincos\.git\worktrees"
+    ).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if (-not $gitDirectory.StartsWith(
+        $approvedRoot + [IO.Path]::DirectorySeparatorChar,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "The Windows worktree .git pointer is outside the approved shared repository: '$gitDirectory'."
+    }
+
+    return @(
+        "GIT_DIR=$(Convert-WindowsPathToWsl -Path $gitDirectory)",
+        "GIT_WORK_TREE=$(Convert-WindowsPathToWsl -Path $RepoRoot)"
+    )
+}
+
 function Join-BashArguments {
     param([AllowEmptyCollection()][string[]]$Values = @())
 
@@ -212,7 +253,7 @@ function Join-BashArguments {
 function New-SkincosWslInvocation {
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet("ScriptPath", "Executable", "NpmScript", "PythonScript", "LegacyRepoCommand")]
+        [ValidateSet("BashScript", "Executable", "NpmScript", "PythonScript", "LegacyRepoCommand")]
         [string]$Mode,
         [Parameter(Mandatory = $true)][string]$Target,
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
@@ -230,7 +271,7 @@ function New-SkincosWslInvocation {
     }
 
     $normalizedTarget = switch ($Mode) {
-        "ScriptPath" {
+        "BashScript" {
             Resolve-SafeRepoRelativePath -Path $Target -ParameterName "ScriptPath" -RequiredExtension ".sh"
         }
         "PythonScript" {
@@ -278,6 +319,7 @@ function New-SkincosWslInvocation {
     $bashLines.Add("set -euo pipefail")
 
     $safeRepoLiteral = Convert-ToBashLiteral -Value $repoMountPath
+    $implicitEnvironment = @(Resolve-WindowsWorktreeEnvironment -RepoRoot $ProjectRoot)
     if (-not $SkipRepoCheck) {
         $message = Convert-ToBashLiteral -Value "Shared repo not found at $repoMountPath."
         $bashLines.Add("if [[ ! -d $safeRepoLiteral ]]; then printf '%s\n' $message >&2; exit 1; fi")
@@ -299,7 +341,8 @@ function New-SkincosWslInvocation {
         $canonicalRepoMount = '/mnt/c/CodexShared/Projetos/skincos'
         $privatePreviewMount = '/mnt/c/CodexRuntime/operator/admin/skincos/source/'
         $trustedPreview = $repoMountPath -eq $canonicalRepoMount -or
-            $repoMountPath.StartsWith($privatePreviewMount, [StringComparison]::OrdinalIgnoreCase)
+            $repoMountPath.StartsWith($privatePreviewMount, [StringComparison]::OrdinalIgnoreCase) -or
+            $repoMountPath.StartsWith('/home/admin/.local/state/skincos/crm-local-preview-source/', [StringComparison]::Ordinal)
         if ($trustedPreview) {
             # CRM snapshots are purposefully created in unique private worktrees.
             # Register only the canonical checkout and the private preview root.
@@ -312,6 +355,10 @@ function New-SkincosWslInvocation {
         }
     }
 
+    foreach ($implicit in $implicitEnvironment) {
+        $parts = $implicit.Split("=", 2)
+        $bashLines.Add("export $($parts[0])=" + (Convert-ToBashLiteral -Value $parts[1]))
+    }
     foreach ($resolved in $resolvedEnvironment) {
         $bashLines.Add(
             "export $($resolved.Name)=" + (Convert-ToBashLiteral -Value ([string]$resolved.Value))
@@ -323,7 +370,7 @@ function New-SkincosWslInvocation {
     $targetLiteral = Convert-ToBashLiteral -Value $normalizedTarget
     $argumentSuffix = if ([string]::IsNullOrEmpty($argumentText)) { "" } else { " $argumentText" }
     switch ($Mode) {
-        "ScriptPath" {
+        "BashScript" {
             $missingMessage = Convert-ToBashLiteral -Value "ScriptPath was not found below ProjectRoot."
             $bashLines.Add("if [[ ! -f $targetLiteral ]]; then printf '%s\n' $missingMessage >&2; exit 1; fi")
             $bashLines.Add("bash -- $targetLiteral$argumentSuffix")
@@ -403,7 +450,7 @@ $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 
 $mode = $PSCmdlet.ParameterSetName
 $target = switch ($mode) {
-    "ScriptPath" { $ScriptPath }
+    "BashScript" { $ScriptPath }
     "Executable" { $Executable }
     "NpmScript" { $NpmScript }
     "PythonScript" { $PythonScript }
@@ -426,11 +473,10 @@ if ($mode -eq "LegacyRepoCommand") {
     Write-Warning "-RepoCommand is a legacy raw-shell compatibility path. Use a typed invocation for new automation."
 }
 
-$systemWsl = Join-Path $env:SystemRoot "System32\wsl.exe"
-if (-not (Test-Path -LiteralPath $systemWsl -PathType Leaf)) {
-    throw "wsl.exe was not found at the Windows system boundary. Install or enable WSL first."
+$wsl = Get-Command -Name $WslExecutable -CommandType Application -ErrorAction SilentlyContinue
+if (-not $wsl) {
+    throw "WSL is unavailable: '$WslExecutable' was not found. No Skincos service was started."
 }
-$wsl = Get-Command -Name $systemWsl -CommandType Application -ErrorAction Stop
 $wslArguments = New-SkincosWslProcessArgumentList -BashCommand $invocation.BashCommand
 
 Write-Host "Running as $script:SkincosWslOperator in $script:SkincosWslDistribution repo: $($invocation.RepoMountPath)"
