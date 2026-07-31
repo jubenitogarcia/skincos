@@ -51,6 +51,7 @@ jobs:
           umask 077
           node - "$directory/authorization.json" <<'NODE'
           const crypto = require("crypto");
+          (async () => {
           const fs = require("fs");
           fs.writeFileSync(process.argv[2], `${JSON.stringify({
             schemaVersion: 1,
