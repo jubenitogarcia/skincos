@@ -14,39 +14,51 @@ export function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-export function globToRegExp(pattern) {
-  let expression = "^";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const char = pattern[index];
-    const next = pattern[index + 1];
-    if (char === "*" && next === "*") {
-      index += 1;
-      if (pattern[index + 1] === "/") {
-        index += 1;
-        expression += "(?:.*/)?";
-      } else {
-        expression += ".*";
-      }
-    } else if (char === "*") {
-      expression += "[^/]*";
-    } else if (char === "?") {
-      expression += "[^/]";
-    } else if (char === "{") {
-      const close = pattern.indexOf("}", index);
-      if (close === -1) expression += "\\{";
-      else {
-        expression += `(?:${pattern.slice(index + 1, close).split(",").map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&")).join("|")})`;
-        index = close;
-      }
+function expandBraces(pattern) {
+  const open = pattern.indexOf("{");
+  if (open < 0) return [pattern];
+  const close = pattern.indexOf("}", open + 1);
+  if (close < 0) return [pattern];
+  const alternatives = pattern.slice(open + 1, close).split(",");
+  return alternatives.flatMap((alternative) => expandBraces(
+    `${pattern.slice(0, open)}${alternative}${pattern.slice(close + 1)}`
+  ));
+}
+
+// Match the small, repository-controlled glob dialect without compiling a
+// runtime regular expression from policy text.  This keeps path selection
+// deterministic and avoids ReDoS when a future policy contains a malformed or
+// unexpectedly broad pattern.
+function globMatch(value, pattern) {
+  const memo = new Map();
+  function match(valueIndex, patternIndex) {
+    const key = `${valueIndex}:${patternIndex}`;
+    if (memo.has(key)) return memo.get(key);
+    let result;
+    if (patternIndex === pattern.length) {
+      result = valueIndex === value.length;
+    } else if (pattern[patternIndex] === "*" && pattern[patternIndex + 1] === "*") {
+      const afterGlob = patternIndex + 2 + (pattern[patternIndex + 2] === "/" ? 1 : 0);
+      result = match(valueIndex, afterGlob)
+        || (valueIndex < value.length && match(valueIndex + 1, patternIndex));
+    } else if (pattern[patternIndex] === "*") {
+      result = match(valueIndex, patternIndex + 1)
+        || (valueIndex < value.length && value[valueIndex] !== "/" && match(valueIndex + 1, patternIndex));
+    } else if (pattern[patternIndex] === "?") {
+      result = valueIndex < value.length && value[valueIndex] !== "/" && match(valueIndex + 1, patternIndex + 1);
     } else {
-      expression += char.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+      result = valueIndex < value.length
+        && value[valueIndex] === pattern[patternIndex]
+        && match(valueIndex + 1, patternIndex + 1);
     }
+    memo.set(key, result);
+    return result;
   }
-  return new RegExp(`${expression}$`);
+  return match(0, 0);
 }
 
 export function matchesAny(path, patterns = []) {
-  return patterns.some((pattern) => globToRegExp(pattern).test(path));
+  return patterns.some((pattern) => expandBraces(pattern).some((expanded) => globMatch(path, expanded)));
 }
 
 export function classifyFiles(policy, files) {
