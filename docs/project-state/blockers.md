@@ -1,5 +1,21 @@
 # Current blockers
 
+## Snapshot autoritativo — 2026-07-31T15:00Z — main `01d2b6d1f79a9017e0a87efa2a1a32f82eed219f`
+
+- PRs #933/#934/#936/#937/#938/#939 estao integradas; esta branch prepara a
+  governanca `single-operator-codex` ainda pendente de PR/checks/merge.
+- A politica elimina somente a revisao humana obrigatoria; preserva PR
+  canonica mergeada, checks exatos, main-only, `can_admins_bypass=false`,
+  mutex/watchdog/latch, WAF split-custody, broker close-only, capabilities
+  target-bound, artefatos sanitizados e rollback automatico.
+- Staging e producao continuam `maintenance`; nenhum SHA foi selecionado e
+  nenhum preview/staging/pilot/canary/producao foi executado neste HEAD.
+- Permanecem gates externos fail-closed: broker Worker independente e
+  atestado, WAF customizado e tokens least-privilege, custodias/keys por
+  ambiente, runner JIT one-shot com attestation, identidade piloto Workforce
+  sintetica autorizada e SLO externo. Nao ha evidencia de connector de
+  Identity/Workforce ou runner JIT disponivel nesta sessao.
+
 ## Snapshot autoritativo — 2026-07-31T14:37Z
 
 - **P0/P1 atual:** nenhum novo bloqueio de Insumos; o P0 continua resolvido.

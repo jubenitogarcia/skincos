@@ -2,6 +2,26 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-31T15:00:00Z",
+      "surface": "github-ponto-single-operator-governance",
+      "scope": "Reconcile current main and replace the human-review environment gate with a verifiable single-operator Codex contract",
+      "state": "local-branch-pending-pr-no-remote-mutation",
+      "method": "Fetched origin/main; created the preserved governance worktree from 01d2b6d1; added policy, environment attestation, canonical merged-PR/check verification, focused tests and state documentation",
+      "result": "The branch is based on origin/main 01d2b6d1f79a9017e0a87efa2a1a32f82eed219f and retains main-only, immutable SHA, canonical PR, required checks, no administrator bypass, split custody, sanitized artifacts and automatic rollback. The focused governance test passed 3/3 and progressive-release validation passed.",
+      "limitation": "The policy PR is not yet published or merged; the remote environments still have the legacy required-reviewer rule, and no secret, identity, Cloudflare resource, flag, migration or deployment was changed.",
+      "sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
+      "branch": "codex/admin/ponto-single-operator-governance",
+      "worktree": "C:\\CodexShared\\Worktrees\\skincos\\admin\\ponto-single-operator-governance",
+      "selected_release_sha": null,
+      "validation": {
+        "ponto_governance_test": "passed-3-tests",
+        "progressive_release_validator": "passed",
+        "remote_mutation": false,
+        "credentials_included": false,
+        "pii_included": false
+      }
+    },
+    {
       "observed_at": "2026-07-31T14:37:00Z",
       "surface": "github-cloudflare-local-runtime-reconciliation",
       "scope": "origin/main current state, Finance lineage, Ponto controls, observability custody and production resource inventory",

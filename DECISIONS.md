@@ -1,5 +1,21 @@
 # DECISIONS
 
+## 2026-07-31 - Governanca single-operator/Codex para a release progressiva do Ponto
+
+- Estado: proposta implementada nesta branch a partir do `origin/main`
+  `01d2b6d1f79a9017e0a87efa2a1a32f82eed219f`; ainda nao integrada.
+- Decisao: substituir a exigencia de reviewer humano independente por
+  `single-operator-codex`, mantendo main-only, SHA imutavel alcancavel do main,
+  PR canonica mergeada, checks obrigatorios, `can_admins_bypass=false`,
+  capabilities target-bound, split-custody, artefatos sanitizados e rollback
+  automatico. O ambiente nao pode conter regra `required_reviewers`; ausencia
+  de reviewer e uma propriedade verificada da politica, nao um bypass.
+- Evidencia implementada: `progressive-release-policy.json`,
+  `ponto-environment-protection.mjs`, `validate-progressive-release.mjs`, teste
+  dedicado e o coordenador `ponto-progressive-release.yml`. Staging e producao
+  continuam `maintenance` ate a PR canonica, os controles externos e os
+  predecessores de pilot/canary serem comprovados.
+
 ## 2026-07-31 - Corrective package published as PR #933
 
 - Status: the post-PR-921 release-probe, Identity teardown, trusted execution,

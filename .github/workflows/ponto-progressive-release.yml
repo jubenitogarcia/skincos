@@ -104,6 +104,7 @@ jobs:
       actions: write
       checks: write
       contents: read
+      deployments: read
     runs-on: ubuntu-latest
     environment: ${{ inputs.stage == 'preview' && 'preview' || inputs.stage == 'staging' && 'staging' || 'production' }}
     timeout-minutes: 360
@@ -184,10 +185,38 @@ jobs:
           PONTO_EXPECTED_STAGE="$predecessor" PONTO_EXPECTED_SHA="$RELEASE_SHA" PONTO_EXPECTED_REPOSITORY="$GITHUB_REPOSITORY" \
             node .github/scripts/ponto-release-evidence.mjs verify "$PONTO_ARTIFACT_DIR/predecessor/ponto-release-evidence.json"
           rm -f "$RUNNER_TEMP/ponto-workflow.json" "$RUNNER_TEMP/predecessor-run.json"
-      - name: Attest protected selected environment before issuing any capability
+      - name: Attest canonical merged PR and required checks for the immutable SHA
         if: ${{ inputs.stage != 'preview' }}
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/pulls" > "$RUNNER_TEMP/ponto-release-pulls.json"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/ponto-release-checks.json"
+          node - "$RUNNER_TEMP/ponto-release-pulls.json" "$RUNNER_TEMP/ponto-release-checks.json" <<'NODE'
+          const fs = require("fs");
+          const read = file => JSON.parse(fs.readFileSync(file, "utf8"));
+          const pulls = read(process.argv[2]);
+          const checks = read(process.argv[3]);
+          const sha = process.env.RELEASE_SHA.toLowerCase();
+          const policy = read(".github/governance/progressive-release-policy.json");
+          const merged = (Array.isArray(pulls) ? pulls : []).filter(pr =>
+            pr?.base?.ref === "main" && pr?.state === "closed" && pr?.merged_at
+            && String(pr?.merge_commit_sha || "").toLowerCase() === sha
+            && String(pr?.head?.repo?.full_name || "") === process.env.GITHUB_REPOSITORY
+          );
+          if (merged.length !== 1) throw new Error("immutable release SHA lacks exactly one canonical merged PR into main");
+          const byName = new Map((checks.check_runs || []).map(run => [String(run.name || ""), run]));
+          for (const name of policy.governance.requiredChecks || []) {
+            const run = byName.get(name);
+            if (!run || run.conclusion !== "success") throw new Error(`required check is not successful for immutable release SHA: ${name}`);
+          }
+          NODE
+          rm -f "$RUNNER_TEMP/ponto-release-pulls.json" "$RUNNER_TEMP/ponto-release-checks.json"
+      - name: Attest single-operator Codex governance and protected environment before issuing any capability
+        if: ${{ inputs.stage != 'preview' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for protection attestation'; exit 1; }
@@ -253,7 +282,7 @@ jobs:
       - name: Verify target-bound asymmetric child capability custody
         if: ${{ inputs.stage != 'preview' }}
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
           PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
@@ -300,7 +329,7 @@ jobs:
       - name: Preflight selected environment secret-root custody
         if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for custody attestation'; exit 1; }
@@ -370,10 +399,10 @@ jobs:
             "$RUNNER_TEMP/ponto-root-repository-secrets.json" \
             "$RUNNER_TEMP/ponto-root-environment-variables.json" \
             "$RUNNER_TEMP/ponto-root-repository-variables.json"
-      - name: Require the independent no-review true-only emergency close path
+      - name: Require the single-operator no-review true-only emergency close path
         if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments read is required for emergency custody'; exit 1; }
@@ -460,7 +489,7 @@ jobs:
       - name: Preflight production custody, approved cohort, and online pilot runner
         if: ${{ contains(fromJSON('["pilot","canary","production"]'), inputs.stage) }}
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           CANARY_COHORT_PERCENTAGE: ${{ vars.PONTO_CANARY_COHORT_PERCENTAGE }}
         run: |
           set -euo pipefail
@@ -1799,7 +1828,7 @@ jobs:
           fetch-depth: 1
       - name: Revalidate protected target environment before rollback mutation
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           PONTO_ENVIRONMENT_TARGET: ${{ inputs.stage == 'staging' && 'staging' || 'production' }}
         run: |
           set -euo pipefail
