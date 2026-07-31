@@ -55,16 +55,16 @@
   },
   "emergencyBrokers": {
     "staging": {
-      "url": null,
-      "custodyRef": null,
-      "responseKeyId": null,
-      "responsePublicKeyPem": null
+      "url": "https://skincos-ponto-emergency-staging.skincos.workers.dev/close",
+      "custodyRef": "vault:v1:broker-staging",
+      "responseKeyId": "vault:v1:szkTTX-TmwZqyBiiWqkbpbPhSRja8oTTC3URT7DcPf8",
+      "responsePublicKeyPem": "-----BEGIN PUBLIC KEY-----\r\nMCowBQYDK2VwAyEADzK+P2iEBdfH38y2CYi8tpSDeJijbo2X/gTppnaKHb0=\r\n-----END PUBLIC KEY-----"
     },
     "production": {
-      "url": null,
-      "custodyRef": null,
-      "responseKeyId": null,
-      "responsePublicKeyPem": null
+      "url": "https://skincos-ponto-emergency-production.skincos.workers.dev/close",
+      "custodyRef": "vault:v1:broker-production",
+      "responseKeyId": "vault:v1:LMQHNNK69P-jxyrqX7t6GW5SKTcbjSfPJyUTqeFg5cI",
+      "responsePublicKeyPem": "-----BEGIN PUBLIC KEY-----\r\nMCowBQYDK2VwAyEAz6WYoXzGy5rqWcJIyG3d9bc2j3NoV66QEy5bVh2GEa8=\r\n-----END PUBLIC KEY-----"
     }
   },
   "pilotRunner": {

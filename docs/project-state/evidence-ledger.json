@@ -2,6 +2,27 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-31T16:30:00Z",
+      "surface": "github-cloudflare-ponto-broker",
+      "scope": "Integrate and attest independent close-only emergency brokers after single-operator governance",
+      "state": "merged-and-live-attested-fail-closed",
+      "method": "PR #945 canonical squash merge after hosted checks; Cloudflare D1 creation/schema, Worker deployment, secret names, encrypted-vault custody, signed HMAC/Ed25519 contract attestation and staging latch/maintenance exercise",
+      "result": "PR #945 merged as d34488afc5b8ea668241382e24f30c745798e033. Staging Worker skincos-ponto-emergency-staging version 472fb1ea-854c-4c7d-8467-d0036b3e95f7 uses D1 da4dfca3-3f5e-4044-a235-eb1b102a6ec1; production Worker skincos-ponto-emergency-production version b07892dc-5325-4f6e-90e1-ae3d50d17c5b uses D1 4b5e9087-7d33-46d0-aeb2-f1503c01db43. Functional attestation passed for both; staging exercise run IDs 910001/910002 left latch=true and control=maintenance.",
+      "limitation": "No application release SHA selected; WAF token/ruleset, JIT runner, Workforce pilot identity and external SLO remain absent. No production Ponto flag or migration was changed.",
+      "sha": "d34488afc5b8ea668241382e24f30c745798e033",
+      "pr": 945,
+      "selected_release_sha": null,
+      "validation": {
+        "hosted_checks": "passed",
+        "broker_staging_attestation": "passed",
+        "broker_production_attestation": "passed",
+        "staging_close_exercise": "passed-latch-true-maintenance",
+        "credentials_included": false,
+        "pii_included": false,
+        "secret_values_emitted": false
+      }
+    },
+    {
       "observed_at": "2026-07-31T15:00:00Z",
       "surface": "github-ponto-single-operator-governance",
       "scope": "Reconcile current main and replace the human-review environment gate with a verifiable single-operator Codex contract",

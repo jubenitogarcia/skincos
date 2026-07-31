@@ -1,13 +1,13 @@
 # TASKS
 
-## Reconciliacao autoritativa — `origin/main` `01d2b6d1f79a9017e0a87efa2a1a32f82eed219f` — 2026-07-31
+## Reconciliacao autoritativa — `origin/main` `d34488afc5b8ea668241382e24f30c745798e033` — 2026-07-31
 
 Esta e a fonte atual para o ciclo. O checkout compartilhado tinha alteracoes
 nao relacionadas preservadas fora desta PR em
 `C:\CodexRuntime\operator\admin\skincos\reconciliation-20260731`; elas nao
-foram misturadas. A PR #933 foi integrada como `a70fe64c...` e as PRs
-#934/#936/#937/#938/#939 tambem foram integradas com checks verdes; `01d2b6d1...`
-e o main atual.
+foram misturadas. As PRs #943 e #945 foram integradas em
+`16cace3c...` e `d34488af...`, respectivamente, alem de #934/#936/#937/#938/
+#939; todos os checks hospedados ficaram verdes e `d34488af...` e o main atual.
 
 - Insumos P0 permanece resolvido por #847/#848; nao ha novo sintoma ou escrita
   nesta reconciliacao.
@@ -28,18 +28,21 @@ e o main atual.
   artefatos de alerta/recuperacao permanecem, mas a instalacao atual e somente
   Run key, sem Scheduled Task/processo ativo, e o ultimo health privado e
   `2026-07-30T18:30:37Z`.
-- Ponto: #930/#931/#933 estao integradas; o delta posterior em #934/#936/#937/
-  #938/#939 e nao-Ponto. Esta branch prepara a decisao governada
+- Ponto: #930/#931/#933/#943/#945 estao integradas; o delta posterior em
+  #934/#936/#937/#938/#939 e nao-Ponto. #943 estabeleceu a decisao governada
   `single-operator-codex` (sem reviewer humano, sem bypass administrativo,
   main-only, checks obrigatorios, merge canonico, custodia separada e rollback
-  automatico). Ate essa PR ser integrada e os controles externos comprovados,
-  nao existe SHA selecionado nem evidencia nova de staging/producao; broker,
-  WAF, runner, identidade piloto e custodia permanecem fail-closed.
+  automatico). #945 adicionou broker close-only independente com D1
+  transacional, nonce atomico, mutex e latch. Brokers staging/production foram
+  publicados e atestados sem expor segredos; ainda nao existe SHA selecionado
+  nem evidencia nova de staging/producao; WAF, runner, identidade piloto e
+  SLO externo permanecem fail-closed.
 
-Proximo marco seguro: revalidar a observabilidade continua e, depois, executar
-preview/staging completos do Financeiro no SHA entao atual, sempre com SHA
-explicito. Acoes proibidas: provisionar ou publicar producao, ativar flags,
-alterar grants/usuarios/secrets/dados ou transferir o repositorio.
+Proximo marco seguro do Ponto: obter WAF least-privilege, runner JIT/attestation,
+identidade piloto Workforce e SLO externo; somente entao selecionar o HEAD
+imutavel e executar preview -> staging -> pilot -> canary -> production.
+Acoes proibidas: ativar flags ou alterar grants/usuarios/dados antes desses
+predecessores.
 
 ## Resolved P0 — incidente de acesso a Insumos
 
