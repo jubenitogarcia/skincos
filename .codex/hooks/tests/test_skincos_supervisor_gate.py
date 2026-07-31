@@ -222,6 +222,7 @@ class GateFixture(unittest.TestCase):
         )
         self.assertTrue(repeated["continue"])
         self.assertIn("measurable progress fingerprint did not change", repeated["stopReason"])
+        self.assertIn("focal diagnosis or a different approach is required", repeated["stopReason"])
         self.assertIn("unchanged work will not be repeated", repeated["stopReason"])
 
     def test_root_continue_without_measurable_progress_is_not_eligible(self) -> None:
@@ -252,6 +253,7 @@ class GateFixture(unittest.TestCase):
         )
         self.assertTrue(repeated["continue"])
         self.assertIn("blocker fingerprint did not change", repeated["stopReason"])
+        self.assertIn("focal diagnosis or a different approach is required", repeated["stopReason"])
 
     def test_corrupt_session_snapshot_stops_active_continuation_without_overwrite(self) -> None:
         self.write_config(cooldown_seconds=0)
@@ -313,7 +315,7 @@ class GateFixture(unittest.TestCase):
         self.assertIn("production_authorization_required", result["stopReason"])
 
     def test_cycle_budget_exhaustion_and_explicit_root_reset(self) -> None:
-        self.write_config(max_cycles=1, cooldown_seconds=0)
+        self.write_config(max_cycles=1, emergency_cycle_limit=1, cooldown_seconds=0)
         first = self.run_gate(self.payload(turn_id="root-1"), now=self.now)
         self.assertEqual(first["decision"], "block")
         second = self.run_gate(

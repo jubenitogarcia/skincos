@@ -22,12 +22,15 @@ evidence judgment remains here.
    allowed/prohibited actions, dependencies, tests, evidence and done
    definition. Prefer the next minimum safe milestone within the active
    objective; do not switch to an unrelated queue item.
-5. Execute that milestone when authorized by the active mission. Test it,
-   commit/push it, create or update its single-purpose PR, follow checks to a
+5. Execute that milestone when authorized by the active mission. Use a
+   delivery-first validation proportional to effect: diff/static checks for
+   docs, one focused test/build or focal functional journey for normal code,
+   and targeted rollback/security evidence only for elevated surfaces. Commit,
+   push, create or update the single-purpose PR, follow the aggregate gate to a
    terminal state, fix failures introduced by the change, merge when gates
-   permit, and verify the integrated result. Domain gates, real permission,
-   rollout, evidence and rollback still decide technical eligibility. Do not
-   merely print commands for another session.
+   permit, and verify the integrated result. Do not run unrelated full suites,
+   staging drills or deep scans by ritual, and do not merely print commands for
+   another session.
 6. Persist durable queue, blocker and evidence changes when facts materially
    changed. Keep transient hook state outside Git.
 7. Choose exactly one terminal or continuing orchestration status. Automatic
@@ -75,13 +78,13 @@ Allowed `orchestration_status` values:
   `credential_blocker` without revealing credential material.
 - `production_authorization_required`: the next necessary action affects
   production and is outside the authorization of the active mission.
-- `cycle_budget_exhausted`: the gate-reported mission budget is exhausted; keep
-  recoverable state and do not claim completion.
+- `cycle_budget_exhausted`: the gate-reported emergency-only cycle guard is
+  exhausted; keep recoverable state and do not claim completion.
 - `safety_stop`: state is corrupt, ambiguous, conflicting or unsafe.
 - `error`: an internal failure prevents a trustworthy decision.
 
 Never emit `continue` with `progress_made=false`, a blocker, a missing
-`next_item`, or `production_authorization_required=true`. A cycle budget is
-a pacing boundary, not a revocation of mission authorization. A Stop-generated prompt does not
+`next_item`, or `production_authorization_required=true`. The cycle guard is an
+emergency pacing boundary, not a revocation of mission authorization. A Stop-generated prompt does not
 create a new mission or broaden scope; it carries valid authorization until the
 objective changes or an explicit human exception applies.

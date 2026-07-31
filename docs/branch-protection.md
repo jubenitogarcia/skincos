@@ -23,5 +23,6 @@ Objetivo: bloquear push direto em `main` e exigir PR com o gate agregado verde.
 - Para deploy automático: manter os workflows de deploy disparando apenas após merge em `main` (nunca em PR).
 - Auto-merge pode ser habilitado pelo workflow de manutenção somente quando o PR
   não é draft, está limpo e todos os checks obrigatórios estão verdes. O merge
-  continua condicionado à ausência de vulnerabilidade crítica/alta alcançável,
-  rollback e superfícies afetadas; a habilitação não contorna a ruleset.
+  segue o gate proporcional à superfície: docs não acordam suítes pesadas,
+  código comum usa um foco, e somente mudanças elevadas/excepcionais exigem
+  segurança/rollback adicional; a habilitação não contorna a ruleset.
