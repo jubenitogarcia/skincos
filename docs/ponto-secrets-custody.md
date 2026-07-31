@@ -24,6 +24,11 @@ execução da evidência enquanto o latch continua fechado. A prova de fail-clos
 também consulta o health endpoint autorizado; nenhum header de Access ou
 secret é incluído no artefato sanitizado.
 
+O probe de propagação executa a consulta autorizada em um escopo assíncrono
+fechado, evitando que o runner interprete `require` e `await` como módulos
+incompatíveis; o resultado continua sanitizado e limitado ao estado de
+disponibilidade.
+
 ## Cloudflare Workers
 
 Os brokers `skincos-ponto-emergency-staging` e

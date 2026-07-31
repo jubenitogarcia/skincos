@@ -51,6 +51,7 @@ jobs:
           umask 077
           node - "$directory/authorization.json" <<'NODE'
           const crypto = require("crypto");
+          (async () => {
           const fs = require("fs");
           fs.writeFileSync(process.argv[2], `${JSON.stringify({
             schemaVersion: 1,
@@ -126,6 +127,7 @@ jobs:
             changedAt: availability.changedAt,
             source: "control",
           })}\n`, { mode: 0o600 });
+          })().catch((error) => { console.error(error); process.exitCode = 1; });
           NODE
           PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
           PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
