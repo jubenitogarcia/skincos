@@ -1414,6 +1414,23 @@
       "rollback_release": "6272becdfba7fc4ef82956ceeda6ab72fbab467b",
       "prohibited_pre_minimization_worker_version": "affdc496-a0f4-4177-93e8-79ffa19e04f4",
       "evidence_ref": "C:\\CodexRuntime\\operator\\admin\\skincos\\evidence\\meta-capi-final-verification-20260729.md"
+    },
+    {
+      "observed_at": "2026-07-31T15:34:00Z",
+      "surface": "production-runtime-and-drive-preflight",
+      "scope": "livia-pr939-isolated-bundle-and-new-carousel-scheduler-preflight",
+      "state": "bundle-repinned-schedule-restored-real-trigger-no-new-media",
+      "method": "PR #939 merge/check audit; exact-merge native archive and lineage SHA-256; stage-only native preparation; candidate structural validation; offline Livia tests; expected-version manifest transaction; safe Orb drain/restart; Schedule Trigger execution 350; canonical Drive folder listing; post-restore manifest audit and local/public health probes",
+      "result": "PR #939 merged as 01d2b6d1f79a9017e0a87efa2a1a32f82eed219f with all hosted checks green. Bundle archive SHA-256 c083bb444a71b1031f6ec0ad601e60db62a5940ad3bbc4ecda2fa1a14244e0c3 and lineage SHA-256 2fc7e38fe254a318126d95b17b89b2bf3a5372655533282354fbda819b4ef14e were verified. Active workflow WGXr4vYkv9UoJ8zc is d11e34fa-7992-4c07-9fba-e212fffe1d8a, pinned to release 01d2b6d1f79a9017e0a87efa2a1a32f82eed219f; audit-live reports zero mutable references. Execution 350 ran in trigger mode and succeeded from 2026-07-31T12:30:19.402-03 to 12:30:26.362-03, ending at List Files with plannedJobs=0 and httpCalls=0. Drive folder 1Dq_1TeD4RCQAaYFSarXA7c63nDvtUvE9 returned 57 historical items; no new carousel was visible, and the eight 3107260830 PNGs were not reused. Schedule was restored to field days at 13:26. Local and public health returned status ok.",
+      "limitation": "No unpublished carousel was available in the canonical Drive listing at the trigger window, so no media, gateway, Drive mark, notification or social publication was created. A real end-to-end carousel acceptance remains open and requires the new Drive file IDs before another scheduled trigger.",
+      "sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
+      "pr": 939,
+      "merge_sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
+      "workflow_version": "d11e34fa-7992-4c07-9fba-e212fffe1d8a",
+      "manifest_sha256": "cca251e26fc87957f341abb264571025a00a142a4162be8d98b6338ae213afbb",
+      "execution": 350,
+      "rollback_checkpoint": "C:\\CodexRuntime\\operator\\admin\\skincos\\checkpoints\\livia-carousel-pr939-post-restore-20260731T123400-0300",
+      "rollback_checkpoint_sha256": "ac8f12e006b0b2af1cca3bd3d5f9704e3183193c8d672e7641a7d777263ed2f1"
     }
   ]
 }
