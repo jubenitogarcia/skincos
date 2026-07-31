@@ -63,14 +63,14 @@ export async function validateWatchdogContext({
     || !Number.isInteger(workflow?.id)
     || run?.id !== eventRun.id
     || run?.workflow_id !== workflow.id
-    || run?.path !== `${workflow.path}@refs/heads/main`
+    || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run?.path)
     || run?.status !== "completed"
     || !Number.isInteger(runAttempt)
     || runAttempt < 1
     || !validConclusion
     || run?.event !== "workflow_dispatch"
     || run?.head_branch !== "main"
-    || run?.name !== "Ponto progressive release"
+    || run?.name !== `Ponto ${match[1]} ${match[2]} orchestrator=${match[3]}`
     || run?.repository?.full_name !== repository
     || String(run?.repository?.id || "") !== String(repositoryId)
     || run?.head_repository?.full_name !== repository
