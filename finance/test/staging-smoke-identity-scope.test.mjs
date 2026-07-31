@@ -37,5 +37,6 @@ test('synthetic Finance identity preserves only the explicit Finance module in t
   assert.match(rotation.core, /role='INJETOR'/);
   assert.match(rotation.core, /allowed_modules_json='\["finance"\]'/);
   assert.match(provision.finance, /ON CONFLICT\(username,scope_id\) DO UPDATE/);
+  assert.match(rotation.finance, /ON CONFLICT\(username,scope_id\) DO UPDATE/);
   assert.match(rotation.finance, /finance_access_grant/);
 });

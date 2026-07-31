@@ -64,6 +64,7 @@ if (action === 'provision') {
     audit('FINANCE_SMOKE_IDENTITY_ROTATED', { active: true }, { ...baseline, active: true }),
   ].join('\n');
   financeSql = [
+    `INSERT INTO finance_access_grants(id,username,scope_id,permission,created_at,created_by) VALUES(${quote('finance-staging-smoke-operator-nh')},${quote(username)},${quote(scopeId)},'operator',${quote(now)},${quote(technicalActor)}) ON CONFLICT(username,scope_id) DO UPDATE SET permission='operator',created_at=${quote(now)},created_by=${quote(technicalActor)};`,
     financeAudit('FINANCE_SMOKE_GRANT_ROTATION_CONFIRMED', { permission: 'operator' }, { ...baseline, permission: 'operator' }),
   ].join('\n');
 } else {
