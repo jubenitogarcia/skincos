@@ -232,7 +232,12 @@ jobs:
           umask 077
           PONTO_EMERGENCY_TARGET="$TARGET" node .github/scripts/ponto-assert-idle.mjs
           npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping" --namespace-id "$NAMESPACE_ID" --remote > "$prior"
-          npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping:emergency-latch" --namespace-id "$NAMESPACE_ID" --remote > "$prior_latch"
+          export PONTO_PRIOR_LATCH_SOURCE=kv
+          if ! npx --yes wrangler@4.112.0 kv key get "module-control:timekeeping:emergency-latch" --namespace-id "$NAMESPACE_ID" --remote > "$prior_latch" 2> "$directory/prior-latch-error"; then
+            grep -q '404' "$directory/prior-latch-error" || { cat "$directory/prior-latch-error"; exit 1; }
+            PONTO_PRIOR_LATCH_SOURCE=broker-attested-missing-kv
+            printf '{"schemaVersion":1,"module":"timekeeping","latched":true,"stopRunId":"%s","source":"broker-attested-missing-kv"}\n' "$EMERGENCY_RUN_ID" > "$prior_latch"
+          fi
           node - "$prior" "$prior_latch" "$payload" "$latch_payload" <<'NODE'
           const fs = require("fs");
           const prior = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
@@ -255,6 +260,7 @@ jobs:
               emergencyArtifactId: process.env.EMERGENCY_ARTIFACT_ID,
               emergencyArtifactDigest: process.env.EMERGENCY_ARTIFACT_DIGEST,
               authorizationRef: process.env.AUTHORIZATION_REF,
+              priorLatchSource: process.env.PONTO_PRIOR_LATCH_SOURCE,
             },
           })}\n`, { mode: 0o600 });
           fs.writeFileSync(process.argv[5], `${JSON.stringify({
@@ -269,6 +275,7 @@ jobs:
               emergencyArtifactId: process.env.EMERGENCY_ARTIFACT_ID,
               emergencyArtifactDigest: process.env.EMERGENCY_ARTIFACT_DIGEST,
               authorizationRef: process.env.AUTHORIZATION_REF,
+              priorLatchSource: process.env.PONTO_PRIOR_LATCH_SOURCE,
             },
           })}\n`, { mode: 0o600 });
           NODE
@@ -296,7 +303,7 @@ jobs:
           ) throw new Error("latch reset readback differs or left Ponto open");
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed_at=${latch.changedAt}\n`);
           NODE
-          rm -f "$prior" "$prior_latch" "$payload" "$latch_payload" "$readback" "$latch_readback"
+          rm -f "$prior" "$prior_latch" "$payload" "$latch_payload" "$readback" "$latch_readback" "$directory/prior-latch-error"
 
   verify-reset:
     needs: [preflight, reset-mutate]
