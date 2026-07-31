@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The typed WSL gateway exports these variables for the approved worktree. Test
+# fixtures must resolve their own Git roots; otherwise git init and the
+# registered project hook can mutate or inspect the real shared common dir.
+unset GIT_DIR GIT_WORK_TREE
+
 repo="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)}"
 source_subdir="$repo/skills/skincos-project-orchestrator"
 test_id="wrapper-shell-$$-$(date +%s%N)"

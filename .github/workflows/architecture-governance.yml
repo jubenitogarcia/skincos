@@ -2,8 +2,18 @@ name: Architecture governance
 
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "ops/project-orchestration/**"
+      - "docs/project-state/**"
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "ops/project-orchestration/**"
+      - "docs/project-state/**"
 
 jobs:
   validate:

@@ -29,12 +29,7 @@
         "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          { "context": "CI Smoke (Assert)" },
-          { "context": "Central E2E Smoke" },
-          { "context": "JS/TS Checks (workspace)" },
-          { "context": "Dependency Audit (JS/TS)" },
-          { "context": "Scan for secrets (Gitleaks)" },
-          { "context": "validate", "integration_id": 15368 }
+          { "context": "codex-autonomy-gate" }
         ]
       }
     }
