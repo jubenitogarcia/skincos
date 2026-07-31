@@ -31,6 +31,15 @@ export const dispatchTimeoutMsFor = (workflow, configuredTimeoutMs) => Math.max(
   minimumDispatchTimeoutMsByWorkflow[workflow] || 0,
 );
 
+export function assertMainShaUnchanged(orchestratorSha, mainSha) {
+  const expected = String(orchestratorSha || "").trim().toLowerCase();
+  const observed = String(mainSha || "").trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(expected) || observed !== expected) {
+    throw new Error("main advanced after the immutable Ponto coordinator was selected");
+  }
+  return expected;
+}
+
 export function governedLeaseKeyFor(workflow, inputs) {
   if (workflow === "deploy-timekeeping.yml" && inputs.target !== "preview") return "timekeeping";
   if (
@@ -149,6 +158,9 @@ const request = async (pathname, init = {}) => {
   if (!response.ok) throw new Error(`GitHub API ${init.method || "GET"} ${pathname} returned ${response.status}`);
   return readGitHubResponse(response);
 };
+
+const currentMain = await request(`/repos/${repository}/commits/main`);
+assertMainShaUnchanged(orchestratorHeadSha, currentMain?.sha);
 
 const inputs = JSON.parse(fs.readFileSync(inputsFile, "utf8"));
 inputs.orchestrator_run_id = correlation;
