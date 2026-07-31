@@ -16,6 +16,7 @@ on:
       - "scripts/*codex*.ps1"
       - ".github/governance/**"
       - ".github/workflows/codex-autonomy-gate.yml"
+      - ".github/workflows/**"
   pull_request:
     branches: [main]
     paths-ignore:
@@ -31,6 +32,7 @@ on:
       - "scripts/*codex*.ps1"
       - ".github/governance/**"
       - ".github/workflows/codex-autonomy-gate.yml"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 jobs:

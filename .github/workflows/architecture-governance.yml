@@ -14,6 +14,7 @@ on:
       - "scripts/codex-*.sh"
       - "scripts/*codex*.ps1"
       - ".github/workflows/codex-autonomy-gate.yml"
+      - ".github/workflows/**"
   push:
     branches: [main]
     paths-ignore:
@@ -28,6 +29,7 @@ on:
       - "scripts/codex-*.sh"
       - "scripts/*codex*.ps1"
       - ".github/workflows/codex-autonomy-gate.yml"
+      - ".github/workflows/**"
 
 jobs:
   validate:
