@@ -72,7 +72,22 @@ jobs:
           PROJECT: ${{ inputs.target == 'production' && vars.FINANCE_UI_PAGES_PROJECT_PRODUCTION || vars.FINANCE_UI_PAGES_PROJECT_STAGING }}
           BRANCH: ${{ inputs.target == 'production' && 'main' || 'staging' }}
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
-        run: npx --yes wrangler@4.114.0 pages deploy dist-finance --project-name "$PROJECT" --branch "$BRANCH" --commit-hash "$RELEASE_SHA"
+        run: |
+          set -euo pipefail
+          # crm/console/wrangler.toml belongs to the shell Pages deployment and
+          # contains Worker-only secret declarations. Finance is a separate
+          # Pages project; use an explicit, secret-free config so Wrangler
+          # cannot discover the shell config and reject the deployment.
+          FINANCE_PAGES_CONFIG="$RUNNER_TEMP/finance-pages.toml"
+          cat > "$FINANCE_PAGES_CONFIG" <<'EOF'
+          name = "skincos-finance-ui"
+          compatibility_date = "2026-07-23"
+          EOF
+          npx --yes wrangler@4.114.0 pages deploy dist-finance \
+            --config "$FINANCE_PAGES_CONFIG" \
+            --project-name "$PROJECT" \
+            --branch "$BRANCH" \
+            --commit-hash "$RELEASE_SHA"
         working-directory: crm/console
       - name: Write staging promotion evidence
         if: inputs.target == 'staging'
