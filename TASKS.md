@@ -1,5 +1,43 @@
 # TASKS
 
+## Reconciliacao autoritativa — `origin/main` `28747bb5109407856bd3cb700d91f7f3cb981a69` — 2026-07-31
+
+Esta e a fonte atual para o ciclo. O checkout compartilhado tinha alteracoes
+nao relacionadas preservadas fora desta PR em
+`C:\CodexRuntime\operator\admin\skincos\reconciliation-20260731`; elas nao
+foram misturadas. A PR #933 foi integrada como `a70fe64c...` e a PR #934 como
+`28747bb...`, ambas com checks verdes.
+
+- Insumos P0 permanece resolvido por #847/#848; nao ha novo sintoma ou escrita
+  nesta reconciliacao.
+- Financeiro permanece `experimental`, `module_enabled=false`, sem grants de
+  usuarios reais e sem piloto/producao. A cadeia completa mais recente validada
+  e `ba16cb4a845e8f96032476a3a2828fc1fb22b399` (Worker `30503675254`, UI
+  `30503676485`, CRM Pages `30503679551`, canary `30504263595`, smoke de
+  identidade `30504380888`). Ela nao e o `origin/main` atual. O Worker
+  `30583405735` em `35aa17db...` foi apenas uma execucao de Worker; nao ha
+  cadeia correspondente de UI/Pages/canary para `28747bb...`.
+- Rollback, kill switch, restore scratch de D1/KV e restore offsite de
+  PostgreSQL continuam evidencias validas dos SHAs/artefatos registrados;
+  `20260729T2255Z-postgresql-fresh` e PR #908 sao a evidencia offsite atual.
+  Isso nao autoriza producao nem piloto.
+- O alerta historico `audit returned 503` (run `30168648150`) e um resultado
+  superado pelo canary verde de `ba16cb...`; nao ha reproducao atual no
+  `28747bb...`. A observabilidade externa nao pode ser chamada de continua: os
+  artefatos de alerta/recuperacao permanecem, mas a instalacao atual e somente
+  Run key, sem Scheduled Task/processo ativo, e o ultimo health privado e
+  `2026-07-30T18:30:37Z`.
+- Ponto: #930/#931/#933 estao integradas e #934 corrigiu apenas o gateway WSL;
+  controles de release estao no main,
+  mas nao existe SHA selecionado nem evidencia nova de staging/producao apos
+  a integracao. Broker externo, WAF e custodia de chaves continuam gates
+  externos fail-closed.
+
+Proximo marco seguro: revalidar a observabilidade continua e, depois, executar
+preview/staging completos do Financeiro no SHA entao atual, sempre com SHA
+explicito. Acoes proibidas: provisionar ou publicar producao, ativar flags,
+alterar grants/usuarios/secrets/dados ou transferir o repositorio.
+
 ## Resolved P0 — incidente de acesso a Insumos
 
 - [x] **P0 — restaurar e estabilizar o acesso por unidade do módulo de Insumos.**
@@ -34,14 +72,18 @@
 
 ## Finance — authoritative reconciliation follow-up (2026-07-29)
 
-- [x] Confirm continuous external observability, a controlled human-alert
-  recovery, historical Finance rollback/kill-switch/scratch-restore evidence,
-  and the merged PR #815 import state machine.
-- [x] Promote current `origin/main` `c277032db96ba96484522a19994a66cbb323a46d`
-  through the canonical immutable candidate, Finance Worker/UI and CRM Pages
-  preview/staging paths. The synthetic authenticated import/UI canary passed in
-  run `30500922386` with zero threshold breaches; the workflow restored the
-  non-enabled staging baseline and synthetic grant.
+- [x] Confirm the historical external observability alert/recovery evidence,
+  Finance rollback/kill-switch/scratch-restore evidence, and the merged PR
+  #815 import state machine. Continuous monitor operation must be revalidated;
+  the current private installation has no active task/process.
+- [x] Preserve the historical current-main candidate
+  `c277032db96ba96484522a19994a66cbb323a46d` evidence and the later complete
+  staging chain `ba16cb4a845e8f96032476a3a2828fc1fb22b399` (Worker/UI/Pages,
+  canary and identity smoke). Neither is evidence for current `origin/main`
+  `a70fe64c87f2c09c96022c0b18b0b05c9d68d979`.
+- [ ] Promote the current `origin/main` SHA through candidate, preview and
+  staging for Worker, Finance UI and CRM Pages, then repeat the authenticated
+  canary before any pilot decision.
 - [x] Obtain a fresh provider-separated PostgreSQL ciphertext, verify
   integrity and restore it in isolated scratch. Drill
   `20260729T2255Z-postgresql-fresh` downloaded 90,908,667 bytes from the
@@ -133,11 +175,10 @@ jornada autenticada atual continue válida.
   CodeQL #4519 foi justificadamente classificado como falso positivo. O merge
   integra a primeira versão dos controles, mas ainda não seleciona um
   candidato.
- - [x] Publicar o pacote corretivo P1/P2 descoberto no recheck pós-merge como
-  PR #933, com head imutável `48c23ad77b21c685ca470a87a59eb71a0e88c010`, sobre
-  `origin/main` `35aa17dbfe21f9b9a7571a786f03a56186e75fff`. A sucessora está
-  aberta, com o worktree limpo e aguardando apenas checks hospedados, revisão
-  independente e merge canônico; nenhum candidato de release foi selecionado.
+ - [x] Integrar o pacote corretivo P1/P2 da PR #933. O head validado foi
+  `f50a5ee418c237b4a311dd095bceac4264b84c65` e o merge em `main` e
+  `28747bb5109407856bd3cb700d91f7f3cb981a69`; nenhum candidato de release foi
+  selecionado.
   O pacote contém:
   checkout trusted-main e comparação exata antes de consumir leases; leases
   independentes para baseline/SLO; todos os outputs de provenance do baseline;
@@ -168,8 +209,8 @@ jornada autenticada atual continue válida.
   o probe sempre tenta revogar a sessão corrente ou faz logout; só aceita
   teardown quando o cookie stale recebe o `401` canônico em `/auth/me`. Falha ou
   teardown indeterminado mantém o probe fail-closed e preserva o erro primário.
-  A validação local focada passou; checks hospedados, revisão independente e
-  merge da PR #933 continuam pendentes.
+  A validação local e os checks hospedados passaram; broker externo, WAF,
+  custodia de chaves, runner e nova evidencia de staging continuam pendentes.
 - [ ] Provisionar e atestar separadamente o broker de fechamento externo nos
   environments `ponto-emergency-staging` e `ponto-emergency-production`:
   secret `PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL` e variables

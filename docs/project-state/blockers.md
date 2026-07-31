@@ -1,6 +1,28 @@
 # Current blockers
 
-## P0 — Workforce Timekeeping production release is fail-closed
+## Snapshot autoritativo — 2026-07-31T14:37Z
+
+- **P0/P1 atual:** nenhum novo bloqueio de Insumos; o P0 continua resolvido.
+- **Financeiro:** staging completo existe para `ba16cb4a...`, mas nao para o
+  `origin/main` atual `28747bb...`; a feature flag permanece desligada e o
+  Worker/D1/KV/Pages produtivos nao existem. O proximo gate e uma cadeia
+  candidata/preview/staging/canary no SHA atual, seguida somente por aprovacao
+  nominal de piloto e provisionamento produtivo separado.
+- **Observabilidade:** alerta/recuperacao historicos continuam auditaveis, mas
+  a execucao continua nao esta comprovada (Run key instalada, nenhum processo
+  ou Scheduled Task ativo, ultimo health privado em 2026-07-30T18:30:37Z).
+- **Ponto:** a PR #933 foi integrada em `a70fe64...` e a PR #934 em
+  `28747bb...`, ambas com checks verdes. Isso
+  fecha o delta de codigo/CI, nao os gates externos de broker, WAF, runner,
+  custodia e staging; nenhum release SHA foi selecionado.
+- **Humano necessaria:** custodia/owner de `IDENTITY_PII_KEY`, broker/WAF e
+  identidades de aprovacao continuam dependencias externas. Nao gerar ou copiar
+  secrets e nao usar esses bloqueios como autorizacao de producao.
+
+As secoes abaixo preservam o historico e nao devem ser interpretadas como
+estado mais recente quando divergirem deste snapshot.
+
+## Historico — Workforce Timekeeping production release is fail-closed
 
 PR #894 and the private Ponto Core/Pages staging prerequisites are integrated.
 Its three residual conversations are resolved with zero unresolved threads.

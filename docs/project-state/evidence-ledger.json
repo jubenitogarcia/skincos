@@ -2,6 +2,22 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-07-31T14:37:00Z",
+      "surface": "github-cloudflare-local-runtime-reconciliation",
+      "scope": "origin/main current state, Finance lineage, Ponto controls, observability custody and production resource inventory",
+      "state": "authoritative-current-main-reconciled-finance-experimental-ponto-external-gates-open-observability-continuity-unproven",
+      "method": "git fetch origin main; GitHub PR/run metadata; Wrangler read-only deployments, D1, KV and Pages project listings; private monitor installation/health/process inspection; JSON/source/document inspection",
+      "result": "origin/main is 28747bb5109407856bd3cb700d91f7f3cb981a69; PR #933 is merged as a70fe64c87f2c09c96022c0b18b0b05c9d68d979 and PR #934 is merged with green hosted checks. PRs #930/#931 are integrated; #736 remains open/draft at 76492a20cf0ec89cdacc25a9bccfb23b510beef5 with DIRTY merge state and #764 remains open/draft at 0b558f6815c4a5a8c3c23a7f15d0926d997e2f01 with BEHIND merge state; neither was changed. Finance complete staging evidence remains ba16cb4a845e8f96032476a3a2828fc1fb22b399 (runs 30503675254, 30503676485, 30503679551, 30504263595 and 30504380888), while no complete chain exists for 28747bb.... Wrangler returned Cloudflare 10007 for production skincos-finance; production Finance D1, control KV and Pages project are absent from metadata listings. Staging Finance D1/KV/Pages exist. Rollback, kill-switch, Finance scratch restore and fresh offsite PostgreSQL restore remain valid for their recorded artifacts. The historical audit returned 503 run 30168648150 is superseded by the later green canary and is not a current failure. The external monitor has operator-run-key installation but no Scheduled Task/process and monitor-health last succeeded at 2026-07-30T18:30:37Z, so continuous operation is not currently proven.",
+      "limitation": "No production mutation, secret read, flag/grant/user/data change, Cloudflare resource creation or deploy was performed. Versioned bindings prove configuration only, not live resources. Ponto controls are integrated but broker/WAF/runner/custody and a new staging release remain external gates.",
+      "sha": "28747bb5109407856bd3cb700d91f7f3cb981a69",
+      "pr": 934,
+      "runs": [30638287326,30638287321,30638287356,30638287332,30638287324,30638287330,30638748005,30504263595,30504380888],
+      "evidence_refs": [
+        "C:\\CodexRuntime\\operator\\admin\\skincos\\observability\\monitor-health.json",
+        "C:\\CodexRuntime\\operator\\admin\\skincos\\reconciliation-20260731"
+      ]
+    },
+    {
       "observed_at": "2026-07-31T13:46:29Z",
       "surface": "github-ponto-corrective-successor-pr",
       "scope": "Post-PR-921 corrective package publication and current-main reconciliation",
