@@ -9,6 +9,8 @@ paths = [
   '''^agent-zero-module/''',
   '''^attached_assets/''',
   '''^backend/apps/automations/sprinta/legacy/''',
+  '''^backend/apps/agent-zero/''',
+  '''^backend/archive/tools/semgrep/semgrep_rules\.json$''',
   '''^social/instagram/instagrapi/''',
   '''^inventory/\.dev\.vars\.example$''',
   '''^backend/apps/meta-ads/apps/api/README\.md$''',
@@ -17,6 +19,7 @@ paths = [
   '''^frontend/CameraDiscovery\.tsx$''',
   '''^messaging/channels/whatsapp/engine/\.env\.example$''',
   '''^messaging/channels/whatsapp/evolution-api/(GUIA-RAPIDO|MIGRATION|SUCESSO-INSTALACAO)\.md$''',
+  '''^messaging/channels/whatsapp/engine/(GUIA-RAPIDO|MIGRATION|SUCESSO-INSTALACAO)\.md$''',
   '''^whatsapp-official-module/''',
   '''^\.config/\.semgrep/''',
 ]
