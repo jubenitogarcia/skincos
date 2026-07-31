@@ -16,6 +16,11 @@ icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action ContextMenu"
 
 [[actions]]
+name = "Codex – Autônomo"
+icon = "run"
+command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-skincos-codex.ps1"
+
+[[actions]]
 name = "CRM – Local"
 icon = "run"
 command = "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmLocal"

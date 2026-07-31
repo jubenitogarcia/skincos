@@ -60,6 +60,26 @@ rollout e rollback. Eles não exigem nova decisão humana quando a missão já
 autorizou a ação. Ações irreversíveis ou destrutivas sobre dados reais continuam
 fora do escopo até uma decisão humana específica.
 
+### 3.1 Validação delivery-first
+
+O classificador versionado em `ops/codex/risk-policy.json` usa efeito, não o
+nome da ferramenta, para escolher o gate:
+
+- `low`: documentação e conteúdo estático; diff e parse estático bastam.
+- `medium` (`normal`): código comum e alterações do próprio operador; no máximo
+  um teste/build focal ou uma jornada funcional curta.
+- `high` (`elevated`): auth, permissões, pagamentos, segredos, migrations,
+  workflows, Workers, Cloudflare e integrações; exige foco e rollback, sem
+  staging, suíte integral ou scan profundo por ritual.
+- `critical` (`exceptional`): somente caminhos explicitamente irreversíveis,
+  destrutivos, de dado real/financeiro ou de exposição de credencial; a execução
+  para no gate excepcional até haver decisão específica.
+
+Workflow, Worker, segredo, migration, GitHub, Cloudflare ou MCP não são críticos
+automaticamente. O gate agregado `codex-autonomy-gate` é o único check obrigatório
+da branch; os demais workflows usam filtros de caminho e só rodam quando o
+domínio alterado é relevante.
+
 ## 4. Exceções humanas
 
 Para uma missão que adota a autorização persistente desta política, o agente só

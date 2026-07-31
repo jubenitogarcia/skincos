@@ -7,6 +7,15 @@ on:
       - "**/*.md"
       - "ops/project-orchestration/**"
       - "docs/project-state/**"
+      - ".codex/**"
+      - "skills/**"
+      - "ops/codex/**"
+      - "scripts/codex-*.mjs"
+      - "scripts/tests/codex-*.mjs"
+      - "scripts/codex-*.sh"
+      - "scripts/*codex*.ps1"
+      - ".github/workflows/codex-autonomy-gate.yml"
+      - ".github/workflows/**"
   push:
     branches: [main]
     paths-ignore:
@@ -14,6 +23,15 @@ on:
       - "**/*.md"
       - "ops/project-orchestration/**"
       - "docs/project-state/**"
+      - ".codex/**"
+      - "skills/**"
+      - "ops/codex/**"
+      - "scripts/codex-*.mjs"
+      - "scripts/tests/codex-*.mjs"
+      - "scripts/codex-*.sh"
+      - "scripts/*codex*.ps1"
+      - ".github/workflows/codex-autonomy-gate.yml"
+      - ".github/workflows/**"
 
 jobs:
   validate:
