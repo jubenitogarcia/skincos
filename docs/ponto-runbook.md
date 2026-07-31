@@ -91,8 +91,13 @@ Mutações same-origin exigem o token CSRF da sessão. A Pages Function envia um
   account/KV ID ou credencial ampla; as custody refs dos dois targets devem ser
   diferentes.
 
-Os nomes Ponto-only acima pertencem ao pacote local ainda não mergeado nem
-provisionado; o broker também não está provisionado nem live. Os nomes
+Os nomes Ponto-only acima pertencem ao pacote integrado em #943/#945. Os
+brokers live são `skincos-ponto-emergency-staging` e
+`skincos-ponto-emergency-production`, cada um com D1 dedicado e secrets
+`BROKER_CREDENTIAL`/`RESPONSE_PRIVATE_KEY_PEM`; a política fixa URL, custody
+ref, response key ID e SPKI público. O exercício staging `910001/910002`
+foi atestado e deixou o latch monotônico fechado e o controle em maintenance.
+Os nomes
 gerais/legados usados na contenção externa atual
 continuam apenas como fences; não os trate como configuração do candidato nem
 os restaure antes do merge revisado e da autorização de release. Seleção de

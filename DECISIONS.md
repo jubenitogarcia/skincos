@@ -1,9 +1,24 @@
 # DECISIONS
 
+## 2026-07-31 - Broker close-only independente
+
+- PR #945 foi integrada em `d34488afc5b8ea668241382e24f30c745798e033` apos
+  checks hospedados verdes. O Worker independente por target usa D1 proprio,
+  reserva atomica de nonce, mutex transacional, latch monotonicamente fechado,
+  operacoes limitadas a `latch-true`/`maintenance` e attestation Ed25519
+  target-bound sem credenciais ou PII na resposta.
+- Evidencia live: staging `skincos-ponto-emergency-staging` versao
+  `472fb1ea-854c-4c7d-8467-d0036b3e95f7`, D1
+  `da4dfca3-3f5e-4044-a235-eb1b102a6ec1`; production
+  `skincos-ponto-emergency-production` versao
+  `b07892dc-5325-4f6e-90e1-ae3d50d17c5b`, D1
+  `4b5e9087-7d33-46d0-aeb2-f1503c01db43`. Atestacao funcional passou nos dois
+  targets; exercicio staging `910001/910002` deixou latch=true e maintenance.
+
 ## 2026-07-31 - Governanca single-operator/Codex para a release progressiva do Ponto
 
-- Estado: proposta implementada nesta branch a partir do `origin/main`
-  `01d2b6d1f79a9017e0a87efa2a1a32f82eed219f`; ainda nao integrada.
+- Estado: integrada por PR #943 em `16cace3c72a2e4b3be7eccd0d6d0a070d476b613`;
+  o main atual alcança `d34488afc5b8ea668241382e24f30c745798e033`.
 - Decisao: substituir a exigencia de reviewer humano independente por
   `single-operator-codex`, mantendo main-only, SHA imutavel alcancavel do main,
   PR canonica mergeada, checks obrigatorios, `can_admins_bypass=false`,

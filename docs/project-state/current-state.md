@@ -1,21 +1,23 @@
 # Current state
 
-## Reconciliacao autoritativa — `origin/main` `01d2b6d1f79a9017e0a87efa2a1a32f82eed219f` — 2026-07-31T15:00Z
+## Reconciliacao autoritativa — `origin/main` `d34488afc5b8ea668241382e24f30c745798e033` — 2026-07-31T16:30Z
 
-As PRs #933, #934, #936, #937, #938 e #939 estao integradas; o HEAD atual e
-`01d2b6d1...` e o delta apos #933 e nao-Ponto. A branch
-`codex/admin/ponto-single-operator-governance` contem a proposta ainda nao
-mergeada para governanca `single-operator-codex`: main-only, PR canonica
-mergeada, SHA imutavel, checks obrigatorios, sem bypass administrativo, sem
-reviewer humano, custodia separada, WAF/broker fail-closed e rollback
-automatico. Nao ha SHA final selecionado, nem preview/staging/pilot/canary ou
-producao neste HEAD.
+As PRs #943 e #945 estao integradas; o HEAD atual e `d34488af...`. #943
+estabeleceu a governanca `single-operator-codex` main-only, PR canonica,
+checks obrigatorios, sem bypass administrativo, sem reviewer humano, custodia
+separada e rollback automatico. #945 integrou o broker close-only independente
+com D1 transacional, nonce atomico, mutex, latch e attestation Ed25519. Nao ha
+SHA final de aplicacao selecionado, nem preview/staging/pilot/canary ou
+producao do Ponto neste HEAD.
 
 O estado remoto permanece fail-closed: staging e producao em
 `module-control:timekeeping=maintenance`; os Workers e Pages observados nao
-carregam este SHA; as migrations D1 0001--0008 existem nos dois bancos; o
-emergency latch, broker, WAF customizado, runner JIT, identidade piloto e
-custodias Ponto ainda nao foram comprovados/provisionados. Readiness 200 nao e
+carregam este SHA; as migrations D1 0001--0008 existem nos dois bancos. Os
+brokers live foram atestados: staging `472fb1ea...`/D1
+`da4dfca3-3f5e-4044-a235-eb1b102a6ec1` e production `b07892dc...`/D1
+`4b5e9087-7d33-46d0-aeb2-f1503c01db43`; staging permanece com latch=true e
+maintenance apos o exercicio. WAF customizado, token least-privilege, runner
+JIT, identidade piloto e SLO externo continuam ausentes. Readiness 200 nao e
 prova de jornada autenticada.
 
 ## Reconciliacao atual — `origin/main` `28747bb5109407856bd3cb700d91f7f3cb981a69` — 2026-07-31T14:37Z

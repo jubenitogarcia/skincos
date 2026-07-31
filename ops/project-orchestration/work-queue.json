@@ -1,29 +1,29 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-31T15:00:00Z",
-  "source_main_sha": "01d2b6d1f79a9017e0a87efa2a1a32f82eed219f",
-  "source_main_state": "reconciled-current-main-pr-939-merged-ponto-single-operator-governance-pending",
+  "authoritative_at": "2026-07-31T16:30:00Z",
+  "source_main_sha": "d34488afc5b8ea668241382e24f30c745798e033",
+  "source_main_state": "reconciled-current-main-single-operator-governance-and-broker-merged-external-gates-pending",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
       "objective": "Complete the governed Workforce Timekeeping release through preview, staging, pilot, canary and production on one immutable source SHA.",
       "priority": 1100,
-      "state": "production-replay-contained-both-environments-maintenance-pr-933-merged-external-gates-pending",
+      "state": "production-replay-contained-both-environments-maintenance-pr-945-merged-broker-attested-external-gates-pending",
       "dependencies": [
         "ponto-release-prerequisites"
       ],
       "blockers": [
         "PR #933 foi integrada como a70fe64c87f2c09c96022c0b18b0b05c9d68d979 e PR #934 como 28747bb5109407856bd3cb700d91f7f3cb981a69 apos checks verdes; selected_release_sha continua null",
         "os contratos de release-probe e teardown de sessao da PR #933 estao integrados, mas nao ha candidato selecionado nem evidencia nova de staging/producao",
-        "the watchdog and automatic rollback are local proposals only; broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI are null for staging and production, broker endpoint/credential/keys and clinic runner are absent, and no independent external automatic freeze/recovery proof exists",
+        "broker policy URL/custodyRef/responseKeyId/Ed25519 SPKI and endpoint are now live and functionally attested for both targets; staging latch/maintenance exercise 910001/910002 passed. JIT runner and independent external automatic freeze/recovery SLO proof remain absent",
         "seven historical Timekeeping child runs and CRM Pages attempt-2 run 30491926800 retain their old definitions; live dispatch fences and both disabled legacy Ponto smokes must remain through expiry or reviewed replacement",
-        "required WAF enforcement and the three immutable rule identifiers are unproven: CLOUDFLARE_ZONE_ID is present by name after checkpoint 14, but the visible zone listing exposed only managed rulesets, the custom entrypoint GET was unauthorized, both browser paths reached login without an authenticated session, and the post-merge security-token path still needs attestation",
+        "required WAF enforcement and the three immutable rule identifiers are unproven: CLOUDFLARE_ZONE_ID is present by name, Cloudflare API permission-groups returned 9109 Unauthorized, and no least-privilege WAF token or custom entrypoint attestation is available",
         "governed capability custody is unprovisioned: each target environment needs a distinct PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY and the repository needs only PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON verifier metadata",
-        "staging and production currently retain the legacy required-reviewer environment rule; the single-operator Codex policy is implemented on branch codex/admin/ponto-single-operator-governance but is not yet merged or applied remotely",
+        "single-operator Codex policy is merged in PR #943 as 16cace3c... and staging/production environments are main-only with zero reviewers and can_admins_bypass=false",
         "scheduled production Ponto Smoke run 30521686413 correctly detects ready=false under maintenance but is not successful external production SLO evidence; UI Smoke run 30518888970 is not an authenticated authorized-user journey",
-        "authorized profile-key custody, target-environment root-attestation and Pages-intent keys, repository public/key-id metadata and per-environment custody references are absent",
+        "profile-key, shared root-attestation, Pages-intent, capability and emergency broker secret names are present in the approved GitHub environments and encrypted operator vault; values remain undisclosed and no release has consumed them",
         "the historical GESTOR account behind the removed legacy repository smoke credentials has not been identified or revoked",
-        "the emergency environments expose only fail-closed close mode; broker URL, custody reference, credential, policy response key ID and Ed25519 SPKI remain absent/null"
+        "the emergency environments expose only fail-closed close mode; broker URLs, custody references, response key IDs/SPKI and credentials are now provisioned and attested, while WAF/runner/Workforce remain external gates"
       ],
       "environment": "staging-then-production",
       "permitted_actions": [
@@ -57,7 +57,7 @@
         "explicit module-control active state and staging rollback drill",
         "version affinity, gradual routing, network-context cohort, minimal grants, automatic interruption and external SLO evidence for pilot and canary",
         "distinct PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY presence by name in each target environment and repository PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON public metadata, without reading private values",
-        "merged single-operator Codex environment-governance policy with no required reviewer, no administrator bypass, main-only admission and exact required checks, separately from an Identity/Workforce-valid pilot designation",
+        "merged single-operator Codex environment-governance policy with no required reviewer, no administrator bypass, main-only admission and exact required checks, plus merged/attested independent brokers, separately from an Identity/Workforce-valid pilot designation",
         "PONTO_ROOT_ATTESTATION_KEY_SHARED present only in protected target environments with one effective version, repository metadata PONTO_ROOT_ATTESTATION_KEY_ID, target-environment-only PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY, distinct approved-vault references and durable producer run/artifact provenance",
         "production checkpoint, deployment/version, health/readiness, authenticated pilot and post-release observation"
       ],
