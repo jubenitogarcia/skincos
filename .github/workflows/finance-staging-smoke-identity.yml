@@ -60,6 +60,7 @@ jobs:
               node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync(0,"utf8")); const row=x[0]?.results?.[0] ?? {}; process.stdout.write(`${row.active_count ?? ""}:${row.total_count ?? ""}`);'
           )"
           IFS=: read -r active_count total_count <<< "$counts"
+          echo "Observed synthetic staging identity counts: active=$active_count total=$total_count"
           [[ "$active_count" =~ ^[0-9]+$ && "$total_count" =~ ^[0-9]+$ ]] || { echo 'Could not verify the synthetic-identity count.'; exit 1; }
           if [[ "$ACTION" == provision ]]; then
             [[ "$total_count" == 0 || ( "$total_count" == 1 && "$active_count" == 0 ) ]] || { echo 'Synthetic identity must be absent or a single inactive row before provisioning.'; exit 1; }
