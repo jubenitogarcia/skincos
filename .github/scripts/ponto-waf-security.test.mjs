@@ -14,6 +14,7 @@ import {
 } from "./ponto-waf-security.mjs";
 
 const zoneId = "1".repeat(32);
+const accountId = "6".repeat(32);
 const rulesetId = "2".repeat(32);
 const headerRuleId = "3".repeat(32);
 const contractRuleId = "4".repeat(32);
@@ -135,7 +136,7 @@ function cloudflareHarness(initialEntrypoint = null) {
     if (parsed.origin === "https://api.cloudflare.com") {
       assert.equal(new Headers(init.headers).get("authorization"), "Bearer security-token");
       state.methods.push({ method, pathname: parsed.pathname });
-      if (parsed.pathname === "/client/v4/accounts/" + "6".repeat(32) + "/tokens/verify") {
+      if (parsed.pathname === `/client/v4/accounts/${accountId}/tokens/verify`) {
         return envelope({ status: "active" });
       }
       if (parsed.pathname === `/client/v4/zones/${zoneId}`) {
@@ -218,6 +219,7 @@ function cloudflareHarness(initialEntrypoint = null) {
 const envFor = (mode, artifactDir) => ({
   PONTO_WAF_MODE: mode,
   CLOUDFLARE_ZONE_ID: zoneId,
+  CLOUDFLARE_ACCOUNT_ID: accountId,
   [mode === "probe" ? "PONTO_WAF_READ_API_TOKEN" : "PONTO_WAF_WRITE_API_TOKEN"]: "security-token",
   GITHUB_SHA: releaseSha,
   GITHUB_RUN_ID: mode === "probe" ? "100" : "101",
