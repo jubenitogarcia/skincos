@@ -88,6 +88,7 @@ export function normalizeRecoveryEvidence({
     || propagation?.environment !== target
     || propagation?.state !== "maintenance"
     || propagation?.changedAt !== exactPropagationChangedAt
+    || !validDate(exactPropagationChangedAt)
     || propagation?.passed !== true
     || propagation?.exactChangedAtObserved !== true
     || propagation?.exactSourceObserved !== true
