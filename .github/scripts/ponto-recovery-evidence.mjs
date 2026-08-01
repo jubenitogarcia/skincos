@@ -77,7 +77,7 @@ export function normalizeRecoveryEvidence({
   // observed timestamp is the exact value that the rollback attestation must
   // bind to; the latch path still uses the broker latch timestamp.
   const exactPropagationChangedAt = propagation?.matchedSource === "control"
-    ? String(propagation.changedAt || "")
+    ? String(propagation.lastObserved?.changedAt || "")
     : maintenance.latchChangedAt;
   const exactControlChangedAt = propagation?.matchedSource === "control"
     ? exactPropagationChangedAt
@@ -87,8 +87,12 @@ export function normalizeRecoveryEvidence({
     || propagation?.module !== "timekeeping"
     || propagation?.environment !== target
     || propagation?.state !== "maintenance"
-    || propagation?.changedAt !== exactPropagationChangedAt
+    || !validDate(propagation?.changedAt)
+    || propagation?.changedAt !== maintenance.latchChangedAt
     || !validDate(exactPropagationChangedAt)
+    || (propagation?.matchedSource === "control"
+      && (propagation?.lastObserved?.source !== "control"
+        || propagation?.lastObserved?.changedAt !== exactPropagationChangedAt))
     || propagation?.passed !== true
     || propagation?.exactChangedAtObserved !== true
     || propagation?.exactSourceObserved !== true

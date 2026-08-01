@@ -81,7 +81,12 @@ test("ordinary recovery binds an idempotent control fallback to the live timesta
     maintenance,
     propagation: {
       ...propagation,
-      changedAt: observedControlAt,
+      changedAt: maintenance.latchChangedAt,
+      lastObserved: {
+        state: "maintenance",
+        changedAt: observedControlAt,
+        source: "control",
+      },
       matchedSource: "control",
     },
     sourceMode: "ordinary",
