@@ -202,9 +202,9 @@ jobs:
           }
           const matching = (payload.runners || []).filter((runner) => {
             const labels = (runner.labels || []).map(label => String(label?.name || ""));
-          const normalizedLabels = new Set(labels.map(label => label.toLowerCase()));
-          return labels.length === configuredLabels.length
-            && configuredLabels.every(label => normalizedLabels.has(label.toLowerCase()));
+            const normalizedLabels = new Set(labels.map(label => label.toLowerCase()));
+            return labels.length === configuredLabels.length
+              && configuredLabels.every(label => normalizedLabels.has(label.toLowerCase()));
           });
           if (
             matching.length !== 1
