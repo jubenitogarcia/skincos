@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-31T16:30:00Z",
-  "source_main_sha": "d34488afc5b8ea668241382e24f30c745798e033",
-  "source_main_state": "reconciled-current-main-single-operator-governance-and-broker-merged-external-gates-pending",
+  "authoritative_at": "2026-07-31T23:55:00Z",
+  "source_main_sha": "3682518e69840c34904fae5f1432917ffd04217a",
+  "source_main_state": "current-main-security-update-after-explicit-finance-selection-disabled-production-foundation-pilot-approval-pending",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
@@ -842,12 +842,9 @@
       "id": "finance-current-main-staging-evidence",
       "objective": "Create one immutable Finance staging release from current main and prove its synthetic authenticated import/UI journey.",
       "priority": 100,
-      "state": "blocked-current-origin-main-has-no-complete-staging-lineage",
+      "state": "completed-current-main-staging-canary-and-abort-evidence",
       "dependencies": [],
-      "blockers": [
-        "the latest complete chain is ba16cb4a845e8f96032476a3a2828fc1fb22b399 (Worker 30503675254, UI 30503676485, CRM Pages 30503679551, canary 30504263595 and identity smoke 30504380888), not current origin/main",
-        "Worker run 30583405735 used 35aa17db... only; UI/Pages/canary for 28747bb... are absent"
-      ],
+      "blockers": [],
       "environment": "staging",
       "permitted_actions": [
         "build a candidate from an explicit current main SHA",
@@ -867,29 +864,30 @@
         "canary thresholds and rollback availability for that candidate"
       ],
       "done_definition": "A single immutable current-main Finance artifact lineage is healthy in staging and has passed the controlled synthetic authenticated journey; Finance remains experimental and disabled.",
-      "next_item": "finance-offsite-postgresql-recovery",
-      "last_verified": "2026-07-31T14:37:00Z",
+      "next_item": "finance-pilot-approval",
+      "last_verified": "2026-07-31T23:55:00Z",
       "evidence": {
-        "current_staging_sha": "ba16cb4a845e8f96032476a3a2828fc1fb22b399",
-        "current_origin_main_sha": "28747bb5109407856bd3cb700d91f7f3cb981a69",
-        "candidate_run": 30500613099,
-        "worker_preview_run": 30500694945,
-        "worker_staging_run": 30500732310,
-        "ui_preview_run": 30500696857,
-        "ui_staging_run": 30500734160,
-        "crm_pages_preview_run": 30500698417,
-        "crm_pages_staging_run": 30500735957,
-        "synthetic_canary_run": 30500922386,
-        "canary_artifact": 8743464166,
+        "current_staging_sha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
+        "origin_main_at_selection": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
+        "current_origin_main_sha": "3682518e69840c34904fae5f1432917ffd04217a",
+        "candidate_run": 30673147811,
+        "worker_preview_run": 30673438315,
+        "worker_staging_run": 30673466768,
+        "ui_preview_run": 30673439481,
+        "ui_staging_run": 30673467862,
+        "synthetic_canary_run": 30673602091,
+        "abort_drill_run": 30673708958,
         "module_enabled": false,
         "migration_journal": "canonical staging migration step completed; journal is retained in promotion evidence",
-        "canary_p95_latency_ms": 426,
+        "canary_samples": 22,
+        "canary_p95_latency_ms": 192,
         "canary_threshold_breaches": [],
-        "current_main_chain": "not-proven",
-        "production_worker": "absent-cloudflare-10007",
-        "production_d1": "absent-from-d1-list",
-        "production_control_kv": "absent-from-kv-list",
-        "production_ui_pages": "absent-from-pages-list"
+        "current_main_chain": "selected-main-ancestor-proven-current-main-advanced-after-selection",
+        "production_release_sha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
+        "production_worker": "skincos-finance-promoted-disabled",
+        "production_d1": "isolated-finance-d1-promoted-disabled",
+        "production_control_kv": "isolated-finance-control-kv-promoted-disabled",
+        "production_ui_pages": "skincos-finance-ui-promoted-disabled"
       }
     },
     {
@@ -925,31 +923,35 @@
       "id": "finance-pilot-approval",
       "objective": "Prepare, not activate, the Finance pilot package after all staging and recovery gates are current.",
       "priority": 90,
-      "state": "blocked-current-main-staging-and-named-approval",
+      "state": "blocked-named-pilot-approval",
       "dependencies": ["finance-current-main-staging-evidence", "finance-offsite-postgresql-recovery"],
-      "blockers": ["current-main preview/staging/canary evidence", "continuous external monitor process and alert route", "named human approval"],
+      "blockers": ["named human approval with owner, unit/cohort, window, training, support and abort criteria"],
       "environment": "production",
       "permitted_actions": ["read-only package review and evidence reconciliation"],
       "prohibited_actions": ["module activation", "grant changes", "cohort activation", "global release"],
       "required_evidence": ["approved nominal pilot package", "all staging/recovery gates"],
       "done_definition": "Named approval is recorded; production activation remains a separate explicit command.",
-      "next_item": "finance-production-provision",
-      "last_verified": "2026-07-29T14:02:00Z"
+      "next_item": null,
+      "last_verified": "2026-07-31T23:55:00Z",
+      "evidence": {
+        "release_sha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
+        "staging_canary": 30673602091,
+        "abort_kill_switch": 30673708958,
+        "external_monitor": "operator-run-key with confirmed alert and recovery",
+        "offsite_postgresql": "20260729T2255Z-postgresql-fresh",
+        "production_foundation": "worker 30673820551 and ui 30673971801; disabled and zero real grants"
+      }
     },
     {
       "id": "finance-production-provision",
       "objective": "Provision isolated Finance production resources through the canonical guarded workflow path.",
       "priority": 80,
-      "state": "blocked-requires-production-authorization",
-      "dependencies": ["finance-pilot-approval"],
-      "blockers": [
-        "explicit production authorization",
-        "production Finance Worker, D1, control KV and UI Pages project do not exist",
-        "production Finance environment configuration names are absent"
-      ],
+      "state": "completed-disabled-foundation",
+      "dependencies": ["finance-current-main-staging-evidence"],
+      "blockers": [],
       "environment": "production",
-      "permitted_actions": ["read-only preflight and provisioning-plan review"],
-      "prohibited_actions": ["unapproved resource creation", "migration", "deploy", "flag/grant/user/data mutation"],
+      "permitted_actions": ["read-only health/readiness/version checks", "preserve immutable rollback artifacts", "prepare the separately approved pilot package"],
+      "prohibited_actions": ["module activation", "grant/user/cohort changes", "business-data mutation", "unapproved migration or deploy"],
       "required_evidence": [
         "isolated production resource inventory",
         "environment variable/secret names only",
@@ -957,10 +959,10 @@
         "checkpoint and rollback plan",
         "explicit production authorization"
       ],
-      "done_definition": "Resources are separately provisioned and attested before any production promotion; this is not pilot activation.",
+      "done_definition": "Isolated resources are provisioned and promoted with the staging SHA while module_enabled remains false and real grants remain zero; this is not pilot activation.",
       "next_item": null,
-      "last_verified": "2026-07-29T14:02:00Z",
-      "evidence": {"missing_worker": "skincos-finance", "failed_core_api_run": 30418523054}
+      "last_verified": "2026-07-31T23:55:00Z",
+      "evidence": {"release_sha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c", "worker_run": 30673820551, "ui_run": 30673971801, "module_enabled": false, "real_grants": 0, "deploy_permission_restored": false}
     }
   ]
 }

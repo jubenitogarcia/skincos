@@ -1,5 +1,19 @@
 # Monitoramento externo do SKINCOS
 
+## Estado verificado em 2026-07-31T23:20Z
+
+O monitor esta instalado e operando continuamente fora do GitHub e da
+Cloudflare em `execution_mode=operator-run-key`. Ha exatamente um supervisor e
+um dashboard associados ao runtime privado do operador; o dashboard escuta
+somente em loopback, a retencao configurada e de 30 dias e o health recente
+retornou `ok=true` com probes do Financeiro staging e da fundacao Financeiro
+production. O drill controlado registrou alerta apos duas falhas e resolucao
+apos duas leituras saudaveis em `notifications.jsonl`; a entrega humana
+confirmada foi mensagem Windows. O Windows Application Event Log retornou
+`event_log_delivery=failed` por a sessao nao estar elevada e, portanto, nao e
+alegado como rota confirmada. A instalacao elevada (SYSTEM/boot) permanece uma
+melhoria operacional separada, nao um requisito para o staging Financeiro.
+
 ## Fonte de verdade e limite atual
 
 O catálogo em `ops/observability/catalog.json` define os probes. O monitor primário é executado fora do GitHub Actions e dos Workers da Cloudflare, no runtime Windows do operador. Ele registra `latest.json`, `history.jsonl`, `metrics.prom`, `dashboard.html` e `notifications.jsonl` em `C:\CodexRuntime\operator\admin\skincos\observability`.
