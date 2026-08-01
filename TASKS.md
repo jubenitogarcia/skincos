@@ -1,13 +1,15 @@
 # TASKS
 
-## Reconciliacao autoritativa atual — `origin/main` `3682518e69840c34904fae5f1432917ffd04217a` — 2026-07-31T23:55Z
+## Reconciliacao autoritativa atual — `origin/main` `3f3749016b348ed9ce690b7750ad50a6fed7e8b0` — 2026-08-01T00:04:46Z
 
 Este bloco e a unica visao atual deste ciclo. A `origin/main` atual e
-`3682518e...`, apos #974. O SHA Finance explicitamente selecionado no inicio
-da promocao foi `1a8eeec5a188301635603a3ecbd2eb4c8b18368c` (main em #973);
-#974 e um commit de seguranca posterior e nao foi misturado ao artefato
-Finance. O checkout compartilhado continua com alteracoes nao relacionadas e
-nao foi tocado. Esta PR usa um unico worktree limpo.
+`3f374901...`, o merge somente documental da PR #976. O baseline de codigo
+revalidado antes desse merge foi `3682518e...` apos #974; ele continua sendo
+o limite de proveniencia do artefato Finance. O SHA Finance explicitamente
+selecionado no inicio da promocao foi `1a8eeec5a188301635603a3ecbd2eb4c8b18368c`
+(main em #973), e nenhum commit posterior foi misturado ao artefato Finance.
+O checkout compartilhado continua com alteracoes nao relacionadas e nao foi
+tocado.
 
 - **Insumos P0:** resolvido por #847/#848; nao ha novo sintoma, escrita ou
   bloqueio operacional relacionado.

@@ -1,13 +1,14 @@
 # Current blockers
 
-## Snapshot autoritativo atual — 2026-07-31T23:55Z — main `3682518e69840c34904fae5f1432917ffd04217a`
+## Snapshot autoritativo atual — 2026-08-01T00:04:46Z — main `3f3749016b348ed9ce690b7750ad50a6fed7e8b0`
 
 - **Nenhum P0/P1 de Insumos:** o incidente por unidade permanece resolvido e
   nao houve novo sintoma.
 - **Financeiro (bloqueio humano minimo):** staging, canary, rollback, kill
   switch, restore e fundacao produtiva desativada estao comprovados no SHA
-  selecionado `1a8eeec5...`; a main avancou depois para `3682518e...` por #974
-  sem alterar a linhagem Finance. Permanece apenas a aprovacao nominal de owner tecnico,
+  selecionado `1a8eeec5...`; o baseline de codigo foi `3682518e...` por #974 e
+  o merge documental #976 produziu `3f374901...`, sem alterar a linhagem Finance.
+  Permanece apenas a aprovacao nominal de owner tecnico,
   owner operacional, revisor, unidade/coorte, janela, suporte, treinamento e
   thresholds de abort. Sem essa ficha, `module_enabled` e grants devem ficar
   inalterados.
