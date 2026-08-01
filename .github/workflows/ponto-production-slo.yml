@@ -112,12 +112,30 @@ jobs:
           # protected production job hydrates the existing governed PAT only
           # for these read-only attestation calls.
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_PILOT_RUNNER_LABELS_JSON: ${{ vars.PONTO_PILOT_RUNNER_LABELS_JSON }}
+          PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM: ${{ vars.PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM }}
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Administration:read and Variables:read is required for clinic runner attestation'; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/runners?per_page=100" > "$RUNNER_TEMP/ponto-clinic-runners.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON" > "$RUNNER_TEMP/ponto-clinic-runner-labels-repository-variable.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM" > "$RUNNER_TEMP/ponto-clinic-runner-encryption-repository-variable.json"
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_LABELS_JSON" > "$RUNNER_TEMP/ponto-clinic-runner-labels-repository-variable.json"; then
+            node - "$RUNNER_TEMP/ponto-clinic-runner-labels-repository-variable.json" <<'NODE'
+            const fs = require("fs");
+            fs.writeFileSync(process.argv[2], JSON.stringify({
+              name: "PONTO_PILOT_RUNNER_LABELS_JSON",
+              value: process.env.PONTO_PILOT_RUNNER_LABELS_JSON || "",
+            }));
+            NODE
+          fi
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/variables/PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM" > "$RUNNER_TEMP/ponto-clinic-runner-encryption-repository-variable.json"; then
+            node - "$RUNNER_TEMP/ponto-clinic-runner-encryption-repository-variable.json" <<'NODE'
+            const fs = require("fs");
+            fs.writeFileSync(process.argv[2], JSON.stringify({
+              name: "PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM",
+              value: process.env.PONTO_PILOT_RUNNER_ENCRYPTION_PUBLIC_KEY_PEM || "",
+            }));
+            NODE
+          fi
           gh api "repos/$GITHUB_REPOSITORY/environments/production/variables?per_page=100" > "$RUNNER_TEMP/ponto-clinic-runner-environment-variables.json"
           node - \
             "$RUNNER_TEMP/ponto-clinic-runners.json" \
