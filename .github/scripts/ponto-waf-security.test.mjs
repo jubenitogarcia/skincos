@@ -10,6 +10,7 @@ import {
   captureSnapshot,
   execute,
   publicSnapshot,
+  waitForEdgePropagation,
   writableRule,
 } from "./ponto-waf-security.mjs";
 
@@ -52,6 +53,14 @@ test("standalone WAF apply proves split custody before write-token hydration", (
   assert.match(
     workflow.slice(custodyIndex, writeIndex),
     /!repository\.has\(read\)[\s\S]*repository\.has\(write\)[\s\S]*owner\.has\(read\)[\s\S]*owner\.has\(write\)[\s\S]*staging\.has\(read\)[\s\S]*staging\.has\(write\)[\s\S]*production\.has\(read\)[\s\S]*!production\.has\(write\)/,
+  );
+});
+
+test("WAF edge propagation wait is bounded and testable", async () => {
+  await waitForEdgePropagation({ delayMs: 0 });
+  await assert.rejects(
+    waitForEdgePropagation({ delayMs: 60_001 }),
+    /propagation delay is invalid/,
   );
 });
 
@@ -224,6 +233,7 @@ const envFor = (mode, artifactDir) => ({
   GITHUB_SHA: releaseSha,
   GITHUB_RUN_ID: mode === "probe" ? "100" : "101",
   PONTO_WAF_ARTIFACT_DIR: artifactDir,
+  PONTO_WAF_EDGE_PROPAGATION_DELAY_MS: "0",
 });
 
 test("contract uses supported fail-closed Cloudflare Rules language primitives", () => {
