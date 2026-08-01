@@ -307,11 +307,13 @@ jobs:
           const environmentSecrets = names(process.argv[4], "secrets");
           const privateName = "PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY";
           const publicMapName = "PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON";
-          if (
-            repositorySecrets.has(privateName)
-            || !repositoryVariables.has(publicMapName)
-            || !environmentSecrets.has(privateName)
-          ) throw new Error("Ponto Ed25519 signer must be target-environment-only and its verifier map repository-public");
+          const violations = [];
+          if (repositorySecrets.has(privateName)) violations.push("repository-private-present");
+          if (!repositoryVariables.has(publicMapName)) violations.push("repository-public-map-missing");
+          if (!environmentSecrets.has(privateName)) violations.push("target-environment-private-missing");
+          if (violations.length) {
+            throw new Error(`Ponto Ed25519 signer custody contract failed: ${violations.join(",")}`);
+          }
           NODE
           PONTO_CAPABILITY_TARGET="$target" node --input-type=module <<'NODE'
           import crypto from "node:crypto";
