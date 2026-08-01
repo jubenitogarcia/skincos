@@ -4,6 +4,25 @@
 **Maturidade atual:** `experimental`.
 **Ambiente:** o pacote só poderá ser usado depois de evidência completa em staging e de uma aprovação nominal independente para produção. Os deploys e canários abaixo são parciais: não autorizam produção.
 
+## Reconciliacao autoritativa — 2026-07-31T23:55Z
+
+O SHA Finance explicitamente selecionado `1a8eeec5a188301635603a3ecbd2eb4c8b18368c`
+concluiu candidata, preview, staging, canary e abort/kill switch nos runs
+`30673147811`, `30673438315`, `30673439481`, `30673466768`, `30673467862`,
+`30673602091` e `30673708958`. A fundacao produtiva isolada foi promovida pelo
+mesmo SHA nos runs `30673820551` (Worker) e `30673971801` (UI), com health/readiness/binding
+200, `module_enabled=false`, grants reais=0 e permissao de deploy restaurada
+para `false`. A main avancou depois para `3682518e...` no PR #974, sem mudar
+este artefato. O restore offsite PostgreSQL
+`20260729T2255Z-postgresql-fresh` e o monitor externo com alerta/resolucao
+controlados continuam validos.
+
+**Decisao atual:** manter `experimental` e nao ativar. O pacote so pode avancar
+apos aprovacao nominal contemporanea contendo owner tecnico, owner operacional,
+revisor, unidade/coorte, participantes, janela, treinamento, suporte,
+criterios de sucesso/abort e procedimento de encerramento. Nenhum campo humano
+deve ser inferido deste documento.
+
 Este documento é deliberadamente um contrato de revisão. Campos marcados como
 `NÃO NOMEADO` impedem a ativação. Não substitua nomes por papéis genéricos,
 listas vazias ou herança administrativa.

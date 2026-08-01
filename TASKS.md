@@ -1,6 +1,53 @@
 # TASKS
 
-## Reconciliacao autoritativa — `origin/main` `d34488afc5b8ea668241382e24f30c745798e033` — 2026-07-31
+## Reconciliacao autoritativa atual — `origin/main` `3f3749016b348ed9ce690b7750ad50a6fed7e8b0` — 2026-08-01T00:04:46Z
+
+Este bloco e a unica visao atual deste ciclo. A `origin/main` atual e
+`3f374901...`, o merge somente documental da PR #976. O baseline de codigo
+revalidado antes desse merge foi `3682518e...` apos #974; ele continua sendo
+o limite de proveniencia do artefato Finance. O SHA Finance explicitamente
+selecionado no inicio da promocao foi `1a8eeec5a188301635603a3ecbd2eb4c8b18368c`
+(main em #973), e nenhum commit posterior foi misturado ao artefato Finance.
+O checkout compartilhado continua com alteracoes nao relacionadas e nao foi
+tocado.
+
+- **Insumos P0:** resolvido por #847/#848; nao ha novo sintoma, escrita ou
+  bloqueio operacional relacionado.
+- **Financeiro:** permanece `experimental`, com `module_enabled=false`, zero
+  grants reais e sem piloto. O SHA selecionado `1a8eeec5...` passou por
+  candidata `30673147811`, preview Worker/UI `30673438315`/`30673439481`,
+  staging Worker/UI `30673466768`/`30673467862` e canary
+  `30673602091`. O canary registrou 22 amostras, p95 192 ms, zero erros,
+  falhas de auth/jornada/auditoria/dependencia/divergencia e import idempotente
+  com undo. O drill de abort/kill switch `30673708958` falhou somente na etapa
+  final intencional de limite excedido e restaurou a baseline desativada.
+- **Financeiro em producao:** a fundacao isolada existe e foi promovida pelo
+  SHA selecionado em Worker `30673820551` e UI `30673971801`; o binding da API
+  e `/finance/health` retornam `1a8eeec5...`. O preflight, health/readiness e
+  verificacao D1 passaram; `module_enabled=false`, grants=0 e auditoria=0.
+  O flag de deploy foi restaurado para `false`; nenhum usuario/coorte foi
+  ativado. Rollback conhecido e o artefato anterior `6acbd485...`.
+- **Observabilidade:** monitor externo fora do GitHub/Cloudflare esta ativo
+  em modo `operator-run-key` (supervisor e dashboard unicos, loopback, retencao
+  30 dias). Alerta e recuperacao controlados foram recebidos via mensagem
+  Windows e registrados em `notifications.jsonl`; Event Log segue indisponivel
+  na sessao nao elevada e nao e alegado como entregue.
+- **Recuperacao:** restore offsite PostgreSQL `20260729T2255Z-postgresql-fresh`
+  continua valido (ciphertext verificado, scratch restaurado e destruido,
+  55,43 s). Restore scratch Finance/D1/KV e rollback/kill switch permanecem
+  evidencias para os artefatos registrados, sem autorizar piloto.
+- **Ponto/Identity:** #971 esta integrado, mas Ponto continua sem gates
+  externos (WAF least-privilege, runner JIT/attestation, identidade piloto e
+  SLO/custodia). Identity continua em modo de compatibilidade; custodia externa
+  da chave PII e o corte fisico permanecem bloqueados.
+
+**Proximo marco executavel:** reconciliar e obter aprovacao nominal do pacote
+de piloto do Financeiro. Acoes permitidas: atualizar evidencia documental,
+smoke sintetico e rollback/kill switch em staging. Acoes proibidas: ativar
+`module_enabled`, conceder grants, criar coorte, alterar usuarios/secrets/dados,
+promover piloto ou iniciar Ponto/Identity sem seus gates externos.
+
+## Historico — reconciliacao anterior — `origin/main` `d34488afc5b8ea668241382e24f30c745798e033` — 2026-07-31
 
 Esta e a fonte atual para o ciclo. O checkout compartilhado tinha alteracoes
 nao relacionadas preservadas fora desta PR em

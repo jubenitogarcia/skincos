@@ -35,11 +35,21 @@ const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || "");
 const apiToken = String(process.env.CLOUDFLARE_API_TOKEN || "");
 const pagesProject = String(process.env.CLOUDFLARE_PAGES_PROJECT || "");
 const moduleControlNamespaceId = String(process.env.MODULE_CONTROL_KV_ID || "");
+const moduleHealthUrl = String(process.env.PONTO_MODULE_HEALTH_URL || "").trim();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const staging = stage === "staging";
 const expectedPagesProject = staging ? "skincos-staging" : "skincos";
 const expectedPagesBranch = staging ? "staging" : "main";
 const expectedPagesAlias = staging ? "crm-staging.skincos.com.br" : "crm.skincos.com.br";
+const expectedModuleHealthUrl = staging
+  ? "https://api-staging.skincos.com.br/api/ponto/health"
+  : "https://api.skincos.com.br/api/ponto/health";
+const accessHeaders = {};
+if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
+  if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) throw new Error("partial Cloudflare Access credential");
+  accessHeaders["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
+  accessHeaders["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
+}
 
 if (!artifactRoot || !reportFile) throw new Error("automatic rollback artifact root and report path are required");
 if (!/^[0-9a-f]{40}$/.test(releaseSha) || !["staging", "pilot", "canary", "production"].includes(stage)) throw new Error("invalid automatic rollback identity");
@@ -86,7 +96,71 @@ const readRemoteModuleKey = (key) => spawnSync("npx", [
   moduleControlNamespaceId,
   "--remote",
 ], { encoding: "utf8", env: process.env, maxBuffer: 2 * 1024 * 1024 });
-const readAndAttestBrokerFailClose = () => {
+const readExternalModuleHealth = async () => {
+  if (moduleHealthUrl !== expectedModuleHealthUrl) {
+    return { passed: false, status: 0, reason: "module-health-url-not-pinned" };
+  }
+  try {
+    const response = await fetch(moduleHealthUrl, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+      headers: { accept: "application/json", ...accessHeaders },
+    });
+    const payload = await response.json().catch(() => null);
+    const availability = payload?.availability;
+    return {
+      passed: response.status === 200
+        && payload?.ok === false
+        && payload?.ready === false
+        && availability?.state === "maintenance"
+        && availability?.source === "control"
+        && Number.isFinite(Date.parse(String(availability?.changedAt || "")))
+        && availability?.changedAt === brokerFailClose?.controlChangedAt,
+      status: response.status,
+      state: String(availability?.state || ""),
+      source: String(availability?.source || ""),
+      changedAt: String(availability?.changedAt || ""),
+    };
+  } catch {
+    return { passed: false, status: 0, reason: "module-health-probe-failed" };
+  }
+};
+const attestNoSurfaceRollback = async () => {
+  // A failed coordinator can legitimately discover zero child mutations. In
+  // that case there is no incumbent deployment to restore; require the
+  // immutable close artifact and a fresh external maintenance probe instead
+  // of pretending that a direct KV readback or deployment rollback occurred.
+  if (Object.keys(plan).length !== 0 || !brokerFailClose) return null;
+  const evidenceValid = brokerFailClose.schemaVersion === 1
+    && brokerFailClose.contractId === "skincos/ponto/emergency-close/v1"
+    && brokerFailClose.coordinatorRunId === orchestratorRunId
+    && brokerFailClose.releaseSha === releaseSha
+    && brokerFailClose.stage === stage
+    && brokerFailClose.target === (staging ? "staging" : "production")
+    && brokerFailClose.state === "maintenance"
+    && brokerFailClose.latched === true
+    && Number.isFinite(Date.parse(String(brokerFailClose.controlChangedAt || "")))
+    && Number.isFinite(Date.parse(String(brokerFailClose.latchChangedAt || "")))
+    && brokerFailClose.emergencyLatchRef?.stopRunId === orchestratorRunId
+    && brokerFailClose.emergencyLatchRef?.emergencyRunId === brokerFailClose.emergencyRunId
+    && brokerFailClose.emergencyLatchRef?.latchChangedAt === brokerFailClose.latchChangedAt
+    && brokerFailClose.propagation?.passed === true
+    && brokerFailClose.passed === true
+    && brokerFailClose.credentialsIncluded === false
+    && brokerFailClose.piiIncluded === false;
+  const health = await readExternalModuleHealth();
+  if (!evidenceValid || !health.passed) return null;
+  return {
+    passed: true,
+    emergencyRunId: brokerFailClose.emergencyRunId,
+    state: "maintenance",
+    controlChangedAt: brokerFailClose.controlChangedAt,
+    latchChangedAt: brokerFailClose.latchChangedAt,
+    readbackMode: "external-health-noop",
+    externalHealth: health,
+  };
+};
+const readAndAttestBrokerFailClose = async () => {
   let moduleControl = null;
   let emergencyLatch = null;
   try {
@@ -104,18 +178,27 @@ const readAndAttestBrokerFailClose = () => {
     moduleControl = null;
     emergencyLatch = null;
   }
+  const directAttestation = attestBrokerFailCloseEvidence({
+    evidence: brokerFailClose,
+    moduleControl,
+    emergencyLatch,
+    coordinatorRunId: orchestratorRunId,
+    releaseSha,
+    stage,
+    target: staging ? "staging" : "production",
+  });
+  if (directAttestation.passed) {
+    return {
+      moduleControl,
+      emergencyLatch,
+      attestation: { ...directAttestation, readbackMode: "direct-kv" },
+    };
+  }
+  const noSurfaceAttestation = await attestNoSurfaceRollback();
   return {
     moduleControl,
     emergencyLatch,
-    attestation: attestBrokerFailCloseEvidence({
-      evidence: brokerFailClose,
-      moduleControl,
-      emergencyLatch,
-      coordinatorRunId: orchestratorRunId,
-      releaseSha,
-      stage,
-      target: staging ? "staging" : "production",
-    }),
+    attestation: noSurfaceAttestation || directAttestation,
   };
 };
 const surfaceSpecs = {
@@ -447,7 +530,7 @@ if (staging && fs.existsSync(drillRunFile)) {
 // KV records and bind the regular control to the exact still-true emergency
 // latch before any Worker or Pages rollback. The workflow-level surface mutex
 // excludes the protected latch reset until the final readback below.
-const preMutationFailClose = readAndAttestBrokerFailClose();
+const preMutationFailClose = await readAndAttestBrokerFailClose();
 if (!preMutationFailClose.attestation.passed) {
   unresolved.push({
     surface: "moduleControl",
@@ -816,12 +899,6 @@ for (const name of ["coreApi", "identityWorkforce", "timekeeping"]) {
   if (plan[name]) rollbackWorker(name, plan[name]);
 }
 
-const accessHeaders = {};
-if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
-  if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) throw new Error("partial Cloudflare Access credential");
-  accessHeaders["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
-  accessHeaders["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
-}
 const external = {};
 if (plan.identityWorkforce && proofs.identityWorkforce?.passed) {
   try {
@@ -878,7 +955,7 @@ if (plan.coreApi && plan.timekeeping && proofs.coreApi?.passed && proofs.timekee
 // Re-read after every mutation while still holding the surface mutex. A reset,
 // drift, or broker/control mismatch makes the recovery unresolved even when all
 // deployment commands themselves succeeded.
-const postMutationFailClose = readAndAttestBrokerFailClose();
+const postMutationFailClose = await readAndAttestBrokerFailClose();
 if (!postMutationFailClose.attestation.passed) {
   unresolved.push({
     surface: "moduleControl",
@@ -907,8 +984,15 @@ const report = {
     changedAt: moduleFailCloseAttestation.controlChangedAt,
     emergencyLatchChangedAt: moduleFailCloseAttestation.latchChangedAt,
     preMutationReadbackMatched: true,
-    remoteKvReadbackMatched: true,
-    emergencyLatchReadbackMatched: true,
+    remoteKvReadbackMatched: preMutationFailClose.attestation.readbackMode === "direct-kv"
+      && postMutationFailClose.attestation.readbackMode === "direct-kv",
+    emergencyLatchReadbackMatched: preMutationFailClose.attestation.readbackMode === "direct-kv"
+      && postMutationFailClose.attestation.readbackMode === "direct-kv",
+    externalHealthReadbackMatched: preMutationFailClose.attestation.readbackMode === "external-health-noop"
+      && postMutationFailClose.attestation.readbackMode === "external-health-noop",
+    rollbackDisposition: plannedNames.length === 0
+      ? "no-dispatched-surface-noop"
+      : "restored-dispatched-surfaces",
   } : {
     state: "unresolved",
     remoteKvReadbackMatched: false,

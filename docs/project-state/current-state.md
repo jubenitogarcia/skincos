@@ -1,6 +1,57 @@
 # Current state
 
-## Reconciliacao autoritativa — `origin/main` `d34488afc5b8ea668241382e24f30c745798e033` — 2026-07-31T16:30Z
+## Fonte autoritativa atual — `origin/main` `3f3749016b348ed9ce690b7750ad50a6fed7e8b0` — 2026-08-01T00:04:46Z
+
+O SHA remoto atual e o merge somente documental da PR #976. O baseline de
+codigo revalidado antes desse merge foi `3682518e...` apos #974. A promocao
+Finance selecionou explicitamente `1a8eeec5a188301635603a3ecbd2eb4c8b18368c`
+quando #973 era a main; #974 e posterior, security-only, e nao altera a
+proveniencia do artefato.
+Os blocos abaixo sao historicos e nao substituem este snapshot.
+
+### Financeiro
+
+- Maturidade oficial: `experimental`; `module_enabled=false`; nenhum grant real,
+  usuario ou coorte de piloto.
+- Linhagem imutavel promovida: SHA selecionado `1a8eeec5...`; candidata
+  `30673147811`; Worker/UI preview `30673438315`/`30673439481`; staging
+  `30673466768`/`30673467862`; canary `30673602091`; abort/kill switch
+  `30673708958`. Todos usam o mesmo SHA; o baseline de codigo da selecao foi
+  `1a8eeec5...`, e a `origin/main` atual e o merge documental `3f374901...`.
+- Evidencia de staging: health/readiness/bootstrap/contas/categorias 200,
+  import stage/analyze/decision/preview/commit/replay/conflict/audit/undo e
+  limpeza sintetica aprovados; 22 amostras, p95 192 ms, zero breaches.
+- Fundacao produtiva desativada: Worker `skincos-finance`, D1 isolado, KV de
+  controle e Pages `skincos-finance-ui` promovidos em `30673820551` e
+  `30673971801`, com `/finance/health` 200/version `1a8eeec5...`. O preflight
+  confirmou bindings, nomes de secrets e ausencia de valores expostos; D1
+  confirmou `module_enabled=false`, grants=0 e audit=0. A API nao foi
+  republicada; seu binding agora encaminha ao Worker atual. Rollback preservado
+  para o artefato `6acbd485...`.
+- O canary abort foi intencional e recuperou a baseline; o historico `audit
+  returned 503` nao reproduz no SHA atual e e evidencia superada.
+
+### Operacao e outros dominios
+
+- Monitor externo: modo `operator-run-key`, supervisor/dashboard unicos,
+  loopback, retencao 30 dias. Alerta e resolucao controlados estao registrados
+  com mensagem humana Windows; Event Log nao foi confirmado por falta de
+  elevacao.
+- PostgreSQL offsite: drill `20260729T2255Z-postgresql-fresh` continua valido,
+  restore em scratch e teardown comprovados (55,43 s). Nao e prova de restore
+  produtivo Finance nem autoriza piloto.
+- Insumos P0 permanece resolvido. Ponto #971 esta integrado mas sem WAF
+  least-privilege, runner JIT, identidade piloto e SLO/custodia externos.
+  Identity segue em compatibilidade, sem corte fisico.
+
+### Proximo marco e limites
+
+O proximo marco e a ficha nominal de aprovacao do piloto Financeiro. Ate que
+ela exista, somente revisao documental e exercicios sinteticos em staging sao
+permitidos; ativacao de flags, grants, usuarios/coortes, migrations de negocio,
+novos deploys de outros modulos e mudancas de producao continuam proibidos.
+
+## Historico — reconciliacao anterior — `origin/main` `d34488afc5b8ea668241382e24f30c745798e033` — 2026-07-31T16:30Z
 
 As PRs #943 e #945 estao integradas; o HEAD atual e `d34488af...`. #943
 estabeleceu a governanca `single-operator-codex` main-only, PR canonica,
@@ -20,7 +71,7 @@ maintenance apos o exercicio. WAF customizado, token least-privilege, runner
 JIT, identidade piloto e SLO externo continuam ausentes. Readiness 200 nao e
 prova de jornada autenticada.
 
-## Reconciliacao atual — `origin/main` `28747bb5109407856bd3cb700d91f7f3cb981a69` — 2026-07-31T14:37Z
+## Historico — reconciliacao anterior — `origin/main` `28747bb5109407856bd3cb700d91f7f3cb981a69` — 2026-07-31T14:37Z
 
 Este bloco supersede qualquer afirmacao abaixo que trate `35aa17db...`,
 `6894e0b...` ou uma PR aberta como estado atual. A PR #933 foi integrada em

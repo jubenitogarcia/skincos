@@ -9,7 +9,7 @@ const source = fs.readFileSync(
 
 test("live broker fail-close is attested before any rollback mutation and re-read after", () => {
   const preAttestation = source.indexOf(
-    "const preMutationFailClose = readAndAttestBrokerFailClose();",
+    "const preMutationFailClose = await readAndAttestBrokerFailClose();",
   );
   const permission = source.indexOf("const rollbackPermitted =");
   const workerMutation = source.indexOf('const rollback = spawnSync("npx"');
@@ -17,7 +17,7 @@ test("live broker fail-close is attested before any rollback mutation and re-rea
     "const rolledBack = await rollbackPagesWithReconciliation",
   );
   const postAttestation = source.indexOf(
-    "const postMutationFailClose = readAndAttestBrokerFailClose();",
+    "const postMutationFailClose = await readAndAttestBrokerFailClose();",
   );
   for (const position of [
     preAttestation,
@@ -42,4 +42,12 @@ test("live broker fail-close is attested before any rollback mutation and re-rea
 test("Pages rollback intent has dedicated environment-only custody", () => {
   assert.match(source, /PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY/);
   assert.doesNotMatch(source, /PONTO_ORCHESTRATOR_LEASE_HMAC_KEY/);
+});
+
+test("zero-surface recovery uses a fresh external maintenance probe instead of faking rollback", () => {
+  assert.match(source, /PONTO_MODULE_HEALTH_URL/);
+  assert.match(source, /Object\.keys\(plan\)\.length !== 0/);
+  assert.match(source, /readbackMode: "external-health-noop"/);
+  assert.match(source, /rollbackDisposition/);
+  assert.match(source, /no-dispatched-surface-noop/);
 });
