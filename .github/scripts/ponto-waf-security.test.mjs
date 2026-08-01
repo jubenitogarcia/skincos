@@ -135,7 +135,7 @@ function cloudflareHarness(initialEntrypoint = null) {
     if (parsed.origin === "https://api.cloudflare.com") {
       assert.equal(new Headers(init.headers).get("authorization"), "Bearer security-token");
       state.methods.push({ method, pathname: parsed.pathname });
-      if (parsed.pathname === "/client/v4/user/tokens/verify") {
+      if (parsed.pathname === "/client/v4/accounts/" + "6".repeat(32) + "/tokens/verify") {
         return envelope({ status: "active" });
       }
       if (parsed.pathname === `/client/v4/zones/${zoneId}`) {
