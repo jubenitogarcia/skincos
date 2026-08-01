@@ -309,17 +309,10 @@ async function readEntrypoint(client, zoneId) {
   return response.status === 404 ? null : response.result;
 }
 
-async function verifyCustody(client, zoneId) {
-  const zone = await client.request(`/zones/${zoneId}`);
-  const accountId = String(zone.result?.account?.id || "").toLowerCase();
-  if (!HEX32.test(accountId)) throw new Error("Cloudflare zone response did not include a usable account id for token verification");
+async function verifyCustody(client, zoneId, accountId) {
+  if (!HEX32.test(accountId)) throw new Error("Cloudflare account id for token verification is invalid");
   const token = await client.request(`/accounts/${accountId}/tokens/verify`);
   if (token.result?.status !== "active") throw new Error("Cloudflare security token is not active");
-  if (
-    String(zone.result?.id || "").toLowerCase() !== zoneId
-    || String(zone.result?.name || "").toLowerCase() !== ZONE_NAME
-    || zone.result?.status !== "active"
-  ) throw new Error("Cloudflare security token does not resolve the exact active skincos.com.br zone");
   const expressionDigests = [];
   for (const rule of PONTO_WAF_RULES) {
     await client.request(`/filters/validate-expr?expression=${encodeURIComponent(rule.expression)}`);
@@ -331,7 +324,7 @@ async function verifyCustody(client, zoneId) {
     expressionDialectValidated: true,
     expressionDigests,
     zoneName: ZONE_NAME,
-    accountId,
+    accountId: accountId.toLowerCase(),
   };
 }
 
@@ -586,6 +579,7 @@ export async function execute({
 } = {}) {
   const mode = required(env, "PONTO_WAF_MODE").toLowerCase();
   const zoneId = required(env, "CLOUDFLARE_ZONE_ID").toLowerCase();
+  const accountId = required(env, "CLOUDFLARE_ACCOUNT_ID").toLowerCase();
   const token = required(
     env,
     mode === "probe" ? "PONTO_WAF_READ_API_TOKEN" : "PONTO_WAF_WRITE_API_TOKEN",
@@ -601,6 +595,7 @@ export async function execute({
   if (
     !["probe", "apply"].includes(mode)
     || !HEX32.test(zoneId)
+    || !HEX32.test(accountId)
     || !SHA.test(releaseSha)
     || !/^[1-9][0-9]*$/.test(runId)
   ) throw new Error("Ponto WAF execution provenance is invalid");
@@ -620,7 +615,7 @@ export async function execute({
   let before;
   let after;
   try {
-    const custody = await verifyCustody(client, zoneId);
+    const custody = await verifyCustody(client, zoneId, accountId);
     const entrypoint = await readEntrypoint(client, zoneId);
     before = captureSnapshot(entrypoint);
     const preimage = publicSnapshot(before);
