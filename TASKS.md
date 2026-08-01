@@ -1,6 +1,6 @@
 # TASKS
 
-## Snapshot autoritativo de fechamento — `origin/main` `0ebfcfb57d42e225efc605405938d49c6acc67e5` — 2026-08-01T23:15:00Z
+## Snapshot autoritativo de fechamento — `origin/main` `b6a6cc109ff0c0690381612212d9bfc67b84f63b` — 2026-08-01T23:34:16Z
 
 Esta seção substitui qualquer snapshot anterior deste ciclo. As PRs #985,
 #990, #994, #997, #998, #999, #1000, #1001, #1002 e #1003 estão integradas;
@@ -14,18 +14,21 @@ não há alteração relevante perdida nesta reconciliação.
   `30673708958`, restore scratch e PostgreSQL offsite
   `20260729T2255Z-postgresql-fresh` (55,43 s). Isso não é promoção do SHA
   atual nem autorização de piloto.
-- **Ponto:** `0ebfcfb5...` passou preview `30721745126` com Timekeeping, Core
-  Inventory, Core API e CRM Pages. Não existe staging verde: `30722077457`
-  falhou antes de mutação porque os checks obrigatórios ainda não existiam;
-  `30722290342` e `30722510118` foram cancelados pelo fail-close. A
-  recuperação (`30722303882`, `30722308654`, `30722594377`) terminou sem
-  evidência de propagação externa de maintenance após 150 s. Ponto permanece
-  `experimental` e bloqueado.
+- **Ponto:** o SHA candidato explícito `0ebfcfb5...` passou preview
+  `30721745126` com Timekeeping, Core Inventory, Core API e CRM Pages. Não
+  existe staging verde: `30722077457` falhou antes de mutação porque os
+  checks obrigatórios ainda não existiam; `30722290342` e `30722510118` foram
+  cancelados pelo fail-close. A tentativa posterior `30722999071` também
+  falhou antes de qualquer superfície por rejeitar o mapa público Ed25519
+  recebido com BOM (`Ponto capability public verifier map is malformed`). O
+  watchdog `30723359886` encerrou fail-closed por não observar a propagação
+  externa do overlay em 150 s. Ponto permanece `experimental` e bloqueado.
 - **Identity:** permanece em compatibilidade; custódia/escrow de
   `IDENTITY_PII_KEY` e corte físico dependem de owner humano.
 
-**Próximo marco:** obter uma execução staging verde do Ponto após resolver a
-propagação externa, ou registrar o gate humano correspondente. Para Financeiro,
+**Próximo marco:** obter uma execução staging verde do Ponto no SHA explícito
+após corrigir a custódia/configuração do mapa Ed25519 e a propagação externa,
+ou registrar o gate humano correspondente. Para Financeiro,
 somente a ficha nominal de piloto pode avançar. Produção, flags, grants,
 usuários, secrets, dados e Organization continuam proibidos.
 

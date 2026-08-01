@@ -2,6 +2,27 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-08-01T23:34:16Z",
+      "surface": "github-ponto-post-merge-current-gate-reconciliation",
+      "scope": "Reconcile the post-merge main SHA and later Ponto staging/watchdog runs without production mutation",
+      "state": "current-main-b6a6-ponto-candidate-0eb-staging-blocked-capability-custody-and-propagation",
+      "method": "git fetch origin main; GitHub run/log inspection of explicit SHA 0ebfcfb57d42e225efc605405938d49c6acc67e5 and post-merge watchdog; no production mutation",
+      "result": "origin/main is b6a6cc109ff0c0690381612212d9bfc67b84f63b after PR #1004. The later Ponto staging coordinator 30722999071 evaluated the explicit candidate SHA 0ebfcfb57d42e225efc605405938d49c6acc67e5 but stopped before capability issuance because PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON carried a UTF-8 BOM and resolveCapabilityVerifier reported the public verifier map malformed. The trusted watchdog 30723359886 latched fail-closed and did not observe external maintenance propagation within 150 seconds. No Ponto surface, production flag, grant, user, secret or data was mutated.",
+      "limitation": "Ponto remains experimental; there is no staging-green run, authenticated journey, canary, backup/restore or pilot evidence for the candidate. The capability custody/configuration and external propagation gates remain open. Finance remains experimental and disabled; Insumos P0 remains resolved; Identity physical cutover remains blocked by PII key escrow/owner.",
+      "sha": "b6a6cc109ff0c0690381612212d9bfc67b84f63b",
+      "candidateSha": "0ebfcfb57d42e225efc605405938d49c6acc67e5",
+      "runs": [30722999071, 30723359886],
+      "validation": {
+        "postMergeCi": "passed",
+        "candidateMutation": false,
+        "staging": "blocked-before-surface-mutation",
+        "watchdog": "fail-closed",
+        "productionMutation": false,
+        "secretsRead": false,
+        "flagsGrantsUsersDataChanged": false
+      }
+    },
+    {
       "observed_at": "2026-08-01T23:15:00Z",
       "surface": "github-ponto-current-main-staging-reconciliation",
       "scope": "Reconcile origin/main, Ponto preview/staging/recovery, Finance evidence, operational blockers and authoritative records",

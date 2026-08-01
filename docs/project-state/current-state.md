@@ -1,6 +1,6 @@
 # Current state
 
-## Snapshot autoritativo de fechamento — `origin/main` `0ebfcfb57d42e225efc605405938d49c6acc67e5` — 2026-08-01T23:15:00Z
+## Snapshot autoritativo de fechamento — `origin/main` `b6a6cc109ff0c0690381612212d9bfc67b84f63b` — 2026-08-01T23:34:16Z
 
 Este snapshot foi revalidado no GitHub e nos workflows canônicos; os textos
 abaixo dele são históricos. As PRs #985, #990, #994, #997, #998, #999, #1000,
@@ -19,13 +19,16 @@ abaixo dele são históricos. As PRs #985, #990, #994, #997, #998, #999, #1000,
 
 ### Ponto / Workforce
 
-- SHA atual avaliado: `0ebfcfb57d42e225efc605405938d49c6acc67e5`.
+- SHA candidato avaliado: `0ebfcfb57d42e225efc605405938d49c6acc67e5`; a
+  `origin/main` atual é o merge documental `b6a6cc109ff0c0690381612212d9bfc67b84f63b`.
 - Preview canônico `30721745126` passou para Timekeeping, Core Inventory, Core
   API e CRM Pages. Staging não foi aprovado: `30722077457` falhou no gate de
   checks ausentes; `30722290342` e `30722510118` foram cancelados pelo
-  fail-close; recuperações `30722303882`, `30722308654` e `30722594377` não
-  observaram propagação externa de maintenance em 150 s. Não há evidência de
-  staging verde, jornada autenticada, canary ou piloto.
+  fail-close; a tentativa `30722999071` falhou antes de mutação porque o mapa
+  público Ed25519 chegou com BOM e o validador reportou `Ponto capability
+  public verifier map is malformed`; o watchdog `30723359886` encerrou
+  fail-closed sem observar propagação externa de maintenance em 150 s. Não há
+  evidência de staging verde, jornada autenticada, canary ou piloto.
 - Maturidade permanece `experimental`. Não há deploy de produção, flag, grant,
   usuário, secret ou dado alterado por esta reconciliação.
 

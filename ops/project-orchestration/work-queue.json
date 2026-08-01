@@ -1,25 +1,25 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-08-01T23:15:00Z",
-  "source_main_sha": "0ebfcfb57d42e225efc605405938d49c6acc67e5",
-  "source_main_state": "current-main-ponto-preview-passed-staging-blocked-external-propagation-finance-disabled",
+  "authoritative_at": "2026-08-01T23:34:16Z",
+  "source_main_sha": "b6a6cc109ff0c0690381612212d9bfc67b84f63b",
+  "source_main_state": "current-main-docs-merged-ponto-candidate-staging-blocked-capability-custody-and-external-propagation-finance-disabled",
   "current_snapshot": {
-    "authoritative_at": "2026-08-01T23:15:00Z",
+    "authoritative_at": "2026-08-01T23:34:16Z",
     "executable_item": "Ponto staging evidence reconciliation",
     "finance": { "maturity": "experimental", "release_sha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c", "module_enabled": false, "pilot": false },
-    "ponto": { "maturity": "experimental", "release_sha": "0ebfcfb57d42e225efc605405938d49c6acc67e5", "preview_run": 30721745126, "staging_green": false, "blocker": "external maintenance propagation was not observed within 150 seconds" },
+    "ponto": { "maturity": "experimental", "release_sha": "0ebfcfb57d42e225efc605405938d49c6acc67e5", "preview_run": 30721745126, "staging_green": false, "blocker": "capability public verifier map was rejected with BOM before mutation; watchdog 30723359886 also lacked external maintenance propagation within 150 seconds" },
     "insumos": { "p0": "resolved" },
     "identity": { "mode": "compatibility", "physical_cutover": "blocked-human-escrow" },
     "allowed_actions": ["document evidence", "run read-only checks", "staging-only reversible validation after external propagation is fixed"],
     "prohibited_actions": ["production deploy", "pilot activation", "flags", "grants", "users", "secrets", "data", "Organization transfer"],
-    "completion_criteria": ["Ponto staging run success on an explicit main SHA", "Finance nominal pilot approval remains separate", "Identity PII key escrow owner recorded"]
+    "completion_criteria": ["Ponto staging run success on an explicit main SHA after capability custody/configuration and propagation gates", "Finance nominal pilot approval remains separate", "Identity PII key escrow owner recorded"]
   },
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
       "objective": "Complete the governed Workforce Timekeeping release through preview, staging, pilot, canary and production on one immutable source SHA.",
       "priority": 1100,
-      "state": "preview-passed-staging-not-proven-external-propagation-blocker",
+      "state": "preview-passed-staging-not-proven-capability-and-propagation-blocker",
       "dependencies": [
         "ponto-release-prerequisites"
       ],
@@ -74,7 +74,7 @@
       ],
       "done_definition": "A single immutable release has complete preview, staging, pilot, canary and production evidence, an authenticated authorized-user journey, proven rollback and post-release observation.",
       "next_item": null,
-      "last_verified": "2026-08-01T23:15:00Z",
+      "last_verified": "2026-08-01T23:34:16Z",
       "evidence": {
         "base_sha": "f202e29f4178bba8966edf71539c942618254de0",
         "merge_sha": "10b2197731d0210cf8fc8cd961f7a787d73bf650",
