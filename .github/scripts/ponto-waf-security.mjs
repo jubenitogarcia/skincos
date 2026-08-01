@@ -382,6 +382,13 @@ export async function runPublicProbes({ fetchImpl = fetch, requireBlocks }) {
   return observations;
 }
 
+export async function waitForEdgePropagation({ delayMs = 30_000 } = {}) {
+  if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 60_000) {
+    throw new Error("WAF edge propagation delay is invalid");
+  }
+  if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 function validateProbePredecessor(report, { zoneId, liveSnapshot }) {
   if (
     report?.schemaVersion !== 1
@@ -645,7 +652,11 @@ export async function execute({
       after = applied.after;
       let probes;
       try {
-        probes = await runPublicProbes({ fetchImpl, requireBlocks: true });
+          const propagationDelayMs = env.PONTO_WAF_EDGE_PROPAGATION_DELAY_MS === undefined
+            ? 30_000
+            : Number(env.PONTO_WAF_EDGE_PROPAGATION_DELAY_MS);
+          if (applied.mutated) await waitForEdgePropagation({ delayMs: propagationDelayMs });
+          probes = await runPublicProbes({ fetchImpl, requireBlocks: true });
       } catch (error) {
         if (applied.mutated) {
           // Public probing occurs after the mutation boundary and can race with
