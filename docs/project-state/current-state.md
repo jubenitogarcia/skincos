@@ -1837,3 +1837,115 @@ Checkpoint pós-restauração:
 O aceite end-to-end de carrossel inédito segue pendente exclusivamente pela
 ausência dos novos IDs no Drive canônico; não há correção de código pendente
 nem impacto no caminho de Reel comprovado anteriormente.
+
+## Finance e API — fechamento de produção no SHA imutável 135a54fd — 2026-08-01
+
+Esta é a reconciliação operacional atual e supersede os bloqueios históricos
+que registravam a ausência do Worker Finance em produção. A causa raiz era a
+combinação de um binding `FINANCE` apontando para um Worker inexistente,
+recursos D1/KV ainda não provisionados e os gates de deploy mantidos em
+`false`; por isso a promoção anterior da API parava em Cloudflare `10143`
+antes do upload. A fundação foi provisionada pela automação canônica, os
+identificadores de produção foram atestados somente por fontes autorizadas e
+`ENABLE_FINANCE_PRODUCTION_DEPLOY`, `ENABLE_CORE_WORKERS_DEPLOY` (staging e
+production) foram habilitados explicitamente nos Environments correspondentes.
+Nenhum valor de secret foi lido ou registrado.
+
+O release selecionado foi o SHA corrente de `origin/main` no início da cadeia,
+`135a54fd529d032ab577d1370b53f5fe0f81a7df` (ancestral de `ba16cb4a…` e de
+`origin/main`). Durante a execução, `origin/main` avançou para
+`327bbbf0b303db30f988801dd50a0430eb5e47c3`; a única diferença entre os dois
+SHAs é a correção Ponto WAF em `.github/scripts/ponto-waf-security.*`, fora de
+Finance/API. Não houve mistura de commits nem rebuild: todas as promoções
+abaixo continuam ligadas exatamente ao SHA selecionado.
+
+### Cadeia Finance
+
+- Preview: workflow `Deploy Finance Worker`, run `30713110755`, sucesso,
+  SHA `135a54fd…`, artefato `promotion-evidence-finance` (`8822503121`).
+- Staging: run `30713133397`, sucesso, predecessor `30713110755`, artefato
+  `promotion-evidence-finance` (`8822537455`) e checkpoint cifrado
+  `finance-staging-pre-migration-135a54fd…` (`8822528464`, zip SHA-256
+  `8dd5dd5e1f59a60594e2e671b8beae586b61650c5623d0cc86011348ac721b71`). A
+  versão Worker de staging foi `028ad7b6-d490-4b6d-8673-15192a1aead9`.
+- Canary funcional sintético: run `30713266139`, artefato verificado
+  `8822565347`; 22 amostras (21 Finance), p95 482 ms, autenticação 2320 ms,
+  zero erros, falhas de autenticação/jornada, divergências, falhas de auditoria
+  ou dependência. O relatório privado registra login, health/readiness,
+  overview somente leitura, auditoria, import idempotente/replay/conflito,
+  undo compensatório e limpeza sintética.
+- Produção: run `30713365695`, sucesso, predecessor `30713133397`,
+  `bootstrap_service_secret=false`. O preflight sanitizado é o artefato
+  `finance-production-preflight-135a54fd…` (`8822578837`, zip SHA-256
+  `f1c8bb9052687c56add6044b75409ab19a53ee4cacf4a31504b3fcccecbbea01`);
+  o checkpoint obrigatório pré-migration é
+  `finance-production-pre-migration-135a54fd…` (`8822598078`, zip SHA-256
+  `4db638ae3faacb881e34314b8c29d7ea9a0b2c0ae4d220aa72ecde7467623ce2`). O
+  Worker publicado é `skincos-finance`, versão
+  `3191b4db-d5fb-4a36-a7b3-1fc72e0316b1`, deployment
+  `61915366-7af7-43da-b9d3-db98c701fea7` a 100%.
+
+O D1 de produção é `skincos-finance`
+(`f26ee541-f0c2-4847-a513-378dbffede05`, ambiente `production`) e o KV
+`SKINCOS_FINANCE_PRODUCTION_FLAGS`
+(`6143d17de388477f8a3c2145a4cc20be`) está ligado como `MODULE_CONTROL`.
+Consulta D1 somente leitura confirmou as migrations `0001` a `0013`, com
+zero linhas escritas na consulta de verificação; a análise versionada não
+encontrou `DROP`, `DELETE FROM`, `TRUNCATE`, `ALTER … DROP` ou `RENAME TABLE`.
+O binding secreto `FINANCE_SERVICE_AUTH_SECRET` existe no Worker Finance e no
+Worker API, sem exposição de valor.
+
+### Cadeia API
+
+- Preview predecessor: run `30712990023`, sucesso, SHA `135a54fd…`, artefato
+  `promotion-evidence-core-api` (`8822478811`). A tentativa posterior de
+  preview geral `30713622896` foi cancelada antes de criar jobs e não é
+  evidência de release nem de mutação.
+- Staging: run `30713914600`, sucesso, `unit=api`, predecessor
+  `30712990023`, `bootstrap_finance_context=false`,
+  `TIMEKEEPING_VERSION_ID=0da32d7c-6d6f-4b54-a538-6b7c642e57de`, artefato
+  `promotion-evidence-core-api` (`8822747958`). A versão publicada foi
+  `a23378ba-9211-4a6a-a0d5-8a705eb306d6`.
+- Produção: run `30714037253`, sucesso, predecessor `30713914600`, mesmos
+  `unit`, SHA e `bootstrap_finance_context=false`. A versão publicada foi
+  `fb108b02-9869-4524-9a4a-d939b09636b3`, deployment Cloudflare
+  `bf7afbf3-3560-4f4a-9cbd-fac344400ddc` a 100%; o smoke automático passou.
+
+Em staging e produção, cinco rodadas independentes de
+`/health`, `/readiness`, `/finance/health` e `/finance/readiness` retornaram
+HTTP 200 e o SHA `135a54fd…`. D1 e `module_control` ficaram `healthy`; o
+gateway Finance reportou `x-skincos-dependency-status=live` e
+`x-skincos-sync-state=current`. Não houve 503 artificial no caminho de
+health/readiness ou latência instável. A leitura de dados sem identidade é
+rejeitada de forma fail-closed (API retorna `IDENTITY_UNAVAILABLE`/503 e o
+Worker direto `SERVICE_IDENTITY_REQUIRED`/401); isso não é uma leitura
+funcional autenticada, mas confirma que nenhuma leitura Finance é exposta sem
+o envelope de serviço. A leitura operacional segura pelo caminho esperado da
+API é o par Finance health/readiness acima.
+
+### Runtime local, alertas e rollback
+
+O monitor foi reinstalado do worktree limpo no SHA `135a54fd…`, em
+`operator-run-key`, preservando
+`C:\CodexRuntime\operator\admin\skincos\checkpoints\observability-pre-ba16-20260730T0105Z`.
+Os hashes SHA-256 de `catalog.json` e dos quatro scripts instalados coincidem
+com `ops/observability` do worktree limpo. O dashboard loopback `/health` e
+`/metrics` retornam HTTP 200; há exatamente um supervisor e um dashboard.
+`latest.json` mostra API e Finance production saudáveis, ambos no SHA
+`135a54fd…`, e o controlled-alert-drill está idle/healthy.
+
+`Test-SkincosObservability.ps1` passou integralmente no código reinstalado,
+cobrindo alerta somente após duas falhas, recuperação sem popup, cooldown de
+15 minutos, expiração de 30 segundos, retenção/expiração, concorrência e
+deduplicação do watchdog. A sessão não elevada continua sem permissão para o
+Windows Application Event Log; os avisos `event-log-write-failed` do teste
+foram registrados como limitação secundária, sem impedir o fallback de alerta
+desktop nem gerar spam na execução saudável.
+
+Rollback Finance: redeploy de 100% da versão anterior
+`3775b4d2-4139-4e70-a55a-1a0a451985b0` (deployment
+`f2028add-8d48-4396-b2f4-5d77ab80b359`) e restauração do checkpoint cifrado
+`8822598078` somente pelo workflow canônico. Rollback API: versão anterior
+`7853381c-79da-4727-9d26-f60743f3f042` (deployment
+`8498b072-cf07-491c-bba2-4ee2c33ecc54`). Preservar ambos os artefatos,
+revalidar health/readiness/binding e não executar migração reversa manual.
