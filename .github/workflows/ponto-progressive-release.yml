@@ -301,22 +301,19 @@ jobs:
           target=production
           [[ "$STAGE" == staging ]] && target=staging
           gh api "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/ponto-capability-repository-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/ponto-capability-repository-variables.json"
           gh api "repos/$GITHUB_REPOSITORY/environments/$target/secrets?per_page=100" > "$RUNNER_TEMP/ponto-capability-environment-secrets.json"
           node - \
             "$RUNNER_TEMP/ponto-capability-repository-secrets.json" \
-            "$RUNNER_TEMP/ponto-capability-repository-variables.json" \
             "$RUNNER_TEMP/ponto-capability-environment-secrets.json" <<'NODE'
           const fs = require("fs");
           const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
           const repositorySecrets = names(process.argv[2], "secrets");
-          const repositoryVariables = names(process.argv[3], "variables");
-          const environmentSecrets = names(process.argv[4], "secrets");
+          const environmentSecrets = names(process.argv[3], "secrets");
           const privateName = "PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY";
-          const publicMapName = "PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON";
+          const publicMap = String(process.env.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON || "").trim();
           const violations = [];
           if (repositorySecrets.has(privateName)) violations.push("repository-private-present");
-          if (!repositoryVariables.has(publicMapName)) violations.push("repository-public-map-missing");
+          if (!publicMap) violations.push("repository-public-map-context-missing");
           if (!environmentSecrets.has(privateName)) violations.push("target-environment-private-missing");
           if (violations.length) {
             throw new Error(`Ponto Ed25519 signer custody contract failed: ${violations.join(",")}`);
