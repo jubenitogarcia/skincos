@@ -501,7 +501,7 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Emergency stop checkout differs from the trusted workflow revision'; exit 1; }
       - name: Verify target-bound public emergency capability custody
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           TARGET: ${{ inputs.target }}
           PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
@@ -515,7 +515,8 @@ jobs:
           const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
           if (
             names(process.argv[2], "secrets").has("PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY")
-            || !names(process.argv[3], "variables").has("PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON")
+            || (!names(process.argv[3], "variables").has("PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON")
+              && !String(process.env.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON || "").trim())
             || !names(process.argv[4], "secrets").has("PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY")
           ) throw new Error("Emergency capability verifier must be target-bound and non-secret");
           NODE

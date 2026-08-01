@@ -10,10 +10,12 @@ import {
   captureSnapshot,
   execute,
   publicSnapshot,
+  waitForEdgePropagation,
   writableRule,
 } from "./ponto-waf-security.mjs";
 
 const zoneId = "1".repeat(32);
+const accountId = "6".repeat(32);
 const rulesetId = "2".repeat(32);
 const headerRuleId = "3".repeat(32);
 const contractRuleId = "4".repeat(32);
@@ -51,6 +53,14 @@ test("standalone WAF apply proves split custody before write-token hydration", (
   assert.match(
     workflow.slice(custodyIndex, writeIndex),
     /!repository\.has\(read\)[\s\S]*repository\.has\(write\)[\s\S]*owner\.has\(read\)[\s\S]*owner\.has\(write\)[\s\S]*staging\.has\(read\)[\s\S]*staging\.has\(write\)[\s\S]*production\.has\(read\)[\s\S]*!production\.has\(write\)/,
+  );
+});
+
+test("WAF edge propagation wait is bounded and testable", async () => {
+  await waitForEdgePropagation({ delayMs: 0 });
+  await assert.rejects(
+    waitForEdgePropagation({ delayMs: 60_001 }),
+    /propagation delay is invalid/,
   );
 });
 
@@ -135,7 +145,7 @@ function cloudflareHarness(initialEntrypoint = null) {
     if (parsed.origin === "https://api.cloudflare.com") {
       assert.equal(new Headers(init.headers).get("authorization"), "Bearer security-token");
       state.methods.push({ method, pathname: parsed.pathname });
-      if (parsed.pathname === "/client/v4/user/tokens/verify") {
+      if (parsed.pathname === `/client/v4/accounts/${accountId}/tokens/verify`) {
         return envelope({ status: "active" });
       }
       if (parsed.pathname === `/client/v4/zones/${zoneId}`) {
@@ -218,10 +228,12 @@ function cloudflareHarness(initialEntrypoint = null) {
 const envFor = (mode, artifactDir) => ({
   PONTO_WAF_MODE: mode,
   CLOUDFLARE_ZONE_ID: zoneId,
+  CLOUDFLARE_ACCOUNT_ID: accountId,
   [mode === "probe" ? "PONTO_WAF_READ_API_TOKEN" : "PONTO_WAF_WRITE_API_TOKEN"]: "security-token",
   GITHUB_SHA: releaseSha,
   GITHUB_RUN_ID: mode === "probe" ? "100" : "101",
   PONTO_WAF_ARTIFACT_DIR: artifactDir,
+  PONTO_WAF_EDGE_PROPAGATION_DELAY_MS: "0",
 });
 
 test("contract uses supported fail-closed Cloudflare Rules language primitives", () => {
@@ -307,7 +319,7 @@ test("probe is GET-only, proves exact zone/read scope and validates both express
   assert.equal(report.passed, true);
   assert.equal(report.mutated, false);
   assert.equal(report.custody.customRulesetPresent, false);
-  assert.equal(report.custody.expressionDialectValidated, true);
+  assert.equal(report.custody.expressionContractValidated, true);
   assert.equal(report.custody.expressionDigests.length, 2);
   assert.equal(harness.state.methods.every((request) => request.method === "GET"), true);
   assert.equal(JSON.stringify(report).includes("security-token"), false);
