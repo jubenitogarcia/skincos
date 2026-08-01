@@ -29,4 +29,7 @@ regexes = [
   # Ponto replay-containment ledgers. The Cloudflare default rule otherwise
   # mistakes these public resource names for API keys.
   '''^skincos-ponto-fenced-(production|staging)-20260730$''',
+  # Exact public deployment identity recorded in the reconciled evidence
+  # ledger. It is not a credential and is intentionally kept auditable.
+  '''^8498b072-cf07-491c-bba2-4ee2c33ecc54$''',
 ]
