@@ -312,7 +312,7 @@ async function readEntrypoint(client, zoneId) {
 async function verifyCustody(client, zoneId) {
   const zone = await client.request(`/zones/${zoneId}`);
   const accountId = String(zone.result?.account?.id || "").toLowerCase();
-  if (!HEX32.test(accountId)) throw new Error("Cloudflare security token did not resolve an account-scoped zone");
+  if (!HEX32.test(accountId)) throw new Error("Cloudflare zone response did not include a usable account id for token verification");
   const token = await client.request(`/accounts/${accountId}/tokens/verify`);
   if (token.result?.status !== "active") throw new Error("Cloudflare security token is not active");
   if (
