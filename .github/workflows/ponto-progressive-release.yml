@@ -192,7 +192,7 @@ jobs:
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/pulls" > "$RUNNER_TEMP/ponto-release-pulls.json"
-          gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/ponto-release-checks.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/ponto-release-checks.json"
           node - "$RUNNER_TEMP/ponto-release-pulls.json" "$RUNNER_TEMP/ponto-release-checks.json" <<'NODE'
           const fs = require("fs");
           const read = file => JSON.parse(fs.readFileSync(file, "utf8"));
@@ -206,7 +206,10 @@ jobs:
             && String(pr?.head?.repo?.full_name || "") === process.env.GITHUB_REPOSITORY
           );
           if (merged.length !== 1) throw new Error("immutable release SHA lacks exactly one canonical merged PR into main");
-          const byName = new Map((checks.check_runs || []).map(run => [String(run.name || ""), run]));
+          const checkRuns = Array.isArray(checks)
+            ? checks.flatMap(page => Array.isArray(page?.check_runs) ? page.check_runs : [])
+            : (checks.check_runs || []);
+          const byName = new Map(checkRuns.map(run => [String(run.name || ""), run]));
           for (const name of policy.governance.requiredChecks || []) {
             const run = byName.get(name);
             if (!run || run.conclusion !== "success") throw new Error(`required check is not successful for immutable release SHA: ${name}`);
