@@ -309,7 +309,7 @@ async function readEntrypoint(client, zoneId) {
   return response.status === 404 ? null : response.result;
 }
 
-async function verifyCustody(client, zoneId, accountId) {
+async function verifyCustody(client, accountId) {
   if (!HEX32.test(accountId)) throw new Error("Cloudflare account id for token verification is invalid");
   const token = await client.request(`/accounts/${accountId}/tokens/verify`);
   if (token.result?.status !== "active") throw new Error("Cloudflare security token is not active");
@@ -615,7 +615,7 @@ export async function execute({
   let before;
   let after;
   try {
-    const custody = await verifyCustody(client, zoneId, accountId);
+    const custody = await verifyCustody(client, accountId);
     const entrypoint = await readEntrypoint(client, zoneId);
     before = captureSnapshot(entrypoint);
     const preimage = publicSnapshot(before);
