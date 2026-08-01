@@ -388,3 +388,18 @@ operacionais sintéticos nunca entram nesse registro.
 - PIN bloqueado: aguardar `locked_until`; RH pode redefinir credencial, nunca consultar o PIN.
 - Dispositivo comprometido: revogar cadastro, revisar auditoria pelo `deviceId` e emitir novo token mostrado uma vez.
 - Divergência de cálculo: não editar evento; abrir correção, recalcular período aberto ou reabrir formalmente o fechado.
+# Revalidacao operacional — 2026-08-01
+
+O SHA `0ebfcfb57d42e225efc605405938d49c6acc67e5` foi executado somente pelo
+coordenador canônico. O preview `30721745126` passou para Timekeeping, Core
+Inventory, Core API e CRM Pages. O staging não está aprovado: `30722077457`
+falhou no gate de checks ausentes; `30722290342` e `30722510118` foram
+cancelados pelo fail-close; as recuperações `30722303882`, `30722308654` e
+`30722594377` não observaram propagação externa de maintenance em 150 s.
+
+Não interpretar preview, CI ou código integrado como evidência de staging,
+canary, piloto ou produção. Antes de nova tentativa, resolver a leitura de
+propagação externa e confirmar o mutex/latch de staging; manter produção
+intocada. O Financeiro continua `experimental` e desativado, e o Ponto não
+deve ser promovido enquanto o gate de staging e a jornada sintética não
+estiverem verdes.

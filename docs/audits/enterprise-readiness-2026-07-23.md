@@ -32,3 +32,15 @@ Os endpoints e contratos de saúde não eram uniformes na verificação anterior
 ## Critério de saída da baseline
 
 A auditoria será substituída por evidência operacional quando cada fluxo crítico possuir: pipeline canônico, artefato/versionamento, health/readiness padronizado, flag e rollback, backup e restore isolado, teste de degradação e registro de aprovação de produção. Até então, as lacunas acima são riscos conhecidos e devem ser tratadas na ordem do plano executivo.
+# Atualizacao autoritativa — 2026-08-01
+
+Base atual: `origin/main` `0ebfcfb57d42e225efc605405938d49c6acc67e5`.
+Financeiro permanece `experimental` e desativado; as evidências válidas são
+as da cadeia imutável `1a8eeec5...` (staging/canary/rollback/restore), sem
+piloto. Insumos P0 permanece resolvido. Ponto teve preview verde
+(`30721745126`), mas não staging verde: `30722077457` falhou por checks
+ausentes e as tentativas/recuperações seguintes (`30722290342`, `30722510118`,
+`30722303882`, `30722308654`, `30722594377`) ficaram fail-closed sem
+propagação externa de maintenance observável em 150 s. Identity continua em
+compatibilidade e depende de escrow/owner para corte físico. Não houve
+alteração de produção, flags, grants, usuários, secrets ou dados.

@@ -142,13 +142,13 @@
       "id": "finance",
       "maturity": "experimental",
       "readiness": {
-        "assessedAt": "2026-07-31T23:55:00Z",
+        "assessedAt": "2026-08-01T23:15:00Z",
         "state": "experimental",
         "integratedImportStateMachine": "PR #815 / 32bf3ebb296ca95e3273bb4fed664480eb5642e5",
-        "stagingBaseline": "The explicitly selected main SHA 1a8eeec5a188301635603a3ecbd2eb4c8b18368c is proven through candidate 30673147811, Worker/UI preview 30673438315/30673439481, staging 30673466768/30673467862 and canary 30673602091; abort/kill-switch drill 30673708958 restored the disabled baseline. origin/main later advanced to 3682518e69840c34904fae5f1432917ffd04217a in security-only PR #974.",
+        "stagingBaseline": "The explicitly selected main SHA 1a8eeec5a188301635603a3ecbd2eb4c8b18368c is proven through candidate 30673147811, Worker/UI preview 30673438315/30673439481, staging 30673466768/30673467862 and canary 30673602091; abort/kill-switch drill 30673708958 restored the disabled baseline. The current origin/main is 0ebfcfb57d42e225efc605405938d49c6acc67e5 and is not being claimed as a Finance promotion.",
         "provenCapabilities": ["staging rollback", "remote kill switch", "isolated scratch restore", "fresh PostgreSQL offsite restore", "continuous external monitor with controlled human alert and recovery", "immutable staging lineage and synthetic authenticated import/UI canary"],
         "openGates": ["nominal pilot approval with named owners, unit/cohort, window, support and training", "pilot-only grants and flag activation after approval", "post-pilot success and observation evidence"],
-        "production": "isolated foundation provisioned and promoted at selected SHA 1a8eeec5a188301635603a3ecbd2eb4c8b18368c (Worker 30673820551, UI 30673971801); module_enabled=false, real grants=0, no pilot"
+        "production": "isolated foundation provisioned and promoted at selected SHA 1a8eeec5a188301635603a3ecbd2eb4c8b18368c (Worker 30673820551, UI 30673971801); module_enabled=false, real grants=0, no pilot; no current-main Finance promotion is claimed"
       },
       "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },
       "dataOwnership": ["Ledger, accounts, obligations, movements, imports, access grants and finance audit trail"],
@@ -342,6 +342,17 @@
     {
       "id": "workforce",
       "maturity": "experimental",
+      "readiness": {
+        "assessedAt": "2026-08-01T23:15:00Z",
+        "state": "experimental",
+        "releaseSha": "0ebfcfb57d42e225efc605405938d49c6acc67e5",
+        "previewRun": 30721745126,
+        "stagingRuns": [30722077457, 30722290342, 30722510118],
+        "stagingGreen": false,
+        "recoveryRuns": [30722303882, 30722308654, 30722594377],
+        "openGates": ["external maintenance propagation observable in staging", "authenticated synthetic journey", "backup/restore and rollback evidence on this SHA", "approved pilot identity and cohort"],
+        "limitation": "Preview and hosted CI are not staging or pilot evidence; no production mutation was performed."
+      },
       "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },
       "dataOwnership": ["Staff schedule, time punches, employee terminal/device context, approvals and timekeeping audit data"],
       "dependencies": { "hard": ["shared"], "optional": [] },

@@ -1,6 +1,28 @@
 # Current blockers
 
-## Snapshot autoritativo atual — 2026-08-01T00:04:46Z — main `3f3749016b348ed9ce690b7750ad50a6fed7e8b0`
+## Snapshot autoritativo de fechamento — 2026-08-01T23:15:00Z — main `0ebfcfb57d42e225efc605405938d49c6acc67e5`
+
+- **Insumos:** nenhum P0/P1 atual; o incidente por unidade permanece resolvido.
+- **Financeiro:** permanece bloqueado apenas pela aprovação nominal do piloto
+  (owner técnico/operacional, revisor, unidade/coorte, janela, suporte,
+  treinamento e thresholds). `module_enabled`, grants e usuários devem ficar
+  inalterados.
+- **Ponto:** bloqueio técnico atual é a ausência de propagação externa
+  observável do estado de maintenance em staging. O preview
+  `30721745126` passou; staging `30722077457` falhou antes de mutação por
+  checks inexistentes; `30722290342`/`30722510118` foram cancelados pelo
+  fail-close; recuperações `30722303882`/`30722308654`/`30722594377` não
+  fecharam a prova de propagação em 150 s. Não tratar código integrado como
+  evidência de ambiente.
+- **Identity:** escrow/owner da `IDENTITY_PII_KEY` e coexistência/rollback do
+  corte físico continuam dependentes de decisão humana.
+- **PRs independentes:** #736 continua draft/DIRTY e #764 draft com checks
+  instáveis; não são bloqueios desta reconciliação e não foram alteradas.
+
+Não há autorização nesta PR para produção, flags, grants, usuários, secrets,
+dados ou transferência de Organization.
+
+## Histórico — snapshot anterior — 2026-08-01T00:04:46Z — main `3f3749016b348ed9ce690b7750ad50a6fed7e8b0`
 
 - **Nenhum P0/P1 de Insumos:** o incidente por unidade permanece resolvido e
   nao houve novo sintoma.
