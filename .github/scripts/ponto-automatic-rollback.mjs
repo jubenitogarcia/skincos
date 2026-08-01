@@ -44,6 +44,12 @@ const expectedPagesAlias = staging ? "crm-staging.skincos.com.br" : "crm.skincos
 const expectedModuleHealthUrl = staging
   ? "https://api-staging.skincos.com.br/api/ponto/health"
   : "https://api.skincos.com.br/api/ponto/health";
+const accessHeaders = {};
+if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
+  if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) throw new Error("partial Cloudflare Access credential");
+  accessHeaders["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
+  accessHeaders["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
+}
 
 if (!artifactRoot || !reportFile) throw new Error("automatic rollback artifact root and report path are required");
 if (!/^[0-9a-f]{40}$/.test(releaseSha) || !["staging", "pilot", "canary", "production"].includes(stage)) throw new Error("invalid automatic rollback identity");
@@ -98,7 +104,7 @@ const readExternalModuleHealth = async () => {
     const response = await fetch(moduleHealthUrl, {
       redirect: "manual",
       signal: AbortSignal.timeout(15_000),
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", ...accessHeaders },
     });
     const payload = await response.json().catch(() => null);
     const availability = payload?.availability;
@@ -893,12 +899,6 @@ for (const name of ["coreApi", "identityWorkforce", "timekeeping"]) {
   if (plan[name]) rollbackWorker(name, plan[name]);
 }
 
-const accessHeaders = {};
-if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
-  if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) throw new Error("partial Cloudflare Access credential");
-  accessHeaders["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
-  accessHeaders["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
-}
 const external = {};
 if (plan.identityWorkforce && proofs.identityWorkforce?.passed) {
   try {
