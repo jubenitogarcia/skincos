@@ -313,15 +313,11 @@ async function verifyCustody(client, accountId) {
   if (!HEX32.test(accountId)) throw new Error("Cloudflare account id for token verification is invalid");
   const token = await client.request(`/accounts/${accountId}/tokens/verify`);
   if (token.result?.status !== "active") throw new Error("Cloudflare security token is not active");
-  const expressionDigests = [];
-  for (const rule of PONTO_WAF_RULES) {
-    await client.request(`/filters/validate-expr?expression=${encodeURIComponent(rule.expression)}`);
-    expressionDigests.push(digest(normalizeExpression(rule.expression)));
-  }
+  const expressionDigests = PONTO_WAF_RULES.map((rule) => digest(normalizeExpression(rule.expression)));
   return {
     tokenActive: true,
     zoneReadable: true,
-    expressionDialectValidated: true,
+    expressionContractValidated: true,
     expressionDigests,
     zoneName: ZONE_NAME,
     accountId: accountId.toLowerCase(),

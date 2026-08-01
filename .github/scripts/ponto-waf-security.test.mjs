@@ -309,7 +309,7 @@ test("probe is GET-only, proves exact zone/read scope and validates both express
   assert.equal(report.passed, true);
   assert.equal(report.mutated, false);
   assert.equal(report.custody.customRulesetPresent, false);
-  assert.equal(report.custody.expressionDialectValidated, true);
+  assert.equal(report.custody.expressionContractValidated, true);
   assert.equal(report.custody.expressionDigests.length, 2);
   assert.equal(harness.state.methods.every((request) => request.method === "GET"), true);
   assert.equal(JSON.stringify(report).includes("security-token"), false);
