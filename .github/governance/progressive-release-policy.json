@@ -84,22 +84,22 @@
       "jitSupervisorCustodyRef": null,
       "jitCleanupHookCustodyRef": null
     },
-    "production": {
-      "runnerId": null,
-      "runnerName": null,
-      "runnerIsolationRef": null,
-      "requiredLabels": null,
-      "networkContextCustodyRef": null,
-      "encryptionPublicKeySha256": null,
-      "jitMode": null,
-      "jitAttestationKeyId": null,
-      "jitAttestationPublicKeyPem": null,
-      "jitAttestationFilePath": null,
-      "jitCredentialBundleFilePath": null,
-      "jitDecryptKeyFilePath": null,
-      "jitSupervisorCustodyRef": null,
-      "jitCleanupHookCustodyRef": null
-    }
+      "production": {
+        "runnerId": 23,
+        "runnerName": "ponto-jit-e307a5ad92b34cbc8d8d1d3c",
+        "runnerIsolationRef": "vault:v1:ponto-jit-runner-production-e307a5ad92b34cbc8d8d1d3c",
+        "requiredLabels": ["self-hosted", "Linux", "X64", "ponto-jit-e307a5ad92b34cbc8d8d1d3c"],
+        "networkContextCustodyRef": "vault:v1:ponto-network-context-production",
+        "encryptionPublicKeySha256": "b6591e908f4f5f876ce2b29fd2bb0fc3c0fd6a781d9319a746f081b2a5b53a01",
+        "jitMode": "ephemeral-pre-job-hook-ed25519-v1",
+        "jitAttestationKeyId": "ponto-jit-attestation-v1",
+        "jitAttestationPublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAAMGQc7MB9Man35lcCjmQC8zCl4Fvho5Q9kcPionZ504=\n-----END PUBLIC KEY-----\n",
+        "jitAttestationFilePath": "/var/lib/skincos/ponto-jit/attestation.json",
+        "jitCredentialBundleFilePath": "/var/lib/skincos/ponto-jit/credentials.enc",
+        "jitDecryptKeyFilePath": "/var/lib/skincos/ponto-jit/decrypt.key",
+        "jitSupervisorCustodyRef": "vault:v1:ponto-jit-supervisor-production",
+        "jitCleanupHookCustodyRef": "vault:v1:ponto-jit-cleanup-production"
+      }
   },
   "criticalUnits": {
     "core-workers": {"featureFlag": "deployment gate ENABLE_CORE_WORKERS_DEPLOY plus module-control:timekeeping", "killSwitch": "module-control:timekeeping=maintenance or disabled for Ponto traffic", "rollback": "pre-pilot attested route-isolated Ponto Core and Identity/Inventory versions through deploy-core-workers.yml", "pilotCanary": "Ponto never split-deploys the shared skincos-api Worker. The private no-route skincos-ponto-core candidate is pinned to exact Timekeeping and remains at 0 percent default traffic for pilot and canary; Pages selects it only through an internal service binding for the conjunctively authorized cohort. Shared Core versions plus Finance and Inventory probes must remain unchanged. Identity/Inventory stays at 0 percent default traffic and its candidate contract is probed only through a protected internal binding."},
