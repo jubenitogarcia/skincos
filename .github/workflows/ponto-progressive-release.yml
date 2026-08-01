@@ -1778,17 +1778,36 @@ jobs:
           node - "$directory/maintenance.json" \
             "$directory/overlay-expectation.json" \
             "$directory/control-fallback-expectation.json" <<'NODE'
+          (async () => {
           const fs = require("fs");
           const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const probe = new URL(process.env.PONTO_MODULE_HEALTH_URL);
+          probe.searchParams.set("recovery_close_probe", process.env.PONTO_FAILED_COORDINATOR_RUN_ID);
+          const response = await fetch(probe, {
+            headers: { accept: "application/json", "cache-control": "no-cache" },
+          });
+          const body = await response.json().catch(() => null);
+          const availability = body?.availability;
+          if (
+            response.status !== 200
+            || availability?.state !== "maintenance"
+            || availability?.source !== "control"
+            || !Number.isFinite(Date.parse(String(availability?.changedAt || "")))
+          ) throw new Error("recovery fail-close did not observe exact incumbent maintenance control");
           fs.writeFileSync(process.argv[3], `${JSON.stringify({
             state: "maintenance",
             changedAt: maintenance.latchChangedAt,
           })}\n`, { mode: 0o600 });
+          // The broker's control timestamp is authoritative for the write, but
+          // an idempotent close may return an older incumbent timestamp. Bind
+          // the fallback to the exact timestamp observed from the live control
+          // endpoint instead of waiting for a timestamp that cannot propagate.
           fs.writeFileSync(process.argv[4], `${JSON.stringify({
             state: "maintenance",
-            changedAt: maintenance.controlChangedAt,
+            changedAt: availability.changedAt,
             source: "control",
           })}\n`, { mode: 0o600 });
+          })().catch((error) => { console.error(error); process.exitCode = 1; });
           NODE
           PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
           PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
