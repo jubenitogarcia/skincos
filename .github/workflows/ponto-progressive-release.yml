@@ -292,7 +292,10 @@ jobs:
       - name: Verify target-bound asymmetric child capability custody
         if: ${{ inputs.stage != 'preview' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Repository/environment secret metadata needs the protected
+          # read-only administration token; the automatic token is not granted
+          # the repository-secrets scope.
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY: ${{ secrets.PONTO_ORCHESTRATOR_CAPABILITY_PRIVATE_KEY }}
           PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
         run: |
