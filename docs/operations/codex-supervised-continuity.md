@@ -70,14 +70,20 @@ the current `trusted_hash` and `enabled = true`. A trusted entry without
 `enabled = true` is not acceptance evidence: the real proof must still show a
 `block_and_continue` event and an automatically generated second turn.
 
-Trust and enablement are read when an App session is initialized. A background
-follow-up sent to an already-existing thread is not a substitute for opening a
-fresh interactive App session in the standalone activation clone after the
-Trust/Enable review. If that session emits a valid `continue` contract but its
-thread has no Stop-hook event and no generated second turn, classify the result
-as `app_hook_not_loaded`; preserve the thread/turn identifiers and sanitized
-evidence, clean the temporary artifact, and do not retry the same session. The
-acceptance check is intentionally strict:
+After a Trust/Enable review or a trusted-hook command update, fully close and
+reopen the Windows Desktop App before opening the fresh interactive App session
+in the standalone activation clone. A new top-level chat in a Desktop process
+that was already running is not evidence that its in-memory project-hook
+registry reloaded the current configuration. A background follow-up sent to an
+already-existing thread is not a substitute for that fresh interactive App
+session.
+
+If that session emits a valid `continue` contract but its thread has no
+project Stop-hook event and no generated second turn, classify the result as
+`app_hook_not_loaded`; preserve the thread/turn identifiers, sanitized
+evidence, and the reversible marker as frozen failure evidence, then do not
+retry the same session. A global Stop-hook event alone does not establish that
+the project hook was loaded. The acceptance check is intentionally strict:
 
 ```powershell
 python .\scripts\validate-codex-app-proof.py <sanitized-evidence.json>
