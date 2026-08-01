@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "authoritative_at": "2026-07-31T23:55:00Z",
-  "source_main_sha": "3682518e69840c34904fae5f1432917ffd04217a",
-  "source_main_state": "current-main-security-update-after-explicit-finance-selection-disabled-production-foundation-pilot-approval-pending",
+  "authoritative_at": "2026-08-01T00:04:46Z",
+  "source_main_sha": "3f3749016b348ed9ce690b7750ad50a6fed7e8b0",
+  "source_main_state": "current-main-docs-only-merge-after-explicit-finance-selection-disabled-production-foundation-pilot-approval-pending",
   "items": [
     {
       "id": "p0-workforce-timekeeping-current-main-release",
@@ -865,11 +865,12 @@
       ],
       "done_definition": "A single immutable current-main Finance artifact lineage is healthy in staging and has passed the controlled synthetic authenticated journey; Finance remains experimental and disabled.",
       "next_item": "finance-pilot-approval",
-      "last_verified": "2026-07-31T23:55:00Z",
+      "last_verified": "2026-08-01T00:04:46Z",
       "evidence": {
         "current_staging_sha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
         "origin_main_at_selection": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
         "current_origin_main_sha": "3682518e69840c34904fae5f1432917ffd04217a",
+        "current_origin_main_after_reconciliation": "3f3749016b348ed9ce690b7750ad50a6fed7e8b0",
         "candidate_run": 30673147811,
         "worker_preview_run": 30673438315,
         "worker_staging_run": 30673466768,
@@ -932,7 +933,7 @@
       "required_evidence": ["approved nominal pilot package", "all staging/recovery gates"],
       "done_definition": "Named approval is recorded; production activation remains a separate explicit command.",
       "next_item": null,
-      "last_verified": "2026-07-31T23:55:00Z",
+      "last_verified": "2026-08-01T00:04:46Z",
       "evidence": {
         "release_sha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
         "staging_canary": 30673602091,

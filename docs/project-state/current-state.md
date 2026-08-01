@@ -1,10 +1,12 @@
 # Current state
 
-## Fonte autoritativa atual — `origin/main` `3682518e69840c34904fae5f1432917ffd04217a` — 2026-07-31T23:55Z
+## Fonte autoritativa atual — `origin/main` `3f3749016b348ed9ce690b7750ad50a6fed7e8b0` — 2026-08-01T00:04:46Z
 
-O SHA remoto atual foi revalidado apos #974. A promocao Finance selecionou
-explicitamente `1a8eeec5a188301635603a3ecbd2eb4c8b18368c` quando #973 era a
-main; #974 e posterior, security-only, e nao altera a proveniencia do artefato.
+O SHA remoto atual e o merge somente documental da PR #976. O baseline de
+codigo revalidado antes desse merge foi `3682518e...` apos #974. A promocao
+Finance selecionou explicitamente `1a8eeec5a188301635603a3ecbd2eb4c8b18368c`
+quando #973 era a main; #974 e posterior, security-only, e nao altera a
+proveniencia do artefato.
 Os blocos abaixo sao historicos e nao substituem este snapshot.
 
 ### Financeiro
@@ -14,7 +16,8 @@ Os blocos abaixo sao historicos e nao substituem este snapshot.
 - Linhagem imutavel promovida: SHA selecionado `1a8eeec5...`; candidata
   `30673147811`; Worker/UI preview `30673438315`/`30673439481`; staging
   `30673466768`/`30673467862`; canary `30673602091`; abort/kill switch
-  `30673708958`. Todos usam o mesmo SHA; `origin/main` atual e `3682518e...`.
+  `30673708958`. Todos usam o mesmo SHA; o baseline de codigo da selecao foi
+  `1a8eeec5...`, e a `origin/main` atual e o merge documental `3f374901...`.
 - Evidencia de staging: health/readiness/bootstrap/contas/categorias 200,
   import stage/analyze/decision/preview/commit/replay/conflict/audit/undo e
   limpeza sintetica aprovados; 22 amostras, p95 192 ms, zero breaches.
