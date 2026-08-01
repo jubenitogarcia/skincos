@@ -72,9 +72,16 @@ export function normalizeRecoveryEvidence({
     || maintenance?.piiIncluded !== false
   ) throw new Error("broker maintenance evidence is invalid");
 
+  // An idempotent broker maintenance call can return the timestamp it saw
+  // before the live control read. For the control fallback, the externally
+  // observed timestamp is the exact value that the rollback attestation must
+  // bind to; the latch path still uses the broker latch timestamp.
   const exactPropagationChangedAt = propagation?.matchedSource === "control"
-    ? maintenance.controlChangedAt
+    ? String(propagation.changedAt || "")
     : maintenance.latchChangedAt;
+  const exactControlChangedAt = propagation?.matchedSource === "control"
+    ? exactPropagationChangedAt
+    : maintenance.controlChangedAt;
   if (
     propagation?.schemaVersion !== 1
     || propagation?.module !== "timekeeping"
@@ -116,7 +123,7 @@ export function normalizeRecoveryEvidence({
       custodyRef: String(maintenance.custodyRef || ""),
       state: "maintenance",
       latched: true,
-      controlChangedAt: maintenance.controlChangedAt,
+      controlChangedAt: exactControlChangedAt,
       latchChangedAt: maintenance.latchChangedAt,
       emergencyLatchRef: {
         stopRunId: coordinatorRunId,
