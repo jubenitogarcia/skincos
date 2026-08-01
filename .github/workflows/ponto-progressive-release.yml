@@ -1772,6 +1772,7 @@ jobs:
       - name: Prove external fail-close through overlay or exact incumbent control
         env:
           PONTO_MODULE_HEALTH_URL: ${{ inputs.stage == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
+          PONTO_RECOVERY_PROBE_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           directory="$RUNNER_TEMP/ponto-ordinary-recovery"
@@ -1782,7 +1783,7 @@ jobs:
           const fs = require("fs");
           const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const probe = new URL(process.env.PONTO_MODULE_HEALTH_URL);
-          probe.searchParams.set("recovery_close_probe", process.env.PONTO_FAILED_COORDINATOR_RUN_ID);
+          probe.searchParams.set("recovery_close_probe", process.env.PONTO_RECOVERY_PROBE_RUN_ID);
           const response = await fetch(probe, {
             headers: { accept: "application/json", "cache-control": "no-cache" },
           });
