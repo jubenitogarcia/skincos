@@ -1621,8 +1621,6 @@ jobs:
         run: node .github/scripts/ponto-emergency-latch-write.mjs
       - name: Attempt external overlay propagation before reconciliation
         env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           PONTO_MODULE_HEALTH_URL: ${{ inputs.stage == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
         run: |
           set -euo pipefail
@@ -1773,8 +1771,6 @@ jobs:
         run: node .github/scripts/ponto-emergency-maintenance-write.mjs
       - name: Prove external fail-close through overlay or exact incumbent control
         env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           PONTO_MODULE_HEALTH_URL: ${{ inputs.stage == 'staging' && 'https://api-staging.skincos.com.br/api/ponto/health' || 'https://api.skincos.com.br/api/ponto/health' }}
         run: |
           set -euo pipefail
@@ -1886,8 +1882,6 @@ jobs:
           PRODUCTION_PAGES_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
           STAGING_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
           PRODUCTION_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           case "$STAGE" in
