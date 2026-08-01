@@ -1,6 +1,34 @@
 # Current blockers
 
-## Snapshot autoritativo — 2026-07-31T16:30Z — main `d34488afc5b8ea668241382e24f30c745798e033`
+## Snapshot autoritativo atual — 2026-08-01T00:04:46Z — main `3f3749016b348ed9ce690b7750ad50a6fed7e8b0`
+
+- **Nenhum P0/P1 de Insumos:** o incidente por unidade permanece resolvido e
+  nao houve novo sintoma.
+- **Financeiro (bloqueio humano minimo):** staging, canary, rollback, kill
+  switch, restore e fundacao produtiva desativada estao comprovados no SHA
+  selecionado `1a8eeec5...`; o baseline de codigo foi `3682518e...` por #974 e
+  o merge documental #976 produziu `3f374901...`, sem alterar a linhagem Finance.
+  Permanece apenas a aprovacao nominal de owner tecnico,
+  owner operacional, revisor, unidade/coorte, janela, suporte, treinamento e
+  thresholds de abort. Sem essa ficha, `module_enabled` e grants devem ficar
+  inalterados.
+- **Observabilidade:** o monitor externo opera continuamente durante a sessao
+  do operador em modo `operator-run-key`; o alerta humano Windows foi validado.
+  Event Log nao esta confirmado na sessao nao elevada. Uma instalacao elevada
+  continua sendo melhoria operacional, nao bloqueio do staging Finance.
+- **Ponto:** #971 integrou o codigo, mas WAF least-privilege, runner JIT com
+  attestation, identidade sintetica aprovada, SLO externo e custodia ainda sao
+  gates externos; nao selecionar SHA nem promover.
+- **Identity:** custodia/escrow autorizado para `IDENTITY_PII_KEY` e o plano de
+  dual-read/restore do corte fisico ainda dependem de owner humano; nao alterar
+  chave, sessoes ou dados.
+- **PRs independentes:** #736 continua draft/DIRTY e #764 draft/BEHIND; nao sao
+  bloqueios do Financeiro e nao foram alteradas nesta reconciliacao.
+
+As secoes posteriores preservam contexto historico e nao devem ser usadas para
+reabrir os bloqueios removidos neste snapshot.
+
+## Historico — snapshot — 2026-07-31T16:30Z — main `d34488afc5b8ea668241382e24f30c745798e033`
 
 - PRs #943/#945/#934/#936/#937/#938/#939 estao integradas com checks verdes;
   o main atual e `d34488af...`.
@@ -20,7 +48,7 @@
   identidade piloto Workforce sintetica autorizada e SLO externo. Nao ha
   connector de Identity/Workforce ou runner JIT disponivel nesta sessao.
 
-## Snapshot autoritativo — 2026-07-31T14:37Z
+## Historico — snapshot — 2026-07-31T14:37Z
 
 - **P0/P1 atual:** nenhum novo bloqueio de Insumos; o P0 continua resolvido.
 - **Financeiro:** staging completo existe para `ba16cb4a...`, mas nao para o

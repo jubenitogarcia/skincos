@@ -17,5 +17,54 @@
       "documentation": "docs/architecture/module-catalog.md"
     }
   },
-  "promotions": {}
+  "promotions": {
+    "finance": {
+      "currentState": "experimental",
+      "targetState": "pilot",
+      "status": "blocked-named-pilot-approval",
+      "releaseSha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
+      "originMainAtSelection": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
+      "originMainCurrent": "3682518e69840c34904fae5f1432917ffd04217a",
+      "staging": {
+        "candidateRun": 30673147811,
+        "workerPreviewRun": 30673438315,
+        "uiPreviewRun": 30673439481,
+        "workerStagingRun": 30673466768,
+        "uiStagingRun": 30673467862,
+        "canaryRun": 30673602091,
+        "abortDrillRun": 30673708958,
+        "canarySamples": 22,
+        "canaryP95Ms": 192,
+        "thresholdBreaches": 0,
+        "authenticatedImport": "stage/analyze/decision/preview/commit/replay/conflict/audit/undo and synthetic cleanup passed",
+        "moduleEnabled": false
+      },
+      "productionFoundation": {
+        "workerRun": 30673820551,
+        "uiRun": 30673971801,
+        "moduleEnabled": false,
+        "realGrants": 0,
+        "apiBindingHealth": 200,
+        "workerHealth": 200,
+        "workerReadiness": 200,
+        "deployPermissionRestored": false,
+        "rollbackSha": "6acbd485..."
+      },
+      "recovery": {
+        "postgresqlOffsiteDrill": "20260729T2255Z-postgresql-fresh",
+        "postgresqlRestoreSeconds": 55.43,
+        "scratchDestroyed": true,
+        "financeRollbackAndKillSwitch": "staging abort drill restored the disabled baseline"
+      },
+      "observability": {
+        "mode": "operator-run-key",
+        "retentionDays": 30,
+        "controlledAlert": "confirmed after two failed probes with Windows human message",
+        "controlledRecovery": "confirmed after two healthy probes",
+        "eventLog": "not confirmed in non-elevated session"
+      },
+      "openGates": ["nominal pilot approval", "approved pilot unit/cohort and window", "training/support confirmation"],
+      "limitations": ["production foundation is not a pilot", "no real user or grant was changed", "historical audit returned 503 is superseded by current canary audit 200"]
+    }
+  }
 }

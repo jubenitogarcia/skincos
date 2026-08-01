@@ -65,6 +65,40 @@ test("ordinary recovery artifact tree normalizes exact child and broker evidence
   assert.equal(normalized.brokerFailClose.controlChangedAt, maintenance.controlChangedAt);
 });
 
+test("ordinary recovery binds an idempotent control fallback to the live timestamp", () => {
+  const observedControlAt = "2026-07-30T00:03:00.000Z";
+  const normalized = normalizeRecoveryEvidence({
+    reconciliation: {
+      schemaVersion: 1,
+      orchestratorRunId: coordinatorRunId,
+      orchestratorHeadSha: sha,
+      discoveredChildren: 0,
+      unresolved: [],
+      passed: true,
+      credentialsIncluded: false,
+      piiIncluded: false,
+    },
+    maintenance,
+    propagation: {
+      ...propagation,
+      changedAt: maintenance.latchChangedAt,
+      lastObserved: {
+        state: "maintenance",
+        changedAt: observedControlAt,
+        source: "control",
+      },
+      matchedSource: "control",
+    },
+    sourceMode: "ordinary",
+    coordinatorRunId,
+    emergencyRunId,
+    releaseSha: sha,
+    stage,
+    target,
+  });
+  assert.equal(normalized.brokerFailClose.controlChangedAt, observedControlAt);
+});
+
 test("watchdog evidence normalizes only capability-authorized terminal children", () => {
   const normalized = normalizeRecoveryEvidence({
     reconciliation: {

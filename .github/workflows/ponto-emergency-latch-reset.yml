@@ -246,8 +246,11 @@ jobs:
             !["maintenance", "disabled"].includes(prior?.state)
             || priorLatch?.schemaVersion !== 1
             || priorLatch?.module !== "timekeeping"
-            || priorLatch?.latched !== true
-            || priorLatch?.stopRunId !== process.env.EMERGENCY_RUN_ID
+            || (priorLatch?.latched !== true
+              && !(process.env.PONTO_PRIOR_LATCH_SOURCE === "kv"
+                && priorLatch?.latched === false))
+            || (priorLatch?.stopRunId !== process.env.EMERGENCY_RUN_ID
+              && process.env.PONTO_PRIOR_LATCH_SOURCE !== "kv")
           ) throw new Error("live emergency latch differs from the exact attested stop");
           fs.writeFileSync(process.argv[4], `${JSON.stringify({
             schemaVersion: 2,
@@ -261,6 +264,7 @@ jobs:
               emergencyArtifactDigest: process.env.EMERGENCY_ARTIFACT_DIGEST,
               authorizationRef: process.env.AUTHORIZATION_REF,
               priorLatchSource: process.env.PONTO_PRIOR_LATCH_SOURCE,
+              priorEmergencyRunId: priorLatch.stopRunId || null,
             },
           })}\n`, { mode: 0o600 });
           fs.writeFileSync(process.argv[5], `${JSON.stringify({
@@ -276,6 +280,7 @@ jobs:
               emergencyArtifactDigest: process.env.EMERGENCY_ARTIFACT_DIGEST,
               authorizationRef: process.env.AUTHORIZATION_REF,
               priorLatchSource: process.env.PONTO_PRIOR_LATCH_SOURCE,
+              priorEmergencyRunId: priorLatch.stopRunId || null,
             },
           })}\n`, { mode: 0o600 });
           NODE
