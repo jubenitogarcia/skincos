@@ -209,7 +209,14 @@ jobs:
           const checkRuns = Array.isArray(checks)
             ? checks.flatMap(page => Array.isArray(page?.check_runs) ? page.check_runs : [])
             : (checks.check_runs || []);
-          const byName = new Map(checkRuns.map(run => [String(run.name || ""), run]));
+          const byName = new Map();
+          for (const run of checkRuns) {
+            const name = String(run.name || "");
+            const current = byName.get(name);
+            if (!current || (current.conclusion !== "success" && run.conclusion === "success")) {
+              byName.set(name, run);
+            }
+          }
           for (const name of policy.governance.requiredChecks || []) {
             const run = byName.get(name);
             if (!run || run.conclusion !== "success") throw new Error(`required check is not successful for immutable release SHA: ${name}`);
