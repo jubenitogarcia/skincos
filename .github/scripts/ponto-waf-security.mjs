@@ -310,9 +310,11 @@ async function readEntrypoint(client, zoneId) {
 }
 
 async function verifyCustody(client, zoneId) {
-  const token = await client.request("/user/tokens/verify");
-  if (token.result?.status !== "active") throw new Error("Cloudflare security token is not active");
   const zone = await client.request(`/zones/${zoneId}`);
+  const accountId = String(zone.result?.account?.id || "").toLowerCase();
+  if (!HEX32.test(accountId)) throw new Error("Cloudflare security token did not resolve an account-scoped zone");
+  const token = await client.request(`/accounts/${accountId}/tokens/verify`);
+  if (token.result?.status !== "active") throw new Error("Cloudflare security token is not active");
   if (
     String(zone.result?.id || "").toLowerCase() !== zoneId
     || String(zone.result?.name || "").toLowerCase() !== ZONE_NAME
@@ -329,9 +331,7 @@ async function verifyCustody(client, zoneId) {
     expressionDialectValidated: true,
     expressionDigests,
     zoneName: ZONE_NAME,
-    accountId: HEX32.test(String(zone.result?.account?.id || "").toLowerCase())
-      ? String(zone.result.account.id).toLowerCase()
-      : null,
+    accountId,
   };
 }
 
