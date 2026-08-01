@@ -960,11 +960,17 @@ for (const required of [
     fail(`Watchdog automatic rollback is missing normalized recovery custody: ${required}`);
   }
 }
-const rollbackPreconditionIndex = automaticRollback.indexOf('const preMutationFailClose = readAndAttestBrokerFailClose();');
+const rollbackPreconditionIndex = Math.max(
+  automaticRollback.indexOf('const preMutationFailClose = readAndAttestBrokerFailClose();'),
+  automaticRollback.indexOf('const preMutationFailClose = await readAndAttestBrokerFailClose();'),
+);
 const rollbackPermissionIndex = automaticRollback.indexOf('const rollbackPermitted =');
 const rollbackWorkerMutationIndex = automaticRollback.indexOf('const rollback = spawnSync("npx"');
 const rollbackPagesMutationIndex = automaticRollback.indexOf('const rolledBack = await rollbackPagesWithReconciliation');
-const rollbackPostconditionIndex = automaticRollback.indexOf('const postMutationFailClose = readAndAttestBrokerFailClose();');
+const rollbackPostconditionIndex = Math.max(
+  automaticRollback.indexOf('const postMutationFailClose = readAndAttestBrokerFailClose();'),
+  automaticRollback.indexOf('const postMutationFailClose = await readAndAttestBrokerFailClose();'),
+);
 if (
   rollbackPreconditionIndex < 0
   || rollbackPermissionIndex < 0
