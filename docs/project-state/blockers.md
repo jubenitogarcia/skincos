@@ -1,19 +1,21 @@
 # Current blockers
 
-## Snapshot autoritativo de fechamento — 2026-08-01T23:15:00Z — main `0ebfcfb57d42e225efc605405938d49c6acc67e5`
+## Snapshot autoritativo de fechamento — 2026-08-01T23:34:16Z — main `b6a6cc109ff0c0690381612212d9bfc67b84f63b`
 
 - **Insumos:** nenhum P0/P1 atual; o incidente por unidade permanece resolvido.
 - **Financeiro:** permanece bloqueado apenas pela aprovação nominal do piloto
   (owner técnico/operacional, revisor, unidade/coorte, janela, suporte,
   treinamento e thresholds). `module_enabled`, grants e usuários devem ficar
   inalterados.
-- **Ponto:** bloqueio técnico atual é a ausência de propagação externa
-  observável do estado de maintenance em staging. O preview
-  `30721745126` passou; staging `30722077457` falhou antes de mutação por
-  checks inexistentes; `30722290342`/`30722510118` foram cancelados pelo
-  fail-close; recuperações `30722303882`/`30722308654`/`30722594377` não
-  fecharam a prova de propagação em 150 s. Não tratar código integrado como
-  evidência de ambiente.
+- **Ponto:** há dois bloqueios técnicos atuais, ambos fail-closed e sem
+  mutação. O preview `30721745126` passou; staging `30722077457` falhou antes
+  de mutação por checks inexistentes; `30722290342`/`30722510118` foram
+  cancelados pelo fail-close. A tentativa `30722999071` rejeitou o mapa
+  público Ed25519 com BOM (`Ponto capability public verifier map is malformed`)
+  antes de emitir capacidades; seu watchdog `30723359886` não observou a
+  propagação externa do overlay em 150 s. Não tratar código integrado como
+  evidência de ambiente; corrigir a custódia/configuração do mapa e o caminho
+  de propagação antes de nova execução.
 - **Identity:** escrow/owner da `IDENTITY_PII_KEY` e coexistência/rollback do
   corte físico continuam dependentes de decisão humana.
 - **PRs independentes:** #736 continua draft/DIRTY e #764 draft com checks

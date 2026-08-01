@@ -20,7 +20,7 @@
     { "id": "shared", "currentUse": "Build-time contracts", "decision": "not-a-product-release", "reason": "No independent runtime or user cohort." },
     { "id": "social", "currentUse": "Publication Worker with disabled default", "decision": "hold", "reason": "Provider reconciliation and external monitoring evidence are incomplete." },
     { "id": "website", "currentUse": "Public site deployment surface", "decision": "hold", "reason": "New public flows need explicit feature flags and restore/monitor evidence." },
-    { "id": "workforce", "currentUse": "Preview of explicit SHA 0ebfcfb57d42e225efc605405938d49c6acc67e5 passed in run 30721745126; no staging green run", "decision": "hold", "reason": "Staging 30722077457 failed before mutation because required checks were absent; retries 30722290342/30722510118 were fail-closed and recovery 30722303882/30722308654/30722594377 did not observe external maintenance propagation within 150 seconds. No authenticated journey, canary, backup/restore or pilot evidence exists for this SHA." }
+    { "id": "workforce", "currentUse": "Preview of explicit SHA 0ebfcfb57d42e225efc605405938d49c6acc67e5 passed in run 30721745126; no staging green run", "decision": "hold", "reason": "Staging 30722077457 failed before mutation because required checks were absent; retries 30722290342/30722510118 were fail-closed; 30722999071 rejected the target-bound public verifier map because the configured JSON carried a BOM; watchdog 30723359886 again failed closed without observing external maintenance propagation within 150 seconds. No authenticated journey, canary, backup/restore or pilot evidence exists for this SHA." }
   ],
   "releaseCandidates": [
     {

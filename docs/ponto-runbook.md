@@ -1,5 +1,15 @@
 # Runbook — Controle de Ponto
 
+## Gate atual de staging (2026-08-01)
+
+O preview do SHA explícito `0ebfcfb57d42e225efc605405938d49c6acc67e5`
+passou em `30721745126`, mas não há staging verde. A tentativa
+`30722999071` foi encerrada antes de emitir capacidades porque o mapa público
+Ed25519 chegou com BOM e o validador registrou `Ponto capability public
+verifier map is malformed`; o watchdog `30723359886` também terminou
+fail-closed após 150 s sem propagação externa do overlay. Não tratar preview,
+CI ou manutenção interna como evidência de staging, piloto ou produção.
+
 ## Arquitetura operacional
 
 O navegador usa `https://crm.skincos.com.br/api/ponto/*`. A Pages Function autentica a sessão, assina claims mínimos e encaminha apenas headers autorizados para `https://api.skincos.com.br/api/ponto/*`. O gateway `api` monta o Worker `workforce/timekeeping` por Service Binding `TIMEKEEPING`. O domínio usa D1 próprio e consome a Escala pelo binding `SCHEDULE`.

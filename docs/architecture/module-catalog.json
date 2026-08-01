@@ -142,7 +142,7 @@
       "id": "finance",
       "maturity": "experimental",
       "readiness": {
-        "assessedAt": "2026-08-01T23:15:00Z",
+        "assessedAt": "2026-08-01T23:34:16Z",
         "state": "experimental",
         "integratedImportStateMachine": "PR #815 / 32bf3ebb296ca95e3273bb4fed664480eb5642e5",
         "stagingBaseline": "The explicitly selected main SHA 1a8eeec5a188301635603a3ecbd2eb4c8b18368c is proven through candidate 30673147811, Worker/UI preview 30673438315/30673439481, staging 30673466768/30673467862 and canary 30673602091; abort/kill-switch drill 30673708958 restored the disabled baseline. The current origin/main is 0ebfcfb57d42e225efc605405938d49c6acc67e5 and is not being claimed as a Finance promotion.",
@@ -347,10 +347,10 @@
         "state": "experimental",
         "releaseSha": "0ebfcfb57d42e225efc605405938d49c6acc67e5",
         "previewRun": 30721745126,
-        "stagingRuns": [30722077457, 30722290342, 30722510118],
+        "stagingRuns": [30722077457, 30722290342, 30722510118, 30722999071],
         "stagingGreen": false,
-        "recoveryRuns": [30722303882, 30722308654, 30722594377],
-        "openGates": ["external maintenance propagation observable in staging", "authenticated synthetic journey", "backup/restore and rollback evidence on this SHA", "approved pilot identity and cohort"],
+        "recoveryRuns": [30722303882, 30722308654, 30722594377, 30723359886],
+        "openGates": ["target-bound capability map without BOM and environment custody", "external maintenance propagation observable in staging", "authenticated synthetic journey", "backup/restore and rollback evidence on this SHA", "approved pilot identity and cohort"],
         "limitation": "Preview and hosted CI are not staging or pilot evidence; no production mutation was performed."
       },
       "owner": { "primary": "@jubenitogarcia", "backup": "unassigned" },
