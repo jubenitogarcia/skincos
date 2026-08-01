@@ -38,6 +38,7 @@ const screenshotMode: ScreenshotSetting =
       : 'only-on-failure'
 const artifactRoot = path.resolve(process.env.PLAYWRIGHT_ARTIFACT_DIR || '../../artifacts/playwright')
 const startLocalServer = process.env.E2E_START_SERVER === '1'
+const localServerPort = parsedBaseURL.port || '5173'
 const configDir = path.dirname(fileURLToPath(import.meta.url))
 const uxAuditTestMatch = ['e2e/pilot/**/*.spec.ts', 'e2e/accessibility/**/*.spec.ts', 'e2e/visual/**/*.spec.ts']
 
@@ -75,7 +76,7 @@ export default defineConfig({
   ],
   webServer: startLocalServer
     ? {
-        command: 'npm run dev -- --host 127.0.0.1 --port 5173',
+        command: `npm run dev -- --host 127.0.0.1 --port ${localServerPort}`,
         url: baseURL,
         cwd: configDir,
         reuseExistingServer: !process.env.CI,
