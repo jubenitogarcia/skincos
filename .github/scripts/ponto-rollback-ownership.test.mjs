@@ -208,7 +208,7 @@ test("automatic rollback refuses every mutation until custody reconciliation and
   );
   assert.match(
     source,
-    /const preMutationFailClose = readAndAttestBrokerFailClose\(\);[\s\S]*const rollbackPermitted = childReconciliationPassed\s*&& drillOwnershipResolved\s*&& preMutationFailClose\.attestation\.passed;[\s\S]*if \(!rollbackPermitted\) \{[\s\S]*rollback-blocked-by-custody-reconciliation/,
+    /const preMutationFailClose = (?:await )?readAndAttestBrokerFailClose\(\);[\s\S]*const rollbackPermitted = childReconciliationPassed\s*&& drillOwnershipResolved\s*&& preMutationFailClose\.attestation\.passed;[\s\S]*if \(!rollbackPermitted\) \{[\s\S]*rollback-blocked-by-custody-reconciliation/,
   );
   assert.match(
     source,
