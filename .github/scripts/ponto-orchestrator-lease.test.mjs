@@ -237,6 +237,14 @@ test("Pages deploy gates use trusted inline API attestation instead of promoted 
   assert.match(source, /deployment_configs\?\.production\?\.env_vars/);
   assert.match(source, /node - "\$pages_project" "\$DEPLOY_TARGET" <<'NODE'/);
   assert.match(source, /node - "\$pages_project" "\$TARGET" <<'NODE'/);
+  assert.match(
+    source,
+    /node - "\$pages_project" "\$DEPLOY_TARGET" <<'NODE'\n          const fs = require\("fs"\);[\s\S]*?\n          NODE\n/,
+  );
+  assert.match(
+    source,
+    /node - "\$pages_project" "\$TARGET" <<'NODE'\n          const fs = require\("fs"\);[\s\S]*?\n          NODE\n/,
+  );
   assert.match(source, /binding\.type !== "secret_text"/);
   assert.doesNotMatch(source, /pages secret list/);
   assert.doesNotMatch(source, /ponto-pages-environment-attestation\.mjs/);

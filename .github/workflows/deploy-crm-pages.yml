@@ -344,34 +344,34 @@ jobs:
           DEPLOY_TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
-           pages_project="$RUNNER_TEMP/pages-ponto-project.json"
-           trap 'rm -f "$pages_project"' EXIT
-           curl --fail --silent --show-error \
-             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PAGES_PROJECT" \
-             > "$pages_project"
-           node - "$pages_project" "$DEPLOY_TARGET" <<'NODE'
-           const fs = require("fs");
-           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-           const envVars = payload?.result?.deployment_configs?.production?.env_vars;
-           if (
-             payload?.success !== true
-             || !envVars
-             || typeof envVars !== "object"
-             || Array.isArray(envVars)
-           ) throw new Error("Cloudflare Pages project response did not contain structured production env_vars");
-           const required = [
-             "PONTO_ACTOR_HMAC_KEY",
-             "PONTO_NETWORK_CONTEXT_KEY",
-             "PONTO_RELEASE_PROBE_HMAC_KEY",
-           ];
-           if (process.argv[3] !== "staging") required.push("PONTO_API_TARGET");
-           for (const name of required) {
-             const binding = envVars[name];
-             if (!binding) throw new Error(`remote Pages value is absent: ${name}`);
-             if (binding.type !== "secret_text") throw new Error(`remote Pages value must be secret_text: ${name}`);
-           }
-           NODE
+          pages_project="$RUNNER_TEMP/pages-ponto-project.json"
+          trap 'rm -f "$pages_project"' EXIT
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PAGES_PROJECT" \
+            > "$pages_project"
+          node - "$pages_project" "$DEPLOY_TARGET" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const envVars = payload?.result?.deployment_configs?.production?.env_vars;
+          if (
+            payload?.success !== true
+            || !envVars
+            || typeof envVars !== "object"
+            || Array.isArray(envVars)
+          ) throw new Error("Cloudflare Pages project response did not contain structured production env_vars");
+          const required = [
+            "PONTO_ACTOR_HMAC_KEY",
+            "PONTO_NETWORK_CONTEXT_KEY",
+            "PONTO_RELEASE_PROBE_HMAC_KEY",
+          ];
+          if (process.argv[3] !== "staging") required.push("PONTO_API_TARGET");
+          for (const name of required) {
+            const binding = envVars[name];
+            if (!binding) throw new Error(`remote Pages value is absent: ${name}`);
+            if (binding.type !== "secret_text") throw new Error(`remote Pages value must be secret_text: ${name}`);
+          }
+          NODE
 
       - name: Capture Ponto staging Pages rollback deployment
         if: ${{ inputs.release_scope == 'ponto' && inputs.target == 'staging' }}
@@ -818,34 +818,34 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-           pages_project="$RUNNER_TEMP/pages-ponto-project.json"
-           trap 'rm -f "$pages_project"' EXIT
-           curl --fail --silent --show-error \
-             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
-             > "$pages_project"
-           node - "$pages_project" "$TARGET" <<'NODE'
-           const fs = require("fs");
-           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-           const envVars = payload?.result?.deployment_configs?.production?.env_vars;
-           if (
-             payload?.success !== true
-             || !envVars
-             || typeof envVars !== "object"
-             || Array.isArray(envVars)
-           ) throw new Error("Cloudflare Pages project response did not contain structured production env_vars");
-           const required = [
-             "PONTO_ACTOR_HMAC_KEY",
-             "PONTO_NETWORK_CONTEXT_KEY",
-             "PONTO_RELEASE_PROBE_HMAC_KEY",
-           ];
-           if (process.argv[3] !== "staging") required.push("PONTO_API_TARGET");
-           for (const name of required) {
-             const binding = envVars[name];
-             if (!binding) throw new Error(`remote Pages value is absent: ${name}`);
-             if (binding.type !== "secret_text") throw new Error(`remote Pages value must be secret_text: ${name}`);
-           }
-           NODE
+          pages_project="$RUNNER_TEMP/pages-ponto-project.json"
+          trap 'rm -f "$pages_project"' EXIT
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
+            > "$pages_project"
+          node - "$pages_project" "$TARGET" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const envVars = payload?.result?.deployment_configs?.production?.env_vars;
+          if (
+            payload?.success !== true
+            || !envVars
+            || typeof envVars !== "object"
+            || Array.isArray(envVars)
+          ) throw new Error("Cloudflare Pages project response did not contain structured production env_vars");
+          const required = [
+            "PONTO_ACTOR_HMAC_KEY",
+            "PONTO_NETWORK_CONTEXT_KEY",
+            "PONTO_RELEASE_PROBE_HMAC_KEY",
+          ];
+          if (process.argv[3] !== "staging") required.push("PONTO_API_TARGET");
+          for (const name of required) {
+            const binding = envVars[name];
+            if (!binding) throw new Error(`remote Pages value is absent: ${name}`);
+            if (binding.type !== "secret_text") throw new Error(`remote Pages value must be secret_text: ${name}`);
+          }
+          NODE
       - name: Select Pages rollback deployment
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
