@@ -381,20 +381,43 @@ jobs:
           PROJECT: ${{ steps.guard.outputs.project }}
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
-            > "$RUNNER_TEMP/pages-staging-incumbent.json"
-          IFS=$'\t' read -r id commit_sha < <(node - "$RUNNER_TEMP/pages-staging-incumbent.json" <<'NODE'
+          selected=false
+          for attempt in {1..12}; do
+            curl --fail --silent --show-error --retry 3 --retry-delay 2 \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&page=1&per_page=25" \
+              > "$RUNNER_TEMP/pages-staging-incumbent.json"
+            selection="$(node - "$RUNNER_TEMP/pages-staging-incumbent.json" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const deployments = (payload.result || []).filter(item => item.environment === "production").sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
-          const selected = deployments[0];
+          const expectedProject = process.env.PROJECT;
+          const deployments = Array.isArray(payload?.result) ? payload.result : [];
+          const candidates = deployments
+            .filter(item =>
+              (item?.environment === "production" || item?.environment == null)
+              && item?.project_name === expectedProject
+              && item?.deployment_trigger?.metadata?.branch === "staging"
+              && item?.is_skipped === false
+              && item?.latest_stage?.name === "deploy"
+              && item?.latest_stage?.status === "success"
+              && Number.isFinite(Date.parse(String(item?.latest_stage?.ended_on || "")))
+              && /^[0-9a-f]{40}$/.test(String(item?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase())
+            )
+            .sort((a, b) => String(b?.created_on || "").localeCompare(String(a?.created_on || "")));
+          const selected = payload?.success === true ? candidates[0] : undefined;
           process.stdout.write(`${selected?.id || ""}\t${selected?.deployment_trigger?.metadata?.commit_hash || ""}`);
           NODE
-          )
-          [[ "$id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Unable to resolve staging Pages rollback deployment'; exit 1; }
-          [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Staging Pages rollback deployment lacks immutable source provenance'; exit 1; }
+            )" || selection=""
+            id=""
+            commit_sha=""
+            IFS=$'\t' read -r id commit_sha <<< "$selection"
+            if [[ "$id" =~ ^[0-9a-fA-F-]{36}$ && "$commit_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              selected=true
+              break
+            fi
+            if [[ "$attempt" != 12 ]]; then sleep 5; fi
+          done
+          [[ "$selected" == true ]] || { echo 'Unable to resolve an exact terminal staging Pages rollback deployment'; exit 1; }
           echo "PAGES_STAGING_ROLLBACK_DEPLOYMENT_ID=$id" >> "$GITHUB_ENV"
           echo "PAGES_STAGING_ROLLBACK_COMMIT_SHA=$commit_sha" >> "$GITHUB_ENV"
           rm -f "$RUNNER_TEMP/pages-staging-incumbent.json"
