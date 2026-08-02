@@ -629,7 +629,12 @@ jobs:
           RELEASE_SHA: ${{ needs.promotion.outputs.source_sha }}
         run: |
           set -euo pipefail
-          [[ "$PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || {
+          candidate_id="${PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID:-}"
+          if [[ -z "$candidate_id" ]]; then
+            echo 'No exact owned staging Pages candidate was attested; preserving the incumbent without a rollback mutation'
+            exit 0
+          fi
+          [[ "$candidate_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || {
             echo 'Staging Pages compensation has no exact owned candidate; refusing to overwrite current state'
             exit 1
           }
@@ -637,7 +642,7 @@ jobs:
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
             > "$RUNNER_TEMP/pages-staging-current.json"
-          node - "$RUNNER_TEMP/pages-staging-current.json" "$PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID" <<'NODE'
+          node - "$RUNNER_TEMP/pages-staging-current.json" "$candidate_id" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const latest = (payload?.result || [])

@@ -21,13 +21,6 @@ service = "skincos-insumos-staging"
 binding = "MODULE_CONTROL"
 id = "e69fe06b6abc46eca4f4c00198d078f2"
 
-[env.production.secrets]
-required = [
-  "PONTO_ACTOR_HMAC_KEY",
-  "PONTO_NETWORK_CONTEXT_KEY",
-  "PONTO_RELEASE_PROBE_HMAC_KEY",
-]
-
 [env.production.vars]
 INSUMOS_API_TARGET = "https://api-staging.skincos.com.br"
 FINANCE_API_TARGET = "https://api-staging.skincos.com.br"
@@ -54,13 +47,6 @@ service = "skincos-insumos-staging"
 [[env.preview.kv_namespaces]]
 binding = "MODULE_CONTROL"
 id = "e69fe06b6abc46eca4f4c00198d078f2"
-
-[env.preview.secrets]
-required = [
-  "PONTO_ACTOR_HMAC_KEY",
-  "PONTO_NETWORK_CONTEXT_KEY",
-  "PONTO_RELEASE_PROBE_HMAC_KEY",
-]
 
 [env.preview.vars]
 INSUMOS_API_TARGET = "https://api-staging.skincos.com.br"
