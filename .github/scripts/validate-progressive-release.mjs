@@ -31,6 +31,14 @@ for (const target of ["staging", "production"]) {
   ) fail(`${target} environment must use the reviewed single-operator protection contract`);
 }
 if (governance?.attestation?.noAdministrativeBypass !== true || governance?.attestation?.automaticRollback !== true) fail("single-operator attestation must retain no-bypass and automatic rollback");
+const securityAudit = governance?.securityAudit;
+if (securityAudit?.workflow !== ".github/workflows/security-secrets-audit.yml" || !Array.isArray(securityAudit?.triggerPaths) || securityAudit.triggerPaths.length < 3) {
+  fail("Ponto governance must declare security audit coverage for its release surfaces");
+}
+const securityWorkflow = read(".github/workflows/security-secrets-audit.yml");
+for (const triggerPath of securityAudit?.triggerPaths ?? []) {
+  if (!securityWorkflow.includes(triggerPath)) fail(`security audit workflow is missing Ponto trigger path: ${triggerPath}`);
+}
 if (JSON.stringify(policy.stages) !== JSON.stringify(["preview", "staging", "pilot", "canary", "production"])) fail("policy stages must be preview, staging, pilot, canary, production in order");
 for (const [stage, predecessor] of Object.entries({ staging: "preview", pilot: "staging", canary: "pilot", production: "canary" })) {
   if (policy.stagePredecessor?.[stage] !== predecessor) fail(`${stage} must require ${predecessor} evidence`);

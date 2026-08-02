@@ -348,12 +348,12 @@ jobs:
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for custody attestation'; exit 1; }
           target=production
           [[ "$STAGE" == staging ]] && target=staging
-          gh api "repos/$GITHUB_REPOSITORY/environments/$target/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-environment-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/environments/staging/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-staging-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-production-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-repository-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/environments/$target/variables?per_page=100" > "$RUNNER_TEMP/ponto-root-environment-variables.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/ponto-root-repository-variables.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/$target/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-environment-secrets.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/staging/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-staging-secrets.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/production/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-production-secrets.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/ponto-root-repository-secrets.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/$target/variables?per_page=100" > "$RUNNER_TEMP/ponto-root-environment-variables.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/ponto-root-repository-variables.json"
           node - \
             "$RUNNER_TEMP/ponto-root-environment-secrets.json" \
             "$RUNNER_TEMP/ponto-root-repository-secrets.json" \
@@ -362,7 +362,13 @@ jobs:
             "$RUNNER_TEMP/ponto-root-staging-secrets.json" \
             "$RUNNER_TEMP/ponto-root-production-secrets.json" <<'NODE'
           const fs = require("fs");
-          const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
+          const names = (file, key) => {
+            const payload = JSON.parse(fs.readFileSync(file, "utf8"));
+            const entries = Array.isArray(payload)
+              ? payload.flatMap(page => Array.isArray(page?.[key]) ? page[key] : [])
+              : (Array.isArray(payload?.[key]) ? payload[key] : []);
+            return new Set(entries.map(item => item.name));
+          };
           const environmentSecrets = names(process.argv[2], "secrets");
           const repositorySecrets = names(process.argv[3], "secrets");
           const environmentVariables = names(process.argv[4], "variables");
