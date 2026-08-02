@@ -117,6 +117,8 @@ jobs:
       # journey/drill budgets, leaves at least 50 minutes for fail-close,
       # reconciliation, rollback, and evidence before the 330-minute job cap.
       PONTO_DISPATCH_TIMEOUT_MS: "1200000"
+      PONTO_REQUIRED_CHECK_SETTLE_TIMEOUT_SECONDS: "900"
+      PONTO_REQUIRED_CHECK_SETTLE_POLL_SECONDS: "10"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
@@ -191,37 +193,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/pulls" > "$RUNNER_TEMP/ponto-release-pulls.json"
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/ponto-release-checks.json"
-          node - "$RUNNER_TEMP/ponto-release-pulls.json" "$RUNNER_TEMP/ponto-release-checks.json" <<'NODE'
-          const fs = require("fs");
-          const read = file => JSON.parse(fs.readFileSync(file, "utf8"));
-          const pulls = read(process.argv[2]);
-          const checks = read(process.argv[3]);
-          const sha = process.env.RELEASE_SHA.toLowerCase();
-          const policy = read(".github/governance/progressive-release-policy.json");
-          const merged = (Array.isArray(pulls) ? pulls : []).filter(pr =>
-            pr?.base?.ref === "main" && pr?.state === "closed" && pr?.merged_at
-            && String(pr?.merge_commit_sha || "").toLowerCase() === sha
-            && String(pr?.head?.repo?.full_name || "") === process.env.GITHUB_REPOSITORY
-          );
-          if (merged.length !== 1) throw new Error("immutable release SHA lacks exactly one canonical merged PR into main");
-          const checkRuns = Array.isArray(checks)
-            ? checks.flatMap(page => Array.isArray(page?.check_runs) ? page.check_runs : [])
-            : (checks.check_runs || []);
-          const byName = new Map();
-          for (const run of checkRuns) {
-            const name = String(run.name || "");
-            const current = byName.get(name);
-            if (!current || (current.conclusion !== "success" && run.conclusion === "success")) {
-              byName.set(name, run);
-            }
-          }
-          for (const name of policy.governance.requiredChecks || []) {
-            const run = byName.get(name);
-            if (!run || run.conclusion !== "success") throw new Error(`required check is not successful for immutable release SHA: ${name}`);
-          }
-          NODE
+          deadline=$(( $(date +%s) + PONTO_REQUIRED_CHECK_SETTLE_TIMEOUT_SECONDS ))
+          while true; do
+            gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/pulls" > "$RUNNER_TEMP/ponto-release-pulls.json"
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/ponto-release-checks.json"
+            set +e
+            node .github/scripts/ponto-required-checks.mjs \
+              "$RUNNER_TEMP/ponto-release-pulls.json" \
+              "$RUNNER_TEMP/ponto-release-checks.json"
+            check_status=$?
+            set -e
+            case "$check_status" in
+              0) break ;;
+              2)
+                if (( $(date +%s) >= deadline )); then
+                  echo 'required checks did not become terminal before the bounded settle timeout' >&2
+                  exit 1
+                fi
+                sleep "$PONTO_REQUIRED_CHECK_SETTLE_POLL_SECONDS"
+                ;;
+              *) exit "$check_status" ;;
+            esac
+          done
           rm -f "$RUNNER_TEMP/ponto-release-pulls.json" "$RUNNER_TEMP/ponto-release-checks.json"
       - name: Attest single-operator Codex governance and protected environment before issuing any capability
         if: ${{ inputs.stage != 'preview' }}
