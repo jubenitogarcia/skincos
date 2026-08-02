@@ -193,6 +193,20 @@ test("Pages custody journals no mutation before any precondition can fail", () =
   );
 });
 
+test("Ponto root custody provenance uses workflow metadata for the static workflow name", () => {
+  for (const workflowName of [
+    "cloudflare-pages-sync-ponto.yml",
+    "deploy-timekeeping.yml",
+  ]) {
+    const source = fs.readFileSync(
+      path.join(repositoryRoot, ".github", "workflows", workflowName),
+      "utf8",
+    );
+    assert.match(source, /workflow\.name !== "Attest Ponto Worker secret custody"/);
+    assert.doesNotMatch(source, /run\.name !== "Attest Ponto Worker secret custody"/);
+  }
+});
+
 test("assert-active rejects a rerun of the privileged child before any API access", async () => {
   await withApi({}, async ({ apiUrl, getRequestCount }) => {
     const result = await execute(
