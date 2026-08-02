@@ -293,6 +293,9 @@ jobs:
           after_project_file="$RUNNER_TEMP/pages-project-after.json"
           secret_file="$RUNNER_TEMP/pages-release-probe-secret.json"
           evidence_file="$RUNNER_TEMP/pages-release-probe-evidence.json"
+          export PONTO_ROOT_CUSTODY_FILE="$RUNNER_TEMP/current-root-custody/root-custody.json"
+          export PONTO_STAGING_EVIDENCE_FILE="$RUNNER_TEMP/staging-evidence/ponto-release-evidence.json"
+          export PONTO_DERIVED_SECRET_FILE="$secret_file"
           trap 'rm -f "$before_project_file" "$after_project_file" "$secret_file"' EXIT
           node <<'NODE'
           const value = String(process.env.PONTO_IDEMPOTENCY_KEY || "");
@@ -302,10 +305,7 @@ jobs:
             || /[\r\n\0]/.test(value)
           ) throw new Error("PONTO_IDEMPOTENCY_KEY must contain at least 32 UTF-8 bytes and no surrounding/control whitespace");
           NODE
-          node --input-type=module - \
-            "$RUNNER_TEMP/current-root-custody/root-custody.json" \
-            "$RUNNER_TEMP/staging-evidence/ponto-release-evidence.json" \
-            "$secret_file" <<'NODE'
+          node --input-type=module - <<'NODE'
           import crypto from "node:crypto";
           import fs from "node:fs";
           import {
@@ -314,7 +314,7 @@ jobs:
             validateRootCustody,
           } from "./.github/scripts/ponto-root-custody.mjs";
           const attested = validateRootCustody(
-            JSON.parse(fs.readFileSync(process.argv[2], "utf8")),
+            JSON.parse(fs.readFileSync(process.env.PONTO_ROOT_CUSTODY_FILE, "utf8")),
             { target: process.env.TARGET, releaseSha: process.env.RELEASE_SHA },
           );
           const current = rootFingerprint(
@@ -333,7 +333,7 @@ jobs:
             throw new Error("Pages derivation root differs from the pre-mutation root custody commitment");
           }
           if (process.env.TARGET === "production") {
-            const evidence = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+            const evidence = JSON.parse(fs.readFileSync(process.env.PONTO_STAGING_EVIDENCE_FILE, "utf8"));
             const staging = validateRootCustody(evidence?.surfaces?.timekeeping?.rootCustody, {
               target: "staging",
               releaseSha: process.env.RELEASE_SHA,
@@ -347,7 +347,7 @@ jobs:
             .update(domain)
             .digest("base64url");
           fs.writeFileSync(
-            process.argv[4],
+            process.env.PONTO_DERIVED_SECRET_FILE,
             `${JSON.stringify({
               PONTO_ACTOR_HMAC_KEY: derive("skincos/ponto/actor/v1"),
               PONTO_NETWORK_CONTEXT_KEY: derive("skincos/ponto/network-context/v1"),
@@ -356,6 +356,7 @@ jobs:
             { mode: 0o600 },
           );
           NODE
+          unset PONTO_ROOT_CUSTODY_FILE PONTO_STAGING_EVIDENCE_FILE PONTO_DERIVED_SECRET_FILE
           unset PONTO_ROOT_ATTESTATION_KEY_SHARED PONTO_IDEMPOTENCY_KEY
           if [[ "$TARGET" == production ]]; then
             [[ "$PROJECT" != "skincos-staging" ]] || exit 1
