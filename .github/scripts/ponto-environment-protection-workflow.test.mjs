@@ -37,6 +37,11 @@ test("coordinator and consumer attest live environment protection before authori
   assert.ok(consumerPreflight < consume);
   const consumerScoped = gate.slice(consumerPreflight, consume);
   assert.match(consumerScoped, /deployment-branch-policies/);
+  assert.match(gate, /secrets:\n\s+GH_TOKEN:\n\s+required: false/);
+  assert.match(
+    consumerScoped,
+    /GH_TOKEN: \$\{\{ secrets\.GH_TOKEN != '' && secrets\.GH_TOKEN \|\| github\.token \}\}/,
+  );
   assert.match(consumerScoped, /actions\/runs\/\$ORCHESTRATOR_RUN_ID/);
   assert.match(consumerScoped, /GITHUB_ACTOR="\$issuer_actor" node/);
   assert.match(gate, /deployments: read/);
@@ -62,6 +67,11 @@ test("every governed caller grants read-only deployment metadata to the gate", (
     );
     assert.notEqual(gate, -1, name);
     assert.match(source.slice(Math.max(0, gate - 220), gate), /deployments: read/, name);
+    assert.match(
+      source.slice(gate, gate + 220),
+      /secrets:\n\s+GH_TOKEN: \$\{\{ secrets\.GH_TOKEN \}\}/,
+      name,
+    );
   }
 });
 

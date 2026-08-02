@@ -4,6 +4,12 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Immutable base SHA for a manually recovered governance check
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -27,10 +33,21 @@ jobs:
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
+          MANUAL_BASE_SHA: ${{ inputs.base_sha }}
         run: |
           set -euo pipefail
-          base="${PR_BASE_SHA:-$BEFORE_SHA}"
-          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then base="$(git rev-parse HEAD^)"; fi
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            base="$MANUAL_BASE_SHA"
+            [[ "$base" =~ ^[0-9a-f]{40}$ ]] || { echo 'Manual governance base_sha must be a full commit SHA'; exit 1; }
+            git cat-file -e "$base^{commit}"
+            git merge-base --is-ancestor "$base" "$GITHUB_SHA" || {
+              echo 'Manual governance base_sha must be an ancestor of the checked-out head'
+              exit 1
+            }
+          else
+            base="${PR_BASE_SHA:-$BEFORE_SHA}"
+            if [[ -z "$base" || "$base" =~ ^0+$ ]]; then base="$(git rev-parse HEAD^)"; fi
+          fi
           echo "sha=$base" >> "$GITHUB_OUTPUT"
       - id: risk
         run: node scripts/codex-risk-classifier.mjs --base "${{ steps.base.outputs.sha }}" --head "$GITHUB_SHA" --output risk-report.json

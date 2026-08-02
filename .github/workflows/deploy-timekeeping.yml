@@ -79,6 +79,8 @@ jobs:
       contents: read
       deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     with:
       required: ${{ inputs.target != 'preview' }}
       lease_key: timekeeping
