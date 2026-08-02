@@ -429,6 +429,25 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
 
+      - name: Materialize the exact fresh broker close under the staging surface mutex
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_RESOURCE_TARGET: staging
+          PONTO_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+          PONTO_OPPOSITE_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
+          PONTO_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          PONTO_MATERIALIZE_TARGET: staging
+          PONTO_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          PONTO_MAINTENANCE_FILE: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close/maintenance.json
+          PONTO_MATERIALIZE_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close/materialized-readback.json
+          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/resource-identity.json
+        run: |
+          node .github/scripts/ponto-cloudflare-resource-identity.mjs
+          node .github/scripts/ponto-module-control-materialize.mjs
+
       - name: Read back the exact staging module control from Cloudflare KV
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -536,18 +555,6 @@ jobs:
             "$RUNNER_TEMP/ponto-staging-recovery-rollback" \
             "$RUNNER_TEMP/ponto-staging-recovery-rollback/fresh-close/direct-readback.json"
 
-      - name: Attest exact staging Ponto resource identities
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PONTO_RESOURCE_TARGET: staging
-          PONTO_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
-          PONTO_OPPOSITE_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
-          PONTO_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
-          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
-          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/resource-identity.json
-        run: node .github/scripts/ponto-cloudflare-resource-identity.mjs
-
       - name: Restore the exact Timekeeping incumbent under the existing latch
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -586,11 +593,13 @@ jobs:
         env:
           PONTO_MODULE_HEALTH_URL: https://api-staging.skincos.com.br/api/ponto/health
           TIMEKEEPING_INCUMBENT_VERSION_ID: ${{ inputs.timekeeping_incumbent_version_id }}
+          PONTO_MATERIALIZE_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close/materialized-readback.json
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           node - <<'NODE'
+          const fs = require("fs");
           const headers = { accept: "application/json" };
           if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
             headers["cf-access-client-id"] = process.env.CF_ACCESS_CLIENT_ID;
@@ -603,6 +612,10 @@ jobs:
           });
           const body = await response.json().catch(() => null);
           const availabilitySource = String(body?.availability?.source || "");
+          const materialized = JSON.parse(fs.readFileSync(process.env.PONTO_MATERIALIZE_REPORT, "utf8"));
+          const expectedAvailabilityChangedAt = availabilitySource === "emergency-latch-active"
+            ? materialized?.emergencyLatch?.changedAt
+            : materialized?.moduleControl?.changedAt;
           const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
           if (
             response.status !== 200
@@ -610,6 +623,7 @@ jobs:
             || body?.ready !== false
             || body?.availability?.state !== "maintenance"
             || !["control", "emergency-latch-active"].includes(availabilitySource)
+            || body?.availability?.changedAt !== expectedAvailabilityChangedAt
             || workerVersionId !== process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
           ) throw new Error("staging health did not prove maintenance on the restored Timekeeping incumbent");
           NODE

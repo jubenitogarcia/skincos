@@ -15,6 +15,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -22,6 +23,8 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     environment: ${{ format('ponto-emergency-{0}', inputs.target) }}
     concurrency:
       # This close-only path intentionally does not wait on
@@ -106,7 +109,7 @@ jobs:
           if (
             response.status !== 200
             || availability?.state !== "maintenance"
-            || availability?.source !== "control"
+            || !["control", "emergency-latch-active"].includes(availability?.source)
             || !Number.isFinite(Date.parse(String(availability?.changedAt || "")))
           ) throw new Error("live Ponto health did not prove maintenance under the closed latch");
           fs.writeFileSync(process.argv[3], `${JSON.stringify({
@@ -131,6 +134,105 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ponto-emergency-close-${{ inputs.target }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-manual-emergency-close
+          retention-days: 90
+          if-no-files-found: error
+
+  materialize:
+    if: ${{ needs.close.result == 'success' && github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    needs: close
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    environment: ${{ inputs.target }}
+    concurrency:
+      group: ponto-surface-mutation
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Download the close-only broker evidence
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-emergency-close-${{ inputs.target }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-manual-emergency-close
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+      - name: Materialize the exact broker close under the surface mutex
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID_RAW: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+          PRODUCTION_D1_ID_RAW: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
+          STAGING_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PRODUCTION_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          PONTO_MATERIALIZE_TARGET: ${{ inputs.target }}
+          PONTO_RESOURCE_TARGET: ${{ inputs.target }}
+          PONTO_COORDINATOR_RUN_ID: ${{ github.run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          PONTO_MAINTENANCE_FILE: ${{ runner.temp }}/ponto-manual-emergency-close/maintenance.json
+          PONTO_MATERIALIZE_REPORT: ${{ runner.temp }}/ponto-manual-emergency-close/materialized-readback.json
+          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-manual-emergency-close/resource-identity.json
+        run: |
+          set -euo pipefail
+          case "$PONTO_MATERIALIZE_TARGET" in
+            staging)
+              PONTO_MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
+              PONTO_TIMEKEEPING_D1_ID="$STAGING_D1_ID_RAW"
+              PONTO_OPPOSITE_TIMEKEEPING_D1_ID="$PRODUCTION_D1_ID_RAW"
+              PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            production)
+              PONTO_MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
+              PONTO_TIMEKEEPING_D1_ID="$PRODUCTION_D1_ID_RAW"
+              PONTO_OPPOSITE_TIMEKEEPING_D1_ID="$STAGING_D1_ID_RAW"
+              PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            *) echo 'Unsupported manual-close module-control target'; exit 1 ;;
+          esac
+          export PONTO_MODULE_CONTROL_KV_ID PONTO_TIMEKEEPING_D1_ID PONTO_OPPOSITE_TIMEKEEPING_D1_ID PONTO_OPPOSITE_MODULE_CONTROL_KV_ID
+          node .github/scripts/ponto-cloudflare-resource-identity.mjs
+          node .github/scripts/ponto-module-control-materialize.mjs
+      - name: Prove the live control reflects the materialized close
+        env:
+          PONTO_MODULE_HEALTH_URL: ${{ inputs.target == 'production' && 'https://api.skincos.com.br/api/ponto/health' || 'https://api-staging.skincos.com.br/api/ponto/health' }}
+        run: |
+          set -euo pipefail
+          node - "$RUNNER_TEMP/ponto-manual-emergency-close/materialized-readback.json" <<'NODE'
+          (async () => {
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const probe = new URL(process.env.PONTO_MODULE_HEALTH_URL);
+          probe.searchParams.set("emergency_close_materialized_probe", process.env.GITHUB_RUN_ID);
+          let lastObservation = "no response";
+          for (let attempt = 0; attempt < 12; attempt += 1) {
+            const response = await fetch(probe, { headers: { accept: "application/json", "cache-control": "no-cache" } });
+            const body = await response.json().catch(() => null);
+            const availability = body?.availability;
+            const expectedChangedAt = availability?.source === "emergency-latch-active"
+              ? report.emergencyLatch.changedAt
+              : report.moduleControl.changedAt;
+            if (
+              response.status === 200
+              && availability?.state === "maintenance"
+              && ["control", "emergency-latch-active"].includes(availability?.source)
+              && availability?.changedAt === expectedChangedAt
+            ) return;
+            lastObservation = `HTTP ${response.status}, source=${String(availability?.source || "")}, changedAt=${String(availability?.changedAt || "")}`;
+            if (attempt < 11) await new Promise((resolve) => setTimeout(resolve, 5_000));
+          }
+          throw new Error(`live Ponto health did not reflect the materialized module control after bounded propagation: ${lastObservation}`);
+          })().catch((error) => { console.error(error); process.exitCode = 1; });
+          NODE
+      - name: Upload sanitized materialized emergency-close evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-emergency-close-materialized-${{ inputs.target }}-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-manual-emergency-close
           retention-days: 90
           if-no-files-found: error
