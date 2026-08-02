@@ -8,6 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   canonicalizeGovernedIntent,
+  acceptsWorkflowRunPath,
   createCapabilityCheck,
   expectedGovernedRunName,
   transitionCapabilityDocument,
@@ -133,6 +134,14 @@ test("assert-active accepts only the exact live first-attempt coordinator", asyn
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /active first-attempt Ponto coordinator/);
   });
+});
+
+test("workflow run provenance accepts both live GitHub REST path forms", () => {
+  const workflowPath = ".github/workflows/deploy-timekeeping.yml";
+  assert.equal(acceptsWorkflowRunPath(workflowPath, workflowPath), true);
+  assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/heads/main`), true);
+  assert.equal(acceptsWorkflowRunPath(workflowPath, ".github/workflows/other.yml"), false);
+  assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/heads/feature`), false);
 });
 
 test("assert-active rejects a rerun of the privileged child before any API access", async () => {
