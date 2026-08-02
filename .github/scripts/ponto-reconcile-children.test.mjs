@@ -147,6 +147,10 @@ test("failure recovery latches before reconciliation and mutexes maintenance plu
   const reconciliationStep = reconciliationJob;
   assert.doesNotMatch(reconciliationStep, /continue-on-error:\s*true/);
   assert.match(reconciliationStep, /PONTO_RECONCILIATION_TIMEOUT_SECONDS:\s*"600"/);
+  assert.match(reconciliationJob, /GH_TOKEN:\s*\$\{\{ secrets\.GH_TOKEN \}\}/);
+  assert.doesNotMatch(reconciliationJob, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
+  assert.match(rollbackJob, /GH_TOKEN:\s*\$\{\{ secrets\.GH_TOKEN \}\}/);
+  assert.doesNotMatch(rollbackJob, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
 });
 
 test("coordinator reserves a bounded recovery budget inside the GitHub job limit", () => {
