@@ -106,17 +106,30 @@ test("watchdog audits a preview rerun without assigning a live target or closing
   }
 });
 
-test("watchdog rejects first-attempt success, non-main source, and event/API drift", async (t) => {
-  for (const [name, value] of [
-    ["success", { ...run, conclusion: "success" }],
-    ["wrong path", { ...run, path: ".github/workflows/other.yml@refs/heads/main" }],
-  ]) {
-    await t.test(name, async () => {
-      await assert.rejects(validateWatchdogContext(input({
-        request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml") ? workflow : value,
-      })));
-    });
-  }
+test("watchdog treats first-attempt success as a no-op and rejects provenance drift", async (t) => {
+  await t.test("first-attempt success is a no-op", async () => {
+    const context = await validateWatchdogContext(input({
+      event: {
+        workflow_run: {
+          ...event.workflow_run,
+          conclusion: "success",
+        },
+      },
+      request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
+        ? workflow
+        : { ...run, conclusion: "success" },
+    }));
+    assert.equal(context.conclusion, "success");
+    assert.equal(context.requiresClose, false);
+    assert.equal(context.passed, true);
+  });
+  await t.test("wrong path", async () => {
+    await assert.rejects(validateWatchdogContext(input({
+      request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
+        ? workflow
+        : { ...run, path: ".github/workflows/other.yml@refs/heads/main" },
+    })));
+  });
   await assert.rejects(validateWatchdogContext(input({ gitRef: "refs/heads/feature" })));
   await assert.rejects(validateWatchdogContext(input({ watchdogRunAttempt: "2" })));
   await assert.rejects(validateWatchdogContext(input({
