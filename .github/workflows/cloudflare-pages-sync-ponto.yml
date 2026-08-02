@@ -368,8 +368,9 @@ jobs:
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
             > "$project_file"
           npx --yes wrangler@4.112.0 pages secret list --project-name "$PROJECT" --env production > "$before_list"
-          node - "$project_file" "$before_list" "$evidence_file" <<'NODE'
-          const fs = require("fs");
+          node --input-type=module - "$project_file" "$before_list" "$evidence_file" <<'NODE'
+          import fs from "node:fs";
+          import { readPagesSecretList } from "./.github/scripts/ponto-pages-secret-list.mjs";
           const projectPayload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const project = projectPayload?.result;
           const expected = process.env.TARGET === "production"
@@ -390,7 +391,7 @@ jobs:
             || apiTarget?.type !== expected.apiType
             || (expected.apiValue && apiTarget?.value !== expected.apiValue)
           ) throw new Error("PONTO_API_TARGET or isolated Pages project metadata differs from policy");
-          const listed = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const listed = readPagesSecretList(process.argv[3]);
           const names = new Set(listed.map(item => item.name));
           if (process.env.TARGET === "production" && !names.has("PONTO_API_TARGET")) {
             throw new Error("production PONTO_API_TARGET secret is absent");
@@ -438,9 +439,10 @@ jobs:
           NODE
           rm -f "$secret_file"
           npx --yes wrangler@4.112.0 pages secret list --project-name "$PROJECT" --env production > "$after_list"
-          node - "$after_list" "$evidence_file" <<'NODE'
-          const fs = require("fs");
-          const listed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          node --input-type=module - "$after_list" "$evidence_file" <<'NODE'
+          import fs from "node:fs";
+          import { readPagesSecretList } from "./.github/scripts/ponto-pages-secret-list.mjs";
+          const listed = readPagesSecretList(process.argv[2]);
           const journal = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
           const names = new Set(listed.map(item => item.name));
           const required = [

@@ -135,6 +135,14 @@ test("Pages derivation and Timekeeping upload independently attest environment c
   }
 });
 
+test("Pages custody parses Wrangler secret-list output through the banner-safe helper", () => {
+  const source = workflow("cloudflare-pages-sync-ponto.yml");
+  assert.match(source, /\.github\/scripts\/ponto-pages-secret-list\.mjs/);
+  assert.match(source, /readPagesSecretList\(process\.argv\[3\]\)/);
+  assert.match(source, /readPagesSecretList\(process\.argv\[2\]\)/);
+  assert.doesNotMatch(source, /const listed = JSON\.parse\(fs\.readFileSync\(process\.argv\[(?:2|3)\], "utf8"\)\)/);
+});
+
 test("Ponto REST run provenance accepts both canonical path representations", () => {
   const pages = workflow("cloudflare-pages-sync-ponto.yml");
   assert.match(
