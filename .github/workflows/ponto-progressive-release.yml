@@ -341,7 +341,10 @@ jobs:
       - name: Preflight selected environment secret-root custody
         if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Environment secret/variable metadata requires the protected
+          # read-only administration token; the automatic token is not granted
+          # the repository-environment metadata scope.
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           PONTO_ROOT_ATTESTATION_KEY_ID: ${{ vars.PONTO_ROOT_ATTESTATION_KEY_ID }}
         run: |
           set -euo pipefail
