@@ -162,6 +162,7 @@ test("staging recovery accepts the still-active emergency latch after incumbent 
     "utf8",
   );
   const proof = workflow.slice(workflow.indexOf("      - name: Prove staging remains closed"));
+  assert.match(proof, /import fs from "node:fs";/);
   assert.match(proof, /const availabilitySource = String\(body\?\.availability\?\.source \|\| \"\"\);/);
   assert.match(proof, /PONTO_MATERIALIZE_REPORT: \$\{\{ runner\.temp \}\}\/ponto-staging-recovery-rollback\/fresh-close\/materialized-readback\.json/);
   assert.match(proof, /const materialized = JSON\.parse\(fs\.readFileSync\(process\.env\.PONTO_MATERIALIZE_REPORT, \"utf8\"\)\);/);
