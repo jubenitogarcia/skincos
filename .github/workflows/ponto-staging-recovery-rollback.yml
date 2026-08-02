@@ -602,13 +602,14 @@ jobs:
             headers,
           });
           const body = await response.json().catch(() => null);
+          const availabilitySource = String(body?.availability?.source || "");
           const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
           if (
             response.status !== 200
             || body?.ok !== false
             || body?.ready !== false
             || body?.availability?.state !== "maintenance"
-            || body?.availability?.source !== "control"
+            || !["control", "emergency-latch-active"].includes(availabilitySource)
             || workerVersionId !== process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
           ) throw new Error("staging health did not prove maintenance on the restored Timekeeping incumbent");
           NODE

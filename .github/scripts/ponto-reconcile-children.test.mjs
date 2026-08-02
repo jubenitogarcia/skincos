@@ -156,6 +156,17 @@ test("failure recovery latches before reconciliation and mutexes maintenance plu
   assert.doesNotMatch(rollbackJob, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
 });
 
+test("staging recovery accepts the still-active emergency latch after incumbent restore", () => {
+  const workflow = fs.readFileSync(
+    new URL("../workflows/ponto-staging-recovery-rollback.yml", import.meta.url),
+    "utf8",
+  );
+  const proof = workflow.slice(workflow.indexOf("      - name: Prove staging remains closed"));
+  assert.match(proof, /const availabilitySource = String\(body\?\.availability\?\.source \|\| \"\"\);/);
+  assert.match(proof, /!\["control", "emergency-latch-active"\]\.includes\(availabilitySource\)/);
+  assert.match(proof, /workerVersionId !== process\.env\.TIMEKEEPING_INCUMBENT_VERSION_ID\.toLowerCase\(\)/);
+});
+
 test("coordinator reserves a bounded recovery budget inside the GitHub job limit", () => {
   const workflow = fs.readFileSync(
     new URL("../workflows/ponto-progressive-release.yml", import.meta.url),
