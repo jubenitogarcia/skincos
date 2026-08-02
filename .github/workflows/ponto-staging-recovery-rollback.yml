@@ -646,34 +646,42 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          node - <<'NODE'
+          node --input-type=module - <<'NODE'
           import fs from "node:fs";
           const headers = { accept: "application/json" };
           if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
             headers["cf-access-client-id"] = process.env.CF_ACCESS_CLIENT_ID;
             headers["cf-access-client-secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
           }
-          const response = await fetch(process.env.PONTO_MODULE_HEALTH_URL, {
-            redirect: "manual",
-            signal: AbortSignal.timeout(15_000),
-            headers,
-          });
-          const body = await response.json().catch(() => null);
-          const availabilitySource = String(body?.availability?.source || "");
           const materialized = JSON.parse(fs.readFileSync(process.env.PONTO_MATERIALIZE_REPORT, "utf8"));
-          const expectedAvailabilityChangedAt = availabilitySource === "emergency-latch-active"
-            ? materialized?.emergencyLatch?.changedAt
-            : materialized?.moduleControl?.changedAt;
-          const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
-          if (
-            response.status !== 200
-            || body?.ok !== false
-            || body?.ready !== false
-            || body?.availability?.state !== "maintenance"
-            || !["control", "emergency-latch-active"].includes(availabilitySource)
-            || body?.availability?.changedAt !== expectedAvailabilityChangedAt
-            || workerVersionId !== process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
-          ) throw new Error("staging health did not prove maintenance on the restored Timekeeping incumbent");
+          let passed = false;
+          for (let attempt = 0; attempt < 12; attempt += 1) {
+            const response = await fetch(process.env.PONTO_MODULE_HEALTH_URL, {
+              redirect: "manual",
+              signal: AbortSignal.timeout(15_000),
+              headers,
+            });
+            const body = await response.json().catch(() => null);
+            const availabilitySource = String(body?.availability?.source || "");
+            const expectedAvailabilityChangedAt = availabilitySource === "emergency-latch-active"
+              ? materialized?.emergencyLatch?.changedAt
+              : materialized?.moduleControl?.changedAt;
+            const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
+            if (
+              response.status === 200
+              && body?.ok === false
+              && body?.ready === false
+              && body?.availability?.state === "maintenance"
+              && ["control", "emergency-latch-active"].includes(availabilitySource)
+              && body?.availability?.changedAt === expectedAvailabilityChangedAt
+              && workerVersionId === process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
+            ) {
+              passed = true;
+              break;
+            }
+            if (attempt < 11) await new Promise((resolve) => setTimeout(resolve, 5_000));
+          }
+          if (!passed) throw new Error("staging health did not prove maintenance on the restored Timekeeping incumbent");
           NODE
 
       - name: Upload immutable staging recovery evidence

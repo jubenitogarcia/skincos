@@ -32,9 +32,11 @@ test("staging recovery rollback is exact, serialized, and environment protected"
     /\["control", "emergency-latch-active"\]\.includes\((?:body\?\.availability\?\.source|availabilitySource)\)/,
   );
   assert.match(workflow, /PONTO_MATERIALIZE_REPORT: \$\{\{ runner\.temp \}\}\/ponto-staging-recovery-rollback\/fresh-close\/materialized-readback\.json/);
-  assert.match(workflow, /body\?\.availability\?\.changedAt !== expectedAvailabilityChangedAt/);
+  assert.match(workflow, /body\?\.availability\?\.changedAt === expectedAvailabilityChangedAt/);
   assert.match(workflow, /readCloudflareKvJson/);
   assert.match(workflow, /fresh-close\/direct-readback\.json/);
+  assert.match(workflow, /for \(let attempt = 0; attempt < 12; attempt \+= 1\)/);
+  assert.match(workflow, /setTimeout\(resolve, 5_000\)/);
   assert.match(workflow, /mutation\.compensationDisposition === "not-required"/);
   assert.match(workflow, /group: ponto-surface-mutation/);
   assert.match(workflow, /cancel-in-progress: false/);
