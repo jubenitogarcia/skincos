@@ -155,7 +155,7 @@ jobs:
             throw new Error("canonical predecessor workflow is not active at the expected path");
           }
           if (run.workflow_id !== workflow.id) throw new Error("predecessor workflow id differs");
-          if (run.path !== workflow.path) throw new Error("predecessor workflow path differs");
+          if (![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)) throw new Error("predecessor workflow path differs");
           NODE
       - name: Download and verify immutable predecessor artifact
         id: evidence
@@ -195,7 +195,7 @@ jobs:
             || workflow.path !== ".github/workflows/ponto-production-baseline.yml"
             || workflow.name !== "Ponto production baseline"
             || run.workflow_id !== workflow.id
-            || run.path !== workflow.path
+            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"

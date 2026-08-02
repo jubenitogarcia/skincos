@@ -144,6 +144,50 @@ test("workflow run provenance accepts both live GitHub REST path forms", () => {
   assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/heads/feature`), false);
 });
 
+test("Ponto workflow REST provenance gates accept both live path forms", () => {
+  const workflowNames = [
+    "cloudflare-pages-sync-ponto.yml",
+    "cloudflare-workers-sync-ponto-secrets.yml",
+    "deploy-timekeeping.yml",
+    "ponto-production-baseline.yml",
+    "ponto-progressive-release.yml",
+    "ponto-release-gate.yml",
+    "ponto-staging-rollback-drill.yml",
+  ];
+  for (const workflowName of workflowNames) {
+    const source = fs.readFileSync(
+      path.join(repositoryRoot, ".github", "workflows", workflowName),
+      "utf8",
+    );
+    assert.match(
+      source,
+      /\[\s*(?:expectedPath|workflow\.path),\s*`\$\{(?:expectedPath|workflow\.path)\}@refs\/heads\/main`\s*\]\.includes\(run\.path\)/,
+      `${workflowName} must accept both GitHub REST workflow path forms`,
+    );
+    assert.doesNotMatch(
+      source,
+      /run\.path\s*!==\s*(?:expectedPath|workflow\.path)|run\.path\s*===\s*workflow\.path/,
+      `${workflowName} must not require one REST path spelling`,
+    );
+  }
+});
+
+test("Pages custody journals no mutation before any precondition can fail", () => {
+  const source = fs.readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "cloudflare-pages-sync-ponto.yml"),
+    "utf8",
+  );
+  const journalIndex = source.indexOf("- name: Initialize Pages mutation journal before any precondition");
+  const verifyIndex = source.indexOf("- name: Verify immutable source and production predecessor");
+  const journalBlock = source.slice(journalIndex, verifyIndex);
+  assert.ok(journalIndex >= 0, "Pages custody must initialize its mutation journal");
+  assert.ok(verifyIndex > journalIndex, "Pages custody must journal before immutable preconditions");
+  assert.match(journalBlock, /pages-release-probe-evidence\.json/);
+  assert.match(journalBlock, /mutationStarted: false/);
+  assert.match(journalBlock, /credentialsIncluded: false/);
+  assert.match(journalBlock, /piiIncluded: false/);
+});
+
 test("assert-active rejects a rerun of the privileged child before any API access", async () => {
   await withApi({}, async ({ apiUrl, getRequestCount }) => {
     const result = await execute(

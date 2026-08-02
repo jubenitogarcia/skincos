@@ -517,7 +517,7 @@ jobs:
             || workflow.name !== "Attest Ponto Worker secret custody"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
             || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"

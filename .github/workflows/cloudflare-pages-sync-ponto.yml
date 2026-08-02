@@ -78,6 +78,41 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
         with:
           node-version: 22.12.0
+      - name: Initialize Pages mutation journal before any precondition
+        env:
+          TARGET: ${{ inputs.target }}
+          STAGING_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING }}
+          PRODUCTION_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            staging) PROJECT="$STAGING_PROJECT_RAW" ;;
+            production) PROJECT="$PRODUCTION_PROJECT_RAW" ;;
+            *) echo 'Unsupported Ponto Pages custody target'; exit 1 ;;
+          esac
+          [[ -n "$PROJECT" ]] || { echo 'Ponto Pages project is missing'; exit 1; }
+          export PROJECT
+          node - "$RUNNER_TEMP/pages-release-probe-evidence.json" <<'NODE'
+          const fs = require("fs");
+          const file = process.argv[2];
+          fs.writeFileSync(file, `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "pagesEnvironmentSecrets",
+            target: process.env.TARGET,
+            project: process.env.PROJECT,
+            releaseSha: process.env.RELEASE_SHA,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID,
+            mutationStarted: false,
+            mutationCompleted: false,
+            remoteAttestationCompleted: false,
+            retentionPolicy: "environment-scoped-deterministic-prerequisite",
+            valuesIncluded: false,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
       - name: Verify immutable source and production predecessor
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,7 +146,7 @@ jobs:
           const expectedPath = workflow.path;
           if (
             run.workflow_id !== workflow.id
-            || run.path !== expectedPath
+            || ![expectedPath, `${expectedPath}@refs/heads/main`].includes(run.path)
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
@@ -142,7 +177,7 @@ jobs:
             || workflow.path !== ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
             || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"
