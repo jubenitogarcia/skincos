@@ -374,10 +374,62 @@ jobs:
         env:
           CANDIDATE_ID: ${{ steps.deployment.outputs.candidate }}
         run: |
-          curl --fail --silent --show-error --retry 5 --retry-delay 4 https://api-staging.skincos.com.br/insumos/health > "$RUNNER_TEMP/identity-staging-health.json"
-          node - "$RUNNER_TEMP/identity-staging-health.json" <<'NODE'
-          const fs = require("fs"); const health = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          if (health.version !== process.env.RELEASE_SHA || health.environment !== "staging" || health.workerVersion?.id !== process.env.CANDIDATE_ID || health.workerVersion?.tag !== `ponto:identityWorkforce:${process.env.RELEASE_SHA}`) process.exit(1);
+          node --input-type=module - "$RUNNER_TEMP/identity-staging-health.json" <<'NODE'
+          import fs from "node:fs";
+
+          const healthFile = process.argv[2];
+          const probeUrl = new URL("https://api-staging.skincos.com.br/insumos/health");
+          const expectedTag = `ponto:identityWorkforce:${process.env.RELEASE_SHA}`;
+          const propagationDeadline = Date.now() + 75_000;
+          let consecutiveValidSamples = 0;
+          let lastValidSampleKey = "";
+          let lastObservation = "no response";
+          let attempt = 0;
+          let passed = false;
+
+          while (Date.now() <= propagationDeadline) {
+            attempt += 1;
+            const probe = new URL(probeUrl);
+            probe.searchParams.set("identity_release_probe", `${Date.now()}-${attempt}`);
+            try {
+              const response = await fetch(probe, {
+                redirect: "manual",
+                signal: AbortSignal.timeout(15_000),
+                headers: { accept: "application/json", "cache-control": "no-cache" },
+              });
+              const health = await response.json().catch(() => null);
+              fs.writeFileSync(healthFile, `${JSON.stringify(health || {}, null, 2)}\n`, { mode: 0o600 });
+              const workerVersionId = String(health?.workerVersion?.id || "").toLowerCase();
+              const workerVersionTag = String(health?.workerVersion?.tag || "");
+              const validSample = response.status === 200
+                && health?.version === process.env.RELEASE_SHA
+                && health?.environment === "staging"
+                && workerVersionId === String(process.env.CANDIDATE_ID || "").toLowerCase()
+                && workerVersionTag === expectedTag;
+              const sampleKey = `${health?.version || ""}:${health?.environment || ""}:${workerVersionId}:${workerVersionTag}`;
+              if (validSample && sampleKey === lastValidSampleKey) consecutiveValidSamples += 1;
+              else if (validSample) {
+                lastValidSampleKey = sampleKey;
+                consecutiveValidSamples = 1;
+              } else {
+                lastValidSampleKey = "";
+                consecutiveValidSamples = 0;
+              }
+              lastObservation = `HTTP ${response.status}, version=${String(health?.version || "")}, environment=${String(health?.environment || "")}, workerVersionId=${workerVersionId}`;
+              if (consecutiveValidSamples >= 2) {
+                passed = true;
+                break;
+              }
+            } catch (error) {
+              lastValidSampleKey = "";
+              consecutiveValidSamples = 0;
+              lastObservation = error instanceof Error ? error.message : String(error);
+            }
+            const remainingMs = propagationDeadline - Date.now();
+            if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(5_000, remainingMs)));
+          }
+
+          if (!passed) throw new Error(`staging Identity health did not prove the candidate in two consecutive samples within the propagation window; attempts=${attempt}; last=${lastObservation}`);
           NODE
       - name: Restore staging Identity incumbent after failure or cancellation
         if: ${{ always() && (failure() || cancelled()) && env.IDENTITY_INCUMBENT_VERSION_ID != '' }}
