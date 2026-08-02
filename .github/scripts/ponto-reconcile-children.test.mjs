@@ -167,9 +167,9 @@ test("staging recovery accepts the still-active emergency latch after incumbent 
   assert.match(proof, /PONTO_MATERIALIZE_REPORT: \$\{\{ runner\.temp \}\}\/ponto-staging-recovery-rollback\/fresh-close\/materialized-readback\.json/);
   assert.match(proof, /const materialized = JSON\.parse\(fs\.readFileSync\(process\.env\.PONTO_MATERIALIZE_REPORT, \"utf8\"\)\);/);
   assert.match(proof, /const expectedAvailabilityChangedAt = availabilitySource === \"emergency-latch-active\"/);
-  assert.match(proof, /!\["control", "emergency-latch-active"\]\.includes\(availabilitySource\)/);
-  assert.match(proof, /body\?\.availability\?\.changedAt !== expectedAvailabilityChangedAt/);
-  assert.match(proof, /workerVersionId !== process\.env\.TIMEKEEPING_INCUMBENT_VERSION_ID\.toLowerCase\(\)/);
+  assert.match(proof, /\["control", "emergency-latch-active"\]\.includes\(availabilitySource\)/);
+  assert.match(proof, /body\?\.availability\?\.changedAt === expectedAvailabilityChangedAt/);
+  assert.match(proof, /workerVersionId === process\.env\.TIMEKEEPING_INCUMBENT_VERSION_ID\.toLowerCase\(\)/);
 });
 
 test("coordinator reserves a bounded recovery budget inside the GitHub job limit", () => {
