@@ -15,7 +15,14 @@ test("staging recovery rollback is exact, serialized, and environment protected"
     "watchdog_run_id",
     "timekeeping_candidate_version_id",
     "timekeeping_incumbent_version_id",
+    "authorization_ref",
   ]) assert.match(workflow, new RegExp(`\\b${input}:`));
+  assert.match(workflow, /fresh-close:/);
+  assert.match(workflow, /environment: ponto-emergency-staging/);
+  assert.match(workflow, /PONTO_FAILED_COORDINATOR_RUN_ID: \$\{\{ inputs\.coordinator_run_id \}\}/);
+  assert.match(workflow, /PONTO_EMERGENCY_TRIGGER_RUN_ID: \$\{\{ github\.run_id \}\}/);
+  assert.match(workflow, /name: ponto-fresh-recovery-close-staging-\$\{\{ github\.run_id \}\}/);
+  assert.match(workflow, /name: Normalize the fresh close with historical child reconciliation/);
   assert.match(workflow, /group: ponto-surface-mutation/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /environment: staging/);
