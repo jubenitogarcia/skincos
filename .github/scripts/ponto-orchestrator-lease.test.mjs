@@ -227,6 +227,31 @@ test("Pages custody uses structured Cloudflare project env_vars for inventory ch
   assert.doesNotMatch(source, /normalize_wrangler_array/);
 });
 
+test("Pages deploy gates use trusted inline API attestation instead of promoted checkout scripts", () => {
+  const source = fs.readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "deploy-crm-pages.yml"),
+    "utf8",
+  );
+  assert.match(source, /pages\/projects\/\$PAGES_PROJECT/);
+  assert.match(source, /pages\/projects\/\$PROJECT/);
+  assert.match(source, /deployment_configs\?\.production\?\.env_vars/);
+  assert.match(source, /node - "\$pages_project" "\$DEPLOY_TARGET" <<'NODE'/);
+  assert.match(source, /node - "\$pages_project" "\$TARGET" <<'NODE'/);
+  for (const command of [
+    'node - "$pages_project" "$DEPLOY_TARGET" <<\'NODE\'',
+    'node - "$pages_project" "$TARGET" <<\'NODE\'',
+  ]) {
+    const start = source.indexOf(command);
+    assert.ok(start >= 0, `missing Pages attestation command: ${command}`);
+    const delimiter = source.slice(start).match(/\n([ \t]+)NODE\n/);
+    assert.ok(delimiter, `missing heredoc delimiter after: ${command}`);
+    assert.equal(delimiter[1].length, 10, `heredoc delimiter indentation drifted after: ${command}`);
+  }
+  assert.match(source, /binding\.type !== "secret_text"/);
+  assert.doesNotMatch(source, /pages secret list/);
+  assert.doesNotMatch(source, /ponto-pages-environment-attestation\.mjs/);
+});
+
 test("assert-active rejects a rerun of the privileged child before any API access", async () => {
   await withApi({}, async ({ apiUrl, getRequestCount }) => {
     const result = await execute(
@@ -458,4 +483,26 @@ test("latch reset accepts only a fresh manual close reattestation title", () => 
   assert.match(reset, /String\(run\?\.id \|\| ""\) !== process\.env\.EMERGENCY_RUN_ID/);
   assert.match(reset, /run\?\.run_attempt !== 1/);
   assert.match(reset, /Automatic watchdog\/ordinary latches are intentionally not reset/);
+});
+
+test("recovery artifact downloads isolate extraction before merging attested evidence", () => {
+  for (const file of ["ponto-release-watchdog.yml", "ponto-progressive-release.yml"]) {
+    const source = workflow(file);
+    assert.match(
+      source,
+      /download_dir="\$\(mktemp -d "\$PONTO_RECOVERY_ARTIFACT_ROOT\/\.artifact-download\.XXXXXX"\)"/,
+      `${file} must isolate each artifact extraction`,
+    );
+    assert.match(source, /--dir "\$download_dir"/, `${file} must download into the isolated directory`);
+    assert.match(
+      source,
+      /cp -a "\$download_dir"\/\. "\$PONTO_RECOVERY_ARTIFACT_ROOT\/\$destination\/"/,
+      `${file} must merge the isolated artifact after extraction`,
+    );
+    assert.doesNotMatch(
+      source,
+      /--dir "\$PONTO_RECOVERY_ARTIFACT_ROOT\/\$destination"/,
+      `${file} must not extract directly into a pre-populated evidence directory`,
+    );
+  }
 });
