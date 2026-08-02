@@ -24,6 +24,18 @@ on:
         description: "Exact incumbent version to restore"
         required: true
         type: string
+      timekeeping_owner_recovery_run_id:
+        description: "Exact successful Ponto recovery that currently owns the candidate-only Worker deployment"
+        required: true
+        type: string
+      timekeeping_owner_coordinator_run_id:
+        description: "Coordinator run bound to the successful current-owner recovery"
+        required: true
+        type: string
+      timekeeping_owner_release_sha:
+        description: "Release SHA bound to the successful current-owner recovery"
+        required: true
+        type: string
       authorization_ref:
         description: "Opaque approved incident or change reference for the fresh recovery close"
         required: true
@@ -46,9 +58,6 @@ jobs:
     permissions:
       actions: read
       contents: read
-    concurrency:
-      group: ponto-surface-mutation
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
@@ -95,7 +104,7 @@ jobs:
             || watchdog.event !== "workflow_run"
             || watchdog.status !== "completed"
             || watchdog.conclusion !== "failure"
-            || watchdog.head_sha !== releaseSha
+            || !/^[0-9a-f]{40}$/.test(String(watchdog.head_sha || ""))
             || watchdog.head_branch !== "main"
             || watchdog.repository?.full_name !== repo
             || !String(watchdog.display_title || "").includes(`source=${process.env.COORDINATOR_RUN_ID}`)
@@ -326,7 +335,7 @@ jobs:
             || watchdog.event !== "workflow_run"
             || watchdog.status !== "completed"
             || watchdog.conclusion !== "failure"
-            || watchdog.head_sha !== releaseSha
+            || !/^[0-9a-f]{40}$/.test(String(watchdog.head_sha || ""))
             || watchdog.head_branch !== "main"
             || watchdog.repository?.full_name !== repo
             || !String(watchdog.display_title || "").includes(`source=${process.env.COORDINATOR_RUN_ID}`)
@@ -341,6 +350,40 @@ jobs:
           path: ${{ runner.temp }}/ponto-staging-recovery-rollback
           github-token: ${{ github.token }}
           run-id: ${{ inputs.watchdog_run_id }}
+
+      - name: Download the exact successful recovery that owns the replacement Worker
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-staging-recovery-rollback-${{ inputs.timekeeping_owner_coordinator_run_id }}-${{ inputs.timekeeping_owner_recovery_run_id }}
+          path: ${{ runner.temp }}/ponto-staging-recovery-rollback/owner-recovery
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.timekeeping_owner_recovery_run_id }}
+
+      - name: Validate the exact current Worker ownership recovery before mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_PRIOR_RECOVERY_RUN_ID: ${{ inputs.timekeeping_owner_recovery_run_id }}
+          PONTO_PRIOR_RECOVERY_COORDINATOR_RUN_ID: ${{ inputs.timekeeping_owner_coordinator_run_id }}
+          PONTO_PRIOR_RECOVERY_RELEASE_SHA: ${{ inputs.timekeeping_owner_release_sha }}
+          PONTO_TIMEKEEPING_CANDIDATE_VERSION_ID: ${{ inputs.timekeeping_candidate_version_id }}
+          PONTO_PRIOR_RECOVERY_RUN_FILE: ${{ runner.temp }}/ponto-staging-recovery-rollback/owner-recovery-run.json
+          PONTO_PRIOR_RECOVERY_ARTIFACT_ROOT: ${{ runner.temp }}/ponto-staging-recovery-rollback/owner-recovery
+          PONTO_WORKER_OWNERSHIP_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/current-worker-ownership.json
+        run: |
+          set -euo pipefail
+          [[ "$PONTO_PRIOR_RECOVERY_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid current-owner recovery run ID'; exit 1; }
+          [[ "$PONTO_PRIOR_RECOVERY_COORDINATOR_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid current-owner coordinator run ID'; exit 1; }
+          [[ "$PONTO_PRIOR_RECOVERY_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid current-owner release SHA'; exit 1; }
+          [[ "$PONTO_PRIOR_RECOVERY_RUN_ID" != "$PONTO_PRIOR_RECOVERY_COORDINATOR_RUN_ID" ]] || { echo 'Current-owner recovery and coordinator runs must differ'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PONTO_PRIOR_RECOVERY_RUN_ID" > "$PONTO_PRIOR_RECOVERY_RUN_FILE"
+          owner_head_sha="$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).head_sha || "")' "$PONTO_PRIOR_RECOVERY_RUN_FILE")"
+          [[ "$owner_head_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Current-owner recovery SHA is invalid'; exit 1; }
+          git merge-base --is-ancestor "$owner_head_sha" origin/main || { echo 'Current-owner recovery source is not reachable from canonical main'; exit 1; }
+          node .github/scripts/ponto-worker-ownership-recovery.mjs \
+            "$PONTO_PRIOR_RECOVERY_RUN_FILE" \
+            "$PONTO_PRIOR_RECOVERY_ARTIFACT_ROOT" \
+            "$PONTO_WORKER_OWNERSHIP_REPORT"
+          rm -f "$PONTO_PRIOR_RECOVERY_RUN_FILE"
 
       - name: Validate exact incumbent custody before mutation
         env:
@@ -431,6 +474,25 @@ jobs:
           path: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
+
+      - name: Materialize the exact fresh broker close under the staging surface mutex
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_RESOURCE_TARGET: staging
+          PONTO_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+          PONTO_OPPOSITE_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
+          PONTO_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          PONTO_MATERIALIZE_TARGET: staging
+          PONTO_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          PONTO_MAINTENANCE_FILE: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close/maintenance.json
+          PONTO_MATERIALIZE_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close/materialized-readback.json
+          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/resource-identity.json
+        run: |
+          node .github/scripts/ponto-cloudflare-resource-identity.mjs
+          node .github/scripts/ponto-module-control-materialize.mjs
 
       - name: Read back the exact staging module control from Cloudflare KV
         env:
@@ -539,18 +601,6 @@ jobs:
             "$RUNNER_TEMP/ponto-staging-recovery-rollback" \
             "$RUNNER_TEMP/ponto-staging-recovery-rollback/fresh-close/direct-readback.json"
 
-      - name: Attest exact staging Ponto resource identities
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PONTO_RESOURCE_TARGET: staging
-          PONTO_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
-          PONTO_OPPOSITE_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
-          PONTO_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
-          PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
-          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/resource-identity.json
-        run: node .github/scripts/ponto-cloudflare-resource-identity.mjs
-
       - name: Restore the exact Timekeeping incumbent under the existing latch
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -559,6 +609,8 @@ jobs:
           PONTO_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
           RELEASE_SHA: ${{ inputs.release_sha }}
           STAGE: staging
+          PONTO_TIMEKEEPING_CANDIDATE_VERSION_ID: ${{ inputs.timekeeping_candidate_version_id }}
+          PONTO_WORKER_OWNERSHIP_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/current-worker-ownership.json
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PONTO_MODULE_HEALTH_URL: https://api-staging.skincos.com.br/api/ponto/health
@@ -589,31 +641,70 @@ jobs:
         env:
           PONTO_MODULE_HEALTH_URL: https://api-staging.skincos.com.br/api/ponto/health
           TIMEKEEPING_INCUMBENT_VERSION_ID: ${{ inputs.timekeeping_incumbent_version_id }}
+          PONTO_MATERIALIZE_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close/materialized-readback.json
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          node - <<'NODE'
+          node --input-type=module - <<'NODE'
+          import fs from "node:fs";
           const headers = { accept: "application/json" };
           if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
             headers["cf-access-client-id"] = process.env.CF_ACCESS_CLIENT_ID;
             headers["cf-access-client-secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
           }
-          const response = await fetch(process.env.PONTO_MODULE_HEALTH_URL, {
-            redirect: "manual",
-            signal: AbortSignal.timeout(15_000),
-            headers,
-          });
-          const body = await response.json().catch(() => null);
-          const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
-          if (
-            response.status !== 200
-            || body?.ok !== false
-            || body?.ready !== false
-            || body?.availability?.state !== "maintenance"
-            || body?.availability?.source !== "control"
-            || workerVersionId !== process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
-          ) throw new Error("staging health did not prove maintenance on the restored Timekeeping incumbent");
+          const materialized = JSON.parse(fs.readFileSync(process.env.PONTO_MATERIALIZE_REPORT, "utf8"));
+          const propagationDeadline = Date.now() + 75_000;
+          let consecutiveValidSamples = 0;
+          let lastValidSampleKey = "";
+          let passed = false;
+          let attempt = 0;
+          while (Date.now() <= propagationDeadline) {
+            attempt += 1;
+            try {
+              const response = await fetch(process.env.PONTO_MODULE_HEALTH_URL, {
+                redirect: "manual",
+                signal: AbortSignal.timeout(15_000),
+                headers,
+              });
+              const body = await response.json().catch(() => null);
+              const availabilitySource = String(body?.availability?.source || "");
+              const expectedAvailabilityChangedAt = availabilitySource === "emergency-latch-active"
+                ? materialized?.emergencyLatch?.changedAt
+                : materialized?.moduleControl?.changedAt;
+              const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
+              const validSample = (
+                response.status === 200
+                && body?.ok === false
+                && body?.ready === false
+                && body?.availability?.state === "maintenance"
+                && ["control", "emergency-latch-active"].includes(availabilitySource)
+                && body?.availability?.changedAt === expectedAvailabilityChangedAt
+                && workerVersionId === process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
+              );
+              const sampleKey = `${availabilitySource}:${body?.availability?.changedAt || ""}:${workerVersionId}`;
+              if (validSample && sampleKey === lastValidSampleKey) {
+                consecutiveValidSamples += 1;
+              } else if (validSample) {
+                lastValidSampleKey = sampleKey;
+                consecutiveValidSamples = 1;
+              } else {
+                lastValidSampleKey = "";
+                consecutiveValidSamples = 0;
+              }
+              if (consecutiveValidSamples >= 2) {
+                passed = true;
+                break;
+              }
+            } catch {
+              // A transient health-probe failure consumes this attempt but must not abort the bounded propagation window.
+              lastValidSampleKey = "";
+              consecutiveValidSamples = 0;
+            }
+            const remainingMs = propagationDeadline - Date.now();
+            if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(5_000, remainingMs)));
+          }
+          if (!passed) throw new Error("staging health did not prove two consecutive maintenance samples on the restored Timekeeping incumbent within the propagation window");
           NODE
 
       - name: Upload immutable staging recovery evidence

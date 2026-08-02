@@ -422,6 +422,7 @@ test("every privileged Ponto mutation job refuses workflow reruns without blocki
     ["module-availability.yml", "emergency-reconciliation"],
     ["ponto-emergency-latch-reset.yml", "reset-mutate"],
     ["ponto-emergency-close.yml", "close"],
+    ["ponto-emergency-close.yml", "materialize"],
     ["ponto-production-baseline.yml", "capture"],
     ["ponto-production-slo.yml", "consultor-journey"],
     ["ponto-production-slo.yml", "rollback-observation"],

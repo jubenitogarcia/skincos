@@ -52,6 +52,13 @@ export function classifyWorkerRollbackOwnership(payload, item, stage) {
   const candidateOwned = sameVersions(actual, expectedCandidateVersions(item, stage))
     && (!expectedDeploymentId || deploymentId === expectedDeploymentId);
   if (candidateOwned) return "candidate-owned";
+  const authorizedReplacementMessage = String(item?.authorizedReplacementMessage || "");
+  const reconciledCandidateOwned = sameVersions(actual, expectedCandidateVersions(item, stage))
+    && Boolean(expectedDeploymentId)
+    && deploymentId !== expectedDeploymentId
+    && /^ponto:auto-abort:[0-9a-f]{40}:orchestrator-[1-9][0-9]*$/.test(authorizedReplacementMessage)
+    && String(payload?.annotations?.["workers/message"] || "") === authorizedReplacementMessage;
+  if (reconciledCandidateOwned) return "candidate-owned-reconciled";
   const incumbentOnly = [{ id: item.incumbentVersionId.toLowerCase(), percentage: 100 }];
   if (sameVersions(actual, incumbentOnly)) return "already-incumbent";
   return "ownership-conflict";
