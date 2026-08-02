@@ -150,7 +150,16 @@ test("watchdog never rolls back after failed child reconciliation", () => {
   assert.match(failClose, /Prove external fail-close through overlay or exact incumbent control/);
   assert.match(failClose, /PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active/);
   assert.match(failClose, /PONTO_MODULE_ALTERNATE_EXPECTATION_FILE=/);
+  assert.match(failClose, /\(async \(\) => \{/);
+  assert.match(failClose, /const probe = new URL\(process\.env\.PONTO_MODULE_HEALTH_URL\)/);
+  assert.match(failClose, /watchdog_close_probe/);
+  assert.match(failClose, /watchdog fail-close did not observe exact incumbent maintenance control/);
+  assert.match(failClose, /\["control", "emergency-latch-active"\]/);
+  assert.match(failClose, /availability\.source === "emergency-latch-active"/);
+  assert.match(failClose, /if \[\[ -f .*control-fallback-expectation\.json/);
   assert.match(failClose, /state: "maintenance"[\s\S]*source: "control"/);
+  assert.match(failClose, /changedAt: availability\.changedAt/);
+  assert.doesNotMatch(failClose, /changedAt: maintenance\.controlChangedAt/);
   assert.match(rollback, /needs:\s*\[context, latch, reconcile, fail-close\]/);
   assert.match(rollback, /needs\.reconcile\.result == 'success'/);
   assert.match(rollback, /needs\.fail-close\.result == 'success'/);
