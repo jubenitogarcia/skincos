@@ -347,7 +347,7 @@ jobs:
             .update(domain)
             .digest("base64url");
           fs.writeFileSync(
-            process.argv[4],
+            process.argv[3],
             `${JSON.stringify({
               PONTO_ACTOR_HMAC_KEY: derive("skincos/ponto/actor/v1"),
               PONTO_NETWORK_CONTEXT_KEY: derive("skincos/ponto/network-context/v1"),
