@@ -64,7 +64,11 @@ test("every governed caller grants read-only deployment metadata to the gate", (
     );
     assert.notEqual(gate, -1, name);
     assert.match(source.slice(Math.max(0, gate - 220), gate), /deployments: read/, name);
-    assert.match(source.slice(gate, gate + 180), /secrets: inherit/, name);
+    assert.match(
+      source.slice(gate, gate + 220),
+      /secrets:\n\s+GH_TOKEN: \$\{\{ secrets\.GH_TOKEN \}\}/,
+      name,
+    );
   }
 });
 

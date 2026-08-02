@@ -50,7 +50,8 @@ jobs:
       contents: read
       deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
-    secrets: inherit
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     with:
       required: ${{ inputs.release_scope == 'ponto' && inputs.target != 'preview' }}
       lease_key: pages
