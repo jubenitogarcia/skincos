@@ -186,6 +186,29 @@ test("watchdog evidence normalizes only capability-authorized terminal children"
   assert.equal(normalized.childReconciliation.discoveredChildren, 1);
 });
 
+test("watchdog evidence accepts validated aggregate child custody", () => {
+  const normalized = normalizeRecoveryEvidence({
+    reconciliation: {
+      schemaVersion: 1,
+      target,
+      discoveredChildren: 32,
+      unresolved: [],
+      passed: true,
+      credentialsIncluded: false,
+      piiIncluded: false,
+    },
+    maintenance,
+    propagation,
+    sourceMode: "watchdog",
+    coordinatorRunId,
+    emergencyRunId,
+    releaseSha: sha,
+    stage,
+    target,
+  });
+  assert.equal(normalized.childReconciliation.discoveredChildren, 32);
+});
+
 test("live module-control and latch must match the exact normalized broker close", () => {
   const normalized = normalizeRecoveryEvidence({
     reconciliation: {
