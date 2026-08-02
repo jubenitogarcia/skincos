@@ -215,6 +215,7 @@ test("Pages custody uses structured Cloudflare project env_vars for inventory ch
   assert.match(source, /pages\/projects\/\$PROJECT/);
   assert.match(source, /deployment_configs\?\.production\?\.env_vars/);
   assert.match(source, /Object\.keys\(envVars\)/);
+  assert.match(source, /node - "\$before_project_file" "\$evidence_file"[\s\S]+process\.argv\[3\]/);
   assert.doesNotMatch(source, /pages secret list/);
   assert.doesNotMatch(source, /normalize_wrangler_array/);
 });
