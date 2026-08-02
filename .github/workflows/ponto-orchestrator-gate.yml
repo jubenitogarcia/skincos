@@ -74,7 +74,7 @@ jobs:
             exit 1
           }
           issuer_actor="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORCHESTRATOR_RUN_ID" --jq '.actor.login')"
-          [[ "$issuer_actor" =~ ^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$ ]] || {
+          [[ "$issuer_actor" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]] || {
             echo 'Governed Ponto coordinator actor is invalid'
             exit 1
           }
