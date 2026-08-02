@@ -35,12 +35,15 @@ test("coordinator and consumer attest live environment protection before authori
   );
   assert.ok(consumerPreflight >= 0);
   assert.ok(consumerPreflight < consume);
-  assert.match(gate.slice(consumerPreflight, consume), /deployment-branch-policies/);
+  const consumerScoped = gate.slice(consumerPreflight, consume);
+  assert.match(consumerScoped, /deployment-branch-policies/);
   assert.match(gate, /secrets:\n\s+GH_TOKEN:\n\s+required: false/);
   assert.match(
-    gate.slice(consumerPreflight, consume),
+    consumerScoped,
     /GH_TOKEN: \$\{\{ secrets\.GH_TOKEN != '' && secrets\.GH_TOKEN \|\| github\.token \}\}/,
   );
+  assert.match(consumerScoped, /actions\/runs\/\$ORCHESTRATOR_RUN_ID/);
+  assert.match(consumerScoped, /GITHUB_ACTOR="\$issuer_actor" node/);
   assert.match(gate, /deployments: read/);
 });
 
