@@ -177,7 +177,7 @@ test("Pages custody journals no mutation before any precondition can fail", () =
     path.join(repositoryRoot, ".github", "workflows", "cloudflare-pages-sync-ponto.yml"),
     "utf8",
   );
-  const journalIndex = source.indexOf("- name: Initialize Pages mutation journal before any precondition");
+  const journalIndex = source.indexOf("- name: Initialize Pages mutation journal before checkout, setup, and preconditions");
   const verifyIndex = source.indexOf("- name: Verify immutable source and production predecessor");
   const journalBlock = source.slice(journalIndex, verifyIndex);
   assert.ok(journalIndex >= 0, "Pages custody must initialize its mutation journal");
@@ -186,6 +186,11 @@ test("Pages custody journals no mutation before any precondition can fail", () =
   assert.match(journalBlock, /mutationStarted: false/);
   assert.match(journalBlock, /credentialsIncluded: false/);
   assert.match(journalBlock, /piiIncluded: false/);
+  assert.match(journalBlock, /- name: Initialize Pages mutation journal before checkout, setup, and preconditions[\s\S]+- uses: actions\/checkout@/);
+  assert.ok(
+    journalBlock.indexOf("[[ -n \"$PROJECT\" ]]") > journalBlock.indexOf("pages-release-probe-evidence.json"),
+    "Pages project validation must follow journal creation",
+  );
 });
 
 test("assert-active rejects a rerun of the privileged child before any API access", async () => {

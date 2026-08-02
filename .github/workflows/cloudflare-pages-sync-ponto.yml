@@ -71,14 +71,7 @@ jobs:
     timeout-minutes: 30
     environment: ${{ inputs.target }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
-        with:
-          ref: ${{ inputs.release_sha }}
-          fetch-depth: 0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
-        with:
-          node-version: 22.12.0
-      - name: Initialize Pages mutation journal before any precondition
+      - name: Initialize Pages mutation journal before checkout, setup, and preconditions
         env:
           TARGET: ${{ inputs.target }}
           STAGING_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING }}
@@ -92,7 +85,6 @@ jobs:
             production) PROJECT="$PRODUCTION_PROJECT_RAW" ;;
             *) echo 'Unsupported Ponto Pages custody target'; exit 1 ;;
           esac
-          [[ -n "$PROJECT" ]] || { echo 'Ponto Pages project is missing'; exit 1; }
           export PROJECT
           node - "$RUNNER_TEMP/pages-release-probe-evidence.json" <<'NODE'
           const fs = require("fs");
@@ -113,6 +105,14 @@ jobs:
             piiIncluded: false,
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
+          [[ -n "$PROJECT" ]] || { echo 'Ponto Pages project is missing'; exit 1; }
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.0.0
+        with:
+          node-version: 22.12.0
       - name: Verify immutable source and production predecessor
         env:
           GH_TOKEN: ${{ github.token }}
