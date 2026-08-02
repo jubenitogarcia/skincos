@@ -1,5 +1,39 @@
 # Current state
 
+## Snapshot autoritativo de fechamento — `origin/main` `fd91be5ff00dcc311bedc205d3bab9efbae82258` — 2026-08-02T13:46:45Z
+
+As PRs Ponto #1039, #1040 e #1042 estão integradas. O preview
+`30747329164` do SHA avaliado `ae6cab22d7fa4ce5d1a2f38f0d3d5a4315249d23`
+passou nos quatro surfaces, mas `30747573120` não é staging verde: o child
+Identity/Workforce `30747791111` parou antes de mutar pela ausência de
+`ENABLE_PONTO_CORE_WORKERS_DEPLOY` e `IDENTITY_BACKUP_PASSPHRASE` em `staging`.
+
+### Ponto / Workforce
+
+- O recovery final `30750613086` passou integralmente, incluindo custódia
+  agregada do watchdog, fresh close, leitura direta do KV, restauração e prova
+  pós-rollback. O candidate `c8864c8f-3625-44ab-bd30-bc25e5e44213` foi
+  retirado e o incumbent `30d4f35b-584b-40a7-95ad-d00ca747e057` ficou a 100%,
+  sob latch de emergência.
+- Health live respondeu 200 com `ok=false`/`ready=false`,
+  `versionMetadata.releaseSha=50872352329446521a84efa44b098f0e3e038497`,
+  Worker `30d4f35b-584b-40a7-95ad-d00ca747e057`,
+  `maintenance/emergency-latch-active`, dependências críticas coerentes e
+  `MODULE_MAINTENANCE`/`RELEASE_AFFINITY_MISMATCH`; readiness e release
+  readiness responderam 503.
+- Não há SHA de release Ponto selecionado para promoção completa: Core API,
+  CRM Pages e a jornada autenticada não foram executados. Health 200 em
+  maintenance é prova de contenção e versão do incumbente, não de jornada.
+
+### Financeiro e limites
+
+Financeiro permanece `experimental`, `module_enabled=false`, sem grants,
+usuários, coorte ou ativação de produção. Nenhuma mutação de produção ocorreu.
+O próximo passo permitido é provisionar/reatestar a flag Ponto de staging e o
+segredo de backup de Identity por caminho governado, sem inventar/copiar
+secrets ou usar fallback entre environments; somente depois uma nova prévia,
+staging e jornada focal podem ser selecionadas.
+
 ## Snapshot autoritativo de fechamento — `origin/main` `b6a6cc109ff0c0690381612212d9bfc67b84f63b` — 2026-08-01T23:34:16Z
 
 Este snapshot foi revalidado no GitHub e nos workflows canônicos; os textos

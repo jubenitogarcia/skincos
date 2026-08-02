@@ -1,5 +1,43 @@
 # TASKS
 
+## Snapshot autoritativo de fechamento — `origin/main` `fd91be5ff00dcc311bedc205d3bab9efbae82258` — 2026-08-02T13:46:45Z
+
+Esta seção substitui o snapshot anterior deste ciclo. As correções Ponto
+#1039, #1040 e #1042 estão integradas em `origin/main`; o checkout compartilhado
+e as alterações não relacionadas não foram tocados.
+
+- **Ponto / SHA:** o SHA avaliado `ae6cab22d7fa4ce5d1a2f38f0d3d5a4315249d23`
+  teve preview `30747329164` verde nos quatro surfaces, mas a staging
+  `30747573120` parou antes da mutação de Identity/Workforce
+  (`30747791111`) por ausência de `ENABLE_PONTO_CORE_WORKERS_DEPLOY` e
+  `IDENTITY_BACKUP_PASSPHRASE`. Não há `selected_release_sha` de staging
+  completa; o incumbente ativo comprovado é o SHA imutável
+  `50872352329446521a84efa44b098f0e3e038497`.
+- **Correções / recuperação:** #1039 vinculou o broker de emergência ao KV
+  `e69fe06b6abc46eca4f4c00198d078f2` (versão live `6e7c6c22...`, deployment
+  `4e4df415...`); #1040 aceitou a custódia agregada validada do watchdog; #1042
+  aceitou `emergency-latch-active` como fonte válida de fail-close pós-rollback.
+  O recovery `30750613086` passou fresh-close, reconciliação, KV direto,
+  restauração do incumbente `30d4f35b-584b-40a7-95ad-d00ca747e057` a 100% e
+  prova pós-rollback.
+- **Estado live:** health 200 com `ok=false`, `ready=false`, incumbente
+  `30d4f35b-584b-40a7-95ad-d00ca747e057` e release SHA
+  `50872352329446521a84efa44b098f0e3e038497`; disponibilidade
+  `maintenance/emergency-latch-active`; D1, schedule, auth, idempotência,
+  criptografia e contexto de rede saudáveis, com `module_control` em
+  `MODULE_MAINTENANCE` e `gateway_affinity` em
+  `RELEASE_AFFINITY_MISMATCH`. Readiness e release-readiness responderam 503.
+  Core API, CRM Pages e a jornada autenticada não foram executados.
+- **Financeiro:** permanece `experimental`, `module_enabled=false`, sem
+  grants, usuários, coorte ou ativação de produção. Nenhuma mutação de
+  produção foi feita.
+
+**Próximo marco externo:** provisionar, por decisão aprovada e sem fallback
+entre environments, a flag Ponto de staging e o segredo de backup de Identity;
+então executar uma nova cadeia preview→staging e a jornada focal. Não criar ou
+copiar secrets, não resetar o latch para fabricar evidência, não habilitar
+produção e não avançar Financeiro.
+
 ## Snapshot autoritativo de fechamento — `origin/main` `b6a6cc109ff0c0690381612212d9bfc67b84f63b` — 2026-08-01T23:34:16Z
 
 Esta seção substitui qualquer snapshot anterior deste ciclo. As PRs #985,

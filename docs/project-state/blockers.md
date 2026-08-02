@@ -1,5 +1,32 @@
 # Current blockers
 
+## Snapshot autoritativo de fechamento — 2026-08-02T13:46:45Z — main `fd91be5ff00dcc311bedc205d3bab9efbae82258`
+
+- **Ponto — configuração de staging:** a prévia `30747329164` do SHA avaliado
+  `ae6cab22d7fa4ce5d1a2f38f0d3d5a4315249d23` passou, mas `30747573120` parou
+  no child Identity/Workforce `30747791111` antes de qualquer mutação porque
+  o environment não fornece `ENABLE_PONTO_CORE_WORKERS_DEPLOY` nem
+  `IDENTITY_BACKUP_PASSPHRASE`. A flag geral `ENABLE_CORE_WORKERS_DEPLOY` não
+  é fallback válido; nenhum secret foi inventado ou copiado.
+- **Ponto — recuperação encerrada:** o recovery `30750613086` passou fresh
+  close, reconciliação, KV direto, restauração e prova pós-rollback. O
+  candidate `c8864c8f-3625-44ab-bd30-bc25e5e44213` foi retirado e o incumbent
+  `30d4f35b-584b-40a7-95ad-d00ca747e057` está a 100% sob
+  `emergency-latch-active`; as correções estão integradas em #1039/#1040/#1042.
+- **Ponto — gate ainda ausente:** não existe staging verde da cadeia completa,
+  Core/CRM publicados ou jornada autenticada. Health 200 mostra contenção e
+  versão do incumbent (`50872352329446521a84efa44b098f0e3e038497`), enquanto
+  readiness e release readiness permanecem em 503. Não resetar o latch para
+  fabricar jornada.
+- **Financeiro:** permanece `module_enabled=false`, grants=0, sem usuários,
+  coorte e sem ativação de produção. Não alterar flags, secrets, dados ou
+  produção para superar este bloqueio.
+
+O desbloqueio exige provisionamento governado da flag e do segredo de backup de
+Identity no environment `staging`, seguido de nova cadeia preview→staging e
+jornada focal no SHA atual daquele momento. Não há autorização para fallback
+entre environments.
+
 ## Snapshot autoritativo de fechamento — 2026-08-01T23:34:16Z — main `b6a6cc109ff0c0690381612212d9bfc67b84f63b`
 
 - **Insumos:** nenhum P0/P1 atual; o incidente por unidade permanece resolvido.
