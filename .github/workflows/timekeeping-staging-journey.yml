@@ -69,6 +69,7 @@ jobs:
       contents: read
       deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    secrets: inherit
     with:
       required: true
       lease_key: staging-journey

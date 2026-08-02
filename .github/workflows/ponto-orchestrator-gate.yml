@@ -21,6 +21,9 @@ on:
       orchestrator_run_id:
         required: false
         type: string
+    secrets:
+      GH_TOKEN:
+        required: false
 permissions:
   actions: read
   checks: write
@@ -57,7 +60,7 @@ jobs:
       - name: Revalidate protected target environment before consuming authority
         if: ${{ inputs.required }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || github.token }}
           PONTO_ENVIRONMENT_TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
