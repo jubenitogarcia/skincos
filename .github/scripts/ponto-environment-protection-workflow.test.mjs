@@ -75,6 +75,23 @@ test("every governed caller grants read-only deployment metadata to the gate", (
   }
 });
 
+test("custody metadata consumers read every GitHub API page", () => {
+  for (const name of [
+    "cloudflare-pages-sync-ponto.yml",
+    "cloudflare-workers-sync-ponto-secrets.yml",
+    "deploy-timekeeping.yml",
+  ]) {
+    const source = workflow(name);
+    assert.equal(
+      (source.match(/gh api --paginate --slurp [^\n]+\/variables\?per_page=100/g) || []).length,
+      2,
+      name,
+    );
+    assert.match(source, /const entries = Array\.isArray\(payload\)/, name);
+    assert.match(source, /payload\.flatMap\(page =>/, name);
+  }
+});
+
 test("ordinary and watchdog rollback revalidate governance and use dedicated intent custody", () => {
   for (const name of [
     "ponto-progressive-release.yml",
