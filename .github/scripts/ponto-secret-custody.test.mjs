@@ -134,3 +134,27 @@ test("Pages derivation and Timekeeping upload independently attest environment c
     );
   }
 });
+
+test("Ponto REST run provenance accepts both canonical path representations", () => {
+  const pages = workflow("cloudflare-pages-sync-ponto.yml");
+  assert.match(
+    pages,
+    /\[expectedPath, `\$\{expectedPath\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
+  );
+  for (const name of [
+    "cloudflare-pages-sync-ponto.yml",
+    "deploy-timekeeping.yml",
+    "ponto-production-baseline.yml",
+  ]) {
+    const source = workflow(name);
+    assert.match(
+      source,
+      /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
+      `${name} must accept the live REST path with or without the main-ref suffix`,
+    );
+  }
+  assert.match(
+    workflow("ponto-progressive-release.yml"),
+    /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
+  );
+});

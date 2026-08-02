@@ -825,7 +825,7 @@ jobs:
           );
           const reusableRuns = runs
             .filter(run => run.workflow_id === workflow.id
-              && run.path === workflow.path
+              && [workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
               && run.status === "completed"
               && run.conclusion === "success"
               && run.event === "workflow_dispatch"
