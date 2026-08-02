@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "assessedAt": "2026-07-31T23:55:00Z",
+  "assessedAt": "2026-08-01T23:15:00Z",
   "assessmentRule": "A live endpoint, historical deployment, or local test alone does not make a module releasable. A module is released only when its catalog maturity and reviewed promotion evidence satisfy the target gate.",
   "enterpriseGate": ["explicit feature flag defaulting to off", "least-privilege pilot group", "non-production or approved seed data", "operator training and named support channel", "safe manual fallback", "measurable success criteria", "tested rapid rollback", "backup, restore and independent monitoring evidence"],
   "classification": [
@@ -20,7 +20,7 @@
     { "id": "shared", "currentUse": "Build-time contracts", "decision": "not-a-product-release", "reason": "No independent runtime or user cohort." },
     { "id": "social", "currentUse": "Publication Worker with disabled default", "decision": "hold", "reason": "Provider reconciliation and external monitoring evidence are incomplete." },
     { "id": "website", "currentUse": "Public site deployment surface", "decision": "hold", "reason": "New public flows need explicit feature flags and restore/monitor evidence." },
-    { "id": "workforce", "currentUse": "Production Ponto health returned 200 on 2026-07-23", "decision": "candidate-after-finance", "reason": "Facial subfeature is disabled, but pilot controls, restore drill and external monitoring are not evidenced." }
+    { "id": "workforce", "currentUse": "Preview of explicit SHA 0ebfcfb57d42e225efc605405938d49c6acc67e5 passed in run 30721745126; no staging green run", "decision": "hold", "reason": "Staging 30722077457 failed before mutation because required checks were absent; retries 30722290342/30722510118 were fail-closed; 30722999071 rejected the target-bound public verifier map because the configured JSON carried a BOM; watchdog 30723359886 again failed closed without observing external maintenance propagation within 150 seconds. No authenticated journey, canary, backup/restore or pilot evidence exists for this SHA." }
   ],
   "releaseCandidates": [
     {
@@ -36,7 +36,7 @@
       "requiredEvidence": ["Finance Worker deployed first to staging and its gateway binding verified (runs 30673466768 and 30673820551)", "independent external health/readiness monitor and alert route (operator-run-key, controlled alert/resolution)", "encrypted offsite Finance D1 backup", "isolated Finance restore drill with retained evidence", "authenticated staging import and UI smoke (run 30673602091)", "named pilot approval"]
     },
     {
-      "id": "workforce", "order": 2, "targetState": "pilot", "status": "blocked-pending-evidence",
+      "id": "workforce", "order": 2, "targetState": "pilot", "status": "blocked-pending-staging-and-external-gates",
       "featureFlag": "Keep PONTO_FACE_PUNCH_ENABLED=false; use MODULE_CONTROL only for a documented maintenance/kill-switch transition after its production state is verified.",
       "pilotGroup": "One approved clinic unit, two trained staff members and one supervisor; identifiers and approved network context remain in the private approval ticket.",
       "initialData": "Register only the pilot unit, approved terminal/PIN assignments and network CIDRs. Do not bulk-import historical punches.",
@@ -45,7 +45,7 @@
       "support": "Primary: clinic operations channel; escalation: workforce owner @jubenitogarcia; record incidents in the private operator runtime.",
       "successCriteria": "Ten business days with authorized punches only, no duplicate punch after retries, daily close reconciliation, and tested module maintenance switch.",
       "rollback": "Disable the pilot capability, set the verified availability control to maintenance if required, preserve audit records, return to PIN/manual flow, and reconcile the affected day.",
-      "requiredEvidence": ["PONTO_NETWORK_CONTEXT_KEY configured in both Workers", "real clinic CIDRs and terminal/PIN authorization validated in staging", "isolated D1 restore drill", "external monitor and alert route", "pilot supervisor approval", "rollback rehearsal"]
+      "requiredEvidence": ["PONTO_NETWORK_CONTEXT_KEY configured in both Workers", "real clinic CIDRs and terminal/PIN authorization validated in staging", "isolated D1 restore drill", "external monitor and alert route", "staging propagation and authenticated journey on one explicit SHA", "pilot supervisor approval", "rollback rehearsal"]
     },
     {
       "id": "inventory", "order": 3, "targetState": "pilot", "status": "blocked-pending-implementation-and-evidence",

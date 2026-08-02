@@ -1,8 +1,40 @@
 # TASKS
 
-## Reconciliacao autoritativa atual — `origin/main` `3f3749016b348ed9ce690b7750ad50a6fed7e8b0` — 2026-08-01T00:04:46Z
+## Snapshot autoritativo de fechamento — `origin/main` `b6a6cc109ff0c0690381612212d9bfc67b84f63b` — 2026-08-01T23:34:16Z
 
-Este bloco e a unica visao atual deste ciclo. A `origin/main` atual e
+Esta seção substitui qualquer snapshot anterior deste ciclo. As PRs #985,
+#990, #994, #997, #998, #999, #1000, #1001, #1002 e #1003 estão integradas;
+não há alteração relevante perdida nesta reconciliação.
+
+- **Insumos P0:** resolvido por #847/#848; nenhum sintoma novo observado.
+- **Financeiro:** `experimental`, `module_enabled=false`, zero grants reais e
+  sem piloto. A cadeia válida continua no SHA imutável `1a8eeec5...` com
+  candidata `30673147811`, previews `30673438315`/`30673439481`, staging
+  `30673466768`/`30673467862`, canary `30673602091`, abort/kill switch
+  `30673708958`, restore scratch e PostgreSQL offsite
+  `20260729T2255Z-postgresql-fresh` (55,43 s). Isso não é promoção do SHA
+  atual nem autorização de piloto.
+- **Ponto:** o SHA candidato explícito `0ebfcfb5...` passou preview
+  `30721745126` com Timekeeping, Core Inventory, Core API e CRM Pages. Não
+  existe staging verde: `30722077457` falhou antes de mutação porque os
+  checks obrigatórios ainda não existiam; `30722290342` e `30722510118` foram
+  cancelados pelo fail-close. A tentativa posterior `30722999071` também
+  falhou antes de qualquer superfície por rejeitar o mapa público Ed25519
+  recebido com BOM (`Ponto capability public verifier map is malformed`). O
+  watchdog `30723359886` encerrou fail-closed por não observar a propagação
+  externa do overlay em 150 s. Ponto permanece `experimental` e bloqueado.
+- **Identity:** permanece em compatibilidade; custódia/escrow de
+  `IDENTITY_PII_KEY` e corte físico dependem de owner humano.
+
+**Próximo marco:** obter uma execução staging verde do Ponto no SHA explícito
+após corrigir a custódia/configuração do mapa Ed25519 e a propagação externa,
+ou registrar o gate humano correspondente. Para Financeiro,
+somente a ficha nominal de piloto pode avançar. Produção, flags, grants,
+usuários, secrets, dados e Organization continuam proibidos.
+
+## Histórico — reconciliação anterior — `origin/main` `3f3749016b348ed9ce690b7750ad50a6fed7e8b0` — 2026-08-01T00:04:46Z
+
+Este bloco é histórico e preservado somente para auditoria. A `origin/main` da
 `3f374901...`, o merge somente documental da PR #976. O baseline de codigo
 revalidado antes desse merge foi `3682518e...` apos #974; ele continua sendo
 o limite de proveniencia do artefato Finance. O SHA Finance explicitamente

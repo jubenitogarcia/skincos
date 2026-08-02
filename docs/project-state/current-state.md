@@ -1,8 +1,49 @@
 # Current state
 
-## Fonte autoritativa atual — `origin/main` `3f3749016b348ed9ce690b7750ad50a6fed7e8b0` — 2026-08-01T00:04:46Z
+## Snapshot autoritativo de fechamento — `origin/main` `b6a6cc109ff0c0690381612212d9bfc67b84f63b` — 2026-08-01T23:34:16Z
 
-O SHA remoto atual e o merge somente documental da PR #976. O baseline de
+Este snapshot foi revalidado no GitHub e nos workflows canônicos; os textos
+abaixo dele são históricos. As PRs #985, #990, #994, #997, #998, #999, #1000,
+#1001, #1002 e #1003 estão integradas.
+
+### Financeiro
+
+- Maturidade: `experimental`; `module_enabled=false`; grants reais=0; piloto
+  não iniciado. A evidência permanece válida somente para o SHA selecionado
+  `1a8eeec5...`: candidata `30673147811`, preview
+  `30673438315`/`30673439481`, staging `30673466768`/`30673467862`, canary
+  `30673602091`, abort/kill switch `30673708958`, restore scratch e
+  PostgreSQL offsite `20260729T2255Z-postgresql-fresh` (55,43 s).
+- O erro histórico `audit returned 503` é superado pelo canary verde; isso não
+  transforma o SHA atual em release Finance nem autoriza piloto.
+
+### Ponto / Workforce
+
+- SHA candidato avaliado: `0ebfcfb57d42e225efc605405938d49c6acc67e5`; a
+  `origin/main` atual é o merge documental `b6a6cc109ff0c0690381612212d9bfc67b84f63b`.
+- Preview canônico `30721745126` passou para Timekeeping, Core Inventory, Core
+  API e CRM Pages. Staging não foi aprovado: `30722077457` falhou no gate de
+  checks ausentes; `30722290342` e `30722510118` foram cancelados pelo
+  fail-close; a tentativa `30722999071` falhou antes de mutação porque o mapa
+  público Ed25519 chegou com BOM e o validador reportou `Ponto capability
+  public verifier map is malformed`; o watchdog `30723359886` encerrou
+  fail-closed sem observar propagação externa de maintenance em 150 s. Não há
+  evidência de staging verde, jornada autenticada, canary ou piloto.
+- Maturidade permanece `experimental`. Não há deploy de produção, flag, grant,
+  usuário, secret ou dado alterado por esta reconciliação.
+
+### Insumos, Identity e operação
+
+- Insumos P0 segue resolvido, sem sintoma novo.
+- Identity segue em modo de compatibilidade; custódia/escrow de
+  `IDENTITY_PII_KEY` e corte físico permanecem gates humanos.
+- Monitor externo e alerta humano controlado permanecem evidências válidas em
+  `operator-run-key`; restore offsite PostgreSQL e scratch Finance permanecem
+  válidos nos artefatos citados acima.
+
+## Histórico — fonte autoritativa anterior — `origin/main` `3f3749016b348ed9ce690b7750ad50a6fed7e8b0` — 2026-08-01T00:04:46Z
+
+O SHA remoto então observado era o merge somente documental da PR #976. O baseline de
 codigo revalidado antes desse merge foi `3682518e...` apos #974. A promocao
 Finance selecionou explicitamente `1a8eeec5a188301635603a3ecbd2eb4c8b18368c`
 quando #973 era a main; #974 e posterior, security-only, e nao altera a

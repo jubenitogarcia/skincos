@@ -2,6 +2,46 @@
   "schema": 1,
   "entries": [
     {
+      "observed_at": "2026-08-01T23:34:16Z",
+      "surface": "github-ponto-post-merge-current-gate-reconciliation",
+      "scope": "Reconcile the post-merge main SHA and later Ponto staging/watchdog runs without production mutation",
+      "state": "current-main-b6a6-ponto-candidate-0eb-staging-blocked-capability-custody-and-propagation",
+      "method": "git fetch origin main; GitHub run/log inspection of explicit SHA 0ebfcfb57d42e225efc605405938d49c6acc67e5 and post-merge watchdog; no production mutation",
+      "result": "origin/main is b6a6cc109ff0c0690381612212d9bfc67b84f63b after PR #1004. The later Ponto staging coordinator 30722999071 evaluated the explicit candidate SHA 0ebfcfb57d42e225efc605405938d49c6acc67e5 but stopped before capability issuance because PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON carried a UTF-8 BOM and resolveCapabilityVerifier reported the public verifier map malformed. The trusted watchdog 30723359886 latched fail-closed and did not observe external maintenance propagation within 150 seconds. No Ponto surface, production flag, grant, user, secret or data was mutated.",
+      "limitation": "Ponto remains experimental; there is no staging-green run, authenticated journey, canary, backup/restore or pilot evidence for the candidate. The capability custody/configuration and external propagation gates remain open. Finance remains experimental and disabled; Insumos P0 remains resolved; Identity physical cutover remains blocked by PII key escrow/owner.",
+      "sha": "b6a6cc109ff0c0690381612212d9bfc67b84f63b",
+      "candidateSha": "0ebfcfb57d42e225efc605405938d49c6acc67e5",
+      "runs": [30722999071, 30723359886],
+      "validation": {
+        "postMergeCi": "passed",
+        "candidateMutation": false,
+        "staging": "blocked-before-surface-mutation",
+        "watchdog": "fail-closed",
+        "productionMutation": false,
+        "secretsRead": false,
+        "flagsGrantsUsersDataChanged": false
+      }
+    },
+    {
+      "observed_at": "2026-08-01T23:15:00Z",
+      "surface": "github-ponto-current-main-staging-reconciliation",
+      "scope": "Reconcile origin/main, Ponto preview/staging/recovery, Finance evidence, operational blockers and authoritative records",
+      "state": "current-main-ponto-preview-passed-staging-unproven-finance-experimental",
+      "method": "git fetch origin main; GitHub PR/run/check/artifact inspection; exact canonical preview and staging dispatches with explicit SHA; no production mutation",
+      "result": "origin/main is 0ebfcfb57d42e225efc605405938d49c6acc67e5. PRs #985, #990, #994, #997, #998, #999, #1000, #1001, #1002 and #1003 are merged. Ponto preview 30721745126 passed for Timekeeping, Core Inventory, Core API and CRM Pages. Staging 30722077457 failed before mutation because required checks were not present at evaluation; 30722290342 and 30722510118 were cancelled fail-closed. Recovery runs 30722303882, 30722308654 and 30722594377 completed without a 150-second external maintenance propagation readback. Finance evidence remains valid only for selected SHA 1a8eeec5... with staging/canary/rollback/restore artifacts and module_enabled=false.",
+      "limitation": "No staging-green Ponto evidence, authenticated journey, canary, pilot or production release is claimed. The external propagation path and Ponto-specific recovery evidence remain open. Identity physical cutover remains blocked by PII key escrow/owner. Insumos P0 remains resolved.",
+      "sha": "0ebfcfb57d42e225efc605405938d49c6acc67e5",
+      "runs": [30721745126, 30722077457, 30722290342, 30722510118, 30722303882, 30722308654, 30722594377],
+      "validation": {
+        "preview": "passed",
+        "requiredChecks": "CI Smoke, Central E2E, lint and security passed for the SHA before the retry",
+        "staging": "not proven",
+        "productionMutation": false,
+        "secretsRead": false,
+        "flagsGrantsUsersDataChanged": false
+      }
+    },
+    {
       "observed_at": "2026-07-31T16:30:00Z",
       "surface": "github-cloudflare-ponto-broker",
       "scope": "Integrate and attest independent close-only emergency brokers after single-operator governance",

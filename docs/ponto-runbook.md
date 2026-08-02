@@ -1,5 +1,15 @@
 # Runbook — Controle de Ponto
 
+## Gate atual de staging (2026-08-01)
+
+O preview do SHA explícito `0ebfcfb57d42e225efc605405938d49c6acc67e5`
+passou em `30721745126`, mas não há staging verde. A tentativa
+`30722999071` foi encerrada antes de emitir capacidades porque o mapa público
+Ed25519 chegou com BOM e o validador registrou `Ponto capability public
+verifier map is malformed`; o watchdog `30723359886` também terminou
+fail-closed após 150 s sem propagação externa do overlay. Não tratar preview,
+CI ou manutenção interna como evidência de staging, piloto ou produção.
+
 ## Arquitetura operacional
 
 O navegador usa `https://crm.skincos.com.br/api/ponto/*`. A Pages Function autentica a sessão, assina claims mínimos e encaminha apenas headers autorizados para `https://api.skincos.com.br/api/ponto/*`. O gateway `api` monta o Worker `workforce/timekeeping` por Service Binding `TIMEKEEPING`. O domínio usa D1 próprio e consome a Escala pelo binding `SCHEDULE`.
@@ -388,3 +398,18 @@ operacionais sintéticos nunca entram nesse registro.
 - PIN bloqueado: aguardar `locked_until`; RH pode redefinir credencial, nunca consultar o PIN.
 - Dispositivo comprometido: revogar cadastro, revisar auditoria pelo `deviceId` e emitir novo token mostrado uma vez.
 - Divergência de cálculo: não editar evento; abrir correção, recalcular período aberto ou reabrir formalmente o fechado.
+# Revalidacao operacional — 2026-08-01
+
+O SHA `0ebfcfb57d42e225efc605405938d49c6acc67e5` foi executado somente pelo
+coordenador canônico. O preview `30721745126` passou para Timekeeping, Core
+Inventory, Core API e CRM Pages. O staging não está aprovado: `30722077457`
+falhou no gate de checks ausentes; `30722290342` e `30722510118` foram
+cancelados pelo fail-close; as recuperações `30722303882`, `30722308654` e
+`30722594377` não observaram propagação externa de maintenance em 150 s.
+
+Não interpretar preview, CI ou código integrado como evidência de staging,
+canary, piloto ou produção. Antes de nova tentativa, resolver a leitura de
+propagação externa e confirmar o mutex/latch de staging; manter produção
+intocada. O Financeiro continua `experimental` e desativado, e o Ponto não
+deve ser promovido enquanto o gate de staging e a jornada sintética não
+estiverem verdes.

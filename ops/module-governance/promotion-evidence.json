@@ -1,5 +1,6 @@
 {
   "schemaVersion": 2,
+  "assessedAt": "2026-08-01T23:34:16Z",
   "purpose": "Reviewed evidence required before a module may advance its official maturity state. References identify runbooks, tests or immutable evidence; they never contain secrets or personal data.",
   "criteria": {
     "experimental": ["permissions", "tests", "featureFlag", "fallback", "documentation"],
@@ -24,7 +25,7 @@
       "status": "blocked-named-pilot-approval",
       "releaseSha": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
       "originMainAtSelection": "1a8eeec5a188301635603a3ecbd2eb4c8b18368c",
-      "originMainCurrent": "3682518e69840c34904fae5f1432917ffd04217a",
+      "originMainCurrent": "0ebfcfb57d42e225efc605405938d49c6acc67e5",
       "staging": {
         "candidateRun": 30673147811,
         "workerPreviewRun": 30673438315,
@@ -65,6 +66,25 @@
       },
       "openGates": ["nominal pilot approval", "approved pilot unit/cohort and window", "training/support confirmation"],
       "limitations": ["production foundation is not a pilot", "no real user or grant was changed", "historical audit returned 503 is superseded by current canary audit 200"]
+    },
+    "workforce": {
+      "currentState": "experimental",
+      "targetState": "staging",
+      "status": "blocked-capability-custody-and-external-staging-propagation",
+      "releaseSha": "0ebfcfb57d42e225efc605405938d49c6acc67e5",
+      "preview": { "run": 30721745126, "result": "success", "surfaces": ["timekeeping", "core-inventory", "core-api", "crm-pages"] },
+      "staging": {
+        "attempts": [30722077457, 30722290342, 30722510118, 30722999071],
+        "successfulRun": false,
+        "firstFailure": "required CI checks were not present when 30722077457 evaluated the gate",
+        "failClosed": [30722290342, 30722510118, 30722999071],
+        "recoveryRuns": [30722303882, 30722308654, 30722594377, 30723359886],
+        "capabilityCustody": "30722999071 rejected the public verifier map because the configured JSON carried a UTF-8 BOM; no capability or surface mutation was issued",
+        "externalPropagation": "not observed within 150 seconds in watchdog 30723359886",
+        "mutationClaimed": false
+      },
+      "openGates": ["target-bound capability custody/configuration without BOM", "staging propagation readback", "authenticated synthetic journey", "Ponto-specific backup/restore and rollback on this SHA", "pilot identity, cohort and SLO approval"],
+      "limitations": ["preview and CI are not staging evidence", "no canary, pilot or production deploy claimed", "no production flag, grant, user, secret or data changed"]
     }
   }
 }
