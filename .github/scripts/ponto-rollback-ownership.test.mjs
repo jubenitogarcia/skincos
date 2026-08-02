@@ -12,6 +12,7 @@ import {
 const candidate = "11111111-1111-4111-8111-111111111111";
 const incumbent = "22222222-2222-4222-8222-222222222222";
 const deployment = "33333333-3333-4333-8333-333333333333";
+const priorAbortMessage = `ponto:auto-abort:${"a".repeat(40)}:orchestrator-12345`;
 const item = {
   candidateVersionId: candidate,
   incumbentVersionId: incumbent,
@@ -49,6 +50,29 @@ test("distinguishes an untouched incumbent from conflicting live drift", () => {
   );
   assert.equal(
     classifyWorkerRollbackOwnership(worker([{ version_id: candidate, percentage: 100 }], "55555555-5555-4555-8555-555555555555"), item, "production"),
+    "ownership-conflict",
+  );
+});
+
+test("reconciles a replacement deployment only with the exact prior recovery abort message", () => {
+  const current = {
+    ...worker([{ version_id: candidate, percentage: 100 }], "55555555-5555-4555-8555-555555555555"),
+    annotations: { "workers/message": priorAbortMessage },
+  };
+  assert.equal(
+    classifyWorkerRollbackOwnership(
+      current,
+      { ...item, authorizedReplacementMessage: priorAbortMessage },
+      "staging",
+    ),
+    "candidate-owned-reconciled",
+  );
+  assert.equal(
+    classifyWorkerRollbackOwnership(
+      current,
+      { ...item, authorizedReplacementMessage: "ponto:auto-abort:wrong" },
+      "staging",
+    ),
     "ownership-conflict",
   );
 });

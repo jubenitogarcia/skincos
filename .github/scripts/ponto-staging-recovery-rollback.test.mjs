@@ -15,6 +15,9 @@ test("staging recovery rollback is exact, serialized, and environment protected"
     "watchdog_run_id",
     "timekeeping_candidate_version_id",
     "timekeeping_incumbent_version_id",
+    "timekeeping_owner_recovery_run_id",
+    "timekeeping_owner_coordinator_run_id",
+    "timekeeping_owner_release_sha",
     "authorization_ref",
   ]) assert.match(workflow, new RegExp(`\\b${input}:`));
   assert.match(workflow, /fresh-close:/);
@@ -42,6 +45,9 @@ test("staging recovery rollback is exact, serialized, and environment protected"
   assert.match(workflow, /git rev-parse origin\/main.*GITHUB_SHA/);
   assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/);
   assert.match(workflow, /run-id: \$\{\{ inputs\.watchdog_run_id \}\}/);
+  assert.match(workflow, /ponto-worker-ownership-recovery\.mjs/);
+  assert.match(workflow, /current-worker-ownership\.json/);
+  assert.match(workflow, /name: ponto-staging-recovery-rollback-\$\{\{ inputs\.timekeeping_owner_coordinator_run_id \}\}-\$\{\{ inputs\.timekeeping_owner_recovery_run_id \}\}/);
   assert.doesNotMatch(workflow, /watchdog\.head_sha !== releaseSha/);
   assert.match(workflow, /!\/\^\[0-9a-f\]\{40\}/);
   assert.match(workflow, /ponto-automatic-rollback\.mjs/);
