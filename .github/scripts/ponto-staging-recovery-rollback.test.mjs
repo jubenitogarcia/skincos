@@ -32,9 +32,17 @@ test("staging recovery rollback is exact, serialized, and environment protected"
     /\["control", "emergency-latch-active"\]\.includes\((?:body\?\.availability\?\.source|availabilitySource)\)/,
   );
   assert.match(workflow, /PONTO_MATERIALIZE_REPORT: \$\{\{ runner\.temp \}\}\/ponto-staging-recovery-rollback\/fresh-close\/materialized-readback\.json/);
-  assert.match(workflow, /body\?\.availability\?\.changedAt !== expectedAvailabilityChangedAt/);
+  assert.match(workflow, /body\?\.availability\?\.changedAt === expectedAvailabilityChangedAt/);
   assert.match(workflow, /readCloudflareKvJson/);
   assert.match(workflow, /fresh-close\/direct-readback\.json/);
+  assert.match(workflow, /const propagationDeadline = Date\.now\(\) \+ 75_000/);
+  assert.match(workflow, /while \(Date\.now\(\) <= propagationDeadline\)/);
+  assert.match(workflow, /try \{[\s\S]*?const response = await fetch\(process\.env\.PONTO_MODULE_HEALTH_URL/);
+  assert.match(workflow, /\} catch \{[\s\S]*?transient health-probe failure consumes this attempt/);
+  assert.match(workflow, /let consecutiveValidSamples = 0/);
+  assert.match(workflow, /if \(consecutiveValidSamples >= 2\)/);
+  assert.match(workflow, /lastValidSampleKey = ""/);
+  assert.match(workflow, /Math\.min\(5_000, remainingMs\)/);
   assert.match(workflow, /mutation\.compensationDisposition === "not-required"/);
   assert.match(workflow, /group: ponto-surface-mutation/);
   assert.match(workflow, /cancel-in-progress: false/);

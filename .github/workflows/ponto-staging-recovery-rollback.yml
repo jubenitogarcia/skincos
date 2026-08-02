@@ -646,34 +646,65 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          node - <<'NODE'
+          node --input-type=module - <<'NODE'
           import fs from "node:fs";
           const headers = { accept: "application/json" };
           if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
             headers["cf-access-client-id"] = process.env.CF_ACCESS_CLIENT_ID;
             headers["cf-access-client-secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
           }
-          const response = await fetch(process.env.PONTO_MODULE_HEALTH_URL, {
-            redirect: "manual",
-            signal: AbortSignal.timeout(15_000),
-            headers,
-          });
-          const body = await response.json().catch(() => null);
-          const availabilitySource = String(body?.availability?.source || "");
           const materialized = JSON.parse(fs.readFileSync(process.env.PONTO_MATERIALIZE_REPORT, "utf8"));
-          const expectedAvailabilityChangedAt = availabilitySource === "emergency-latch-active"
-            ? materialized?.emergencyLatch?.changedAt
-            : materialized?.moduleControl?.changedAt;
-          const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
-          if (
-            response.status !== 200
-            || body?.ok !== false
-            || body?.ready !== false
-            || body?.availability?.state !== "maintenance"
-            || !["control", "emergency-latch-active"].includes(availabilitySource)
-            || body?.availability?.changedAt !== expectedAvailabilityChangedAt
-            || workerVersionId !== process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
-          ) throw new Error("staging health did not prove maintenance on the restored Timekeeping incumbent");
+          const propagationDeadline = Date.now() + 75_000;
+          let consecutiveValidSamples = 0;
+          let lastValidSampleKey = "";
+          let passed = false;
+          let attempt = 0;
+          while (Date.now() <= propagationDeadline) {
+            attempt += 1;
+            try {
+              const response = await fetch(process.env.PONTO_MODULE_HEALTH_URL, {
+                redirect: "manual",
+                signal: AbortSignal.timeout(15_000),
+                headers,
+              });
+              const body = await response.json().catch(() => null);
+              const availabilitySource = String(body?.availability?.source || "");
+              const expectedAvailabilityChangedAt = availabilitySource === "emergency-latch-active"
+                ? materialized?.emergencyLatch?.changedAt
+                : materialized?.moduleControl?.changedAt;
+              const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
+              const validSample = (
+                response.status === 200
+                && body?.ok === false
+                && body?.ready === false
+                && body?.availability?.state === "maintenance"
+                && ["control", "emergency-latch-active"].includes(availabilitySource)
+                && body?.availability?.changedAt === expectedAvailabilityChangedAt
+                && workerVersionId === process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
+              );
+              const sampleKey = `${availabilitySource}:${body?.availability?.changedAt || ""}:${workerVersionId}`;
+              if (validSample && sampleKey === lastValidSampleKey) {
+                consecutiveValidSamples += 1;
+              } else if (validSample) {
+                lastValidSampleKey = sampleKey;
+                consecutiveValidSamples = 1;
+              } else {
+                lastValidSampleKey = "";
+                consecutiveValidSamples = 0;
+              }
+              if (consecutiveValidSamples >= 2) {
+                passed = true;
+                break;
+              }
+            } catch {
+              // A transient health-probe failure consumes this attempt but must not abort the bounded propagation window.
+              lastValidSampleKey = "";
+              consecutiveValidSamples = 0;
+            }
+            const remainingMs = propagationDeadline - Date.now();
+            if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(5_000, remainingMs)));
+          }
+          if (!passed) throw new Error("staging health did not prove two consecutive maintenance samples on the restored Timekeeping incumbent within the propagation window");
           NODE
 
       - name: Upload immutable staging recovery evidence
