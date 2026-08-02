@@ -654,8 +654,13 @@ jobs:
             headers["cf-access-client-secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
           }
           const materialized = JSON.parse(fs.readFileSync(process.env.PONTO_MATERIALIZE_REPORT, "utf8"));
+          const propagationDeadline = Date.now() + 75_000;
+          let consecutiveValidSamples = 0;
+          let lastValidSampleKey = "";
           let passed = false;
-          for (let attempt = 0; attempt < 12; attempt += 1) {
+          let attempt = 0;
+          while (Date.now() <= propagationDeadline) {
+            attempt += 1;
             try {
               const response = await fetch(process.env.PONTO_MODULE_HEALTH_URL, {
                 redirect: "manual",
@@ -668,7 +673,7 @@ jobs:
                 ? materialized?.emergencyLatch?.changedAt
                 : materialized?.moduleControl?.changedAt;
               const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
-              if (
+              const validSample = (
                 response.status === 200
                 && body?.ok === false
                 && body?.ready === false
@@ -676,16 +681,30 @@ jobs:
                 && ["control", "emergency-latch-active"].includes(availabilitySource)
                 && body?.availability?.changedAt === expectedAvailabilityChangedAt
                 && workerVersionId === process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
-              ) {
+              );
+              const sampleKey = `${availabilitySource}:${body?.availability?.changedAt || ""}:${workerVersionId}`;
+              if (validSample && sampleKey === lastValidSampleKey) {
+                consecutiveValidSamples += 1;
+              } else if (validSample) {
+                lastValidSampleKey = sampleKey;
+                consecutiveValidSamples = 1;
+              } else {
+                lastValidSampleKey = "";
+                consecutiveValidSamples = 0;
+              }
+              if (consecutiveValidSamples >= 2) {
                 passed = true;
                 break;
               }
             } catch {
               // A transient health-probe failure consumes this attempt but must not abort the bounded propagation window.
+              lastValidSampleKey = "";
+              consecutiveValidSamples = 0;
             }
-            if (attempt < 11) await new Promise((resolve) => setTimeout(resolve, 5_000));
+            const remainingMs = propagationDeadline - Date.now();
+            if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(5_000, remainingMs)));
           }
-          if (!passed) throw new Error("staging health did not prove maintenance on the restored Timekeeping incumbent");
+          if (!passed) throw new Error("staging health did not prove two consecutive maintenance samples on the restored Timekeeping incumbent within the propagation window");
           NODE
 
       - name: Upload immutable staging recovery evidence
