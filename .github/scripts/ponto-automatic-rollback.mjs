@@ -16,6 +16,7 @@ import {
   classifyWorkerRollbackOwnership,
 } from "./ponto-rollback-ownership.mjs";
 import { attestBrokerFailCloseEvidence } from "./ponto-recovery-evidence.mjs";
+import { readCloudflareKvJson } from "./ponto-kv-readback.mjs";
 
 const [artifactRoot, reportFile] = process.argv.slice(2);
 const releaseSha = String(process.env.RELEASE_SHA || "").trim().toLowerCase();
@@ -87,17 +88,6 @@ const brokerFailCloseFile = path.join(
 const brokerFailClose = fs.existsSync(brokerFailCloseFile)
   ? readJson(brokerFailCloseFile)
   : null;
-const readRemoteModuleKey = (key) => spawnSync("npx", [
-  "--yes",
-  "wrangler@4.112.0",
-  "kv",
-  "key",
-  "get",
-  key,
-  "--namespace-id",
-  moduleControlNamespaceId,
-  "--remote",
-], { encoding: "utf8", env: process.env, maxBuffer: 2 * 1024 * 1024 });
 const readExternalModuleHealth = async () => {
   if (moduleHealthUrl !== expectedModuleHealthUrl) {
     return { passed: false, status: 0, reason: "module-health-url-not-pinned" };
@@ -166,16 +156,18 @@ const readAndAttestBrokerFailClose = async () => {
   let moduleControl = null;
   let emergencyLatch = null;
   try {
-    const controlResult = readRemoteModuleKey("module-control:timekeeping");
-    if (controlResult.status !== 0) throw new Error("KV readback failed");
-    moduleControl = JSON.parse(controlResult.stdout);
-    const latchResult = readRemoteModuleKey(
-      "module-control:timekeeping:emergency-latch",
-    );
-    if (latchResult.status !== 0) {
-      throw new Error("emergency latch KV readback failed");
-    }
-    emergencyLatch = JSON.parse(latchResult.stdout);
+    moduleControl = await readCloudflareKvJson({
+      accountId,
+      namespaceId: moduleControlNamespaceId,
+      key: "module-control:timekeeping",
+      apiToken,
+    });
+    emergencyLatch = await readCloudflareKvJson({
+      accountId,
+      namespaceId: moduleControlNamespaceId,
+      key: "module-control:timekeeping:emergency-latch",
+      apiToken,
+    });
   } catch {
     moduleControl = null;
     emergencyLatch = null;
