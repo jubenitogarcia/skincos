@@ -237,6 +237,16 @@ test("Pages deploy gates use trusted inline API attestation instead of promoted 
   assert.match(source, /deployment_configs\?\.production\?\.env_vars/);
   assert.match(source, /node - "\$pages_project" "\$DEPLOY_TARGET" <<'NODE'/);
   assert.match(source, /node - "\$pages_project" "\$TARGET" <<'NODE'/);
+  for (const command of [
+    'node - "$pages_project" "$DEPLOY_TARGET" <<\'NODE\'',
+    'node - "$pages_project" "$TARGET" <<\'NODE\'',
+  ]) {
+    const start = source.indexOf(command);
+    assert.ok(start >= 0, `missing Pages attestation command: ${command}`);
+    const delimiter = source.slice(start).match(/\n([ \t]+)NODE\n/);
+    assert.ok(delimiter, `missing heredoc delimiter after: ${command}`);
+    assert.equal(delimiter[1].length, 10, `heredoc delimiter indentation drifted after: ${command}`);
+  }
   assert.match(source, /binding\.type !== "secret_text"/);
   assert.doesNotMatch(source, /pages secret list/);
   assert.doesNotMatch(source, /ponto-pages-environment-attestation\.mjs/);
