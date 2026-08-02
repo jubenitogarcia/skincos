@@ -227,6 +227,21 @@ test("Pages custody uses structured Cloudflare project env_vars for inventory ch
   assert.doesNotMatch(source, /normalize_wrangler_array/);
 });
 
+test("Pages deploy gates use trusted inline API attestation instead of promoted checkout scripts", () => {
+  const source = fs.readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "deploy-crm-pages.yml"),
+    "utf8",
+  );
+  assert.match(source, /pages\/projects\/\$PAGES_PROJECT/);
+  assert.match(source, /pages\/projects\/\$PROJECT/);
+  assert.match(source, /deployment_configs\?\.production\?\.env_vars/);
+  assert.match(source, /node - "\$pages_project" "\$DEPLOY_TARGET" <<'NODE'/);
+  assert.match(source, /node - "\$pages_project" "\$TARGET" <<'NODE'/);
+  assert.match(source, /binding\.type !== "secret_text"/);
+  assert.doesNotMatch(source, /pages secret list/);
+  assert.doesNotMatch(source, /ponto-pages-environment-attestation\.mjs/);
+});
+
 test("assert-active rejects a rerun of the privileged child before any API access", async () => {
   await withApi({}, async ({ apiUrl, getRequestCount }) => {
     const result = await execute(
