@@ -825,7 +825,7 @@ jobs:
           );
           const reusableRuns = runs
             .filter(run => run.workflow_id === workflow.id
-              && run.path === workflow.path
+              && [workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
               && run.status === "completed"
               && run.conclusion === "success"
               && run.event === "workflow_dispatch"
@@ -1724,7 +1724,11 @@ jobs:
           path: ${{ runner.temp }}/ponto-ordinary-recovery/journal
       - name: Cancel and reconcile children without waiting on the surface mutex
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Recovery must retain the protected Actions-read token used by the
+          # coordinator; the automatic token cannot list workflow-dispatch
+          # children in this repository.
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_RECONCILIATION_CANCEL_TOKEN: ${{ github.token }}
           PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
           PONTO_COORDINATOR_RUN_ID: ${{ github.run_id }}
           PONTO_COORDINATOR_SHA: ${{ inputs.release_sha }}
@@ -1737,7 +1741,8 @@ jobs:
       - name: Reconstruct and fetch exact rollback journals outside the surface mutex
         if: ${{ contains(fromJSON('["staging","pilot","canary","production"]'), inputs.stage) }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_WATCHDOG_CHECK_TOKEN: ${{ github.token }}
           PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
           PONTO_COORDINATOR_RUN_ID: ${{ github.run_id }}
           PONTO_COORDINATOR_SHA: ${{ inputs.release_sha }}
@@ -1882,7 +1887,7 @@ jobs:
           fetch-depth: 1
       - name: Revalidate protected target environment before rollback mutation
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           PONTO_ENVIRONMENT_TARGET: ${{ inputs.stage == 'staging' && 'staging' || 'production' }}
         run: |
           set -euo pipefail
@@ -1930,7 +1935,8 @@ jobs:
             "$RUNNER_TEMP/ponto-ordinary-recovery/journal"
       - name: Restore every attested incumbent idempotently
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_ROLLBACK_CHECK_TOKEN: ${{ github.token }}
           PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY: ${{ secrets.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY }}
           RELEASE_SHA: ${{ inputs.release_sha }}
           STAGE: ${{ inputs.stage }}

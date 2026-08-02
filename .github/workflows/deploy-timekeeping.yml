@@ -79,6 +79,8 @@ jobs:
       contents: read
       deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     with:
       required: ${{ inputs.target != 'preview' }}
       lease_key: timekeeping
@@ -353,17 +355,23 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for candidate secret custody attestation'; exit 1; }
-          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET_ENVIRONMENT/secrets?per_page=100" > "$RUNNER_TEMP/timekeeping-environment-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/timekeeping-repository-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET_ENVIRONMENT/variables?per_page=100" > "$RUNNER_TEMP/timekeeping-environment-variables.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/timekeeping-repository-variables.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/$TARGET_ENVIRONMENT/secrets?per_page=100" > "$RUNNER_TEMP/timekeeping-environment-secrets.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/timekeeping-repository-secrets.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/$TARGET_ENVIRONMENT/variables?per_page=100" > "$RUNNER_TEMP/timekeeping-environment-variables.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/timekeeping-repository-variables.json"
           node - \
             "$RUNNER_TEMP/timekeeping-environment-secrets.json" \
             "$RUNNER_TEMP/timekeeping-repository-secrets.json" \
             "$RUNNER_TEMP/timekeeping-environment-variables.json" \
             "$RUNNER_TEMP/timekeeping-repository-variables.json" <<'NODE'
           const fs = require("fs");
-          const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
+          const names = (file, key) => {
+            const payload = JSON.parse(fs.readFileSync(file, "utf8"));
+            const entries = Array.isArray(payload)
+              ? payload.flatMap(page => Array.isArray(page?.[key]) ? page[key] : [])
+              : (Array.isArray(payload?.[key]) ? payload[key] : []);
+            return new Set(entries.map(item => item.name));
+          };
           const environmentSecrets = names(process.argv[2], "secrets");
           const repositorySecrets = names(process.argv[3], "secrets");
           const environmentVariables = names(process.argv[4], "variables");
@@ -509,14 +517,13 @@ jobs:
             || workflow.name !== "Attest Ponto Worker secret custody"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
             || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
             || run.head_sha !== process.env.RELEASE_SHA
-            || run.name !== "Attest Ponto Worker secret custody"
             || !expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY

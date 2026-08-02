@@ -16,6 +16,7 @@ import {
   classifyWorkerRollbackOwnership,
 } from "./ponto-rollback-ownership.mjs";
 import { attestBrokerFailCloseEvidence } from "./ponto-recovery-evidence.mjs";
+import { readCloudflareKvJson } from "./ponto-kv-readback.mjs";
 
 const [artifactRoot, reportFile] = process.argv.slice(2);
 const releaseSha = String(process.env.RELEASE_SHA || "").trim().toLowerCase();
@@ -27,6 +28,7 @@ const repository = String(process.env.GITHUB_REPOSITORY || "");
 const repositoryId = String(process.env.GITHUB_REPOSITORY_ID || "");
 const recoveryRunId = String(process.env.GITHUB_RUN_ID || "");
 const ghToken = String(process.env.GH_TOKEN || "");
+const rollbackCheckToken = String(process.env.PONTO_ROLLBACK_CHECK_TOKEN || "");
 const githubApiBase = String(process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
 const pagesRollbackIntentHmacKey = String(
   process.env.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY || "",
@@ -59,6 +61,7 @@ if (
   || !/^[1-9][0-9]*$/.test(repositoryId)
   || !/^[1-9][0-9]*$/.test(recoveryRunId)
   || !ghToken
+  || !rollbackCheckToken
   || Buffer.byteLength(pagesRollbackIntentHmacKey, "utf8") < 32
 ) throw new Error("invalid orchestrator or rollback-intent provenance");
 if (
@@ -85,17 +88,30 @@ const brokerFailCloseFile = path.join(
 const brokerFailClose = fs.existsSync(brokerFailCloseFile)
   ? readJson(brokerFailCloseFile)
   : null;
-const readRemoteModuleKey = (key) => spawnSync("npx", [
-  "--yes",
-  "wrangler@4.112.0",
-  "kv",
-  "key",
-  "get",
-  key,
-  "--namespace-id",
-  moduleControlNamespaceId,
-  "--remote",
-], { encoding: "utf8", env: process.env, maxBuffer: 2 * 1024 * 1024 });
+const safeReadbackFailureCode = (error) => {
+  const code = String(error?.code || "cloudflare-kv-readback-failed");
+  return /^[a-z0-9-]{1,96}$/.test(code) ? code : "cloudflare-kv-readback-failed";
+};
+const classifyBrokerReadback = ({ moduleControl, emergencyLatch }) => {
+  const target = staging ? "staging" : "production";
+  if (!brokerFailClose) return "broker-evidence-missing";
+  if (!moduleControl) return "module-control-unavailable";
+  if (moduleControl.schemaVersion !== 2) return "module-control-schema-mismatch";
+  if (moduleControl.state !== "maintenance") return "module-control-state-mismatch";
+  if (moduleControl.changedAt !== brokerFailClose.controlChangedAt) return "module-control-timestamp-mismatch";
+  if (moduleControl.emergencyLatchRef?.stopRunId !== orchestratorRunId) return "module-control-stop-run-mismatch";
+  if (moduleControl.emergencyLatchRef?.emergencyRunId !== brokerFailClose.emergencyRunId) return "module-control-emergency-run-mismatch";
+  if (moduleControl.emergencyLatchRef?.latchChangedAt !== brokerFailClose.latchChangedAt) return "module-control-latch-timestamp-mismatch";
+  if (!emergencyLatch) return "emergency-latch-unavailable";
+  if (emergencyLatch.schemaVersion !== 1) return "emergency-latch-schema-mismatch";
+  if (emergencyLatch.module !== "timekeeping") return "emergency-latch-module-mismatch";
+  if (emergencyLatch.target !== target) return "emergency-latch-target-mismatch";
+  if (emergencyLatch.latched !== true) return "emergency-latch-state-mismatch";
+  if (emergencyLatch.changedAt !== brokerFailClose.latchChangedAt) return "emergency-latch-timestamp-mismatch";
+  if (emergencyLatch.stopRunId !== orchestratorRunId) return "emergency-latch-stop-run-mismatch";
+  if (emergencyLatch.emergencyRunId !== brokerFailClose.emergencyRunId) return "emergency-latch-emergency-run-mismatch";
+  return "broker-evidence-attestation-mismatch";
+};
 const readExternalModuleHealth = async () => {
   if (moduleHealthUrl !== expectedModuleHealthUrl) {
     return { passed: false, status: 0, reason: "module-health-url-not-pinned" };
@@ -163,20 +179,34 @@ const attestNoSurfaceRollback = async () => {
 const readAndAttestBrokerFailClose = async () => {
   let moduleControl = null;
   let emergencyLatch = null;
+  let readbackFailure = "";
   try {
-    const controlResult = readRemoteModuleKey("module-control:timekeeping");
-    if (controlResult.status !== 0) throw new Error("KV readback failed");
-    moduleControl = JSON.parse(controlResult.stdout);
-    const latchResult = readRemoteModuleKey(
-      "module-control:timekeeping:emergency-latch",
-    );
-    if (latchResult.status !== 0) {
-      throw new Error("emergency latch KV readback failed");
+    try {
+      moduleControl = await readCloudflareKvJson({
+        accountId,
+        namespaceId: moduleControlNamespaceId,
+        key: "module-control:timekeeping",
+        apiToken,
+      });
+    } catch (error) {
+      readbackFailure = `control-${safeReadbackFailureCode(error)}`;
+      throw error;
     }
-    emergencyLatch = JSON.parse(latchResult.stdout);
+    try {
+      emergencyLatch = await readCloudflareKvJson({
+        accountId,
+        namespaceId: moduleControlNamespaceId,
+        key: "module-control:timekeeping:emergency-latch",
+        apiToken,
+      });
+    } catch (error) {
+      readbackFailure = `latch-${safeReadbackFailureCode(error)}`;
+      throw error;
+    }
   } catch {
     moduleControl = null;
     emergencyLatch = null;
+    if (!readbackFailure) readbackFailure = "cloudflare-kv-readback-failed";
   }
   const directAttestation = attestBrokerFailCloseEvidence({
     evidence: brokerFailClose,
@@ -191,14 +221,17 @@ const readAndAttestBrokerFailClose = async () => {
     return {
       moduleControl,
       emergencyLatch,
-      attestation: { ...directAttestation, readbackMode: "direct-kv" },
+      attestation: { ...directAttestation, readbackMode: "direct-kv", readbackFailure: "" },
     };
   }
   const noSurfaceAttestation = await attestNoSurfaceRollback();
   return {
     moduleControl,
     emergencyLatch,
-    attestation: noSurfaceAttestation || directAttestation,
+    attestation: noSurfaceAttestation || {
+      ...directAttestation,
+      readbackFailure: readbackFailure || classifyBrokerReadback({ moduleControl, emergencyLatch }),
+    },
   };
 };
 const surfaceSpecs = {
@@ -651,11 +684,12 @@ const cloudflare = async (pathname, init = {}) => {
 };
 
 const github = async (pathname, init = {}) => {
+  const requestToken = pathname.includes("/check-runs") ? rollbackCheckToken : ghToken;
   const response = await fetch(`${githubApiBase}${pathname}`, {
     ...init,
     signal: AbortSignal.timeout(30_000),
     headers: {
-      authorization: `Bearer ${ghToken}`,
+      authorization: `Bearer ${requestToken}`,
       accept: "application/vnd.github+json",
       "x-github-api-version": "2022-11-28",
       ...(init.body ? { "content-type": "application/json" } : {}),
@@ -997,6 +1031,10 @@ const report = {
     state: "unresolved",
     remoteKvReadbackMatched: false,
     emergencyLatchReadbackMatched: false,
+    readbackFailure: [
+      preMutationFailClose.attestation.readbackFailure,
+      postMutationFailClose.attestation.readbackFailure,
+    ].filter(Boolean),
   },
   childReconciliation: childReconciliationPassed ? {
     passed: true,

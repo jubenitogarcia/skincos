@@ -44,6 +44,17 @@ test("Pages rollback intent has dedicated environment-only custody", () => {
   assert.doesNotMatch(source, /PONTO_ORCHESTRATOR_LEASE_HMAC_KEY/);
 });
 
+test("broker custody readback uses the account-scoped Cloudflare API", () => {
+  assert.match(source, /readCloudflareKvJson/);
+  assert.doesNotMatch(source, /const readRemoteModuleKey = \(key\) => spawnSync\("npx"/);
+});
+
+test("broker readback diagnostics expose only a bounded mismatch category", () => {
+  assert.match(source, /classifyBrokerReadback/);
+  assert.match(source, /readbackFailure: readbackFailure \|\| classifyBrokerReadback/);
+  assert.doesNotMatch(source, /readbackFailure:\s*moduleControl/);
+});
+
 test("zero-surface recovery uses a fresh external maintenance probe instead of faking rollback", () => {
   assert.match(source, /PONTO_MODULE_HEALTH_URL/);
   assert.match(source, /Object\.keys\(plan\)\.length !== 0/);

@@ -102,6 +102,7 @@ test("canonical high-risk allowlist covers every Ponto workflow that can hydrate
       ".github/workflows/ponto-core-baseline-publisher.yml",
       ".github/workflows/timekeeping-staging-journey.yml",
       ".github/workflows/ponto-staging-rollback-drill.yml",
+      ".github/workflows/ponto-staging-recovery-rollback.yml",
       ".github/workflows/ponto-production-baseline.yml",
       ".github/workflows/ponto-production-slo.yml",
     ],

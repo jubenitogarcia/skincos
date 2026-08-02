@@ -8,6 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   canonicalizeGovernedIntent,
+  acceptsWorkflowRunPath,
   createCapabilityCheck,
   expectedGovernedRunName,
   transitionCapabilityDocument,
@@ -133,6 +134,97 @@ test("assert-active accepts only the exact live first-attempt coordinator", asyn
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /active first-attempt Ponto coordinator/);
   });
+});
+
+test("workflow run provenance accepts both live GitHub REST path forms", () => {
+  const workflowPath = ".github/workflows/deploy-timekeeping.yml";
+  assert.equal(acceptsWorkflowRunPath(workflowPath, workflowPath), true);
+  assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/heads/main`), true);
+  assert.equal(acceptsWorkflowRunPath(workflowPath, ".github/workflows/other.yml"), false);
+  assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/heads/feature`), false);
+});
+
+test("Ponto workflow REST provenance gates accept both live path forms", () => {
+  const workflowNames = [
+    "cloudflare-pages-sync-ponto.yml",
+    "cloudflare-workers-sync-ponto-secrets.yml",
+    "deploy-timekeeping.yml",
+    "ponto-production-baseline.yml",
+    "ponto-progressive-release.yml",
+    "ponto-release-gate.yml",
+    "ponto-staging-rollback-drill.yml",
+  ];
+  for (const workflowName of workflowNames) {
+    const source = fs.readFileSync(
+      path.join(repositoryRoot, ".github", "workflows", workflowName),
+      "utf8",
+    );
+    assert.match(
+      source,
+      /\[\s*(?:expectedPath|workflow\.path),\s*`\$\{(?:expectedPath|workflow\.path)\}@refs\/heads\/main`\s*\]\.includes\(run\.path\)/,
+      `${workflowName} must accept both GitHub REST workflow path forms`,
+    );
+    assert.doesNotMatch(
+      source,
+      /run\.path\s*!==\s*(?:expectedPath|workflow\.path)|run\.path\s*===\s*workflow\.path/,
+      `${workflowName} must not require one REST path spelling`,
+    );
+  }
+});
+
+test("Pages custody journals no mutation before any precondition can fail", () => {
+  const source = fs.readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "cloudflare-pages-sync-ponto.yml"),
+    "utf8",
+  );
+  const journalIndex = source.indexOf("- name: Initialize Pages mutation journal before checkout, setup, and preconditions");
+  const verifyIndex = source.indexOf("- name: Verify immutable source and production predecessor");
+  const journalBlock = source.slice(journalIndex, verifyIndex);
+  assert.ok(journalIndex >= 0, "Pages custody must initialize its mutation journal");
+  assert.ok(verifyIndex > journalIndex, "Pages custody must journal before immutable preconditions");
+  assert.match(journalBlock, /pages-release-probe-evidence\.json/);
+  assert.match(journalBlock, /mutationStarted: false/);
+  assert.match(journalBlock, /credentialsIncluded: false/);
+  assert.match(journalBlock, /piiIncluded: false/);
+  assert.match(journalBlock, /- name: Initialize Pages mutation journal before checkout, setup, and preconditions[\s\S]+- uses: actions\/checkout@/);
+  assert.ok(
+    journalBlock.indexOf("[[ -n \"$PROJECT\" ]]") > journalBlock.indexOf("pages-release-probe-evidence.json"),
+    "Pages project validation must follow journal creation",
+  );
+});
+
+test("Ponto root custody provenance uses workflow metadata for the static workflow name", () => {
+  for (const workflowName of [
+    "cloudflare-pages-sync-ponto.yml",
+    "deploy-timekeeping.yml",
+  ]) {
+    const source = fs.readFileSync(
+      path.join(repositoryRoot, ".github", "workflows", workflowName),
+      "utf8",
+    );
+    assert.match(source, /workflow\.name !== "Attest Ponto Worker secret custody"/);
+    assert.doesNotMatch(source, /run\.name !== "Attest Ponto Worker secret custody"/);
+  }
+});
+
+test("Pages custody uses structured Cloudflare project env_vars for inventory checks", () => {
+  const source = fs.readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "cloudflare-pages-sync-ponto.yml"),
+    "utf8",
+  );
+  assert.match(source, /pages\/projects\/\$PROJECT/);
+  assert.match(source, /deployment_configs\?\.production\?\.env_vars/);
+  assert.match(source, /Object\.keys\(envVars\)/);
+  const journalWriterStart = source.indexOf('node - "$before_project_file" "$evidence_file" <<\'NODE\'');
+  const journalWriterEnd = source.indexOf("\n          NODE", journalWriterStart);
+  assert.ok(journalWriterStart >= 0, "Pages custody must have a before-inventory journal writer");
+  assert.ok(journalWriterEnd > journalWriterStart, "Pages journal writer heredoc must terminate");
+  assert.match(
+    source.slice(journalWriterStart, journalWriterEnd),
+    /fs\.writeFileSync\(process\.argv\[3\]/,
+  );
+  assert.doesNotMatch(source, /pages secret list/);
+  assert.doesNotMatch(source, /normalize_wrangler_array/);
 });
 
 test("assert-active rejects a rerun of the privileged child before any API access", async () => {

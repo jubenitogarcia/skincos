@@ -106,17 +106,30 @@ test("watchdog audits a preview rerun without assigning a live target or closing
   }
 });
 
-test("watchdog rejects first-attempt success, non-main source, and event/API drift", async (t) => {
-  for (const [name, value] of [
-    ["success", { ...run, conclusion: "success" }],
-    ["wrong path", { ...run, path: ".github/workflows/other.yml@refs/heads/main" }],
-  ]) {
-    await t.test(name, async () => {
-      await assert.rejects(validateWatchdogContext(input({
-        request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml") ? workflow : value,
-      })));
-    });
-  }
+test("watchdog treats first-attempt success as a no-op and rejects provenance drift", async (t) => {
+  await t.test("first-attempt success is a no-op", async () => {
+    const context = await validateWatchdogContext(input({
+      event: {
+        workflow_run: {
+          ...event.workflow_run,
+          conclusion: "success",
+        },
+      },
+      request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
+        ? workflow
+        : { ...run, conclusion: "success" },
+    }));
+    assert.equal(context.conclusion, "success");
+    assert.equal(context.requiresClose, false);
+    assert.equal(context.passed, true);
+  });
+  await t.test("wrong path", async () => {
+    await assert.rejects(validateWatchdogContext(input({
+      request: async (pathname) => pathname.endsWith("ponto-progressive-release.yml")
+        ? workflow
+        : { ...run, path: ".github/workflows/other.yml@refs/heads/main" },
+    })));
+  });
   await assert.rejects(validateWatchdogContext(input({ gitRef: "refs/heads/feature" })));
   await assert.rejects(validateWatchdogContext(input({ watchdogRunAttempt: "2" })));
   await assert.rejects(validateWatchdogContext(input({
@@ -150,7 +163,16 @@ test("watchdog never rolls back after failed child reconciliation", () => {
   assert.match(failClose, /Prove external fail-close through overlay or exact incumbent control/);
   assert.match(failClose, /PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active/);
   assert.match(failClose, /PONTO_MODULE_ALTERNATE_EXPECTATION_FILE=/);
+  assert.match(failClose, /\(async \(\) => \{/);
+  assert.match(failClose, /const probe = new URL\(process\.env\.PONTO_MODULE_HEALTH_URL\)/);
+  assert.match(failClose, /watchdog_close_probe/);
+  assert.match(failClose, /watchdog fail-close did not observe exact incumbent maintenance control/);
+  assert.match(failClose, /\["control", "emergency-latch-active"\]/);
+  assert.match(failClose, /availability\.source === "emergency-latch-active"/);
+  assert.match(failClose, /if \[\[ -f .*control-fallback-expectation\.json/);
   assert.match(failClose, /state: "maintenance"[\s\S]*source: "control"/);
+  assert.match(failClose, /changedAt: availability\.changedAt/);
+  assert.doesNotMatch(failClose, /changedAt: maintenance\.controlChangedAt/);
   assert.match(rollback, /needs:\s*\[context, latch, reconcile, fail-close\]/);
   assert.match(rollback, /needs\.reconcile\.result == 'success'/);
   assert.match(rollback, /needs\.fail-close\.result == 'success'/);

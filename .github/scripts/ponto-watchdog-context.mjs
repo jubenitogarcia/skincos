@@ -53,7 +53,7 @@ export async function validateWatchdogContext({
   const unauthorizedReplay = Number.isInteger(runAttempt) && runAttempt > 1;
   const validConclusion = unauthorizedReplay
     ? typeof run?.conclusion === "string" && run.conclusion.length > 0
-    : FAILURE_CONCLUSIONS.has(run?.conclusion);
+    : FAILURE_CONCLUSIONS.has(run?.conclusion) || run?.conclusion === "success";
   if (
     !(
       workflow?.state === "active"
@@ -85,6 +85,8 @@ export async function validateWatchdogContext({
     || eventRun.conclusion !== run.conclusion
   ) throw new Error("failed coordinator provenance is invalid");
   const stage = match[1];
+  const requiresClose = stage !== "preview"
+    && (unauthorizedReplay || FAILURE_CONCLUSIONS.has(run.conclusion));
   return {
     schemaVersion: 1,
     coordinatorRunId: String(run.id),
@@ -95,7 +97,7 @@ export async function validateWatchdogContext({
     conclusion: run.conclusion,
     runAttempt,
     unauthorizedReplay,
-    requiresClose: stage !== "preview",
+    requiresClose,
     passed: true,
   };
 }

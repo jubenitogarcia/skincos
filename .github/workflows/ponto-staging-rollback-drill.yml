@@ -38,6 +38,8 @@ jobs:
       contents: read
       deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     with:
       required: true
       lease_key: staging-rollback
@@ -84,7 +86,7 @@ jobs:
             || workflow.path !== ".github/workflows/timekeeping-staging-journey.yml"
             || workflow.name !== "Timekeeping authenticated staging journey"
             || run.workflow_id !== workflow.id
-            || run.path !== workflow.path
+            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"

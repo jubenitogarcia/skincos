@@ -134,3 +134,48 @@ test("Pages derivation and Timekeeping upload independently attest environment c
     );
   }
 });
+
+test("Pages root derivation passes private paths through explicit environment variables", () => {
+  const source = workflow("cloudflare-pages-sync-ponto.yml");
+  const start = source.indexOf("- name: Derive and provision environment-scoped Ponto Pages keys");
+  const end = source.indexOf("- name: Upload sanitised Pages secret attestation", start);
+  const step = source.slice(start, end);
+  const rootStart = source.indexOf("node --input-type=module - <<'NODE'", start);
+  const rootEnd = source.indexOf("NODE\n          unset PONTO_ROOT_CUSTODY_FILE", rootStart);
+  const rootStep = source.slice(rootStart, rootEnd);
+  assert.ok(start >= 0 && end > start);
+  assert.ok(rootStart >= start && rootEnd > rootStart);
+  assert.match(step, /export PONTO_ROOT_CUSTODY_FILE=/);
+  assert.match(step, /export PONTO_STAGING_EVIDENCE_FILE=/);
+  assert.match(step, /export PONTO_DERIVED_SECRET_FILE=/);
+  assert.match(rootStep, /fs\.readFileSync\(process\.env\.PONTO_ROOT_CUSTODY_FILE/);
+  assert.match(rootStep, /fs\.readFileSync\(process\.env\.PONTO_STAGING_EVIDENCE_FILE/);
+  assert.match(rootStep, /fs\.writeFileSync\(\s*process\.env\.PONTO_DERIVED_SECRET_FILE/);
+  assert.doesNotMatch(rootStep, /process\.argv\[(?:2|3|4)\]/);
+  assert.match(step, /unset PONTO_ROOT_CUSTODY_FILE PONTO_STAGING_EVIDENCE_FILE PONTO_DERIVED_SECRET_FILE/);
+  assert.match(step, /unset PONTO_ROOT_ATTESTATION_KEY_SHARED PONTO_IDEMPOTENCY_KEY/);
+});
+
+test("Ponto REST run provenance accepts both canonical path representations", () => {
+  const pages = workflow("cloudflare-pages-sync-ponto.yml");
+  assert.match(
+    pages,
+    /\[expectedPath, `\$\{expectedPath\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
+  );
+  for (const name of [
+    "cloudflare-pages-sync-ponto.yml",
+    "deploy-timekeeping.yml",
+    "ponto-production-baseline.yml",
+  ]) {
+    const source = workflow(name);
+    assert.match(
+      source,
+      /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
+      `${name} must accept the live REST path with or without the main-ref suffix`,
+    );
+  }
+  assert.match(
+    workflow("ponto-progressive-release.yml"),
+    /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
+  );
+});

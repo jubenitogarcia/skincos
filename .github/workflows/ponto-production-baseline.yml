@@ -45,6 +45,8 @@ jobs:
       contents: read
       deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     with:
       required: true
       lease_key: production-baseline
@@ -96,7 +98,7 @@ jobs:
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/ponto-progressive-release.yml"
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"

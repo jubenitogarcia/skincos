@@ -35,7 +35,15 @@ test("coordinator and consumer attest live environment protection before authori
   );
   assert.ok(consumerPreflight >= 0);
   assert.ok(consumerPreflight < consume);
-  assert.match(gate.slice(consumerPreflight, consume), /deployment-branch-policies/);
+  const consumerScoped = gate.slice(consumerPreflight, consume);
+  assert.match(consumerScoped, /deployment-branch-policies/);
+  assert.match(gate, /secrets:\n\s+GH_TOKEN:\n\s+required: false/);
+  assert.match(
+    consumerScoped,
+    /GH_TOKEN: \$\{\{ secrets\.GH_TOKEN != '' && secrets\.GH_TOKEN \|\| github\.token \}\}/,
+  );
+  assert.match(consumerScoped, /actions\/runs\/\$ORCHESTRATOR_RUN_ID/);
+  assert.match(consumerScoped, /GITHUB_ACTOR="\$issuer_actor" node/);
   assert.match(gate, /deployments: read/);
 });
 
@@ -59,6 +67,28 @@ test("every governed caller grants read-only deployment metadata to the gate", (
     );
     assert.notEqual(gate, -1, name);
     assert.match(source.slice(Math.max(0, gate - 220), gate), /deployments: read/, name);
+    assert.match(
+      source.slice(gate, gate + 220),
+      /secrets:\n\s+GH_TOKEN: \$\{\{ secrets\.GH_TOKEN \}\}/,
+      name,
+    );
+  }
+});
+
+test("custody metadata consumers read every GitHub API page", () => {
+  for (const name of [
+    "cloudflare-pages-sync-ponto.yml",
+    "cloudflare-workers-sync-ponto-secrets.yml",
+    "deploy-timekeeping.yml",
+  ]) {
+    const source = workflow(name);
+    assert.equal(
+      (source.match(/gh api --paginate --slurp [^\n]+\/variables\?per_page=100/g) || []).length,
+      2,
+      name,
+    );
+    assert.match(source, /const entries = Array\.isArray\(payload\)/, name);
+    assert.match(source, /payload\.flatMap\(page =>/, name);
   }
 });
 

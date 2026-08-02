@@ -195,23 +195,64 @@ jobs:
           node - "$directory/maintenance.json" \
             "$directory/overlay-expectation.json" \
             "$directory/control-fallback-expectation.json" <<'NODE'
+          (async () => {
           const fs = require("fs");
           const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          fs.writeFileSync(process.argv[3], `${JSON.stringify({
-            state: "maintenance",
-            changedAt: maintenance.latchChangedAt,
-          })}\n`, { mode: 0o600 });
-          fs.writeFileSync(process.argv[4], `${JSON.stringify({
-            state: "maintenance",
-            changedAt: maintenance.controlChangedAt,
-            source: "control",
-          })}\n`, { mode: 0o600 });
+          const probe = new URL(process.env.PONTO_MODULE_HEALTH_URL);
+          probe.searchParams.set("watchdog_close_probe", `${Date.now()}`);
+          const headers = { accept: "application/json", "cache-control": "no-cache" };
+          if (process.env.CF_ACCESS_CLIENT_ID || process.env.CF_ACCESS_CLIENT_SECRET) {
+            if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) {
+              throw new Error("partial Cloudflare Access credential");
+            }
+            headers["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
+            headers["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
+          }
+          const response = await fetch(probe, { redirect: "manual", headers });
+          const body = await response.json().catch(() => null);
+          const availability = body?.availability;
+          if (
+            response.status !== 200
+            || availability?.state !== "maintenance"
+            || !["control", "emergency-latch-active"].includes(availability?.source)
+            || !Number.isFinite(Date.parse(String(availability?.changedAt || "")))
+          ) throw new Error("watchdog fail-close did not observe exact incumbent maintenance control");
+          if (availability.source === "emergency-latch-active") {
+            fs.writeFileSync(process.argv[3], `${JSON.stringify({
+              state: "maintenance",
+              changedAt: availability.changedAt,
+            })}\n`, { mode: 0o600 });
+            fs.rmSync(process.argv[4], { force: true });
+          } else {
+            fs.writeFileSync(process.argv[3], `${JSON.stringify({
+              state: "maintenance",
+              changedAt: maintenance.latchChangedAt,
+            })}\n`, { mode: 0o600 });
+            // The broker's control timestamp is authoritative for its write,
+            // but an idempotent close may return an older incumbent timestamp.
+            // Bind the fallback to the exact timestamp observed from the live
+            // control endpoint instead of waiting for a timestamp that cannot
+            // propagate.
+            fs.writeFileSync(process.argv[4], `${JSON.stringify({
+              state: "maintenance",
+              changedAt: availability.changedAt,
+              source: "control",
+            })}\n`, { mode: 0o600 });
+          }
+          })().catch((error) => { console.error(error); process.exitCode = 1; });
           NODE
-          PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
-          PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
-          PONTO_MODULE_ALTERNATE_EXPECTATION_FILE="$directory/control-fallback-expectation.json" \
-          PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
-            node .github/scripts/ponto-module-propagation.mjs
+          if [[ -f "$directory/control-fallback-expectation.json" ]]; then
+            PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+            PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+            PONTO_MODULE_ALTERNATE_EXPECTATION_FILE="$directory/control-fallback-expectation.json" \
+            PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+              node .github/scripts/ponto-module-propagation.mjs
+          else
+            PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+            PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+            PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+              node .github/scripts/ponto-module-propagation.mjs
+          fi
           rm -f "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json"
       - name: Upload immutable fail-close evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -292,7 +333,8 @@ jobs:
             "$RUNNER_TEMP/ponto-watchdog-rollback"
       - name: Reconstruct exact child provenance and download immutable rollback journals
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_WATCHDOG_CHECK_TOKEN: ${{ github.token }}
           PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
           PONTO_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
           PONTO_COORDINATOR_SHA: ${{ needs.context.outputs.release_sha }}
@@ -321,7 +363,8 @@ jobs:
           done
       - name: Restore every independently attested incumbent and keep the latch true
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_ROLLBACK_CHECK_TOKEN: ${{ github.token }}
           PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY: ${{ secrets.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY }}
           PONTO_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
           RELEASE_SHA: ${{ needs.context.outputs.release_sha }}

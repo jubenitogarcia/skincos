@@ -21,6 +21,7 @@ export function normalizeRecoveryEvidence({
   releaseSha,
   stage,
   target,
+  moduleControlReadback = null,
 }) {
   if (
     !["ordinary", "watchdog"].includes(sourceMode)
@@ -82,6 +83,31 @@ export function normalizeRecoveryEvidence({
   const exactControlChangedAt = propagation?.matchedSource === "control"
     ? exactPropagationChangedAt
     : maintenance.controlChangedAt;
+  const directReadbackPresent = moduleControlReadback !== null
+    && moduleControlReadback !== undefined;
+  const directModuleControl = moduleControlReadback?.moduleControl;
+  const directEmergencyLatch = moduleControlReadback?.emergencyLatch;
+  const directReadbackValid = !directReadbackPresent || (
+    moduleControlReadback?.schemaVersion === 1
+    && moduleControlReadback?.source === "cloudflare-kv-direct"
+    && moduleControlReadback?.target === target
+    && moduleControlReadback?.credentialsIncluded === false
+    && moduleControlReadback?.piiIncluded === false
+    && directModuleControl?.schemaVersion === 2
+    && directModuleControl?.state === "maintenance"
+    && validDate(directModuleControl?.changedAt)
+    && directModuleControl?.emergencyLatchRef?.stopRunId === coordinatorRunId
+    && directModuleControl?.emergencyLatchRef?.emergencyRunId === emergencyRunId
+    && directModuleControl?.emergencyLatchRef?.latchChangedAt === maintenance.latchChangedAt
+    && directEmergencyLatch?.schemaVersion === 1
+    && directEmergencyLatch?.module === "timekeeping"
+    && directEmergencyLatch?.target === target
+    && directEmergencyLatch?.latched === true
+    && validDate(directEmergencyLatch?.changedAt)
+    && directEmergencyLatch?.changedAt === maintenance.latchChangedAt
+    && directEmergencyLatch?.stopRunId === coordinatorRunId
+    && directEmergencyLatch?.emergencyRunId === emergencyRunId
+  );
   if (
     propagation?.schemaVersion !== 1
     || propagation?.module !== "timekeeping"
@@ -99,7 +125,12 @@ export function normalizeRecoveryEvidence({
     || !["control", "emergency-latch-active"].includes(propagation?.matchedSource)
     || propagation?.credentialsIncluded !== false
     || propagation?.piiIncluded !== false
+    || !directReadbackValid
   ) throw new Error("broker fail-close propagation evidence is invalid");
+
+  const normalizedControlChangedAt = directReadbackPresent
+    ? directModuleControl.changedAt
+    : exactControlChangedAt;
 
   return {
     childReconciliation: {
@@ -128,7 +159,7 @@ export function normalizeRecoveryEvidence({
       custodyRef: String(maintenance.custodyRef || ""),
       state: "maintenance",
       latched: true,
-      controlChangedAt: exactControlChangedAt,
+      controlChangedAt: normalizedControlChangedAt,
       latchChangedAt: maintenance.latchChangedAt,
       emergencyLatchRef: {
         stopRunId: coordinatorRunId,
@@ -200,7 +231,7 @@ export function attestBrokerFailCloseEvidence({
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
 if (invokedPath === import.meta.url) {
-  const [reconciliationFile, maintenanceFile, propagationFile, outputRoot] =
+  const [reconciliationFile, maintenanceFile, propagationFile, outputRoot, directReadbackFile] =
     process.argv.slice(2);
   if (!reconciliationFile || !maintenanceFile || !propagationFile || !outputRoot) {
     throw new Error(
@@ -217,6 +248,7 @@ if (invokedPath === import.meta.url) {
     releaseSha: String(process.env.RELEASE_SHA || "").toLowerCase(),
     stage: String(process.env.STAGE || ""),
     target: String(process.env.PONTO_RECOVERY_TARGET || ""),
+    moduleControlReadback: directReadbackFile ? readJson(directReadbackFile) : null,
   });
   const directory = path.join(outputRoot, "automatic-rollback");
   fs.mkdirSync(directory, { recursive: true });

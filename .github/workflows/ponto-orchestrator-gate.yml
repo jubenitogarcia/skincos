@@ -21,6 +21,9 @@ on:
       orchestrator_run_id:
         required: false
         type: string
+    secrets:
+      GH_TOKEN:
+        required: false
 permissions:
   actions: read
   checks: write
@@ -57,19 +60,31 @@ jobs:
       - name: Revalidate protected target environment before consuming authority
         if: ${{ inputs.required }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN != '' && secrets.GH_TOKEN || github.token }}
           PONTO_ENVIRONMENT_TARGET: ${{ inputs.target }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
         run: |
           set -euo pipefail
           [[ "$PONTO_ENVIRONMENT_TARGET" == staging || "$PONTO_ENVIRONMENT_TARGET" == production ]] || {
             echo 'Governed Ponto capability target must be staging or production'
             exit 1
           }
+          [[ "$ORCHESTRATOR_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'Governed Ponto capability consumption requires the direct coordinator run'
+            exit 1
+          }
+          issuer_actor="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORCHESTRATOR_RUN_ID" --jq '.actor.login')"
+          [[ "$issuer_actor" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]] || {
+            echo 'Governed Ponto coordinator actor is invalid'
+            exit 1
+          }
           gh api "repos/$GITHUB_REPOSITORY/environments/$PONTO_ENVIRONMENT_TARGET" \
             > "$RUNNER_TEMP/ponto-environment.json"
           gh api "repos/$GITHUB_REPOSITORY/environments/$PONTO_ENVIRONMENT_TARGET/deployment-branch-policies?per_page=100" \
             > "$RUNNER_TEMP/ponto-environment-branch-policies.json"
-          node .github/scripts/ponto-environment-protection.mjs \
+          # A workflow-dispatch child runs as github-actions[bot]; preserve the
+          # direct coordinator actor for the single-operator attestation.
+          GITHUB_ACTOR="$issuer_actor" node .github/scripts/ponto-environment-protection.mjs \
             "$RUNNER_TEMP/ponto-environment.json" \
             "$RUNNER_TEMP/ponto-environment-branch-policies.json" \
             "$RUNNER_TEMP/ponto-environment-protection.json"

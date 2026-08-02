@@ -65,6 +65,7 @@ export function isJournalAuthorizedRun(run, savedEntries) {
 async function main() {
   const [artifactRoot, reportFile] = process.argv.slice(2);
   const token = String(process.env.GH_TOKEN || "").trim();
+  const cancellationToken = String(process.env.PONTO_RECONCILIATION_CANCEL_TOKEN || "").trim();
   const repository = String(process.env.GITHUB_REPOSITORY || "").trim();
   const apiBase = String(process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
   const orchestratorRunId = String(
@@ -75,7 +76,13 @@ async function main() {
   ).trim().toLowerCase();
   const reconciliationTimeoutSeconds = Number(process.env.PONTO_RECONCILIATION_TIMEOUT_SECONDS || "600");
   if (!artifactRoot || !reportFile) throw new Error("artifact root and reconciliation report path are required");
-  if (!token || !repository.includes("/") || !/^[0-9]+$/.test(orchestratorRunId) || !/^[0-9a-f]{40}$/.test(orchestratorHeadSha)) {
+  if (
+    !token
+    || !cancellationToken
+    || !repository.includes("/")
+    || !/^[0-9]+$/.test(orchestratorRunId)
+    || !/^[0-9a-f]{40}$/.test(orchestratorHeadSha)
+  ) {
     throw new Error("GitHub cancellation custody is unavailable");
   }
   if (
@@ -85,12 +92,16 @@ async function main() {
   ) throw new Error("child reconciliation timeout is outside the governed range");
 
   const request = async (pathname, init = {}) => {
+    const method = String(init.method || "GET").toUpperCase();
+    const requestToken = ["POST", "PUT", "PATCH", "DELETE"].includes(method)
+      ? cancellationToken
+      : token;
     const response = await fetch(`${apiBase}${pathname}`, {
       ...init,
       signal: AbortSignal.timeout(30_000),
       headers: {
         accept: "application/vnd.github+json",
-        authorization: `Bearer ${token}`,
+        authorization: `Bearer ${requestToken}`,
         "x-github-api-version": "2022-11-28",
         ...(init.headers || {}),
       },

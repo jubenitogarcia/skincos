@@ -55,6 +55,8 @@ jobs:
       contents: read
       deployments: read
     uses: ./.github/workflows/ponto-orchestrator-gate.yml
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     with:
       required: true
       lease_key: pages-secrets
@@ -69,6 +71,41 @@ jobs:
     timeout-minutes: 30
     environment: ${{ inputs.target }}
     steps:
+      - name: Initialize Pages mutation journal before checkout, setup, and preconditions
+        env:
+          TARGET: ${{ inputs.target }}
+          STAGING_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING }}
+          PRODUCTION_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            staging) PROJECT="$STAGING_PROJECT_RAW" ;;
+            production) PROJECT="$PRODUCTION_PROJECT_RAW" ;;
+            *) echo 'Unsupported Ponto Pages custody target'; exit 1 ;;
+          esac
+          export PROJECT
+          node - "$RUNNER_TEMP/pages-release-probe-evidence.json" <<'NODE'
+          const fs = require("fs");
+          const file = process.argv[2];
+          fs.writeFileSync(file, `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "pagesEnvironmentSecrets",
+            target: process.env.TARGET,
+            project: process.env.PROJECT,
+            releaseSha: process.env.RELEASE_SHA,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID,
+            mutationStarted: false,
+            mutationCompleted: false,
+            remoteAttestationCompleted: false,
+            retentionPolicy: "environment-scoped-deterministic-prerequisite",
+            valuesIncluded: false,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          [[ -n "$PROJECT" ]] || { echo 'Ponto Pages project is missing'; exit 1; }
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
           ref: ${{ inputs.release_sha }}
@@ -109,7 +146,7 @@ jobs:
           const expectedPath = workflow.path;
           if (
             run.workflow_id !== workflow.id
-            || run.path !== expectedPath
+            || ![expectedPath, `${expectedPath}@refs/heads/main`].includes(run.path)
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
@@ -138,16 +175,16 @@ jobs:
           if (
             workflow.state !== "active"
             || workflow.path !== ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"
+            || workflow.name !== "Attest Ponto Worker secret custody"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
             || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
             || run.head_branch !== "main"
             || run.head_sha !== process.env.RELEASE_SHA
-            || run.name !== "Attest Ponto Worker secret custody"
             || !expectedTitle
             || run.repository?.full_name !== process.env.GITHUB_REPOSITORY
             || run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY
@@ -182,17 +219,23 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments:read is required for custody attestation'; exit 1; }
-          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET/secrets?per_page=100" > "$RUNNER_TEMP/environment-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/repository-secrets.json"
-          gh api "repos/$GITHUB_REPOSITORY/environments/$TARGET/variables?per_page=100" > "$RUNNER_TEMP/environment-variables.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/repository-variables.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/$TARGET/secrets?per_page=100" > "$RUNNER_TEMP/environment-secrets.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/secrets?per_page=100" > "$RUNNER_TEMP/repository-secrets.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/environments/$TARGET/variables?per_page=100" > "$RUNNER_TEMP/environment-variables.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/variables?per_page=100" > "$RUNNER_TEMP/repository-variables.json"
           node - \
             "$RUNNER_TEMP/environment-secrets.json" \
             "$RUNNER_TEMP/repository-secrets.json" \
             "$RUNNER_TEMP/environment-variables.json" \
             "$RUNNER_TEMP/repository-variables.json" <<'NODE'
           const fs = require("fs");
-          const names = (file, key) => new Set((JSON.parse(fs.readFileSync(file, "utf8"))[key] || []).map(item => item.name));
+          const names = (file, key) => {
+            const payload = JSON.parse(fs.readFileSync(file, "utf8"));
+            const entries = Array.isArray(payload)
+              ? payload.flatMap(page => Array.isArray(page?.[key]) ? page[key] : [])
+              : (Array.isArray(payload?.[key]) ? payload[key] : []);
+            return new Set(entries.map(item => item.name));
+          };
           const environmentSecrets = names(process.argv[2], "secrets");
           const repositorySecrets = names(process.argv[3], "secrets");
           const environmentVariables = names(process.argv[4], "variables");
@@ -246,12 +289,14 @@ jobs:
           done
           [[ -z "${OPPOSITE_PROJECT:-}" || "$PROJECT" != "$OPPOSITE_PROJECT" ]] || { echo 'Ponto Pages projects are not isolated'; exit 1; }
           export PROJECT
-          before_list="$RUNNER_TEMP/pages-secret-list-before.json"
-          after_list="$RUNNER_TEMP/pages-secret-list-after.json"
-          project_file="$RUNNER_TEMP/pages-project-before.json"
+          before_project_file="$RUNNER_TEMP/pages-project-before.json"
+          after_project_file="$RUNNER_TEMP/pages-project-after.json"
           secret_file="$RUNNER_TEMP/pages-release-probe-secret.json"
           evidence_file="$RUNNER_TEMP/pages-release-probe-evidence.json"
-          trap 'rm -f "$before_list" "$after_list" "$project_file" "$secret_file"' EXIT
+          export PONTO_ROOT_CUSTODY_FILE="$RUNNER_TEMP/current-root-custody/root-custody.json"
+          export PONTO_STAGING_EVIDENCE_FILE="$RUNNER_TEMP/staging-evidence/ponto-release-evidence.json"
+          export PONTO_DERIVED_SECRET_FILE="$secret_file"
+          trap 'rm -f "$before_project_file" "$after_project_file" "$secret_file"' EXIT
           node <<'NODE'
           const value = String(process.env.PONTO_IDEMPOTENCY_KEY || "");
           if (
@@ -260,10 +305,7 @@ jobs:
             || /[\r\n\0]/.test(value)
           ) throw new Error("PONTO_IDEMPOTENCY_KEY must contain at least 32 UTF-8 bytes and no surrounding/control whitespace");
           NODE
-          node --input-type=module - \
-            "$RUNNER_TEMP/current-root-custody/root-custody.json" \
-            "$RUNNER_TEMP/staging-evidence/ponto-release-evidence.json" \
-            "$secret_file" <<'NODE'
+          node --input-type=module - <<'NODE'
           import crypto from "node:crypto";
           import fs from "node:fs";
           import {
@@ -272,7 +314,7 @@ jobs:
             validateRootCustody,
           } from "./.github/scripts/ponto-root-custody.mjs";
           const attested = validateRootCustody(
-            JSON.parse(fs.readFileSync(process.argv[2], "utf8")),
+            JSON.parse(fs.readFileSync(process.env.PONTO_ROOT_CUSTODY_FILE, "utf8")),
             { target: process.env.TARGET, releaseSha: process.env.RELEASE_SHA },
           );
           const current = rootFingerprint(
@@ -291,7 +333,7 @@ jobs:
             throw new Error("Pages derivation root differs from the pre-mutation root custody commitment");
           }
           if (process.env.TARGET === "production") {
-            const evidence = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+            const evidence = JSON.parse(fs.readFileSync(process.env.PONTO_STAGING_EVIDENCE_FILE, "utf8"));
             const staging = validateRootCustody(evidence?.surfaces?.timekeeping?.rootCustody, {
               target: "staging",
               releaseSha: process.env.RELEASE_SHA,
@@ -305,7 +347,7 @@ jobs:
             .update(domain)
             .digest("base64url");
           fs.writeFileSync(
-            process.argv[4],
+            process.env.PONTO_DERIVED_SECRET_FILE,
             `${JSON.stringify({
               PONTO_ACTOR_HMAC_KEY: derive("skincos/ponto/actor/v1"),
               PONTO_NETWORK_CONTEXT_KEY: derive("skincos/ponto/network-context/v1"),
@@ -314,6 +356,7 @@ jobs:
             { mode: 0o600 },
           );
           NODE
+          unset PONTO_ROOT_CUSTODY_FILE PONTO_STAGING_EVIDENCE_FILE PONTO_DERIVED_SECRET_FILE
           unset PONTO_ROOT_ATTESTATION_KEY_SHARED PONTO_IDEMPOTENCY_KEY
           if [[ "$TARGET" == production ]]; then
             [[ "$PROJECT" != "skincos-staging" ]] || exit 1
@@ -323,12 +366,19 @@ jobs:
           curl --fail --silent --show-error \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
-            > "$project_file"
-          npx --yes wrangler@4.112.0 pages secret list --project-name "$PROJECT" --env production > "$before_list"
-          node - "$project_file" "$before_list" "$evidence_file" <<'NODE'
+            > "$before_project_file"
+          node - "$before_project_file" "$evidence_file" <<'NODE'
           const fs = require("fs");
           const projectPayload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const project = projectPayload?.result;
+          const envVars = project?.deployment_configs?.production?.env_vars;
+          if (
+            projectPayload?.success !== true
+            || !envVars
+            || typeof envVars !== "object"
+            || Array.isArray(envVars)
+          ) throw new Error("Cloudflare Pages project response did not contain structured production env_vars");
+          const names = new Set(Object.keys(envVars));
           const expected = process.env.TARGET === "production"
             ? { name: "skincos", branch: "main", subdomain: "skincos.pages.dev", apiType: "secret_text" }
             : {
@@ -347,12 +397,10 @@ jobs:
             || apiTarget?.type !== expected.apiType
             || (expected.apiValue && apiTarget?.value !== expected.apiValue)
           ) throw new Error("PONTO_API_TARGET or isolated Pages project metadata differs from policy");
-          const listed = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-          const names = new Set(listed.map(item => item.name));
           if (process.env.TARGET === "production" && !names.has("PONTO_API_TARGET")) {
             throw new Error("production PONTO_API_TARGET secret is absent");
           }
-          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
             schemaVersion: 1,
             surface: "pagesEnvironmentSecrets",
             target: process.env.TARGET,
@@ -394,12 +442,22 @@ jobs:
           fs.writeFileSync(file, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
           NODE
           rm -f "$secret_file"
-          npx --yes wrangler@4.112.0 pages secret list --project-name "$PROJECT" --env production > "$after_list"
-          node - "$after_list" "$evidence_file" <<'NODE'
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT" \
+            > "$after_project_file"
+          node - "$after_project_file" "$evidence_file" <<'NODE'
           const fs = require("fs");
-          const listed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const projectPayload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const journal = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-          const names = new Set(listed.map(item => item.name));
+          const envVars = projectPayload?.result?.deployment_configs?.production?.env_vars;
+          if (
+            projectPayload?.success !== true
+            || !envVars
+            || typeof envVars !== "object"
+            || Array.isArray(envVars)
+          ) throw new Error("Cloudflare Pages project response did not contain structured production env_vars");
+          const names = new Set(Object.keys(envVars));
           const required = [
             "PONTO_ACTOR_HMAC_KEY",
             "PONTO_NETWORK_CONTEXT_KEY",
