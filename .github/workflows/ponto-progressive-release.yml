@@ -418,7 +418,10 @@ jobs:
       - name: Require the single-operator no-review true-only emergency close path
         if: ${{ contains(fromJSON('["staging","pilot","canary","production","rollback"]'), inputs.stage) }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Emergency environment secret/variable metadata requires the protected
+          # read-only administration token; the automatic token is not granted
+          # the repository-environment metadata scope.
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN:-}" ]] || { echo 'GH_TOKEN with Environments read is required for emergency custody'; exit 1; }
