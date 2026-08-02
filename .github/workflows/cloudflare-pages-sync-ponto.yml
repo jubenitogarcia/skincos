@@ -71,6 +71,41 @@ jobs:
     timeout-minutes: 30
     environment: ${{ inputs.target }}
     steps:
+      - name: Initialize Pages mutation journal before checkout, setup, and preconditions
+        env:
+          TARGET: ${{ inputs.target }}
+          STAGING_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING }}
+          PRODUCTION_PROJECT_RAW: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          ORCHESTRATOR_RUN_ID: ${{ inputs.orchestrator_run_id }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            staging) PROJECT="$STAGING_PROJECT_RAW" ;;
+            production) PROJECT="$PRODUCTION_PROJECT_RAW" ;;
+            *) echo 'Unsupported Ponto Pages custody target'; exit 1 ;;
+          esac
+          export PROJECT
+          node - "$RUNNER_TEMP/pages-release-probe-evidence.json" <<'NODE'
+          const fs = require("fs");
+          const file = process.argv[2];
+          fs.writeFileSync(file, `${JSON.stringify({
+            schemaVersion: 1,
+            surface: "pagesEnvironmentSecrets",
+            target: process.env.TARGET,
+            project: process.env.PROJECT,
+            releaseSha: process.env.RELEASE_SHA,
+            orchestratorRunId: process.env.ORCHESTRATOR_RUN_ID,
+            mutationStarted: false,
+            mutationCompleted: false,
+            remoteAttestationCompleted: false,
+            retentionPolicy: "environment-scoped-deterministic-prerequisite",
+            valuesIncluded: false,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          [[ -n "$PROJECT" ]] || { echo 'Ponto Pages project is missing'; exit 1; }
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
         with:
           ref: ${{ inputs.release_sha }}
