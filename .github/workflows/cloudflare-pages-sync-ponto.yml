@@ -111,7 +111,7 @@ jobs:
           const expectedPath = workflow.path;
           if (
             run.workflow_id !== workflow.id
-            || run.path !== expectedPath
+            || ![expectedPath, `${expectedPath}@refs/heads/main`].includes(run.path)
             || run.status !== "completed"
             || run.conclusion !== "success"
             || run.event !== "workflow_dispatch"
@@ -142,7 +142,7 @@ jobs:
             || workflow.path !== ".github/workflows/cloudflare-workers-sync-ponto-secrets.yml"
             || run.id !== Number(process.env.ROOT_CUSTODY_RUN_ID)
             || run.workflow_id !== workflow.id
-            || run.path !== `${workflow.path}@refs/heads/main`
+            || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run.path)
             || run.run_attempt !== 1
             || run.status !== "completed"
             || run.conclusion !== "success"
