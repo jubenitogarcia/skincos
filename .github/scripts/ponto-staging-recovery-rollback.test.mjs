@@ -36,6 +36,8 @@ test("staging recovery rollback is exact, serialized, and environment protected"
   assert.match(workflow, /readCloudflareKvJson/);
   assert.match(workflow, /fresh-close\/direct-readback\.json/);
   assert.match(workflow, /for \(let attempt = 0; attempt < 12; attempt \+= 1\)/);
+  assert.match(workflow, /try \{[\s\S]*?const response = await fetch\(process\.env\.PONTO_MODULE_HEALTH_URL/);
+  assert.match(workflow, /\} catch \{[\s\S]*?transient health-probe failure consumes this attempt/);
   assert.match(workflow, /setTimeout\(resolve, 5_000\)/);
   assert.match(workflow, /mutation\.compensationDisposition === "not-required"/);
   assert.match(workflow, /group: ponto-surface-mutation/);

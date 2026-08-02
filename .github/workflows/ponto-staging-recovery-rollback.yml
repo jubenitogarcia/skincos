@@ -656,28 +656,32 @@ jobs:
           const materialized = JSON.parse(fs.readFileSync(process.env.PONTO_MATERIALIZE_REPORT, "utf8"));
           let passed = false;
           for (let attempt = 0; attempt < 12; attempt += 1) {
-            const response = await fetch(process.env.PONTO_MODULE_HEALTH_URL, {
-              redirect: "manual",
-              signal: AbortSignal.timeout(15_000),
-              headers,
-            });
-            const body = await response.json().catch(() => null);
-            const availabilitySource = String(body?.availability?.source || "");
-            const expectedAvailabilityChangedAt = availabilitySource === "emergency-latch-active"
-              ? materialized?.emergencyLatch?.changedAt
-              : materialized?.moduleControl?.changedAt;
-            const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
-            if (
-              response.status === 200
-              && body?.ok === false
-              && body?.ready === false
-              && body?.availability?.state === "maintenance"
-              && ["control", "emergency-latch-active"].includes(availabilitySource)
-              && body?.availability?.changedAt === expectedAvailabilityChangedAt
-              && workerVersionId === process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
-            ) {
-              passed = true;
-              break;
+            try {
+              const response = await fetch(process.env.PONTO_MODULE_HEALTH_URL, {
+                redirect: "manual",
+                signal: AbortSignal.timeout(15_000),
+                headers,
+              });
+              const body = await response.json().catch(() => null);
+              const availabilitySource = String(body?.availability?.source || "");
+              const expectedAvailabilityChangedAt = availabilitySource === "emergency-latch-active"
+                ? materialized?.emergencyLatch?.changedAt
+                : materialized?.moduleControl?.changedAt;
+              const workerVersionId = String(body?.versionMetadata?.workerVersionId || "").toLowerCase();
+              if (
+                response.status === 200
+                && body?.ok === false
+                && body?.ready === false
+                && body?.availability?.state === "maintenance"
+                && ["control", "emergency-latch-active"].includes(availabilitySource)
+                && body?.availability?.changedAt === expectedAvailabilityChangedAt
+                && workerVersionId === process.env.TIMEKEEPING_INCUMBENT_VERSION_ID.toLowerCase()
+              ) {
+                passed = true;
+                break;
+              }
+            } catch {
+              // A transient health-probe failure consumes this attempt but must not abort the bounded propagation window.
             }
             if (attempt < 11) await new Promise((resolve) => setTimeout(resolve, 5_000));
           }
