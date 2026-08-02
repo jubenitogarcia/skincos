@@ -99,6 +99,66 @@ test("ordinary recovery binds an idempotent control fallback to the live timesta
   assert.equal(normalized.brokerFailClose.controlChangedAt, observedControlAt);
 });
 
+test("direct KV custody overrides a stale control fallback timestamp", () => {
+  const observedControlAt = "2026-07-30T00:03:00.000Z";
+  const directControlAt = "2026-07-30T00:04:00.000Z";
+  const normalized = normalizeRecoveryEvidence({
+    reconciliation: {
+      schemaVersion: 1,
+      orchestratorRunId: coordinatorRunId,
+      orchestratorHeadSha: sha,
+      discoveredChildren: 0,
+      unresolved: [],
+      passed: true,
+      credentialsIncluded: false,
+      piiIncluded: false,
+    },
+    maintenance,
+    propagation: {
+      ...propagation,
+      lastObserved: {
+        state: "maintenance",
+        changedAt: observedControlAt,
+        source: "control",
+      },
+      matchedSource: "control",
+    },
+    moduleControlReadback: {
+      schemaVersion: 1,
+      source: "cloudflare-kv-direct",
+      target,
+      moduleControl: {
+        schemaVersion: 2,
+        state: "maintenance",
+        changedAt: directControlAt,
+        emergencyLatchRef: {
+          stopRunId: coordinatorRunId,
+          emergencyRunId,
+          latchChangedAt: maintenance.latchChangedAt,
+        },
+      },
+      emergencyLatch: {
+        schemaVersion: 1,
+        module: "timekeeping",
+        target,
+        latched: true,
+        changedAt: maintenance.latchChangedAt,
+        stopRunId: coordinatorRunId,
+        emergencyRunId,
+      },
+      credentialsIncluded: false,
+      piiIncluded: false,
+    },
+    sourceMode: "ordinary",
+    coordinatorRunId,
+    emergencyRunId,
+    releaseSha: sha,
+    stage,
+    target,
+  });
+  assert.equal(normalized.brokerFailClose.controlChangedAt, directControlAt);
+});
+
 test("watchdog evidence normalizes only capability-authorized terminal children", () => {
   const normalized = normalizeRecoveryEvidence({
     reconciliation: {

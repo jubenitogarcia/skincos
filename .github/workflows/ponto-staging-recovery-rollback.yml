@@ -155,9 +155,11 @@ jobs:
             || !uuid(mutation.candidateVersionId)
             || !uuid(mutation.incumbentVersionId)
             || mutation.mutationStarted !== true
-            || mutation.mutationCompleted !== false
             || mutation.rollbackCompleted !== false
-            || mutation.compensationDisposition !== "ownership-conflict"
+            || !(
+              (mutation.mutationCompleted === false && mutation.compensationDisposition === "ownership-conflict")
+              || (mutation.mutationCompleted === true && mutation.compensationDisposition === "not-required")
+            )
             || mutation.credentialsIncluded !== false
             || mutation.piiIncluded !== false
           ) throw new Error("historical watchdog custody does not prove the exact failed Timekeeping mutation");
@@ -397,9 +399,11 @@ jobs:
             || !uuid(mutation.candidateVersionId)
             || !uuid(mutation.incumbentVersionId)
             || mutation.mutationStarted !== true
-            || mutation.mutationCompleted !== false
             || mutation.rollbackCompleted !== false
-            || mutation.compensationDisposition !== "ownership-conflict"
+            || !(
+              (mutation.mutationCompleted === false && mutation.compensationDisposition === "ownership-conflict")
+              || (mutation.mutationCompleted === true && mutation.compensationDisposition === "not-required")
+            )
             || mutation.credentialsIncluded !== false
             || mutation.piiIncluded !== false
           ) throw new Error("watchdog recovery evidence does not prove the exact failed Timekeeping mutation");
@@ -428,6 +432,97 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
 
+      - name: Read back the exact staging module control from Cloudflare KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PONTO_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PONTO_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          PONTO_MAINTENANCE_FILE: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close/maintenance.json
+          PONTO_DIRECT_READBACK_FILE: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close/direct-readback.json
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import { readCloudflareKvJson } from "./.github/scripts/ponto-kv-readback.mjs";
+
+          const validDate = (value) => Number.isFinite(Date.parse(String(value || "")));
+          const maintenance = JSON.parse(fs.readFileSync(process.env.PONTO_MAINTENANCE_FILE, "utf8"));
+          const moduleControl = await readCloudflareKvJson({
+            accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+            namespaceId: process.env.PONTO_MODULE_CONTROL_KV_ID,
+            key: "module-control:timekeeping",
+            apiToken: process.env.CLOUDFLARE_API_TOKEN,
+          });
+          const emergencyLatch = await readCloudflareKvJson({
+            accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+            namespaceId: process.env.PONTO_MODULE_CONTROL_KV_ID,
+            key: "module-control:timekeeping:emergency-latch",
+            apiToken: process.env.CLOUDFLARE_API_TOKEN,
+          });
+          const coordinatorRunId = process.env.PONTO_COORDINATOR_RUN_ID;
+          const emergencyRunId = process.env.PONTO_EMERGENCY_RUN_ID;
+          if (
+            maintenance?.schemaVersion !== 1
+            || maintenance?.target !== "staging"
+            || maintenance?.coordinatorRunId !== coordinatorRunId
+            || maintenance?.emergencyRunId !== emergencyRunId
+            || maintenance?.state !== "maintenance"
+            || maintenance?.latched !== true
+            || maintenance?.passed !== true
+            || !validDate(maintenance?.latchChangedAt)
+            || moduleControl?.schemaVersion !== 2
+            || moduleControl?.state !== "maintenance"
+            || !validDate(moduleControl?.changedAt)
+            || moduleControl?.emergencyLatchRef?.stopRunId !== coordinatorRunId
+            || moduleControl?.emergencyLatchRef?.emergencyRunId !== emergencyRunId
+            || moduleControl?.emergencyLatchRef?.latchChangedAt !== maintenance.latchChangedAt
+            || emergencyLatch?.schemaVersion !== 1
+            || emergencyLatch?.module !== "timekeeping"
+            || emergencyLatch?.target !== "staging"
+            || emergencyLatch?.latched !== true
+            || !validDate(emergencyLatch?.changedAt)
+            || emergencyLatch?.changedAt !== maintenance.latchChangedAt
+            || emergencyLatch?.stopRunId !== coordinatorRunId
+            || emergencyLatch?.emergencyRunId !== emergencyRunId
+          ) throw new Error("direct staging KV readback is not correlated to the fresh emergency close");
+          const sanitized = {
+            schemaVersion: 1,
+            source: "cloudflare-kv-direct",
+            target: "staging",
+            moduleControl: {
+              schemaVersion: moduleControl.schemaVersion,
+              state: moduleControl.state,
+              changedAt: moduleControl.changedAt,
+              emergencyLatchRef: {
+                stopRunId: moduleControl.emergencyLatchRef.stopRunId,
+                emergencyRunId: moduleControl.emergencyLatchRef.emergencyRunId,
+                latchChangedAt: moduleControl.emergencyLatchRef.latchChangedAt,
+              },
+            },
+            emergencyLatch: {
+              schemaVersion: emergencyLatch.schemaVersion,
+              module: emergencyLatch.module,
+              target: emergencyLatch.target,
+              latched: emergencyLatch.latched,
+              changedAt: emergencyLatch.changedAt,
+              stopRunId: emergencyLatch.stopRunId,
+              emergencyRunId: emergencyLatch.emergencyRunId,
+            },
+            credentialsIncluded: false,
+            piiIncluded: false,
+          };
+          fs.mkdirSync(path.dirname(process.env.PONTO_DIRECT_READBACK_FILE), { recursive: true });
+          fs.writeFileSync(
+            process.env.PONTO_DIRECT_READBACK_FILE,
+            `${JSON.stringify(sanitized, null, 2)}\n`,
+            { mode: 0o600 },
+          );
+          process.stdout.write("Direct staging KV custody readback recorded without values.\n");
+          NODE
+
       - name: Normalize the fresh close with historical child reconciliation
         env:
           PONTO_RECOVERY_SOURCE_MODE: watchdog
@@ -441,7 +536,8 @@ jobs:
             "$RUNNER_TEMP/ponto-staging-recovery-rollback/automatic-rollback/ponto-child-reconciliation.json" \
             "$RUNNER_TEMP/ponto-staging-recovery-rollback/fresh-close/maintenance.json" \
             "$RUNNER_TEMP/ponto-staging-recovery-rollback/fresh-close/final-propagation.json" \
-            "$RUNNER_TEMP/ponto-staging-recovery-rollback"
+            "$RUNNER_TEMP/ponto-staging-recovery-rollback" \
+            "$RUNNER_TEMP/ponto-staging-recovery-rollback/fresh-close/direct-readback.json"
 
       - name: Attest exact staging Ponto resource identities
         env:

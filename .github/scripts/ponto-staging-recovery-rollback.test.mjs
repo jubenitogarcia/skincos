@@ -23,6 +23,10 @@ test("staging recovery rollback is exact, serialized, and environment protected"
   assert.match(workflow, /PONTO_EMERGENCY_TRIGGER_RUN_ID: \$\{\{ github\.run_id \}\}/);
   assert.match(workflow, /name: ponto-fresh-recovery-close-staging-\$\{\{ github\.run_id \}\}/);
   assert.match(workflow, /name: Normalize the fresh close with historical child reconciliation/);
+  assert.match(workflow, /name: Read back the exact staging module control from Cloudflare KV/);
+  assert.match(workflow, /readCloudflareKvJson/);
+  assert.match(workflow, /fresh-close\/direct-readback\.json/);
+  assert.match(workflow, /mutation\.compensationDisposition === "not-required"/);
   assert.match(workflow, /group: ponto-surface-mutation/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /environment: staging/);
