@@ -44,6 +44,7 @@ test("fails closed without including Cloudflare response content", async () => {
       }),
     }),
     (error) => error.message === "Cloudflare KV readback failed (HTTP 403)"
+      && error.code === "cloudflare-kv-readback-http-403"
       && !error.message.includes(secretLikeBody),
   );
 });

@@ -7,6 +7,8 @@ const requireValue = (value, label) => {
   return normalized;
 };
 
+const readbackError = (message, code) => Object.assign(new Error(message), { code });
+
 /**
  * Read a JSON-valued KV record through the account-scoped Cloudflare API.
  * The returned value is kept in memory for custody comparison. Response
@@ -27,27 +29,54 @@ export async function readCloudflareKvJson({
     throw new Error("Cloudflare account or KV namespace ID is malformed");
   }
 
-  const response = await fetchImpl(
-    `${API_BASE}/accounts/${encodeURIComponent(account)}/storage/kv/namespaces/${encodeURIComponent(namespace)}/values/${encodeURIComponent(recordKey)}`,
-    {
-      method: "GET",
-      headers: {
-        authorization: `Bearer ${token}`,
-        accept: "application/json",
+  let response;
+  try {
+    response = await fetchImpl(
+      `${API_BASE}/accounts/${encodeURIComponent(account)}/storage/kv/namespaces/${encodeURIComponent(namespace)}/values/${encodeURIComponent(recordKey)}`,
+      {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/json",
+        },
+        signal: AbortSignal.timeout(30_000),
       },
-      signal: AbortSignal.timeout(30_000),
-    },
-  );
-  const raw = await response.text();
-  if (!response.ok) throw new Error(`Cloudflare KV readback failed (HTTP ${response.status})`);
+    );
+  } catch {
+    throw readbackError(
+      "Cloudflare KV readback request failed",
+      "cloudflare-kv-readback-request-failed",
+    );
+  }
+  let raw;
+  try {
+    raw = await response.text();
+  } catch {
+    throw readbackError(
+      "Cloudflare KV readback body unavailable",
+      "cloudflare-kv-readback-body-unavailable",
+    );
+  }
+  if (!response.ok) {
+    throw readbackError(
+      `Cloudflare KV readback failed (HTTP ${response.status})`,
+      `cloudflare-kv-readback-http-${response.status}`,
+    );
+  }
   let value;
   try {
     value = JSON.parse(raw);
   } catch {
-    throw new Error("Cloudflare KV readback is not valid JSON");
+    throw readbackError(
+      "Cloudflare KV readback is not valid JSON",
+      "cloudflare-kv-readback-invalid-json",
+    );
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Cloudflare KV readback JSON shape is invalid");
+    throw readbackError(
+      "Cloudflare KV readback JSON shape is invalid",
+      "cloudflare-kv-readback-invalid-shape",
+    );
   }
   return value;
 }
