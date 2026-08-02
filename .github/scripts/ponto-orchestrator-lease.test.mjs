@@ -484,3 +484,25 @@ test("latch reset accepts only a fresh manual close reattestation title", () => 
   assert.match(reset, /run\?\.run_attempt !== 1/);
   assert.match(reset, /Automatic watchdog\/ordinary latches are intentionally not reset/);
 });
+
+test("recovery artifact downloads isolate extraction before merging attested evidence", () => {
+  for (const file of ["ponto-release-watchdog.yml", "ponto-progressive-release.yml"]) {
+    const source = workflow(file);
+    assert.match(
+      source,
+      /download_dir="\$\(mktemp -d "\$PONTO_RECOVERY_ARTIFACT_ROOT\/\.artifact-download\.XXXXXX"\)"/,
+      `${file} must isolate each artifact extraction`,
+    );
+    assert.match(source, /--dir "\$download_dir"/, `${file} must download into the isolated directory`);
+    assert.match(
+      source,
+      /cp -a "\$download_dir"\/\. "\$PONTO_RECOVERY_ARTIFACT_ROOT\/\$destination\/"/,
+      `${file} must merge the isolated artifact after extraction`,
+    );
+    assert.doesNotMatch(
+      source,
+      /--dir "\$PONTO_RECOVERY_ARTIFACT_ROOT\/\$destination"/,
+      `${file} must not extract directly into a pre-populated evidence directory`,
+    );
+  }
+});

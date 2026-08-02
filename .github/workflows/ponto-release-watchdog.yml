@@ -396,8 +396,12 @@ jobs:
           NODE
           while IFS=$'\t' read -r run_id artifact destination; do
             mkdir -p "$PONTO_RECOVERY_ARTIFACT_ROOT/$destination"
-            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
-              --name "$artifact" --dir "$PONTO_RECOVERY_ARTIFACT_ROOT/$destination" || true
+            download_dir="$(mktemp -d "$PONTO_RECOVERY_ARTIFACT_ROOT/.artifact-download.XXXXXX")"
+            if gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name "$artifact" --dir "$download_dir"; then
+              cp -a "$download_dir"/. "$PONTO_RECOVERY_ARTIFACT_ROOT/$destination/"
+            fi
+            rm -rf "$download_dir"
           done
       - name: Restore every independently attested incumbent and keep the latch true
         env:
