@@ -92,7 +92,7 @@ jobs:
             || watchdog.event !== "workflow_run"
             || watchdog.status !== "completed"
             || watchdog.conclusion !== "failure"
-            || watchdog.head_sha !== releaseSha
+            || !/^[0-9a-f]{40}$/.test(String(watchdog.head_sha || ""))
             || watchdog.head_branch !== "main"
             || watchdog.repository?.full_name !== repo
             || !String(watchdog.display_title || "").includes(`source=${process.env.COORDINATOR_RUN_ID}`)
@@ -323,7 +323,7 @@ jobs:
             || watchdog.event !== "workflow_run"
             || watchdog.status !== "completed"
             || watchdog.conclusion !== "failure"
-            || watchdog.head_sha !== releaseSha
+            || !/^[0-9a-f]{40}$/.test(String(watchdog.head_sha || ""))
             || watchdog.head_branch !== "main"
             || watchdog.repository?.full_name !== repo
             || !String(watchdog.display_title || "").includes(`source=${process.env.COORDINATOR_RUN_ID}`)

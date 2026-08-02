@@ -42,6 +42,8 @@ test("staging recovery rollback is exact, serialized, and environment protected"
   assert.match(workflow, /git rev-parse origin\/main.*GITHUB_SHA/);
   assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/);
   assert.match(workflow, /run-id: \$\{\{ inputs\.watchdog_run_id \}\}/);
+  assert.doesNotMatch(workflow, /watchdog\.head_sha !== releaseSha/);
+  assert.match(workflow, /!\/\^\[0-9a-f\]\{40\}/);
   assert.match(workflow, /ponto-automatic-rollback\.mjs/);
   assert.match(workflow, /PONTO_ROLLBACK_CHECK_TOKEN: \$\{\{ github\.token \}\}/);
   assert.match(workflow, /name: Upload immutable staging recovery evidence[\s\S]*?if: always\(\)/);
