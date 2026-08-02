@@ -1,11 +1,12 @@
 import React from 'react'
-import { AreaChart as AreaChartIcon, BarChart3, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, Maximize2, Minimize2, Plus, RefreshCw, Stethoscope, Trash2, TrendingUp, Users, type LucideIcon } from 'lucide-react'
+import { AreaChart as AreaChartIcon, BarChart3, ChevronLeft, ChevronRight, ChevronsUpDown, Maximize2, Minimize2, Plus, RefreshCw, Stethoscope, Trash2, TrendingUp, Users, type LucideIcon } from 'lucide-react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { formatCurrencyBRL, formatNumberBR } from '@/atendimentoDomain'
 import type { AtendimentoOverview } from '@/atendimentoApi'
 import { atendimentoEntityColor, atendimentoProfessionalColor, type AtendimentoVisualProfessional } from '@/atendimentoVisuals'
+import { PanelToggleButton } from '@/panelToggleButton'
 import { TooltipLabel } from '@/tooltip'
 
 export type AtendimentoChartPreset = 'monthly' | 'ticket' | 'procedures' | 'injectors' | 'consultants'
@@ -182,10 +183,20 @@ export function AtendimentoChartsPanel({ overview, professionals = [], slots, on
   }
   return (
     <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" data-testid="atendimento-charts-panel" aria-label="Gráficos">
-      <button type="button" className="flex w-full items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5 text-left transition hover:bg-slate-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/70" aria-expanded={expanded} aria-controls="atendimento-charts-content" data-testid="atendimento-charts-toggle" onClick={() => onExpandedChange((current) => !current)}>
-        <span className="flex min-w-0 items-center gap-2"><span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-emerald-400/25 bg-emerald-400/10 text-emerald-200" aria-hidden="true"><AreaChartIcon className="h-4 w-4" /></span><span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Gráficos</span><span className="block truncate text-[11px] text-slate-400">Séries e rankings configuráveis do período.</span></span></span>
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">{expanded ? 'Recolher' : 'Ver gráficos'}{expanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}</span>
-      </button>
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5" data-testid="atendimento-charts-header">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-emerald-400/25 bg-emerald-400/10 text-emerald-200" aria-hidden="true"><AreaChartIcon className="h-4 w-4" /></span>
+          <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Gráficos</span><span className="block truncate text-[11px] text-slate-400">Séries e rankings configuráveis do período.</span></span>
+        </div>
+        <PanelToggleButton
+          expanded={expanded}
+          onToggle={() => onExpandedChange((current) => !current)}
+          expandedLabel="Recolher gráficos"
+          collapsedLabel="Expandir gráficos"
+          ariaControls="atendimento-charts-content"
+          testId="atendimento-charts-toggle"
+        />
+      </div>
       {expanded ? <div id="atendimento-charts-content" className="space-y-3 p-3"><div className="flex justify-end gap-2"><IconOnlyAction label="Adicionar gráfico" description="Criar outro gráfico configurável no painel." onClick={addChart} disabled={slots.length >= 6} tooltipAlign="right" data-testid="atendimento-chart-add"><Plus className="h-4 w-4" /></IconOnlyAction><IconOnlyAction label="Resetar gráficos" description="Restaurar a seleção padrão de gráficos." onClick={resetCharts} tooltipAlign="right" data-testid="atendimento-chart-reset"><RefreshCw className="h-4 w-4" /></IconOnlyAction></div><div className={`grid gap-3 ${slots.length <= 1 ? 'grid-cols-1' : slots.length === 2 ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1 lg:grid-cols-2 xl:grid-cols-3'}`}>{slots.map((slot, index) => <AtendimentoChartCard key={`${index}-${slot.presetId}-${slot.metric}-${slot.view}`} slot={slot} overview={overview} professionals={professionals} onChange={(patch) => updateSlot(index, patch)} onMove={(direction) => moveSlot(index, direction)} onCycleLayout={() => cycleLayout(index)} onToggleWide={() => updateSlot(index, { layout: slot.layout === 'wide' ? 'standard' : 'wide' })} onRemove={() => onSlotsChange((prev) => prev.filter((_, current) => current !== index))} canRemove={slots.length > 1} canMoveLeft={index > 0} canMoveRight={index < slots.length - 1} />)}</div></div> : <div className="px-3 py-3 text-xs leading-relaxed text-slate-400" data-testid="atendimento-charts-collapsed">Os gráficos estão recolhidos. Abra a seção para configurar e comparar as séries do período.</div>}
     </section>
   )

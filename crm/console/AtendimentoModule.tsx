@@ -9,8 +9,6 @@ import {
   BarChart3,
   Calculator,
   CalendarRange,
-  ChevronDown,
-  ChevronUp,
   Crosshair,
   Divide,
   Download,
@@ -96,6 +94,7 @@ import { AtendimentoChartsPanel } from '@/atendimentoCharts'
 import { AtendimentoClientAutocomplete } from '@/atendimentoClientAutocomplete'
 import { AtendimentoDatePicker } from '@/AtendimentoDatePicker'
 import { atendimentoColorWithAlpha, atendimentoProfessionalColor } from '@/atendimentoVisuals'
+import { PanelToggleButton } from '@/panelToggleButton'
 import { useAtendimentoHeaderBridge } from '@/useAtendimentoHeaderBridge'
 import { useAuth } from '@/contexts'
 import { isAtendimentoManager, normalizeCrmRole } from '@/authPolicy'
@@ -625,7 +624,7 @@ function ConversionMultiplierDetails({
                       data-testid="atendimento-multiplier-info-trigger"
                       data-tooltip-pin="true"
                     >
-                      <Info className="h-3.5 w-3.5" />
+                      <Info className="h-3 w-3" />
                     </button>
                 </TooltipLabel>
               </div>
@@ -709,7 +708,7 @@ function MultiplierDistributionMetric({ optimization }: { optimization: NonNulla
       </div>
     </div>
   )
-  return <TooltipLabel label="Faixas e níveis" description={description} contentClassName="w-[min(26rem,calc(100vw-2rem))] max-w-none"><button type="button" className="flex min-w-[12rem] items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-slate-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60" data-testid="atendimento-multiplier-distribution-trigger"><span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${metricToneClass('violet')}`}><Divide className="h-3 w-3" /></span><span className="min-w-0"><span className="block text-[11px] font-semibold text-slate-200">Faixas e níveis</span><span className="block text-[10px] text-slate-500">{formatNumberBR(total)} doutores elegíveis</span></span><Info className="ml-auto h-3 w-3 shrink-0 text-slate-500" /></button></TooltipLabel>
+  return <TooltipLabel label="Faixas e níveis" description={description} contentClassName="w-[min(26rem,calc(100vw-2rem))] max-w-none"><button type="button" className="flex min-w-[12rem] items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-slate-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60" data-testid="atendimento-multiplier-distribution-trigger"><span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${metricToneClass('violet')}`}><Divide className="h-3 w-3" /></span><span className="min-w-0"><span className="block text-[11px] font-semibold text-slate-200">Faixas e níveis</span><span className="block text-[10px] text-slate-500">{formatNumberBR(total)} doutores elegíveis</span></span><Info className="ml-auto h-2.5 w-2.5 shrink-0 text-slate-500" aria-hidden="true" /></button></TooltipLabel>
 }
 
 function MetricGroupContent({
@@ -795,9 +794,9 @@ function MetricGroupContent({
           </span>
         )}
         <div className={`min-w-0 ${horizontal ? 'flex-none' : 'flex-1'}`}>
-          <span className={`relative inline-flex max-w-full overflow-visible pr-2.5 ${isDetail ? 'text-[10px] font-medium text-slate-500' : `text-[11px] ${isChild ? 'font-medium text-slate-400' : 'font-semibold text-slate-200'}`} leading-tight`}>
-            <span className="min-w-0 truncate">{row.label}</span>
-            {row.tooltip ? <Info className="pointer-events-none absolute right-0 -top-0.5 h-2 w-2 text-slate-500" /> : null}
+          <span className={`relative isolate inline-flex max-w-full items-start overflow-visible ${isDetail ? 'text-[10px] font-medium text-slate-500' : `text-[11px] ${isChild ? 'font-medium text-slate-400' : 'font-semibold text-slate-200'}`} leading-tight`}>
+            <span className="min-w-0 truncate pr-0.5">{row.label}</span>
+            {row.tooltip ? <Info className="pointer-events-none absolute -right-1 -top-1 z-10 h-2 w-2 text-slate-500" aria-hidden="true" /> : null}
           </span>
         </div>
         <div className={`shrink-0 ${isDetail ? 'text-[10px] font-medium text-slate-400' : `text-[11px] font-semibold ${isChild ? 'text-slate-200' : 'text-white'}`}`}>{row.value}</div>
@@ -3035,28 +3034,30 @@ export function AtendimentoModule() {
       {error ? <ErrorBanner message={error} /> : null}
 
       <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" data-testid="atendimento-analysis">
-        <button
-          type="button"
-          className="flex w-full items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5 text-left transition hover:bg-slate-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/70"
-          aria-expanded={analysisExpanded}
-          aria-controls="atendimento-analysis-content"
-          data-testid="atendimento-analysis-toggle"
-          onClick={() => setAnalysisExpanded((current) => !current)}
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${metricToneClass('violet')}`} aria-hidden="true">
-              <Gauge className="h-4 w-4" />
-            </span>
+        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5" data-testid="atendimento-analysis-header">
+          <div className="flex min-w-0 items-center gap-2">
+            <TooltipLabel
+              label="Análise do período"
+              description="Desempenho por doutor: ranking, totais, metas e faixas do período. Os cálculos detalhados são carregados somente quando a seção é expandida."
+            >
+              <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${metricToneClass('violet')}`} aria-label="Informações da análise do período">
+                <Gauge className="h-4 w-4" aria-hidden="true" />
+              </span>
+            </TooltipLabel>
             <span className="min-w-0">
               <span className="block text-sm font-semibold text-slate-100">Análise do período</span>
               <span className="block text-[11px] text-slate-400">Desempenho por doutor: ranking, totais, metas e faixas do período — carregado somente quando necessário.</span>
             </span>
-          </span>
-          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">
-            {analysisExpanded ? 'Recolher' : 'Ver análise'}
-            {analysisExpanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
-          </span>
-        </button>
+          </div>
+          <PanelToggleButton
+            expanded={analysisExpanded}
+            onToggle={() => setAnalysisExpanded((current) => !current)}
+            expandedLabel="Recolher análise"
+            collapsedLabel="Expandir análise"
+            ariaControls="atendimento-analysis-content"
+            testId="atendimento-analysis-toggle"
+          />
+        </div>
         {analysisExpanded ? (
       <div id="atendimento-analysis-content" className="space-y-2 p-3" data-testid="atendimento-kpis">
         {analysisLoading ? (
@@ -3162,20 +3163,20 @@ export function AtendimentoModule() {
 
       <div className="grid min-h-0 flex-1 gap-4">
         <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" aria-label="Atendimentos" data-testid="atendimento-records">
-          <button
-            type="button"
-            className="flex w-full items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5 text-left transition hover:bg-slate-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/70"
-            aria-expanded={attendancesExpanded}
-            aria-controls="atendimento-records-content"
-            data-testid="atendimento-records-toggle"
-            onClick={() => setAttendancesExpanded((current) => !current)}
-          >
-            <span className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5" data-testid="atendimento-records-header">
+            <div className="flex min-w-0 items-center gap-2">
               <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-sky-400/25 bg-sky-400/10 text-sky-200" aria-hidden="true"><Users className="h-4 w-4" /></span>
               <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Atendimentos</span><span className="block truncate text-[11px] text-slate-400">Registros, pendências e valores do período.</span></span>
-            </span>
-            <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">{attendancesExpanded ? 'Recolher' : 'Ver registros'}{attendancesExpanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}</span>
-          </button>
+            </div>
+            <PanelToggleButton
+              expanded={attendancesExpanded}
+              onToggle={() => setAttendancesExpanded((current) => !current)}
+              expandedLabel="Recolher registros"
+              collapsedLabel="Expandir registros"
+              ariaControls="atendimento-records-content"
+              testId="atendimento-records-toggle"
+            />
+          </div>
           {attendancesExpanded ? (
           <div id="atendimento-records-content">
           {filters.unit === 'all' ? (

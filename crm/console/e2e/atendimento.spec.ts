@@ -358,7 +358,9 @@ test.describe('atendimento', () => {
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Doutores elegíveis')
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Dias mês')
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Fonte agenda')
-    await expect(analysisToggle).toContainText('Desempenho por doutor: ranking, totais, metas e faixas do período')
+    await expect(page.getByTestId('atendimento-analysis-header')).toContainText('Análise do período')
+    await expect(page.getByTestId('atendimento-analysis-header')).toContainText('Desempenho por doutor: ranking, totais, metas e faixas do período')
+    await expect(analysisToggle).toHaveAttribute('aria-label', 'Recolher análise')
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Desempenho por doutor')
     await expect(page.getByTestId('atendimento-kpi-ranking')).toHaveCount(0)
     await expect(page.getByTestId('atendimento-kpi-resumo')).toHaveCount(0)
@@ -499,8 +501,11 @@ test.describe('atendimento', () => {
 
     await page.setViewportSize({ width: 390, height: 844 })
     for (const control of [analysisToggle, recordsToggle, chartsToggle]) {
-      await control.scrollIntoViewIfNeeded()
+      await expect(control).toBeAttached()
       await expect(control).toBeVisible()
+      const controlBox = await control.boundingBox()
+      expect(controlBox?.width || 0).toBeGreaterThan(0)
+      expect(controlBox?.height || 0).toBeGreaterThan(0)
     }
   })
 

@@ -8,6 +8,7 @@ import { Checkbox } from '@/checkbox'
 import { Input } from '@/input'
 import { InsumosBarcodeScannerInline } from '@/InsumosBarcodeScannerInline'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/dialog'
+import { PanelToggleButton } from '@/panelToggleButton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Textarea } from '@/textarea'
 import { TooltipButton, TooltipLabel } from '@/tooltip'
@@ -2623,25 +2624,13 @@ export function InsumosCategoryPoliciesPanel({
               </svg>
             </div>
           </TooltipLabel>
-          <TooltipButton label={panelOpen ? 'Contrair' : 'Expandir'}>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-              onClick={onToggleOpen}
-              aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-            >
-              {panelOpen ? (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              ) : (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
-            </Button>
-          </TooltipButton>
+          <PanelToggleButton
+            expanded={panelOpen}
+            onToggle={onToggleOpen}
+            expandedLabel="Recolher políticas"
+            collapsedLabel="Expandir políticas"
+            testId="insumos-policies-toggle"
+          />
         </div>
       </CardHeader>
       {panelOpen ? (
@@ -2996,19 +2985,13 @@ export function InsumosAlertsPanel({
                   </svg>
                 </Button>
               </TooltipButton>
-              <TooltipButton label={panelOpen ? 'Contrair' : 'Expandir'}>
-                <Button size="icon" variant="ghost" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onToggleOpen} aria-label={panelOpen ? 'Contrair' : 'Expandir'}>
-                  {panelOpen ? (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  ) : (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </Button>
-              </TooltipButton>
+              <PanelToggleButton
+                expanded={panelOpen}
+                onToggle={onToggleOpen}
+                expandedLabel="Recolher avisos"
+                collapsedLabel="Expandir avisos"
+                testId="insumos-alerts-toggle"
+              />
             </div>
           </div>
         </div>
@@ -3442,19 +3425,13 @@ export function InsumosChartsPanel({
                   </svg>
                 </Button>
               </TooltipButton>
-              <TooltipButton label={panelOpen ? 'Contrair' : 'Expandir'}>
-                <Button size="icon" variant="ghost" className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]" onClick={onToggleOpen} aria-label={panelOpen ? 'Contrair' : 'Expandir'}>
-                  {panelOpen ? (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  ) : (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </Button>
-              </TooltipButton>
+              <PanelToggleButton
+                expanded={panelOpen}
+                onToggle={onToggleOpen}
+                expandedLabel="Recolher gráficos"
+                collapsedLabel="Expandir gráficos"
+                testId="insumos-charts-toggle"
+              />
             </div>
           </div>
         </div>
@@ -3773,25 +3750,13 @@ export function InsumosMovementsPanel({
                   </svg>
                 </Button>
               </TooltipButton>
-              <TooltipButton label={panelOpen ? 'Contrair' : 'Expandir'}>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-9 w-9 bg-transparent text-white hover:bg-white/[0.10]"
-                  onClick={onToggleOpen}
-                  aria-label={panelOpen ? 'Contrair' : 'Expandir'}
-                >
-                  {panelOpen ? (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  ) : (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </Button>
-              </TooltipButton>
+              <PanelToggleButton
+                expanded={panelOpen}
+                onToggle={onToggleOpen}
+                expandedLabel="Recolher movimentações"
+                collapsedLabel="Expandir movimentações"
+                testId="insumos-movements-toggle"
+              />
             </div>
           </div>
         </div>
