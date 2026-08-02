@@ -20,6 +20,35 @@ test("extracts only a structured version upload for the exact Worker", () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("accepts Wrangler version-deploy records without an environment field", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wrangler-output-"));
+  const file = path.join(dir, "output.ndjson");
+  fs.writeFileSync(file, [
+    JSON.stringify({ type: "version-deploy", worker_name: "skincos-timekeeping-staging", deployment_id: uuid }),
+    "",
+  ].join("\n"));
+  const result = spawnSync(process.execPath, [script, file, "version-deploy", "skincos-timekeeping-staging"], {
+    encoding: "utf8",
+    env: { ...process.env, PONTO_EXPECTED_WRANGLER_ENV: "staging" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("rejects an explicit Wrangler environment conflict", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wrangler-output-"));
+  const file = path.join(dir, "output.ndjson");
+  fs.writeFileSync(file, [
+    JSON.stringify({ type: "version-deploy", worker_name: "skincos-timekeeping-staging", environment: "production", deployment_id: uuid }),
+    "",
+  ].join("\n"));
+  const result = spawnSync(process.execPath, [script, file, "version-deploy", "skincos-timekeeping-staging"], {
+    encoding: "utf8",
+    env: { ...process.env, PONTO_EXPECTED_WRANGLER_ENV: "staging" },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Wrangler output environment differs/);
+});
+
 test("rejects a different target or command-failed record", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wrangler-output-"));
   const file = path.join(dir, "output.ndjson");

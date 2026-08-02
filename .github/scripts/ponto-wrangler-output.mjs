@@ -16,7 +16,11 @@ const actualName = String(record.worker_name || record.project_name || record.na
 if (actualName !== expectedName) throw new Error(`Wrangler output target differs: ${actualName || "missing"}`);
 const expectedEnvironment = String(process.env.PONTO_EXPECTED_WRANGLER_ENV || "").trim();
 const actualEnvironment = String(record.wrangler_environment || record.environment || "");
-if (expectedEnvironment && actualEnvironment !== expectedEnvironment) {
+// Wrangler's version-deploy NDJSON does not include an environment field.
+// The exact environment-specific Worker name and explicit --env argument are
+// the authoritative target contract in that case. Reject an explicit conflict,
+// but do not reject the documented absent field.
+if (expectedEnvironment && actualEnvironment && actualEnvironment !== expectedEnvironment) {
   throw new Error(`Wrangler output environment differs: ${actualEnvironment || "missing"}`);
 }
 const versionId = String(record.version_id || "");
