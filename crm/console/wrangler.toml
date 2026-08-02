@@ -3,13 +3,6 @@ name = "skincos"
 pages_build_output_dir = "dist"
 compatibility_date = "2026-01-13"
 
-[secrets]
-required = [
-  "PONTO_ACTOR_HMAC_KEY",
-  "PONTO_NETWORK_CONTEXT_KEY",
-  "PONTO_RELEASE_PROBE_HMAC_KEY",
-]
-
 [[env.production.r2_buckets]]
 binding = "SHARE_BUCKET"
 bucket_name = "skincos-share"
@@ -25,13 +18,6 @@ service = "skincos-insumos"
 [[env.production.kv_namespaces]]
 binding = "MODULE_CONTROL"
 id = "__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__"
-
-[env.production.secrets]
-required = [
-  "PONTO_ACTOR_HMAC_KEY",
-  "PONTO_NETWORK_CONTEXT_KEY",
-  "PONTO_RELEASE_PROBE_HMAC_KEY",
-]
 
 [env.production.vars]
 ATENDIMENTO_API_TARGET = "https://cs-api.skincos.com.br"
@@ -64,13 +50,6 @@ service = "skincos-insumos-staging"
 [[env.preview.kv_namespaces]]
 binding = "MODULE_CONTROL"
 id = "e69fe06b6abc46eca4f4c00198d078f2"
-
-[env.preview.secrets]
-required = [
-  "PONTO_ACTOR_HMAC_KEY",
-  "PONTO_NETWORK_CONTEXT_KEY",
-  "PONTO_RELEASE_PROBE_HMAC_KEY",
-]
 
 [env.preview.vars]
 INSUMOS_API_TARGET = "https://api.skincos.com.br"
