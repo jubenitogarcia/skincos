@@ -88,6 +88,10 @@ const brokerFailCloseFile = path.join(
 const brokerFailClose = fs.existsSync(brokerFailCloseFile)
   ? readJson(brokerFailCloseFile)
   : null;
+const safeReadbackFailureCode = (error) => {
+  const code = String(error?.code || "cloudflare-kv-readback-failed");
+  return /^[a-z0-9-]{1,96}$/.test(code) ? code : "cloudflare-kv-readback-failed";
+};
 const readExternalModuleHealth = async () => {
   if (moduleHealthUrl !== expectedModuleHealthUrl) {
     return { passed: false, status: 0, reason: "module-health-url-not-pinned" };
@@ -155,22 +159,34 @@ const attestNoSurfaceRollback = async () => {
 const readAndAttestBrokerFailClose = async () => {
   let moduleControl = null;
   let emergencyLatch = null;
+  let readbackFailure = "";
   try {
-    moduleControl = await readCloudflareKvJson({
-      accountId,
-      namespaceId: moduleControlNamespaceId,
-      key: "module-control:timekeeping",
-      apiToken,
-    });
-    emergencyLatch = await readCloudflareKvJson({
-      accountId,
-      namespaceId: moduleControlNamespaceId,
-      key: "module-control:timekeeping:emergency-latch",
-      apiToken,
-    });
+    try {
+      moduleControl = await readCloudflareKvJson({
+        accountId,
+        namespaceId: moduleControlNamespaceId,
+        key: "module-control:timekeeping",
+        apiToken,
+      });
+    } catch (error) {
+      readbackFailure = `control-${safeReadbackFailureCode(error)}`;
+      throw error;
+    }
+    try {
+      emergencyLatch = await readCloudflareKvJson({
+        accountId,
+        namespaceId: moduleControlNamespaceId,
+        key: "module-control:timekeeping:emergency-latch",
+        apiToken,
+      });
+    } catch (error) {
+      readbackFailure = `latch-${safeReadbackFailureCode(error)}`;
+      throw error;
+    }
   } catch {
     moduleControl = null;
     emergencyLatch = null;
+    if (!readbackFailure) readbackFailure = "cloudflare-kv-readback-failed";
   }
   const directAttestation = attestBrokerFailCloseEvidence({
     evidence: brokerFailClose,
@@ -185,14 +201,14 @@ const readAndAttestBrokerFailClose = async () => {
     return {
       moduleControl,
       emergencyLatch,
-      attestation: { ...directAttestation, readbackMode: "direct-kv" },
+      attestation: { ...directAttestation, readbackMode: "direct-kv", readbackFailure: "" },
     };
   }
   const noSurfaceAttestation = await attestNoSurfaceRollback();
   return {
     moduleControl,
     emergencyLatch,
-    attestation: noSurfaceAttestation || directAttestation,
+    attestation: noSurfaceAttestation || { ...directAttestation, readbackFailure },
   };
 };
 const surfaceSpecs = {
@@ -992,6 +1008,10 @@ const report = {
     state: "unresolved",
     remoteKvReadbackMatched: false,
     emergencyLatchReadbackMatched: false,
+    readbackFailure: [
+      preMutationFailClose.attestation.readbackFailure,
+      postMutationFailClose.attestation.readbackFailure,
+    ].filter(Boolean),
   },
   childReconciliation: childReconciliationPassed ? {
     passed: true,
