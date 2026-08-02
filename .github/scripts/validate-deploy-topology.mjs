@@ -3,6 +3,14 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
+const jobSource = (source, name) => {
+  const marker = `  ${name}:\n`;
+  const start = source.indexOf(marker);
+  if (start < 0) return "";
+  const remaining = source.slice(start + marker.length);
+  const next = /\n  [a-zA-Z0-9_-]+:\n/.exec(remaining);
+  return source.slice(start, next ? start + marker.length + next.index : source.length);
+};
 const catalog = JSON.parse(read("platform/deploy/operational-units.json"));
 const failures = [];
 const fail = (message) => failures.push(message);
@@ -171,6 +179,8 @@ const coordinator = read('.github/workflows/ponto-progressive-release.yml');
 const orchestratorGate = read('.github/workflows/ponto-orchestrator-gate.yml');
 const emergencyLatchReset = read('.github/workflows/ponto-emergency-latch-reset.yml');
 const emergencyClose = read('.github/workflows/ponto-emergency-close.yml');
+const emergencyCloseOnly = jobSource(emergencyClose, 'close');
+const emergencyCloseMaterialize = jobSource(emergencyClose, 'materialize');
 const emergencyBroker = read('.github/scripts/ponto-emergency-broker.mjs');
 const progressivePolicy = JSON.parse(read('.github/governance/progressive-release-policy.json'));
 const emergencyIdleAssertion = read('.github/scripts/ponto-assert-idle.mjs');
@@ -762,16 +772,22 @@ if (
   fail('Only brief automatic close and governed reset jobs may hold the target latch queue; long module transitions must never delay fail-close');
 }
 if (
-  emergencyClose.includes('group: ponto-surface-mutation')
-  || !/  close:[\s\S]*?group: ponto-emergency-latch-\$\{\{ inputs\.target \}\}[\s\S]*?cancel-in-progress: false/.test(emergencyClose)
-  || !emergencyClose.includes("github.ref == 'refs/heads/main' && github.run_attempt == 1")
-  || !emergencyClose.includes("format('ponto-emergency-{0}', inputs.target)")
-  || !emergencyClose.includes('ponto-emergency-latch-write.mjs')
-  || !emergencyClose.includes('ponto-emergency-maintenance-write.mjs')
-  || !emergencyClose.includes('ponto-module-propagation.mjs')
-  || emergencyClose.includes('CLOUDFLARE_API_TOKEN')
-  || emergencyClose.includes('CF_ACCESS_CLIENT_ID')
-  || emergencyClose.includes('CF_ACCESS_CLIENT_SECRET')
+  emergencyCloseOnly.includes('group: ponto-surface-mutation')
+  || !/  close:[\s\S]*?group: ponto-emergency-latch-\$\{\{ inputs\.target \}\}[\s\S]*?cancel-in-progress: false/.test(emergencyCloseOnly)
+  || !emergencyCloseOnly.includes("github.ref == 'refs/heads/main' && github.run_attempt == 1")
+  || !emergencyCloseOnly.includes("format('ponto-emergency-{0}', inputs.target)")
+  || !emergencyCloseOnly.includes('ponto-emergency-latch-write.mjs')
+  || !emergencyCloseOnly.includes('ponto-emergency-maintenance-write.mjs')
+  || !emergencyCloseOnly.includes('ponto-module-propagation.mjs')
+  || emergencyCloseOnly.includes('CLOUDFLARE_API_TOKEN')
+  || emergencyCloseOnly.includes('CF_ACCESS_CLIENT_ID')
+  || emergencyCloseOnly.includes('CF_ACCESS_CLIENT_SECRET')
+  || !emergencyCloseMaterialize.includes('group: ponto-surface-mutation')
+  || !emergencyCloseMaterialize.includes('ponto-module-control-materialize.mjs')
+  || !emergencyCloseMaterialize.includes('CLOUDFLARE_API_TOKEN')
+  || !emergencyCloseMaterialize.includes('environment: ${{ inputs.target }}')
+  || !emergencyCloseMaterialize.includes('github.run_attempt == 1')
+  || !emergencyCloseMaterialize.includes('cancel-in-progress: false')
 ) {
   fail('Manual Ponto emergency close must serialize on the target latch queue through the close-only broker without waiting on the surface mutex or hydrating broad credentials');
 }

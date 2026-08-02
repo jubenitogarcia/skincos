@@ -317,6 +317,43 @@ jobs:
         with:
           name: ponto-watchdog-close-${{ needs.context.outputs.coordinator_run_id }}-${{ github.run_id }}
           path: ${{ runner.temp }}/ponto-watchdog-evidence/fail-close
+
+      - name: Materialize the exact broker close under the watchdog surface mutex
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID_RAW: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+          PRODUCTION_D1_ID_RAW: ${{ vars.PONTO_TIMEKEEPING_D1_PRODUCTION_ID }}
+          STAGING_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
+          PRODUCTION_MODULE_CONTROL_KV_ID_RAW: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
+          PONTO_MATERIALIZE_TARGET: ${{ needs.context.outputs.target }}
+          PONTO_RESOURCE_TARGET: ${{ needs.context.outputs.target }}
+          PONTO_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          PONTO_MAINTENANCE_FILE: ${{ runner.temp }}/ponto-watchdog-evidence/fail-close/maintenance.json
+          PONTO_MATERIALIZE_REPORT: ${{ runner.temp }}/ponto-watchdog-rollback/automatic-rollback/ponto-module-control-direct-readback.json
+          PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-watchdog-rollback/automatic-rollback/ponto-resource-identity.json
+        run: |
+          set -euo pipefail
+          case "$PONTO_MATERIALIZE_TARGET" in
+            staging)
+              PONTO_MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
+              PONTO_TIMEKEEPING_D1_ID="$STAGING_D1_ID_RAW"
+              PONTO_OPPOSITE_TIMEKEEPING_D1_ID="$PRODUCTION_D1_ID_RAW"
+              PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            production)
+              PONTO_MODULE_CONTROL_KV_ID="$PRODUCTION_MODULE_CONTROL_KV_ID_RAW"
+              PONTO_TIMEKEEPING_D1_ID="$PRODUCTION_D1_ID_RAW"
+              PONTO_OPPOSITE_TIMEKEEPING_D1_ID="$STAGING_D1_ID_RAW"
+              PONTO_OPPOSITE_MODULE_CONTROL_KV_ID="$STAGING_MODULE_CONTROL_KV_ID_RAW"
+              ;;
+            *) echo 'Unsupported watchdog module-control target'; exit 1 ;;
+          esac
+          export PONTO_MODULE_CONTROL_KV_ID PONTO_TIMEKEEPING_D1_ID PONTO_OPPOSITE_TIMEKEEPING_D1_ID PONTO_OPPOSITE_MODULE_CONTROL_KV_ID
+          node .github/scripts/ponto-cloudflare-resource-identity.mjs
+          node .github/scripts/ponto-module-control-materialize.mjs
+
       - name: Normalize exact watchdog recovery custody for automatic rollback
         env:
           PONTO_RECOVERY_SOURCE_MODE: watchdog
@@ -330,7 +367,8 @@ jobs:
             "$RUNNER_TEMP/ponto-watchdog-evidence/reconciliation/reconciliation.json" \
             "$RUNNER_TEMP/ponto-watchdog-evidence/fail-close/maintenance.json" \
             "$RUNNER_TEMP/ponto-watchdog-evidence/fail-close/final-propagation.json" \
-            "$RUNNER_TEMP/ponto-watchdog-rollback"
+            "$RUNNER_TEMP/ponto-watchdog-rollback" \
+            "$RUNNER_TEMP/ponto-watchdog-rollback/automatic-rollback/ponto-module-control-direct-readback.json"
       - name: Reconstruct exact child provenance and download immutable rollback journals
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}

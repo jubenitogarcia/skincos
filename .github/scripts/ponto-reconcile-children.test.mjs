@@ -140,7 +140,7 @@ test("failure recovery latches before reconciliation and mutexes maintenance plu
   assert.match(closeJob, /Prove external fail-close through overlay or exact incumbent control/);
   assert.match(closeJob, /PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active/);
   assert.match(closeJob, /PONTO_MODULE_ALTERNATE_EXPECTATION_FILE=/);
-  assert.match(closeJob, /state: "maintenance"[\s\S]*source: "control"/);
+  assert.match(closeJob, /\["control", "emergency-latch-active"\]\.includes\(availability\?\.source\)/);
   assert.match(rollbackJob, /needs:\s*\[orchestrate, recovery-reconcile, recovery-close\]/);
   assert.match(rollbackJob, /needs\.recovery-reconcile\.result == 'success'/);
   assert.match(rollbackJob, /concurrency:\s*\n\s*group:\s*ponto-surface-mutation[\s\S]*ponto-automatic-rollback\.mjs/);
@@ -163,7 +163,11 @@ test("staging recovery accepts the still-active emergency latch after incumbent 
   );
   const proof = workflow.slice(workflow.indexOf("      - name: Prove staging remains closed"));
   assert.match(proof, /const availabilitySource = String\(body\?\.availability\?\.source \|\| \"\"\);/);
+  assert.match(proof, /PONTO_MATERIALIZE_REPORT: \$\{\{ runner\.temp \}\}\/ponto-staging-recovery-rollback\/fresh-close\/materialized-readback\.json/);
+  assert.match(proof, /const materialized = JSON\.parse\(fs\.readFileSync\(process\.env\.PONTO_MATERIALIZE_REPORT, \"utf8\"\)\);/);
+  assert.match(proof, /const expectedAvailabilityChangedAt = availabilitySource === \"emergency-latch-active\"/);
   assert.match(proof, /!\["control", "emergency-latch-active"\]\.includes\(availabilitySource\)/);
+  assert.match(proof, /body\?\.availability\?\.changedAt !== expectedAvailabilityChangedAt/);
   assert.match(proof, /workerVersionId !== process\.env\.TIMEKEEPING_INCUMBENT_VERSION_ID\.toLowerCase\(\)/);
 });
 
