@@ -729,7 +729,7 @@ let pagesCreatedDeploymentId = "";
 let pagesMutationAttempted = false;
 let pagesMutationObserved = false;
 let pagesIntent = null;
-const pagesIntentInput = plan.crmPages ? {
+const pagesIntentInput = plan.crmPages && UUID.test(plan.crmPages.candidateDeploymentId || "") ? {
   request: github,
   secret: pagesRollbackIntentHmacKey,
   repositoryId,

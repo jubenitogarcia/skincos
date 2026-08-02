@@ -62,3 +62,10 @@ test("zero-surface recovery uses a fresh external maintenance probe instead of f
   assert.match(source, /rollbackDisposition/);
   assert.match(source, /no-dispatched-surface-noop/);
 });
+
+test("Pages recovery skips rollback intent custody when no owned candidate exists", () => {
+  assert.match(
+    source,
+    /const pagesIntentInput = plan\.crmPages && UUID\.test\(plan\.crmPages\.candidateDeploymentId \|\| ""\) \?/,
+  );
+});

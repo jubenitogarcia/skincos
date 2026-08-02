@@ -506,3 +506,44 @@ test("recovery artifact downloads isolate extraction before merging attested evi
     );
   }
 });
+
+test("staging Pages incumbent capture retries and requires exact terminal provenance", () => {
+  const source = workflow("deploy-crm-pages.yml");
+  const start = source.indexOf("- name: Capture Ponto staging Pages rollback deployment");
+  const end = source.indexOf("- name: Deploy to Cloudflare Pages (wrangler)", start);
+  assert.ok(start >= 0 && end > start, "staging Pages incumbent capture block is absent");
+  const block = source.slice(start, end);
+  assert.match(block, /for attempt in \{1\.\.12\}; do/);
+  assert.match(block, /deployments\?env=production&page=\$page&per_page=25/);
+  assert.match(block, /result_info\?\.total_pages/);
+  assert.match(block, /totalPages > 100/);
+  assert.match(block, /item\?\.environment === "production" \|\| item\?\.environment == null/);
+  assert.match(block, /\.sort\(\(a, b\) => Date\.parse\(String\(b\?\.created_on/);
+  assert.match(block, /latest\?\.project_name === expectedProject/);
+  assert.match(block, /metadata\.branch === "staging"/);
+  assert.match(block, /String\(metadata\.commit_hash \|\| ""\)\.toLowerCase\(\)/);
+  assert.match(block, /stage\?\.status === "success"/);
+  assert.match(block, /Number\.isFinite\(Date\.parse\(String\(stage\?\.ended_on/);
+  assert.match(block, /if \[\[ "\$attempt" != 12 \]\]; then sleep 5; fi/);
+  assert.doesNotMatch(block, /Unable to resolve staging Pages rollback deployment/);
+});
+
+test("Pages configs keep remote secrets out of Wrangler Pages configuration", () => {
+  for (const relativePath of ["crm/console/wrangler.toml", "crm/console/.wrangler-staging/wrangler.toml"]) {
+    const source = fs.readFileSync(path.join(repositoryRoot, relativePath), "utf8");
+    assert.doesNotMatch(source, /^\[secrets\]/m, `${relativePath} must not declare unsupported Pages secrets`);
+    assert.doesNotMatch(source, /^\[env\.(?:production|preview)\.secrets\]/m, `${relativePath} must not declare unsupported environment secrets`);
+  }
+});
+
+test("staging Pages compensation preserves the incumbent when deployment produced no owned candidate", () => {
+  const source = workflow("deploy-crm-pages.yml");
+  const start = source.indexOf("- name: Restore Ponto staging Pages incumbent after failure or cancellation");
+  const end = source.indexOf("- name: Write Ponto staging Pages mutation journal", start);
+  assert.ok(start >= 0 && end > start, "staging Pages compensation block is absent");
+  const block = source.slice(start, end);
+  assert.match(block, /candidate_id="\$\{PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID:-\}"/);
+  assert.match(block, /No exact owned staging Pages candidate was attested/);
+  assert.match(block, /exit 0/);
+  assert.doesNotMatch(block, /PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID"\]\]/);
+});
