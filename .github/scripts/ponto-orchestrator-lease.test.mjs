@@ -506,3 +506,24 @@ test("recovery artifact downloads isolate extraction before merging attested evi
     );
   }
 });
+
+test("staging Pages incumbent capture retries and requires exact terminal provenance", () => {
+  const source = workflow("deploy-crm-pages.yml");
+  const start = source.indexOf("- name: Capture Ponto staging Pages rollback deployment");
+  const end = source.indexOf("- name: Deploy to Cloudflare Pages (wrangler)", start);
+  assert.ok(start >= 0 && end > start, "staging Pages incumbent capture block is absent");
+  const block = source.slice(start, end);
+  assert.match(block, /for attempt in \{1\.\.12\}; do/);
+  assert.match(block, /deployments\?env=production&page=\$page&per_page=25/);
+  assert.match(block, /result_info\?\.total_pages/);
+  assert.match(block, /totalPages > 100/);
+  assert.match(block, /item\?\.environment === "production" \|\| item\?\.environment == null/);
+  assert.match(block, /\.sort\(\(a, b\) => Date\.parse\(String\(b\?\.created_on/);
+  assert.match(block, /latest\?\.project_name === expectedProject/);
+  assert.match(block, /metadata\.branch === "staging"/);
+  assert.match(block, /String\(metadata\.commit_hash \|\| ""\)\.toLowerCase\(\)/);
+  assert.match(block, /stage\?\.status === "success"/);
+  assert.match(block, /Number\.isFinite\(Date\.parse\(String\(stage\?\.ended_on/);
+  assert.match(block, /if \[\[ "\$attempt" != 12 \]\]; then sleep 5; fi/);
+  assert.doesNotMatch(block, /Unable to resolve staging Pages rollback deployment/);
+});
