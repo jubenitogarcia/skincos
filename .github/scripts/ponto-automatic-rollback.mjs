@@ -92,6 +92,26 @@ const safeReadbackFailureCode = (error) => {
   const code = String(error?.code || "cloudflare-kv-readback-failed");
   return /^[a-z0-9-]{1,96}$/.test(code) ? code : "cloudflare-kv-readback-failed";
 };
+const classifyBrokerReadback = ({ moduleControl, emergencyLatch }) => {
+  const target = staging ? "staging" : "production";
+  if (!brokerFailClose) return "broker-evidence-missing";
+  if (!moduleControl) return "module-control-unavailable";
+  if (moduleControl.schemaVersion !== 2) return "module-control-schema-mismatch";
+  if (moduleControl.state !== "maintenance") return "module-control-state-mismatch";
+  if (moduleControl.changedAt !== brokerFailClose.controlChangedAt) return "module-control-timestamp-mismatch";
+  if (moduleControl.emergencyLatchRef?.stopRunId !== orchestratorRunId) return "module-control-stop-run-mismatch";
+  if (moduleControl.emergencyLatchRef?.emergencyRunId !== brokerFailClose.emergencyRunId) return "module-control-emergency-run-mismatch";
+  if (moduleControl.emergencyLatchRef?.latchChangedAt !== brokerFailClose.latchChangedAt) return "module-control-latch-timestamp-mismatch";
+  if (!emergencyLatch) return "emergency-latch-unavailable";
+  if (emergencyLatch.schemaVersion !== 1) return "emergency-latch-schema-mismatch";
+  if (emergencyLatch.module !== "timekeeping") return "emergency-latch-module-mismatch";
+  if (emergencyLatch.target !== target) return "emergency-latch-target-mismatch";
+  if (emergencyLatch.latched !== true) return "emergency-latch-state-mismatch";
+  if (emergencyLatch.changedAt !== brokerFailClose.latchChangedAt) return "emergency-latch-timestamp-mismatch";
+  if (emergencyLatch.stopRunId !== orchestratorRunId) return "emergency-latch-stop-run-mismatch";
+  if (emergencyLatch.emergencyRunId !== brokerFailClose.emergencyRunId) return "emergency-latch-emergency-run-mismatch";
+  return "broker-evidence-attestation-mismatch";
+};
 const readExternalModuleHealth = async () => {
   if (moduleHealthUrl !== expectedModuleHealthUrl) {
     return { passed: false, status: 0, reason: "module-health-url-not-pinned" };
@@ -208,7 +228,10 @@ const readAndAttestBrokerFailClose = async () => {
   return {
     moduleControl,
     emergencyLatch,
-    attestation: noSurfaceAttestation || { ...directAttestation, readbackFailure },
+    attestation: noSurfaceAttestation || {
+      ...directAttestation,
+      readbackFailure: readbackFailure || classifyBrokerReadback({ moduleControl, emergencyLatch }),
+    },
   };
 };
 const surfaceSpecs = {
