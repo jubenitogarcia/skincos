@@ -400,7 +400,7 @@ jobs:
           if (process.env.TARGET === "production" && !names.has("PONTO_API_TARGET")) {
             throw new Error("production PONTO_API_TARGET secret is absent");
           }
-          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+          fs.writeFileSync(process.argv[3], `${JSON.stringify({
             schemaVersion: 1,
             surface: "pagesEnvironmentSecrets",
             target: process.env.TARGET,
