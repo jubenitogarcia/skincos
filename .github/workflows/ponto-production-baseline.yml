@@ -186,15 +186,20 @@ jobs:
           });
           fs.writeFileSync(process.env.PONTO_BOOTSTRAP_LIVE_FILE, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
           NODE
-          node - "$evidence_dir/live.json" "$deployment_id" "$version_id" <<'NODE'
-          const fs = require("fs");
-          const live = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          if (
-            live?.exists !== true
-            || live?.attestation?.activeDeploymentId !== process.argv[3]
-            || live?.attestation?.activeVersionId !== process.argv[4]
-          ) throw new Error("live production Ponto Core differs from the exact cataloged bootstrap predecessor");
+          deployment_id="$(node --input-type=module - "$evidence_dir/live.json" "$deployment_id" "$version_id" <<'NODE'
+          import fs from "node:fs";
+          import { validatePontoCoreBootstrapLive } from "./.github/scripts/ponto-core-bootstrap-precondition.mjs";
+          const [liveFile, expectedDeployment, expectedVersion] = process.argv.slice(2);
+          const live = JSON.parse(fs.readFileSync(liveFile, "utf8"));
+          const precondition = validatePontoCoreBootstrapLive({
+            live,
+            expectedDeployment,
+            expectedVersion,
+            target: "production",
+          });
+          process.stdout.write(precondition.deploymentId);
           NODE
+          )"
           {
             echo "bootstrap_workflow_run_id=$run_id"
             echo "bootstrap_artifact_id=$artifact_id"

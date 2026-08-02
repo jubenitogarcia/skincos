@@ -705,28 +705,38 @@ jobs:
           });
           fs.writeFileSync(process.env.PONTO_BOOTSTRAP_LIVE_FILE, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
           NODE
-          node - "$evidence_dir/live.json" "$deployment_id" "$version_id" "$evidence_dir/precondition.json" "$run_id" "$artifact_id" "$artifact_digest" <<'NODE'
-          const fs = require("fs");
+          node --input-type=module - "$evidence_dir/live.json" "$deployment_id" "$version_id" "$evidence_dir/precondition.json" "$run_id" "$artifact_id" "$artifact_digest" <<'NODE'
+          import fs from "node:fs";
+          import { validatePontoCoreBootstrapLive } from "./.github/scripts/ponto-core-bootstrap-precondition.mjs";
           const [liveFile, expectedDeployment, expectedVersion, outputFile, runId, artifactId, artifactDigest] = process.argv.slice(2);
           const live = JSON.parse(fs.readFileSync(liveFile, "utf8"));
-          if (
-            live?.exists !== true
-            || live?.attestation?.activeDeploymentId !== expectedDeployment
-            || live?.attestation?.activeVersionId !== expectedVersion
-          ) throw new Error("live staging Ponto Core differs from the exact cataloged bootstrap predecessor");
+          const precondition = validatePontoCoreBootstrapLive({
+            live,
+            expectedDeployment,
+            expectedVersion,
+            target: "staging",
+          });
           fs.writeFileSync(outputFile, `${JSON.stringify({
             schemaVersion: 1,
             target: "staging",
             workflowRunId: runId,
             artifactId,
             artifactDigest,
-            deploymentId: expectedDeployment,
-            versionId: expectedVersion,
+            deploymentId: precondition.deploymentId,
+            catalogDeploymentId: precondition.catalogDeploymentId,
+            deploymentDrifted: precondition.deploymentDrifted,
+            versionId: precondition.versionId,
             liveAttestation: live.attestation,
             credentialsIncluded: false,
             piiIncluded: false,
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
+          deployment_id="$(node --input-type=module - "$evidence_dir/precondition.json" <<'NODE'
+          import fs from "node:fs";
+          const precondition = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          process.stdout.write(precondition.deploymentId);
+          NODE
+          )"
           {
             echo "CORE_STAGING_BOOTSTRAP_WORKFLOW_RUN_ID=$run_id"
             echo "CORE_STAGING_BOOTSTRAP_ARTIFACT_ID=$artifact_id"

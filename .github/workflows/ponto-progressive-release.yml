@@ -742,15 +742,17 @@ jobs:
           });
           fs.writeFileSync(process.env.PONTO_BOOTSTRAP_LIVE_FILE, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
           NODE
-          node - "$evidence_dir/live.json" "$deployment_id" "$version_id" "$proof_dir/precondition.json" "$run_id" "$artifact_id" "$artifact_digest" "$source_sha" <<'NODE'
-          const fs = require("fs");
+          node --input-type=module - "$evidence_dir/live.json" "$deployment_id" "$version_id" "$proof_dir/precondition.json" "$run_id" "$artifact_id" "$artifact_digest" "$source_sha" <<'NODE'
+          import fs from "node:fs";
+          import { validatePontoCoreBootstrapLive } from "./.github/scripts/ponto-core-bootstrap-precondition.mjs";
           const [liveFile, expectedDeployment, expectedVersion, outputFile, runId, artifactId, artifactDigest, sourceSha] = process.argv.slice(2);
           const live = JSON.parse(fs.readFileSync(liveFile, "utf8"));
-          if (
-            live?.exists !== true
-            || live?.attestation?.activeDeploymentId !== expectedDeployment
-            || live?.attestation?.activeVersionId !== expectedVersion
-          ) throw new Error(`live ${process.env.PONTO_BOOTSTRAP_TARGET} Ponto Core differs from the exact cataloged bootstrap predecessor`);
+          const precondition = validatePontoCoreBootstrapLive({
+            live,
+            expectedDeployment,
+            expectedVersion,
+            target: process.env.PONTO_BOOTSTRAP_TARGET,
+          });
           fs.writeFileSync(outputFile, `${JSON.stringify({
             schemaVersion: 1,
             target: process.env.PONTO_BOOTSTRAP_TARGET,
@@ -758,8 +760,10 @@ jobs:
             artifactId,
             artifactDigest,
             sourceSha,
-            deploymentId: expectedDeployment,
-            versionId: expectedVersion,
+            deploymentId: precondition.deploymentId,
+            catalogDeploymentId: precondition.catalogDeploymentId,
+            deploymentDrifted: precondition.deploymentDrifted,
+            versionId: precondition.versionId,
             liveAttested: true,
             liveAttestation: live.attestation,
             credentialsIncluded: false,
