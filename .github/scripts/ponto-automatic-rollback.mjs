@@ -27,6 +27,7 @@ const repository = String(process.env.GITHUB_REPOSITORY || "");
 const repositoryId = String(process.env.GITHUB_REPOSITORY_ID || "");
 const recoveryRunId = String(process.env.GITHUB_RUN_ID || "");
 const ghToken = String(process.env.GH_TOKEN || "");
+const rollbackCheckToken = String(process.env.PONTO_ROLLBACK_CHECK_TOKEN || "");
 const githubApiBase = String(process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
 const pagesRollbackIntentHmacKey = String(
   process.env.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY || "",
@@ -59,6 +60,7 @@ if (
   || !/^[1-9][0-9]*$/.test(repositoryId)
   || !/^[1-9][0-9]*$/.test(recoveryRunId)
   || !ghToken
+  || !rollbackCheckToken
   || Buffer.byteLength(pagesRollbackIntentHmacKey, "utf8") < 32
 ) throw new Error("invalid orchestrator or rollback-intent provenance");
 if (
@@ -651,11 +653,12 @@ const cloudflare = async (pathname, init = {}) => {
 };
 
 const github = async (pathname, init = {}) => {
+  const requestToken = pathname.includes("/check-runs") ? rollbackCheckToken : ghToken;
   const response = await fetch(`${githubApiBase}${pathname}`, {
     ...init,
     signal: AbortSignal.timeout(30_000),
     headers: {
-      authorization: `Bearer ${ghToken}`,
+      authorization: `Bearer ${requestToken}`,
       accept: "application/vnd.github+json",
       "x-github-api-version": "2022-11-28",
       ...(init.body ? { "content-type": "application/json" } : {}),

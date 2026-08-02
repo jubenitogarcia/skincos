@@ -148,8 +148,11 @@ test("failure recovery latches before reconciliation and mutexes maintenance plu
   assert.doesNotMatch(reconciliationStep, /continue-on-error:\s*true/);
   assert.match(reconciliationStep, /PONTO_RECONCILIATION_TIMEOUT_SECONDS:\s*"600"/);
   assert.match(reconciliationJob, /GH_TOKEN:\s*\$\{\{ secrets\.GH_TOKEN \}\}/);
-  assert.doesNotMatch(reconciliationJob, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
+  assert.match(reconciliationJob, /PONTO_RECONCILIATION_CANCEL_TOKEN:\s*\$\{\{ github\.token \}\}/);
+  assert.match(reconciliationJob, /PONTO_WATCHDOG_CHECK_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(rollbackJob, /GH_TOKEN:\s*\$\{\{ secrets\.GH_TOKEN \}\}/);
+  assert.match(rollbackJob, /PONTO_ROLLBACK_CHECK_TOKEN:\s*\$\{\{ github\.token \}\}/);
+  assert.doesNotMatch(reconciliationJob, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.doesNotMatch(rollbackJob, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
 });
 

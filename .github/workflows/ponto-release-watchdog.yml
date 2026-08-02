@@ -292,7 +292,8 @@ jobs:
             "$RUNNER_TEMP/ponto-watchdog-rollback"
       - name: Reconstruct exact child provenance and download immutable rollback journals
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_WATCHDOG_CHECK_TOKEN: ${{ github.token }}
           PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON: ${{ vars.PONTO_ORCHESTRATOR_CAPABILITY_PUBLIC_KEYS_JSON }}
           PONTO_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
           PONTO_COORDINATOR_SHA: ${{ needs.context.outputs.release_sha }}
@@ -321,7 +322,8 @@ jobs:
           done
       - name: Restore every independently attested incumbent and keep the latch true
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PONTO_ROLLBACK_CHECK_TOKEN: ${{ github.token }}
           PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY: ${{ secrets.PONTO_PAGES_ROLLBACK_INTENT_HMAC_KEY }}
           PONTO_COORDINATOR_RUN_ID: ${{ needs.context.outputs.coordinator_run_id }}
           RELEASE_SHA: ${{ needs.context.outputs.release_sha }}
