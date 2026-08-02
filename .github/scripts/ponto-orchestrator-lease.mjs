@@ -155,6 +155,12 @@ const KEY_ID = /^[a-z][a-z0-9._-]{2,63}$/;
 const TARGETS = ["staging", "production"];
 const ED25519_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
 
+export function acceptsWorkflowRunPath(workflowPath, observedPath) {
+  const canonicalPath = String(workflowPath || "").trim();
+  const livePath = String(observedPath || "").trim();
+  return [canonicalPath, `${canonicalPath}@refs/heads/main`].includes(livePath);
+}
+
 const canonicalClaims = claims => CLAIM_FIELDS.map((field) => {
   const name = Buffer.from(field, "utf8");
   const value = Buffer.from(String(claims?.[field] ?? ""), "utf8");
@@ -565,7 +571,7 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage, cur
     || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
     || String(run?.id || "") !== orchestratorRunId
     || run?.workflow_id !== workflow.id
-    || ![workflow.path, `${workflow.path}@refs/heads/main`].includes(run?.path)
+    || !acceptsWorkflowRunPath(workflow.path, run?.path)
     || run?.run_attempt !== 1
     || run?.status !== "in_progress"
     || run?.conclusion != null
@@ -623,7 +629,7 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
   if (
     String(child?.id || "") !== childRunId
     || child?.run_attempt !== 1
-    || child?.path !== `${childWorkflowPath}@refs/heads/main`
+    || !acceptsWorkflowRunPath(childWorkflowPath, child?.path)
     || child?.status !== "in_progress"
     || child?.conclusion != null
     || child?.event !== "workflow_dispatch"
@@ -657,7 +663,7 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     || issuer?.workflow_id !== issuerWorkflow?.id
     || issuerWorkflow?.state !== "active"
     || issuerWorkflow?.path !== issuerWorkflowPath
-    || issuer?.path !== `${issuerWorkflowPath}@refs/heads/main`
+    || !acceptsWorkflowRunPath(issuerWorkflowPath, issuer?.path)
     || issuer?.run_attempt !== 1
     || issuer?.status !== "in_progress"
     || issuer?.conclusion != null
