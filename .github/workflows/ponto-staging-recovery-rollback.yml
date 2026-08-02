@@ -24,6 +24,10 @@ on:
         description: "Exact incumbent version to restore"
         required: true
         type: string
+      authorization_ref:
+        description: "Opaque approved incident or change reference for the fresh recovery close"
+        required: true
+        type: string
 
 concurrency:
   group: ponto-surface-mutation
@@ -34,7 +38,242 @@ permissions:
   contents: read
 
 jobs:
+  fresh-close:
+    if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ponto-emergency-staging
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: ponto-surface-mutation
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Validate current source and exact failed-run provenance before fresh close
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          WATCHDOG_RUN_ID: ${{ inputs.watchdog_run_id }}
+          AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid release SHA'; exit 1; }
+          [[ "$COORDINATOR_RUN_ID" =~ ^[1-9][0-9]*$ && "$WATCHDOG_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid recovery run IDs'; exit 1; }
+          [[ "$COORDINATOR_RUN_ID" != "$WATCHDOG_RUN_ID" ]] || { echo 'Coordinator and watchdog runs must differ'; exit 1; }
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Recovery must run from main'; exit 1; }
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Historical recovery reruns are forbidden; dispatch a fresh recovery'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo 'Recovery checkout differs from current workflow source'; exit 1; }
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse origin/main)" == "$GITHUB_SHA" ]] || { echo 'Recovery source is not the current canonical main'; exit 1; }
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo 'Failed release is not reachable from main'; exit 1; }
+          [[ "$AUTHORIZATION_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/#-]{2,119}$ ]] || { echo 'Authorization reference must be opaque'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$COORDINATOR_RUN_ID" > "$RUNNER_TEMP/ponto-coordinator.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$WATCHDOG_RUN_ID" > "$RUNNER_TEMP/ponto-watchdog.json"
+          node - "$RUNNER_TEMP/ponto-coordinator.json" "$RUNNER_TEMP/ponto-watchdog.json" <<'NODE'
+          const fs = require("fs");
+          const coordinator = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const watchdog = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          const repo = process.env.GITHUB_REPOSITORY;
+          const releaseSha = process.env.RELEASE_SHA;
+          const isCompletedFailure = (run) => run.status === "completed"
+            && ["failure", "cancelled"].includes(run.conclusion);
+          if (
+            coordinator.path !== ".github/workflows/ponto-progressive-release.yml"
+            || coordinator.event !== "workflow_dispatch"
+            || !isCompletedFailure(coordinator)
+            || coordinator.head_sha !== releaseSha
+            || coordinator.head_branch !== "main"
+            || coordinator.repository?.full_name !== repo
+            || watchdog.path !== ".github/workflows/ponto-release-watchdog.yml"
+            || watchdog.event !== "workflow_run"
+            || watchdog.status !== "completed"
+            || watchdog.conclusion !== "failure"
+            || watchdog.head_sha !== releaseSha
+            || watchdog.head_branch !== "main"
+            || watchdog.repository?.full_name !== repo
+            || !String(watchdog.display_title || "").includes(`source=${process.env.COORDINATOR_RUN_ID}`)
+          ) throw new Error("failed coordinator/watchdog provenance is not exact");
+          NODE
+          rm -f "$RUNNER_TEMP/ponto-coordinator.json" "$RUNNER_TEMP/ponto-watchdog.json"
+
+      - name: Download the exact historical watchdog custody
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-watchdog-rollback-${{ inputs.coordinator_run_id }}-${{ inputs.watchdog_run_id }}
+          path: ${{ runner.temp }}/ponto-fresh-close/historical
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.watchdog_run_id }}
+
+      - name: Validate the exact failed Timekeeping mutation before fresh close
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          WATCHDOG_RUN_ID: ${{ inputs.watchdog_run_id }}
+          TIMEKEEPING_CANDIDATE_VERSION_ID: ${{ inputs.timekeeping_candidate_version_id }}
+          TIMEKEEPING_INCUMBENT_VERSION_ID: ${{ inputs.timekeeping_incumbent_version_id }}
+          RECOVERY_ROOT: ${{ runner.temp }}/ponto-fresh-close/historical
+        run: |
+          set -euo pipefail
+          node - "$RECOVERY_ROOT" <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const root = process.argv[2];
+          const read = (relative) => JSON.parse(fs.readFileSync(path.join(root, relative), "utf8"));
+          const uuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+          const journal = read("watchdog-journal.json");
+          const reconciliation = read("automatic-rollback/ponto-child-reconciliation.json");
+          const mutation = read("mutations/timekeeping/mutation.json");
+          if (
+            journal.schemaVersion !== 1
+            || journal.coordinatorRunId !== process.env.COORDINATOR_RUN_ID
+            || journal.releaseSha !== process.env.RELEASE_SHA
+            || journal.stage !== "staging"
+            || journal.passed !== true
+            || journal.credentialsIncluded !== false
+            || journal.piiIncluded !== false
+            || reconciliation.schemaVersion !== 1
+            || reconciliation.orchestratorRunId !== process.env.COORDINATOR_RUN_ID
+            || reconciliation.orchestratorHeadSha !== process.env.RELEASE_SHA
+            || reconciliation.target !== "staging"
+            || reconciliation.passed !== true
+            || reconciliation.credentialsIncluded !== false
+            || reconciliation.piiIncluded !== false
+            || mutation.schemaVersion !== 1
+            || mutation.surface !== "timekeeping"
+            || mutation.stage !== "staging"
+            || mutation.sourceSha !== process.env.RELEASE_SHA
+            || mutation.orchestratorRunId !== process.env.COORDINATOR_RUN_ID
+            || mutation.candidateVersionId !== process.env.TIMEKEEPING_CANDIDATE_VERSION_ID
+            || mutation.incumbentVersionId !== process.env.TIMEKEEPING_INCUMBENT_VERSION_ID
+            || !uuid(mutation.candidateVersionId)
+            || !uuid(mutation.incumbentVersionId)
+            || mutation.mutationStarted !== true
+            || mutation.mutationCompleted !== false
+            || mutation.rollbackCompleted !== false
+            || mutation.compensationDisposition !== "ownership-conflict"
+            || mutation.credentialsIncluded !== false
+            || mutation.piiIncluded !== false
+          ) throw new Error("historical watchdog custody does not prove the exact failed Timekeeping mutation");
+          NODE
+
+      - name: Write a fresh emergency latch correlated to the failed coordinator
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: staging
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_LATCH_REPORT: ${{ runner.temp }}/ponto-fresh-close/latch.json
+        run: node .github/scripts/ponto-emergency-latch-write.mjs
+
+      - name: Write fresh maintenance under the correlated latch
+        env:
+          PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL: ${{ secrets.PONTO_EMERGENCY_CLOSE_BROKER_CREDENTIAL }}
+          PONTO_EMERGENCY_CLOSE_BROKER_URL: ${{ vars.PONTO_EMERGENCY_CLOSE_BROKER_URL }}
+          PONTO_EMERGENCY_CLOSE_CUSTODY_REF: ${{ vars.PONTO_EMERGENCY_CLOSE_CUSTODY_REF }}
+          PONTO_EMERGENCY_TARGET: staging
+          PONTO_EMERGENCY_TRIGGER_RUN_ID: ${{ github.run_id }}
+          PONTO_FAILED_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_MAINTENANCE_REPORT: ${{ runner.temp }}/ponto-fresh-close/maintenance.json
+        run: node .github/scripts/ponto-emergency-maintenance-write.mjs
+
+      - name: Prove and record the fresh external fail-close
+        env:
+          AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_MODULE_HEALTH_URL: https://api-staging.skincos.com.br/api/ponto/health
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/ponto-fresh-close"
+          mkdir -p "$directory"
+          node - "$directory/latch.json" "$directory/maintenance.json" "$directory/authorization.json" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const latch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const maintenance = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (
+            latch?.target !== "staging"
+            || latch?.coordinatorRunId !== process.env.COORDINATOR_RUN_ID
+            || latch?.emergencyRunId !== process.env.GITHUB_RUN_ID
+            || latch?.latched !== true
+            || maintenance?.target !== "staging"
+            || maintenance?.coordinatorRunId !== process.env.COORDINATOR_RUN_ID
+            || maintenance?.emergencyRunId !== process.env.GITHUB_RUN_ID
+            || maintenance?.state !== "maintenance"
+            || maintenance?.latched !== true
+            || maintenance?.passed !== true
+          ) throw new Error("fresh broker close evidence is not correlated to the failed coordinator");
+          fs.writeFileSync(process.argv[4], `${JSON.stringify({
+            schemaVersion: 1,
+            target: "staging",
+            releaseSha: process.env.RELEASE_SHA,
+            coordinatorRunId: process.env.COORDINATOR_RUN_ID,
+            emergencyRunId: process.env.GITHUB_RUN_ID,
+            authorizationRefDigest: `sha256:${crypto.createHash("sha256").update(process.env.AUTHORIZATION_REF).digest("hex")}`,
+            passed: true,
+            credentialsIncluded: false,
+            piiIncluded: false,
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          node - "$directory/maintenance.json" "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json" <<'NODE'
+          (async () => {
+          const fs = require("fs");
+          const maintenance = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const probe = new URL(process.env.PONTO_MODULE_HEALTH_URL);
+          probe.searchParams.set("recovery_close_probe", `${Date.now()}`);
+          const response = await fetch(probe, { redirect: "manual", headers: { accept: "application/json", "cache-control": "no-cache" } });
+          const body = await response.json().catch(() => null);
+          const availability = body?.availability;
+          if (
+            response.status !== 200
+            || availability?.state !== "maintenance"
+            || !["control", "emergency-latch-active"].includes(availability?.source)
+            || !Number.isFinite(Date.parse(String(availability?.changedAt || "")))
+          ) throw new Error("fresh recovery close did not observe maintenance");
+          if (availability.source === "emergency-latch-active") {
+            fs.writeFileSync(process.argv[3], `${JSON.stringify({ state: "maintenance", changedAt: availability.changedAt })}\n`, { mode: 0o600 });
+            fs.rmSync(process.argv[4], { force: true });
+          } else {
+            fs.writeFileSync(process.argv[3], `${JSON.stringify({ state: "maintenance", changedAt: maintenance.latchChangedAt })}\n`, { mode: 0o600 });
+            fs.writeFileSync(process.argv[4], `${JSON.stringify({ state: "maintenance", changedAt: availability.changedAt, source: "control" })}\n`, { mode: 0o600 });
+          }
+          })().catch((error) => { console.error(error); process.exitCode = 1; });
+          NODE
+          if [[ -f "$directory/control-fallback-expectation.json" ]]; then
+            PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+            PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+            PONTO_MODULE_ALTERNATE_EXPECTATION_FILE="$directory/control-fallback-expectation.json" \
+            PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+              node .github/scripts/ponto-module-propagation.mjs
+          else
+            PONTO_MODULE_EXPECTED_SOURCE=emergency-latch-active \
+            PONTO_MODULE_EXPECTATION_FILE="$directory/overlay-expectation.json" \
+            PONTO_MODULE_PROPAGATION_REPORT="$directory/final-propagation.json" \
+              node .github/scripts/ponto-module-propagation.mjs
+          fi
+          rm -f "$directory/overlay-expectation.json" "$directory/control-fallback-expectation.json"
+
+      - name: Upload immutable fresh recovery close evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ponto-fresh-recovery-close-staging-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-fresh-close
+          retention-days: 90
+          if-no-files-found: error
+
   rollback:
+    needs: fresh-close
+    if: ${{ needs.fresh-close.result == 'success' && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: staging
@@ -180,6 +419,29 @@ jobs:
             "$RUNNER_TEMP/ponto-environment-policies.json" \
             "$RUNNER_TEMP/ponto-environment-protection.json"
           rm -f "$RUNNER_TEMP/ponto-environment.json" "$RUNNER_TEMP/ponto-environment-policies.json"
+
+      - name: Download the fresh recovery close evidence
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-fresh-recovery-close-staging-${{ github.run_id }}
+          path: ${{ runner.temp }}/ponto-staging-recovery-rollback/fresh-close
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+
+      - name: Normalize the fresh close with historical child reconciliation
+        env:
+          PONTO_RECOVERY_SOURCE_MODE: watchdog
+          PONTO_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
+          PONTO_EMERGENCY_RUN_ID: ${{ github.run_id }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          STAGE: staging
+          PONTO_RECOVERY_TARGET: staging
+        run: |
+          node .github/scripts/ponto-recovery-evidence.mjs \
+            "$RUNNER_TEMP/ponto-staging-recovery-rollback/automatic-rollback/ponto-child-reconciliation.json" \
+            "$RUNNER_TEMP/ponto-staging-recovery-rollback/fresh-close/maintenance.json" \
+            "$RUNNER_TEMP/ponto-staging-recovery-rollback/fresh-close/final-propagation.json" \
+            "$RUNNER_TEMP/ponto-staging-recovery-rollback"
 
       - name: Attest exact staging Ponto resource identities
         env:
