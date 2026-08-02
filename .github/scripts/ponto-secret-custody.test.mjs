@@ -153,6 +153,11 @@ test("Ponto REST run provenance accepts both canonical path representations", ()
       `${name} must accept the live REST path with or without the main-ref suffix`,
     );
   }
+  for (const name of ["cloudflare-pages-sync-ponto.yml", "deploy-timekeeping.yml"]) {
+    const source = workflow(name);
+    assert.match(source, /workflow\.name !== "Attest Ponto Worker secret custody"/);
+    assert.doesNotMatch(source, /run\.name !== "Attest Ponto Worker secret custody"/);
+  }
   assert.match(
     workflow("ponto-progressive-release.yml"),
     /\[workflow\.path, `\$\{workflow\.path\}@refs\/heads\/main`\]\.includes\(run\.path\)/,
