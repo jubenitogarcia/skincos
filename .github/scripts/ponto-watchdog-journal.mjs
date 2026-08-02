@@ -526,14 +526,16 @@ export async function reconstructWatchdogJournal({
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
 if (invokedPath === import.meta.url) {
   const token = String(process.env.GH_TOKEN || "");
+  const checksToken = String(process.env.PONTO_WATCHDOG_CHECK_TOKEN || "");
   const repository = String(process.env.GITHUB_REPOSITORY || "");
   const apiBase = String(process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
   const request = async (pathname) => {
+    const requestToken = pathname.includes("/check-runs") ? checksToken : token;
     const response = await fetch(`${apiBase}${pathname}`, {
       signal: AbortSignal.timeout(30_000),
       headers: {
         accept: "application/vnd.github+json",
-        authorization: `Bearer ${token}`,
+        authorization: `Bearer ${requestToken}`,
         "x-github-api-version": "2022-11-28",
       },
     });
