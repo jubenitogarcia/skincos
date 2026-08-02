@@ -207,6 +207,18 @@ test("Ponto root custody provenance uses workflow metadata for the static workfl
   }
 });
 
+test("Pages custody uses structured Cloudflare project env_vars for inventory checks", () => {
+  const source = fs.readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "cloudflare-pages-sync-ponto.yml"),
+    "utf8",
+  );
+  assert.match(source, /pages\/projects\/\$PROJECT/);
+  assert.match(source, /deployment_configs\?\.production\?\.env_vars/);
+  assert.match(source, /Object\.keys\(envVars\)/);
+  assert.doesNotMatch(source, /pages secret list/);
+  assert.doesNotMatch(source, /normalize_wrangler_array/);
+});
+
 test("assert-active rejects a rerun of the privileged child before any API access", async () => {
   await withApi({}, async ({ apiUrl, getRequestCount }) => {
     const result = await execute(
