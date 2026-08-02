@@ -4,6 +4,9 @@ const DENIED = ["active", "arbitrary-kv-write", "canary", "delete", "disabled", 
 const MAX_SKEW_MS = 30_000;
 const NONCE_TTL_MS = 15 * 60_000;
 const MUTEX_TTL_MS = 60_000;
+export const MODULE_CONTROL_KEY = "module-control:timekeeping";
+export const EMERGENCY_LATCH_KEY = "module-control:timekeeping:emergency-latch";
+const BROKER_CHANGED_BY = "skincos-ponto-emergency-broker";
 
 const json = (value) => JSON.stringify(value, Object.keys(value || {}).sort());
 const canonicalize = (value) => {
@@ -38,6 +41,70 @@ const responseSign = async (pem, value) => {
 const bad = (message, status = 401) => new Response(JSON.stringify({ passed: false, error: message }), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const ok = (payload) => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 const runId = (value) => /^[1-9][0-9]*$/.test(String(value || ""));
+
+const isRecord = (value) => value && typeof value === "object" && !Array.isArray(value);
+
+const exactJson = (left, right) => canonicalJson(left) === canonicalJson(right);
+
+export async function writeEmergencyControlPlane({
+  moduleControl,
+  operation,
+  target,
+  coordinatorRunId,
+  emergencyRunId,
+  changedAt,
+  latchChangedAt = changedAt,
+}) {
+  if (
+    !moduleControl
+    || typeof moduleControl.get !== "function"
+    || typeof moduleControl.put !== "function"
+  ) throw new Error("module control binding unavailable");
+  if (!ALLOWED.includes(operation)) throw new Error("module control operation is not close-only");
+  if (!runId(coordinatorRunId) || !runId(emergencyRunId)) throw new Error("module control ownership is invalid");
+  if (!Number.isFinite(Date.parse(String(changedAt || ""))) || !Number.isFinite(Date.parse(String(latchChangedAt || "")))) {
+    throw new Error("module control timestamps are invalid");
+  }
+
+  const latch = {
+    schemaVersion: 1,
+    module: "timekeeping",
+    target,
+    latched: true,
+    changedAt: latchChangedAt,
+    changedBy: BROKER_CHANGED_BY,
+    stopRunId: coordinatorRunId,
+    emergencyRunId,
+  };
+  if (operation === "latch-true") {
+    await moduleControl.put(EMERGENCY_LATCH_KEY, JSON.stringify(latch));
+    const readback = await moduleControl.get(EMERGENCY_LATCH_KEY, "json");
+    if (!exactJson(readback, latch)) throw new Error("emergency latch KV readback differs");
+    return { latch, control: null };
+  }
+
+  const priorControl = await moduleControl.get(MODULE_CONTROL_KEY, "json");
+  if (!isRecord(priorControl) || priorControl.schemaVersion !== 2) {
+    throw new Error("regular module control is unavailable");
+  }
+  const control = {
+    ...priorControl,
+    schemaVersion: 2,
+    state: "maintenance",
+    message: "Ponto interrompido por parada de emergência.",
+    changedAt,
+    changedBy: BROKER_CHANGED_BY,
+    emergencyLatchRef: {
+      stopRunId: coordinatorRunId,
+      emergencyRunId,
+      latchChangedAt,
+    },
+  };
+  await moduleControl.put(MODULE_CONTROL_KEY, JSON.stringify(control));
+  const readback = await moduleControl.get(MODULE_CONTROL_KEY, "json");
+  if (!exactJson(readback, control)) throw new Error("regular module control KV readback differs");
+  return { latch, control };
+}
 
 async function reserveNonce(env, nonce, requestedAt, digest) {
   const expiresAt = new Date(Date.parse(requestedAt) + NONCE_TTL_MS).toISOString();
@@ -87,8 +154,8 @@ async function attest(env, request, binding, body) {
   return ok({ ...unsigned, brokerAttestation: attestation });
 }
 
-async function handle(request, env) {
-  if (!env.DB || !env.BROKER_CREDENTIAL || !env.RESPONSE_PRIVATE_KEY_PEM || !env.TARGET || !env.CUSTODY_REF || !env.RESPONSE_KEY_ID) return bad("broker custody unavailable", 503);
+export async function handle(request, env) {
+  if (!env.DB || !env.MODULE_CONTROL || !env.BROKER_CREDENTIAL || !env.RESPONSE_PRIVATE_KEY_PEM || !env.TARGET || !env.CUSTODY_REF || !env.RESPONSE_KEY_ID) return bad("broker custody unavailable", 503);
   if (new URL(request.url).pathname !== "/close") return bad("not found", 404);
   if (!["GET", "POST"].includes(request.method)) return bad("method not allowed", 405);
   const nonce = request.headers.get("x-skincos-emergency-request-nonce") || "";
@@ -110,6 +177,7 @@ async function handle(request, env) {
   if (!(await acquireMutex(env, nonce, Date.now()))) return bad("emergency mutex busy", 409);
   try {
     const current = await env.DB.prepare("SELECT latched, changed_at, stop_run_id, emergency_run_id FROM broker_state WHERE id = 'timekeeping'").first();
+    if (!current) return bad("broker state unavailable", 503);
     const now = new Date().toISOString();
     // A close-only re-attestation may transfer the recorded owner while the
     // latch is already closed. This never opens the module: it only refreshes
@@ -120,13 +188,46 @@ async function handle(request, env) {
       && payload.operation !== "latch-true"
       && (current.stop_run_id !== payload.coordinatorRunId || current.emergency_run_id !== payload.emergencyRunId)
     ) return bad("emergency latch already owned", 409);
-    if (payload.operation === "latch-true") {
-      await env.DB.prepare("UPDATE broker_state SET latched = 1, changed_at = ?, stop_run_id = ?, emergency_run_id = ? WHERE id = 'timekeeping'").bind(now, payload.coordinatorRunId, payload.emergencyRunId).run();
-    } else {
-      if (current?.latched !== 1) return bad("maintenance requires closed latch", 409);
-      await env.DB.prepare("UPDATE broker_state SET control_state = 'maintenance', control_changed_at = ? WHERE id = 'timekeeping'").bind(now).run();
+    let controlPlane;
+    try {
+      if (payload.operation === "latch-true") {
+        controlPlane = await writeEmergencyControlPlane({
+          moduleControl: env.MODULE_CONTROL,
+          operation: payload.operation,
+          target: env.TARGET,
+          coordinatorRunId: payload.coordinatorRunId,
+          emergencyRunId: payload.emergencyRunId,
+          changedAt: now,
+        });
+        await env.DB.prepare("UPDATE broker_state SET latched = 1, changed_at = ?, stop_run_id = ?, emergency_run_id = ? WHERE id = 'timekeeping'").bind(now, payload.coordinatorRunId, payload.emergencyRunId).run();
+      } else {
+        if (current.latched !== 1) return bad("maintenance requires closed latch", 409);
+        controlPlane = await writeEmergencyControlPlane({
+          moduleControl: env.MODULE_CONTROL,
+          operation: payload.operation,
+          target: env.TARGET,
+          coordinatorRunId: payload.coordinatorRunId,
+          emergencyRunId: payload.emergencyRunId,
+          changedAt: now,
+          latchChangedAt: current.changed_at,
+        });
+        await env.DB.prepare("UPDATE broker_state SET control_state = 'maintenance', control_changed_at = ? WHERE id = 'timekeeping'").bind(now).run();
+      }
+    } catch {
+      return bad("module control close failed", 503);
     }
     const state = await env.DB.prepare("SELECT latched, changed_at, stop_run_id, emergency_run_id, control_state, control_changed_at FROM broker_state WHERE id = 'timekeeping'").first();
+    if (
+      !state
+      || state.latched !== 1
+      || state.changed_at !== controlPlane.latch.changedAt
+      || state.stop_run_id !== controlPlane.latch.stopRunId
+      || state.emergency_run_id !== controlPlane.latch.emergencyRunId
+      || (payload.operation === "maintenance" && (
+        state.control_state !== controlPlane.control.state
+        || state.control_changed_at !== controlPlane.control.changedAt
+      ))
+    ) return bad("broker state reconciliation failed", 503);
     const response = {
       schemaVersion: 1,
       id: CONTRACT_ID,
@@ -140,10 +241,10 @@ async function handle(request, env) {
       operation: payload.operation,
       coordinatorRunId: payload.coordinatorRunId,
       emergencyRunId: payload.emergencyRunId,
-      latch: { schemaVersion: 1, module: "timekeeping", target: env.TARGET, latched: state.latched === 1, changedAt: state.changed_at, stopRunId: state.stop_run_id, emergencyRunId: state.emergency_run_id },
+      latch: controlPlane.latch,
       observations: [{ name: "broker", passed: true }, { name: "nonce", passed: true }, { name: "mutex", passed: true }],
     };
-    if (payload.operation === "maintenance") response.control = { schemaVersion: 2, state: state.control_state, changedAt: state.control_changed_at, emergencyLatchRef: { stopRunId: state.stop_run_id, emergencyRunId: state.emergency_run_id, latchChangedAt: state.changed_at } };
+    if (payload.operation === "maintenance") response.control = controlPlane.control;
     const unsigned = { ...response };
     const attestation = { schemaVersion: 1, contractId: CONTRACT_ID, keyId: env.RESPONSE_KEY_ID, issuedAt: now, requestBinding: binding, responseDigest: await sha256(canonicalJson(unsigned)) };
     attestation.signature = await responseSign(env.RESPONSE_PRIVATE_KEY_PEM, canonicalJson(attestation));
