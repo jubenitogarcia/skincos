@@ -81,6 +81,24 @@ await attestPontoCloudflareResources({
 });
 
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+const workerOwnershipReportFile = String(process.env.PONTO_WORKER_OWNERSHIP_REPORT || "");
+const authorizedWorkerOwnership = (() => {
+  if (!workerOwnershipReportFile) return null;
+  if (!fs.existsSync(workerOwnershipReportFile)) throw new Error("authorized Worker ownership evidence is missing");
+  const report = readJson(workerOwnershipReportFile);
+  const expectedCandidateVersionId = String(process.env.PONTO_TIMEKEEPING_CANDIDATE_VERSION_ID || "").toLowerCase();
+  if (
+    report.schemaVersion !== 1
+    || report.target !== (staging ? "staging" : stage)
+    || report.workerName !== (staging ? "skincos-timekeeping-staging" : "skincos-timekeeping")
+    || String(report.candidateVersionId || "").toLowerCase() !== expectedCandidateVersionId
+    || report.passed !== true
+    || report.credentialsIncluded !== false
+    || report.piiIncluded !== false
+    || !/^ponto:auto-abort:[0-9a-f]{40}:orchestrator-[1-9][0-9]*$/.test(String(report.authorizedReplacementMessage || ""))
+  ) throw new Error("authorized Worker ownership evidence is invalid");
+  return report;
+})();
 const brokerFailCloseFile = path.join(
   artifactRoot,
   "automatic-rollback/ponto-broker-fail-close.json",
@@ -391,6 +409,9 @@ for (const [name, spec] of Object.entries(surfaceSpecs)) {
       deploymentId: String(source.deploymentId || ""),
       candidatePercent: expectedWeights[stage][name],
       incumbentPercent: 100 - expectedWeights[stage][name],
+      ...(name === "timekeeping" && authorizedWorkerOwnership
+        ? { authorizedReplacementMessage: authorizedWorkerOwnership.authorizedReplacementMessage }
+        : {}),
     };
   }
 }
@@ -656,6 +677,9 @@ const rollbackWorker = (name, item) => {
       targetVersionId: item.incumbentVersionId,
       candidatePercent: 0,
       incumbentPercent: 100,
+      disposition: ownership === "candidate-owned-reconciled"
+        ? "candidate-owned-reconciled"
+        : "candidate-owned",
     };
   } catch {
     proofs[name] = {

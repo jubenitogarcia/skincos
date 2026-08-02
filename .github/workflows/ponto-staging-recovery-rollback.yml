@@ -24,6 +24,18 @@ on:
         description: "Exact incumbent version to restore"
         required: true
         type: string
+      timekeeping_owner_recovery_run_id:
+        description: "Exact successful Ponto recovery that currently owns the candidate-only Worker deployment"
+        required: true
+        type: string
+      timekeeping_owner_coordinator_run_id:
+        description: "Coordinator run bound to the successful current-owner recovery"
+        required: true
+        type: string
+      timekeeping_owner_release_sha:
+        description: "Release SHA bound to the successful current-owner recovery"
+        required: true
+        type: string
       authorization_ref:
         description: "Opaque approved incident or change reference for the fresh recovery close"
         required: true
@@ -339,6 +351,40 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.watchdog_run_id }}
 
+      - name: Download the exact successful recovery that owns the replacement Worker
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: ponto-staging-recovery-rollback-${{ inputs.timekeeping_owner_coordinator_run_id }}-${{ inputs.timekeeping_owner_recovery_run_id }}
+          path: ${{ runner.temp }}/ponto-staging-recovery-rollback/owner-recovery
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.timekeeping_owner_recovery_run_id }}
+
+      - name: Validate the exact current Worker ownership recovery before mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PONTO_PRIOR_RECOVERY_RUN_ID: ${{ inputs.timekeeping_owner_recovery_run_id }}
+          PONTO_PRIOR_RECOVERY_COORDINATOR_RUN_ID: ${{ inputs.timekeeping_owner_coordinator_run_id }}
+          PONTO_PRIOR_RECOVERY_RELEASE_SHA: ${{ inputs.timekeeping_owner_release_sha }}
+          PONTO_TIMEKEEPING_CANDIDATE_VERSION_ID: ${{ inputs.timekeeping_candidate_version_id }}
+          PONTO_PRIOR_RECOVERY_RUN_FILE: ${{ runner.temp }}/ponto-staging-recovery-rollback/owner-recovery-run.json
+          PONTO_PRIOR_RECOVERY_ARTIFACT_ROOT: ${{ runner.temp }}/ponto-staging-recovery-rollback/owner-recovery
+          PONTO_WORKER_OWNERSHIP_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/current-worker-ownership.json
+        run: |
+          set -euo pipefail
+          [[ "$PONTO_PRIOR_RECOVERY_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid current-owner recovery run ID'; exit 1; }
+          [[ "$PONTO_PRIOR_RECOVERY_COORDINATOR_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid current-owner coordinator run ID'; exit 1; }
+          [[ "$PONTO_PRIOR_RECOVERY_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid current-owner release SHA'; exit 1; }
+          [[ "$PONTO_PRIOR_RECOVERY_RUN_ID" != "$PONTO_PRIOR_RECOVERY_COORDINATOR_RUN_ID" ]] || { echo 'Current-owner recovery and coordinator runs must differ'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PONTO_PRIOR_RECOVERY_RUN_ID" > "$PONTO_PRIOR_RECOVERY_RUN_FILE"
+          owner_head_sha="$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).head_sha || "")' "$PONTO_PRIOR_RECOVERY_RUN_FILE")"
+          [[ "$owner_head_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Current-owner recovery SHA is invalid'; exit 1; }
+          git merge-base --is-ancestor "$owner_head_sha" origin/main || { echo 'Current-owner recovery source is not reachable from canonical main'; exit 1; }
+          node .github/scripts/ponto-worker-ownership-recovery.mjs \
+            "$PONTO_PRIOR_RECOVERY_RUN_FILE" \
+            "$PONTO_PRIOR_RECOVERY_ARTIFACT_ROOT" \
+            "$PONTO_WORKER_OWNERSHIP_REPORT"
+          rm -f "$PONTO_PRIOR_RECOVERY_RUN_FILE"
+
       - name: Validate exact incumbent custody before mutation
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -563,6 +609,8 @@ jobs:
           PONTO_COORDINATOR_RUN_ID: ${{ inputs.coordinator_run_id }}
           RELEASE_SHA: ${{ inputs.release_sha }}
           STAGE: staging
+          PONTO_TIMEKEEPING_CANDIDATE_VERSION_ID: ${{ inputs.timekeeping_candidate_version_id }}
+          PONTO_WORKER_OWNERSHIP_REPORT: ${{ runner.temp }}/ponto-staging-recovery-rollback/current-worker-ownership.json
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PONTO_MODULE_HEALTH_URL: https://api-staging.skincos.com.br/api/ponto/health
