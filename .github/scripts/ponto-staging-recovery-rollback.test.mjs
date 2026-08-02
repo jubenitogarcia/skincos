@@ -29,6 +29,8 @@ test("staging recovery rollback is exact, serialized, and environment protected"
   assert.match(workflow, /mutation\.compensationDisposition === "not-required"/);
   assert.match(workflow, /group: ponto-surface-mutation/);
   assert.match(workflow, /cancel-in-progress: false/);
+  const freshClose = workflow.match(/jobs:\n  fresh-close:([\s\S]*?)\n\n  rollback:/)?.[1] || "";
+  assert.doesNotMatch(freshClose, /concurrency:/);
   assert.match(workflow, /environment: staging/);
   assert.match(workflow, /\[\[ "\$GITHUB_REF" == refs\/heads\/main \]\]/);
   assert.match(workflow, /git rev-parse origin\/main.*GITHUB_SHA/);
