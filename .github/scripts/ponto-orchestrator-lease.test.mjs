@@ -207,16 +207,16 @@ test("Ponto root custody provenance uses workflow metadata for the static workfl
   }
 });
 
-test("Pages custody normalizes Wrangler banner output before JSON inventory checks", () => {
+test("Pages custody uses structured Cloudflare project env_vars for inventory checks", () => {
   const source = fs.readFileSync(
     path.join(repositoryRoot, ".github", "workflows", "cloudflare-pages-sync-ponto.yml"),
     "utf8",
   );
-  assert.match(source, /normalize_wrangler_array\(\)/);
-  assert.match(source, /const start = raw\.indexOf\("\["\)/);
-  assert.match(source, /const end = raw\.lastIndexOf\("\]"\)/);
-  assert.match(source, /normalize_wrangler_array "\$before_raw" "\$before_list"/);
-  assert.match(source, /normalize_wrangler_array "\$after_raw" "\$after_list"/);
+  assert.match(source, /pages\/projects\/\$PROJECT/);
+  assert.match(source, /deployment_configs\?\.production\?\.env_vars/);
+  assert.match(source, /Object\.keys\(envVars\)/);
+  assert.doesNotMatch(source, /pages secret list/);
+  assert.doesNotMatch(source, /normalize_wrangler_array/);
 });
 
 test("assert-active rejects a rerun of the privileged child before any API access", async () => {
