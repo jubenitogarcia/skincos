@@ -39,18 +39,21 @@ export function normalizeRecoveryEvidence({
     && reconciliation.unresolved.length === 0
     && reconciliation?.credentialsIncluded === false
     && reconciliation?.piiIncluded === false;
+  const watchdogChildrenValid = Array.isArray(reconciliation?.children)
+    ? reconciliation.children.every((run) =>
+      run?.status === "completed"
+      && ["issued", "consumed", "invalidated", "invalidated-before-cancel"].includes(
+        String(run?.capabilityState || run?.capabilityAuthorization || ""),
+      ))
+    : Number.isSafeInteger(reconciliation?.discoveredChildren)
+      && reconciliation.discoveredChildren >= 0;
   const reconciliationValid = sourceMode === "ordinary"
     ? reconciliationCommon
       && String(reconciliation.orchestratorRunId || "") === coordinatorRunId
       && String(reconciliation.orchestratorHeadSha || "").toLowerCase() === releaseSha
     : reconciliationCommon
       && reconciliation?.target === target
-      && Array.isArray(reconciliation?.children)
-      && reconciliation.children.every((run) =>
-        run?.status === "completed"
-        && ["issued", "consumed", "invalidated", "invalidated-before-cancel"].includes(
-          String(run?.capabilityState || run?.capabilityAuthorization || ""),
-        ));
+      && watchdogChildrenValid;
   if (!reconciliationValid) {
     throw new Error("child reconciliation evidence is invalid");
   }
@@ -141,7 +144,9 @@ export function normalizeRecoveryEvidence({
       target,
       discoveredChildren: sourceMode === "ordinary"
         ? Number(reconciliation.discoveredChildren || 0)
-        : reconciliation.children.length,
+        : Array.isArray(reconciliation?.children)
+          ? reconciliation.children.length
+          : reconciliation.discoveredChildren,
       unresolved: [],
       passed: true,
       credentialsIncluded: false,
