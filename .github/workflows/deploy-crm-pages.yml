@@ -345,8 +345,10 @@ jobs:
         run: |
           set -euo pipefail
           secret_list="$RUNNER_TEMP/pages-ponto-secret-list.json"
+          normalized_secret_list="$RUNNER_TEMP/pages-ponto-secret-list.normalized.json"
           npx --yes wrangler@4.112.0 pages secret list --project-name "$PAGES_PROJECT" --env production > "$secret_list"
-          node - "$secret_list" <<'NODE'
+          node .github/scripts/parse-wrangler-json.mjs "$secret_list" > "$normalized_secret_list"
+          node - "$normalized_secret_list" <<'NODE'
           const fs = require("fs");
           const listed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const names = new Set(listed.map(item => item.name));
@@ -356,7 +358,7 @@ jobs:
             if (!names.has(name)) throw new Error(`remote Pages value must be provisioned before release: ${name}`);
           }
           NODE
-          rm -f "$secret_list"
+          rm -f "$secret_list" "$normalized_secret_list"
 
       - name: Capture Ponto staging Pages rollback deployment
         if: ${{ inputs.release_scope == 'ponto' && inputs.target == 'staging' }}
@@ -804,15 +806,17 @@ jobs:
         run: |
           set -euo pipefail
           list="$RUNNER_TEMP/pages-secret-list.json"
+          normalized_list="$RUNNER_TEMP/pages-secret-list.normalized.json"
           npx --yes wrangler@4.112.0 pages secret list --project-name "$PROJECT" --env production > "$list"
-          node - "$list" <<'NODE'
+          node .github/scripts/parse-wrangler-json.mjs "$list" > "$normalized_list"
+          node - "$normalized_list" <<'NODE'
           const fs = require("fs");
           const names = new Set(JSON.parse(fs.readFileSync(process.argv[2], "utf8")).map(item => item.name));
           for (const name of ["PONTO_API_TARGET", "PONTO_ACTOR_HMAC_KEY", "PONTO_NETWORK_CONTEXT_KEY", "PONTO_RELEASE_PROBE_HMAC_KEY"]) {
             if (!names.has(name)) throw new Error(`remote Pages value is absent: ${name}`);
           }
           NODE
-          rm -f "$list"
+          rm -f "$list" "$normalized_list"
       - name: Select Pages rollback deployment
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
