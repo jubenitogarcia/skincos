@@ -383,29 +383,65 @@ jobs:
           set -euo pipefail
           selected=false
           for attempt in {1..12}; do
-            curl --fail --silent --show-error --retry 3 --retry-delay 2 \
-              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&page=1&per_page=25" \
-              > "$RUNNER_TEMP/pages-staging-incumbent.json"
-            selection="$(node - "$RUNNER_TEMP/pages-staging-incumbent.json" <<'NODE'
+            pages_dir="$RUNNER_TEMP/pages-staging-incumbent-$attempt"
+            mkdir -p "$pages_dir"
+            rm -f "$pages_dir"/page-*.json
+            total_pages=1
+            page=1
+            while (( page <= total_pages )); do
+              incumbent_page="$pages_dir/page-$page.json"
+              curl --fail --silent --show-error --retry 3 --retry-delay 2 \
+                -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&page=$page&per_page=25" \
+                > "$incumbent_page"
+              total_pages="$(node - "$incumbent_page" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const totalPages = Number(payload?.result_info?.total_pages || 1);
+          if (
+            payload?.success !== true
+            || !Array.isArray(payload?.result)
+            || !Number.isInteger(totalPages)
+            || totalPages < 1
+            || totalPages > 100
+          ) throw new Error("Cloudflare Pages deployment inventory is not paginable");
+          process.stdout.write(String(totalPages));
+          NODE
+              )"
+              (( page += 1 ))
+            done
+            selection="$(node - "$pages_dir" <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const pagesDir = process.argv[2];
           const expectedProject = process.env.PROJECT;
-          const deployments = Array.isArray(payload?.result) ? payload.result : [];
-          const candidates = deployments
-            .filter(item =>
-              (item?.environment === "production" || item?.environment == null)
-              && item?.project_name === expectedProject
-              && item?.deployment_trigger?.metadata?.branch === "staging"
-              && item?.is_skipped === false
-              && item?.latest_stage?.name === "deploy"
-              && item?.latest_stage?.status === "success"
-              && Number.isFinite(Date.parse(String(item?.latest_stage?.ended_on || "")))
-              && /^[0-9a-f]{40}$/.test(String(item?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase())
-            )
-            .sort((a, b) => String(b?.created_on || "").localeCompare(String(a?.created_on || "")));
-          const selected = payload?.success === true ? candidates[0] : undefined;
-          process.stdout.write(`${selected?.id || ""}\t${selected?.deployment_trigger?.metadata?.commit_hash || ""}`);
+          const files = fs.readdirSync(pagesDir)
+            .filter(file => /^page-[0-9]+\.json$/.test(file))
+            .sort((a, b) => Number(a.match(/[0-9]+/)[0]) - Number(b.match(/[0-9]+/)[0]));
+          const payloads = files.map(file => JSON.parse(fs.readFileSync(path.join(pagesDir, file), "utf8")));
+          if (!payloads.length || payloads.some(item => item?.success !== true || !Array.isArray(item?.result))) {
+            throw new Error("Cloudflare Pages deployment inventory contains an invalid page");
+          }
+          const deployments = payloads
+            .flatMap(item => item.result)
+            .filter(item => item?.environment === "production" || item?.environment == null)
+            .sort((a, b) => Date.parse(String(b?.created_on || "")) - Date.parse(String(a?.created_on || "")));
+          const latest = deployments[0];
+          const metadata = latest?.deployment_trigger?.metadata || {};
+          const commitSha = String(metadata.commit_hash || "").toLowerCase();
+          const stage = latest?.latest_stage;
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && latest?.is_skipped === false;
+          const selected = latest
+            && latest?.project_name === expectedProject
+            && metadata.branch === "staging"
+            && /^[0-9a-f]{40}$/.test(commitSha)
+            && terminal
+            ? latest
+            : undefined;
+          process.stdout.write(`${selected?.id || ""}\t${selected ? commitSha : ""}`);
           NODE
             )" || selection=""
             id=""
@@ -420,7 +456,7 @@ jobs:
           [[ "$selected" == true ]] || { echo 'Unable to resolve an exact terminal staging Pages rollback deployment'; exit 1; }
           echo "PAGES_STAGING_ROLLBACK_DEPLOYMENT_ID=$id" >> "$GITHUB_ENV"
           echo "PAGES_STAGING_ROLLBACK_COMMIT_SHA=$commit_sha" >> "$GITHUB_ENV"
-          rm -f "$RUNNER_TEMP/pages-staging-incumbent.json"
+          rm -f "$RUNNER_TEMP"/pages-staging-incumbent-*/page-*.json
 
       - name: Deploy to Cloudflare Pages (wrangler)
         if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
