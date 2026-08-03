@@ -180,6 +180,65 @@ jobs:
           [[ "$STAGING_CORE_D1_DATABASE" == 'skincos-db-staging' && "$STAGING_TIMEKEEPING_D1_DATABASE" == 'skincos-timekeeping-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
           npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$CORE_SQL" >/dev/null
           npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$TIMEKEEPING_SQL" >/dev/null
+
+      - name: Attest the exact synthetic PIN credential in staging D1
+        env:
+          FIXTURES: ${{ runner.temp }}/ponto-staging-fixtures.json
+          PIN_SQL: ${{ runner.temp }}/ponto-staging-pin-attestation.sql
+          PIN_RESULT: ${{ runner.temp }}/ponto-staging-pin-attestation-result.json
+          PIN_REPORT: ${{ runner.temp }}/ponto-staging-pin-attestation.json
+          STAGING_TIMEKEEPING_D1_DATABASE: skincos-timekeeping-staging
+        run: |
+          set -euo pipefail
+          node - "$FIXTURES" "$PIN_SQL" <<'NODE'
+          const fs = require('fs');
+          const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (fixture?.environment !== 'staging' || !String(fixture?.employeeId || '').startsWith(`stg-ponto-${fixture.runId}`)) {
+            throw new Error('staging PIN attestation fixture escaped its run scope');
+          }
+          const employeeId = String(fixture.employeeId).replaceAll("'", "''");
+          fs.writeFileSync(process.argv[3], `SELECT algorithm, salt_b64, hash_b64, iterations FROM timekeeping_pin_credentials WHERE employee_id='${employeeId}';\n`, { mode: 0o600 });
+          NODE
+          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$PIN_SQL" --json > "$PIN_RESULT"
+          node - "$FIXTURES" "$PIN_RESULT" "$PIN_REPORT" <<'NODE'
+          const fs = require('fs');
+          const rows = (file) => {
+            const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const entries = Array.isArray(payload) ? payload : [payload];
+            if (entries.some((entry) => entry?.success === false)) throw new Error('PIN attestation query failed');
+            return entries.flatMap((entry) => entry?.results || entry?.result?.results || []);
+          };
+          (async () => {
+            const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+            const row = rows(process.argv[3]).find((entry) => entry?.algorithm && entry?.salt_b64 && entry?.hash_b64);
+            if (!row) throw new Error('staging D1 PIN credential row is missing');
+            const { pathToFileURL } = require('url');
+            const { verifyPin } = await import(pathToFileURL(require('path').resolve('workforce/timekeeping/security.js')).href);
+            const credential = {
+              algorithm: row.algorithm,
+              saltB64: row.salt_b64,
+              hashB64: row.hash_b64,
+              iterations: row.iterations,
+            };
+            const verified = await verifyPin(fixture.pin, credential);
+            const report = {
+              schemaVersion: 1,
+              environment: 'staging',
+              credentialPresent: true,
+              algorithm: String(row.algorithm),
+              iterations: Number(row.iterations),
+              saltLength: String(row.salt_b64).length,
+              hashLength: String(row.hash_b64).length,
+              fixtureCredentialVerified: verified === true,
+              credentialsIncluded: false,
+              piiIncluded: false,
+            };
+            if (report.algorithm !== 'PBKDF2-SHA256' || report.iterations !== 150000 || report.saltLength !== 22 || report.hashLength !== 43 || !report.fixtureCredentialVerified) {
+              throw new Error('staging D1 PIN credential does not verify with the canonical contract');
+            }
+            fs.writeFileSync(process.argv[4], `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+          })().catch((error) => { console.error(error); process.exitCode = 1; });
+          NODE
       - name: Prove exact Identity candidate through the protected Pages binding
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -335,6 +394,7 @@ jobs:
           path: |
             ${{ runner.temp }}/ponto-staging-report.json
             ${{ runner.temp }}/ponto-staging-contract.json
+            ${{ runner.temp }}/ponto-staging-pin-attestation.json
             ${{ runner.temp }}/ponto-staging-teardown-report.json
           retention-days: 30
           if-no-files-found: warn

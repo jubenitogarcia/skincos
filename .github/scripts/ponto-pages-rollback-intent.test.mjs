@@ -11,6 +11,7 @@ import {
 const repository = "owner/repo";
 const sourceSha = "a".repeat(40);
 const restoredId = "33333333-3333-4333-8333-333333333333";
+const incumbentId = "22222222-2222-4222-8222-222222222222";
 const secret = "pages-rollback-intent-hmac-root-".repeat(2);
 
 const canonicalize = (value) => {
@@ -179,4 +180,37 @@ test("transition readback rejects a valid competing state", async () => {
     }),
     /competing transition detected/,
   );
+});
+
+test("existing incumbent reconciliation is explicit and durably attested", async () => {
+  const fixture = harness();
+  const intent = await createPagesRollbackIntent({
+    ...input(fixture.request),
+    recoveryRunId: "700",
+    now: new Date("2026-07-30T00:00:00Z"),
+  });
+  await assert.rejects(
+    completePagesRollbackIntent({
+      request: fixture.request,
+      secret,
+      intent,
+      restoredDeploymentId: incumbentId,
+    }),
+    /distinct rollback clone/,
+  );
+  const completed = await completePagesRollbackIntent({
+    request: fixture.request,
+    secret,
+    intent,
+    restoredDeploymentId: incumbentId,
+    allowExistingIncumbent: true,
+    now: new Date("2026-07-30T00:02:00Z"),
+  });
+  assert.equal(completed.claims.state, "restored");
+  assert.equal(completed.claims.restoredDeploymentId, incumbentId);
+  assert.equal(completed.claims.restoredExistingIncumbent, true);
+  const loaded = await readPagesRollbackIntent(input(fixture.request));
+  assert.equal(loaded.claims.restoredExistingIncumbent, true);
+  assert.equal(fixture.check().status, "completed");
+  assert.equal(fixture.check().conclusion, "success");
 });
