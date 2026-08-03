@@ -857,9 +857,15 @@ function createRealRuntime(config, env = process.env) {
       if (error instanceof DrillFailure) throw error;
       throw new DrillFailure("D1_QUERY_JSON_INVALID");
     }
-    const entries = Array.isArray(payload) ? payload : [payload];
-    if (entries.some((entry) => entry?.success === false)) throw new DrillFailure("D1_QUERY_FAILED");
-    return entries.flatMap((entry) => entry?.results || entry?.result?.results || []);
+    const collectRows = (value) => {
+      if (Array.isArray(value)) return value.flatMap(collectRows);
+      if (!value || typeof value !== "object") return [];
+      if (value.success === false) throw new DrillFailure("D1_QUERY_FAILED");
+      if (Array.isArray(value.results)) return value.results;
+      if (Object.hasOwn(value, "result")) return collectRows(value.result);
+      return [];
+    };
+    return collectRows(payload);
   };
   const sql = (value) => `'${String(value).replaceAll("'", "''")}'`;
   const numeric = (value) => Number(value || 0);
