@@ -281,6 +281,10 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
   const stagingJourney = readWorkflow("timekeeping-staging-journey.yml");
   assert.match(stagingJourney, /vars\.PONTO_TIMEKEEPING_D1_STAGING_ID\b/);
   assert.match(stagingJourney, /TIMEKEEPING_STAGING_WRANGLER_CONFIG/);
+  assert.match(stagingJourney, /--json > "\$CORE_RAW"/);
+  assert.match(stagingJourney, /ponto-json-output\.mjs/);
+  assert.match(stagingJourney, /for attempt in \$\(seq 1 12\)/);
+  assert.match(stagingJourney, /bounded propagation/);
   assert.match(stagingJourney, /import crypto from "node:crypto";/);
   assert.match(stagingJourney, /import fs from "node:fs";/);
   assert.doesNotMatch(
