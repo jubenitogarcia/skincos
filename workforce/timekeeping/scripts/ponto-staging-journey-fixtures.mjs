@@ -6,6 +6,7 @@
 import { createHash, pbkdf2Sync, randomBytes, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { DEFAULT_PIN_ITERATIONS, hashPin } from '../security.js';
 
 const usage = 'usage: node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action provision|teardown --run-id <github-run-id> [--fixture-id <label>] --fixtures <private-json> --core-sql <sql-file> --timekeeping-sql <sql-file>';
 const args = new Map();
@@ -38,12 +39,7 @@ const passwordHash = (value) => {
   const digest = pbkdf2Sync(value, salt, 100_000, 32, 'sha256');
   return `pbkdf2_sha256$100000$${salt.toString('base64url')}$${digest.toString('base64url')}`;
 };
-const pinCredential = (value) => {
-  const salt = randomBytes(16);
-  const iterations = 150_000;
-  const digest = pbkdf2Sync(value, salt, iterations, 32, 'sha256');
-  return { algorithm: 'PBKDF2-SHA256', iterations, saltB64: salt.toString('base64url'), hashB64: digest.toString('base64url') };
-};
+const pinCredential = (value) => hashPin(value, DEFAULT_PIN_ITERATIONS);
 
 function audit(actionName, actor, detail) {
   return `INSERT INTO audit_log (ts, actor, role, action, entity, entity_id, unidade, ip, user_agent, idempotency_key, before_json, after_json) VALUES (${sql(now)}, ${sql(actor)}, 'SYSTEM', ${sql(actionName)}, 'staging_synthetic_ponto', ${sql(actor)}, '', '', 'github-actions', ${sql(`${prefix}:${actionName}`)}, NULL, ${sql(JSON.stringify(detail))});`;
@@ -121,7 +117,7 @@ function controlledFixture() {
 
 if (action === 'provision') {
   const fixture = privateFixture();
-  const credential = pinCredential(fixture.pin);
+  const credential = await pinCredential(fixture.pin);
   mkdirSync(dirname(resolve(fixturesPath)), { recursive: true });
   writeFileSync(fixturesPath, JSON.stringify(fixture), { mode: 0o600 });
 
