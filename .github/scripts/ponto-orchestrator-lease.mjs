@@ -738,7 +738,7 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
   ) throw new Error("current child run is not the exact active first-attempt capability subject");
 
   const issuerSnapshot = issuerRunId === orchestratorRunId
-    ? parent
+    ? { issuer: parent.run, issuerWorkflow: parent.workflow }
     : await delegatedIssuerSnapshot({ issuerRunId });
   const { issuer, issuerWorkflow } = issuerSnapshot;
   const issuerWorkflowPath = String(issuer?.path || "").split("@")[0];
