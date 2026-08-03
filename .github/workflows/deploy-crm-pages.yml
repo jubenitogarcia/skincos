@@ -566,7 +566,7 @@ jobs:
           candidate_dir="$RUNNER_TEMP/pages-staging-candidate"
           mkdir -p "$candidate_dir"
           selected=false
-          for attempt in {1..12}; do
+          for attempt in {1..36}; do
             rm -f "$candidate_dir"/page-*.json
             total_pages=1
             page=1
@@ -617,7 +617,7 @@ jobs:
           echo "PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
           [[ "$deployment_url" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'Structured Pages output returned an unexpected staging URL'; exit 1; }
           candidate_attested=false
-          for attempt in {1..12}; do
+          for attempt in {1..36}; do
             http_status="000"
             curl_status=0
             http_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
@@ -670,9 +670,18 @@ jobs:
           if (!headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)) throw new Error("staging Pages release header is absent");
           if (!headers.includes("x-skincos-pages-environment: staging")) throw new Error("staging Pages environment header is absent");
           NODE
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-alias.headers" \
-            "https://skincos-staging.pages.dev/api/ponto/_proxy-status" > "$RUNNER_TEMP/pages-staging-alias.json"
-          node - "$RUNNER_TEMP/pages-staging-alias.json" "$RUNNER_TEMP/pages-staging-alias.headers" <<'NODE'
+          alias_attested=false
+          for attempt in {1..36}; do
+            http_status="000"
+            curl_status=0
+            http_status="$(curl --silent --show-error --retry 5 --retry-all-errors --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-alias.headers" \
+              --output "$RUNNER_TEMP/pages-staging-alias.json" \
+              --write-out '%{http_code}' \
+              "https://skincos-staging.pages.dev/api/ponto/_proxy-status" \
+            )" || curl_status=$?
+            if [[ "$http_status" == "200" && "$curl_status" == "0" ]]; then
+              alias_status=0
+              node - "$RUNNER_TEMP/pages-staging-alias.json" "$RUNNER_TEMP/pages-staging-alias.headers" <<'NODE' || alias_status=$?
           const fs = require("fs");
           const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const headers = fs.readFileSync(process.argv[3], "utf8").toLowerCase();
@@ -681,8 +690,17 @@ jobs:
             || body?.ready !== true
             || !headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)
             || !headers.includes("x-skincos-pages-environment: staging")
-          ) throw new Error("staging Pages production alias is not linked to the exact candidate deployment");
-          NODE
+          ) process.exit(2);
+NODE
+              if [[ "$alias_status" == "0" ]]; then alias_attested=true; break; fi
+              [[ "$alias_status" == "2" ]] || exit "$alias_status"
+            elif [[ "$http_status" != "404" && "$http_status" != "000" ]]; then
+              echo "staging Pages production alias readback returned HTTP $http_status"
+              exit 1
+            fi
+            if [[ "$attempt" != 36 ]]; then sleep 5; fi
+          done
+          [[ "$alias_attested" == true ]] || { echo 'Unable to attest the exact staging Pages candidate and production alias'; exit 1; }
           echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
           echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
           touch "$RUNNER_TEMP/pages-staging-mutation-completed"
@@ -718,7 +736,7 @@ jobs:
           resolved=false
           if [[ -n "${PAGES_STAGING_DEPLOYMENT_STARTED_AT:-}" ]]; then
             mkdir -p "$candidate_dir"
-            for attempt in {1..12}; do
+            for attempt in {1..36}; do
               rm -f "$candidate_dir"/page-*.json
               total_pages=1
               page=1
@@ -828,7 +846,7 @@ jobs:
           NODE
           )"
           restored=false
-          for attempt in {1..36}; do
+          for attempt in {1..72}; do
             status_code=2
             if curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
