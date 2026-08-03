@@ -205,6 +205,7 @@ jobs:
           PIN_SQL: ${{ runner.temp }}/ponto-staging-pin-attestation.sql
           PIN_RAW: ${{ runner.temp }}/ponto-staging-pin-attestation-raw.txt
           PIN_RESULT: ${{ runner.temp }}/ponto-staging-pin-attestation-result.json
+          PIN_VERIFY_ERROR: ${{ runner.temp }}/ponto-staging-pin-attestation-error.txt
           PIN_REPORT: ${{ runner.temp }}/ponto-staging-pin-attestation.json
           STAGING_TIMEKEEPING_D1_DATABASE: skincos-timekeeping-staging
         run: |
@@ -220,10 +221,14 @@ jobs:
           NODE
           pin_attested=false
           for attempt in $(seq 1 12); do
-            rm -f "$PIN_RAW" "$PIN_RESULT"
-            if npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$PIN_SQL" --json > "$PIN_RAW" 2>&1 \
-              && node .github/scripts/ponto-json-output.mjs "$PIN_RAW" "$PIN_RESULT"; then
-              if node - "$FIXTURES" "$PIN_RESULT" "$PIN_REPORT" 2>/dev/null <<'NODE'
+            rm -f "$PIN_RAW" "$PIN_RESULT" "$PIN_VERIFY_ERROR"
+            if ! npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$PIN_SQL" --json > "$PIN_RAW" 2>&1; then
+              echo 'staging D1 PIN attestation query command failed'; exit 1
+            fi
+            if ! node .github/scripts/ponto-json-output.mjs "$PIN_RAW" "$PIN_RESULT"; then
+              echo 'staging D1 PIN attestation output was invalid'; exit 1
+            fi
+            if node - "$FIXTURES" "$PIN_RESULT" "$PIN_REPORT" 2>"$PIN_VERIFY_ERROR" <<'NODE'
           const fs = require('fs');
           const rows = (file) => {
             const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -260,18 +265,28 @@ jobs:
               throw new Error('staging D1 PIN credential does not verify with the canonical contract');
             }
             fs.writeFileSync(process.argv[4], `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-          })().catch((error) => { console.error(error); process.exitCode = 1; });
+          })().catch((error) => {
+            const message = String(error?.message || 'PIN attestation failed');
+            console.error(message);
+            process.exitCode = message === 'staging D1 PIN credential row is missing' ? 2 : 1;
+          });
           NODE
               then
                 pin_attested=true
                 break
+              else
+                verification_status=$?
+                if [[ "$verification_status" -eq 1 ]]; then
+                  cat "$PIN_VERIFY_ERROR" >&2
+                  echo 'staging D1 PIN attestation query or credential contract failed' >&2
+                  exit 1
+                fi
               fi
-            fi
             if [[ "$attempt" -lt 12 ]]; then
               sleep 5
             fi
           done
-          rm -f "$PIN_SQL" "$PIN_RAW" "$PIN_RESULT"
+          rm -f "$PIN_SQL" "$PIN_RAW" "$PIN_RESULT" "$PIN_VERIFY_ERROR"
           [[ "$pin_attested" == true ]] || { echo 'staging D1 PIN credential row was not observable after bounded propagation'; exit 1; }
       - name: Prove exact Identity candidate through the protected Pages binding
         env:
@@ -380,6 +395,7 @@ jobs:
           PIN_SQL: ${{ runner.temp }}/ponto-staging-pin-attestation.sql
           PIN_RAW: ${{ runner.temp }}/ponto-staging-pin-attestation-raw.txt
           PIN_RESULT: ${{ runner.temp }}/ponto-staging-pin-attestation-result.json
+          PIN_VERIFY_ERROR: ${{ runner.temp }}/ponto-staging-pin-attestation-error.txt
           TEARDOWN_REPORT: ${{ runner.temp }}/ponto-staging-teardown-report.json
         run: |
           set -euo pipefail
@@ -425,7 +441,7 @@ jobs:
             piiIncluded: false,
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
-          rm -f "$FIXTURES" "$CORE_SQL" "$TIMEKEEPING_SQL" "$CORE_RAW" "$TIMEKEEPING_RAW" "$CORE_RESULT" "$TIMEKEEPING_RESULT" "$PIN_SQL" "$PIN_RAW" "$PIN_RESULT"
+          rm -f "$FIXTURES" "$CORE_SQL" "$TIMEKEEPING_SQL" "$CORE_RAW" "$TIMEKEEPING_RAW" "$CORE_RESULT" "$TIMEKEEPING_RESULT" "$PIN_SQL" "$PIN_RAW" "$PIN_RESULT" "$PIN_VERIFY_ERROR"
 
       - name: Upload sanitised journey evidence
         if: ${{ always() }}
