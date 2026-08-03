@@ -47,7 +47,8 @@
       "triggerPaths": [
         ".github/governance/progressive-release-policy.json",
         ".github/workflows/ponto-",
-        ".github/scripts/ponto-"
+        ".github/scripts/ponto-",
+        "workforce/timekeeping/"
       ]
     }
   },
