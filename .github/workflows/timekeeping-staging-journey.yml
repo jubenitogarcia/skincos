@@ -193,8 +193,8 @@ jobs:
           [[ "$IDENTITY_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$TIMEKEEPING_VERSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Exact staging version IDs are required'; exit 1; }
           [[ -n "${PONTO_IDEMPOTENCY_KEY:-}" ]] || { echo 'Staging PONTO_IDEMPOTENCY_KEY is required for the one-time release probe'; exit 1; }
           node - "$FIXTURES" "$RUNNER_TEMP/ponto-staging-contract.json" <<'NODE'
-          const crypto = require("crypto");
-          const fs = require("fs");
+          import crypto from "node:crypto";
+          import fs from "node:fs";
           const fixture = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           if (fixture?.environment !== "staging" || fixture?.role !== "CONSULTOR" || !String(fixture?.email || "").endsWith("@staging.invalid")) {
             throw new Error("protected contract requires the run-scoped synthetic staging identity");

@@ -281,6 +281,8 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
   const stagingJourney = readWorkflow("timekeeping-staging-journey.yml");
   assert.match(stagingJourney, /vars\.PONTO_TIMEKEEPING_D1_STAGING_ID\b/);
   assert.match(stagingJourney, /TIMEKEEPING_STAGING_WRANGLER_CONFIG/);
+  assert.match(stagingJourney, /import crypto from "node:crypto";/);
+  assert.match(stagingJourney, /import fs from "node:fs";/);
   assert.doesNotMatch(
     stagingJourney,
     /d1 execute \"\$STAGING_TIMEKEEPING_D1_DATABASE\" --config workforce\/timekeeping\/wrangler\.toml/,
