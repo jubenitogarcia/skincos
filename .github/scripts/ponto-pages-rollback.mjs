@@ -51,6 +51,7 @@ export async function rollbackPagesWithReconciliation({
   knownRestoredDeploymentId = "",
   persistAttempt = async () => {},
   persistCreatedId = async () => {},
+  persistExistingIncumbentId = async () => {},
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   timeoutMs = 180_000,
   pollMs = 5_000,
@@ -172,10 +173,18 @@ export async function rollbackPagesWithReconciliation({
       if (!attestation.passed) {
         throw new Error("reconciled Pages deployment does not attest the exact incumbent");
       }
-      await persistCreatedId(latestId, "reconciled-indeterminate-response");
+      const restoredExistingIncumbent = latestId === incumbentId;
+      if (restoredExistingIncumbent) {
+        await persistExistingIncumbentId(latestId, "reconciled-indeterminate-response");
+      } else {
+        await persistCreatedId(latestId, "reconciled-indeterminate-response");
+      }
       return {
-        disposition: "restored-after-indeterminate-response",
+        disposition: restoredExistingIncumbent
+          ? "restored-existing-incumbent-after-indeterminate-response"
+          : "restored-after-indeterminate-response",
         active,
+        restoredExistingIncumbent,
       };
     }
     return { disposition: "candidate-still-active", active: candidate };
@@ -194,14 +203,22 @@ export async function rollbackPagesWithReconciliation({
         alias,
       })
     ) throw new Error("durable Pages rollback deployment no longer owns the exact incumbent alias");
-    await persistCreatedId(knownRestoredId, "durable-intent-created-id");
+    const restoredExistingIncumbent = knownRestoredId === incumbentId;
+    if (restoredExistingIncumbent) {
+      await persistExistingIncumbentId(knownRestoredId, "durable-intent-existing-incumbent");
+    } else {
+      await persistCreatedId(knownRestoredId, "durable-intent-created-id");
+    }
     return {
       active,
       activeDeploymentId: knownRestoredId,
       incumbentCommitSha: incumbentCommit,
       mutationPerformed: true,
       attempts: 0,
-      disposition: "durable-intent-restored",
+      disposition: restoredExistingIncumbent
+        ? "durable-intent-existing-incumbent-restored"
+        : "durable-intent-restored",
+      restoredExistingIncumbent,
     };
   }
 
@@ -215,6 +232,7 @@ export async function rollbackPagesWithReconciliation({
         mutationPerformed: true,
         attempts: 0,
         disposition: "durable-intent-reconciled",
+        restoredExistingIncumbent: Boolean(reconciled.restoredExistingIncumbent),
       };
     }
     throw new Error(
@@ -272,6 +290,7 @@ export async function rollbackPagesWithReconciliation({
         mutationPerformed: true,
         attempts: 1,
         disposition: reconciled.disposition,
+        restoredExistingIncumbent: Boolean(reconciled.restoredExistingIncumbent),
       };
     }
     throw new Error(

@@ -27,7 +27,7 @@ const deployment = (id, commit, createdOn) => ({
   aliases: [`https://${alias}`],
 });
 
-function harness({ firstPostApplies }) {
+function harness({ firstPostApplies, restoresAsIncumbent = false }) {
   const deployments = new Map([
     [candidateId, deployment(candidateId, candidateCommit, "2026-07-30T00:02:00Z")],
     [incumbentId, deployment(incumbentId, incumbentCommit, "2026-07-29T00:02:00Z")],
@@ -41,11 +41,18 @@ function harness({ firstPostApplies }) {
       if (postCount === 1 && !firstPostApplies) {
         throw new Error("transport failed before apply");
       }
-      deployments.set(
-        restoredId,
-        deployment(restoredId, incumbentCommit, "2026-07-30T00:03:00Z"),
-      );
-      latestId = restoredId;
+      if (restoresAsIncumbent) {
+        const restoredIncumbent = deployment(incumbentId, incumbentCommit, "2026-07-30T00:03:00Z");
+        deployments.set(incumbentId, restoredIncumbent);
+        deployments.get(candidateId).aliases = [];
+        latestId = incumbentId;
+      } else {
+        deployments.set(
+          restoredId,
+          deployment(restoredId, incumbentCommit, "2026-07-30T00:03:00Z"),
+        );
+        latestId = restoredId;
+      }
       if (postCount === 1 && firstPostApplies) {
         throw new Error("transport failed after server apply");
       }
@@ -82,6 +89,36 @@ const run = (fixture, persisted, attempts = []) => rollbackPagesWithReconciliati
   persistCreatedId: async (id, source) => persisted.push({ id, source }),
   timeoutMs: 20,
   pollMs: 0,
+});
+
+test("indeterminate Pages rollback reconciles an already-restored incumbent without a duplicate POST", async () => {
+  const fixture = harness({ firstPostApplies: true, restoresAsIncumbent: true });
+  const persisted = [];
+  const existing = [];
+  const result = await rollbackPagesWithReconciliation({
+    request: fixture.request,
+    accountId,
+    project,
+    branch,
+    alias,
+    candidateDeploymentId: candidateId,
+    candidateCommitSha: candidateCommit,
+    incumbentDeploymentId: incumbentId,
+    persistAttempt: async () => {},
+    persistCreatedId: async (id, source) => persisted.push({ id, source }),
+    persistExistingIncumbentId: async (id, source) => existing.push({ id, source }),
+    timeoutMs: 20,
+    pollMs: 0,
+  });
+  assert.equal(fixture.postCount(), 1);
+  assert.equal(result.activeDeploymentId, incumbentId);
+  assert.equal(result.restoredExistingIncumbent, true);
+  assert.equal(result.disposition, "restored-existing-incumbent-after-indeterminate-response");
+  assert.deepEqual(persisted, []);
+  assert.deepEqual(existing, [{
+    id: incumbentId,
+    source: "reconciled-indeterminate-response",
+  }]);
 });
 
 test("applied-then-thrown Pages rollback reconciles the exact incumbent without duplicate retry", async () => {
