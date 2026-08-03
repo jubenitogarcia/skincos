@@ -548,6 +548,14 @@ test("consume-check rejects a child rerun before any API access", async () => {
   });
 });
 
+test("consume-check maps the direct parent issuer into the delegated snapshot shape", () => {
+  const source = fs.readFileSync(script, "utf8");
+  assert.match(
+    source,
+    /issuerRunId === orchestratorRunId\s*\?\s*\{ issuer: parent\.run, issuerWorkflow: parent\.workflow \}/,
+  );
+});
+
 test("every orchestrated secret or mutation job revalidates the coordinator after checkout and before secrets", () => {
   const guardedJobs = [
     ["deploy-timekeeping.yml", "release"],
