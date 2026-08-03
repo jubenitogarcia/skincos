@@ -71,12 +71,20 @@ const canonicalRun = (overrides = {}) => ({
   ...overrides,
 });
 
-const withApi = async ({ run = canonicalRun(), artifact }, callback) => {
+const withApi = async ({ run = canonicalRun(), artifact, transientFailures = [] }, callback) => {
   let deleted = false;
   let requestCount = 0;
+  const remainingTransientFailures = new Map(transientFailures.map(pathname => [pathname, 1]));
   const server = http.createServer((request, response) => {
     requestCount += 1;
     response.setHeader("content-type", "application/json");
+    const remainingFailures = remainingTransientFailures.get(request.url) || 0;
+    if (remainingFailures > 0) {
+      remainingTransientFailures.set(request.url, remainingFailures - 1);
+      response.statusCode = 503;
+      response.end(JSON.stringify({ message: "transient test failure" }));
+      return;
+    }
     if (request.url === `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`) {
       response.end(JSON.stringify({
         id: 77,
@@ -133,6 +141,19 @@ test("assert-active accepts only the exact live first-attempt coordinator", asyn
     );
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /active first-attempt Ponto coordinator/);
+  });
+});
+
+test("assert-active retries a transient GitHub API read before accepting the coordinator", async () => {
+  const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
+  await withApi({ transientFailures: [workflowPath] }, async ({ apiUrl, getRequestCount }) => {
+    const result = await execute(
+      ["assert-active", stage, releaseSha, orchestratorRunId],
+      { GITHUB_API_URL: apiUrl },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /active first-attempt Ponto coordinator/);
+    assert.equal(getRequestCount(), 3);
   });
 });
 

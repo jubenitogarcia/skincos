@@ -539,20 +539,35 @@ export function transitionCapabilityDocument(document, {
   };
 }
 
+const TRANSIENT_READ_STATUSES = new Set([429, 500, 502, 503, 504]);
+const TRANSIENT_READ_RETRY_DELAYS_MS = [1_000, 3_000, 8_000];
+
 const request = async (pathname, init = {}) => {
-  const response = await fetch(`${apiBase}${pathname}`, {
-    ...init,
-    signal: AbortSignal.timeout(30_000),
-    headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${token}`,
-      "x-github-api-version": "2022-11-28",
-      ...(init.headers || {}),
-    },
-  });
-  if (!response.ok) throw new Error(`GitHub API ${init.method || "GET"} ${pathname} returned ${response.status}`);
-  if (response.status === 202 || response.status === 204) return null;
-  return response.json();
+  const method = String(init.method || "GET").toUpperCase();
+  const canRetry = method === "GET" || method === "HEAD";
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await fetch(`${apiBase}${pathname}`, {
+      ...init,
+      signal: AbortSignal.timeout(30_000),
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${token}`,
+        "x-github-api-version": "2022-11-28",
+        ...(init.headers || {}),
+      },
+    });
+    if (response.ok) {
+      if (response.status === 202 || response.status === 204) return null;
+      return response.json();
+    }
+    const retryDelay = canRetry && TRANSIENT_READ_STATUSES.has(response.status)
+      ? TRANSIENT_READ_RETRY_DELAYS_MS[attempt]
+      : undefined;
+    if (retryDelay === undefined) {
+      throw new Error(`GitHub API ${method} ${pathname} returned ${response.status}`);
+    }
+    await new Promise(resolve => setTimeout(resolve, retryDelay));
+  }
 };
 
 const assertFirstAttempt = () => {
