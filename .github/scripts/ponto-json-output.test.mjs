@@ -40,6 +40,17 @@ test("prefers the last D1 result after a valid JSON progress document", () => {
   ]);
 });
 
+test("preserves D1 rows when Wrangler appends a summary document", () => {
+  const { output, result } = runParser(
+    '{"result":{"results":[{"algorithm":"PBKDF2-SHA256"}]}}\n{"result":{"results":[{"Database size (MB)":1,"Rows read":1,"Rows written":0,"Total queries executed":1}]}}\n',
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), [
+    { results: [{ algorithm: "PBKDF2-SHA256" }] },
+    { results: [{ "Database size (MB)": 1, "Rows read": 1, "Rows written": 0, "Total queries executed": 1 }] },
+  ]);
+});
+
 test("normalizes a D1 result array inside an envelope", () => {
   const { output, result } = runParser(
     '{"message":"checking"}\n{"result":[{"results":[{"pin_credentials":1}]}]}\n',
