@@ -83,13 +83,26 @@ export function classifyWorkerPublisherCompensationOwnership(payload, item, stag
   return classifyWorkerRollbackOwnership(payload, item, stage);
 }
 
-export function latestProductionPagesDeployment(payload) {
+const aliasHost = (value) => {
+  try {
+    return new URL(String(value)).hostname;
+  } catch {
+    return String(value).replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  }
+};
+
+export function latestProductionPagesDeployment(payload, { alias = "" } = {}) {
   if (payload?.success !== true || !Array.isArray(payload?.result)) {
     throw new Error("Pages deployment inventory is invalid");
   }
-  return payload.result
+  const production = payload.result
     .filter(item => item?.environment === "production")
-    .sort((left, right) => String(right?.created_on || "").localeCompare(String(left?.created_on || "")))[0] || null;
+    .sort((left, right) => String(right?.created_on || "").localeCompare(String(left?.created_on || "")));
+  const expectedAlias = alias ? aliasHost(alias) : "";
+  const aliased = expectedAlias
+    ? production.filter(item => (item?.aliases || []).map(aliasHost).includes(expectedAlias))
+    : [];
+  return (aliased.length ? aliased : production)[0] || null;
 }
 
 export function isTerminalPagesDeployment(deployment) {
@@ -104,7 +117,7 @@ export function classifyPagesRollbackOwnership(payload, item) {
   if (!UUID.test(item?.incumbentDeploymentId || "")) {
     throw new Error("Pages rollback incumbent identity is invalid");
   }
-  const latest = latestProductionPagesDeployment(payload);
+  const latest = latestProductionPagesDeployment(payload, { alias: item?.alias });
   const latestId = String(latest?.id || "").toLowerCase();
   const candidateId = String(item?.candidateDeploymentId || "").toLowerCase();
   const incumbentId = String(item.incumbentDeploymentId).toLowerCase();
