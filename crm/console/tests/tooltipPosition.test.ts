@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateFollowCursorPosition } from '@/tooltip'
+import { calculateFollowCursorPosition, calculateTooltipAspectAdjustment } from '@/tooltip'
 
 describe('follow-cursor tooltip positioning', () => {
   it('anchors beside the cursor while there is viewport space', () => {
@@ -24,5 +24,26 @@ describe('follow-cursor tooltip positioning', () => {
       { width: 400, height: 300 },
       { width: 390, height: 844 },
     )).toEqual({ left: 12, top: 22 })
+  })
+
+  it('adds only the minimum height needed for an overly wide tooltip', () => {
+    expect(calculateTooltipAspectAdjustment(
+      { width: 240, height: 80 },
+      { width: 1280, height: 800 },
+    )).toEqual({ minHeight: 120 })
+  })
+
+  it('adds only the minimum width needed for an overly tall tooltip', () => {
+    expect(calculateTooltipAspectAdjustment(
+      { width: 80, height: 240 },
+      { width: 1280, height: 800 },
+    )).toEqual({ minWidth: 120 })
+  })
+
+  it('does not pad tooltips that already fit the supported aspect range', () => {
+    expect(calculateTooltipAspectAdjustment(
+      { width: 180, height: 120 },
+      { width: 1280, height: 800 },
+    )).toEqual({})
   })
 })

@@ -689,28 +689,6 @@ function ConversionMultiplierDetails({
   )
 }
 
-function MultiplierDistributionMetric({ optimization }: { optimization: NonNullable<ConversionRankingSection['optimization']> }) {
-  const counts = optimization.optimalPlateau?.counts || { level0: 0, level1: 0, level2: 0, level3: 0 }
-  const total = Math.max(0, counts.level0 + counts.level1 + counts.level2 + counts.level3)
-  const groups = CONVERSION_DISTRIBUTION_GROUP_VISUAL.map((group) => ({
-    ...group,
-    count: group.levels.reduce((sum, level) => sum + counts[`level${level}` as keyof typeof counts], 0),
-  }))
-  const description = (
-    <div className="space-y-2">
-      <p className="leading-snug text-slate-300">Distribuição dos doutores entre os níveis definidos pelos limites e pela linha de corte. Consulte cada faixa sem alongar o detalhamento do Intervalo.</p>
-      <div className="rounded-lg border border-slate-700/75 bg-slate-900/55 px-2 py-1.5"><span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">Fórmula</span><span className="mt-0.5 block font-medium text-slate-100">proporção da faixa = doutores no nível ÷ doutores elegíveis</span></div>
-      <div className="overflow-hidden rounded-lg border border-slate-700/75 bg-slate-900/45">
-        {groups.map((group) => {
-          const proportion = total > 0 ? group.count / total : 0
-          return <div key={group.key} className="border-b border-slate-700/60 px-2 py-1.5 last:border-b-0"><div className={`font-semibold ${group.tone}`}>{group.label}: {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}</div><div className="mt-0.5 text-slate-400">{group.levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(counts[`level${level}` as keyof typeof counts])}/${formatNumberBR(total)}`).join(' · ')}</div></div>
-        })}
-      </div>
-    </div>
-  )
-  return <TooltipLabel label="Faixas e níveis" description={description} contentClassName="w-[min(26rem,calc(100vw-2rem))] max-w-none"><button type="button" className="flex min-w-[12rem] items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-slate-800/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-400/60" data-testid="atendimento-multiplier-distribution-trigger"><span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${metricToneClass('violet')}`}><Divide className="h-3 w-3" /></span><span className="min-w-0"><span className="block text-[11px] font-semibold text-slate-200">Faixas e níveis</span><span className="block text-[10px] text-slate-500">{formatNumberBR(total)} doutores elegíveis</span></span><Info className="ml-auto h-2.5 w-2.5 shrink-0 text-slate-500" aria-hidden="true" /></button></TooltipLabel>
-}
-
 function MetricGroupContent({
   rows,
   hierarchy,
@@ -782,12 +760,12 @@ function MetricGroupContent({
           <img
             src={row.avatarUrl}
             alt=""
-            className="h-5 w-5 shrink-0 rounded-full border border-slate-600/90 object-cover"
+            className="mt-1 h-5 w-5 shrink-0 rounded-full border border-slate-600/90 object-cover"
             onError={(event) => { event.currentTarget.style.display = 'none' }}
           />
         ) : (
           <span
-            className={`inline-flex ${isDetail ? 'h-4 w-4' : 'h-5 w-5'} shrink-0 items-center justify-center rounded-md border ${metricToneClass(row.tone)}`}
+            className={`mt-1 inline-flex ${isDetail ? 'h-4 w-4' : 'h-5 w-5'} shrink-0 items-center justify-center rounded-md border ${metricToneClass(row.tone)}`}
             aria-hidden="true"
           >
             <RowIcon className={isDetail ? 'h-2.5 w-2.5' : 'h-3 w-3'} />
@@ -796,7 +774,6 @@ function MetricGroupContent({
         <div className={`min-w-0 ${horizontal ? 'flex-none' : 'flex-1'}`}>
           <span className={`relative isolate inline-flex max-w-full items-start overflow-visible ${isDetail ? 'text-[10px] font-medium text-slate-500' : `text-[11px] ${isChild ? 'font-medium text-slate-400' : 'font-semibold text-slate-200'}`} leading-tight`}>
             <span className="min-w-0 truncate pr-0.5">{row.label}</span>
-            {row.tooltip ? <Info className="pointer-events-none absolute -right-1 -top-1 z-10 h-2 w-2 text-slate-500" aria-hidden="true" /> : null}
           </span>
           <span data-testid={`atendimento-metric-value-${row.key}`} className="mt-0.5 block truncate text-[10px] font-medium leading-tight text-slate-400">{row.value}</span>
         </div>
@@ -1149,19 +1126,6 @@ const CONVERSION_METRIC_TONE_BY_KEY: Record<ConversionMetricKey, AtendimentoMetr
   level2: 'sky',
   level3: 'emerald',
 }
-
-const CONVERSION_DISTRIBUTION_GROUP_VISUAL: Array<{
-  key: 'lower' | 'upper' | 'center' | 'extremes'
-  label: string
-  levels: number[]
-  icon: LucideIcon
-  tone: string
-}> = [
-  { key: 'lower', label: 'Lado inferior', levels: [0, 1], icon: CONVERSION_METRIC_ICON_BY_KEY.lowerSide, tone: 'text-amber-200' },
-  { key: 'upper', label: 'Lado superior', levels: [2, 3], icon: CONVERSION_METRIC_ICON_BY_KEY.upperSide, tone: 'text-emerald-200' },
-  { key: 'center', label: 'Faixas centrais', levels: [1, 2], icon: CONVERSION_METRIC_ICON_BY_KEY.centerShare, tone: 'text-sky-200' },
-  { key: 'extremes', label: 'Faixas extremas', levels: [0, 3], icon: CONVERSION_METRIC_ICON_BY_KEY.extremesShare, tone: 'text-violet-200' },
-]
 
 const CONVERSION_DISTRIBUTION_DETAIL_GROUPS: Array<{
   key: string
@@ -1645,7 +1609,7 @@ function ConversionDoctorBandsContent({
     const percentage = new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(count / total)
     return {
       subtitle: `${formatNumberBR(count)}/${formatNumberBR(total)} · ${percentage}`,
-      description: levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(levelCount(level))}/${formatNumberBR(total)}`).join(' · '),
+      description: `Fórmula: proporção da faixa = doutores no nível ÷ doutores elegíveis. ${levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(levelCount(level))}/${formatNumberBR(total)}`).join(' · ')}`,
     }
   }
   const bandGroupBadges = isAggregate ? [] : [
@@ -1837,7 +1801,6 @@ function ConversionDoctorBandsContent({
               />
             </div>
           ))}
-          {optimization ? <div className="mt-2 flex justify-center"><MultiplierDistributionMetric optimization={optimization} /></div> : null}
           <div className="my-3 border-t border-slate-800/80" />
           <div
             ref={chartHoverRef}
