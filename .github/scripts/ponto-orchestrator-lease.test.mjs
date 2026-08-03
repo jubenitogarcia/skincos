@@ -515,13 +515,18 @@ test("staging Pages incumbent capture retries and requires exact terminal proven
   const block = source.slice(start, end);
   assert.match(block, /for attempt in \{1\.\.12\}; do/);
   assert.match(block, /deployments\?env=production&page=\$page&per_page=25/);
+  assert.match(block, /PAGES_STAGING_ALIAS: crm-staging\.skincos\.com\.br/);
   assert.match(block, /result_info\?\.total_pages/);
   assert.match(block, /totalPages > 100/);
   assert.match(block, /item\?\.environment === "production" \|\| item\?\.environment == null/);
+  assert.match(block, /inventory_ok=false/);
+  assert.match(block, /--retry-all-errors/);
   assert.match(block, /\.sort\(\(a, b\) => Date\.parse\(String\(b\?\.created_on/);
-  assert.match(block, /latest\?\.project_name === expectedProject/);
+  assert.match(block, /const expectedAlias = process\.env\.PAGES_STAGING_ALIAS/);
+  assert.match(block, /aliases\.has\(expectedAlias\)/);
+  assert.match(block, /deployments\.length === 1/);
   assert.match(block, /metadata\.branch === "staging"/);
-  assert.match(block, /String\(metadata\.commit_hash \|\| ""\)\.toLowerCase\(\)/);
+  assert.match(block, /String\(selected\.deployment_trigger\?\.metadata\?\.commit_hash \|\| ""\)\.toLowerCase\(\)/);
   assert.match(block, /stage\?\.status === "success"/);
   assert.match(block, /Number\.isFinite\(Date\.parse\(String\(stage\?\.ended_on/);
   assert.match(block, /if \[\[ "\$attempt" != 12 \]\]; then sleep 5; fi/);
@@ -536,14 +541,38 @@ test("Pages configs keep remote secrets out of Wrangler Pages configuration", ()
   }
 });
 
-test("staging Pages compensation preserves the incumbent when deployment produced no owned candidate", () => {
+test("staging Pages compensation fails closed when an owned candidate cannot be attested", () => {
   const source = workflow("deploy-crm-pages.yml");
   const start = source.indexOf("- name: Restore Ponto staging Pages incumbent after failure or cancellation");
   const end = source.indexOf("- name: Write Ponto staging Pages mutation journal", start);
   assert.ok(start >= 0 && end > start, "staging Pages compensation block is absent");
   const block = source.slice(start, end);
   assert.match(block, /candidate_id="\$\{PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID:-\}"/);
-  assert.match(block, /No exact owned staging Pages candidate was attested/);
-  assert.match(block, /exit 0/);
-  assert.doesNotMatch(block, /PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID"\]\]/);
+  assert.match(block, /resolved=false/);
+  assert.match(block, /--pending/);
+  assert.match(block, /Unable to attest the exact staging Pages candidate/);
+  assert.match(block, /deployments\/\$candidate_id/);
+  assert.match(block, /String\(deployment\?\.id \|\| ""\)\.toLowerCase\(\)/);
+  assert.match(block, /deployment\?\.production_branch !== "staging"/);
+  assert.match(block, /restored staging Pages deployment identity or alias differs/);
+  assert.doesNotMatch(block, /restored Pages deployment is not latest/);
+  assert.match(block, /exit 1/);
+  assert.doesNotMatch(block, /preserving the incumbent without a rollback mutation/);
+});
+
+test("Ponto staging Pages resolves and compensates candidates from the API inventory", () => {
+  const source = workflow("deploy-crm-pages.yml");
+  const deployStart = source.indexOf("- name: Deploy to Cloudflare Pages (wrangler)");
+  const restoreEnd = source.indexOf("- name: Write Ponto staging Pages mutation journal", deployStart);
+  assert.ok(deployStart >= 0 && restoreEnd > deployStart, "Ponto Pages deployment block is absent");
+  const block = source.slice(deployStart, restoreEnd);
+  assert.match(block, /ponto-pages-candidate\.mjs/);
+  assert.match(source, /Preserve trusted Ponto Pages candidate resolver before release checkout/);
+  assert.match(source, /node "\$RUNNER_TEMP\/ponto-pages-candidate\.mjs"/);
+  assert.match(block, /PAGES_STAGING_DEPLOYMENT_STARTED_AT/);
+  assert.match(block, /env=production&page=\$page&per_page=25/);
+  assert.match(block, /inventory_ok=false/);
+  assert.match(block, /--retry-all-errors/);
+  assert.doesNotMatch(block, /ponto-wrangler-output\.mjs/);
+  assert.match(block, /PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=\$candidate_id/);
 });

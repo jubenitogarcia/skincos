@@ -165,6 +165,30 @@ test("Pages rollback mutates only its exact current candidate", () => {
   );
 });
 
+test("Pages ownership follows the public alias after Cloudflare restores an older incumbent", () => {
+  const currentCandidate = {
+    ...pages(candidate).result[0],
+    created_on: "2026-08-03T00:02:00Z",
+    aliases: [],
+  };
+  const currentIncumbent = {
+    ...pages(incumbent).result[0],
+    created_on: "2026-07-30T00:00:00Z",
+    aliases: ["https://crm-staging.skincos.com.br"],
+  };
+  assert.equal(
+    classifyPagesRollbackOwnership(
+      { success: true, result: [currentCandidate, currentIncumbent] },
+      {
+        candidateDeploymentId: candidate,
+        incumbentDeploymentId: incumbent,
+        alias: "crm-staging.skincos.com.br",
+      },
+    ),
+    "already-incumbent",
+  );
+});
+
 test("Pages ownership accepts only an unskipped completed deploy success", () => {
   const valid = pages(candidate).result[0];
   assert.equal(isTerminalPagesDeployment(valid), true);

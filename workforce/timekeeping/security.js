@@ -31,7 +31,9 @@ export function constantTimeEqual(leftValue, rightValue) {
   return diff === 0
 }
 
-export async function hashPin(pin, iterations = 100000) {
+export const DEFAULT_PIN_ITERATIONS = 150_000
+
+export async function hashPin(pin, iterations = DEFAULT_PIN_ITERATIONS) {
   const value = String(pin || '')
   if (!/^\d{4,12}$/.test(value)) throw new Error('PIN_INVALID')
   const salt = crypto.getRandomValues(new Uint8Array(16))

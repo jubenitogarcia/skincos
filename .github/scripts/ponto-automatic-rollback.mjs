@@ -385,6 +385,7 @@ for (const [name, spec] of Object.entries(surfaceSpecs)) {
       candidateDeploymentId,
       incumbentDeploymentId,
       restoredDeploymentId,
+      alias: expectedPagesAlias,
     };
   } else {
     const candidateVersionId = String(source.candidateVersionId || "");
