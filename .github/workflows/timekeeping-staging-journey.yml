@@ -174,12 +174,28 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CORE_SQL: ${{ runner.temp }}/ponto-staging-core-provision.sql
           TIMEKEEPING_SQL: ${{ runner.temp }}/ponto-staging-timekeeping-provision.sql
+          CORE_RAW: ${{ runner.temp }}/ponto-staging-core-provision-raw.txt
+          TIMEKEEPING_RAW: ${{ runner.temp }}/ponto-staging-timekeeping-provision-raw.txt
+          CORE_RESULT: ${{ runner.temp }}/ponto-staging-core-provision-result.json
+          TIMEKEEPING_RESULT: ${{ runner.temp }}/ponto-staging-timekeeping-provision-result.json
         run: |
           set -euo pipefail
           [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'staging Cloudflare credentials are required'; exit 1; }
           [[ "$STAGING_CORE_D1_DATABASE" == 'skincos-db-staging' && "$STAGING_TIMEKEEPING_D1_DATABASE" == 'skincos-timekeeping-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
-          npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$CORE_SQL" >/dev/null
-          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$TIMEKEEPING_SQL" >/dev/null
+          trap 'rm -f "$CORE_RAW" "$TIMEKEEPING_RAW" "$CORE_RESULT" "$TIMEKEEPING_RESULT"' EXIT
+          npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$CORE_SQL" --json > "$CORE_RAW" 2>&1
+          node .github/scripts/ponto-json-output.mjs "$CORE_RAW" "$CORE_RESULT"
+          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$TIMEKEEPING_SQL" --json > "$TIMEKEEPING_RAW" 2>&1
+          node .github/scripts/ponto-json-output.mjs "$TIMEKEEPING_RAW" "$TIMEKEEPING_RESULT"
+          node - "$CORE_RESULT" "$TIMEKEEPING_RESULT" <<'NODE'
+          const fs = require("fs");
+          for (const file of process.argv.slice(2)) {
+            const entries = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (!Array.isArray(entries) || entries.length === 0 || entries.some((entry) => entry?.success === false)) {
+              throw new Error("synthetic staging D1 provision returned a failed statement");
+            }
+          }
+          NODE
 
       - name: Attest the exact synthetic PIN credential in staging D1
         env:
@@ -202,10 +218,12 @@ jobs:
           const employeeId = String(fixture.employeeId).replaceAll("'", "''");
           fs.writeFileSync(process.argv[3], `SELECT algorithm, salt_b64, hash_b64, iterations FROM timekeeping_pin_credentials WHERE employee_id='${employeeId}';\n`, { mode: 0o600 });
           NODE
-          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$PIN_SQL" --json > "$PIN_RAW" 2>&1
-          node .github/scripts/ponto-json-output.mjs "$PIN_RAW" "$PIN_RESULT"
-          rm -f "$PIN_RAW"
-          node - "$FIXTURES" "$PIN_RESULT" "$PIN_REPORT" <<'NODE'
+          pin_attested=false
+          for attempt in $(seq 1 12); do
+            rm -f "$PIN_RAW" "$PIN_RESULT"
+            if npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$PIN_SQL" --json > "$PIN_RAW" 2>&1 \
+              && node .github/scripts/ponto-json-output.mjs "$PIN_RAW" "$PIN_RESULT"; then
+              if node - "$FIXTURES" "$PIN_RESULT" "$PIN_REPORT" 2>/dev/null <<'NODE'
           const fs = require('fs');
           const rows = (file) => {
             const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -244,6 +262,17 @@ jobs:
             fs.writeFileSync(process.argv[4], `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
           })().catch((error) => { console.error(error); process.exitCode = 1; });
           NODE
+              then
+                pin_attested=true
+                break
+              fi
+            fi
+            if [[ "$attempt" -lt 12 ]]; then
+              sleep 5
+            fi
+          done
+          rm -f "$PIN_SQL" "$PIN_RAW" "$PIN_RESULT"
+          [[ "$pin_attested" == true ]] || { echo 'staging D1 PIN credential row was not observable after bounded propagation'; exit 1; }
       - name: Prove exact Identity candidate through the protected Pages binding
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -348,6 +377,9 @@ jobs:
           TIMEKEEPING_RAW: ${{ runner.temp }}/ponto-staging-timekeeping-teardown-raw.txt
           CORE_RESULT: ${{ runner.temp }}/ponto-staging-core-teardown-result.json
           TIMEKEEPING_RESULT: ${{ runner.temp }}/ponto-staging-timekeeping-teardown-result.json
+          PIN_SQL: ${{ runner.temp }}/ponto-staging-pin-attestation.sql
+          PIN_RAW: ${{ runner.temp }}/ponto-staging-pin-attestation-raw.txt
+          PIN_RESULT: ${{ runner.temp }}/ponto-staging-pin-attestation-result.json
           TEARDOWN_REPORT: ${{ runner.temp }}/ponto-staging-teardown-report.json
         run: |
           set -euo pipefail
@@ -393,7 +425,7 @@ jobs:
             piiIncluded: false,
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
-          rm -f "$FIXTURES" "$CORE_SQL" "$TIMEKEEPING_SQL" "$CORE_RAW" "$TIMEKEEPING_RAW" "$CORE_RESULT" "$TIMEKEEPING_RESULT"
+          rm -f "$FIXTURES" "$CORE_SQL" "$TIMEKEEPING_SQL" "$CORE_RAW" "$TIMEKEEPING_RAW" "$CORE_RESULT" "$TIMEKEEPING_RESULT" "$PIN_SQL" "$PIN_RAW" "$PIN_RESULT"
 
       - name: Upload sanitised journey evidence
         if: ${{ always() }}
