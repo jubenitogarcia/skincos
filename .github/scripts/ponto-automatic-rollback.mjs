@@ -813,6 +813,43 @@ const persistPagesCreatedId = async (deploymentId, source) => {
     piiIncluded: false,
   }, null, 2)}\n`, { mode: 0o600 });
 };
+const persistPagesExistingIncumbentId = async (deploymentId, source) => {
+  if (!pagesIntent) throw new Error("Pages rollback existing incumbent has no durable one-shot intent");
+  if (String(deploymentId || "").toLowerCase() !== String(plan.crmPages.incumbentDeploymentId || "").toLowerCase()) {
+    throw new Error("Pages rollback existing incumbent identity differs from the attested incumbent");
+  }
+  pagesIntent = await completePagesRollbackIntent({
+    request: github,
+    secret: pagesRollbackIntentHmacKey,
+    intent: pagesIntent,
+    restoredDeploymentId: deploymentId,
+    allowExistingIncumbent: true,
+  });
+  pagesCreatedDeploymentId = deploymentId;
+  pagesMutationObserved = true;
+  plan.crmPages.restoredDeploymentId = deploymentId;
+  const journalFile = path.join(
+    artifactRoot,
+    "automatic-rollback/ponto-pages-rollback-restored.json",
+  );
+  fs.mkdirSync(path.dirname(journalFile), { recursive: true });
+  fs.writeFileSync(journalFile, `${JSON.stringify({
+    schemaVersion: 1,
+    sourceSha: releaseSha,
+    failedStage: stage,
+    orchestratorRunId,
+    candidateDeploymentId: plan.crmPages.candidateDeploymentId,
+    incumbentDeploymentId: plan.crmPages.incumbentDeploymentId,
+    restoredDeploymentId: deploymentId,
+    restoredExistingIncumbent: true,
+    source,
+    mutationAttempted: true,
+    mutationOutcome: "existing-incumbent-reconciled",
+    recordedAt: new Date().toISOString(),
+    credentialsIncluded: false,
+    piiIncluded: false,
+  }, null, 2)}\n`, { mode: 0o600 });
+};
 
 if (plan.crmPages) {
   if (!rollbackPermitted) {
@@ -845,15 +882,9 @@ if (plan.crmPages) {
         reason: "current-pages-ownership-conflict",
       };
     } else if (["already-incumbent", "already-restored"].includes(ownership)) {
-      if (
-        ownership === "already-incumbent"
+      const existingIncumbentReconciled = ownership === "already-incumbent"
         && pagesIntent
-        && pagesIntent.claims.state !== "restored"
-      ) {
-        throw new Error(
-          "Pages rollback intent exists but no distinct rollback clone can be proven",
-        );
-      }
+        && pagesIntent.claims.state !== "restored";
       const activeId = ownership === "already-restored"
         ? plan.crmPages.restoredDeploymentId
         : requested;
@@ -877,16 +908,19 @@ if (plan.crmPages) {
           secret: pagesRollbackIntentHmacKey,
           intent: pagesIntent,
           restoredDeploymentId: activeId,
+          allowExistingIncumbent: ownership === "already-incumbent",
         });
       }
       proofs.crmPages = {
         passed: true,
-        mutationPerformed: false,
+        mutationPerformed: Boolean(existingIncumbentReconciled),
         requestedDeploymentId: requested,
         activeDeploymentId: activeId,
         project: pagesProject,
         sourceCommitSha: attestation.sourceCommitSha,
-        disposition: ownership,
+        disposition: existingIncumbentReconciled
+          ? "already-incumbent-after-intent"
+          : ownership,
         publicAliasesAttested: true,
       };
     } else {
@@ -907,6 +941,7 @@ if (plan.crmPages) {
           : "",
         persistAttempt: persistPagesAttempt,
         persistCreatedId: persistPagesCreatedId,
+        persistExistingIncumbentId: persistPagesExistingIncumbentId,
       });
       if (!pagesIntent) throw new Error("Pages rollback completed without durable intent");
       pagesIntent = await completePagesRollbackIntent({
@@ -914,6 +949,7 @@ if (plan.crmPages) {
         secret: pagesRollbackIntentHmacKey,
         intent: pagesIntent,
         restoredDeploymentId: rolledBack.activeDeploymentId,
+        allowExistingIncumbent: rolledBack.restoredExistingIncumbent === true,
       });
       proofs.crmPages = {
         passed: true,

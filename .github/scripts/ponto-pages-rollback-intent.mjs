@@ -64,6 +64,10 @@ function verifyDocument(document, expectedBase, secret) {
     || !/^[1-9][0-9]*$/.test(String(claims?.recoveryRunId || ""))
     || (claims.state === "attempted" && claims.restoredDeploymentId !== "")
     || (
+      claims.restoredExistingIncumbent !== undefined
+      && typeof claims.restoredExistingIncumbent !== "boolean"
+    )
+    || (
       ["created", "restored"].includes(claims.state)
       && !UUID.test(String(claims.restoredDeploymentId || ""))
     )
@@ -73,6 +77,18 @@ function verifyDocument(document, expectedBase, secret) {
         expectedBase.candidateDeploymentId,
         expectedBase.incumbentDeploymentId,
       ].includes(String(claims.restoredDeploymentId || "").toLowerCase())
+      && !(
+        claims.state === "restored"
+        && claims.restoredExistingIncumbent === true
+        && String(claims.restoredDeploymentId || "").toLowerCase() === expectedBase.incumbentDeploymentId
+      )
+    )
+    || (
+      claims.restoredExistingIncumbent === true
+      && (
+        claims.state !== "restored"
+        || String(claims.restoredDeploymentId || "").toLowerCase() !== expectedBase.incumbentDeploymentId
+      )
     )
     || (claims.state === "restored" && !Number.isFinite(Date.parse(String(claims.restoredAt || ""))))
     || !/^[0-9a-f]{64}$/.test(String(document?.signatureHmacSha256 || ""))
@@ -145,6 +161,7 @@ export async function createPagesRollbackIntent({
     attemptedAt: attemptedAt.toISOString(),
     recoveryRunId: String(recoveryRunId),
     restoredDeploymentId: "",
+    restoredExistingIncumbent: false,
     restoredAt: "",
   };
   const document = { claims, signatureHmacSha256: signature(claims, secret) };
@@ -197,6 +214,7 @@ async function transitionIntent({
   intent,
   state,
   restoredDeploymentId,
+  allowExistingIncumbent = false,
   now = new Date(),
 }) {
   if (!intent?.base || !Number.isInteger(intent?.checkId)) {
@@ -208,10 +226,10 @@ async function transitionIntent({
   const verified = verifyCheck(current, intent.base, secret);
   const restoredId = String(restoredDeploymentId || "").toLowerCase();
   if (!UUID.test(restoredId)) throw new Error("Pages rollback restored deployment ID is invalid");
-  if ([
-    intent.base.candidateDeploymentId,
-    intent.base.incumbentDeploymentId,
-  ].includes(restoredId)) {
+  if (restoredId === intent.base.candidateDeploymentId) {
+    throw new Error("Pages rollback restored deployment must be a distinct rollback clone");
+  }
+  if (restoredId === intent.base.incumbentDeploymentId && (!allowExistingIncumbent || state !== "restored")) {
     throw new Error("Pages rollback restored deployment must be a distinct rollback clone");
   }
   if (
@@ -225,6 +243,7 @@ async function transitionIntent({
     ...verified.claims,
     state,
     restoredDeploymentId: restoredId,
+    restoredExistingIncumbent: restoredId === intent.base.incumbentDeploymentId,
     restoredAt: state === "restored" ? transitionedAt.toISOString() : "",
   };
   const document = { claims, signatureHmacSha256: signature(claims, secret) };

@@ -34,7 +34,26 @@ if (fixture.fixtureId && !/^[a-z][a-z0-9-]{0,31}$/.test(String(fixture.fixtureId
 const fixtureKey = fixture.fixtureId ? `${fixture.runId}-${fixture.fixtureId}` : String(fixture.runId)
 
 const assert = (condition, message) => { if (!condition) throw new Error(message) }
-const safeRequestMeta = (response) => ({ status: response.status, requestIdPresent: Boolean(response.requestId), cfRayPresent: Boolean(response.cfRay) })
+const safeReleaseMeta = (response) => ({
+  pagesReleaseSha: String(response?.pagesReleaseSha || ''),
+  pagesEnvironment: String(response?.pagesEnvironment || ''),
+  gatewayReleaseSha: String(response?.gatewayReleaseSha || ''),
+  gatewayEnvironment: String(response?.gatewayEnvironment || ''),
+  gatewayVersionId: String(response?.gatewayVersionId || ''),
+  timekeepingReleaseSha: String(response?.timekeepingReleaseSha || ''),
+  timekeepingEnvironment: String(response?.timekeepingEnvironment || ''),
+  timekeepingVersionId: String(response?.timekeepingVersionId || ''),
+})
+const safeRequestMeta = (response) => ({
+  status: response.status,
+  requestIdPresent: Boolean(response.requestId),
+  cfRayPresent: Boolean(response.cfRay),
+  release: safeReleaseMeta(response),
+})
+const responseFailure = (response) => {
+  const meta = safeRequestMeta(response)
+  return `${response.status}/${response.json?.error || ''}; release=${JSON.stringify(meta.release)}`
+}
 const recordCleanupRequest = (response) => {
   const requestId = String(response?.requestId || '')
   assert(/^[A-Za-z0-9._:-]{1,180}$/.test(requestId), 'mutation response omitted a safe cleanup request id')
@@ -64,6 +83,14 @@ const api = async (page, pathname, init = {}) => {
       json,
       requestId: String(response.headers.get('x-request-id') || ''),
       cfRay: String(response.headers.get('cf-ray') || ''),
+      pagesReleaseSha: String(response.headers.get('x-skincos-pages-release-sha') || ''),
+      pagesEnvironment: String(response.headers.get('x-skincos-pages-environment') || ''),
+      gatewayReleaseSha: String(response.headers.get('x-skincos-gateway-release-sha') || ''),
+      gatewayEnvironment: String(response.headers.get('x-skincos-gateway-environment') || ''),
+      gatewayVersionId: String(response.headers.get('x-skincos-gateway-version-id') || ''),
+      timekeepingReleaseSha: String(response.headers.get('x-skincos-timekeeping-release-sha') || ''),
+      timekeepingEnvironment: String(response.headers.get('x-skincos-timekeeping-environment') || ''),
+      timekeepingVersionId: String(response.headers.get('x-skincos-timekeeping-version-id') || ''),
     }
   }, { safePathname, init })
 }
@@ -140,13 +167,13 @@ async function main() {
 
     const invalidPin = await post(page, '/api/ponto/me/punch', { pin: '000000', unit: fixture.unitId }, `invalid-${fixtureKey}`)
     recordCleanupRequest(invalidPin)
-    assert(invalidPin.status === 401 && invalidPin.json?.error === 'PIN_INVALID', `invalid PIN did not fail closed (${invalidPin.status}/${invalidPin.json?.error || ''})`)
+    assert(invalidPin.status === 401 && invalidPin.json?.error === 'PIN_INVALID', `invalid PIN did not fail closed (${responseFailure(invalidPin)})`)
     const idempotencyKey = `synthetic-punch-${fixtureKey}`
     const occurredAt = new Date().toISOString()
     const punchBody = { pin: fixture.pin, unit: fixture.unitId, occurredAt, requestId: idempotencyKey }
     const punch = await post(page, '/api/ponto/me/punch', punchBody, idempotencyKey)
     recordCleanupRequest(punch)
-    assert(punch.status === 201 && punch.json?.ok === true && punch.json?.data?.id, `PIN punch failed (${punch.status}/${punch.json?.error || ''})`)
+    assert(punch.status === 201 && punch.json?.ok === true && punch.json?.data?.id, `PIN punch failed (${responseFailure(punch)})`)
     recordCleanupEvent(punch.json.data.id)
     const retry = await post(page, '/api/ponto/me/punch', punchBody, idempotencyKey)
     recordCleanupRequest(retry)

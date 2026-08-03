@@ -616,11 +616,19 @@ jobs:
           [[ "$selected" == true ]] || { echo 'Unable to resolve an exact terminal staging Pages candidate'; exit 1; }
           echo "PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
           [[ "$deployment_url" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'Structured Pages output returned an unexpected staging URL'; exit 1; }
-          curl --fail --silent --show-error \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$deployment_id" \
-            > "$RUNNER_TEMP/pages-staging-deployment.json"
-          node - "$RUNNER_TEMP/pages-staging-deployment.json" "$deployment_id" "$deployment_url" <<'NODE'
+          candidate_attested=false
+          for attempt in {1..12}; do
+            http_status="000"
+            curl_status=0
+            http_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
+              --output "$RUNNER_TEMP/pages-staging-deployment.json" \
+              --write-out '%{http_code}' \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$deployment_id" \
+            )" || curl_status=$?
+            if [[ "$http_status" == "200" && "$curl_status" == "0" ]]; then
+              candidate_status=0
+              node - "$RUNNER_TEMP/pages-staging-deployment.json" "$deployment_id" "$deployment_url" <<'NODE' || candidate_status=$?
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const deployment = payload?.result;
@@ -638,10 +646,18 @@ jobs:
             || deployment?.url !== process.argv[4]
             || metadata.branch !== "staging"
             || String(metadata.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA
-            || !terminal
-            || !(deployment?.aliases || []).includes("https://crm-staging.skincos.com.br")
-          ) throw new Error("staging Pages deployment metadata or production alias differs from the exact candidate");
+          ) throw new Error("staging Pages deployment metadata differs from the exact candidate");
+          if (!terminal || !(deployment?.aliases || []).includes("https://crm-staging.skincos.com.br")) process.exit(2);
           NODE
+              if [[ "$candidate_status" == "0" ]]; then candidate_attested=true; break; fi
+              [[ "$candidate_status" == "2" ]] || exit "$candidate_status"
+            elif [[ "$http_status" != "404" ]]; then
+              echo "staging Pages candidate readback returned HTTP $http_status"
+              exit 1
+            fi
+            if [[ "$attempt" != 12 ]]; then sleep 5; fi
+          done
+          [[ "$candidate_attested" == true ]] || { echo 'Unable to attest the exact terminal staging Pages candidate and production alias'; exit 1; }
           curl --fail --silent --show-error --retry 5 --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-proxy.headers" \
             "${deployment_url%/}/api/ponto/_proxy-status" > "$RUNNER_TEMP/pages-staging-proxy.json"
           node - "$RUNNER_TEMP/pages-staging-proxy.json" "$RUNNER_TEMP/pages-staging-proxy.headers" <<'NODE'

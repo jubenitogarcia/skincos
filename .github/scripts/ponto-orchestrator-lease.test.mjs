@@ -573,6 +573,9 @@ test("Ponto staging Pages resolves and compensates candidates from the API inven
   assert.match(block, /env=production&page=\$page&per_page=25/);
   assert.match(block, /inventory_ok=false/);
   assert.match(block, /--retry-all-errors/);
+  assert.match(block, /candidate_attested=false/);
+  assert.match(block, /--write-out '%\{http_code\}'/);
+  assert.match(block, /Unable to attest the exact terminal staging Pages candidate and production alias/);
   assert.doesNotMatch(block, /ponto-wrangler-output\.mjs/);
   assert.match(block, /PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=\$candidate_id/);
 });
