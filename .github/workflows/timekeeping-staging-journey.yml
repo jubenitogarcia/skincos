@@ -133,6 +133,20 @@ jobs:
         run: npx --yes playwright install --with-deps chromium
         working-directory: crm/console
 
+      - name: Render the exact staging Timekeeping D1 config
+        env:
+          STAGING_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$STAGING_TIMEKEEPING_D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'staging Timekeeping D1 ID is missing or malformed'; exit 1; }
+          config="$RUNNER_TEMP/ponto-timekeeping-staging-wrangler.toml"
+          cp workforce/timekeeping/wrangler.toml "$config"
+          sed -i \
+            "s/__CONFIGURE_TIMEKEEPING_D1_ID__/00000000-0000-4000-8000-000000000001/;s/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/00000000000000000000000000000001/;s/__CONFIGURE_TIMEKEEPING_STAGING_D1_ID__/$STAGING_TIMEKEEPING_D1_ID/" \
+            "$config"
+          ! grep -q '__CONFIGURE_.*_ID__' "$config" || { echo 'unresolved Timekeeping staging binding placeholder'; exit 1; }
+          printf 'TIMEKEEPING_STAGING_WRANGLER_CONFIG=%s\n' "$config" >> "$GITHUB_ENV"
+
       - name: Generate runner-private synthetic fixture
         env:
           FIXTURES: ${{ runner.temp }}/ponto-staging-fixtures.json
@@ -165,7 +179,7 @@ jobs:
           [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo 'staging Cloudflare credentials are required'; exit 1; }
           [[ "$STAGING_CORE_D1_DATABASE" == 'skincos-db-staging' && "$STAGING_TIMEKEEPING_D1_DATABASE" == 'skincos-timekeeping-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
           npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$CORE_SQL" >/dev/null
-          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config workforce/timekeeping/wrangler.toml --env staging --remote --file "$TIMEKEEPING_SQL" >/dev/null
+          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$TIMEKEEPING_SQL" >/dev/null
       - name: Prove exact Identity candidate through the protected Pages binding
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -274,7 +288,7 @@ jobs:
           [[ -f "$FIXTURES" ]] || exit 0
           [[ "$STAGING_CORE_D1_DATABASE" == 'skincos-db-staging' && "$STAGING_TIMEKEEPING_D1_DATABASE" == 'skincos-timekeeping-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
           node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$FIXTURES" --core-sql "$CORE_SQL" --timekeeping-sql "$TIMEKEEPING_SQL"
-          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config workforce/timekeeping/wrangler.toml --env staging --remote --file "$TIMEKEEPING_SQL" --json > "$TIMEKEEPING_RESULT"
+          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$TIMEKEEPING_SQL" --json > "$TIMEKEEPING_RESULT"
           npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$CORE_SQL" --json > "$CORE_RESULT"
           node - "$CORE_RESULT" "$TIMEKEEPING_RESULT" "$TEARDOWN_REPORT" <<'NODE'
           const fs = require("fs");
