@@ -599,8 +599,8 @@ jobs:
               fi
               (( page += 1 ))
             done
-            if [[ "$inventory_ok" != true ]]; then
-              if [[ "$attempt" != 12 ]]; then sleep 5; fi
+              if [[ "$inventory_ok" != true ]]; then
+                if [[ "$attempt" != 36 ]]; then sleep 5; fi
               continue
             fi
             status=0
@@ -611,7 +611,7 @@ jobs:
               break
             fi
             [[ "$status" == 2 ]] || exit "$status"
-            if [[ "$attempt" != 12 ]]; then sleep 5; fi
+            if [[ "$attempt" != 36 ]]; then sleep 5; fi
           done
           [[ "$selected" == true ]] || { echo 'Unable to resolve an exact terminal staging Pages candidate'; exit 1; }
           echo "PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
@@ -655,7 +655,7 @@ jobs:
               echo "staging Pages candidate readback returned HTTP $http_status"
               exit 1
             fi
-            if [[ "$attempt" != 12 ]]; then sleep 5; fi
+            if [[ "$attempt" != 36 ]]; then sleep 5; fi
           done
           [[ "$candidate_attested" == true ]] || { echo 'Unable to attest the exact terminal staging Pages candidate and production alias'; exit 1; }
           # A newly-created Pages deployment can serve a bounded transient 404
@@ -691,7 +691,7 @@ jobs:
             || !headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)
             || !headers.includes("x-skincos-pages-environment: staging")
           ) process.exit(2);
-NODE
+          NODE
               if [[ "$alias_status" == "0" ]]; then alias_attested=true; break; fi
               [[ "$alias_status" == "2" ]] || exit "$alias_status"
             elif [[ "$http_status" != "404" && "$http_status" != "000" ]]; then
@@ -770,7 +770,7 @@ NODE
                 (( page += 1 ))
               done
               if [[ "$inventory_ok" != true ]]; then
-                if [[ "$attempt" != 12 ]]; then sleep 5; fi
+                if [[ "$attempt" != 36 ]]; then sleep 5; fi
                 continue
               fi
               if [[ -z "$candidate_id" ]]; then
@@ -793,7 +793,7 @@ NODE
                 fi
                 [[ "$status" == 2 ]] || exit "$status"
               fi
-              if [[ "$attempt" != 12 ]]; then sleep 5; fi
+              if [[ "$attempt" != 36 ]]; then sleep 5; fi
             done
           fi
           if [[ "$resolved" != true ]]; then
