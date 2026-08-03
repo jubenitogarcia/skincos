@@ -385,6 +385,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ steps.guard.outputs.project }}
+          PAGES_STAGING_ALIAS: crm-staging.skincos.com.br
         run: |
           set -euo pipefail
           selected=false
@@ -394,13 +395,17 @@ jobs:
             rm -f "$pages_dir"/page-*.json
             total_pages=1
             page=1
+            inventory_ok=true
             while (( page <= total_pages )); do
               incumbent_page="$pages_dir/page-$page.json"
-              curl --fail --silent --show-error --retry 3 --retry-delay 2 \
+              if ! curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
                 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
                 "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&page=$page&per_page=25" \
-                > "$incumbent_page"
-              total_pages="$(node - "$incumbent_page" <<'NODE'
+                > "$incumbent_page"; then
+                inventory_ok=false
+                break
+              fi
+              if ! total_pages="$(node - "$incumbent_page" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const totalPages = Number(payload?.result_info?.total_pages || 1);
@@ -413,14 +418,25 @@ jobs:
           ) throw new Error("Cloudflare Pages deployment inventory is not paginable");
           process.stdout.write(String(totalPages));
           NODE
-              )"
+              )"; then
+                inventory_ok=false
+                break
+              fi
               (( page += 1 ))
             done
+            if [[ "$inventory_ok" != true ]]; then
+              if [[ "$attempt" != 12 ]]; then sleep 5; fi
+              continue
+            fi
             selection="$(node - "$pages_dir" <<'NODE'
           const fs = require("fs");
           const path = require("path");
           const pagesDir = process.argv[2];
           const expectedProject = process.env.PROJECT;
+          const expectedAlias = process.env.PAGES_STAGING_ALIAS;
+          const aliasHost = (value) => {
+            try { return new URL(value).hostname; } catch { return String(value).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
+          };
           const files = fs.readdirSync(pagesDir)
             .filter(file => /^page-[0-9]+\.json$/.test(file))
             .sort((a, b) => Number(a.match(/[0-9]+/)[0]) - Number(b.match(/[0-9]+/)[0]));
@@ -430,24 +446,25 @@ jobs:
           }
           const deployments = payloads
             .flatMap(item => item.result)
-            .filter(item => item?.environment === "production" || item?.environment == null)
+            .filter(item => {
+              const metadata = item?.deployment_trigger?.metadata || {};
+              const stage = item?.latest_stage;
+              const aliases = new Set((item?.aliases || []).map(aliasHost));
+              const terminal = stage?.name === "deploy"
+                && stage?.status === "success"
+                && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+                && item?.is_skipped === false;
+              return item?.project_name === expectedProject
+                && (item?.environment === "production" || item?.environment == null)
+                && metadata.branch === "staging"
+                && /^[0-9a-f]{40}$/i.test(String(metadata.commit_hash || ""))
+                && terminal
+                && aliases.has(expectedAlias);
+            })
             .sort((a, b) => Date.parse(String(b?.created_on || "")) - Date.parse(String(a?.created_on || "")));
-          const latest = deployments[0];
-          const metadata = latest?.deployment_trigger?.metadata || {};
-          const commitSha = String(metadata.commit_hash || "").toLowerCase();
-          const stage = latest?.latest_stage;
-          const terminal = stage?.name === "deploy"
-            && stage?.status === "success"
-            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
-            && latest?.is_skipped === false;
-          const selected = latest
-            && latest?.project_name === expectedProject
-            && metadata.branch === "staging"
-            && /^[0-9a-f]{40}$/.test(commitSha)
-            && terminal
-            ? latest
-            : undefined;
-          process.stdout.write(`${selected?.id || ""}\t${selected ? commitSha : ""}`);
+          const selected = deployments.length === 1 ? deployments[0] : undefined;
+          const commitSha = selected ? String(selected.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() : "";
+          process.stdout.write(`${selected?.id || ""}\t${commitSha}`);
           NODE
             )" || selection=""
             id=""
@@ -553,13 +570,17 @@ jobs:
             rm -f "$candidate_dir"/page-*.json
             total_pages=1
             page=1
+            inventory_ok=true
             while (( page <= total_pages )); do
               candidate_page="$candidate_dir/page-$page.json"
-              curl --fail --silent --show-error --retry 3 --retry-delay 2 \
+              if ! curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
                 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
                 "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&page=$page&per_page=25" \
-                > "$candidate_page"
-              total_pages="$(node - "$candidate_page" <<'NODE'
+                > "$candidate_page"; then
+                inventory_ok=false
+                break
+              fi
+              if ! total_pages="$(node - "$candidate_page" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const totalPages = Number(payload?.result_info?.total_pages || 1);
@@ -572,9 +593,16 @@ jobs:
           ) throw new Error("Cloudflare Pages deployment inventory is not paginable");
           process.stdout.write(String(totalPages));
           NODE
-              )"
+              )"; then
+                inventory_ok=false
+                break
+              fi
               (( page += 1 ))
             done
+            if [[ "$inventory_ok" != true ]]; then
+              if [[ "$attempt" != 12 ]]; then sleep 5; fi
+              continue
+            fi
             status=0
             selection="$(PROJECT="$PROJECT" RELEASE_SHA="$RELEASE_SHA" PAGES_STAGING_DEPLOYMENT_STARTED_AT="${PAGES_STAGING_DEPLOYMENT_STARTED_AT:-}" node "$RUNNER_TEMP/ponto-pages-candidate.mjs" "$candidate_dir")" || status=$?
             if [[ "$status" == 0 ]]; then
@@ -676,13 +704,17 @@ jobs:
               rm -f "$candidate_dir"/page-*.json
               total_pages=1
               page=1
+              inventory_ok=true
               while (( page <= total_pages )); do
                 candidate_page="$candidate_dir/page-$page.json"
-                curl --fail --silent --show-error --retry 3 --retry-delay 2 \
+                if ! curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
                   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
                   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&page=$page&per_page=25" \
-                  > "$candidate_page"
-                total_pages="$(node - "$candidate_page" <<'NODE'
+                  > "$candidate_page"; then
+                  inventory_ok=false
+                  break
+                fi
+                if ! total_pages="$(node - "$candidate_page" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const totalPages = Number(payload?.result_info?.total_pages || 1);
@@ -695,9 +727,16 @@ jobs:
           ) throw new Error("Cloudflare Pages deployment inventory is not paginable");
           process.stdout.write(String(totalPages));
           NODE
-                )"
+                )"; then
+                  inventory_ok=false
+                  break
+                fi
                 (( page += 1 ))
               done
+              if [[ "$inventory_ok" != true ]]; then
+                if [[ "$attempt" != 12 ]]; then sleep 5; fi
+                continue
+              fi
               if [[ -z "$candidate_id" ]]; then
                 status=0
                 pending="$(PROJECT="$PROJECT" RELEASE_SHA="$RELEASE_SHA" PAGES_STAGING_DEPLOYMENT_STARTED_AT="${PAGES_STAGING_DEPLOYMENT_STARTED_AT:-}" node "$RUNNER_TEMP/ponto-pages-candidate.mjs" "$candidate_dir" --pending)" || status=$?
@@ -729,29 +768,33 @@ jobs:
             echo 'Staging Pages compensation has no exact owned candidate; refusing to overwrite current state'
             exit 1
           }
-          curl --fail --silent --show-error \
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$candidate_id" \
             > "$RUNNER_TEMP/pages-staging-current.json"
           node - "$RUNNER_TEMP/pages-staging-current.json" "$candidate_id" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const latest = (payload?.result || [])
-            .filter(item => item?.environment === "production")
-            .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0];
-          const stage = latest?.latest_stage;
+          const deployment = payload?.result;
+          const stage = deployment?.latest_stage;
           const terminal = stage?.name === "deploy"
             && stage?.status === "success"
             && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
-            && latest?.is_skipped === false;
+            && deployment?.is_skipped === false;
+          const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
+            try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
+          }));
           if (
             payload?.success !== true
-            || latest?.id !== process.argv[3]
-            || latest?.project_name !== "skincos-staging"
-            || latest?.deployment_trigger?.metadata?.branch !== "staging"
-            || String(latest?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA
+            || String(deployment?.id || "").toLowerCase() !== String(process.argv[3]).toLowerCase()
+            || deployment?.project_name !== "skincos-staging"
+            || deployment?.environment !== "production"
+            || deployment?.production_branch !== "staging"
+            || deployment?.deployment_trigger?.metadata?.branch !== "staging"
+            || String(deployment?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() !== process.env.RELEASE_SHA
             || !terminal
-          ) throw new Error("staging Pages compensation lost exact ownership of the active candidate");
+            || !aliasHosts.has("crm-staging.skincos.com.br")
+          ) throw new Error("staging Pages compensation lost exact ownership of the exact active candidate");
           NODE
           curl --fail --silent --show-error --request POST \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
@@ -768,12 +811,12 @@ jobs:
           )"
           restored=false
           for attempt in {1..36}; do
-            curl --fail --silent --show-error \
+            status_code=2
+            if curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments/$restored_id" \
-              > "$RUNNER_TEMP/pages-staging-restored.json"
-            status_code=0
-            node - "$RUNNER_TEMP/pages-staging-restored.json" "$restored_id" <<'NODE' || status_code=$?
+              > "$RUNNER_TEMP/pages-staging-restored.json"; then
+              node - "$RUNNER_TEMP/pages-staging-restored.json" "$restored_id" <<'NODE' || status_code=$?
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const deployment = payload?.result;
@@ -799,22 +842,35 @@ jobs:
           if (["active", "queued", "waiting", "pending", "building", "initializing"].includes(status)) process.exit(2);
           process.exit(3);
           NODE
+            fi
             if [[ "$status_code" == 0 ]]; then restored=true; break; fi
             [[ "$status_code" == 2 ]] || { echo 'staging Pages compensation entered a failed or invalid state'; exit 1; }
             sleep 5
           done
           [[ "$restored" == true ]] || { echo 'staging Pages compensation did not reach terminal success'; exit 1; }
-          curl --fail --silent --show-error \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&per_page=25" \
-            > "$RUNNER_TEMP/pages-staging-restored-list.json"
-          node - "$RUNNER_TEMP/pages-staging-restored-list.json" "$restored_id" <<'NODE'
+          node - "$RUNNER_TEMP/pages-staging-restored.json" "$restored_id" <<'NODE'
           const fs = require("fs");
           const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-          const latest = (payload?.result || [])
-            .filter((item) => item?.environment === "production")
-            .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)))[0];
-          if (payload?.success !== true || latest?.id !== process.argv[3]) throw new Error("restored staging Pages deployment is not latest");
+          const deployment = payload?.result;
+          const stage = deployment?.latest_stage;
+          const terminal = stage?.name === "deploy"
+            && stage?.status === "success"
+            && Number.isFinite(Date.parse(String(stage?.ended_on || "")))
+            && deployment?.is_skipped === false;
+          const aliasHosts = new Set((deployment?.aliases || []).map((alias) => {
+            try { return new URL(alias).hostname; } catch { return String(alias).replace(/^https?:\/\//, "").replace(/\/.*$/, ""); }
+          }));
+          if (
+            payload?.success !== true
+            || String(deployment?.id || "").toLowerCase() !== String(process.argv[3]).toLowerCase()
+            || deployment?.project_name !== "skincos-staging"
+            || deployment?.environment !== "production"
+            || deployment?.production_branch !== "staging"
+            || deployment?.deployment_trigger?.metadata?.branch !== "staging"
+            || String(deployment?.deployment_trigger?.metadata?.commit_hash || "").toLowerCase() !== process.env.PAGES_STAGING_ROLLBACK_COMMIT_SHA
+            || !terminal
+            || !aliasHosts.has("crm-staging.skincos.com.br")
+          ) throw new Error("restored staging Pages deployment identity or alias differs from the exact incumbent");
           NODE
           echo "PAGES_STAGING_RESTORED_DEPLOYMENT_ID=$restored_id" >> "$GITHUB_ENV"
           touch "$RUNNER_TEMP/pages-staging-rollback-completed"
