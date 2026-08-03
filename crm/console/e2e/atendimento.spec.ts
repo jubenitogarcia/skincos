@@ -373,6 +373,8 @@ test.describe('atendimento', () => {
     await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('3 pts')
     await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('Total principal do período e dispersão calculada pelo CRM')
     await expect(page.getByTestId('atendimento-conversion-distribution')).not.toContainText('Desempenho por doutor')
+    await expect(page.getByTestId('atendimento-conversion-distribution').locator(':scope > .rounded-xl')).toHaveCount(0)
+    await expect(page.getByTestId('atendimento-conversion-distribution').locator(':scope > .relative')).toHaveCSS('height', '432px')
     const metricLabels = ['Limite Superior diário', 'Limite Inferior diário', 'Linha Corte diária', 'Intervalo diário', 'Meta diária', 'Média diária', 'Mediana diária']
     const metricBounds = await Promise.all(metricLabels.map(async (label) => {
       const metric = page.getByText(label, { exact: true })
@@ -390,6 +392,13 @@ test.describe('atendimento', () => {
         expect(overlapsHorizontally && overlapsVertically).toBe(false)
       }
     }
+    const metricTitleBox = await page.getByText('Limite Superior diário', { exact: true }).boundingBox()
+    const metricValue = page.getByTestId('atendimento-metric-value-upperLimit')
+    const metricValueBox = await metricValue.boundingBox()
+    expect(metricTitleBox).not.toBeNull()
+    expect(metricValueBox).not.toBeNull()
+    if (metricTitleBox && metricValueBox) expect(metricValueBox.y).toBeGreaterThan(metricTitleBox.y)
+    await expect(metricValue).toHaveCSS('font-size', '10px')
     await page.getByText('Meta diária', { exact: true }).hover()
     const dailyMetricTooltip = page.getByRole('tooltip').filter({ hasText: 'Fórmula' })
     await expect(dailyMetricTooltip).toContainText('Meta diária média do período selecionado.')
@@ -465,7 +474,9 @@ test.describe('atendimento', () => {
     await chartsToggle.click()
     await expect(chartsToggle).toHaveAttribute('aria-expanded', 'false')
     await expect(page.getByTestId('atendimento-charts-collapsed')).toBeVisible()
+    await expect(page.getByRole('tooltip').filter({ hasText: 'Expandir gráficos' })).toHaveCount(0)
     await chartsToggle.click()
+    await expect(page.getByRole('tooltip').filter({ hasText: 'Contrair gráficos' })).toHaveCount(0)
     await expect(page.getByTestId('atendimento-chart-card')).toHaveCount(5)
     for (const tabName of [/Inventário/, /Pessoas/, /Escala/, /Comercial/, /Conversão/, /Caixa/, /Importação/]) {
       await expect(page.getByRole('tab', { name: tabName })).toHaveCount(0)
