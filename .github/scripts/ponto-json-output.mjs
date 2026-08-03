@@ -63,7 +63,8 @@ const containsD1Results = (value) => {
   return containsD1Results(value.result);
 };
 
-const document = documents.filter(containsD1Results).at(-1) ?? documents.at(0);
+const d1Documents = documents.filter(containsD1Results);
+const document = d1Documents.length > 0 ? d1Documents : documents.at(0);
 
 if (document === undefined) {
   throw new Error("command output did not contain a valid JSON document");
