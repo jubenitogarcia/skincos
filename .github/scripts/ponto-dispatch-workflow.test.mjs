@@ -233,6 +233,11 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
   }
 
   const sharedPages = readWorkflow("deploy-crm-pages.yml");
+  assert.match(sharedPages, /alias_attested=false/);
+  assert.match(sharedPages, /alias_status=0/);
+  assert.match(sharedPages, /Unable to attest the exact staging Pages candidate and production alias/);
+  assert.match(sharedPages, /if \[\[ "\$attempt" != 36 \]\]; then sleep 5; fi/);
+  assert.match(sharedPages, /for attempt in \{1\.\.72\}; do/);
   for (const name of [
     "CRM_PAGES_PROJECT",
     "CRM_PAGES_PROJECT_STAGING",
