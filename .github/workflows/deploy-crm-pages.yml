@@ -658,7 +658,9 @@ jobs:
             if [[ "$attempt" != 12 ]]; then sleep 5; fi
           done
           [[ "$candidate_attested" == true ]] || { echo 'Unable to attest the exact terminal staging Pages candidate and production alias'; exit 1; }
-          curl --fail --silent --show-error --retry 5 --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-proxy.headers" \
+          # A newly-created Pages deployment can serve a bounded transient 404
+          # while the data-plane route propagates after control-plane success.
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-proxy.headers" \
             "${deployment_url%/}/api/ponto/_proxy-status" > "$RUNNER_TEMP/pages-staging-proxy.json"
           node - "$RUNNER_TEMP/pages-staging-proxy.json" "$RUNNER_TEMP/pages-staging-proxy.headers" <<'NODE'
           const fs = require("fs");
@@ -668,7 +670,7 @@ jobs:
           if (!headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)) throw new Error("staging Pages release header is absent");
           if (!headers.includes("x-skincos-pages-environment: staging")) throw new Error("staging Pages environment header is absent");
           NODE
-          curl --fail --silent --show-error --retry 5 --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-alias.headers" \
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-alias.headers" \
             "https://skincos-staging.pages.dev/api/ponto/_proxy-status" > "$RUNNER_TEMP/pages-staging-alias.json"
           node - "$RUNNER_TEMP/pages-staging-alias.json" "$RUNNER_TEMP/pages-staging-alias.headers" <<'NODE'
           const fs = require("fs");
