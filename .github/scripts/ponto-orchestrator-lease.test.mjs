@@ -547,3 +547,16 @@ test("staging Pages compensation preserves the incumbent when deployment produce
   assert.match(block, /exit 0/);
   assert.doesNotMatch(block, /PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID"\]\]/);
 });
+
+test("Ponto staging Pages resolves and compensates candidates from the API inventory", () => {
+  const source = workflow("deploy-crm-pages.yml");
+  const deployStart = source.indexOf("- name: Deploy to Cloudflare Pages (wrangler)");
+  const restoreEnd = source.indexOf("- name: Write Ponto staging Pages mutation journal", deployStart);
+  assert.ok(deployStart >= 0 && restoreEnd > deployStart, "Ponto Pages deployment block is absent");
+  const block = source.slice(deployStart, restoreEnd);
+  assert.match(block, /ponto-pages-candidate\.mjs/);
+  assert.match(block, /PAGES_STAGING_DEPLOYMENT_STARTED_AT/);
+  assert.match(block, /env=production&page=\$page&per_page=25/);
+  assert.doesNotMatch(block, /ponto-wrangler-output\.mjs/);
+  assert.match(block, /PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=\$candidate_id/);
+});

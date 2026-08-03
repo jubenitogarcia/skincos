@@ -474,7 +474,6 @@ jobs:
           CORE_CANDIDATE_VERSION_ID: ${{ inputs.core_candidate_version_id }}
           IDENTITY_CANDIDATE_VERSION_ID: ${{ inputs.identity_candidate_version_id }}
           MODULE_CONTROL_KV_ID: ${{ steps.guard.outputs.module_control_kv_id }}
-          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/crm-pages-deploy.ndjson
         run: |
           set -euo pipefail
           PROJECT="${PAGES_PROJECT:-skincos}"
@@ -524,6 +523,7 @@ jobs:
           if [[ "$RELEASE_SCOPE" == ponto ]]; then GIT_MESSAGE="ponto:crmPages:$GIT_SHA"; fi
           if [[ "$RELEASE_SCOPE" == ponto && "$DEPLOY_TARGET" == staging ]]; then
             echo "PAGES_STAGING_MUTATION_STARTED=true" >> "$GITHUB_ENV"
+            echo "PAGES_STAGING_DEPLOYMENT_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_ENV"
             touch "$RUNNER_TEMP/pages-staging-mutation-started"
           fi
           echo "Deploying Cloudflare Pages project=$PROJECT branch=$BRANCH_NAME"
@@ -540,14 +540,46 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          PONTO_EXPECTED_WRANGLER_ENV=production node .github/scripts/ponto-wrangler-output.mjs "$RUNNER_TEMP/crm-pages-deploy.ndjson" pages-deploy "$PROJECT" > "$RUNNER_TEMP/pages-deploy-verified.txt"
-          IFS=$'\t' read -r deployment_id deployment_url < <(node - "$RUNNER_TEMP/crm-pages-deploy.ndjson" <<'NODE'
+          candidate_dir="$RUNNER_TEMP/pages-staging-candidate"
+          mkdir -p "$candidate_dir"
+          selected=false
+          for attempt in {1..12}; do
+            rm -f "$candidate_dir"/page-*.json
+            total_pages=1
+            page=1
+            while (( page <= total_pages )); do
+              candidate_page="$candidate_dir/page-$page.json"
+              curl --fail --silent --show-error --retry 3 --retry-delay 2 \
+                -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&page=$page&per_page=25" \
+                > "$candidate_page"
+              total_pages="$(node - "$candidate_page" <<'NODE'
           const fs = require("fs");
-          const rows = fs.readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/).map(JSON.parse);
-          const row = rows.filter(item => item.type === "pages-deploy").at(-1);
-          process.stdout.write(`${row?.deployment_id || row?.id || ""}\t${row?.url || row?.deployment_url || row?.targets?.[0] || ""}`);
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const totalPages = Number(payload?.result_info?.total_pages || 1);
+          if (
+            payload?.success !== true
+            || !Array.isArray(payload?.result)
+            || !Number.isInteger(totalPages)
+            || totalPages < 1
+            || totalPages > 100
+          ) throw new Error("Cloudflare Pages deployment inventory is not paginable");
+          process.stdout.write(String(totalPages));
           NODE
-          )
+              )"
+              (( page += 1 ))
+            done
+            status=0
+            selection="$(PROJECT="$PROJECT" RELEASE_SHA="$RELEASE_SHA" PAGES_STAGING_DEPLOYMENT_STARTED_AT="${PAGES_STAGING_DEPLOYMENT_STARTED_AT:-}" node .github/scripts/ponto-pages-candidate.mjs "$candidate_dir")" || status=$?
+            if [[ "$status" == 0 ]]; then
+              IFS=$'\t' read -r deployment_id deployment_url <<< "$selection"
+              selected=true
+              break
+            fi
+            [[ "$status" == 2 ]] || exit "$status"
+            if [[ "$attempt" != 12 ]]; then sleep 5; fi
+          done
+          [[ "$selected" == true ]] || { echo 'Unable to resolve an exact terminal staging Pages candidate'; exit 1; }
           echo "PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
           [[ "$deployment_url" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'Structured Pages output returned an unexpected staging URL'; exit 1; }
           curl --fail --silent --show-error \
@@ -630,6 +662,47 @@ jobs:
         run: |
           set -euo pipefail
           candidate_id="${PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID:-}"
+          if [[ -z "$candidate_id" && -n "${PAGES_STAGING_DEPLOYMENT_STARTED_AT:-}" ]]; then
+            candidate_dir="$RUNNER_TEMP/pages-staging-compensation-candidate"
+            mkdir -p "$candidate_dir"
+            for attempt in {1..12}; do
+              rm -f "$candidate_dir"/page-*.json
+              total_pages=1
+              page=1
+              while (( page <= total_pages )); do
+                candidate_page="$candidate_dir/page-$page.json"
+                curl --fail --silent --show-error --retry 3 --retry-delay 2 \
+                  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments?env=production&page=$page&per_page=25" \
+                  > "$candidate_page"
+                total_pages="$(node - "$candidate_page" <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const totalPages = Number(payload?.result_info?.total_pages || 1);
+          if (
+            payload?.success !== true
+            || !Array.isArray(payload?.result)
+            || !Number.isInteger(totalPages)
+            || totalPages < 1
+            || totalPages > 100
+          ) throw new Error("Cloudflare Pages deployment inventory is not paginable");
+          process.stdout.write(String(totalPages));
+          NODE
+                )"
+                (( page += 1 ))
+              done
+              status=0
+              selection="$(PROJECT="$PROJECT" RELEASE_SHA="$RELEASE_SHA" PAGES_STAGING_DEPLOYMENT_STARTED_AT="${PAGES_STAGING_DEPLOYMENT_STARTED_AT:-}" node .github/scripts/ponto-pages-candidate.mjs "$candidate_dir")" || status=$?
+              if [[ "$status" == 0 ]]; then
+                IFS=$'\t' read -r candidate_id _ <<< "$selection"
+                echo "PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=$candidate_id" >> "$GITHUB_ENV"
+                break
+              fi
+              [[ "$status" == 2 ]] || exit "$status"
+              candidate_id=""
+              if [[ "$attempt" != 12 ]]; then sleep 5; fi
+            done
+          fi
           if [[ -z "$candidate_id" ]]; then
             echo 'No exact owned staging Pages candidate was attested; preserving the incumbent without a rollback mutation'
             exit 0
