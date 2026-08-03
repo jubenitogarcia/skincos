@@ -32,6 +32,26 @@ test("extracts a nested JSON object after ANSI progress output", () => {
   });
 });
 
+test("prefers the last D1 result after a valid JSON progress document", () => {
+  const { output, result } = runParser(
+    '{"type":"progress","message":"checking"}\n[{"success":true,"results":[{"employees":1}]}]\n',
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), [
+    { success: true, results: [{ employees: 1 }] },
+  ]);
+});
+
+test("recognizes a D1 result array inside an envelope", () => {
+  const { output, result } = runParser(
+    '{"message":"checking"}\n{"result":[{"results":[{"pin_credentials":1}]}]}\n',
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), {
+    result: [{ results: [{ pin_credentials: 1 }] }],
+  });
+});
+
 test("fails closed when no JSON document is present", () => {
   const { result } = runParser("├ Checking...\nrequest failed\n");
   assert.notEqual(result.status, 0);
