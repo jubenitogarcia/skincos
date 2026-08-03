@@ -674,9 +674,8 @@ jobs:
           for attempt in {1..36}; do
             http_status="000"
             curl_status=0
-            http_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
+            http_status="$(curl --silent --show-error --retry 5 --retry-all-errors --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-alias.headers" \
               --output "$RUNNER_TEMP/pages-staging-alias.json" \
-              --dump-header "$RUNNER_TEMP/pages-staging-alias.headers" \
               --write-out '%{http_code}' \
               "https://skincos-staging.pages.dev/api/ponto/_proxy-status" \
             )" || curl_status=$?
