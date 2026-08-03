@@ -167,6 +167,22 @@ test("assert-active retries a transient GitHub API read before accepting the coo
   });
 });
 
+test("assert-active honors Retry-After on a transient 503 read", async () => {
+  const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
+  await withApi({
+    transientFailures: [workflowPath],
+    transientFailureStatus: 503,
+    transientFailureHeaders: { "retry-after": "0" },
+  }, async ({ apiUrl, getRequestCount }) => {
+    const result = await execute(
+      ["assert-active", stage, releaseSha, orchestratorRunId],
+      { GITHUB_API_URL: apiUrl },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(getRequestCount(), 5);
+  });
+});
+
 test("assert-active refreshes the complete coordinator snapshot after a retried read", async () => {
   const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
   await withApi({

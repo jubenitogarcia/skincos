@@ -570,7 +570,7 @@ const request = async (pathname, init = {}, { onRetry } = {}) => {
       if (response.status === 202 || response.status === 204) return null;
       return response.json();
     }
-    const retryAfterDelay = response.status === 429 || response.status === 403
+    const retryAfterDelay = TRANSIENT_READ_STATUSES.has(response.status) || response.status === 403
       ? parseRetryAfterMs(response.headers.get("retry-after"))
       : undefined;
     const retryableReadStatus = TRANSIENT_READ_STATUSES.has(response.status)
