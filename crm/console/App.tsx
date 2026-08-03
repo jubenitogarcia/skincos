@@ -1896,6 +1896,30 @@ export default function AppFunctionalNeatlab() {
                                                         </span>
                                                     ) : null}
                                                 </div>
+                                                <TooltipButton label="Expandir tudo">
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                        onClick={() => dispatchAtendimentoHeaderAction({ type: 'layout', value: 'expandAll' })}
+                                                        aria-label="Expandir tudo"
+                                                        data-testid="atendimento-header-expand-all"
+                                                    >
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M7 9l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 14l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                                    </Button>
+                                                </TooltipButton>
+                                                <TooltipButton label="Contrair tudo">
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
+                                                        onClick={() => dispatchAtendimentoHeaderAction({ type: 'layout', value: 'collapseAll' })}
+                                                        aria-label="Contrair tudo"
+                                                        data-testid="atendimento-header-collapse-all"
+                                                    >
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M7 15l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 10l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                                    </Button>
+                                                </TooltipButton>
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <Button

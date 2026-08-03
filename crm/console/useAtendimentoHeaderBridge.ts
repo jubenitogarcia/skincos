@@ -22,6 +22,7 @@ type UseAtendimentoHeaderBridgeOptions = {
   refreshManagement: (options?: { force?: boolean }) => void | Promise<void>
   openImport: () => void
   openReport: () => void | Promise<void>
+  updateLayout: (value: 'expandAll' | 'collapseAll') => void
   updateFilters: (patch: Partial<AtendimentoFilters>) => void
 }
 
@@ -44,6 +45,7 @@ export function useAtendimentoHeaderBridge({
   refreshManagement,
   openImport,
   openReport,
+  updateLayout,
   updateFilters,
 }: UseAtendimentoHeaderBridgeOptions) {
   useEffect(() => {
@@ -79,6 +81,10 @@ export function useAtendimentoHeaderBridge({
       void openReport()
       return
     }
+    if (action.type === 'layout') {
+      updateLayout(action.value)
+      return
+    }
     if (action.type === 'set-filter') updateFilters(action.patch)
-  }), [canManage, openImport, openReport, refresh, refreshManagement, updateFilters])
+  }), [canManage, openImport, openReport, refresh, refreshManagement, updateFilters, updateLayout])
 }
