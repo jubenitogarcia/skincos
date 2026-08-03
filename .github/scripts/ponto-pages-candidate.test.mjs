@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { selectPagesCandidate } from "./ponto-pages-candidate.mjs";
+import { selectPagesCandidate, selectPagesPendingCandidate } from "./ponto-pages-candidate.mjs";
 
 const project = "skincos-staging";
 const branch = "staging";
@@ -74,6 +74,25 @@ test("rejects a same-SHA deployment that is stale, pending, or not aliased", () 
   assert.equal(
     selectPagesCandidate([stale, pending, unaliased], { project, branch, releaseSha, startedAt, alias }),
     null,
+  );
+});
+
+test("captures the exact same-SHA deployment while it is pending", () => {
+  const pending = deployment({
+    id: "44444444-4444-4444-8444-444444444444",
+    createdOn: "2026-08-03T00:01:00.000Z",
+    status: "active",
+    aliases: [],
+  });
+  assert.deepEqual(
+    selectPagesPendingCandidate([pending], { project, branch, releaseSha, startedAt, alias }),
+    {
+      id: pending.id,
+      url: pending.url,
+      createdOn: pending.created_on,
+      terminal: false,
+      aliased: false,
+    },
   );
 });
 

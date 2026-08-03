@@ -35,40 +35,69 @@ const candidateUrl = (value) => {
   }
 };
 
-export function selectPagesCandidate(deployments, {
+const normalizeExpectations = ({
   project,
   branch = "staging",
   releaseSha,
   startedAt,
   alias = "crm-staging.skincos.com.br",
-}) {
+  candidateId = "",
+}) => {
   const expectedProject = String(project || "");
   const expectedBranch = String(branch || "");
   const expectedSha = String(releaseSha || "").toLowerCase();
   const startedAtMs = Date.parse(String(startedAt || ""));
   const expectedAlias = aliasHost(alias);
+  const expectedCandidateId = String(candidateId || "").toLowerCase();
   if (
     !expectedProject
     || !expectedBranch
     || !SHA.test(expectedSha)
     || !Number.isFinite(startedAtMs)
     || !expectedAlias
-    || !Array.isArray(deployments)
+    || (expectedCandidateId && !UUID.test(expectedCandidateId))
   ) throw new Error("Pages candidate selection identity is invalid");
+  return {
+    expectedProject,
+    expectedBranch,
+    expectedSha,
+    startedAtMs,
+    expectedAlias,
+    expectedCandidateId,
+  };
+};
 
+const matchesIdentity = (deployment, expectations) => {
+  const createdAtMs = Date.parse(String(deployment?.created_on || ""));
+  return UUID.test(String(deployment?.id || ""))
+    && deployment?.project_name === expectations.expectedProject
+    && deployment?.environment === "production"
+    && deployment?.deployment_trigger?.metadata?.branch === expectations.expectedBranch
+    && commitSha(deployment) === expectations.expectedSha
+    && Number.isFinite(createdAtMs)
+    && createdAtMs >= expectations.startedAtMs
+    && deployment?.is_skipped === false
+    && (!expectations.expectedCandidateId
+      || String(deployment.id).toLowerCase() === expectations.expectedCandidateId);
+};
+
+const summarizeCandidate = (deployment, expectedAlias) => ({
+  id: String(deployment.id),
+  url: String(deployment.url || ""),
+  createdOn: String(deployment.created_on),
+  terminal: terminalDeployment(deployment),
+  aliased: new Set((deployment?.aliases || []).map(aliasHost)).has(expectedAlias),
+});
+
+export function selectPagesCandidate(deployments, expectationsInput) {
+  if (!Array.isArray(deployments)) throw new Error("Pages deployment inventory is invalid");
+  const expectations = normalizeExpectations(expectationsInput);
   return deployments
     .filter((deployment) => {
-      const createdAtMs = Date.parse(String(deployment?.created_on || ""));
       const aliases = new Set((deployment?.aliases || []).map(aliasHost));
-      return UUID.test(String(deployment?.id || ""))
-        && deployment?.project_name === expectedProject
-        && deployment?.environment === "production"
-        && deployment?.deployment_trigger?.metadata?.branch === expectedBranch
-        && commitSha(deployment) === expectedSha
-        && Number.isFinite(createdAtMs)
-        && createdAtMs >= startedAtMs
+      return matchesIdentity(deployment, expectations)
         && terminalDeployment(deployment)
-        && aliases.has(expectedAlias)
+        && aliases.has(expectations.expectedAlias)
         && candidateUrl(deployment?.url);
     })
     .sort((a, b) => Date.parse(String(b.created_on)) - Date.parse(String(a.created_on)))
@@ -78,6 +107,28 @@ export function selectPagesCandidate(deployments, {
       createdOn: String(deployment.created_on),
     }))[0] || null;
 }
+
+// During compensation, an exact deployment can exist before it reaches a
+// terminal stage or receives the public alias. Capture that identity first,
+// then keep polling that same deployment until the terminal owned candidate
+// is attested. Never infer that the incumbent is safe from a missing match.
+export function selectPagesPendingCandidate(deployments, expectationsInput) {
+  if (!Array.isArray(deployments)) throw new Error("Pages deployment inventory is invalid");
+  const expectations = normalizeExpectations(expectationsInput);
+  return deployments
+    .filter((deployment) => matchesIdentity(deployment, expectations))
+    .sort((a, b) => Date.parse(String(b.created_on)) - Date.parse(String(a.created_on)))
+    .map((deployment) => summarizeCandidate(deployment, expectations.expectedAlias))[0] || null;
+}
+
+const cliExpectations = () => ({
+  project: process.env.PROJECT,
+  branch: process.env.BRANCH || "staging",
+  releaseSha: process.env.RELEASE_SHA,
+  startedAt: process.env.PAGES_STAGING_DEPLOYMENT_STARTED_AT,
+  alias: process.env.PAGES_STAGING_ALIAS || "crm-staging.skincos.com.br",
+  candidateId: process.env.CANDIDATE_ID || "",
+});
 
 export function readPagesDeploymentInventory(directory) {
   const files = fs.readdirSync(directory)
@@ -95,19 +146,20 @@ export function resolvePagesCandidate(directory, expectations) {
   return selectPagesCandidate(readPagesDeploymentInventory(directory), expectations);
 }
 
+export function resolvePagesPendingCandidate(directory, expectations) {
+  return selectPagesPendingCandidate(readPagesDeploymentInventory(directory), expectations);
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [directory] = process.argv.slice(2);
+  const [directory, mode = ""] = process.argv.slice(2);
   try {
-    if (!directory) throw new Error("usage: ponto-pages-candidate.mjs <inventory-directory>");
-    const selected = resolvePagesCandidate(directory, {
-      project: process.env.PROJECT,
-      branch: process.env.BRANCH || "staging",
-      releaseSha: process.env.RELEASE_SHA,
-      startedAt: process.env.PAGES_STAGING_DEPLOYMENT_STARTED_AT,
-      alias: process.env.PAGES_STAGING_ALIAS || "crm-staging.skincos.com.br",
-    });
+    if (!directory) throw new Error("usage: ponto-pages-candidate.mjs <inventory-directory> [--pending]");
+    const expectations = cliExpectations();
+    const selected = mode === "--pending"
+      ? resolvePagesPendingCandidate(directory, expectations)
+      : resolvePagesCandidate(directory, expectations);
     if (!selected) process.exit(2);
-    process.stdout.write(`${selected.id}\t${selected.url}\n`);
+    process.stdout.write(`${selected.id}\t${selected.url || ""}\n`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
