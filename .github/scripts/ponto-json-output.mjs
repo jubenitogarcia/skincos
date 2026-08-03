@@ -75,8 +75,15 @@ if (document === undefined) {
 const normalizeD1Document = (value) => {
   if (Array.isArray(value)) return value.flatMap(normalizeD1Document);
   if (!value || typeof value !== "object") return [value];
-  if (value.success === false || Array.isArray(value.results)) return [value];
-  if (Object.hasOwn(value, "result")) return normalizeD1Document(value.result);
+  if (value.success === false) return [value];
+  if (Object.hasOwn(value, "result")) {
+    const nested = value.result;
+    if (
+      Array.isArray(nested)
+      || (nested && typeof nested === "object" && (Object.hasOwn(nested, "results") || Object.hasOwn(nested, "result")))
+    ) return normalizeD1Document(nested);
+  }
+  if (Array.isArray(value.results)) return [value];
   return [value];
 };
 

@@ -48,6 +48,14 @@ test("normalizes a D1 result array inside an envelope", () => {
   assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), [{ results: [{ pin_credentials: 1 }] }]);
 });
 
+test("unwraps a D1 envelope when an empty top-level results array accompanies nested rows", () => {
+  const { output, result } = runParser(
+    '{"success":true,"results":[],"result":{"results":[{"algorithm":"PBKDF2-SHA256"}]}}\n',
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), [{ results: [{ algorithm: "PBKDF2-SHA256" }] }]);
+});
+
 test("fails closed when no JSON document is present", () => {
   const { result } = runParser("├ Checking...\nrequest failed\n");
   assert.notEqual(result.status, 0);
