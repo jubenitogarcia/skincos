@@ -222,7 +222,7 @@ jobs:
           pin_attested=false
           for attempt in $(seq 1 12); do
             rm -f "$PIN_RAW" "$PIN_RESULT" "$PIN_VERIFY_ERROR"
-            if ! npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$PIN_SQL" --json > "$PIN_RAW" 2>&1; then
+            if ! npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --command "$(cat "$PIN_SQL")" --json > "$PIN_RAW" 2>&1; then
               echo 'staging D1 PIN attestation query command failed'; exit 1
             fi
             if ! node .github/scripts/ponto-json-output.mjs "$PIN_RAW" "$PIN_RESULT"; then
