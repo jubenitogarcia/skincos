@@ -3010,10 +3010,12 @@ export function AtendimentoModule() {
   const localMirrorDetail = localMirrorStatus
     ? `${formatNumberBR(localMirrorStatus.attendances)} atendimentos${localMirrorStatus.minServiceDate && localMirrorStatus.maxServiceDate ? `, de ${localMirrorStatus.minServiceDate} a ${localMirrorStatus.maxServiceDate}` : ''}`
     : ''
+  const layoutExpanded = analysisExpanded && attendancesExpanded && chartsExpanded
 
   useAtendimentoHeaderBridge({
     loading,
     canManage: canManageConsultant,
+    layoutExpanded,
     filters,
     units: (references?.units || []).map((unit) => ({ value: unit.slug, label: unit.name })),
     procedures: (references?.procedures || []).map((procedure) => ({ value: procedure.name, label: procedure.name })),
