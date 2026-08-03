@@ -37,7 +37,7 @@ const parseDocumentAt = (start) => {
       stack.pop();
       if (!stack.length && character === closing) {
         try {
-          return JSON.parse(source.slice(start, index + 1));
+          return { value: JSON.parse(source.slice(start, index + 1)), end: index };
         } catch {
           return undefined;
         }
@@ -47,11 +47,23 @@ const parseDocumentAt = (start) => {
   return undefined;
 };
 
-let document;
-for (let index = 0; index < source.length && document === undefined; index += 1) {
+const documents = [];
+for (let index = 0; index < source.length; index += 1) {
   if (source[index] !== "{" && source[index] !== "[") continue;
-  document = parseDocumentAt(index);
+  const candidate = parseDocumentAt(index);
+  if (!candidate) continue;
+  documents.push(candidate.value);
+  index = candidate.end;
 }
+
+const containsD1Results = (value) => {
+  if (Array.isArray(value)) return value.some(containsD1Results);
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value.results)) return true;
+  return containsD1Results(value.result);
+};
+
+const document = documents.filter(containsD1Results).at(-1) ?? documents.at(0);
 
 if (document === undefined) {
   throw new Error("command output did not contain a valid JSON document");
