@@ -230,19 +230,39 @@ jobs:
             fi
             if node - "$FIXTURES" "$PIN_RESULT" "$PIN_REPORT" 2>"$PIN_VERIFY_ERROR" <<'NODE'
           const fs = require('fs');
-          const rows = (file) => {
+          const readResult = (file) => {
             const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
             const entries = Array.isArray(payload) ? payload : [payload];
             if (entries.some((entry) => entry?.success === false)) throw new Error('PIN attestation query failed');
-            return entries.flatMap((entry) => [
+            const rows = entries.flatMap((entry) => [
               ...(Array.isArray(entry?.results) ? entry.results : []),
               ...(Array.isArray(entry?.result?.results) ? entry.result.results : []),
             ]);
+            return { entries, rows };
           };
           (async () => {
             const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-            const row = rows(process.argv[3]).find((entry) => entry?.algorithm && entry?.salt_b64 && entry?.hash_b64);
-            if (!row) throw new Error('staging D1 PIN credential row is missing');
+            const result = readResult(process.argv[3]);
+            const row = result.rows.find((entry) => entry?.algorithm && entry?.salt_b64 && entry?.hash_b64);
+            if (!row) {
+              const rowKeySets = [...new Set(result.rows.map((entry) => Object.keys(entry).sort().join(',')))].slice(0, 4);
+              const servedByPrimary = [...new Set(result.entries
+                .map((entry) => entry?.meta?.served_by_primary)
+                .filter((value) => typeof value === 'boolean'))];
+              const report = {
+                schemaVersion: 1,
+                environment: 'staging',
+                credentialPresent: false,
+                normalizedEntryCount: result.entries.length,
+                normalizedRowCount: result.rows.length,
+                normalizedRowKeySets: rowKeySets,
+                servedByPrimary,
+                credentialsIncluded: false,
+                piiIncluded: false,
+              };
+              fs.writeFileSync(process.argv[4], `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+              throw new Error(`staging D1 PIN credential row is missing; normalizedRows=${result.rows.length}; keySets=${rowKeySets.join('|') || 'none'}; servedByPrimary=${servedByPrimary.join('|') || 'unknown'}`);
+            }
             const { pathToFileURL } = require('url');
             const { verifyPin } = await import(pathToFileURL(require('path').resolve('workforce/timekeeping/security.js')).href);
             const credential = {
@@ -271,7 +291,7 @@ jobs:
           })().catch((error) => {
             const message = String(error?.message || 'PIN attestation failed');
             console.error(message);
-            process.exitCode = message === 'staging D1 PIN credential row is missing' ? 2 : 1;
+            process.exitCode = message.startsWith('staging D1 PIN credential row is missing') ? 2 : 1;
           });
           NODE
               then

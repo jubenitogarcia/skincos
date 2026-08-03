@@ -287,6 +287,8 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
   assert.match(stagingJourney, /bounded propagation/);
   assert.match(stagingJourney, /PIN attestation query command failed/);
   assert.match(stagingJourney, /PIN attestation query or credential contract failed/);
+  assert.match(stagingJourney, /normalizedRowCount/);
+  assert.match(stagingJourney, /servedByPrimary/);
   assert.match(stagingJourney, /import crypto from "node:crypto";/);
   assert.match(stagingJourney, /import fs from "node:fs";/);
   assert.doesNotMatch(
