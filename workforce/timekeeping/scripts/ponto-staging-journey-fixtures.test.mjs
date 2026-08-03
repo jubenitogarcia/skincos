@@ -6,9 +6,11 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { validateOnboardingInput } from '../../../shared/identity-runtime/inventory-compat.js';
+import { verifyPin } from '../security.js';
 
 const script = new URL('./ponto-staging-journey-fixtures.mjs', import.meta.url);
 const inventoryMigrations = new URL('../../../inventory/migrations/', import.meta.url);
+const timekeepingMigrations = new URL('../migrations/', import.meta.url);
 
 function generate(action, paths, fixtureId = '') {
   const argv = [
@@ -23,7 +25,7 @@ function generate(action, paths, fixtureId = '') {
   execFileSync(process.execPath, argv, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-test('staging fixture SQL is run-scoped, secret-free, and teardown preserves audit', () => {
+test('staging fixture SQL is run-scoped, secret-free, and teardown preserves audit', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'skincos-ponto-fixture-'));
   const paths = {
     fixture: join(directory, 'fixture.json'),
@@ -80,11 +82,25 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
     assert.doesNotMatch(provisionTimekeeping, /(?:INSERT INTO|DELETE FROM) workforce_units/);
 
     const database = new DatabaseSync(':memory:');
+    const timekeepingDatabase = new DatabaseSync(':memory:');
     try {
       for (const migration of readdirSync(inventoryMigrations).filter((name) => name.endsWith('.sql')).sort()) {
         database.exec(readFileSync(new URL(migration, inventoryMigrations), 'utf8'));
       }
       database.exec(provisionCore);
+      for (const migration of readdirSync(timekeepingMigrations).filter((name) => name.endsWith('.sql')).sort()) {
+        timekeepingDatabase.exec(readFileSync(new URL(migration, timekeepingMigrations), 'utf8'));
+      }
+      timekeepingDatabase.exec(provisionTimekeeping);
+      const storedPin = timekeepingDatabase.prepare(`
+        SELECT algorithm, salt_b64 AS saltB64, hash_b64 AS hashB64, iterations
+        FROM timekeeping_pin_credentials
+        WHERE employee_id = ?
+      `).get(fixture.employeeId);
+      assert.deepEqual(storedPin.algorithm, 'PBKDF2-SHA256');
+      assert.equal(storedPin.iterations, 100000);
+      assert.equal(await verifyPin(fixture.pin, storedPin), true);
+      assert.equal(await verifyPin('000000', storedPin), false);
       const insertSession = database.prepare(`
         INSERT INTO crm_identity_sessions
           (id, username, session_version, created_at, last_seen_at)
@@ -124,6 +140,7 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
       const teardownTimekeeping = readFileSync(paths.timekeeping, 'utf8');
 
       database.exec(teardownCore);
+      timekeepingDatabase.exec(teardownTimekeeping);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM crm_users WHERE username IN (?, ?)').get(
         fixture.username,
         fixture.adminUsername,
@@ -154,6 +171,7 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
       assert.doesNotMatch(teardownTimekeeping, /DELETE FROM workforce_units/);
     } finally {
       database.close();
+      timekeepingDatabase.close();
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });

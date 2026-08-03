@@ -1,5 +1,5 @@
 import { canonicalEventType, calculateDay, calculatePeriod, isoDateInZone } from './domain.js'
-import { biometricDistance, constantTimeEqual, decryptSensitiveText, decryptTemplate, encryptSensitiveText, encryptTemplate, hashPin, isValidBiometricTemplate, sha256, signHmac, verifyPin } from './security.js'
+import { biometricDistance, constantTimeEqual, decryptSensitiveText, decryptTemplate, encryptSensitiveText, encryptTemplate, DEFAULT_PIN_ITERATIONS, hashPin, isValidBiometricTemplate, sha256, signHmac, verifyPin } from './security.js'
 import { canaryBucket, publicModuleAvailability, readModuleAvailability, moduleUnavailableResponse } from '../../shared/module-availability/worker.js'
 import { dependencyState, operationalStatus } from '../../shared/observability/contract.js'
 import { normalizeAllowedUnits, unknownUnitScopes } from '../../shared/identity-contract/index.js'
@@ -1543,7 +1543,7 @@ export async function handleTimekeeping(request, env) {
       const body = await readJson(request); const employeeId = decodeURIComponent(pinConfigure[1] || cleanText(body?.employeeId, 120)); const employee = await employeeById(db, actor, employeeId)
       if (!employee) return failure(404, 'EMPLOYEE_NOT_FOUND', requestId)
       let credential
-      try { credential = await hashPin(body?.pin, Number(env.PONTO_PIN_ITERATIONS || 150000)) } catch { return failure(400, 'PIN_INVALID', requestId) }
+      try { credential = await hashPin(body?.pin, Number(env.PONTO_PIN_ITERATIONS || DEFAULT_PIN_ITERATIONS)) } catch { return failure(400, 'PIN_INVALID', requestId) }
       await db.batch([
         db.prepare(`INSERT INTO timekeeping_pin_credentials (employee_id, algorithm, salt_b64, hash_b64, iterations, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(employee_id) DO UPDATE SET algorithm=excluded.algorithm, salt_b64=excluded.salt_b64, hash_b64=excluded.hash_b64, iterations=excluded.iterations, updated_by=excluded.updated_by, updated_at=excluded.updated_at`).bind(employee.id, credential.algorithm, credential.saltB64, credential.hashB64, credential.iterations, actor.id, now()),
         db.prepare('DELETE FROM timekeeping_pin_failures WHERE employee_id=?').bind(employee.id),
