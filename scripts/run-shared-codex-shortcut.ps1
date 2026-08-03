@@ -24,6 +24,7 @@ param(
         "WebsiteReleaseCheck",
         "CrmLocal",
         "CrmModules",
+        "CrmThreadPreview",
         "CrmModule",
         "CrmModuleStop",
         "CrmConsultor",
@@ -68,6 +69,12 @@ param(
     [string]$CrmRole,
     [ValidatePattern('^[a-z0-9]+(?:-[a-z0-9]+)*$')]
     [string]$CrmModule,
+    [string]$CrmThreadPreviewSourceRoot,
+    [string]$CrmThreadPreviewMaterializedSourceRoot,
+    [string]$CrmThreadPreviewTargetCommit,
+    [string]$CrmThreadPreviewSourceFingerprint,
+    [switch]$CrmThreadPreviewDetachedStart,
+    [switch]$CrmThreadPreviewStop,
     [switch]$CrmAtendimentoDetachedStart,
     [switch]$CrmLocalDetachedStart,
     [switch]$CrmRuntimeDetachedStart,
@@ -108,6 +115,8 @@ $ProjectRoot = Resolve-ProjectRoot -RequestedPath $ProjectRoot -ScriptDirectory 
 $localStateRoot = Join-Path $env:LOCALAPPDATA "Codex\skincos"
 $operatorRuntimeRoot = "C:\CodexRuntime\operator\admin\skincos"
 $crmLocalSourceSelectionPath = Join-Path $operatorRuntimeRoot "runtime\crm-local\active-source.json"
+$crmThreadPreviewInstanceRoot = Join-Path $operatorRuntimeRoot "runtime\crm-local\thread-previews"
+$crmThreadPreviewPortBase = 25000
 $tmpRoot = Join-Path $localStateRoot "tmp"
 $logRoot = Join-Path $operatorRuntimeRoot "logs"
 $wslInvoker = Join-Path $scriptRoot "invoke-skincos-wsl.ps1"
@@ -332,13 +341,16 @@ function Get-CrmLocalSnapshotHash {
 }
 
 function Export-CrmLocalSnapshotPatch {
-    param([Parameter(Mandatory = $true)][string]$OutputPath)
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputPath,
+        [string]$SourceRoot = $ProjectRoot
+    )
 
     New-Item -ItemType Directory -Path (Split-Path -Parent $OutputPath) -Force | Out-Null
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
     $process.StartInfo.FileName = 'git'
-    $process.StartInfo.Arguments = ('-C "{0}" diff --binary HEAD' -f $ProjectRoot)
+    $process.StartInfo.Arguments = ('-C "{0}" diff --binary HEAD' -f $SourceRoot)
     $process.StartInfo.UseShellExecute = $false
     $process.StartInfo.RedirectStandardOutput = $true
     $process.StartInfo.RedirectStandardError = $true
@@ -353,7 +365,7 @@ function Export-CrmLocalSnapshotPatch {
         $standardError = $process.StandardError.ReadToEnd()
         $process.WaitForExit()
         if ($process.ExitCode -ne 0) {
-            throw "Não foi possível ler as alterações locais do checkout '$ProjectRoot': $standardError"
+            throw "Não foi possível ler as alterações locais do checkout '$SourceRoot': $standardError"
         }
     } finally {
         $process.Dispose()
@@ -381,15 +393,18 @@ function Get-CrmLocalSnapshotRelativePath {
 }
 
 function Get-CrmLocalSnapshotUntrackedFiles {
-    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Entries)
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Entries,
+        [string]$SourceRoot = $ProjectRoot
+    )
 
-    $sourceRootPath = (Resolve-Path -LiteralPath $ProjectRoot).Path.TrimEnd([char]'\', [char]'/')
+    $sourceRootPath = (Resolve-Path -LiteralPath $SourceRoot).Path.TrimEnd([char]'\', [char]'/')
     $files = [System.Collections.Generic.List[string]]::new()
     foreach ($entry in $Entries) {
         $relativeEntry = ([string]$entry).Trim()
         if ([string]::IsNullOrWhiteSpace($relativeEntry)) { continue }
 
-        $candidate = Join-Path $ProjectRoot $relativeEntry.Replace('/', [IO.Path]::DirectorySeparatorChar)
+        $candidate = Join-Path $SourceRoot $relativeEntry.Replace('/', [IO.Path]::DirectorySeparatorChar)
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
             $item = Get-Item -LiteralPath $candidate -Force
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -422,7 +437,7 @@ function Get-CrmLocalSnapshotUntrackedFiles {
                 throw "Arquivo não rastreado com link simbólico não pode entrar no snapshot do CRM Local: '$($_.FullName)'."
             }
             $relativeFile = Get-CrmLocalSnapshotRelativePath -SourceRootPath $sourceRootPath -FullPath $_.FullName
-            & git -C $ProjectRoot check-ignore --quiet -- $relativeFile 2>$null
+            & git -C $SourceRoot check-ignore --quiet -- $relativeFile 2>$null
             if ($LASTEXITCODE -eq 0) { return }
             if ($LASTEXITCODE -ne 1) { throw "Não foi possível validar o arquivo não rastreado '$relativeFile' no snapshot do CRM Local." }
             $files.Add($relativeFile)
@@ -432,15 +447,20 @@ function Get-CrmLocalSnapshotUntrackedFiles {
 }
 
 function Get-CrmLocalSourceSnapshot {
-    param([Parameter(Mandatory = $true)][string]$TargetCommit)
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [string]$SourceRoot = $ProjectRoot,
+        [switch]$IncludeWorkingChanges
+    )
 
     # The standard action intentionally ignores the caller's dirty checkout.
     # That checkout can belong to another Codex thread and may be based on an
     # older branch. A local preview must opt in explicitly and be based on the
     # exact requested revision, otherwise no changes are copied.
-    if (-not (Test-CrmLocalIncludeWorkingChanges)) {
+    $shouldIncludeWorkingChanges = $IncludeWorkingChanges.IsPresent -or (Test-CrmLocalIncludeWorkingChanges)
+    if (-not $shouldIncludeWorkingChanges) {
         return [pscustomobject]@{
-            SourceRoot = $ProjectRoot
+            SourceRoot = $SourceRoot
             TargetCommit = $TargetCommit
             PatchPath = $null
             Untracked = @()
@@ -449,25 +469,25 @@ function Get-CrmLocalSourceSnapshot {
         }
     }
 
-    $sourceCommit = (& git -C $ProjectRoot rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
-    if ($sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Não foi possível resolver o commit do checkout que disparou o CRM Local: '$ProjectRoot'." }
+    $sourceCommit = (& git -C $SourceRoot rev-parse --verify 'HEAD^{commit}' 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
+    if ($sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Não foi possível resolver o commit do checkout que disparou o CRM Local: '$SourceRoot'." }
     if ($sourceCommit -ne $TargetCommit) {
         # A named preview may be based on an older ancestor. Its patch is
         # applied only to a fresh worktree at the current canonical commit;
         # conflict detection remains fail-closed in Apply-CrmLocalSourceSnapshot.
-        & git -C $ProjectRoot merge-base --is-ancestor $sourceCommit $TargetCommit
+        & git -C $SourceRoot merge-base --is-ancestor $sourceCommit $TargetCommit
         if ($LASTEXITCODE -ne 0) {
             throw "A prévia ativa não deriva da revisão canônica solicitada ($TargetCommit). Não copie alterações entre linhas divergentes; selecione uma prévia rebaseada ou limpe a seleção com CRM_LOCAL_CLEAR_PREVIEW_SOURCE=1."
         }
     }
     $patchPath = Join-Path $operatorRuntimeRoot ("tmp\crm-local-snapshot-{0}.patch" -f [Guid]::NewGuid().ToString('N'))
-    Export-CrmLocalSnapshotPatch -OutputPath $patchPath
+    Export-CrmLocalSnapshotPatch -OutputPath $patchPath -SourceRoot $SourceRoot
     $patchBytes = (Get-Item -LiteralPath $patchPath).Length
-    $untrackedEntries = @(& git -C $ProjectRoot ls-files --others --exclude-standard)
-    if ($LASTEXITCODE -ne 0) { throw "Não foi possível ler os arquivos não rastreados do checkout '$ProjectRoot'." }
-    $untracked = @(Get-CrmLocalSnapshotUntrackedFiles -Entries $untrackedEntries)
+    $untrackedEntries = @(& git -C $SourceRoot ls-files --others --exclude-standard)
+    if ($LASTEXITCODE -ne 0) { throw "Não foi possível ler os arquivos não rastreados do checkout '$SourceRoot'." }
+    $untracked = @(Get-CrmLocalSnapshotUntrackedFiles -Entries $untrackedEntries -SourceRoot $SourceRoot)
     $untrackedDigest = foreach ($relativePath in $untracked) {
-        $candidate = Join-Path $ProjectRoot $relativePath
+        $candidate = Join-Path $SourceRoot $relativePath
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Arquivo não rastreado inválido no snapshot do CRM Local: '$relativePath'." }
         "${relativePath}:$((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant())"
     }
@@ -478,7 +498,7 @@ function Get-CrmLocalSourceSnapshot {
         "commit:${TargetCommit}"
     }
     return [pscustomobject]@{
-        SourceRoot = $ProjectRoot
+        SourceRoot = $SourceRoot
         TargetCommit = $TargetCommit
         PatchPath = $patchPath
         Untracked = $untracked
@@ -633,6 +653,7 @@ function Sync-CrmLocalImmutableSourceRoot {
         [object]$Snapshot
     )
 
+    $snapshotSourceRoot = (Resolve-Path -LiteralPath ([string]$Snapshot.SourceRoot)).Path
     $sourceKey = (Get-CrmLocalSnapshotHash -Value ([string]$Snapshot.Fingerprint)).Substring(0, 24)
     $sourceRoot = Join-Path $operatorRuntimeRoot ("source\crm-local\immutable\{0}" -f $sourceKey)
     $metadataPath = Join-Path $operatorRuntimeRoot ("source\crm-local\metadata\{0}.json" -f $sourceKey)
@@ -673,7 +694,7 @@ function Sync-CrmLocalImmutableSourceRoot {
                 New-Item -ItemType Directory -Path $quarantineRoot -Force | Out-Null
                 $quarantinePath = Join-Path $quarantineRoot ("{0}-{1}" -f $sourceKey, (Get-Date -Format 'yyyyMMddHHmmssfff'))
                 Move-Item -LiteralPath $sourceRoot -Destination $quarantinePath
-                & git -C $ProjectRoot worktree prune | Out-Null
+                & git -C $snapshotSourceRoot worktree prune | Out-Null
                 Write-Host "[crm-local] Fonte incompleta preservada em quarentena: '$quarantinePath'."
             } else {
                 $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
@@ -685,8 +706,8 @@ function Sync-CrmLocalImmutableSourceRoot {
             }
         }
 
-        & git -C $ProjectRoot worktree prune | Out-Null
-        & git -C $ProjectRoot worktree add --detach $sourceRoot $TargetCommit | Out-Host
+        & git -C $snapshotSourceRoot worktree prune | Out-Null
+        & git -C $snapshotSourceRoot worktree add --detach $sourceRoot $TargetCommit | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Não foi possível criar a fonte imutável do CRM Local em '$sourceRoot'."
         }
@@ -704,7 +725,7 @@ function Sync-CrmLocalImmutableSourceRoot {
             $metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $temporaryMetadata -Encoding utf8
             Move-Item -LiteralPath $temporaryMetadata -Destination $metadataPath -Force
         } catch {
-            & git -C $ProjectRoot worktree remove --force $sourceRoot 2>$null
+            & git -C $snapshotSourceRoot worktree remove --force $sourceRoot 2>$null
             throw
         }
         return $sourceRoot
@@ -1739,11 +1760,226 @@ function Resolve-CrmLocalModuleSpec {
     return $matches[0]
 }
 
+function Test-CrmSameWindowsPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Left,
+        [Parameter(Mandatory = $true)][string]$Right
+    )
+
+    $leftPath = [IO.Path]::GetFullPath($Left).TrimEnd([char]'\', [char]'/')
+    $rightPath = [IO.Path]::GetFullPath($Right).TrimEnd([char]'\', [char]'/')
+    return $leftPath.Equals($rightPath, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Resolve-CrmThreadPreviewSourceCheckout {
+    param([string]$SourceRoot = $ProjectRoot)
+
+    if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
+        throw 'CRM – Prévia da Thread exige o worktree da thread atual.'
+    }
+    $resolvedSource = (Resolve-Path -LiteralPath $SourceRoot).Path
+    if (Test-CrmSameWindowsPath -Left $resolvedSource -Right $crmCanonicalProjectRoot) {
+        throw 'CRM – Prévia da Thread não pode usar o clone compartilhado. Abra o worktree da thread no Codex App e execute a ação nele.'
+    }
+    $gitRootRaw = @(& git -C $resolvedSource rev-parse --show-toplevel 2>$null)
+    $gitExit = $LASTEXITCODE
+    $gitRoot = [string]($gitRootRaw | Select-Object -First 1)
+    if ($gitExit -ne 0 -or [string]::IsNullOrWhiteSpace($gitRoot) -or
+        -not (Test-CrmSameWindowsPath -Left ([string]$gitRoot).Trim() -Right $resolvedSource)) {
+        throw "A prévia deve partir da raiz de um worktree Git: '$resolvedSource'."
+    }
+
+    $registeredWorktreeRaw = @(& git -C $crmCanonicalProjectRoot worktree list --porcelain 2>$null)
+    $registeredExit = $LASTEXITCODE
+    $registeredWorktrees = @($registeredWorktreeRaw |
+        Where-Object { $_ -like 'worktree *' } |
+        ForEach-Object { $_.Substring('worktree '.Length).Trim() })
+    if ($registeredExit -ne 0 -or -not ($registeredWorktrees | Where-Object {
+        Test-CrmSameWindowsPath -Left ([string]$_) -Right $resolvedSource
+    })) {
+        throw "A prévia deve partir de um worktree registrado do SKINCOS: '$resolvedSource'."
+    }
+    return $resolvedSource
+}
+
+function Get-CrmThreadPreviewTargetCommit {
+    param([Parameter(Mandatory = $true)][string]$SourceCheckout)
+
+    $targetCommitRaw = @(& git -C $SourceCheckout rev-parse --verify 'HEAD^{commit}' 2>$null)
+    $targetExit = $LASTEXITCODE
+    $targetCommit = ([string]($targetCommitRaw | Select-Object -First 1)).Trim().ToLowerInvariant()
+    if ($targetExit -ne 0 -or $targetCommit -notmatch '^[0-9a-f]{40}$') {
+        throw "Não foi possível resolver o HEAD da thread para a prévia: '$SourceCheckout'."
+    }
+    return $targetCommit
+}
+
+function Get-CrmThreadPreviewSpec {
+    param(
+        [Parameter(Mandatory = $true)][object]$BaseSpec,
+        [Parameter(Mandatory = $true)][string]$SourceRoot,
+        [Parameter(Mandatory = $true)][string]$SourceCheckout
+    )
+
+    $catalog = Get-CrmLocalModuleCatalog -SourceRoot $SourceRoot
+    $catalogIndex = 0
+    $found = $false
+    foreach ($candidate in @($catalog.combinations)) {
+        if ([string]$candidate.runtimeId -eq [string]$BaseSpec.runtimeId) {
+            $found = $true
+            break
+        }
+        $catalogIndex += 1
+    }
+    if (-not $found) {
+        throw "A combinação de prévia '$([string]$BaseSpec.role) / $([string]$BaseSpec.module)' não existe no catálogo materializado."
+    }
+
+    $stride = [int]$catalog.portPlan.stride
+    $offsets = $catalog.portPlan.offsets
+    $portBase = $crmThreadPreviewPortBase + ($catalogIndex * $stride)
+    $ports = [ordered]@{
+        pages = $portBase + [int]$offsets.pages
+        vite = $portBase + [int]$offsets.vite
+        insumos = if ([bool]$BaseSpec.dependencies.insumos) { $portBase + [int]$offsets.insumos } else { $null }
+        timekeeping = if ([bool]$BaseSpec.dependencies.timekeeping) { $portBase + [int]$offsets.timekeeping } else { $null }
+        whatsapp = if ([bool]$BaseSpec.dependencies.whatsapp) { $portBase + [int]$offsets.whatsapp } else { $null }
+    }
+    if (@($ports.Values | Where-Object { $null -ne $_ -and ([int]$_ -lt 1 -or [int]$_ -gt 65535) }).Count -gt 0) {
+        throw "O plano de portas da prévia excede a faixa permitida para '$([string]$BaseSpec.module)'."
+    }
+
+    $runtimeId = 'crm-thread-preview--{0}--{1}' -f ([string]$BaseSpec.module), ([string]$BaseSpec.roleKey).ToLowerInvariant()
+    $configPayload = "thread-preview-v1`n$([string]$BaseSpec.configFingerprint)`n$runtimeId`n$($ports | ConvertTo-Json -Compress)"
+    $properties = [ordered]@{}
+    foreach ($property in $BaseSpec.PSObject.Properties) {
+        $properties[$property.Name] = $property.Value
+    }
+    $properties.runtimeId = $runtimeId
+    $properties.ports = [pscustomobject]$ports
+    $properties.configFingerprint = 'sha256:' + (Get-CrmLocalSnapshotHash -Value $configPayload)
+    $properties.threadPreview = $true
+    $properties.previewSourceCheckout = $SourceCheckout
+    return [pscustomobject]$properties
+}
+
+function Test-CrmThreadPreviewSpec {
+    param([Parameter(Mandatory = $true)][object]$Spec)
+    return $null -ne $Spec.PSObject.Properties['threadPreview'] -and [bool]$Spec.threadPreview
+}
+
 function Get-CrmInstanceRuntimeRoot {
     param([Parameter(Mandatory = $true)][object]$Spec)
     $roleSegment = ([string]$Spec.role).Trim().ToLowerInvariant()
     $moduleSegment = ([string]$Spec.module).Trim().ToLowerInvariant()
+    if (Test-CrmThreadPreviewSpec -Spec $Spec) {
+        return Join-Path $crmThreadPreviewInstanceRoot (Join-Path $roleSegment $moduleSegment)
+    }
     return Join-Path $crmInstanceRoot (Join-Path $roleSegment $moduleSegment)
+}
+
+function Get-CrmThreadPreviewDescriptorPath {
+    param([Parameter(Mandatory = $true)][object]$Spec)
+    return Join-Path (Get-CrmInstanceRuntimeRoot -Spec $Spec) 'thread-preview.json'
+}
+
+function Get-CrmThreadPreviewDescriptor {
+    param([Parameter(Mandatory = $true)][object]$Spec)
+    $path = Get-CrmThreadPreviewDescriptorPath -Spec $Spec
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try { return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { return $null }
+}
+
+function Write-CrmThreadPreviewDescriptor {
+    param(
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][string]$SourceCheckout,
+        [Parameter(Mandatory = $true)][string]$MaterializedSourceRoot,
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint,
+        # The lifecycle state lives in the runtime's current.json. This
+        # descriptor is provenance/ownership metadata written before the
+        # detached launcher can finish, so "requested" remains truthful even
+        # while the process transitions to ready or failed.
+        [ValidateSet('requested', 'stopped')][string]$State = 'requested'
+    )
+
+    $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
+    New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+    $branch = (& git -C $SourceCheckout branch --show-current 2>$null | Select-Object -First 1).Trim()
+    if ([string]::IsNullOrWhiteSpace($branch)) { $branch = '(detached)' }
+    [ordered]@{
+        version = 1
+        kind = 'crm-thread-preview'
+        state = $State
+        sourceCheckout = $SourceCheckout
+        sourceBranch = $branch
+        materializedSource = $MaterializedSourceRoot
+        targetCommit = $TargetCommit
+        sourceFingerprint = $SourceFingerprint
+        runtimeId = [string]$Spec.runtimeId
+        role = [string]$Spec.role
+        module = [string]$Spec.module
+        url = "http://localhost:$([int]$Spec.ports.pages)/?module=$([string]$Spec.module)"
+        runtimeManifest = 'current.json'
+        updatedAt = (Get-Date).ToString('o')
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Get-CrmThreadPreviewDescriptorPath -Spec $Spec) -Encoding utf8
+}
+
+function Assert-CrmThreadPreviewOwnership {
+    param(
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][string]$SourceCheckout
+    )
+
+    $descriptor = Get-CrmThreadPreviewDescriptor -Spec $Spec
+    $manifest = Get-CrmInstanceManifest -Spec $Spec
+    if ($null -eq $descriptor -and $null -ne $manifest) {
+        throw "A prévia '$([string]$Spec.runtimeId)' possui um manifesto sem proveniência da thread; ela não será substituída automaticamente."
+    }
+    if ($null -ne $descriptor) {
+        if (-not (Test-CrmSameWindowsPath -Left ([string]$descriptor.sourceCheckout) -Right $SourceCheckout)) {
+            throw "A prévia '$([string]$Spec.runtimeId)' pertence a outra thread em '$([string]$descriptor.sourceCheckout)'. Encerre-a no worktree proprietário antes de abrir esta."
+        }
+        if ([string]$descriptor.runtimeId -ne [string]$Spec.runtimeId -or
+            [string]$descriptor.role -ne [string]$Spec.role -or
+            [string]$descriptor.module -ne [string]$Spec.module) {
+            throw "A proveniência da prévia '$([string]$Spec.runtimeId)' está inconsistente; ela não será reutilizada."
+        }
+    }
+    return $descriptor
+}
+
+function Assert-CrmThreadPreviewMaterializedSource {
+    param(
+        [Parameter(Mandatory = $true)][string]$MaterializedSourceRoot,
+        [Parameter(Mandatory = $true)][string]$SourceCheckout,
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint
+    )
+
+    $resolvedSource = (Resolve-Path -LiteralPath $MaterializedSourceRoot).Path
+    $immutableRoot = Join-Path $operatorRuntimeRoot 'source\crm-local\immutable'
+    if (-not (Test-WindowsPathWithinRoot -Path $resolvedSource -Root $immutableRoot)) {
+        throw "A prévia da thread deve executar somente uma fonte privada imutável: '$resolvedSource'."
+    }
+    $actualCommitRaw = @(& git -C $resolvedSource rev-parse --verify 'HEAD^{commit}' 2>$null)
+    $actualExit = $LASTEXITCODE
+    $actualCommit = ([string]($actualCommitRaw | Select-Object -First 1)).Trim().ToLowerInvariant()
+    if ($actualExit -ne 0 -or $actualCommit -ne $TargetCommit) {
+        throw "A fonte privada da prévia não corresponde ao commit solicitado: '$resolvedSource'."
+    }
+    $sourceKey = (Get-CrmLocalSnapshotHash -Value $SourceFingerprint).Substring(0, 24)
+    $metadataPath = Join-Path $operatorRuntimeRoot ("source\crm-local\metadata\{0}.json" -f $sourceKey)
+    if (-not (Test-Path -LiteralPath $metadataPath)) {
+        throw "A fonte privada da prévia não possui metadados de proveniência: '$resolvedSource'."
+    }
+    $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+    if ([string]$metadata.fingerprint -ne $SourceFingerprint -or [string]$metadata.targetCommit -ne $TargetCommit -or
+        -not (Test-CrmSameWindowsPath -Left ([string]$metadata.sourceCheckout) -Right $SourceCheckout)) {
+        throw "Os metadados da prévia divergem da thread solicitada: '$resolvedSource'."
+    }
+    return $resolvedSource
 }
 
 function Get-CrmInstanceManifest {
@@ -2233,6 +2469,200 @@ function Show-CrmModulesMenu {
     }
 }
 
+function Start-CrmThreadPreviewBackgroundUpdate {
+    param(
+        [Parameter(Mandatory = $true)][object]$Spec,
+        [Parameter(Mandatory = $true)][string]$SourceCheckout,
+        [Parameter(Mandatory = $true)][string]$MaterializedSourceRoot,
+        [Parameter(Mandatory = $true)][string]$TargetCommit,
+        [Parameter(Mandatory = $true)][string]$SourceFingerprint
+    )
+
+    $runtimeRoot = Get-CrmInstanceRuntimeRoot -Spec $Spec
+    New-Item -ItemType Directory -Path (Join-Path $runtimeRoot 'logs') -Force | Out-Null
+    $outLog = Join-Path $runtimeRoot 'logs\action.out.log'
+    $errLog = Join-Path $runtimeRoot 'logs\action.err.log'
+    $arguments = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath,
+        '-Action', 'CrmThreadPreview', '-ProjectRoot', $SourceCheckout,
+        '-CrmRole', [string]$Spec.role, '-CrmModule', [string]$Spec.module,
+        '-CrmThreadPreviewSourceRoot', $SourceCheckout,
+        '-CrmThreadPreviewMaterializedSourceRoot', $MaterializedSourceRoot,
+        '-CrmThreadPreviewTargetCommit', $TargetCommit,
+        '-CrmThreadPreviewSourceFingerprint', $SourceFingerprint,
+        '-CrmThreadPreviewDetachedStart'
+    )
+    if ($CrmRuntimeSuppressBrowser) {
+        $arguments += '-CrmRuntimeSuppressBrowser'
+    }
+    Start-Process powershell.exe -ArgumentList $arguments -WindowStyle Hidden `
+        -RedirectStandardOutput $outLog -RedirectStandardError $errLog | Out-Null
+    Write-Host "[crm-thread-preview] $([string]$Spec.role) / $([string]$Spec.label) iniciou em segundo plano."
+}
+
+function Invoke-CrmThreadPreviewAction {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('Gestor', 'Consultor')][string]$Role,
+        [Parameter(Mandatory = $true)][string]$Module,
+        [string]$SourceRoot = $ProjectRoot
+    )
+
+    $sourceCheckout = Resolve-CrmThreadPreviewSourceCheckout -SourceRoot $SourceRoot
+    if ($CrmThreadPreviewDetachedStart) {
+        foreach ($required in @(
+            $CrmThreadPreviewMaterializedSourceRoot,
+            $CrmThreadPreviewTargetCommit,
+            $CrmThreadPreviewSourceFingerprint
+        )) {
+            if ([string]::IsNullOrWhiteSpace([string]$required)) {
+                throw 'A inicialização destacada da prévia perdeu a proveniência da thread; ela foi recusada.'
+            }
+        }
+        $materializedSource = Assert-CrmThreadPreviewMaterializedSource `
+            -MaterializedSourceRoot $CrmThreadPreviewMaterializedSourceRoot `
+            -SourceCheckout $sourceCheckout `
+            -TargetCommit $CrmThreadPreviewTargetCommit `
+            -SourceFingerprint $CrmThreadPreviewSourceFingerprint
+        Assert-CrmLocalLauncherContract -SourceRoot $materializedSource
+        $baseSpec = Resolve-CrmLocalModuleSpec -Role $Role -Module $Module -SourceRoot $materializedSource
+        $spec = Get-CrmThreadPreviewSpec -BaseSpec $baseSpec -SourceRoot $materializedSource -SourceCheckout $sourceCheckout
+        $null = Assert-CrmThreadPreviewOwnership -Spec $spec -SourceCheckout $sourceCheckout
+        $sourceOrigin = '{0}__{1}' -f $materializedSource, ([string]$spec.runtimeId)
+        $buildPaths = Get-CrmInstanceBuildPaths -SourceFingerprint $CrmThreadPreviewSourceFingerprint -SourceRoot $materializedSource
+        New-Item -ItemType Directory -Path $buildPaths.Root -Force | Out-Null
+        $descriptor = Get-CrmInstanceBuildDescriptor -SourceRoot $materializedSource -StatePath $buildPaths.State
+        $decision = Get-CrmInstanceDecision `
+            -Spec $spec `
+            -TargetCommit $CrmThreadPreviewTargetCommit `
+            -SourceFingerprint $CrmThreadPreviewSourceFingerprint `
+            -SourceOrigin $sourceOrigin `
+            -BuildDescriptor $descriptor `
+            -BuildStatePath $buildPaths.State `
+            -SourceRoot $materializedSource
+        if ($decision.Action -eq 'reuse') {
+            if ($CrmRuntimeSuppressBrowser) {
+                Write-Host "[crm-thread-preview] $([string]$spec.runtimeId) já está pronto para este snapshot."
+            } else {
+                Open-CrmInstanceUrl -Spec $spec -Manifest $decision.Manifest
+            }
+            return
+        }
+        if ($decision.Action -eq 'wait') {
+            $ready = Wait-CrmInstanceCurrent `
+                -Spec $spec `
+                -TargetCommit $CrmThreadPreviewTargetCommit `
+                -SourceFingerprint $CrmThreadPreviewSourceFingerprint `
+                -SourceOrigin $sourceOrigin `
+                -BuildPaths $buildPaths
+            if ($ready.Action -eq 'reuse') {
+                if ($CrmRuntimeSuppressBrowser) {
+                    Write-Host "[crm-thread-preview] $([string]$spec.runtimeId) ficou pronto para este snapshot."
+                } else {
+                    Open-CrmInstanceUrl -Spec $spec -Manifest $ready.Manifest
+                }
+                return
+            }
+            $decision = $ready
+        }
+        if ($decision.Action -eq 'restart') {
+            Write-Host "[crm-thread-preview] Atualizando $([string]$spec.runtimeId): $($decision.Reason)."
+            Stop-CrmInstanceRuntime -Spec $spec
+        }
+        Start-CrmInstanceRuntime `
+            -Spec $spec `
+            -SourceRoot $materializedSource `
+            -TargetCommit $CrmThreadPreviewTargetCommit `
+            -SourceFingerprint $CrmThreadPreviewSourceFingerprint `
+            -SourceOrigin $sourceOrigin `
+            -BuildPaths $buildPaths
+        return
+    }
+
+    $targetCommit = Get-CrmThreadPreviewTargetCommit -SourceCheckout $sourceCheckout
+    $snapshot = Get-CrmLocalSourceSnapshot `
+        -TargetCommit $targetCommit `
+        -SourceRoot $sourceCheckout `
+        -IncludeWorkingChanges
+    try {
+        $materializedSource = Sync-CrmLocalImmutableSourceRoot -TargetCommit $targetCommit -Snapshot $snapshot
+        Assert-CrmLocalLauncherContract -SourceRoot $materializedSource
+        $baseSpec = Resolve-CrmLocalModuleSpec -Role $Role -Module $Module -SourceRoot $materializedSource
+        $spec = Get-CrmThreadPreviewSpec -BaseSpec $baseSpec -SourceRoot $materializedSource -SourceCheckout $sourceCheckout
+        $null = Assert-CrmThreadPreviewOwnership -Spec $spec -SourceCheckout $sourceCheckout
+        Write-CrmThreadPreviewDescriptor `
+            -Spec $spec `
+            -SourceCheckout $sourceCheckout `
+            -MaterializedSourceRoot $materializedSource `
+            -TargetCommit $targetCommit `
+            -SourceFingerprint ([string]$snapshot.Fingerprint)
+        Start-CrmThreadPreviewBackgroundUpdate `
+            -Spec $spec `
+            -SourceCheckout $sourceCheckout `
+            -MaterializedSourceRoot $materializedSource `
+            -TargetCommit $targetCommit `
+            -SourceFingerprint ([string]$snapshot.Fingerprint)
+        Write-Host "[crm-thread-preview] Fonte: $sourceCheckout"
+        Write-Host "[crm-thread-preview] Commit: $targetCommit | Snapshot: $([string]$snapshot.Fingerprint)"
+        Write-Host "[crm-thread-preview] URL: http://localhost:$([int]$spec.ports.pages)/?module=$([string]$spec.module)"
+    } finally {
+        Remove-CrmLocalSourceSnapshot -Snapshot $snapshot
+    }
+}
+
+function Stop-CrmThreadPreviewAction {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('Gestor', 'Consultor')][string]$Role,
+        [Parameter(Mandatory = $true)][string]$Module,
+        [string]$SourceRoot = $ProjectRoot
+    )
+
+    $sourceCheckout = Resolve-CrmThreadPreviewSourceCheckout -SourceRoot $SourceRoot
+    $baseSpec = Resolve-CrmLocalModuleSpec -Role $Role -Module $Module -SourceRoot $sourceCheckout
+    $spec = Get-CrmThreadPreviewSpec -BaseSpec $baseSpec -SourceRoot $sourceCheckout -SourceCheckout $sourceCheckout
+    $descriptor = Assert-CrmThreadPreviewOwnership -Spec $spec -SourceCheckout $sourceCheckout
+    if ($null -eq $descriptor) {
+        Write-Host "[crm-thread-preview] Não há prévia registrada para $([string]$spec.role) / $([string]$spec.label)."
+        return
+    }
+    Stop-CrmInstanceRuntime -Spec $spec
+    Write-CrmThreadPreviewDescriptor `
+        -Spec $spec `
+        -SourceCheckout $sourceCheckout `
+        -MaterializedSourceRoot ([string]$descriptor.materializedSource) `
+        -TargetCommit ([string]$descriptor.targetCommit) `
+        -SourceFingerprint ([string]$descriptor.sourceFingerprint) `
+        -State stopped
+    Write-Host "[crm-thread-preview] Prévia encerrada: $([string]$spec.runtimeId)."
+}
+
+function Show-CrmThreadPreviewMenu {
+    $sourceCheckout = Resolve-CrmThreadPreviewSourceCheckout -SourceRoot $ProjectRoot
+    $catalog = Get-CrmLocalModuleCatalog -SourceRoot $sourceCheckout
+    while ($true) {
+        $operation = Read-MenuSelection -Title "CRM – Prévia da Thread ($([IO.Path]::GetFileName($sourceCheckout)))" -Options @(
+            (New-MenuOption -Label 'Abrir ou atualizar prévia isolada' -Action 'start'),
+            (New-MenuOption -Label 'Encerrar prévia desta thread' -Action 'stop')
+        ) -CancelLabel 'Sair'
+        if ($null -eq $operation) { return }
+        $roleOptions = @($catalog.roles | ForEach-Object {
+            New-MenuOption -Label ([string]$_.role) -Action ([string]$_.role)
+        })
+        $roleSelection = Read-MenuSelection -Title 'Prévia — papel' -Options $roleOptions -CancelLabel 'Voltar'
+        if ($null -eq $roleSelection) { continue }
+        $selectedRole = [string]$roleSelection.Action
+        $moduleOptions = @($catalog.combinations | Where-Object { [string]$_.role -eq $selectedRole } | ForEach-Object {
+            New-MenuOption -Label ([string]$_.label) -Action ([string]$_.module)
+        })
+        $moduleSelection = Read-MenuSelection -Title "Prévia — $selectedRole" -Options $moduleOptions -CancelLabel 'Voltar'
+        if ($null -eq $moduleSelection) { continue }
+        if ([string]$operation.Action -eq 'start') {
+            Invoke-CrmThreadPreviewAction -Role $selectedRole -Module ([string]$moduleSelection.Action) -SourceRoot $sourceCheckout
+        } else {
+            Stop-CrmThreadPreviewAction -Role $selectedRole -Module ([string]$moduleSelection.Action) -SourceRoot $sourceCheckout
+        }
+    }
+}
+
 foreach ($path in @(
     $efAppStateRoot,
     $efAppOutputRoot,
@@ -2485,7 +2915,7 @@ function Invoke-EfAppPythonMode {
 function Invoke-ShortcutActionInternal {
     param([string]$SelectedAction)
 
-    if ($SelectedAction -like 'Crm*') {
+    if ($SelectedAction -like 'Crm*' -and $SelectedAction -ne 'CrmThreadPreview') {
         Use-CrmLaunchSource
     }
 
@@ -2573,6 +3003,35 @@ function Invoke-ShortcutActionInternal {
         }
         "CrmModules" {
             Show-CrmModulesMenu
+        }
+        "CrmThreadPreview" {
+            $threadPreviewSource = if ([string]::IsNullOrWhiteSpace($CrmThreadPreviewSourceRoot)) {
+                $ProjectRoot
+            } else {
+                $CrmThreadPreviewSourceRoot
+            }
+            if ($CrmThreadPreviewDetachedStart) {
+                if ([string]::IsNullOrWhiteSpace($CrmRole) -or [string]::IsNullOrWhiteSpace($CrmModule)) {
+                    throw 'A inicialização destacada da prévia exige -CrmRole e -CrmModule.'
+                }
+                Invoke-CrmThreadPreviewAction -Role $CrmRole -Module $CrmModule -SourceRoot $threadPreviewSource
+                return
+            }
+            if ($CrmThreadPreviewStop) {
+                if ([string]::IsNullOrWhiteSpace($CrmRole) -or [string]::IsNullOrWhiteSpace($CrmModule)) {
+                    throw 'O encerramento da prévia exige -CrmRole e -CrmModule.'
+                }
+                Stop-CrmThreadPreviewAction -Role $CrmRole -Module $CrmModule -SourceRoot $threadPreviewSource
+                return
+            }
+            if ([string]::IsNullOrWhiteSpace($CrmRole) -and [string]::IsNullOrWhiteSpace($CrmModule)) {
+                Show-CrmThreadPreviewMenu
+                return
+            }
+            if ([string]::IsNullOrWhiteSpace($CrmRole) -or [string]::IsNullOrWhiteSpace($CrmModule)) {
+                throw 'CRM – Prévia da Thread exige -CrmRole e -CrmModule juntos, ou nenhum para abrir o menu.'
+            }
+            Invoke-CrmThreadPreviewAction -Role $CrmRole -Module $CrmModule -SourceRoot $threadPreviewSource
         }
         "CrmModule" {
             if ([string]::IsNullOrWhiteSpace($CrmRole) -or [string]::IsNullOrWhiteSpace($CrmModule)) {
