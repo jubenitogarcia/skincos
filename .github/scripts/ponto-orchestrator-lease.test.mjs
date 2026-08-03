@@ -199,6 +199,38 @@ test("assert-active honors a bounded Retry-After response for a transient read",
   });
 });
 
+test("assert-active retries a rate-limited 403 only when Retry-After is present", async () => {
+  const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
+  await withApi({
+    transientFailures: [workflowPath],
+    transientFailureStatus: 403,
+    transientFailureHeaders: { "retry-after": "0" },
+  }, async ({ apiUrl, getRequestCount }) => {
+    const result = await execute(
+      ["assert-active", stage, releaseSha, orchestratorRunId],
+      { GITHUB_API_URL: apiUrl },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(getRequestCount(), 5);
+  });
+});
+
+test("assert-active keeps an ordinary 403 fail-closed", async () => {
+  const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
+  await withApi({
+    transientFailures: [workflowPath],
+    transientFailureStatus: 403,
+  }, async ({ apiUrl, getRequestCount }) => {
+    const result = await execute(
+      ["assert-active", stage, releaseSha, orchestratorRunId],
+      { GITHUB_API_URL: apiUrl },
+    );
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /GitHub API GET .* returned 403/);
+    assert.equal(getRequestCount(), 2);
+  });
+});
+
 test("assert-active fails closed when Retry-After exceeds the bounded read window", async () => {
   const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
   await withApi({

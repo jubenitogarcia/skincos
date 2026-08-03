@@ -570,19 +570,17 @@ const request = async (pathname, init = {}, { onRetry } = {}) => {
       if (response.status === 202 || response.status === 204) return null;
       return response.json();
     }
-    if (
-      canRetry
-      && TRANSIENT_READ_STATUSES.has(response.status)
-      && attempt >= TRANSIENT_READ_RETRY_DELAYS_MS.length
-    ) {
+    const retryAfterDelay = response.status === 429 || response.status === 403
+      ? parseRetryAfterMs(response.headers.get("retry-after"))
+      : undefined;
+    const retryableReadStatus = TRANSIENT_READ_STATUSES.has(response.status)
+      || (response.status === 403 && retryAfterDelay !== undefined);
+    if (canRetry && retryableReadStatus && attempt >= TRANSIENT_READ_RETRY_DELAYS_MS.length) {
       throw new Error(
         `GitHub API ${method} ${pathname} returned ${response.status} after bounded transient read retries`,
       );
     }
-    const retryAfterDelay = response.status === 429
-      ? parseRetryAfterMs(response.headers.get("retry-after"))
-      : undefined;
-    const retryDelay = canRetry && TRANSIENT_READ_STATUSES.has(response.status)
+    const retryDelay = canRetry && retryableReadStatus
       ? retryAfterDelay ?? TRANSIENT_READ_RETRY_DELAYS_MS[attempt]
       : undefined;
     if (retryDelay === undefined) {
@@ -653,6 +651,32 @@ const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage, cur
   }
 };
 
+const delegatedIssuerSnapshot = async ({ issuerRunId }) => {
+  for (let refresh = 0; ; refresh += 1) {
+    let snapshotWasRetried = false;
+    const markSnapshotRetry = () => {
+      snapshotWasRetried = true;
+    };
+    const issuer = await request(
+      `/repos/${repository}/actions/runs/${issuerRunId}`,
+      {},
+      { onRetry: markSnapshotRetry },
+    );
+    const issuerWorkflow = await request(
+      `/repos/${repository}/actions/workflows/${issuer?.workflow_id}`,
+      {},
+      { onRetry: markSnapshotRetry },
+    );
+    if (snapshotWasRetried) {
+      if (refresh >= MAX_CANONICAL_SNAPSHOT_REFRESHES) {
+        throw new Error("delegated issuer snapshot remained transient after bounded refreshes");
+      }
+      continue;
+    }
+    return { issuer, issuerWorkflow };
+  }
+};
+
 async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestratorRunId]) {
   const releaseSha = String(releaseShaRaw || "").trim().toLowerCase();
   const currentHeadSha = String(process.env.GITHUB_SHA || "").trim().toLowerCase();
@@ -713,12 +737,10 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
     || !["main", "refs/heads/main"].includes(String(event?.ref || ""))
   ) throw new Error("current child run is not the exact active first-attempt capability subject");
 
-  const issuer = issuerRunId === orchestratorRunId
-    ? parent.run
-    : await request(`/repos/${repository}/actions/runs/${issuerRunId}`);
-  const issuerWorkflow = issuerRunId === orchestratorRunId
-    ? parent.workflow
-    : await request(`/repos/${repository}/actions/workflows/${issuer?.workflow_id}`);
+  const issuerSnapshot = issuerRunId === orchestratorRunId
+    ? parent
+    : await delegatedIssuerSnapshot({ issuerRunId });
+  const { issuer, issuerWorkflow } = issuerSnapshot;
   const issuerWorkflowPath = String(issuer?.path || "").split("@")[0];
   const delegatedIssuer = issuerRunId !== orchestratorRunId;
   if (
