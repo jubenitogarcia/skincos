@@ -570,6 +570,15 @@ const request = async (pathname, init = {}, { onRetry } = {}) => {
       if (response.status === 202 || response.status === 204) return null;
       return response.json();
     }
+    if (
+      canRetry
+      && TRANSIENT_READ_STATUSES.has(response.status)
+      && attempt >= TRANSIENT_READ_RETRY_DELAYS_MS.length
+    ) {
+      throw new Error(
+        `GitHub API ${method} ${pathname} returned ${response.status} after bounded transient read retries`,
+      );
+    }
     const retryAfterDelay = response.status === 429
       ? parseRetryAfterMs(response.headers.get("retry-after"))
       : undefined;

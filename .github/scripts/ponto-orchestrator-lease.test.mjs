@@ -76,13 +76,14 @@ const withApi = async ({
   artifact,
   runSequence = [],
   transientFailures = [],
+  transientFailureCount = 1,
   transientFailureStatus = 503,
   transientFailureHeaders = {},
 }, callback) => {
   let deleted = false;
   let requestCount = 0;
   let runRequestCount = 0;
-  const remainingTransientFailures = new Map(transientFailures.map(pathname => [pathname, 1]));
+  const remainingTransientFailures = new Map(transientFailures.map(pathname => [pathname, transientFailureCount]));
   const server = http.createServer((request, response) => {
     requestCount += 1;
     response.setHeader("content-type", "application/json");
@@ -212,6 +213,24 @@ test("assert-active fails closed when Retry-After exceeds the bounded read windo
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /Retry-After beyond the bounded retry window/);
     assert.equal(getRequestCount(), 2);
+  });
+});
+
+test("assert-active bounds repeated Retry-After responses", async () => {
+  const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
+  await withApi({
+    transientFailures: [workflowPath],
+    transientFailureCount: 10,
+    transientFailureStatus: 429,
+    transientFailureHeaders: { "retry-after": "0" },
+  }, async ({ apiUrl, getRequestCount }) => {
+    const result = await execute(
+      ["assert-active", stage, releaseSha, orchestratorRunId],
+      { GITHUB_API_URL: apiUrl },
+    );
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /after bounded transient read retries/);
+    assert.equal(getRequestCount(), 5);
   });
 });
 
