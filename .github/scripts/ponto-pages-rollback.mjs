@@ -84,7 +84,7 @@ export async function rollbackPagesWithReconciliation({
   };
   const getLatest = async () => {
     const payload = await request(`${base}?env=production&per_page=25`);
-    const listed = latestProductionPagesDeployment(payload);
+    const listed = latestProductionPagesDeployment(payload, { alias });
     const id = String(listed?.id || "").toLowerCase();
     if (!UUID.test(id)) throw new Error("Pages latest production deployment identity is invalid");
     return getDeployment(id);
