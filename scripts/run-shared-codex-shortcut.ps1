@@ -1939,6 +1939,18 @@ function Assert-CrmThreadPreviewOwnership {
     }
     if ($null -ne $descriptor) {
         if (-not (Test-CrmSameWindowsPath -Left ([string]$descriptor.sourceCheckout) -Right $SourceCheckout)) {
+            # A clean stop must release the shared role/module port for the
+            # next thread. The descriptor alone is never enough: accept that
+            # handoff only when both records say stopped and the recorded
+            # launcher identity is no longer alive.
+            $manifestStopped = $null -eq $manifest -or [string]$manifest.state -eq 'stopped'
+            $launcherAlive = $false
+            if ($null -ne $manifest) {
+                $launcherAlive = Test-CrmManifestLauncherIdentity -Manifest $manifest
+            }
+            if ([string]$descriptor.state -eq 'stopped' -and $manifestStopped -and -not $launcherAlive) {
+                return $null
+            }
             throw "A prévia '$([string]$Spec.runtimeId)' pertence a outra thread em '$([string]$descriptor.sourceCheckout)'. Encerre-a no worktree proprietário antes de abrir esta."
         }
         if ([string]$descriptor.runtimeId -ne [string]$Spec.runtimeId -or
