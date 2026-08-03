@@ -278,6 +278,13 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
   assert.match(core, /vars\.ENABLE_PONTO_CORE_WORKERS_DEPLOY\b/);
   const timekeeping = readWorkflow("deploy-timekeeping.yml");
   assert.match(timekeeping, /vars\.ENABLE_PONTO_TIMEKEEPING_PRODUCTION_DEPLOY\b/);
+  const stagingJourney = readWorkflow("timekeeping-staging-journey.yml");
+  assert.match(stagingJourney, /vars\.PONTO_TIMEKEEPING_D1_STAGING_ID\b/);
+  assert.match(stagingJourney, /TIMEKEEPING_STAGING_WRANGLER_CONFIG/);
+  assert.doesNotMatch(
+    stagingJourney,
+    /d1 execute \"\$STAGING_TIMEKEEPING_D1_DATABASE\" --config workforce\/timekeeping\/wrangler\.toml/,
+  );
   const journey = fs.readFileSync(
     new URL("./ponto-production-journey.mjs", import.meta.url),
     "utf8",
