@@ -71,9 +71,17 @@ const canonicalRun = (overrides = {}) => ({
   ...overrides,
 });
 
-const withApi = async ({ run = canonicalRun(), artifact, transientFailures = [] }, callback) => {
+const withApi = async ({
+  run = canonicalRun(),
+  artifact,
+  runSequence = [],
+  transientFailures = [],
+  transientFailureStatus = 503,
+  transientFailureHeaders = {},
+}, callback) => {
   let deleted = false;
   let requestCount = 0;
+  let runRequestCount = 0;
   const remainingTransientFailures = new Map(transientFailures.map(pathname => [pathname, 1]));
   const server = http.createServer((request, response) => {
     requestCount += 1;
@@ -81,7 +89,8 @@ const withApi = async ({ run = canonicalRun(), artifact, transientFailures = [] 
     const remainingFailures = remainingTransientFailures.get(request.url) || 0;
     if (remainingFailures > 0) {
       remainingTransientFailures.set(request.url, remainingFailures - 1);
-      response.statusCode = 503;
+      response.statusCode = transientFailureStatus;
+      for (const [name, value] of Object.entries(transientFailureHeaders)) response.setHeader(name, value);
       response.end(JSON.stringify({ message: "transient test failure" }));
       return;
     }
@@ -94,7 +103,7 @@ const withApi = async ({ run = canonicalRun(), artifact, transientFailures = [] 
       return;
     }
     if (request.url === `/repos/${repository}/actions/runs/${orchestratorRunId}`) {
-      response.end(JSON.stringify(run));
+      response.end(JSON.stringify(runSequence[runRequestCount++] || run));
       return;
     }
     if (request.url?.startsWith(`/repos/${repository}/actions/runs/${orchestratorRunId}/artifacts?`)) {
@@ -153,7 +162,56 @@ test("assert-active retries a transient GitHub API read before accepting the coo
     );
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /active first-attempt Ponto coordinator/);
-    assert.equal(getRequestCount(), 3);
+    assert.equal(getRequestCount(), 5);
+  });
+});
+
+test("assert-active refreshes the complete coordinator snapshot after a retried read", async () => {
+  const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
+  await withApi({
+    transientFailures: [workflowPath],
+    runSequence: [canonicalRun(), canonicalRun({ status: "completed", conclusion: "cancelled" })],
+  }, async ({ apiUrl, getRequestCount }) => {
+    const result = await execute(
+      ["assert-active", stage, releaseSha, orchestratorRunId],
+      { GITHUB_API_URL: apiUrl },
+    );
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /exact active first-attempt issuer/);
+    assert.equal(getRequestCount(), 5);
+  });
+});
+
+test("assert-active honors a bounded Retry-After response for a transient read", async () => {
+  const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
+  await withApi({
+    transientFailures: [workflowPath],
+    transientFailureStatus: 429,
+    transientFailureHeaders: { "retry-after": "0" },
+  }, async ({ apiUrl, getRequestCount }) => {
+    const result = await execute(
+      ["assert-active", stage, releaseSha, orchestratorRunId],
+      { GITHUB_API_URL: apiUrl },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(getRequestCount(), 5);
+  });
+});
+
+test("assert-active fails closed when Retry-After exceeds the bounded read window", async () => {
+  const workflowPath = `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`;
+  await withApi({
+    transientFailures: [workflowPath],
+    transientFailureStatus: 429,
+    transientFailureHeaders: { "retry-after": "31" },
+  }, async ({ apiUrl, getRequestCount }) => {
+    const result = await execute(
+      ["assert-active", stage, releaseSha, orchestratorRunId],
+      { GITHUB_API_URL: apiUrl },
+    );
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /Retry-After beyond the bounded retry window/);
+    assert.equal(getRequestCount(), 2);
   });
 });
 

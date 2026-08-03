@@ -541,8 +541,18 @@ export function transitionCapabilityDocument(document, {
 
 const TRANSIENT_READ_STATUSES = new Set([429, 500, 502, 503, 504]);
 const TRANSIENT_READ_RETRY_DELAYS_MS = [1_000, 3_000, 8_000];
+const MAX_TRANSIENT_READ_RETRY_DELAY_MS = 30_000;
+const MAX_CANONICAL_SNAPSHOT_REFRESHES = 2;
 
-const request = async (pathname, init = {}) => {
+const parseRetryAfterMs = (value, now = Date.now()) => {
+  const raw = String(value || "").trim();
+  if (!raw) return undefined;
+  if (/^\d+(?:\.\d+)?$/.test(raw)) return Math.ceil(Number(raw) * 1_000);
+  const timestamp = Date.parse(raw);
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - now) : undefined;
+};
+
+const request = async (pathname, init = {}, { onRetry } = {}) => {
   const method = String(init.method || "GET").toUpperCase();
   const canRetry = method === "GET" || method === "HEAD";
   for (let attempt = 0; ; attempt += 1) {
@@ -560,12 +570,21 @@ const request = async (pathname, init = {}) => {
       if (response.status === 202 || response.status === 204) return null;
       return response.json();
     }
+    const retryAfterDelay = response.status === 429
+      ? parseRetryAfterMs(response.headers.get("retry-after"))
+      : undefined;
     const retryDelay = canRetry && TRANSIENT_READ_STATUSES.has(response.status)
-      ? TRANSIENT_READ_RETRY_DELAYS_MS[attempt]
+      ? retryAfterDelay ?? TRANSIENT_READ_RETRY_DELAYS_MS[attempt]
       : undefined;
     if (retryDelay === undefined) {
       throw new Error(`GitHub API ${method} ${pathname} returned ${response.status}`);
     }
+    if (retryDelay > MAX_TRANSIENT_READ_RETRY_DELAY_MS) {
+      throw new Error(
+        `GitHub API ${method} ${pathname} returned ${response.status} with Retry-After beyond the bounded retry window`,
+      );
+    }
+    onRetry?.({ method, pathname, status: response.status, retryDelay });
     await new Promise(resolve => setTimeout(resolve, retryDelay));
   }
 };
@@ -577,32 +596,52 @@ const assertFirstAttempt = () => {
 };
 
 const canonicalOrchestrator = async ({ orchestratorRunId, releaseSha, stage, currentHeadSha }) => {
-  const [workflow, run] = await Promise.all([
-    request(`/repos/${repository}/actions/workflows/ponto-progressive-release.yml`),
-    request(`/repos/${repository}/actions/runs/${orchestratorRunId}`),
-  ]);
-  if (
-    workflow?.state !== "active"
-    || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
-    || String(run?.id || "") !== orchestratorRunId
-    || run?.workflow_id !== workflow.id
-    || !acceptsWorkflowRunPath(workflow.path, run?.path)
-    || run?.run_attempt !== 1
-    || run?.status !== "in_progress"
-    || run?.conclusion != null
-    || run?.event !== "workflow_dispatch"
-    || run?.head_branch !== "main"
-    || run?.head_sha !== currentHeadSha
-    || run?.head_sha !== releaseSha
-    || run?.name !== `Ponto ${stage} ${releaseSha} orchestrator=${orchestratorRunId}`
-    || run?.repository?.full_name !== repository
-    || String(run?.repository?.id || "") !== repositoryId
-    || run?.head_repository?.full_name !== repository
-    || run?.display_title !== `Ponto ${stage} ${releaseSha} orchestrator=${orchestratorRunId}`
-  ) {
-    throw new Error("canonical orchestrator run is not the exact active first-attempt issuer");
+  for (let refresh = 0; ; refresh += 1) {
+    let snapshotWasRetried = false;
+    const markSnapshotRetry = () => {
+      snapshotWasRetried = true;
+    };
+    const [workflow, run] = await Promise.all([
+      request(
+        `/repos/${repository}/actions/workflows/ponto-progressive-release.yml`,
+        {},
+        { onRetry: markSnapshotRetry },
+      ),
+      request(
+        `/repos/${repository}/actions/runs/${orchestratorRunId}`,
+        {},
+        { onRetry: markSnapshotRetry },
+      ),
+    ]);
+    if (snapshotWasRetried) {
+      if (refresh >= MAX_CANONICAL_SNAPSHOT_REFRESHES) {
+        throw new Error("canonical orchestrator snapshot remained transient after bounded refreshes");
+      }
+      continue;
+    }
+    if (
+      workflow?.state !== "active"
+      || workflow?.path !== ".github/workflows/ponto-progressive-release.yml"
+      || String(run?.id || "") !== orchestratorRunId
+      || run?.workflow_id !== workflow.id
+      || !acceptsWorkflowRunPath(workflow.path, run?.path)
+      || run?.run_attempt !== 1
+      || run?.status !== "in_progress"
+      || run?.conclusion != null
+      || run?.event !== "workflow_dispatch"
+      || run?.head_branch !== "main"
+      || run?.head_sha !== currentHeadSha
+      || run?.head_sha !== releaseSha
+      || run?.name !== `Ponto ${stage} ${releaseSha} orchestrator=${orchestratorRunId}`
+      || run?.repository?.full_name !== repository
+      || String(run?.repository?.id || "") !== repositoryId
+      || run?.head_repository?.full_name !== repository
+      || run?.display_title !== `Ponto ${stage} ${releaseSha} orchestrator=${orchestratorRunId}`
+    ) {
+      throw new Error("canonical orchestrator run is not the exact active first-attempt issuer");
+    }
+    return { workflow, run };
   }
-  return { workflow, run };
 };
 
 async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestratorRunId]) {
