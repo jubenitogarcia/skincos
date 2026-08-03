@@ -234,7 +234,10 @@ jobs:
             const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
             const entries = Array.isArray(payload) ? payload : [payload];
             if (entries.some((entry) => entry?.success === false)) throw new Error('PIN attestation query failed');
-            return entries.flatMap((entry) => entry?.results || entry?.result?.results || []);
+            return entries.flatMap((entry) => [
+              ...(Array.isArray(entry?.results) ? entry.results : []),
+              ...(Array.isArray(entry?.result?.results) ? entry.result.results : []),
+            ]);
           };
           (async () => {
             const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
