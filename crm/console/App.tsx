@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import {
     DropdownMenu,
     DropdownMenuContent,
+    DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
@@ -48,7 +49,7 @@ import { dispatchAtendimentoHeaderAction, subscribeAtendimentoHeaderState } from
 import type { AtendimentoHeaderState } from '@/atendimentoHeaderBridge'
 import { hasCrmModuleAccess } from '@/crmRoleAccess'
 import { canManagePonto } from '@/pontoAccess'
-import { BarChart3, CalendarX2, CheckCircle2, ChevronDown, Download, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, X } from 'lucide-react'
+import { ArrowDownUp, CalendarX2, CheckCircle2, ChevronDown, ChevronsUpDown, Download, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Upload, X } from 'lucide-react'
 
 const INSUMOS_UNIT_KEY = 'skincos.insumos.unidade.v1'
 const INSUMOS_OVERVIEW_PERIOD_KEY = 'skincos.insumos.overview.period.v1'
@@ -550,6 +551,8 @@ export default function AppFunctionalNeatlab() {
                     if ((atendimentoQuickWindow !== 'currentWeek' && atendimentoQuickWindow !== 'currentMonth') || days == null) return ''
                     return `${days}d laborais`
                 }, [atendimentoHeaderState?.periodOperationalDays, atendimentoQuickWindow])
+                const atendimentoLayoutExpanded = atendimentoHeaderState?.layoutExpanded === true
+                const atendimentoLayoutLabel = atendimentoLayoutExpanded ? 'Contrair tudo' : 'Expandir tudo'
                 const setAtendimentoQuickWindow = React.useCallback((preset: AtendimentoQuickPreset) => {
                     const { from, to } = buildAtendimentoQuickRange(preset)
                     dispatchAtendimentoHeaderAction({
@@ -1896,28 +1899,16 @@ export default function AppFunctionalNeatlab() {
                                                         </span>
                                                     ) : null}
                                                 </div>
-                                                <TooltipButton label="Expandir tudo">
+                                                <TooltipButton label={atendimentoLayoutLabel} pinOnClick={false}>
                                                     <Button
                                                         size="icon"
                                                         variant="ghost"
                                                         className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
-                                                        onClick={() => dispatchAtendimentoHeaderAction({ type: 'layout', value: 'expandAll' })}
-                                                        aria-label="Expandir tudo"
-                                                        data-testid="atendimento-header-expand-all"
+                                                        onClick={() => dispatchAtendimentoHeaderAction({ type: 'layout', value: atendimentoLayoutExpanded ? 'collapseAll' : 'expandAll' })}
+                                                        aria-label={atendimentoLayoutLabel}
+                                                        data-testid="atendimento-header-layout-toggle"
                                                     >
-                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M7 9l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 14l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                                                    </Button>
-                                                </TooltipButton>
-                                                <TooltipButton label="Contrair tudo">
-                                                    <Button
-                                                        size="icon"
-                                                        variant="ghost"
-                                                        className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
-                                                        onClick={() => dispatchAtendimentoHeaderAction({ type: 'layout', value: 'collapseAll' })}
-                                                        aria-label="Contrair tudo"
-                                                        data-testid="atendimento-header-collapse-all"
-                                                    >
-                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M7 15l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 10l5-5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                                        <ChevronsUpDown className="size-3.5" aria-hidden="true" />
                                                     </Button>
                                                 </TooltipButton>
                                                 <Tooltip>
@@ -1949,40 +1940,41 @@ export default function AppFunctionalNeatlab() {
                                                         </div>
                                                     </TooltipContent>
                                                 </Tooltip>
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
+                                                <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
                                                         <Button
                                                             size="icon"
                                                             variant="ghost"
                                                             className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
-                                                            onClick={() => dispatchAtendimentoHeaderAction({ type: 'report' })}
-                                                            aria-label="Relatório Atendimento"
+                                                            aria-label="Importar / exportar Atendimento"
+                                                            title="Importar / exportar"
+                                                            data-testid="atendimento-header-import-export"
+                                                        >
+                                                            <ArrowDownUp className="size-3.5" aria-hidden="true" />
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent align="end" className="w-56 border-slate-700 bg-slate-950/95 p-1.5 text-slate-100 shadow-2xl backdrop-blur-xl">
+                                                        <DropdownMenuLabel className="px-2 py-1.5 text-[11px] uppercase tracking-[0.12em] text-slate-400">Importar / exportar</DropdownMenuLabel>
+                                                        <DropdownMenuSeparator className="bg-slate-800" />
+                                                        <DropdownMenuItem
+                                                            onSelect={() => dispatchAtendimentoHeaderAction({ type: 'report' })}
                                                             data-testid="atendimento-header-report"
+                                                            className="text-slate-100 focus:bg-white/10 focus:text-white"
                                                         >
-                                                            <BarChart3 className="size-3.5" aria-hidden="true" />
-                                                        </Button>
-                                                    </TooltipTrigger>
-                                                    <TooltipContent>
-                                                        Relatório
-                                                    </TooltipContent>
-                                                </Tooltip>
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <Button
-                                                            size="icon"
-                                                            variant="ghost"
-                                                            className="h-8 w-8 rounded-full border border-white/15 bg-white/[0.06] text-blue-50 hover:bg-white/[0.12]"
-                                                            onClick={() => dispatchAtendimentoHeaderAction({ type: 'open-import' })}
-                                                            aria-label="Importar Gerência"
+                                                            <Download className="size-4" aria-hidden="true" />
+                                                            Exportar relatório
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuItem
+                                                            onSelect={() => dispatchAtendimentoHeaderAction({ type: 'open-import' })}
+                                                            disabled={!atendimentoHeaderState?.canManage}
                                                             data-testid="atendimento-header-import"
+                                                            className="text-slate-100 focus:bg-white/10 focus:text-white"
                                                         >
-                                                            <Download className="size-3.5" aria-hidden="true" />
-                                                        </Button>
-                                                    </TooltipTrigger>
-                                                    <TooltipContent>
-                                                        Importar Gerência
-                                                    </TooltipContent>
-                                                </Tooltip>
+                                                            <Upload className="size-4" aria-hidden="true" />
+                                                            Importar Gerência
+                                                        </DropdownMenuItem>
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu>
                                             </div>
                                         </div>
                                     ) : null}

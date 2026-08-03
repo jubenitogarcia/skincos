@@ -7,6 +7,7 @@ type HeaderOption = { value: string; label: string }
 type UseAtendimentoHeaderBridgeOptions = {
   loading: boolean
   canManage: boolean
+  layoutExpanded: boolean
   filters: AtendimentoFilters
   units: HeaderOption[]
   procedures: HeaderOption[]
@@ -30,6 +31,7 @@ type UseAtendimentoHeaderBridgeOptions = {
 export function useAtendimentoHeaderBridge({
   loading,
   canManage,
+  layoutExpanded,
   filters,
   units,
   procedures,
@@ -52,6 +54,7 @@ export function useAtendimentoHeaderBridge({
     emitAtendimentoHeaderState({
       loading,
       canManage,
+      layoutExpanded,
       filters,
       units,
       procedures,
@@ -65,7 +68,7 @@ export function useAtendimentoHeaderBridge({
       total,
     })
     return () => emitAtendimentoHeaderState(null)
-  }, [activeUnitLabel, canManage, filters, injectors, latestImportLabel, loading, localMirrorDetail, localMirrorSummary, periodLabel, periodOperationalDays, procedures, total, units])
+  }, [activeUnitLabel, canManage, filters, injectors, latestImportLabel, layoutExpanded, loading, localMirrorDetail, localMirrorSummary, periodLabel, periodOperationalDays, procedures, total, units])
 
   useEffect(() => subscribeAtendimentoHeaderAction((action) => {
     if (action.type === 'refresh') {
