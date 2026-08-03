@@ -288,6 +288,7 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
   assert.match(stagingJourney, /TIMEKEEPING_STAGING_WRANGLER_CONFIG/);
   assert.match(stagingJourney, /--json > "\$CORE_RAW"/);
   assert.match(stagingJourney, /ponto-json-output\.mjs/);
+  assert.match(stagingJourney, /--command \"\$\(cat \"\$PIN_SQL\"\)\" --json/);
   assert.match(stagingJourney, /for attempt in \$\(seq 1 12\)/);
   assert.match(stagingJourney, /bounded propagation/);
   assert.match(stagingJourney, /PIN attestation query command failed/);
