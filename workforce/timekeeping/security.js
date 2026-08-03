@@ -31,7 +31,7 @@ export function constantTimeEqual(leftValue, rightValue) {
   return diff === 0
 }
 
-export const DEFAULT_PIN_ITERATIONS = 100_000
+export const DEFAULT_PIN_ITERATIONS = 150_000
 
 export async function hashPin(pin, iterations = DEFAULT_PIN_ITERATIONS) {
   const value = String(pin || '')

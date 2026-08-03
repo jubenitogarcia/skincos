@@ -98,7 +98,7 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
         WHERE employee_id = ?
       `).get(fixture.employeeId);
       assert.deepEqual(storedPin.algorithm, 'PBKDF2-SHA256');
-      assert.equal(storedPin.iterations, 100000);
+      assert.equal(storedPin.iterations, 150000);
       assert.equal(await verifyPin(fixture.pin, storedPin), true);
       assert.equal(await verifyPin('000000', storedPin), false);
       const insertSession = database.prepare(`
