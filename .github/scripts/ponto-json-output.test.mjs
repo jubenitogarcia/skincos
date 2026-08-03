@@ -24,12 +24,10 @@ test("extracts JSON after Wrangler progress output", () => {
   ]);
 });
 
-test("extracts a nested JSON object after ANSI progress output", () => {
+test("normalizes a nested D1 result object after ANSI progress output", () => {
   const { output, result } = runParser('\u001b[2K\u001b[1G├ Checking...\n{"result":{"results":[{"employees":0}]}}\n');
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), {
-    result: { results: [{ employees: 0 }] },
-  });
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), [{ results: [{ employees: 0 }] }]);
 });
 
 test("prefers the last D1 result after a valid JSON progress document", () => {
@@ -42,14 +40,12 @@ test("prefers the last D1 result after a valid JSON progress document", () => {
   ]);
 });
 
-test("recognizes a D1 result array inside an envelope", () => {
+test("normalizes a D1 result array inside an envelope", () => {
   const { output, result } = runParser(
     '{"message":"checking"}\n{"result":[{"results":[{"pin_credentials":1}]}]}\n',
   );
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), {
-    result: [{ results: [{ pin_credentials: 1 }] }],
-  });
+  assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), [{ results: [{ pin_credentials: 1 }] }]);
 });
 
 test("fails closed when no JSON document is present", () => {

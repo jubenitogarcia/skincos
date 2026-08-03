@@ -69,4 +69,15 @@ if (document === undefined) {
   throw new Error("command output did not contain a valid JSON document");
 }
 
-fs.writeFileSync(outputPath, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
+// Wrangler can return the D1 statements as either a top-level array or an
+// envelope such as { result: [{ success: true, results: [...] }] }. Keep the
+// parser output stable for callers that inspect statement entries directly.
+const normalizeD1Document = (value) => {
+  if (Array.isArray(value)) return value.flatMap(normalizeD1Document);
+  if (!value || typeof value !== "object") return [value];
+  if (value.success === false || Array.isArray(value.results)) return [value];
+  if (Object.hasOwn(value, "result")) return normalizeD1Document(value.result);
+  return [value];
+};
+
+fs.writeFileSync(outputPath, `${JSON.stringify(normalizeD1Document(document), null, 2)}\n`, { mode: 0o600 });
