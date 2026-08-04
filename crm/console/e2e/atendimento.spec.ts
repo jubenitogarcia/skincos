@@ -164,7 +164,10 @@ async function mockAtendimentoApi(page: Page, options: { restrictedManagement?: 
                 periodOperationalDays: 1,
                 periodGoal: 20,
                 dailyGoal: 20,
-                segments: [{ monthKey: '2026-06-01', monthlyGoal: 20, monthOperationalDays: 1, periodOperationalDays: 1, dailyGoal: 20, periodGoal: 20 }],
+                segments: [
+                  { monthKey: '2026-05-01', monthlyGoal: 10, monthOperationalDays: 1, periodOperationalDays: 1, dailyGoal: 10, periodGoal: 4 },
+                  { monthKey: '2026-06-01', monthlyGoal: 15, monthOperationalDays: 1, periodOperationalDays: 1, dailyGoal: 15, periodGoal: 6 },
+                ],
               },
               metrics: {
                 periodAttendanceTotal: { label: 'Total', weekValue: rows.reduce((acc, row) => acc + row.value, 0), totalValue: rows.reduce((acc, row) => acc + row.value, 0) },
@@ -422,8 +425,14 @@ test.describe('atendimento', () => {
     await expect(dailyMetricTooltip).not.toContainText('Meta diária média do período selecionado.')
     await expect(dailyMetricTooltip).toContainText('Fórmula')
     await expect(dailyMetricTooltip).toContainText('Meta do mês ÷ Dias do período.')
-    await expect(dailyMetricTooltip).toContainText('Meta do período')
+    await expect(dailyMetricTooltip).toContainText('mai de 26')
+    await expect(dailyMetricTooltip).toContainText('jun de 26')
+    await expect(dailyMetricTooltip).toContainText('Meta do período (soma)')
     await expect(dailyMetricTooltip).toContainText('Meta do período ÷ Dias período')
+    const dailyMetricTooltipText = await dailyMetricTooltip.innerText()
+    expect(dailyMetricTooltipText.indexOf('mai de 26')).toBeLessThan(dailyMetricTooltipText.indexOf('Meta do período (soma)'))
+    expect(dailyMetricTooltipText.indexOf('jun de 26')).toBeLessThan(dailyMetricTooltipText.indexOf('Meta do período (soma)'))
+    expect(dailyMetricTooltipText.indexOf('Meta do período (soma)')).toBeLessThan(dailyMetricTooltipText.lastIndexOf('Dias período'))
     await expect(dailyMetricTooltip).not.toContainText('Todas as métricas exibidas aqui usam o período filtrado')
     await expect(dailyMetricTooltip).not.toContainText('Aplicação atual:')
     await expect(dailyMetricTooltip).not.toContainText('_')
@@ -454,6 +463,7 @@ test.describe('atendimento', () => {
       const bounds = element.getBoundingClientRect()
       return { width: bounds.width, height: bounds.height }
     })
+    expect(intervalTooltipBox.width).toBeLessThanOrEqual(448)
     expect(intervalTooltipBox.width / intervalTooltipBox.height).toBeGreaterThanOrEqual(0.5)
     expect(intervalTooltipBox.width / intervalTooltipBox.height).toBeLessThanOrEqual(2)
     await page.getByTestId('atendimento-band-group-badge-lower-side').hover()
@@ -476,13 +486,17 @@ test.describe('atendimento', () => {
     await expect(page.getByTestId('atendimento-conversion-ranking')).toContainText('Dra. Sintética')
     await expect(page.getByRole('button', { name: 'Detalhes de Faixas' })).toHaveCount(0)
     await expect(page.getByTestId('atendimento-kpis')).not.toContainText('Total do período')
-    const doctorProfileTarget = page.getByLabel('Detalhes do perfil de Dra. Sintética: R$ 18,00, Nível 3, posição 1.')
+    const doctorProfileTarget = page.getByLabel('Detalhes do perfil de Dra. Sintética: 1 dia atendido, total produzido R$ 18,00, produção/dia R$ 18,00, posição 1.')
     await expect(doctorProfileTarget).toHaveCount(1)
     await doctorProfileTarget.hover()
     const doctorProfileTooltip = page.getByTestId('atendimento-doctor-tooltip')
     await expect(doctorProfileTooltip).toContainText('Dra. Sintética')
+    await expect(doctorProfileTooltip).toContainText('Dias atendidos')
+    await expect(doctorProfileTooltip).toContainText('Total produzido no período')
+    await expect(doctorProfileTooltip).toContainText('Produção/dia (ranking)')
     await expect(doctorProfileTooltip).not.toContainText('Z modificado')
     await expect(doctorProfileTooltip).not.toContainText('Distância ao')
+    await expect(doctorProfileTooltip).not.toContainText('Nível')
     const [doctorProfileBox, doctorProfileTooltipBox] = await Promise.all([
       doctorProfileTarget.boundingBox(),
       doctorProfileTooltip.boundingBox(),
@@ -501,7 +515,8 @@ test.describe('atendimento', () => {
     await doctorBar.hover()
     const doctorTooltip = page.getByTestId('atendimento-doctor-tooltip')
     await expect(doctorTooltip).toBeVisible()
-    await expect(doctorTooltip).toContainText('Realizado')
+    await expect(doctorTooltip).toContainText('Dias atendidos')
+    await expect(doctorTooltip).toContainText('Produção/dia (ranking)')
     await expect(page.getByTestId('atendimento-row-client-row-1')).toHaveValue('Cliente Inicial')
     await expect(page.getByTestId('atendimento-loaded-count')).toContainText('1/1')
     const importExportTrigger = page.getByTestId('atendimento-header-import-export')

@@ -823,7 +823,7 @@ function MetricGroupContent({
     )
     return (
       <div key={row.key} className="min-w-0">
-        <div className="min-w-0">{metricTooltipInfo ? <MetricTooltip label={row.label} info={metricTooltipDescription ? undefined : metricTooltipInfo} description={metricTooltipDescription} contentClassName={row.key === 'interval' && multiplierOptimization ? 'w-[min(34rem,calc(100vw-2rem))] max-w-none max-h-[min(32rem,calc(100vh-2rem))] overflow-y-auto' : detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'w-[min(26rem,calc(100vw-2rem))] max-w-none'}>{rowContent}</MetricTooltip> : rowContent}</div>
+        <div className="min-w-0">{metricTooltipInfo ? <MetricTooltip label={row.label} info={metricTooltipDescription ? undefined : metricTooltipInfo} description={metricTooltipDescription} contentClassName={row.key === 'interval' && multiplierOptimization ? 'w-fit max-w-[min(28rem,calc(100vw-2rem))] max-h-[min(32rem,calc(100vh-2rem))] overflow-y-auto' : detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'w-[min(26rem,calc(100vw-2rem))] max-w-none'}>{rowContent}</MetricTooltip> : rowContent}</div>
       </div>
     )
   }
@@ -1236,6 +1236,11 @@ function formatCompactCurrencyBRL(value: number) {
   return `R$ ${compactValue}k`
 }
 
+function formatDoctorWorkingDays(value: number | undefined) {
+  const days = Math.max(0, Number(value || 0))
+  return `${formatNumberBR(days)} ${days === 1 ? 'dia atendido' : 'dias atendidos'}`
+}
+
 function PodiumBadge({ rank }: { rank: number }) {
   const normalizedRank = Number(rank || 0)
   const podium = normalizedRank === 1
@@ -1429,12 +1434,16 @@ function ConversionDoctorBandsContent({
       unitName: string
       value: number
       productionValue: number
+      totalValue: number
+      workingDays: number
       score: number
       sourceNames: string[]
     }>()
     for (const doctor of doctors) {
       if (!isRenderableConversionDoctor(doctor.name)) continue
       const productionValue = Number(doctor.weekValue || 0)
+      const totalValue = Number(doctor.totalValue || 0)
+      const workingDays = Number(doctor.workingDays || 0)
       const score = Number(doctor.score || 0)
       const value = isAggregate ? score : productionValue
       const name = getCanonicalDoctorName(doctor.name)
@@ -1443,6 +1452,8 @@ function ConversionDoctorBandsContent({
       if (existing) {
         existing.value += value
         existing.productionValue += productionValue
+        existing.totalValue += totalValue
+        existing.workingDays += workingDays
         existing.score += score
         if (!existing.sourceNames.includes(String(doctor.name || '').trim())) existing.sourceNames.push(String(doctor.name || '').trim())
         continue
@@ -1453,6 +1464,8 @@ function ConversionDoctorBandsContent({
         unitName: doctor.unitName || unitName,
         value,
         productionValue,
+        totalValue,
+        workingDays,
         score,
         sourceNames: [String(doctor.name || '').trim()].filter(Boolean),
       })
@@ -1882,7 +1895,7 @@ function ConversionDoctorBandsContent({
                         transform={`translate(${tickProps.x},${tickProps.y})`}
                         data-testid={`atendimento-doctor-label-target-${doctor.id}`}
                         tabIndex={0}
-                        aria-label={`Detalhes do perfil de ${doctor.name}: ${isAggregate ? `${formatNumberBR(doctor.value)} pontos` : formatCurrencyBRL(doctor.value)}, ${doctor.levelLabel}, posição ${doctor.rank}.`}
+                        aria-label={`Detalhes do perfil de ${doctor.name}: ${isAggregate ? `${formatNumberBR(doctor.value)} pontos` : `${formatDoctorWorkingDays(doctor.workingDays)}, total produzido ${formatCurrencyBRL(doctor.totalValue)}, produção/dia ${formatCurrencyBRL(doctor.productionValue)}`}, posição ${doctor.rank}.`}
                         onMouseEnter={(event) => activateDoctorTooltip(doctor.id, event)}
                         onMouseMove={(event) => activateDoctorTooltip(doctor.id, event)}
                         onMouseLeave={clearDoctorTooltip}
@@ -1969,7 +1982,7 @@ function ConversionDoctorBandsContent({
                       <g
                         data-testid={`atendimento-doctor-bar-target-${payload.id}`}
                         tabIndex={0}
-                        aria-label={`Detalhes da coluna de ${payload.name}: ${isAggregate ? `${formatNumberBR(payload.value)} pontos` : formatCurrencyBRL(payload.value)}, ${payload.levelLabel}, posição ${payload.rank}.`}
+                        aria-label={`Detalhes da coluna de ${payload.name}: ${isAggregate ? `${formatNumberBR(payload.value)} pontos` : `${formatDoctorWorkingDays(payload.workingDays)}, total produzido ${formatCurrencyBRL(payload.totalValue)}, produção/dia ${formatCurrencyBRL(payload.productionValue)}`}, posição ${payload.rank}.`}
                         onMouseEnter={(event) => activateDoctorTooltip(payload.id, event)}
                         onMouseMove={(event) => activateDoctorTooltip(payload.id, event)}
                         onMouseLeave={clearDoctorTooltip}
@@ -2036,8 +2049,14 @@ function ConversionDoctorBandsContent({
                 </div>
                 {activeDoctor.sourceNames.length > 1 ? <div className="mt-1 text-[10px] text-slate-400">Cadastros equivalentes consolidados.</div> : null}
                 <div className="mt-2 space-y-1">
-                  <div className="flex items-center justify-between gap-3"><span>{isAggregate ? 'Pontos nas unidades' : 'Realizado'}</span><span className="font-semibold text-white">{isAggregate ? formatNumberBR(activeDoctor.value) : formatCurrencyBRL(activeDoctor.value)}</span></div>
-                  {isAggregate ? <div className="flex items-center justify-between gap-3"><span>Produção</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.productionValue)}</span></div> : <div className="flex items-center justify-between gap-3"><span>Nível</span><span className="font-semibold text-white">{activeDoctor.levelLabel}</span></div>}
+                  {isAggregate ? <>
+                    <div className="flex items-center justify-between gap-3"><span>Pontos nas unidades</span><span className="font-semibold text-white">{formatNumberBR(activeDoctor.value)}</span></div>
+                    <div className="flex items-center justify-between gap-3"><span>Produção</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.productionValue)}</span></div>
+                  </> : <>
+                    <div className="flex items-center justify-between gap-3"><span>Dias atendidos</span><span className="font-semibold text-white">{formatDoctorWorkingDays(activeDoctor.workingDays)}</span></div>
+                    <div className="flex items-center justify-between gap-3"><span>Total produzido no período</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.totalValue)}</span></div>
+                    <div className="flex items-center justify-between gap-3"><span>Produção/dia (ranking)</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.productionValue)}</span></div>
+                  </>}
                   <div className="flex items-center justify-between gap-3"><span>Ranking</span><span className="font-semibold text-white">{activeDoctor.rank ? `${activeDoctor.rank}º` : '-'}</span></div>
                 </div>
               </TooltipAspectSurface>
@@ -2557,7 +2576,11 @@ export function AtendimentoModule() {
           : buildMetricTooltip(definition, exactCalculation)
         return [{
           key,
-          label: key === 'rankedDoctorTotal' ? 'Total produzido' : definition.label,
+          label: key === 'rankedDoctorTotal'
+            ? 'Total produzido'
+            : key === 'periodGoal'
+              ? 'Meta do período (soma)'
+              : definition.label,
           value: key === 'intervalMultiplier' && conversionSection?.optimization?.selectedMultiplier == null
             ? 'Não aplicável'
             : key === 'level0' || key === 'level1' || key === 'level2' || key === 'level3'
@@ -2614,7 +2637,7 @@ export function AtendimentoModule() {
       { key: 'lowerLimit' },
       { key: 'cutLine' },
       { key: 'interval', children: [{ key: 'standardDeviation' }, { key: 'intervalMultiplier' }] },
-      { key: 'dailyGoal', children: [{ key: 'periodGoal' }, { key: 'periodOperationalDays' }, ...goalSegmentRows.map((row) => ({ key: row.key }))] },
+      { key: 'dailyGoal', children: [...goalSegmentRows.map((row) => ({ key: row.key })), { key: 'periodGoal' }, { key: 'periodOperationalDays' }] },
       { key: 'average', children: [...averageDoctorRows.map((row) => ({ key: row.key })), { key: 'rankedDoctorTotal' }] },
       { key: 'median', children: medianDoctorRows.map((row) => ({ key: row.key })) },
     ]
