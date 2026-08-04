@@ -284,7 +284,7 @@ jobs:
               credentialsIncluded: false,
               piiIncluded: false,
             };
-            if (report.algorithm !== 'PBKDF2-SHA256' || report.iterations !== 150000 || report.saltLength !== 22 || report.hashLength !== 43 || !report.fixtureCredentialVerified) {
+            if (report.algorithm !== 'PBKDF2-SHA256' || report.iterations !== 100000 || report.saltLength !== 22 || report.hashLength !== 43 || !report.fixtureCredentialVerified) {
               throw new Error('staging D1 PIN credential does not verify with the canonical contract');
             }
             fs.writeFileSync(process.argv[4], `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
