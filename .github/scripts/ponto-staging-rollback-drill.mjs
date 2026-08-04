@@ -19,10 +19,11 @@ const SURFACE_SOURCE_PATTERNS = {
 };
 
 class DrillFailure extends Error {
-  constructor(code) {
+  constructor(code, details = null) {
     super(code);
     this.name = "DrillFailure";
     this.code = code;
+    if (details) this.details = details;
   }
 }
 
@@ -143,8 +144,16 @@ const baseReport = (config) => ({
   piiIncluded: false,
 });
 
+const safeFailureDetail = (value) => String(value || "")
+  .replaceAll(/https?:\/\/[^\s)]+/gi, "<url>")
+  .replaceAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "<email>")
+  .replaceAll(/\b(password|pin|token|secret|authorization|cookie)\s*[:=]\s*[^,\s}]+/gi, "$1=<redacted>")
+  .slice(0, 500);
+
 const recordFailure = (report, phase, error) => {
-  report.failures.push({ phase, code: publicFailureCode(error) });
+  const failure = { phase, code: publicFailureCode(error) };
+  if (error?.details) failure.detail = safeFailureDetail(error.details);
+  report.failures.push(failure);
 };
 
 async function mutateEverySurface({
@@ -642,7 +651,16 @@ function createRealRuntime(config, env = process.env) {
       env: childEnv,
       maxBuffer: 20 * 1024 * 1024,
     });
-    if (result.status !== 0) throw new DrillFailure(options.code || "GOVERNED_COMMAND_FAILED");
+    if (result.status !== 0) {
+      const detail = options.captureFailureDetail
+        ? String(result.stderr || "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .find((line) => line.includes("[ponto-staging-journey] FAILED:"))
+        : "";
+      throw new DrillFailure(options.code || "GOVERNED_COMMAND_FAILED", detail || null);
+    }
     return result.stdout;
   };
   const wrangler = (args, code = "WRANGLER_COMMAND_FAILED") => runCommand(
@@ -1168,86 +1186,118 @@ function createRealRuntime(config, env = process.env) {
       || ![expected.pagesSourceSha, expected.identitySourceSha, expected.coreSourceSha, expected.timekeepingSourceSha]
         .every((value) => SHA.test(String(value || "")))
     ) throw new DrillFailure("INCUMBENT_COMPATIBILITY_EXPECTATION_INVALID");
+    let lastObservation = { attempt: 0, pages: {}, identity: {} };
+    for (let attempt = 1; attempt <= 36; attempt += 1) {
+      let response;
+      let payload;
+      let identityResponse;
+      let identityPayload;
+      try {
+        const pagesHealth = new URL("/api/ponto/health", origin);
+        pagesHealth.searchParams.set("staging_rollback_incumbent_probe", `${config.runId}-${attempt}`);
+        response = await fetch(pagesHealth, {
+          redirect: "manual",
+          signal: AbortSignal.timeout(30_000),
+          headers: {
+            accept: "application/json",
+            "cache-control": "no-cache",
+            ...config.accessHeaders,
+          },
+        });
+        payload = await response.json().catch(() => null);
+        const header = (name) => String(response.headers.get(name) || "").trim().toLowerCase();
+        const pagesPassed = response.status === 200
+          && payload?.ok === false
+          && payload?.ready === false
+          && payload?.service === "workforce-timekeeping"
+          && payload?.unit === "timekeeping"
+          && payload?.environment === "staging"
+          && payload?.database === true
+          && payload?.dependencies?.module_control?.state === "healthy"
+          && payload?.dependencies?.gateway_affinity?.state === "unavailable"
+          && payload?.dependencies?.gateway_affinity?.reason === "RELEASE_AFFINITY_MISMATCH"
+          && String(payload?.versionMetadata?.releaseSha || "").toLowerCase() === expected.timekeepingSourceSha.toLowerCase()
+          && String(payload?.versionMetadata?.workerVersionId || "").toLowerCase() === expected.timekeepingVersionId.toLowerCase()
+          && String(payload?.versionMetadata?.gatewayReleaseSha || "").toLowerCase() === expected.coreSourceSha.toLowerCase()
+          && String(payload?.versionMetadata?.gatewayEnvironment || "").toLowerCase() === "staging"
+          && String(payload?.versionMetadata?.gatewayVersionId || "").toLowerCase() === expected.coreVersionId.toLowerCase()
+          && header("x-skincos-pages-release-sha") === expected.pagesSourceSha.toLowerCase()
+          && header("x-skincos-pages-environment") === "staging"
+          && header("x-skincos-gateway-release-sha") === expected.coreSourceSha.toLowerCase()
+          && header("x-skincos-gateway-environment") === "staging"
+          && header("x-skincos-gateway-version-id") === expected.coreVersionId.toLowerCase()
+          && header("x-skincos-timekeeping-release-sha") === expected.timekeepingSourceSha.toLowerCase()
+          && header("x-skincos-timekeeping-environment") === "staging"
+          && header("x-skincos-timekeeping-version-id") === expected.timekeepingVersionId.toLowerCase();
 
-    const pagesHealth = new URL("/api/ponto/health", origin);
-    pagesHealth.searchParams.set("staging_rollback_incumbent_probe", config.runId);
-    const response = await fetch(pagesHealth, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(30_000),
-      headers: {
-        accept: "application/json",
-        "cache-control": "no-cache",
-        ...config.accessHeaders,
-      },
-    });
-    const payload = await response.json().catch(() => null);
-    const header = (name) => String(response.headers.get(name) || "").trim().toLowerCase();
-    const pagesPassed = response.status === 200
-      && payload?.ok === false
-      && payload?.ready === false
-      && payload?.service === "workforce-timekeeping"
-      && payload?.unit === "timekeeping"
-      && payload?.environment === "staging"
-      && payload?.database === true
-      && payload?.dependencies?.module_control?.state === "healthy"
-      && payload?.dependencies?.gateway_affinity?.state === "unavailable"
-      && payload?.dependencies?.gateway_affinity?.reason === "RELEASE_AFFINITY_MISMATCH"
-      && String(payload?.versionMetadata?.releaseSha || "").toLowerCase() === expected.timekeepingSourceSha.toLowerCase()
-      && String(payload?.versionMetadata?.workerVersionId || "").toLowerCase() === expected.timekeepingVersionId.toLowerCase()
-      && String(payload?.versionMetadata?.gatewayReleaseSha || "").toLowerCase() === expected.coreSourceSha.toLowerCase()
-      && String(payload?.versionMetadata?.gatewayEnvironment || "").toLowerCase() === "staging"
-      && String(payload?.versionMetadata?.gatewayVersionId || "").toLowerCase() === expected.coreVersionId.toLowerCase()
-      && header("x-skincos-pages-release-sha") === expected.pagesSourceSha.toLowerCase()
-      && header("x-skincos-pages-environment") === "staging"
-      && header("x-skincos-gateway-release-sha") === expected.coreSourceSha.toLowerCase()
-      && header("x-skincos-gateway-environment") === "staging"
-      && header("x-skincos-gateway-version-id") === expected.coreVersionId.toLowerCase()
-      && header("x-skincos-timekeeping-release-sha") === expected.timekeepingSourceSha.toLowerCase()
-      && header("x-skincos-timekeeping-environment") === "staging"
-      && header("x-skincos-timekeeping-version-id") === expected.timekeepingVersionId.toLowerCase();
-
-    const identityHealth = new URL("https://api-staging.skincos.com.br/insumos/health");
-    identityHealth.searchParams.set("staging_rollback_incumbent_probe", config.runId);
-    const identityResponse = await fetch(identityHealth, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(30_000),
-      headers: {
-        accept: "application/json",
-        "cache-control": "no-cache",
-        ...config.accessHeaders,
-      },
-    });
-    const identityPayload = await identityResponse.json().catch(() => null);
-    const identityPassed = identityResponse.status === 200
-      && identityPayload?.ok === true
-      && identityPayload?.ready === true
-      && identityPayload?.environment === "staging"
-      && String(identityPayload?.version || "").toLowerCase() === expected.identitySourceSha.toLowerCase()
-      && String(identityPayload?.workerVersion?.id || "").toLowerCase() === expected.identityVersionId.toLowerCase();
-
-    if (!pagesPassed || !identityPassed) throw new DrillFailure("INCUMBENT_COMPATIBILITY_SMOKE_FAILED");
-    return {
-      passed: true,
-      mode: "heterogeneous-fail-closed-health",
-      pagesHealth: {
-        status: response.status,
-        ready: false,
-        affinity: "RELEASE_AFFINITY_MISMATCH",
-      },
-      identityHealth: {
-        status: identityResponse.status,
-        ready: true,
-        versionId: expected.identityVersionId,
-      },
-      sourceShas: {
-        pages: expected.pagesSourceSha,
-        coreApi: expected.coreSourceSha,
-        timekeeping: expected.timekeepingSourceSha,
-        identityWorkforce: expected.identitySourceSha,
-      },
-      credentialsIncluded: false,
-      piiIncluded: false,
-    };
+        const identityHealth = new URL("https://api-staging.skincos.com.br/insumos/health");
+        identityHealth.searchParams.set("staging_rollback_incumbent_probe", `${config.runId}-${attempt}`);
+        identityResponse = await fetch(identityHealth, {
+          redirect: "manual",
+          signal: AbortSignal.timeout(30_000),
+          headers: {
+            accept: "application/json",
+            "cache-control": "no-cache",
+            ...config.accessHeaders,
+          },
+        });
+        identityPayload = await identityResponse.json().catch(() => null);
+        const identityPassed = identityResponse.status === 200
+          && identityPayload?.ok === true
+          && identityPayload?.ready === true
+          && identityPayload?.environment === "staging"
+          && String(identityPayload?.version || "").toLowerCase() === expected.identitySourceSha.toLowerCase()
+          && String(identityPayload?.workerVersion?.id || "").toLowerCase() === expected.identityVersionId.toLowerCase();
+        lastObservation = {
+          attempt,
+          pages: {
+            status: response.status,
+            passed: pagesPassed,
+            ready: payload?.ready === true,
+            affinity: payload?.dependencies?.gateway_affinity?.state || "unknown",
+          },
+          identity: {
+            status: identityResponse.status,
+            passed: identityPassed,
+            ready: identityPayload?.ready === true,
+          },
+        };
+        if (pagesPassed && identityPassed) {
+          return {
+            passed: true,
+            mode: "heterogeneous-fail-closed-health",
+            attempts: attempt,
+            pagesHealth: {
+              status: response.status,
+              ready: false,
+              affinity: "RELEASE_AFFINITY_MISMATCH",
+            },
+            identityHealth: {
+              status: identityResponse.status,
+              ready: true,
+              versionId: expected.identityVersionId,
+            },
+            sourceShas: {
+              pages: expected.pagesSourceSha,
+              coreApi: expected.coreSourceSha,
+              timekeeping: expected.timekeepingSourceSha,
+              identityWorkforce: expected.identitySourceSha,
+            },
+            credentialsIncluded: false,
+            piiIncluded: false,
+          };
+        }
+      } catch (error) {
+        lastObservation = {
+          attempt,
+          pages: { status: response?.status || 0, passed: false },
+          identity: { status: identityResponse?.status || 0, passed: false },
+          error: safeFailureDetail(error),
+        };
+      }
+      if (attempt < 36) await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+    throw new DrillFailure("INCUMBENT_COMPATIBILITY_SMOKE_FAILED", JSON.stringify(lastObservation));
   };
   const sanitizedJourney = (raw, expected, controlPlane) => {
     const report = JSON.parse(raw);
@@ -1309,6 +1359,7 @@ function createRealRuntime(config, env = process.env) {
     ) throw new DrillFailure("JOURNEY_ORIGIN_INVALID");
     runCommand(process.execPath, ["crm/console/scripts/ponto-staging-journey.cjs"], {
       code: "AUTHENTICATED_JOURNEY_FAILED",
+      captureFailureDetail: true,
       env: {
         PONTO_STAGING_CRM_URL: origin.href,
         PONTO_STAGING_FIXTURES_FILE: handle.fixturePath,
