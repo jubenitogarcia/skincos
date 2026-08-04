@@ -329,9 +329,15 @@ function TooltipAspectSurface({
         { width: bounds.width, height: bounds.height },
         { width: typeof window === 'undefined' ? 0 : window.innerWidth, height: typeof window === 'undefined' ? 0 : window.innerHeight },
       )
-      setAspectAdjustment((current) => current.minWidth === requiredAdjustment.minWidth && current.maxWidth === requiredAdjustment.maxWidth
-        ? current
-        : requiredAdjustment)
+      setAspectAdjustment((current) => {
+        const next = {
+          minWidth: Math.max(current.minWidth || 0, requiredAdjustment.minWidth || 0) || undefined,
+          maxWidth: requiredAdjustment.maxWidth
+            ? Math.min(current.maxWidth || Number.POSITIVE_INFINITY, requiredAdjustment.maxWidth)
+            : current.maxWidth,
+        }
+        return next.minWidth === current.minWidth && next.maxWidth === current.maxWidth ? current : next
+      })
     }
     updateSize()
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateSize)
