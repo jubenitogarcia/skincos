@@ -507,18 +507,25 @@ function formatTooltipFormula(value: string) {
   return formatted ? `${formatted.slice(0, 1).toLocaleUpperCase('pt-BR')}${formatted.slice(1)}` : formatted
 }
 
-function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
+function MetricTooltipContent({
+  info,
+  compactSummary,
+}: {
+  info: MetricTooltipSpec
+  compactSummary?: string
+}) {
   const presentation = info.detailPresentation || 'compact'
   const formula = formatTooltipFormula(info.formula || info.calculation)
   return (
     <div className="space-y-2 text-left">
-      <p className="leading-snug text-slate-300">{info.what} {info.usage}</p>
+      {compactSummary ? null : <p className="leading-snug text-slate-300">{info.what} {info.usage}</p>}
       <div className="rounded-lg border border-slate-700/75 bg-slate-900/55 px-2 py-1.5">
         <span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">Fórmula</span>
         <span className="mt-0.5 block font-medium leading-snug text-slate-100">{formula}</span>
       </div>
       {info.details?.length ? <>
         <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-700/75 bg-slate-900/45 pr-1">
+          {compactSummary ? <div className="border-b border-slate-700/60 px-2 py-1.5 text-[10px] leading-snug text-slate-400">{compactSummary}</div> : null}
           {info.details.map((detail) => (
             <div key={`${detail.label}:${detail.value}`} className="border-b border-slate-700/60 px-2 py-1.5 last:border-b-0">
               <div className="flex min-w-0 items-center justify-between gap-3">
@@ -672,7 +679,7 @@ function ConversionMultiplierDetails({
             </TooltipLabel>
           </div>
           {chartData.length > 0 ? (
-            <div className="h-32 rounded-xl border border-slate-800 bg-slate-900/45 p-2" aria-label="Curva do multiplicador pela homogeneidade">
+            <div className="mx-auto h-32 w-full max-w-[26rem] rounded-xl border border-slate-800 bg-slate-900/45 p-2" aria-label="Curva do multiplicador pela homogeneidade">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 10, right: 12, left: -14, bottom: 2 }}>
                   <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
@@ -781,7 +788,7 @@ function MetricGroupContent({
     } : componentTooltip
     const metricTooltipDescription = metricTooltipInfo ? (
       <div className="space-y-2">
-        <MetricTooltipContent info={metricTooltipInfo} />
+        <MetricTooltipContent info={metricTooltipInfo} compactSummary={row.key === 'dailyGoal' ? 'Meta do mês ÷ Dias do período.' : undefined} />
         {row.key === 'interval' && multiplierOptimization ? (
           <div className="border-t border-slate-700/80 pt-3">
             <ConversionMultiplierDetails optimization={multiplierOptimization} />
