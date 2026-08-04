@@ -788,6 +788,52 @@ function createRealRuntime(config, env = process.env) {
       changedAt: String(value.changedAt || ""),
     };
   };
+  const observeModulePropagation = (state, details, phase, changedAt) => {
+    const directory = path.join(config.runnerTemp, "ponto-staging-rollback-propagation");
+    const expectationFile = path.join(directory, `${phase}-${config.runId}-expectation.json`);
+    const reportFile = path.join(directory, `${phase}-${config.runId}-propagation.json`);
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(expectationFile, `${JSON.stringify({
+      state,
+      changedAt,
+      ...(state === "active" ? { releaseSha: details.releaseSha } : {}),
+    })}\n`, { mode: 0o600 });
+    try {
+      runCommand(process.execPath, [".github/scripts/ponto-module-propagation.mjs"], {
+        code: "MODULE_CONTROL_PROPAGATION_FAILED",
+        env: {
+          PONTO_MODULE_EXPECTED_SOURCE: "control",
+          PONTO_MODULE_EXPECTATION_FILE: expectationFile,
+          PONTO_MODULE_PROPAGATION_REPORT: reportFile,
+          PONTO_MODULE_HEALTH_URL: "https://api-staging.skincos.com.br/api/ponto/health",
+          PONTO_MODULE_PROPAGATION_TIMEOUT_MS: "150000",
+          PONTO_MODULE_PROPAGATION_CADENCE_MS: "5000",
+          PONTO_MODULE_PROPAGATION_CONSECUTIVE: "2",
+        },
+      });
+      const report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
+      if (report?.passed !== true || report?.state !== state || report?.changedAt !== changedAt) {
+        throw new DrillFailure("MODULE_CONTROL_PROPAGATION_INVALID");
+      }
+      return {
+        passed: true,
+        state,
+        changedAt,
+        source: report.matchedSource || "control",
+        attempts: report.attempts,
+        consecutiveSamples: report.consecutiveSamples,
+        requiredConsecutiveSamples: report.requiredConsecutiveSamples,
+        elapsedMs: report.elapsedMs,
+        observation: report.observation,
+        credentialsIncluded: false,
+        piiIncluded: false,
+      };
+    } finally {
+      fs.rmSync(expectationFile, { force: true });
+      fs.rmSync(reportFile, { force: true });
+      try { fs.rmdirSync(directory); } catch { /* keep other phase evidence private */ }
+    }
+  };
   const setModuleStateDirectly = async (state, details, phase) => {
     if (!["active", "maintenance"].includes(state)) throw new DrillFailure("MODULE_STATE_INVALID");
     const latchBefore = readEmergencyLatch();
@@ -834,9 +880,11 @@ function createRealRuntime(config, env = process.env) {
       fs.rmSync(payloadFile, { force: true });
     }
     const proof = assertModuleControl(state, details);
+    const propagation = observeModulePropagation(state, details, phase, proof.changedAt);
     const latchAfter = readEmergencyLatch();
     return {
       ...proof,
+      propagation,
       mutation: "direct-signed-drill",
       runId: config.runId,
       workflow: "ponto-staging-rollback-drill.yml",

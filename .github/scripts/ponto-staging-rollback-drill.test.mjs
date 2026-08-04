@@ -424,6 +424,8 @@ test("the executable and workflow retain no unimplemented hard-stop and require 
   );
   assert.match(script, /mutation:\s*"direct-signed-drill"/);
   assert.match(script, /module-control:timekeeping:emergency-latch/);
+  assert.match(script, /ponto-module-propagation\.mjs/);
+  assert.match(script, /MODULE_CONTROL_PROPAGATION_FAILED/);
   assert.match(script, /value\?\.latched !== false/);
   assert.match(script, /const latchBefore = readEmergencyLatch\(\)/);
   assert.match(script, /const latchAfter = readEmergencyLatch\(\)/);
