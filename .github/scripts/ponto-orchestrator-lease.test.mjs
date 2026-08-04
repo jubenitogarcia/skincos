@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   canonicalizeGovernedIntent,
   acceptsWorkflowRunPath,
+  childCapabilitySubjectWaitMs,
   createCapabilityCheck,
   expectedGovernedRunName,
   transitionCapabilityDocument,
@@ -288,6 +289,13 @@ test("workflow run provenance accepts both live GitHub REST path forms", () => {
   assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/heads/main`), true);
   assert.equal(acceptsWorkflowRunPath(workflowPath, ".github/workflows/other.yml"), false);
   assert.equal(acceptsWorkflowRunPath(workflowPath, `${workflowPath}@refs/heads/feature`), false);
+});
+
+test("consume-check waits only for a queued child to become the active capability subject", () => {
+  assert.equal(childCapabilitySubjectWaitMs({ status: "in_progress", conclusion: null }, 0), 0);
+  assert.ok(childCapabilitySubjectWaitMs({ status: "queued", conclusion: null }, 0) > 0);
+  assert.equal(childCapabilitySubjectWaitMs({ status: "queued", conclusion: null }, 99), -1);
+  assert.equal(childCapabilitySubjectWaitMs({ status: "completed", conclusion: "failure" }, 0), -1);
 });
 
 test("Ponto workflow REST provenance gates accept both live path forms", () => {
