@@ -227,20 +227,31 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
     "cloudflare-pages-sync-escala.yml",
     "cloudflare-pages-sync-meta-ads-report-secret.yml",
     "cloudflare-sync-integrations-encryption-secret.yml",
-    "codex-autonomy-preflight.yml",
   ]) {
     assert.match(readWorkflow(workflow), /vars\.CRM_PAGES_PROJECT\b/);
   }
 
+  const preflight = readWorkflow("codex-autonomy-preflight.yml");
+  assert.doesNotMatch(preflight, /vars\.CRM_PAGES_PROJECT\b/);
+  assert.match(preflight, /vars\.CRM_GENERAL_PAGES_PROJECT\b/);
+  assert.match(preflight, /vars\.ENABLE_CRM_GENERAL_PAGES_DEPLOY\b/);
+
   const sharedPages = readWorkflow("deploy-crm-pages.yml");
+  assert.doesNotMatch(
+    sharedPages,
+    /vars\.CRM_PAGES_PROJECT(?:_STAGING)?\b/,
+    "general Pages deploy must not consume the legacy shared control names",
+  );
   assert.match(sharedPages, /alias_attested=false/);
   assert.match(sharedPages, /alias_status=0/);
   assert.match(sharedPages, /Unable to attest the exact staging Pages candidate and production alias/);
   assert.match(sharedPages, /if \[\[ "\$attempt" != 36 \]\]; then sleep 5; fi/);
   assert.match(sharedPages, /for attempt in \{1\.\.72\}; do/);
   for (const name of [
-    "CRM_PAGES_PROJECT",
-    "CRM_PAGES_PROJECT_STAGING",
+    "CRM_GENERAL_PAGES_PROJECT",
+    "CRM_GENERAL_PAGES_PROJECT_STAGING",
+    "ENABLE_CRM_GENERAL_PAGES_DEPLOY",
+    "ENABLE_CRM_GENERAL_PAGES_DEPLOY_STAGING",
     "PONTO_CLOUDFLARE_PAGES_PROJECT",
     "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING",
     "ENABLE_PONTO_CRM_PAGES_DEPLOY",
