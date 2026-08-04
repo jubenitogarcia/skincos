@@ -69,6 +69,14 @@ def check_once(args: argparse.Namespace) -> str:
         and health.get("error") == "PONTO_DISABLED"
     ):
         return "SKIP"
+    if (
+        args.allow_ponto_disabled
+        and health.get("__http_status") == 200
+        and health.get("ok") is False
+        and health.get("ready") is False
+        and (health.get("availability") or {}).get("state") == "maintenance"
+    ):
+        return "SKIP"
 
     require_true(health, "ok", "health")
     if health.get("service") != "workforce-timekeeping":
