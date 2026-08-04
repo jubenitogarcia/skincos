@@ -108,7 +108,10 @@ function isAdmin(actor) {
 
 function isCommercialManager(actor) {
     const role = normalizeRole(actor?.role)
-    return role === 'GESTOR' || role === 'GERENTE'
+    // The Clientes shell is deliberately exclusive to GESTOR. Keep this
+    // boundary at the API too, so a direct signed request cannot bypass the
+    // role policy enforced by the frontend registry.
+    return role === 'GESTOR'
 }
 
 function isLocalRequest(req) {

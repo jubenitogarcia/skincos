@@ -125,6 +125,14 @@ function hasModuleAccess(user: CrmUserLike): boolean {
   return allowed.includes('atendimento')
 }
 
+function hasCommercialAccess(user: CrmUserLike, restPath: string): boolean {
+  const path = String(restPath || '')
+  if (path !== '/commercial' && !path.startsWith('/commercial/')) return true
+  // The module registry exposes Clientes only to GESTOR. Reject at the edge
+  // as well, before minting a signed actor header for the upstream API.
+  return normalizeRole(user?.role) === 'GESTOR'
+}
+
 function shouldAllowUnsignedLocalProxy(context: AtendimentoProxyContext, actorKey: string): boolean {
   return !actorKey && isLocalDevAuthBypassEnabled(context)
 }
@@ -151,6 +159,10 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
   const unsignedLocalProxyAllowed = shouldAllowUnsignedLocalProxy(context, actorKey)
   const prefix = '/api/atendimento'
   const rest = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || '/' : url.pathname
+
+  if (!hasCommercialAccess(userOrRes, rest)) {
+    return json(403, { ok: false, error: 'FORBIDDEN' }, { 'x-request-id': requestId })
+  }
 
   if ((rest === '/local-mirror/status' || rest === '/local-mirror/status/') && !isLocalDevAuthBypassEnabled(context)) {
     return json(404, { ok: false, error: 'NOT_FOUND' }, { 'x-request-id': requestId })
@@ -220,6 +232,7 @@ export async function onRequest(context: AtendimentoProxyContext): Promise<Respo
 export const __testables = {
   buildUpstreamHeaders,
   buildTargetUrl,
+  hasCommercialAccess,
   hasModuleAccess,
   normalizeRole,
   resolveAtendimentoActorHmacKey,
