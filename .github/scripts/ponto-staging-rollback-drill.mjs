@@ -19,10 +19,11 @@ const SURFACE_SOURCE_PATTERNS = {
 };
 
 class DrillFailure extends Error {
-  constructor(code) {
+  constructor(code, details = null) {
     super(code);
     this.name = "DrillFailure";
     this.code = code;
+    if (details) this.details = details;
   }
 }
 
@@ -79,6 +80,53 @@ export function validateIncumbentProvenance(ids, evidence) {
   return validated;
 }
 
+export function classifyIncumbentBundle(evidence) {
+  const sourceShas = [
+    ...WORKER_SURFACES.map((surface) => evidence?.[surface]?.sourceSha),
+    evidence?.crmPages?.sourceSha,
+  ]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  const uniqueSourceShas = [...new Set(sourceShas)].sort();
+  const coherent = sourceShas.length === WORKER_SURFACES.length + 1
+    && uniqueSourceShas.length === 1
+    && SHA.test(uniqueSourceShas[0]);
+  return {
+    coherent,
+    sourceShas: uniqueSourceShas,
+    reason: coherent ? "coherent-release-bundle" : "heterogeneous-or-incomplete-release-bundle",
+  };
+}
+
+export function isFailClosedIncumbentHealth({ status, payload, headers, expected }) {
+  const header = (name) => {
+    if (typeof headers?.get === "function") return String(headers.get(name) || "").trim().toLowerCase();
+    const lower = name.toLowerCase();
+    return String(headers?.[name] ?? headers?.[lower] ?? "").trim().toLowerCase();
+  };
+  const metadata = payload?.versionMetadata || {};
+  const moduleControlState = String(payload?.dependencies?.module_control?.state || "").toLowerCase();
+  const gatewayAffinity = payload?.dependencies?.gateway_affinity || {};
+  return status === 200
+    && payload?.ok === false
+    && payload?.ready === false
+    && payload?.service === "workforce-timekeeping"
+    && payload?.unit === "timekeeping"
+    && payload?.environment === "staging"
+    && payload?.database === true
+    && ["healthy", "unavailable"].includes(moduleControlState)
+    && gatewayAffinity.state === "unavailable"
+    && gatewayAffinity.reason === "RELEASE_AFFINITY_MISMATCH"
+    && String(metadata.releaseSha || "").toLowerCase() === String(expected.timekeepingSourceSha || "").toLowerCase()
+    && String(metadata.workerVersionId || "").toLowerCase() === String(expected.timekeepingVersionId || "").toLowerCase()
+    && SHA.test(String(metadata.gatewayReleaseSha || ""))
+    && UUID.test(String(metadata.gatewayVersionId || ""))
+    && String(metadata.gatewayEnvironment || "").toLowerCase() === "staging"
+    && header("x-skincos-timekeeping-release-sha") === String(expected.timekeepingSourceSha || "").toLowerCase()
+    && header("x-skincos-timekeeping-environment") === "staging"
+    && header("x-skincos-timekeeping-version-id") === String(expected.timekeepingVersionId || "").toLowerCase();
+}
+
 const versionSet = (ids, side) => ({
   timekeeping: ids.timekeeping[side],
   coreApi: ids.coreApi[side],
@@ -110,6 +158,8 @@ const baseReport = (config) => ({
   functionalValidation: {
     implemented: true,
     incumbentJourney: { attempted: false, passed: false },
+    incumbentCompatibility: { attempted: false, passed: false },
+    candidateAffinity: { attempted: false, passed: false },
     protectedCandidateContract: { attempted: false, passed: false },
     candidateJourney: { attempted: false, passed: false },
   },
@@ -123,8 +173,16 @@ const baseReport = (config) => ({
   piiIncluded: false,
 });
 
+const safeFailureDetail = (value) => String(value || "")
+  .replaceAll(/https?:\/\/[^\s)]+/gi, "<url>")
+  .replaceAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "<email>")
+  .replaceAll(/\b(password|pin|token|secret|authorization|cookie)\s*[:=]\s*[^,\s}]+/gi, "$1=<redacted>")
+  .slice(0, 500);
+
 const recordFailure = (report, phase, error) => {
-  report.failures.push({ phase, code: publicFailureCode(error) });
+  const failure = { phase, code: publicFailureCode(error) };
+  if (error?.details) failure.detail = safeFailureDetail(error.details);
+  report.failures.push(failure);
 };
 
 async function mutateEverySurface({
@@ -186,12 +244,28 @@ async function validateFixture({
 }) {
   let handle;
   let fixtureReady = false;
-  try {
-    handle = await runtime.prepareFixture(label);
-    await runtime.provisionFixture(handle);
-    fixtureReady = true;
-  } catch (error) {
-    recordFailure(report, `${label}.provision`, error);
+  let affinityReady = !includeProtectedContract;
+  if (includeProtectedContract) {
+    report.functionalValidation.candidateAffinity.attempted = true;
+    try {
+      report.functionalValidation.candidateAffinity = {
+        attempted: true,
+        ...await runtime.proveCandidateAffinity(pages, expected),
+      };
+      affinityReady = report.functionalValidation.candidateAffinity.passed === true;
+    } catch (error) {
+      recordFailure(report, "candidate.affinity", error);
+    }
+  }
+
+  if (affinityReady) {
+    try {
+      handle = await runtime.prepareFixture(label);
+      await runtime.provisionFixture(handle);
+      fixtureReady = true;
+    } catch (error) {
+      recordFailure(report, `${label}.provision`, error);
+    }
   }
 
   if (fixtureReady && includeProtectedContract) {
@@ -210,6 +284,12 @@ async function validateFixture({
   if (fixtureReady && (!includeProtectedContract || report.functionalValidation.protectedCandidateContract.passed)) {
     report.functionalValidation[journeyKey].attempted = true;
     try {
+      if (includeProtectedContract) {
+        report.functionalValidation.candidateAffinity.journeyFence = {
+          attempted: true,
+          ...await runtime.proveCandidateAffinity(pages, expected),
+        };
+      }
       report.functionalValidation[journeyKey] = {
         attempted: true,
         ...await runtime.runJourney(handle, pages.url, expected),
@@ -240,11 +320,14 @@ export async function runStagingRollbackDrill(config, runtime) {
   let rollbackPages = null;
   let restoredPages = null;
   let mutationStarted = false;
+  let incumbentProvenance = null;
 
   report.preflight.attempted = true;
   try {
     const preflight = await runtime.attestInitialState(config);
     const incumbents = validateIncumbentProvenance(config.ids, preflight.incumbents);
+    incumbentProvenance = incumbents;
+    const incumbentBundle = classifyIncumbentBundle(incumbents);
     report.preflight = {
       attempted: true,
       passed: true,
@@ -252,6 +335,30 @@ export async function runStagingRollbackDrill(config, runtime) {
       surfaces: preflight.surfaces,
       incumbents,
     };
+    if (!incumbentBundle.coherent) {
+      report.functionalValidation.incumbentJourney = {
+        attempted: false,
+        passed: false,
+        skipped: true,
+        blocking: true,
+        reason: incumbentBundle.reason,
+        sourceShas: incumbentBundle.sourceShas,
+      };
+      report.functionalValidation.incumbentCompatibility = {
+        attempted: false,
+        passed: false,
+        required: true,
+        mode: "heterogeneous-fail-closed-health",
+        sourceShas: incumbentBundle.sourceShas,
+      };
+      report.teardown.incumbent = {
+        attempted: false,
+        passed: true,
+        skipped: true,
+        notRequired: true,
+        reason: incumbentBundle.reason,
+      };
+    }
   } catch (error) {
     recordFailure(report, "preflight", error);
   }
@@ -283,7 +390,26 @@ export async function runStagingRollbackDrill(config, runtime) {
         recordFailure(report, "module-control.incumbent-active", error);
       }
 
-      if (report.moduleControl.incumbentActive.passed) {
+      if (report.moduleControl.incumbentActive.passed && report.functionalValidation.incumbentJourney.skipped) {
+        report.functionalValidation.incumbentCompatibility.attempted = true;
+        try {
+          report.functionalValidation.incumbentCompatibility = {
+            attempted: true,
+            ...await runtime.proveIncumbentCompatibility(rollbackPages, {
+              pagesSourceSha: incumbentProvenance.crmPages.sourceSha,
+              identitySourceSha: incumbentProvenance.identityWorkforce.sourceSha,
+              coreSourceSha: incumbentProvenance.coreApi.sourceSha,
+              timekeepingSourceSha: incumbentProvenance.timekeeping.sourceSha,
+              pagesDeploymentId: rollbackPages.activeDeploymentId,
+              identityVersionId: config.ids.identityWorkforce.incumbent,
+              coreVersionId: config.ids.coreApi.incumbent,
+              timekeepingVersionId: config.ids.timekeeping.incumbent,
+            }),
+          };
+        } catch (error) {
+          recordFailure(report, "incumbent.compatibility", error);
+        }
+      } else if (report.moduleControl.incumbentActive.passed) {
         await validateFixture({
           label: "incumbent",
           pages: rollbackPages,
@@ -367,15 +493,27 @@ export async function runStagingRollbackDrill(config, runtime) {
     recordFailure(report, "module-control.final-maintenance", error);
   }
 
+  const incumbentFunctionalValidationPassed = report.functionalValidation.incumbentJourney.passed
+    || (
+      report.functionalValidation.incumbentJourney.skipped === true
+      && report.functionalValidation.incumbentJourney.passed === false
+      && report.functionalValidation.incumbentJourney.blocking === true
+      && report.functionalValidation.incumbentCompatibility.passed === true
+      && report.functionalValidation.incumbentCompatibility.mode === "heterogeneous-fail-closed-health"
+    );
+  const incumbentTeardownPassed = report.functionalValidation.incumbentJourney.skipped === true
+    ? report.teardown.incumbent.notRequired === true
+    : report.teardown.incumbent.passed;
   const normalPassed = report.failures.length === 0
     && report.preflight.passed
     && report.rollback.passed
     && report.moduleControl.incumbentActive.passed
-    && report.functionalValidation.incumbentJourney.passed
-    && report.teardown.incumbent.passed
+    && incumbentFunctionalValidationPassed
+    && incumbentTeardownPassed
     && report.moduleControl.preRestorationMaintenance.passed
     && report.restoration.passed
     && report.moduleControl.candidateActive.passed
+    && report.functionalValidation.candidateAffinity.passed
     && report.functionalValidation.protectedCandidateContract.passed
     && report.functionalValidation.candidateJourney.passed
     && report.teardown.candidate.passed
@@ -548,7 +686,16 @@ function createRealRuntime(config, env = process.env) {
       env: childEnv,
       maxBuffer: 20 * 1024 * 1024,
     });
-    if (result.status !== 0) throw new DrillFailure(options.code || "GOVERNED_COMMAND_FAILED");
+    if (result.status !== 0) {
+      const detail = options.captureFailureDetail
+        ? String(result.stderr || "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .find((line) => line.includes("[ponto-staging-journey] FAILED:"))
+        : "";
+      throw new DrillFailure(options.code || "GOVERNED_COMMAND_FAILED", detail || null);
+    }
     return result.stdout;
   };
   const wrangler = (args, code = "WRANGLER_COMMAND_FAILED") => runCommand(
@@ -987,6 +1134,193 @@ function createRealRuntime(config, env = process.env) {
     );
     return { surfaces, pages };
   };
+  const proveCandidateAffinity = async (pages, expected) => {
+    const origin = new URL(pages?.url || "");
+    if (
+      origin.protocol !== "https:"
+      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || origin.pathname !== "/"
+      || origin.search
+      || origin.hash
+      || expected.sourceSha !== config.releaseSha
+    ) throw new DrillFailure("PAGES_AFFINITY_EXPECTATION_INVALID");
+
+    const expectedHeaders = {
+      "x-skincos-pages-release-sha": expected.sourceSha,
+      "x-skincos-pages-environment": "staging",
+      "x-skincos-gateway-release-sha": expected.sourceSha,
+      "x-skincos-gateway-environment": "staging",
+      "x-skincos-gateway-version-id": expected.coreVersionId,
+      "x-skincos-timekeeping-release-sha": expected.sourceSha,
+      "x-skincos-timekeeping-environment": "staging",
+      "x-skincos-timekeeping-version-id": expected.timekeepingVersionId,
+    };
+    let lastStatus = 0;
+    for (let attempt = 1; attempt <= 36; attempt += 1) {
+      const probe = new URL("/api/ponto/health", origin);
+      probe.searchParams.set("staging_rollback_affinity_probe", `${config.runId}-${attempt}`);
+      try {
+        const response = await fetch(probe, {
+          redirect: "manual",
+          signal: AbortSignal.timeout(30_000),
+          headers: {
+            accept: "application/json",
+            "cache-control": "no-cache",
+            ...config.accessHeaders,
+          },
+        });
+        lastStatus = response.status;
+        if (response.status === 200) {
+          const payload = await response.json().catch(() => null);
+          const matched = Object.entries(expectedHeaders).every(([name, value]) =>
+            String(response.headers.get(name) || "").trim().toLowerCase() === String(value).toLowerCase());
+          const ready = payload?.ok === true
+            && payload?.ready === true
+            && payload?.service === "workforce-timekeeping"
+            && payload?.unit === "timekeeping"
+            && payload?.environment === "staging"
+            && payload?.database === true
+            && payload?.dependencies?.module_control?.state === "healthy"
+            && payload?.dependencies?.gateway_affinity?.state === "healthy"
+            && String(payload?.versionMetadata?.releaseSha || "").toLowerCase() === expected.sourceSha.toLowerCase()
+            && String(payload?.versionMetadata?.workerVersionId || "").toLowerCase() === expected.timekeepingVersionId.toLowerCase()
+            && String(payload?.versionMetadata?.gatewayReleaseSha || "").toLowerCase() === expected.sourceSha.toLowerCase()
+            && String(payload?.versionMetadata?.gatewayEnvironment || "").toLowerCase() === "staging"
+            && String(payload?.versionMetadata?.gatewayVersionId || "").toLowerCase() === expected.coreVersionId.toLowerCase();
+          if (matched && ready) {
+            return {
+              passed: true,
+              attempts: attempt,
+              status: response.status,
+              sourceSha: expected.sourceSha,
+              gatewayVersionId: expected.coreVersionId,
+              timekeepingVersionId: expected.timekeepingVersionId,
+              credentialsIncluded: false,
+              piiIncluded: false,
+            };
+          }
+        } else if (![404, 429, 502, 503, 504].includes(response.status) && response.status < 500) {
+          throw new DrillFailure("PAGES_AFFINITY_UNEXPECTED_STATUS");
+        }
+      } catch (error) {
+        if (error instanceof DrillFailure && error.code === "PAGES_AFFINITY_UNEXPECTED_STATUS") throw error;
+        lastStatus = 0;
+      }
+      if (attempt < 36) await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+    throw new DrillFailure(`PAGES_TIMEKEEPING_AFFINITY_FAILED_${lastStatus || "FETCH"}`);
+  };
+  const proveIncumbentCompatibility = async (pages, expected) => {
+    const origin = new URL(pages?.url || "");
+    if (
+      origin.protocol !== "https:"
+      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || origin.pathname !== "/"
+      || origin.search
+      || origin.hash
+      || ![expected.pagesSourceSha, expected.identitySourceSha, expected.coreSourceSha, expected.timekeepingSourceSha]
+        .every((value) => SHA.test(String(value || "")))
+    ) throw new DrillFailure("INCUMBENT_COMPATIBILITY_EXPECTATION_INVALID");
+    let lastObservation = { attempt: 0, pages: {}, identity: {} };
+    for (let attempt = 1; attempt <= 36; attempt += 1) {
+      let response;
+      let payload;
+      let identityResponse;
+      let identityPayload;
+      try {
+        const pagesHealth = new URL("/api/ponto/health", origin);
+        pagesHealth.searchParams.set("staging_rollback_incumbent_probe", `${config.runId}-${attempt}`);
+        response = await fetch(pagesHealth, {
+          redirect: "manual",
+          signal: AbortSignal.timeout(30_000),
+          headers: {
+            accept: "application/json",
+            "cache-control": "no-cache",
+            ...config.accessHeaders,
+          },
+        });
+        payload = await response.json().catch(() => null);
+        const pagesPassed = isFailClosedIncumbentHealth({
+          status: response.status,
+          payload,
+          headers: response.headers,
+          expected,
+        });
+
+        const identityHealth = new URL("https://api-staging.skincos.com.br/insumos/health");
+        identityHealth.searchParams.set("staging_rollback_incumbent_probe", `${config.runId}-${attempt}`);
+        identityResponse = await fetch(identityHealth, {
+          redirect: "manual",
+          signal: AbortSignal.timeout(30_000),
+          headers: {
+            accept: "application/json",
+            "cache-control": "no-cache",
+            ...config.accessHeaders,
+          },
+        });
+        identityPayload = await identityResponse.json().catch(() => null);
+        const identityPassed = identityResponse.status === 200
+          && identityPayload?.ok === true
+          && identityPayload?.ready === true
+          && identityPayload?.environment === "staging"
+          && String(identityPayload?.version || "").toLowerCase() === expected.identitySourceSha.toLowerCase()
+          && String(identityPayload?.workerVersion?.id || "").toLowerCase() === expected.identityVersionId.toLowerCase();
+        lastObservation = {
+          attempt,
+          pages: {
+            status: response.status,
+            passed: pagesPassed,
+            ready: payload?.ready === true,
+            moduleControl: payload?.dependencies?.module_control?.state || "unknown",
+            affinity: payload?.dependencies?.gateway_affinity?.state || "unknown",
+            gatewayReason: payload?.dependencies?.gateway_affinity?.reason || "unknown",
+            gatewayReleaseShaPresent: SHA.test(String(payload?.versionMetadata?.gatewayReleaseSha || "")),
+            gatewayVersionIdPresent: UUID.test(String(payload?.versionMetadata?.gatewayVersionId || "")),
+          },
+          identity: {
+            status: identityResponse.status,
+            passed: identityPassed,
+            ready: identityPayload?.ready === true,
+          },
+        };
+        if (pagesPassed && identityPassed) {
+          return {
+            passed: true,
+            mode: "heterogeneous-fail-closed-health",
+            attempts: attempt,
+            pagesHealth: {
+              status: response.status,
+              ready: false,
+              moduleControl: payload?.dependencies?.module_control?.state || "unknown",
+              affinity: "RELEASE_AFFINITY_MISMATCH",
+            },
+            identityHealth: {
+              status: identityResponse.status,
+              ready: true,
+              versionId: expected.identityVersionId,
+            },
+            sourceShas: {
+              pages: expected.pagesSourceSha,
+              coreApi: expected.coreSourceSha,
+              timekeeping: expected.timekeepingSourceSha,
+              identityWorkforce: expected.identitySourceSha,
+            },
+            credentialsIncluded: false,
+            piiIncluded: false,
+          };
+        }
+      } catch (error) {
+        lastObservation = {
+          attempt,
+          pages: { status: response?.status || 0, passed: false },
+          identity: { status: identityResponse?.status || 0, passed: false },
+          error: safeFailureDetail(error),
+        };
+      }
+      if (attempt < 36) await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+    throw new DrillFailure("INCUMBENT_COMPATIBILITY_SMOKE_FAILED", JSON.stringify(lastObservation));
+  };
   const sanitizedJourney = (raw, expected, controlPlane) => {
     const report = JSON.parse(raw);
     const navigation = report?.navigation || {};
@@ -1045,22 +1379,44 @@ function createRealRuntime(config, env = process.env) {
       || origin.search
       || origin.hash
     ) throw new DrillFailure("JOURNEY_ORIGIN_INVALID");
-    runCommand(process.execPath, ["crm/console/scripts/ponto-staging-journey.cjs"], {
+    const journeyArgs = ["crm/console/scripts/ponto-staging-journey.cjs"];
+    const journeyOptions = {
       code: "AUTHENTICATED_JOURNEY_FAILED",
+      captureFailureDetail: true,
       env: {
         PONTO_STAGING_CRM_URL: origin.href,
         PONTO_STAGING_FIXTURES_FILE: handle.fixturePath,
         PONTO_STAGING_REPORT_FILE: handle.journeyReportPath,
         NODE_PATH: path.resolve("crm/console/node_modules"),
       },
-    });
+    };
+    let journeyAttempts = 0;
+    const runJourneyCommand = () => {
+      journeyAttempts += 1;
+      return runCommand(process.execPath, journeyArgs, journeyOptions);
+    };
+    try {
+      runJourneyCommand();
+    } catch (error) {
+      const detail = String(error?.details || "");
+      const retryablePropagationFailure = error instanceof DrillFailure
+        && detail.includes("invalid PIN did not fail closed (503/domain_service_degraded")
+        && detail.includes('"timekeepingReleaseSha":""')
+        && detail.includes('"timekeepingVersionId":""');
+      if (!retryablePropagationFailure) throw error;
+      await proveCandidateAffinity(pages, expected);
+      runJourneyCommand();
+    }
     const raw = fs.readFileSync(handle.journeyReportPath, "utf8");
     // The rollback API response and the exact terminal target deployment are
     // authoritative for the drill's generated Pages URL. Cloudflare's
     // production list can retain the pre-rollback alias while that target is
     // being reattached, so do not confuse list ordering with target identity.
     const controlPlane = await verifyActiveSet(expected, { requireLatestPages: false });
-    return sanitizedJourney(raw, expected, controlPlane);
+    return {
+      ...sanitizedJourney(raw, expected, controlPlane),
+      journeyAttempts,
+    };
   };
   const verifyProtectedContract = async (handle, url, expected) => {
     const origin = new URL(url);
@@ -1378,6 +1734,8 @@ function createRealRuntime(config, env = process.env) {
     runJourney,
     verifyProtectedContract,
     teardownFixture,
+    proveIncumbentCompatibility,
+    proveCandidateAffinity,
   };
 }
 
