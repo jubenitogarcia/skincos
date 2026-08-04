@@ -660,16 +660,40 @@ jobs:
           [[ "$candidate_attested" == true ]] || { echo 'Unable to attest the exact terminal staging Pages candidate and production alias'; exit 1; }
           # A newly-created Pages deployment can serve a bounded transient 404
           # while the data-plane route propagates after control-plane success.
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 4 --dump-header "$RUNNER_TEMP/pages-staging-proxy.headers" \
-            "${deployment_url%/}/api/ponto/_proxy-status" > "$RUNNER_TEMP/pages-staging-proxy.json"
-          node - "$RUNNER_TEMP/pages-staging-proxy.json" "$RUNNER_TEMP/pages-staging-proxy.headers" <<'NODE'
+          # Keep the 404 retryable, but fail closed on a non-404 response or an
+          # invalid payload instead of treating route propagation as success.
+          proxy_attested=false
+          for attempt in {1..36}; do
+            http_status="000"
+            curl_status=0
+            http_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
+              --dump-header "$RUNNER_TEMP/pages-staging-proxy.headers" \
+              --output "$RUNNER_TEMP/pages-staging-proxy.json" \
+              --write-out '%{http_code}' \
+              "${deployment_url%/}/api/ponto/_proxy-status" \
+            )" || curl_status=$?
+            if [[ "$http_status" == "200" && "$curl_status" == "0" ]]; then
+              proxy_status=0
+              node - "$RUNNER_TEMP/pages-staging-proxy.json" "$RUNNER_TEMP/pages-staging-proxy.headers" <<'NODE' || proxy_status=$?
           const fs = require("fs");
           const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const headers = fs.readFileSync(process.argv[3], "utf8").toLowerCase();
-          if (body.ok !== true || body.ready !== true) throw new Error("staging Pages proxy status is not ready");
-          if (!headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)) throw new Error("staging Pages release header is absent");
-          if (!headers.includes("x-skincos-pages-environment: staging")) throw new Error("staging Pages environment header is absent");
+          if (
+            body.ok !== true
+            || body.ready !== true
+            || !headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)
+            || !headers.includes("x-skincos-pages-environment: staging")
+          ) process.exit(2);
           NODE
+              if [[ "$proxy_status" == "0" ]]; then proxy_attested=true; break; fi
+              [[ "$proxy_status" == "2" ]] || exit "$proxy_status"
+            elif [[ "$http_status" != "404" && "$http_status" != "000" ]]; then
+              echo "staging Pages proxy readback returned HTTP $http_status"
+              exit 1
+            fi
+            if [[ "$attempt" != 36 ]]; then sleep 5; fi
+          done
+          [[ "$proxy_attested" == true ]] || { echo 'Unable to attest the staging Pages candidate data-plane route'; exit 1; }
           alias_attested=false
           for attempt in {1..36}; do
             http_status="000"

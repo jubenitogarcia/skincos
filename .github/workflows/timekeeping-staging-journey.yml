@@ -336,45 +336,86 @@ jobs:
           }
           const pathname = "/api/ponto/_release-contract";
           const rawBody = JSON.stringify({ email: fixture.email, password: fixture.password });
-          const timestamp = String(Date.now());
-          const nonce = crypto.randomBytes(32).toString("base64url");
           const bodyHash = crypto.createHash("sha256").update(rawBody).digest("hex");
           const releaseProbeKey = crypto.createHmac("sha256", process.env.PONTO_IDEMPOTENCY_KEY)
             .update("skincos/ponto/release-probe/v1")
             .digest("base64url");
-          const signature = crypto.createHmac("sha256", releaseProbeKey)
-            .update(`ponto-release-probe/v1.${timestamp}.${nonce}.POST.${pathname}.${bodyHash}.${process.env.RELEASE_SHA}`)
-            .digest("base64url");
-          const response = await fetch(new URL("/api/ponto/_release-contract", origin), {
-            method: "POST",
-            redirect: "manual",
-            headers: {
-              accept: "application/json",
-              "content-type": "application/json",
-              "x-skincos-release-probe-ts": timestamp,
-              "x-skincos-release-probe-nonce": nonce,
-              "x-skincos-release-probe-signature-version": "1",
-              "x-skincos-release-probe-sig": signature,
-            },
-            body: rawBody,
-            signal: AbortSignal.timeout(30_000),
-          });
-          const body = await response.json().catch(() => null);
-          const valid = response.status === 200
-            && response.headers.get("x-skincos-pages-release-sha") === process.env.RELEASE_SHA
-            && response.headers.get("x-skincos-pages-environment") === "staging"
-            && body?.ok === true
-            && body?.ready === true
-            && body?.releaseSha === process.env.RELEASE_SHA
-            && String(body?.identityVersionId || "").toLowerCase() === process.env.IDENTITY_VERSION_ID.toLowerCase()
-            && body?.contract === "identity-workforce-hmac-v2"
-            && body?.roleClass === "CONSULTOR"
-            && JSON.stringify(body?.modules) === JSON.stringify(["atendimento", "ponto"])
-            && body?.sessionRead === true
-            && body?.sessionRevoked === true
-            && body?.credentialsIncluded === false
-            && body?.piiIncluded === false;
-          if (!valid) throw new Error("protected staging Identity contract did not match the exact release");
+          const maxAttempts = 36;
+          const retryDelayMs = 5_000;
+          let lastObservation = { attempt: 0, status: 0, error: "not attempted" };
+          let passed = false;
+          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            const timestamp = String(Date.now());
+            const nonce = crypto.randomBytes(32).toString("base64url");
+            const signature = crypto.createHmac("sha256", releaseProbeKey)
+              .update(`ponto-release-probe/v1.${timestamp}.${nonce}.POST.${pathname}.${bodyHash}.${process.env.RELEASE_SHA}`)
+              .digest("base64url");
+            let response = null;
+            let body = null;
+            let fetchError = "";
+            try {
+              response = await fetch(new URL(pathname, origin), {
+                method: "POST",
+                redirect: "manual",
+                headers: {
+                  accept: "application/json",
+                  "content-type": "application/json",
+                  "x-skincos-release-probe-ts": timestamp,
+                  "x-skincos-release-probe-nonce": nonce,
+                  "x-skincos-release-probe-signature-version": "1",
+                  "x-skincos-release-probe-sig": signature,
+                },
+                body: rawBody,
+                signal: AbortSignal.timeout(30_000),
+              });
+              body = await response.json().catch(() => null);
+            } catch (error) {
+              fetchError = String(error?.message || error || "fetch failed").slice(0, 240);
+            }
+            const pagesReleaseSha = response?.headers.get("x-skincos-pages-release-sha") || "";
+            const pagesEnvironment = response?.headers.get("x-skincos-pages-environment") || "";
+            const valid = response?.status === 200
+              && pagesReleaseSha === process.env.RELEASE_SHA
+              && pagesEnvironment === "staging"
+              && body?.ok === true
+              && body?.ready === true
+              && body?.releaseSha === process.env.RELEASE_SHA
+              && String(body?.identityVersionId || "").toLowerCase() === process.env.IDENTITY_VERSION_ID.toLowerCase()
+              && body?.contract === "identity-workforce-hmac-v2"
+              && body?.roleClass === "CONSULTOR"
+              && JSON.stringify(body?.modules) === JSON.stringify(["atendimento", "ponto"])
+              && body?.sessionRead === true
+              && body?.sessionRevoked === true
+              && body?.credentialsIncluded === false
+              && body?.piiIncluded === false;
+            if (valid) {
+              passed = true;
+              break;
+            }
+            lastObservation = {
+              attempt,
+              status: response?.status || 0,
+              error: fetchError || String(body?.error || ""),
+              primaryError: String(body?.primaryError || ""),
+              releaseSha: String(body?.releaseSha || ""),
+              identityVersionId: String(body?.identityVersionId || ""),
+              contract: String(body?.contract || ""),
+              ready: body?.ready === true,
+              sessionTeardownProven: body?.sessionTeardownProven === true,
+              pagesReleaseSha,
+              pagesEnvironment,
+            };
+            const retryable = !response
+              || response.status === 404
+              || response.status === 429
+              || response.status >= 500
+              || response.status === 200;
+            if (!retryable || attempt === maxAttempts) break;
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          }
+          if (!passed) {
+            throw new Error(`protected staging Identity contract did not match the exact release after bounded propagation; last=${JSON.stringify(lastObservation)}`);
+          }
           const summary = {
             passed: true,
             sourceSha: process.env.RELEASE_SHA,

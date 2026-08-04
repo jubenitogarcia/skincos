@@ -729,9 +729,40 @@ test("Ponto staging Pages resolves and compensates candidates from the API inven
   assert.match(block, /--retry-all-errors/);
   assert.match(block, /candidate_attested=false/);
   assert.match(block, /--write-out '%\{http_code\}'/);
-  assert.match(block, /--retry 5 --retry-all-errors --retry-delay 4 --dump-header "\$RUNNER_TEMP\/pages-staging-proxy\.headers"/);
+  assert.match(block, /proxy_attested=false/);
+  assert.match(block, /--dump-header "\$RUNNER_TEMP\/pages-staging-proxy\.headers"/);
+  assert.match(block, /staging Pages proxy readback returned HTTP/);
   assert.match(block, /--retry 5 --retry-all-errors --retry-delay 4 --dump-header "\$RUNNER_TEMP\/pages-staging-alias\.headers"/);
   assert.match(block, /Unable to attest the exact terminal staging Pages candidate and production alias/);
   assert.doesNotMatch(block, /ponto-wrangler-output\.mjs/);
   assert.match(block, /PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=\$candidate_id/);
+});
+
+test("staging waits for exact Pages-to-Timekeeping affinity before the authenticated journey", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const start = source.indexOf("- name: Prove exact staging Pages-to-Timekeeping affinity before authenticated journey");
+  const end = source.indexOf("- name: Execute authenticated synthetic staging journey", start);
+  assert.ok(start >= 0 && end > start, "staging affinity probe block is absent or misplaced");
+  const block = source.slice(start, end);
+  assert.match(block, /for attempt in \{1\.\.36\}; do/);
+  assert.match(block, /\/api\/ponto\/health\?staging_affinity_probe=\$GITHUB_RUN_ID/);
+  assert.match(block, /x-skincos-pages-release-sha/);
+  assert.match(block, /x-skincos-gateway-version-id/);
+  assert.match(block, /x-skincos-timekeeping-release-sha/);
+  assert.match(block, /x-skincos-timekeeping-version-id/);
+  assert.match(block, /Unable to attest exact staging Pages-to-Timekeeping affinity/);
+  assert.doesNotMatch(block, /PONTO_IDEMPOTENCY_KEY/);
+});
+
+test("staging retries the protected Identity contract during bounded propagation", () => {
+  const source = workflow("timekeeping-staging-journey.yml");
+  const start = source.indexOf("- name: Prove exact Identity candidate through the protected Pages binding");
+  const end = source.indexOf("- name: Execute authenticated Ponto journey", start);
+  assert.ok(start >= 0 && end > start, "protected Identity contract block is absent or misplaced");
+  const block = source.slice(start, end);
+  assert.match(block, /const maxAttempts = 36/);
+  assert.match(block, /for \(let attempt = 1; attempt <= maxAttempts; attempt \+= 1\)/);
+  assert.match(block, /protected staging Identity contract did not match the exact release after bounded propagation/);
+  assert.match(block, /lastObservation/);
+  assert.match(block, /sessionTeardownProven/);
 });
