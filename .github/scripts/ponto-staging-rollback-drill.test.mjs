@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   loadConfig,
   classifyIncumbentBundle,
+  isFailClosedIncumbentHealth,
   runStagingRollbackDrill,
   validateIncumbentProvenance,
   validateSourceEvidence,
@@ -179,6 +180,45 @@ test("incumbent bundle classification skips only heterogeneous or incomplete rel
   });
 });
 
+test("heterogeneous incumbent health accepts a safe affinity mismatch without trusting gateway identity", () => {
+  const expected = {
+    timekeepingSourceSha: "b".repeat(40),
+    timekeepingVersionId: ids.timekeeping.incumbent,
+  };
+  const payload = {
+    ok: false,
+    ready: false,
+    service: "workforce-timekeeping",
+    unit: "timekeeping",
+    environment: "staging",
+    database: true,
+    dependencies: {
+      module_control: { state: "unavailable" },
+      gateway_affinity: { state: "unavailable", reason: "RELEASE_AFFINITY_MISMATCH" },
+    },
+    versionMetadata: {
+      releaseSha: expected.timekeepingSourceSha,
+      workerVersionId: expected.timekeepingVersionId,
+      gatewayReleaseSha: "d".repeat(40),
+      gatewayEnvironment: "staging",
+      gatewayVersionId: ids.coreApi.incumbent,
+    },
+  };
+  const headers = new Map([
+    ["x-skincos-timekeeping-release-sha", expected.timekeepingSourceSha],
+    ["x-skincos-timekeeping-environment", "staging"],
+    ["x-skincos-timekeeping-version-id", expected.timekeepingVersionId],
+  ]);
+
+  assert.equal(isFailClosedIncumbentHealth({ status: 200, payload, headers, expected }), true);
+  assert.equal(isFailClosedIncumbentHealth({
+    status: 200,
+    payload: { ...payload, ready: true },
+    headers,
+    expected,
+  }), false);
+});
+
 class FakeRuntime {
   constructor(failAt = "", candidateSourceSha = config.releaseSha, incumbents = incumbentEvidence) {
     this.calls = [];
@@ -278,7 +318,9 @@ class FakeRuntime {
   }
 
   async proveCandidateAffinity(_pages, expected) {
-    const call = "candidate:affinity";
+    const call = this.calls.includes("candidate:affinity")
+      ? "candidate:journey-fence"
+      : "candidate:affinity";
     this.calls.push(call);
     this.maybeFail(call);
     return {
@@ -381,6 +423,7 @@ test("drill exercises two fresh fixtures and restores every exact candidate", as
     "fixture:candidate:prepare",
     "fixture:candidate:provision",
     "fixture:candidate:contract",
+    "candidate:journey-fence",
     "fixture:candidate:journey",
     "fixture:candidate:teardown",
     "module:final-maintenance:maintenance",
@@ -533,6 +576,8 @@ test("the executable and workflow retain no unimplemented hard-stop and require 
   assert.match(script, /ponto-release-probe\/v1\./);
   assert.match(script, /"x-skincos-release-probe-sig":\s*signature/);
   assert.match(script, /incumbentCompatibility/);
+  assert.match(script, /journeyFence/);
+  assert.match(script, /journeyAttempts/);
   assert.match(script, /dependencies\?\.gateway_affinity\?\.state === "healthy"/);
   assert.match(script, /RELEASE_AFFINITY_MISMATCH/);
   assert.match(script, /createHmac\("sha256", idempotencyKey\)[\s\S]*skincos\/ponto\/release-probe\/v1[\s\S]*digest\("base64url"\)/);
