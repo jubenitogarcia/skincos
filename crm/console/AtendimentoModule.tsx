@@ -2010,6 +2010,7 @@ function ConversionDoctorBandsContent({
             </ResponsiveContainer>
             {activeDoctor && activeDoctorTooltipPosition ? createPortal(
               <TooltipAspectSurface
+                key={activeDoctor.id}
                 role="tooltip"
                 data-testid="atendimento-doctor-tooltip"
                 className="pointer-events-none fixed z-[1000] min-w-[13rem] -translate-x-1/2 -translate-y-full rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl"
@@ -2035,6 +2036,7 @@ function ConversionDoctorBandsContent({
               </TooltipAspectSurface>
             , document.body) : activeReferenceTooltip ? createPortal(
               <TooltipAspectSurface
+                key={activeReferenceTooltip.key}
                 role="tooltip"
                 data-testid={`atendimento-reference-tooltip-${activeReferenceTooltip.key}`}
                 className="pointer-events-none fixed z-[1000] min-w-[13rem] -translate-x-1/2 -translate-y-full rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl"
@@ -2046,6 +2048,7 @@ function ConversionDoctorBandsContent({
               </TooltipAspectSurface>
             , document.body) : activeBand && activeBandTooltipPosition ? createPortal(
               <TooltipAspectSurface
+                key={activeBand.level}
                 role="tooltip"
                 data-testid="atendimento-conversion-band-tooltip"
                 className="pointer-events-none fixed z-[1000] max-w-[15rem] -translate-x-1/2 -translate-y-full rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 text-[10px] text-slate-200 shadow-xl"
