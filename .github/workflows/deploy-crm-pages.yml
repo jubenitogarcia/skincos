@@ -540,6 +540,13 @@ jobs:
           NODE
             fi
           fi
+          if [[ "$RELEASE_SCOPE" == general && "$DEPLOY_TARGET" == production ]]; then
+            # Production already owns PONTO_API_TARGET as a Pages secret. Do
+            # not redeclare that binding as a plaintext variable in a general
+            # deployment; leaving the remote secret untouched preserves the
+            # independently fenced Ponto surface.
+            sed -i '/^PONTO_API_TARGET[[:space:]]*=/d' wrangler.toml
+          fi
           node - wrangler.toml "$MODULE_CONTROL_KV_ID" <<'NODE'
           const fs = require("fs");
           const file = process.argv[2];
