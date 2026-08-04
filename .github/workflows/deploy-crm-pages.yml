@@ -345,8 +345,12 @@ jobs:
         run: npm run build
         working-directory: crm/console
 
-      - name: Attest remote Ponto Pages values before deployment
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
+      - name: Attest remote Ponto Pages values before Ponto deployment
+        # General CRM releases intentionally use the canonical general Pages
+        # project while Ponto remains independently fenced. Only a governed
+        # Ponto release may require Ponto-owned remote secrets; a general
+        # release must not hydrate or mutate that namespace.
+        if: ${{ inputs.release_scope == 'ponto' && steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

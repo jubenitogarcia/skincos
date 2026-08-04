@@ -247,6 +247,11 @@ test("current Pages and Ponto mutators are fenced from legacy repository control
   assert.match(sharedPages, /Unable to attest the exact staging Pages candidate and production alias/);
   assert.match(sharedPages, /if \[\[ "\$attempt" != 36 \]\]; then sleep 5; fi/);
   assert.match(sharedPages, /for attempt in \{1\.\.72\}; do/);
+  assert.match(
+    sharedPages,
+    /name: Attest remote Ponto Pages values before Ponto deployment[\s\S]*?if: \$\{\{ inputs\.release_scope == 'ponto'/,
+    "Ponto remote values must be gated to governed Ponto releases",
+  );
   for (const name of [
     "CRM_GENERAL_PAGES_PROJECT",
     "CRM_GENERAL_PAGES_PROJECT_STAGING",
