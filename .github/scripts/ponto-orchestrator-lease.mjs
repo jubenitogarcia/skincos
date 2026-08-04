@@ -543,6 +543,19 @@ const TRANSIENT_READ_STATUSES = new Set([429, 500, 502, 503, 504]);
 const TRANSIENT_READ_RETRY_DELAYS_MS = [1_000, 3_000, 8_000];
 const MAX_TRANSIENT_READ_RETRY_DELAY_MS = 30_000;
 const MAX_CANONICAL_SNAPSHOT_REFRESHES = 2;
+const CHILD_SUBJECT_RETRY_DELAYS_MS = [1_000, 3_000, 8_000];
+
+export const childCapabilitySubjectWaitMs = (run, attempt) => {
+  if (run?.status === "in_progress" && run?.conclusion == null) return 0;
+  if (
+    run?.status === "queued"
+    && run?.conclusion == null
+    && Number.isInteger(attempt)
+    && attempt >= 0
+    && attempt < CHILD_SUBJECT_RETRY_DELAYS_MS.length
+  ) return CHILD_SUBJECT_RETRY_DELAYS_MS[attempt];
+  return -1;
+};
 
 const parseRetryAfterMs = (value, now = Date.now()) => {
   const raw = String(value || "").trim();
@@ -700,42 +713,52 @@ async function consumeCheck([leaseKey, stage, target, releaseShaRaw, orchestrato
   const verifier = resolveCapabilityVerifier(capabilityPublicKeysJson, target);
 
   const parent = await canonicalOrchestrator({ orchestratorRunId, releaseSha, stage, currentHeadSha });
-  const child = await request(`/repos/${repository}/actions/runs/${childRunId}`);
-  const childWorkflowPath = String(child?.path || "").split("@")[0];
   const event = JSON.parse(fs.readFileSync(eventPath, "utf8"));
-  const { digest: intentDigest, normalizedInputs } = canonicalizeGovernedIntent(
-    childWorkflowPath,
-    event?.inputs,
-  );
-  const dispatchNonce = String(normalizedInputs.orchestrator_nonce || "");
-  const issuerRunId = String(normalizedInputs.orchestrator_issuer_run_id || "");
-  const expectedDisplayTitle = expectedGovernedRunName(childWorkflowPath, normalizedInputs);
-  const intentReleaseSha = childWorkflowPath === ".github/workflows/module-availability.yml"
-    ? String(normalizedInputs.orchestrator_release_sha || normalizedInputs.release_sha)
-    : String(normalizedInputs.release_sha);
-  if (
-    String(child?.id || "") !== childRunId
-    || child?.run_attempt !== 1
-    || !acceptsWorkflowRunPath(childWorkflowPath, child?.path)
-    || child?.status !== "in_progress"
-    || child?.conclusion != null
-    || child?.event !== "workflow_dispatch"
-    || child?.head_branch !== "main"
-    || child?.head_sha !== releaseSha
-    || child?.repository?.full_name !== repository
-    || String(child?.repository?.id || "") !== repositoryId
-    || child?.head_repository?.full_name !== repository
-    || String(child?.head_repository?.id || "") !== repositoryId
-    || child?.display_title !== expectedDisplayTitle
-    || normalizedInputs.orchestrator_run_id !== orchestratorRunId
-    || normalizedInputs.orchestrator_stage !== stage
-    || intentReleaseSha !== releaseSha
-    || !DISPATCH_NONCE.test(dispatchNonce)
-    || !/^[1-9][0-9]*$/.test(issuerRunId)
-    || String(event?.repository?.id || "") !== repositoryId
-    || event?.repository?.full_name !== repository
-    || !["main", "refs/heads/main"].includes(String(event?.ref || ""))
-  ) throw new Error("current child run is not the exact active first-attempt capability subject");
+  let child;
+  let childWorkflowPath = "";
+  let intentDigest = "";
+  let normalizedInputs = {};
+  let dispatchNonce = "";
+  let issuerRunId = "";
+  for (let attempt = 0; ; attempt += 1) {
+    child = await request(`/repos/${repository}/actions/runs/${childRunId}`);
+    childWorkflowPath = String(child?.path || "").split("@")[0];
+    ({ digest: intentDigest, normalizedInputs } = canonicalizeGovernedIntent(
+      childWorkflowPath,
+      event?.inputs,
+    ));
+    dispatchNonce = String(normalizedInputs.orchestrator_nonce || "");
+    issuerRunId = String(normalizedInputs.orchestrator_issuer_run_id || "");
+    const expectedDisplayTitle = expectedGovernedRunName(childWorkflowPath, normalizedInputs);
+    const intentReleaseSha = childWorkflowPath === ".github/workflows/module-availability.yml"
+      ? String(normalizedInputs.orchestrator_release_sha || normalizedInputs.release_sha)
+      : String(normalizedInputs.release_sha);
+    if (
+      String(child?.id || "") !== childRunId
+      || child?.run_attempt !== 1
+      || !acceptsWorkflowRunPath(childWorkflowPath, child?.path)
+      || child?.event !== "workflow_dispatch"
+      || child?.head_branch !== "main"
+      || child?.head_sha !== releaseSha
+      || child?.repository?.full_name !== repository
+      || String(child?.repository?.id || "") !== repositoryId
+      || child?.head_repository?.full_name !== repository
+      || String(child?.head_repository?.id || "") !== repositoryId
+      || child?.display_title !== expectedDisplayTitle
+      || normalizedInputs.orchestrator_run_id !== orchestratorRunId
+      || normalizedInputs.orchestrator_stage !== stage
+      || intentReleaseSha !== releaseSha
+      || !DISPATCH_NONCE.test(dispatchNonce)
+      || !/^[1-9][0-9]*$/.test(issuerRunId)
+      || String(event?.repository?.id || "") !== repositoryId
+      || event?.repository?.full_name !== repository
+      || !["main", "refs/heads/main"].includes(String(event?.ref || ""))
+    ) throw new Error("current child run is not the exact active first-attempt capability subject");
+    const retryDelay = childCapabilitySubjectWaitMs(child, attempt);
+    if (retryDelay === 0) break;
+    if (retryDelay < 0) throw new Error("current child run is not the exact active first-attempt capability subject");
+    await new Promise(resolve => setTimeout(resolve, retryDelay));
+  }
 
   const issuerSnapshot = issuerRunId === orchestratorRunId
     ? { issuer: parent.run, issuerWorkflow: parent.workflow }
