@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { DragDropContext, Draggable, Droppable, type DraggableProvidedDragHandleProps, type DropResult } from '@hello-pangea/dnd'
+import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import {
   AlertTriangle,
   AreaChart as AreaChartIcon,
@@ -13,9 +13,7 @@ import {
   Divide,
   Download,
   Eye,
-  EyeOff,
   Gauge,
-  GripVertical,
   Info,
   LineChart as LineChartIcon,
   Percent,
@@ -470,17 +468,41 @@ function metricProgressClass(tone: AtendimentoMetricTone) {
         : 'bg-sky-300'
 }
 
+const TOOLTIP_FORMULA_LABELS: Record<string, string> = {
+  linha_corte_diária: 'linha de corte diária',
+  intervalo_diário: 'intervalo diário',
+  desvio_padrão_amostral: 'desvio padrão amostral',
+  produção_diária: 'produção diária',
+  multiplicador_otimizado: 'multiplicador otimizado',
+  média_diária: 'média diária',
+  mediana_diária: 'mediana diária',
+  meta_diária: 'meta diária',
+  meta_periodo: 'meta do período',
+  dias_trabalhados_periodo: 'dias trabalhados no período',
+  doutores_elegíveis: 'doutores elegíveis',
+  limite_inferior: 'limite inferior',
+  limite_superior: 'limite superior',
+  linha_corte: 'linha de corte',
+}
+
+function formatTooltipFormula(value: string) {
+  let formatted = String(value || '').trim()
+  Object.entries(TOOLTIP_FORMULA_LABELS).forEach(([token, label]) => {
+    formatted = formatted.split(token).join(label)
+  })
+  formatted = formatted.replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
+  return formatted ? `${formatted.slice(0, 1).toLocaleUpperCase('pt-BR')}${formatted.slice(1)}` : formatted
+}
+
 function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
   const presentation = info.detailPresentation || 'compact'
-  const formula = info.formula || info.calculation
-  const hasCurrentCalculation = info.calculation !== formula
+  const formula = formatTooltipFormula(info.formula || info.calculation)
   return (
     <div className="space-y-2 text-left">
       <p className="leading-snug text-slate-300">{info.what} {info.usage}</p>
       <div className="rounded-lg border border-slate-700/75 bg-slate-900/55 px-2 py-1.5">
         <span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">Fórmula</span>
         <span className="mt-0.5 block font-medium leading-snug text-slate-100">{formula}</span>
-        {hasCurrentCalculation ? <span className="mt-1 block leading-snug text-slate-400">Aplicação atual: {info.calculation}</span> : null}
       </div>
       {info.details?.length ? <>
         <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-700/75 bg-slate-900/45 pr-1">
@@ -637,7 +659,7 @@ function ConversionMultiplierDetails({
             </TooltipLabel>
           </div>
           {chartData.length > 0 ? (
-            <div className="h-48 rounded-xl border border-slate-800 bg-slate-900/45 p-2" aria-label="Curva do multiplicador pela homogeneidade">
+            <div className="h-32 rounded-xl border border-slate-800 bg-slate-900/45 p-2" aria-label="Curva do multiplicador pela homogeneidade">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 10, right: 12, left: -14, bottom: 2 }}>
                   <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
@@ -822,8 +844,6 @@ function MetricTile({
   progress,
   content,
   hideContentHeader = false,
-  dragHandleProps,
-  onHide,
   isDragging,
 }: {
   label: string
@@ -838,8 +858,6 @@ function MetricTile({
   progress?: number
   content?: React.ReactNode
   hideContentHeader?: boolean
-  dragHandleProps?: DraggableProvidedDragHandleProps | null
-  onHide?: () => void
   isDragging?: boolean
 }) {
   const toneClass = metricToneClass(tone)
@@ -862,26 +880,6 @@ function MetricTile({
       data-testid={`atendimento-kpi-${label.toLowerCase().replace(/\s+/g, '-')}`}
     >
       {loading ? <LoadingOverlay label="Atualizando" /> : null}
-      <div className="absolute right-2 top-2 z-20 flex items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
-        <button
-          type="button"
-          className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-slate-700 bg-slate-950/80 text-slate-400 hover:border-sky-400/40 hover:text-sky-100"
-          aria-label={`Mover ${label}`}
-          {...dragHandleProps}
-        >
-          <GripVertical className="h-3 w-3" />
-        </button>
-        {onHide ? (
-          <button
-            type="button"
-            className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-slate-700 bg-slate-950/80 text-slate-400 hover:border-rose-400/40 hover:text-rose-100"
-            aria-label={`Ocultar ${label}`}
-            onClick={onHide}
-          >
-            <EyeOff className="h-3 w-3" />
-          </button>
-        ) : null}
-      </div>
       <CardContent className={hideContentHeader ? 'p-0' : `${content ? 'min-h-[7.1rem]' : 'min-h-[5.05rem]'} p-2.5`}>
         <div className="flex h-full min-w-0 flex-col justify-between gap-1.5">
           {!hideContentHeader ? <div className="flex min-w-0 items-center gap-2">
@@ -1190,7 +1188,7 @@ function buildGoalPlanTooltip(
 ) {
   const segmentSummary = formatGoalPlanSegments(goalPlan)
   return buildMetricTooltip(definition, formula, {
-    usage: `${definition.usage} ${segmentSummary ? `Base atual: ${segmentSummary}. ` : ''}Todas as métricas visíveis deste bloco consideram somente o período filtrado; os dias do mês ficam apenas como insumo técnico da proporcionalização.`,
+    usage: `${definition.usage} ${segmentSummary ? `Base atual: ${segmentSummary}. ` : ''}${segmentSummary ? 'Os dias do mês ficam apenas como insumo técnico da proporcionalização.' : ''}`.trim(),
   })
 }
 
@@ -2533,9 +2531,7 @@ export function AtendimentoModule() {
         const exactCalculation = currentMetricCalculation(key, Number(metric.weekValue || 0))
         const tooltip = key === 'dailyGoal' || key === 'periodGoal' || key === 'periodOperationalDays'
           ? buildGoalPlanTooltip(definition, exactCalculation, goalPlan)
-          : buildMetricTooltip(definition, exactCalculation, {
-            usage: `${definition.usage} Todas as métricas exibidas aqui usam o período filtrado.`,
-          })
+          : buildMetricTooltip(definition, exactCalculation)
         return [{
           key,
           label: key === 'rankedDoctorTotal' ? 'Total produzido' : definition.label,
@@ -3078,6 +3074,7 @@ export function AtendimentoModule() {
                       <div
                         ref={dragProvided.innerRef}
                         {...dragProvided.draggableProps}
+                        {...(dragProvided.dragHandleProps || {})}
                         className={`${tile.wrapperClassName || ''} ${snapshot.isDragging ? 'z-30' : ''}`}
                         style={dragProvided.draggableProps.style as CSSProperties}
                       >
@@ -3094,8 +3091,6 @@ export function AtendimentoModule() {
                           progress={tile.progress}
                           content={tile.content}
                           hideContentHeader={tile.hideContentHeader}
-                          dragHandleProps={dragProvided.dragHandleProps}
-                          onHide={() => updateMetricTile(tile.key, { visible: false })}
                           isDragging={snapshot.isDragging}
                         />
                       </div>
