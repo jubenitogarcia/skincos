@@ -34,6 +34,21 @@ reavaliar a elegibilidade imediatamente antes do envio.
   cobrindo também o primeiro `STOP` quando ainda não há linha de contato. A
   leitura após uma espera de trava vê a revogação ou bloqueio já confirmado;
   falha posterior não marca a ação como contatada.
+- A cadência é consumida somente quando o contato é efetivamente registrado em
+  `contacted_at`, nunca quando uma fila é criada. A transição consulta todos os
+  contatos anteriores da identidade dentro da janela e as transições
+  concorrentes compartilham a mesma trava por identidade; somente uma pode
+  consumir a janela de cadência. Estados legados como resposta, agendamento,
+  venda ou retorno não contam como contato sem um `contacted_at` explícito.
+- O registro de contato e a concessão de uma nova permissão começam desligados.
+  Para abrir um canário, um GESTOR precisa habilitar explicitamente o rollout e
+  fornecer uma allowlist de identidades UUID. Negar uma permissão continua
+  disponível mesmo fora do canário. O rollout libera somente registros no CRM;
+  ele não envia mensagens.
+- A política expõe uma versão opaca. A UI só envia campos de canário quando eles
+  foram realmente alterados e acompanha a versão lida; uma atualização
+  concorrente responde conflito em vez de reabrir, fechar ou esvaziar um
+  canário com valores desatualizados.
 
 ## Migration
 
@@ -43,7 +58,8 @@ Ela cria `commercial_contact_permissions` e
 `commercial_contact_permission_events`, e adiciona o canal de contato às ações
 comerciais. O executor
 `crm/api/scripts/migrate-atendimento-commercial-contact.mjs` aceita somente o
-espelho local `skincos_crm_local`; ele não possui caminho de aplicação remota.
+espelho local `skincos_crm_local` pelo socket Unix do operador `admin`; ele não
+possui caminho de aplicação remota.
 
 Aplicação local, depois de backup privado:
 
@@ -58,6 +74,27 @@ rastreabilidade.
 ```bash
 npm --prefix crm/api run migrate-commercial-contact -- --rollback
 ```
+
+Migration complementar: `20260804_commercial_contact_rollout_v1`.
+
+Ela adiciona `commercial_actions.contacted_at`, o índice de consulta de
+cadência e os campos de rollout desligado por padrão em
+`commercial_policy_config`. Ela depende da migration de controles anterior e
+aceita somente `skincos_crm_local` pelo socket Unix do operador `admin`, via
+executor abaixo:
+
+```bash
+npm --prefix crm/api run migrate-commercial-contact-rollout -- --apply
+```
+
+A aplicação só reaproveita timestamps existentes de ações explicitamente
+marcadas `contacted`; ela não infere contato de respostas, agendamentos, vendas
+ou retornos. O executor verifica e repara índice inválido antes de registrar o
+resultado. A flag começa em `false` e a allowlist começa vazia.
+
+Sua reversão também é não destrutiva: mantém timestamps, desliga a flag, limpa
+a allowlist, remove apenas o índice de consulta e marca a migration como
+revertida.
 
 ## Dados e reconciliação
 
@@ -82,7 +119,11 @@ não devem ser descartados para melhorar o painel artificialmente.
    ator configurados; o backend deve receber identidade individual do operador.
 4. Validar em staging, com identidade sintética, os casos: sem permissão,
    permissão expirada, bloqueio, opt-out Harmonia e permissão concedida.
-5. Promover o backend pela linha de release nativa aprovada e só então o
+5. Antes de qualquer canário, comprovar que `contacted_at`, a allowlist e a
+   flag de rollout estão presentes; a flag deve iniciar desligada e a allowlist
+   vazia. Testar duas ações sintéticas concorrentes para confirmar que somente
+   uma transição pode registrar `contacted` na mesma janela.
+6. Promover o backend pela linha de release nativa aprovada e só então o
    frontend compatível. A UI nova continua segura contra backend ainda sem os
    campos de contato: ela apresenta revisão e não libera `contacted`.
 

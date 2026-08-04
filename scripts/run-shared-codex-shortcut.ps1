@@ -33,6 +33,7 @@ param(
         "CrmMetaAds",
         "CrmFinance",
         "CrmAtendimento",
+        "CrmAtendimentoMirrorPreflight",
         "CrmAtendimentoMirrorStatus",
         "CrmAtendimentoMirrorSync",
         "CrmLocalStop",
@@ -3076,6 +3077,9 @@ function Invoke-ShortcutActionInternal {
         }
         "CrmAtendimento" {
             Invoke-CrmModuleAction -Role Gestor -Module "atendimento"
+        }
+        "CrmAtendimentoMirrorPreflight" {
+            Invoke-ShortcutWsl -NpmScript "codex:crm:atendimento-mirror-preflight"
         }
         "CrmAtendimentoMirrorStatus" {
             Invoke-ShortcutWsl -NpmScript "codex:crm:atendimento-mirror-status"

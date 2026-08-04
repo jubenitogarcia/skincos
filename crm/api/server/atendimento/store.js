@@ -562,6 +562,15 @@ function roleCanManage(actor) {
     return role === 'GESTOR' || role === 'GERENTE' || role === 'ADMIN'
 }
 
+// Clientes is intentionally a GESTOR-only module in the CRM shell. Preserve
+// the legacy ADMIN alias for direct/local API consumers, but never widen the
+// commercial boundary to GERENTE merely because that role manages other
+// Atendimento surfaces.
+function roleCanManageCommercial(actor) {
+    const role = String(actor?.role || '').trim().toUpperCase()
+    return role === 'GESTOR' || role === 'ADMIN'
+}
+
 function normalizeAllowedUnitKeys(actor) {
     const raw = Array.isArray(actor?.allowedUnits) ? actor.allowedUnits : []
     return new Set(raw.map((unit) => normalizeUnit(unit).slug).filter(Boolean))
@@ -2106,6 +2115,13 @@ function assertManager(actor) {
     throw err
 }
 
+function assertCommercialManager(actor) {
+    if (roleCanManageCommercial(actor)) return
+    const err = new Error('FORBIDDEN')
+    err.statusCode = 403
+    throw err
+}
+
 async function resolveConsultantForCreate(client, input, actor, unit) {
     if (roleCanManage(actor)) {
         return {
@@ -2574,6 +2590,20 @@ const COMMERCIAL_ACTION_STATUSES = new Set(['open', 'contacted', 'responded', 's
 const COMMERCIAL_ACTION_TYPES = new Set(['contact', 'follow_up', 'appointment', 'relationship'])
 const COMMERCIAL_ACTIVE_ACTION_STATUSES = ['open', 'contacted', 'responded', 'scheduled']
 const COMMERCIAL_CONTACT_CHANNEL = 'whatsapp'
+const COMMERCIAL_POLICY_VERSION_SQL = `md5(concat_ws('|',
+    active_contact_cooldown_days::text,
+    return_risk_thresholds::text,
+    commercial_contact_writes_enabled::text,
+    commercial_contact_canary_identity_ids::text,
+    extract(epoch from updated_at)::text
+))`
+const LEGACY_COMMERCIAL_POLICY_VERSION_SQL = `md5(concat_ws('|',
+    active_contact_cooldown_days::text,
+    return_risk_thresholds::text,
+    'false',
+    '{}',
+    extract(epoch from updated_at)::text
+))`
 
 function commercialAsOf(value) {
     const raw = String(value || '').trim()
@@ -2618,6 +2648,7 @@ function mapCommercialAction(row) {
         outcomeNotes: row.outcome_notes || '',
         createdBy: row.created_by || '',
         completedAt: row.completed_at || null,
+        contactedAt: row.contacted_at || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     }
@@ -2639,14 +2670,41 @@ async function assertCommercialIdentitySource(pgPool) {
 }
 
 async function readCommercialPolicy(pgPool) {
-    const result = await pgPool.query(
-        `select active_contact_cooldown_days, return_risk_thresholds, updated_by, updated_at
-         from crm_atendimento.commercial_policy_config where singleton = true`,
-    )
+    let result
+    let contactWriteControlsReady = true
+    try {
+        result = await pgPool.query(
+            `select active_contact_cooldown_days, return_risk_thresholds,
+                    commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,
+                    updated_by, updated_at,
+                    ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version
+             from crm_atendimento.commercial_policy_config where singleton = true`,
+        )
+    } catch (error) {
+        // A backend may be deployed before the explicit, guarded rollout
+        // migration. Reads remain available, but every contact write stays
+        // fail-closed until the two rollout columns are present.
+        if (String(error?.code || '') !== '42703') throw error
+        contactWriteControlsReady = false
+        result = await pgPool.query(
+            `select active_contact_cooldown_days, return_risk_thresholds,
+                    false as commercial_contact_writes_enabled,
+                    '{}'::uuid[] as commercial_contact_canary_identity_ids,
+                    updated_by, updated_at,
+                    ${LEGACY_COMMERCIAL_POLICY_VERSION_SQL} as policy_version
+             from crm_atendimento.commercial_policy_config where singleton = true`,
+        )
+    }
     const row = result.rows[0] || {}
     return {
         activeContactCooldownDays: Number(row.active_contact_cooldown_days || 30),
         returnRiskThresholds: Array.isArray(row.return_risk_thresholds) ? row.return_risk_thresholds.map(Number) : [90, 180, 365],
+        commercialContactWritesEnabled: row.commercial_contact_writes_enabled === true,
+        commercialContactCanaryIdentityIds: Array.isArray(row.commercial_contact_canary_identity_ids)
+            ? row.commercial_contact_canary_identity_ids.map(String).filter(Boolean)
+            : [],
+        commercialContactWriteControlsReady: contactWriteControlsReady,
+        policyVersion: row.policy_version || '',
         updatedBy: row.updated_by || '',
         updatedAt: row.updated_at || null,
     }
@@ -2658,13 +2716,19 @@ function commercialContactError(code, statusCode = 409) {
     return error
 }
 
-function emptyCommercialContactEligibility(reason, { controlsReady = false, harmoniaChecked = false, hasPhone = false } = {}) {
+function emptyCommercialContactEligibility(reason, {
+    controlsReady = false,
+    contactWriteControlsReady = false,
+    harmoniaChecked = false,
+    hasPhone = false,
+} = {}) {
     return {
         channel: COMMERCIAL_CONTACT_CHANNEL,
         status: 'review_required',
         contactAllowed: false,
         reason,
         controlsReady,
+        contactWriteControlsReady,
         harmoniaChecked,
         hasPhone,
         optOutRecorded: false,
@@ -2708,7 +2772,16 @@ async function readCommercialContactAvailability(pgPool) {
                 to_regclass('crm_atendimento.supplemental_lead_profiles') as lead_profiles,
                 exists(select 1 from information_schema.columns
                     where table_schema = 'crm_atendimento' and table_name = 'commercial_actions'
-                      and column_name = 'contact_channel') as action_channel`,
+                      and column_name = 'contact_channel') as action_channel,
+                exists(select 1 from information_schema.columns
+                    where table_schema = 'crm_atendimento' and table_name = 'commercial_actions'
+                      and column_name = 'contacted_at') as action_contacted_at,
+                exists(select 1 from information_schema.columns
+                    where table_schema = 'crm_atendimento' and table_name = 'commercial_policy_config'
+                      and column_name = 'commercial_contact_writes_enabled') as rollout_enabled,
+                exists(select 1 from information_schema.columns
+                    where table_schema = 'crm_atendimento' and table_name = 'commercial_policy_config'
+                      and column_name = 'commercial_contact_canary_identity_ids') as rollout_canary`,
     )
     const row = result.rows[0] || {}
     return {
@@ -2719,7 +2792,11 @@ async function readCommercialContactAvailability(pgPool) {
         appRegistrations: !!row.app_registrations,
         leadProfiles: !!row.lead_profiles,
         actionChannel: !!row.action_channel,
+        actionContactedAt: !!row.action_contacted_at,
+        rolloutConfig: !!row.rollout_enabled && !!row.rollout_canary,
         controlsReady: !!row.permissions && !!row.permission_events && !!row.action_channel,
+        contactWriteControlsReady: !!row.permissions && !!row.permission_events && !!row.action_channel &&
+            !!row.action_contacted_at && !!row.rollout_enabled && !!row.rollout_canary,
     }
 }
 
@@ -2771,10 +2848,13 @@ async function queryCommercialIdentityPhoneKeys(pgPool, identityIds, availabilit
 async function queryCommercialContactEligibility(pgPool, identityIds, { lockHarmonia = false } = {}) {
     const ids = [...new Set((identityIds || []).map((value) => String(value || '').trim()).filter(Boolean))]
     const availability = await readCommercialContactAvailability(pgPool)
+    const contactWriteControlsReady = availability.contactWriteControlsReady
     const result = new Map()
     if (!ids.length) return result
     if (!availability.controlsReady) {
-        for (const id of ids) result.set(id, emptyCommercialContactEligibility('commercial_contact_controls_not_ready'))
+        for (const id of ids) result.set(id, emptyCommercialContactEligibility('commercial_contact_controls_not_ready', {
+            contactWriteControlsReady,
+        }))
         return result
     }
     const [permissions, phonesByIdentity] = await Promise.all([
@@ -2813,6 +2893,7 @@ async function queryCommercialContactEligibility(pgPool, identityIds, { lockHarm
         if (!phoneKeys.size) {
             result.set(id, { ...emptyCommercialContactEligibility('identity_phone_not_confirmed', {
                 controlsReady: true,
+                contactWriteControlsReady,
                 harmoniaChecked: availability.harmoniaContacts,
                 hasPhone: false,
             }), ...commercialContactPermissionFields(permissionRow) })
@@ -2821,6 +2902,7 @@ async function queryCommercialContactEligibility(pgPool, identityIds, { lockHarm
         if (!availability.harmoniaContacts) {
             result.set(id, { ...emptyCommercialContactEligibility('harmonia_contact_source_unavailable', {
                 controlsReady: true,
+                contactWriteControlsReady,
                 harmoniaChecked: false,
                 hasPhone: true,
             }), ...commercialContactPermissionFields(permissionRow) })
@@ -2837,6 +2919,7 @@ async function queryCommercialContactEligibility(pgPool, identityIds, { lockHarm
             contactAllowed: eligibility.contactAllowed,
             reason: eligibility.reason,
             controlsReady: true,
+            contactWriteControlsReady,
             harmoniaChecked: true,
             hasPhone: true,
             optOutRecorded: harmoniaOptOut,
@@ -2874,6 +2957,68 @@ async function assertCommercialContactControls(pgPool) {
     const availability = await readCommercialContactAvailability(pgPool)
     if (!availability.controlsReady) throw commercialContactError('COMMERCIAL_CONTACT_CONTROLS_NOT_READY')
     return availability
+}
+
+async function assertCommercialContactCooldownControls(pgPool) {
+    const availability = await assertCommercialContactControls(pgPool)
+    if (!availability.actionContactedAt || !availability.rolloutConfig) {
+        throw commercialContactError('COMMERCIAL_CONTACT_COOLDOWN_CONTROLS_NOT_READY')
+    }
+    return availability
+}
+
+async function assertCommercialContactWriteRollout(client, identityId) {
+    const result = await client.query(
+        `select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids
+         from crm_atendimento.commercial_policy_config where singleton = true for share`,
+    )
+    const row = result.rows[0] || {}
+    if (row.commercial_contact_writes_enabled !== true) {
+        throw commercialContactError('COMMERCIAL_CONTACT_ROLLOUT_DISABLED')
+    }
+    const identities = Array.isArray(row.commercial_contact_canary_identity_ids)
+        ? row.commercial_contact_canary_identity_ids.map(String)
+        : []
+    if (!identities.includes(String(identityId || '').trim())) {
+        throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED')
+    }
+}
+
+async function assertCommercialContactCooldown(client, { identityId, actionId, cooldownDays }) {
+    const result = await client.query(
+        `select id, contacted_at
+         from crm_atendimento.commercial_actions
+         where identity_id = $1 and ($2::uuid is null or id <> $2::uuid)
+           and contacted_at >= now() - ($3::int * interval '1 day')
+         order by contacted_at desc
+         limit 1`,
+        [identityId, actionId, cooldownDays],
+    )
+    if (result.rows[0]?.id) throw commercialContactError('COMMERCIAL_CONTACT_COOLDOWN_ACTIVE')
+}
+
+function commercialCanaryIdentityIds(value) {
+    if (value === undefined) return undefined
+    if (!Array.isArray(value)) throw commercialContactError('INVALID_COMMERCIAL_CONTACT_CANARY', 400)
+    const ids = [...new Set(value.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean))]
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    if (ids.length > 100 || ids.some((id) => !uuid.test(id))) {
+        throw commercialContactError('INVALID_COMMERCIAL_CONTACT_CANARY', 400)
+    }
+    return ids
+}
+
+function commercialContactWritesEnabled(value) {
+    if (value === undefined) return undefined
+    if (typeof value !== 'boolean') throw commercialContactError('INVALID_COMMERCIAL_CONTACT_ROLLOUT', 400)
+    return value
+}
+
+function commercialExpectedPolicyVersion(value) {
+    if (value === undefined || value === null || String(value).trim() === '') return ''
+    const version = String(value).trim().toLowerCase()
+    if (!/^[a-f0-9]{32}$/.test(version)) throw commercialContactError('INVALID_COMMERCIAL_POLICY_VERSION', 400)
+    return version
 }
 
 async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
@@ -2996,11 +3141,21 @@ function filterCommercialProfiles(profiles, query) {
     })
 }
 
-async function queryCommercialActionMetrics(pgPool) {
+async function queryCommercialActionMetrics(pgPool, availability) {
+    if (!availability?.actionContactedAt) {
+        const legacy = await pgPool.query(`select count(*)::int as actions from crm_atendimento.commercial_actions`)
+        return {
+            actions: Number(legacy.rows[0]?.actions || 0),
+            contactedActions: 0,
+            recoveredSalesClients: 0,
+            clinicalReturnClients: 0,
+        }
+    }
     const metrics = await pgPool.query(
         `with actions as (
-            select id, identity_id, created_at::date as action_date
+            select id, identity_id, contacted_at::date as action_date
             from crm_atendimento.commercial_actions
+            where contacted_at is not null
          ), action_sales as (
             select distinct action.id, action.identity_id
             from actions action
@@ -3014,13 +3169,15 @@ async function queryCommercialActionMetrics(pgPool) {
             join crm_atendimento.attendances attendance on attendance.id = acl.attendance_id
             where attendance.deleted_at is null and attendance.service_date >= action.action_date
          )
-         select (select count(*)::int from actions) as actions,
+         select (select count(*)::int from crm_atendimento.commercial_actions) as actions,
+                (select count(*)::int from actions) as contacted_actions,
                 (select count(distinct identity_id)::int from action_sales) as recovered_sales_clients,
                 (select count(distinct identity_id)::int from action_returns) as clinical_return_clients`,
     )
     const row = metrics.rows[0] || {}
     return {
         actions: Number(row.actions || 0),
+        contactedActions: Number(row.contacted_actions || 0),
         recoveredSalesClients: Number(row.recovered_sales_clients || 0),
         clinicalReturnClients: Number(row.clinical_return_clients || 0),
     }
@@ -3382,10 +3539,13 @@ export function createAtendimentoStore(options = {}) {
 
         async commercialOverview(query, actor) {
             await ensureReady()
-            assertManager(actor)
+            assertCommercialManager(actor)
             await assertCommercialIdentitySource(pgPool)
             const asOf = commercialAsOf(query?.asOf)
-            const policy = await readCommercialPolicy(pgPool)
+            const [policy, commercialContactAvailability] = await Promise.all([
+                readCommercialPolicy(pgPool),
+                readCommercialContactAvailability(pgPool),
+            ])
             const profiles = await queryCommercialProfiles(pgPool, {
                 asOf,
                 unitSlug: commercialUnit(query?.unit),
@@ -3398,7 +3558,7 @@ export function createAtendimentoStore(options = {}) {
                 pgPool.query(`select count(*)::int as future_attendances from crm_atendimento.attendances where deleted_at is null and service_date > $1::date`, [asOf]),
                 pgPool.query(`select count(*)::int as count from crm_caixa.sale_items where mapping_status = 'mapped'`),
                 pgPool.query(`select count(*)::int as count from crm_caixa.sale_items`),
-                queryCommercialActionMetrics(pgPool),
+                queryCommercialActionMetrics(pgPool, commercialContactAvailability),
                 pgPool.query(
                     `select count(distinct canonical.id)::int as count
                      from crm_atendimento.canonical_clients canonical
@@ -3417,8 +3577,15 @@ export function createAtendimentoStore(options = {}) {
                 else if (status === 'blocked') summary.blocked += 1
                 else summary.reviewRequired += 1
                 summary.controlsReady = summary.controlsReady && !!profile.contactEligibility?.controlsReady
+                summary.contactWriteControlsReady = summary.contactWriteControlsReady && !!profile.contactEligibility?.contactWriteControlsReady
                 return summary
-            }, { eligible: 0, blocked: 0, reviewRequired: 0, controlsReady: profiles.length > 0 })
+            }, {
+                eligible: 0,
+                blocked: 0,
+                reviewRequired: 0,
+                controlsReady: profiles.length > 0,
+                contactWriteControlsReady: profiles.length > 0 && commercialContactAvailability.contactWriteControlsReady,
+            })
             return {
                 asOf,
                 policy,
@@ -3448,14 +3615,14 @@ export function createAtendimentoStore(options = {}) {
 
         async identityReviewQueue(query, actor) {
             await ensureReady()
-            assertManager(actor)
+            assertCommercialManager(actor)
             await assertIdentityReviewSource(pgPool)
             return queryIdentityReviewQueue(pgPool, query)
         },
 
         async commercialProfile(identityId, query, actor) {
             await ensureReady()
-            assertManager(actor)
+            assertCommercialManager(actor)
             await assertCommercialIdentitySource(pgPool)
             const id = String(identityId || '').trim()
             if (!id) {
@@ -3517,7 +3684,7 @@ export function createAtendimentoStore(options = {}) {
 
         async recordCommercialContactPermission(payload, actor) {
             await ensureReady()
-            assertManager(actor)
+            assertCommercialManager(actor)
             await assertCommercialIdentitySource(pgPool)
             await assertCommercialContactControls(pgPool)
             const actorIdentity = actorIdentityForMutation(actor)
@@ -3533,6 +3700,7 @@ export function createAtendimentoStore(options = {}) {
                 throw commercialContactError('INVALID_COMMERCIAL_CONTACT_PERMISSION', 400)
             }
             const permission = validation.permission
+            if (permission.status === 'granted') await assertCommercialContactCooldownControls(pgPool)
             return withCommercialContactTransaction(pgPool, async (client) => {
                 // The same transaction-scoped lock is acquired when an action is
                 // marked as contacted. A revocation therefore cannot interleave
@@ -3543,6 +3711,12 @@ export function createAtendimentoStore(options = {}) {
                     [identityId],
                 )
                 if (!identity.rows[0]?.id) throw commercialContactError('COMMERCIAL_IDENTITY_NOT_FOUND', 404)
+                // A denial is always a safe control action. An affirmative
+                // permission can enable outbound contact, so it stays behind
+                // the disabled-by-default, identity-scoped rollout gate.
+                if (permission.status === 'granted') {
+                    await assertCommercialContactWriteRollout(client, identityId)
+                }
                 const previous = await client.query(
                     `select status from crm_atendimento.commercial_contact_permissions
                      where identity_id = $1 and channel = $2 for update`,
@@ -3586,13 +3760,13 @@ export function createAtendimentoStore(options = {}) {
 
         async commercialPolicy(actor) {
             await ensureReady()
-            assertManager(actor)
+            assertCommercialManager(actor)
             return { policy: await readCommercialPolicy(pgPool) }
         },
 
         async updateCommercialPolicy(payload, actor) {
             await ensureReady()
-            assertManager(actor)
+            assertCommercialManager(actor)
             const cooldown = Number(payload?.activeContactCooldownDays)
             if (!Number.isInteger(cooldown) || cooldown < 1 || cooldown > 180) {
                 const error = new Error('INVALID_ACTIVE_CONTACT_COOLDOWN')
@@ -3600,26 +3774,109 @@ export function createAtendimentoStore(options = {}) {
                 throw error
             }
             const thresholds = commercialThresholds(payload?.returnRiskThresholds)
-            const result = await pgPool.query(
-                `update crm_atendimento.commercial_policy_config
-                 set active_contact_cooldown_days = $1, return_risk_thresholds = $2::int[], updated_by = $3, updated_at = now()
-                 where singleton = true
-                 returning active_contact_cooldown_days, return_risk_thresholds, updated_by, updated_at`,
-                [cooldown, thresholds, actorLabel(actor)],
-            )
-            await audit(pgPool, 'commercial.policy.updated', actor, null, { cooldown, thresholds })
-            const row = result.rows[0] || {}
-            return { policy: {
-                activeContactCooldownDays: Number(row.active_contact_cooldown_days || cooldown),
-                returnRiskThresholds: row.return_risk_thresholds || thresholds,
-                updatedBy: row.updated_by || actorLabel(actor),
-                updatedAt: row.updated_at || null,
-            } }
+            const requestedWritesEnabled = commercialContactWritesEnabled(payload?.commercialContactWritesEnabled)
+            const requestedCanaryIdentityIds = commercialCanaryIdentityIds(payload?.commercialContactCanaryIdentityIds)
+            const expectedPolicyVersion = commercialExpectedPolicyVersion(payload?.expectedPolicyVersion)
+            const changesRollout = requestedWritesEnabled !== undefined || requestedCanaryIdentityIds !== undefined
+            const availability = await readCommercialContactAvailability(pgPool)
+            if (changesRollout && !availability.contactWriteControlsReady) {
+                throw commercialContactError('COMMERCIAL_CONTACT_COOLDOWN_CONTROLS_NOT_READY')
+            }
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                if (!availability.contactWriteControlsReady) {
+                    const current = await client.query(
+                        `select ${LEGACY_COMMERCIAL_POLICY_VERSION_SQL} as policy_version
+                         from crm_atendimento.commercial_policy_config where singleton = true for update`,
+                    )
+                    if (expectedPolicyVersion && current.rows[0]?.policy_version !== expectedPolicyVersion) {
+                        throw commercialContactError('COMMERCIAL_POLICY_CONFLICT')
+                    }
+                    const legacy = await client.query(
+                        `update crm_atendimento.commercial_policy_config
+                         set active_contact_cooldown_days = $1, return_risk_thresholds = $2::int[],
+                             updated_by = $3, updated_at = now()
+                         where singleton = true
+                         returning active_contact_cooldown_days, return_risk_thresholds, updated_by, updated_at,
+                             ${LEGACY_COMMERCIAL_POLICY_VERSION_SQL} as policy_version`,
+                        [cooldown, thresholds, actorLabel(actor)],
+                    )
+                    const row = legacy.rows[0] || {}
+                    await audit(client, 'commercial.policy.updated', actor, null, {
+                        cooldown,
+                        thresholds,
+                        commercialContactWritesEnabled: false,
+                        commercialContactCanaryCount: 0,
+                        contactWriteControlsReady: false,
+                    })
+                    return { policy: {
+                        activeContactCooldownDays: Number(row.active_contact_cooldown_days || cooldown),
+                        returnRiskThresholds: row.return_risk_thresholds || thresholds,
+                        commercialContactWritesEnabled: false,
+                        commercialContactCanaryIdentityIds: [],
+                        commercialContactWriteControlsReady: false,
+                        policyVersion: row.policy_version || '',
+                        updatedBy: row.updated_by || actorLabel(actor),
+                        updatedAt: row.updated_at || null,
+                    } }
+                }
+                const current = await client.query(
+                    `select commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,
+                            ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version
+                     from crm_atendimento.commercial_policy_config where singleton = true for update`,
+                )
+                const currentRow = current.rows[0] || {}
+                if (expectedPolicyVersion && currentRow.policy_version !== expectedPolicyVersion) {
+                    throw commercialContactError('COMMERCIAL_POLICY_CONFLICT')
+                }
+                const writesEnabled = requestedWritesEnabled === undefined
+                    ? currentRow.commercial_contact_writes_enabled === true
+                    : requestedWritesEnabled
+                const canaryIdentityIds = requestedCanaryIdentityIds === undefined
+                    ? (Array.isArray(currentRow.commercial_contact_canary_identity_ids)
+                        ? currentRow.commercial_contact_canary_identity_ids.map(String).filter(Boolean)
+                        : [])
+                    : requestedCanaryIdentityIds
+                if (writesEnabled && !canaryIdentityIds.length) {
+                    throw commercialContactError('COMMERCIAL_CONTACT_CANARY_REQUIRED', 400)
+                }
+                const result = await client.query(
+                    `update crm_atendimento.commercial_policy_config
+                     set active_contact_cooldown_days = $1, return_risk_thresholds = $2::int[],
+                         commercial_contact_writes_enabled = $3,
+                         commercial_contact_canary_identity_ids = $4::uuid[],
+                         updated_by = $5, updated_at = now()
+                     where singleton = true
+                     returning active_contact_cooldown_days, return_risk_thresholds,
+                          commercial_contact_writes_enabled, commercial_contact_canary_identity_ids,
+                          updated_by, updated_at,
+                          ${COMMERCIAL_POLICY_VERSION_SQL} as policy_version`,
+                    [cooldown, thresholds, writesEnabled, canaryIdentityIds, actorLabel(actor)],
+                )
+                await audit(client, 'commercial.policy.updated', actor, null, {
+                    cooldown,
+                    thresholds,
+                    commercialContactWritesEnabled: writesEnabled,
+                    commercialContactCanaryCount: canaryIdentityIds.length,
+                })
+                const row = result.rows[0] || {}
+                return { policy: {
+                    activeContactCooldownDays: Number(row.active_contact_cooldown_days || cooldown),
+                    returnRiskThresholds: row.return_risk_thresholds || thresholds,
+                    commercialContactWritesEnabled: row.commercial_contact_writes_enabled === true,
+                    commercialContactCanaryIdentityIds: Array.isArray(row.commercial_contact_canary_identity_ids)
+                        ? row.commercial_contact_canary_identity_ids.map(String).filter(Boolean)
+                        : canaryIdentityIds,
+                    commercialContactWriteControlsReady: true,
+                    policyVersion: row.policy_version || '',
+                    updatedBy: row.updated_by || actorLabel(actor),
+                    updatedAt: row.updated_at || null,
+                } }
+            })
         },
 
         async commercialCadences(actor) {
             await ensureReady()
-            assertManager(actor)
+            assertCommercialManager(actor)
             const result = await pgPool.query(
                 `select cadence.id, cadence.procedure_id, procedure.name as procedure_name, cadence.cadence_days, cadence.status,
                         cadence.notes, cadence.approved_by, cadence.approved_at, cadence.updated_by, cadence.updated_at,
@@ -3640,7 +3897,7 @@ export function createAtendimentoStore(options = {}) {
 
         async upsertCommercialCadence(payload, actor) {
             await ensureReady()
-            assertManager(actor)
+            assertCommercialManager(actor)
             const procedureId = String(payload?.procedureId || '').trim()
             const status = String(payload?.status || 'draft').trim()
             const cadenceDays = Number(payload?.cadenceDays)
@@ -3673,9 +3930,9 @@ export function createAtendimentoStore(options = {}) {
 
         async createCommercialAction(payload, actor) {
             await ensureReady()
-            assertManager(actor)
+            assertCommercialManager(actor)
             await assertCommercialIdentitySource(pgPool)
-            await assertCommercialContactControls(pgPool)
+            await assertCommercialContactCooldownControls(pgPool)
             const identityId = String(payload?.identityId || '').trim()
             const segmentKey = String(payload?.segmentKey || '').trim()
             const actionType = String(payload?.actionType || 'contact').trim()
@@ -3689,7 +3946,12 @@ export function createAtendimentoStore(options = {}) {
                 throw error
             }
             const unitSlug = commercialUnit(payload?.unit)
-            return withPgTransaction(pgPool, async (client) => {
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                // Creation joins the same per-identity lock as `contacted`.
+                // This prevents two queue writes from both observing an empty
+                // cadence window and creates a stable ordering with the first
+                // recorded outbound contact.
+                await acquireCommercialContactIdentityLock(client, identityId)
                 const [identity, policy, unit] = await Promise.all([
                     client.query(`select id from crm_atendimento.global_client_identities where id = $1`, [identityId]),
                     client.query(`select active_contact_cooldown_days from crm_atendimento.commercial_policy_config where singleton = true`),
@@ -3707,6 +3969,7 @@ export function createAtendimentoStore(options = {}) {
                 }
                 const contactEligibility = await readCommercialContactEligibility(client, identityId)
                 const cooldown = Number(policy.rows[0]?.active_contact_cooldown_days || 30)
+                await assertCommercialContactCooldown(client, { identityId, actionId: null, cooldownDays: cooldown })
                 const active = await client.query(
                     `select id from crm_atendimento.commercial_actions
                      where identity_id = $1 and status = any($2::text[]) and created_at >= now() - ($3::int * interval '1 day')
@@ -3741,8 +4004,7 @@ export function createAtendimentoStore(options = {}) {
 
         async updateCommercialAction(actionId, payload, actor) {
             await ensureReady()
-            assertManager(actor)
-            await assertCommercialContactControls(pgPool)
+            assertCommercialManager(actor)
             const actorIdentity = actorIdentityForMutation(actor)
             const id = String(actionId || '').trim()
             const status = String(payload?.status || '').trim()
@@ -3751,13 +4013,30 @@ export function createAtendimentoStore(options = {}) {
                 error.statusCode = 400
                 throw error
             }
+            const availability = await readCommercialContactAvailability(pgPool)
+            if (status === 'contacted' && !availability.contactWriteControlsReady) {
+                throw commercialContactError('COMMERCIAL_CONTACT_COOLDOWN_CONTROLS_NOT_READY')
+            }
             return withCommercialContactTransaction(pgPool, async (client) => {
+                const contactedAtSelection = availability.actionContactedAt
+                    ? ', contacted_at'
+                    : ', null::timestamptz as contacted_at'
                 const action = await client.query(
-                    `select id, identity_id, status from crm_atendimento.commercial_actions where id = $1 for update`,
+                    `select id, identity_id, status${contactedAtSelection}
+                     from crm_atendimento.commercial_actions where id = $1 for update`,
                     [id],
                 )
                 const current = action.rows[0]
                 if (!current?.id) throw commercialContactError('COMMERCIAL_ACTION_NOT_FOUND', 404)
+                const recordingContact = status === 'contacted' && !current.contacted_at
+                // An action records at most one outbound contact. Reopening it
+                // may track follow-up work, but a later contact must be a new
+                // action so the immutable timestamp and cadence audit remain
+                // truthful.
+                if (status === 'contacted' && current.status !== 'contacted' && current.contacted_at) {
+                    throw commercialContactError('COMMERCIAL_CONTACT_ALREADY_RECORDED', 409)
+                }
+                if (recordingContact) await assertCommercialContactCooldownControls(client)
                 if (status === 'contacted') {
                     await acquireCommercialContactIdentityLock(client, current.identity_id)
                 }
@@ -3781,17 +4060,34 @@ export function createAtendimentoStore(options = {}) {
                             : 'INVALID_COMMERCIAL_ACTION_TRANSITION'
                     throw commercialContactError(code)
                 }
+                if (recordingContact) {
+                    await assertCommercialContactWriteRollout(client, current.identity_id)
+                    const policy = await client.query(
+                        `select active_contact_cooldown_days from crm_atendimento.commercial_policy_config where singleton = true`,
+                    )
+                    const cooldown = Number(policy.rows[0]?.active_contact_cooldown_days || 30)
+                    await assertCommercialContactCooldown(client, {
+                        identityId: current.identity_id,
+                        actionId: id,
+                        cooldownDays: cooldown,
+                    })
+                }
+                const contactedAtUpdate = availability.actionContactedAt
+                    ? `contacted_at = case when $2 = 'contacted' and contacted_at is null then now() else contacted_at end,`
+                    : ''
                 await client.query(
                     `update crm_atendimento.commercial_actions
                      set status = $2, owner = coalesce(nullif($3, ''), owner), outcome_notes = coalesce(nullif($4, ''), outcome_notes),
-                         completed_at = case when $2 in ('won_sale','returned','closed','cancelled') then now() else completed_at end,
-                         updated_by = $5, updated_at = now()
+                          completed_at = case when $2 in ('won_sale','returned','closed','cancelled') then now() else completed_at end,
+                          ${contactedAtUpdate}
+                          updated_by = $5, updated_at = now()
                      where id = $1`,
                     [id, status, String(payload?.owner || '').trim(), String(payload?.outcomeNotes || '').trim(), actorIdentity],
                 )
                 await audit(client, 'commercial.action.updated', actor, null, {
                     actionId: id,
                     status,
+                    contactedAtRecorded: recordingContact,
                     eligibilityStatus: contactEligibility.status,
                     eligibilityReason: contactEligibility.reason,
                 })

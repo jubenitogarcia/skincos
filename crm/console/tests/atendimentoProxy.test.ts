@@ -20,6 +20,13 @@ describe('Atendimento proxy helpers', () => {
     expect(__testables.hasModuleAccess({ role: 'CONSULTOR', allowedModules: [] })).toBe(true)
   })
 
+  it('keeps Clientes endpoints exclusive to GESTOR before proxying', () => {
+    expect(__testables.hasCommercialAccess({ role: 'GESTOR' }, '/commercial/overview')).toBe(true)
+    expect(__testables.hasCommercialAccess({ role: 'ADMIN' }, '/commercial/actions')).toBe(true)
+    expect(__testables.hasCommercialAccess({ role: 'GERENTE' }, '/commercial/overview')).toBe(false)
+    expect(__testables.hasCommercialAccess({ role: 'GERENTE' }, '/overview')).toBe(true)
+  })
+
   it('normalizes legacy roles', () => {
     expect(__testables.normalizeRole('ADMIN')).toBe('GESTOR')
     expect(__testables.normalizeRole('OPERADOR')).toBe('INJETOR')

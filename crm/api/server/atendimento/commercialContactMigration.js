@@ -1,4 +1,4 @@
-import { isLocalMirrorDestination } from './mirror.js'
+import { isStrictLocalMirrorDestination } from './mirror.js'
 
 export const COMMERCIAL_CONTACT_MIGRATION_ID = '20260804_commercial_contact_controls_v1'
 
@@ -59,10 +59,11 @@ async function query(client, sql, params = []) {
 }
 
 async function assertLocalDestination(client, databaseUrl) {
-    if (!isLocalMirrorDestination(databaseUrl)) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
-    const result = await query(client, `select current_database() as database_name, current_setting('transaction_read_only') as read_only`)
+    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
+    const result = await query(client, `select current_database() as database_name, current_user as database_user,
+        current_setting('transaction_read_only') as read_only`)
     const row = result.rows[0] || {}
-    if (row.database_name !== 'skincos_crm_local' || String(row.read_only).toLowerCase() === 'on') {
+    if (row.database_name !== 'skincos_crm_local' || row.database_user !== 'admin' || String(row.read_only).toLowerCase() === 'on') {
         throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
     }
 }
@@ -86,6 +87,7 @@ export function commercialContactMigrationPlan() {
 
 export async function applyCommercialContactMigration({ pool, databaseUrl }) {
     if (!pool) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_POOL_REQUIRED')
+    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
     const client = await pool.connect()
     const report = { id: COMMERCIAL_CONTACT_MIGRATION_ID, applied: false, indexes: [] }
     try {
@@ -113,6 +115,7 @@ export async function applyCommercialContactMigration({ pool, databaseUrl }) {
 
 export async function rollbackCommercialContactMigration({ pool, databaseUrl }) {
     if (!pool) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_POOL_REQUIRED')
+    if (!isStrictLocalMirrorDestination(databaseUrl)) throw migrationError('COMMERCIAL_CONTACT_MIGRATION_DESTINATION_UNSAFE')
     const client = await pool.connect()
     try {
         await query(client, `set lock_timeout = '3s'`)

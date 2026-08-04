@@ -25,6 +25,7 @@ export const DEFAULT_CRM_RUNTIME_HOME = '/var/lib/skincos-runtime/crm'
 const LOCAL_DATABASE_NAME = 'skincos_crm_local'
 const IDENTIFIER_RE = /^[a-z_][a-z0-9_]*$/
 const INSERT_BATCH_SIZE = 250
+const MIRROR_SYNC_LOCK_KEY = 'crm_atendimento.local-mirror-sync-v1'
 
 function mirrorError(code, message) {
     const error = new Error(message || code)
@@ -76,6 +77,25 @@ export function isLocalMirrorDestination(destinationUrl) {
     return !host || host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.startsWith('/var/run/postgresql')
 }
 
+// DDL runners use a narrower boundary than a local mirror read/sync. A TCP
+// loopback address can be an SSH tunnel to a remote database, so migrations
+// accept only the dedicated Unix socket URL used by the admin operator.
+export function isStrictLocalMirrorDestination(destinationUrl) {
+    const raw = String(destinationUrl || '').trim()
+    try {
+        const url = new URL(raw)
+        return url.protocol === 'postgresql:' &&
+            !url.hostname &&
+            !url.port &&
+            !url.username &&
+            !url.password &&
+            url.pathname === `/${LOCAL_DATABASE_NAME}` &&
+            url.searchParams.get('host') === '/var/run/postgresql'
+    } catch {
+        return false
+    }
+}
+
 export async function ensureAtendimentoMirrorMetadata(client) {
     await client.query(`create table if not exists crm_atendimento.local_mirror_state (
         singleton boolean primary key default true check (singleton),
@@ -97,6 +117,22 @@ async function getDatabaseIdentity(client) {
         coalesce(inet_server_addr()::text, '') as server_address,
         current_setting('transaction_read_only') as transaction_read_only`)
     return result.rows[0] || {}
+}
+
+export async function acquireAtendimentoMirrorSyncLock(client) {
+    const result = await client.query(`select pg_try_advisory_lock(hashtext($1)) as acquired`, [MIRROR_SYNC_LOCK_KEY])
+    if (result.rows[0]?.acquired !== true) {
+        throw mirrorError('MIRROR_SYNC_IN_PROGRESS', 'Já existe uma sincronização do espelho local em andamento.')
+    }
+}
+
+export async function releaseAtendimentoMirrorSyncLock(client) {
+    try {
+        await client?.query(`select pg_advisory_unlock(hashtext($1))`, [MIRROR_SYNC_LOCK_KEY])
+    } catch {
+        // The connection is about to close; PostgreSQL releases a session lock
+        // on disconnect. Keep cleanup best-effort so the original error wins.
+    }
 }
 
 async function assertSourceReadOnly(client) {
@@ -123,6 +159,60 @@ async function assertSourceReadOnly(client) {
 function buildFingerprint(identity) {
     const raw = `${identity.server_address || 'socket'}|${identity.database_name || ''}|${identity.database_user || ''}`
     return createHash('sha256').update(raw).digest('hex').slice(0, 16)
+}
+
+function canonicalValue(value) {
+    if (value instanceof Date) return value.toISOString()
+    if (Array.isArray(value)) return value.map(canonicalValue)
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]))
+    }
+    return value
+}
+
+function snapshotFingerprint(identity, snapshot) {
+    const hash = createHash('sha256')
+    hash.update(buildFingerprint(identity))
+    for (const table of MIRROR_TABLES) {
+        hash.update(table)
+        const rowHashes = (snapshot.tables[table]?.rows || [])
+            .map((row) => createHash('sha256').update(JSON.stringify(canonicalValue(row))).digest('hex'))
+            .sort()
+        for (const rowHash of rowHashes) hash.update(rowHash)
+    }
+    return hash.digest('hex').slice(0, 16)
+}
+
+function latestSourceUpdateAt(snapshot) {
+    let latest = null
+    for (const table of MIRROR_TABLES) {
+        for (const row of snapshot.tables[table]?.rows || []) {
+            for (const key of ['updated_at', 'imported_at', 'created_at']) {
+                if (row[key] === null || row[key] === undefined || row[key] === '') continue
+                const parsed = new Date(row[key])
+                if (Number.isNaN(parsed.getTime())) continue
+                if (!latest || parsed > latest) latest = parsed
+            }
+        }
+    }
+    return latest?.toISOString() || null
+}
+
+function sourcePreflightEvidence(identity, snapshot, observedAt) {
+    const rowCounts = Object.fromEntries(MIRROR_TABLES.map((table) => [table, snapshot.tables[table]?.rows?.length || 0]))
+    return {
+        sourceFingerprint: snapshotFingerprint(identity, snapshot),
+        rowCounts,
+        attendances: rowCounts.attendances,
+        minServiceDate: snapshot.range.min_service_date || null,
+        maxServiceDate: snapshot.range.max_service_date || null,
+        sourceFreshness: {
+            observedAt,
+            latestSourceUpdateAt: latestSourceUpdateAt(snapshot),
+            minServiceDate: snapshot.range.min_service_date || null,
+            maxServiceDate: snapshot.range.max_service_date || null,
+        },
+    }
 }
 
 function connectionFingerprint(url) {
@@ -195,6 +285,9 @@ async function runProcess(command, args) {
 }
 
 export async function backupAtendimentoMirror(destinationUrl, runtimeHome = process.env.CRM_RUNTIME_HOME || DEFAULT_CRM_RUNTIME_HOME) {
+    if (!isStrictLocalMirrorDestination(destinationUrl)) {
+        throw mirrorError('MIRROR_DESTINATION_UNSAFE', `Backups mutáveis exigem o socket local ${LOCAL_DATABASE_NAME}.`)
+    }
     const backupDir = path.join(runtimeHome, 'backups', 'atendimento')
     await fs.mkdir(backupDir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -208,8 +301,8 @@ export async function backupAtendimentoMirror(destinationUrl, runtimeHome = proc
 }
 
 export async function restoreAtendimentoMirror(destinationUrl, backupPath) {
-    if (!isLocalMirrorDestination(destinationUrl)) {
-        throw mirrorError('MIRROR_DESTINATION_UNSAFE', `O destino deve ser o banco local ${LOCAL_DATABASE_NAME}.`)
+    if (!isStrictLocalMirrorDestination(destinationUrl)) {
+        throw mirrorError('MIRROR_DESTINATION_UNSAFE', `A restauração exige o socket local ${LOCAL_DATABASE_NAME}.`)
     }
     if (!backupPath) {
         throw mirrorError('MIRROR_BACKUP_MISSING', 'O backup anterior do clone não foi informado.')
@@ -228,11 +321,14 @@ export async function restoreAtendimentoMirror(destinationUrl, backupPath) {
 }
 
 export async function getAtendimentoMirrorStatus(pool) {
-    const [stateResult, countsResult, rangeResult] = await Promise.all([
-        pool.query(`select mode, synced_at, row_counts, min_service_date::text, max_service_date::text, updated_at from crm_atendimento.local_mirror_state where singleton = true`),
+    const [stateTableResult, countsResult, rangeResult] = await Promise.all([
+        pool.query(`select to_regclass('crm_atendimento.local_mirror_state') as table_name`),
         pool.query(`select count(*)::int as attendances from crm_atendimento.attendances where deleted_at is null`),
         pool.query(`select min(service_date)::text as min_service_date, max(service_date)::text as max_service_date from crm_atendimento.attendances where deleted_at is null`),
     ])
+    const stateResult = stateTableResult.rows[0]?.table_name
+        ? await pool.query(`select mode, synced_at, row_counts, min_service_date::text, max_service_date::text, updated_at from crm_atendimento.local_mirror_state where singleton = true`)
+        : { rows: [] }
     const state = stateResult.rows[0] || {}
     const range = rangeResult.rows[0] || {}
     return {
@@ -246,13 +342,11 @@ export async function getAtendimentoMirrorStatus(pool) {
     }
 }
 
-export async function syncAtendimentoMirror({
+export async function preflightAtendimentoMirror({
     sourceUrl,
     destinationUrl,
-    dryRun = true,
     createPool = createPgPool,
-    migrateDestination,
-    backupDestination = backupAtendimentoMirror,
+    observedAt = new Date().toISOString(),
 }) {
     if (!sourceUrl) throw mirrorError('MIRROR_SOURCE_NOT_CONFIGURED', 'ATENDIMENTO_SOURCE_DATABASE_URL não está configurada.')
     if (!destinationUrl) throw mirrorError('MIRROR_DESTINATION_NOT_CONFIGURED', 'DATABASE_URL local não está configurada.')
@@ -271,9 +365,86 @@ export async function syncAtendimentoMirror({
     let destinationClient
     try {
         destinationClient = await destinationPool.connect()
+        await destinationClient.query('begin read only')
         const destinationIdentity = await getDatabaseIdentity(destinationClient)
         if (destinationIdentity.database_name !== LOCAL_DATABASE_NAME) {
             throw mirrorError('MIRROR_DESTINATION_UNSAFE', `O destino deve ser ${LOCAL_DATABASE_NAME}.`)
+        }
+        await destinationClient.query('commit')
+
+        sourceClient = await sourcePool.connect()
+        await sourceClient.query('begin transaction isolation level repeatable read read only')
+        const sourceIdentity = await assertSourceReadOnly(sourceClient)
+        if (sourceIdentity.database_name === destinationIdentity.database_name && sourceIdentity.server_address === destinationIdentity.server_address) {
+            throw mirrorError('MIRROR_SOURCE_EQUALS_DESTINATION', 'A origem resolve para o mesmo banco do clone local.')
+        }
+        const snapshot = await readSourceSnapshot(sourceClient)
+        await sourceClient.query('commit')
+
+        return {
+            preflight: true,
+            dryRun: true,
+            destination: {
+                local: true,
+                reachable: true,
+            },
+            ...sourcePreflightEvidence(sourceIdentity, snapshot, observedAt),
+        }
+    } catch (error) {
+        if (sourceClient) {
+            try { await sourceClient.query('rollback') } catch { /* ignore */ }
+        }
+        if (destinationClient) {
+            try { await destinationClient.query('rollback') } catch { /* ignore */ }
+        }
+        throw error
+    } finally {
+        sourceClient?.release()
+        destinationClient?.release()
+        await Promise.allSettled([sourcePool.end(), destinationPool.end()])
+    }
+}
+
+export async function syncAtendimentoMirror({
+    sourceUrl,
+    destinationUrl,
+    dryRun = true,
+    createPool = createPgPool,
+    migrateDestination,
+    backupDestination = backupAtendimentoMirror,
+    observedAt = new Date().toISOString(),
+}) {
+    if (!sourceUrl) throw mirrorError('MIRROR_SOURCE_NOT_CONFIGURED', 'ATENDIMENTO_SOURCE_DATABASE_URL não está configurada.')
+    if (!destinationUrl) throw mirrorError('MIRROR_DESTINATION_NOT_CONFIGURED', 'DATABASE_URL local não está configurada.')
+    if (!isLocalMirrorDestination(destinationUrl)) {
+        throw mirrorError('MIRROR_DESTINATION_UNSAFE', `O destino deve ser o banco local ${LOCAL_DATABASE_NAME}.`)
+    }
+    if (!dryRun && !isStrictLocalMirrorDestination(destinationUrl)) {
+        throw mirrorError('MIRROR_DESTINATION_UNSAFE', `A aplicação exige o socket local ${LOCAL_DATABASE_NAME}.`)
+    }
+    if (connectionFingerprint(sourceUrl) === connectionFingerprint(destinationUrl)) {
+        throw mirrorError('MIRROR_SOURCE_EQUALS_DESTINATION', 'A origem e o destino do clone não podem ser iguais.')
+    }
+
+    const sourcePool = createPool(sourceUrl)
+    const destinationPool = createPool(destinationUrl)
+    if (!sourcePool || !destinationPool) throw mirrorError('MIRROR_POOL_UNAVAILABLE', 'Não foi possível abrir as conexões do espelho.')
+
+    let sourceClient
+    let destinationClient
+    let syncLockAcquired = false
+    try {
+        destinationClient = await destinationPool.connect()
+        const destinationIdentity = await getDatabaseIdentity(destinationClient)
+        if (destinationIdentity.database_name !== LOCAL_DATABASE_NAME) {
+            throw mirrorError('MIRROR_DESTINATION_UNSAFE', `O destino deve ser ${LOCAL_DATABASE_NAME}.`)
+        }
+        // A mutable run owns the lock before it reads the source snapshot. If
+        // it waited until after that read, an older snapshot could wait behind
+        // a newer sync and overwrite the destination after the newer commit.
+        if (!dryRun) {
+            await acquireAtendimentoMirrorSyncLock(destinationClient)
+            syncLockAcquired = true
         }
 
         sourceClient = await sourcePool.connect()
@@ -285,14 +456,10 @@ export async function syncAtendimentoMirror({
         const snapshot = await readSourceSnapshot(sourceClient)
         await sourceClient.query('commit')
 
-        const rowCounts = Object.fromEntries(MIRROR_TABLES.map((table) => [table, snapshot.tables[table].rows.length]))
+        const evidence = sourcePreflightEvidence(sourceIdentity, snapshot, observedAt)
         const report = {
             dryRun,
-            sourceFingerprint: buildFingerprint(sourceIdentity),
-            rowCounts,
-            attendances: rowCounts.attendances,
-            minServiceDate: snapshot.range.min_service_date || null,
-            maxServiceDate: snapshot.range.max_service_date || null,
+            ...evidence,
         }
         if (dryRun) return report
 
@@ -320,7 +487,7 @@ export async function syncAtendimentoMirror({
                 min_service_date = excluded.min_service_date,
                 max_service_date = excluded.max_service_date,
                 backup_path = excluded.backup_path,
-                updated_at = excluded.updated_at`, [report.sourceFingerprint, JSON.stringify(rowCounts), report.minServiceDate, report.maxServiceDate, backupPath])
+                updated_at = excluded.updated_at`, [report.sourceFingerprint, JSON.stringify(report.rowCounts), report.minServiceDate, report.maxServiceDate, backupPath])
             await destinationClient.query('commit')
         } catch (error) {
             try { await destinationClient.query('rollback') } catch { /* ignore */ }
@@ -333,6 +500,7 @@ export async function syncAtendimentoMirror({
         }
         throw error
     } finally {
+        if (syncLockAcquired) await releaseAtendimentoMirrorSyncLock(destinationClient)
         sourceClient?.release()
         destinationClient?.release()
         await Promise.allSettled([sourcePool.end(), destinationPool.end()])
@@ -343,5 +511,7 @@ export const __testables = {
     DEFAULT_CRM_RUNTIME_HOME,
     connectionFingerprint,
     isLocalMirrorDestination,
+    isStrictLocalMirrorDestination,
     parsePostgresConnection,
+    sourcePreflightEvidence,
 }

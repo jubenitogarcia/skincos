@@ -2,9 +2,9 @@
 import { createPgPool } from '../server/harmonia/store/pg.js'
 import { isStrictLocalMirrorDestination } from '../server/atendimento/mirror.js'
 import {
-    applyCommercialContactMigration,
-    rollbackCommercialContactMigration,
-} from '../server/atendimento/commercialContactMigration.js'
+    applyCommercialContactRolloutMigration,
+    rollbackCommercialContactRolloutMigration,
+} from '../server/atendimento/commercialContactRolloutMigration.js'
 
 const args = new Set(process.argv.slice(2))
 const databaseUrl = String(process.env.DATABASE_URL || '').trim()
@@ -15,8 +15,8 @@ if (!databaseUrl || !isStrictLocalMirrorDestination(databaseUrl)) throw new Erro
 const pool = createPgPool(databaseUrl)
 try {
     const result = args.has('--rollback')
-        ? await rollbackCommercialContactMigration({ pool, databaseUrl })
-        : await applyCommercialContactMigration({ pool, databaseUrl })
+        ? await rollbackCommercialContactRolloutMigration({ pool, databaseUrl })
+        : await applyCommercialContactRolloutMigration({ pool, databaseUrl })
     console.log(JSON.stringify(result, null, 2))
 } finally {
     await pool.end()

@@ -784,6 +784,7 @@ export type CommercialContactEligibility = {
   contactAllowed: boolean
   reason: string
   controlsReady: boolean
+  contactWriteControlsReady: boolean
   harmoniaChecked: boolean
   hasPhone: boolean
   optOutRecorded: boolean
@@ -839,6 +840,7 @@ export type CommercialAction = {
   outcomeNotes: string
   createdBy: string
   completedAt: string | null
+  contactedAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -846,6 +848,10 @@ export type CommercialAction = {
 export type CommercialPolicy = {
   activeContactCooldownDays: number
   returnRiskThresholds: number[]
+  commercialContactWritesEnabled: boolean
+  commercialContactCanaryIdentityIds: string[]
+  commercialContactWriteControlsReady: boolean
+  policyVersion: string
   updatedBy: string
   updatedAt: string | null
 }
@@ -854,7 +860,7 @@ export type CommercialOverview = {
   asOf: string
   policy: CommercialPolicy
   summary: { profiles: number; returnAtRisk: number; highValueInactive: number; frequent: number; balancedVip: number; reactivationPotential: number; averageTicket: number }
-  actions: { actions: number; recoveredSalesClients: number; clinicalReturnClients: number }
+  actions: { actions: number; contactedActions: number; recoveredSalesClients: number; clinicalReturnClients: number }
   coverage: { identitiesVisible: number; confirmedMultiSourceIdentities: number; unresolvedSingleSourceIdentities: number; classifiedSaleItems: number; saleItems: number }
   dataQuality: {
     futureAttendancesExcluded: number
@@ -862,7 +868,7 @@ export type CommercialOverview = {
     saleItemsWithoutClassification: number
     activeAttendanceClientsWithoutIdentity: number
     identityDataUpdatedAt: string | null
-    contactEligibility: { eligible: number; blocked: number; reviewRequired: number; controlsReady: boolean }
+    contactEligibility: { eligible: number; blocked: number; reviewRequired: number; controlsReady: boolean; contactWriteControlsReady: boolean }
   }
   total: number
   limit: number
@@ -929,7 +935,9 @@ export function fetchCommercialPolicy() {
   return api<{ policy: CommercialPolicy }>('/commercial/policy')
 }
 
-export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'>) {
+export function updateCommercialPolicy(payload: Pick<CommercialPolicy, 'activeContactCooldownDays' | 'returnRiskThresholds'> &
+  Partial<Pick<CommercialPolicy, 'commercialContactWritesEnabled' | 'commercialContactCanaryIdentityIds'>> &
+  { expectedPolicyVersion?: string }) {
   return api<{ policy: CommercialPolicy }>('/commercial/policy', { method: 'PUT', body: payload })
 }
 
