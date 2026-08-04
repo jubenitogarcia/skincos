@@ -3,11 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { isTerminalPagesDeployment } from "./ponto-rollback-ownership.mjs";
+import {
+  isTerminalPagesDeployment,
+  latestProductionPagesDeployment,
+} from "./ponto-rollback-ownership.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{40}$/i;
 const WORKER_SURFACES = ["timekeeping", "identityWorkforce", "coreApi"];
+const STAGING_PAGES_ALIAS = "crm-staging.skincos.com.br";
 const SURFACE_SOURCE_PATTERNS = {
   timekeeping: /ponto:timekeeping:([0-9a-f]{40})/i,
   identityWorkforce: /ponto:identityWorkforce:([0-9a-f]{40})/i,
@@ -459,6 +463,7 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
   const moduleControlNamespaceId = requireValue(env, "PONTO_MODULE_CONTROL_STAGING_KV_ID").toLowerCase();
   const runnerTemp = requireValue(env, "RUNNER_TEMP");
   const pagesProject = requireValue(env, "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING");
+  const timekeepingWranglerConfig = requireValue(env, "TIMEKEEPING_STAGING_WRANGLER_CONFIG");
   const ids = {
     timekeeping: {
       worker: "skincos-timekeeping-staging",
@@ -522,6 +527,7 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
     moduleControlNamespaceId,
     runnerTemp,
     pagesProject,
+    timekeepingWranglerConfig,
     ids,
     accessHeaders: accessId ? {
       "CF-Access-Client-Id": accessId,
@@ -687,11 +693,12 @@ function createRealRuntime(config, env = process.env) {
   };
   const latestPagesDeployment = async ({ allowPending = false } = {}) => {
     const deployments = await cloudflare(`${pagesPath}/deployments?env=production&per_page=25`);
-    const ordered = (Array.isArray(deployments) ? deployments : [])
-      .filter((item) => item?.environment === "production")
-      .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
-    if (!ordered[0]) throw new DrillFailure("PAGES_LATEST_DEPLOYMENT_MISSING");
-    return pageDetails(ordered[0], { allowPending });
+    const latest = latestProductionPagesDeployment(
+      { success: true, result: Array.isArray(deployments) ? deployments : [] },
+      { alias: STAGING_PAGES_ALIAS },
+    );
+    if (!latest) throw new DrillFailure("PAGES_LATEST_DEPLOYMENT_MISSING");
+    return pageDetails(latest, { allowPending });
   };
   const assertPagesActive = async (deploymentId, expectedSha = null) => {
     const source = await pagesDeploymentDetails(deploymentId);
@@ -907,7 +914,7 @@ function createRealRuntime(config, env = process.env) {
   };
   const provisionFixture = async (handle) => {
     d1Execute(config.coreDatabase, "inventory/wrangler.toml", ["--file", handle.coreProvisionPath], "CORE_FIXTURE_PROVISION_FAILED");
-    d1Execute(config.timekeepingDatabase, "workforce/timekeeping/wrangler.toml", ["--file", handle.timekeepingProvisionPath], "TIMEKEEPING_FIXTURE_PROVISION_FAILED");
+    d1Execute(config.timekeepingDatabase, config.timekeepingWranglerConfig, ["--file", handle.timekeepingProvisionPath], "TIMEKEEPING_FIXTURE_PROVISION_FAILED");
     return { passed: true };
   };
 
@@ -1094,7 +1101,7 @@ function createRealRuntime(config, env = process.env) {
     ));
     timekeepingBefore = capture("TIMEKEEPING_PRE_TEARDOWN_QUERY_FAILED", () => d1Rows(
       config.timekeepingDatabase,
-      "workforce/timekeeping/wrangler.toml",
+      config.timekeepingWranglerConfig,
       timekeepingBeforeSql,
     ));
 
@@ -1110,7 +1117,7 @@ function createRealRuntime(config, env = process.env) {
     if (fs.existsSync(handle.timekeepingTeardownPath)) {
       capture("TIMEKEEPING_TEARDOWN_FAILED", () => d1Execute(
         config.timekeepingDatabase,
-        "workforce/timekeeping/wrangler.toml",
+        config.timekeepingWranglerConfig,
         ["--file", handle.timekeepingTeardownPath],
         "TIMEKEEPING_TEARDOWN_FAILED",
       ), "");
@@ -1160,7 +1167,7 @@ function createRealRuntime(config, env = process.env) {
     ));
     timekeepingAfter = capture("TIMEKEEPING_POST_TEARDOWN_QUERY_FAILED", () => d1Rows(
       config.timekeepingDatabase,
-      "workforce/timekeeping/wrangler.toml",
+      config.timekeepingWranglerConfig,
       timekeepingAfterSql,
     ));
 

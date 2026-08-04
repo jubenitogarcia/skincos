@@ -143,6 +143,19 @@ jobs:
           PONTO_OPPOSITE_MODULE_CONTROL_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_PRODUCTION_KV_ID }}
           PONTO_RESOURCE_IDENTITY_REPORT: ${{ runner.temp }}/ponto-staging-resource-identity.json
         run: node .github/scripts/ponto-cloudflare-resource-identity.mjs
+      - name: Render the exact staging Timekeeping D1 config
+        env:
+          STAGING_TIMEKEEPING_D1_ID: ${{ vars.PONTO_TIMEKEEPING_D1_STAGING_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$STAGING_TIMEKEEPING_D1_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'staging Timekeeping D1 ID is missing or malformed'; exit 1; }
+          config="$RUNNER_TEMP/ponto-timekeeping-staging-wrangler.toml"
+          cp workforce/timekeeping/wrangler.toml "$config"
+          sed -i \
+            "s/__CONFIGURE_TIMEKEEPING_D1_ID__/00000000-0000-4000-8000-000000000001/;s/__CONFIGURE_MODULE_CONTROL_PRODUCTION_KV_ID__/00000000000000000000000000000001/;s/__CONFIGURE_TIMEKEEPING_STAGING_D1_ID__/$STAGING_TIMEKEEPING_D1_ID/" \
+            "$config"
+          ! grep -q '__CONFIGURE_.*_ID__' "$config" || { echo 'unresolved Timekeeping staging binding placeholder'; exit 1; }
+          printf 'TIMEKEEPING_STAGING_WRANGLER_CONFIG=%s\n' "$config" >> "$GITHUB_ENV"
       - name: Exercise exact incumbents and restore every exact staging candidate
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -164,6 +177,7 @@ jobs:
           PONTO_MODULE_CONTROL_STAGING_KV_ID: ${{ vars.PONTO_MODULE_CONTROL_STAGING_KV_ID }}
           STAGING_CORE_D1_DATABASE: skincos-db-staging
           STAGING_TIMEKEEPING_D1_DATABASE: skincos-timekeeping-staging
+          TIMEKEEPING_STAGING_WRANGLER_CONFIG: ${{ runner.temp }}/ponto-timekeeping-staging-wrangler.toml
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
