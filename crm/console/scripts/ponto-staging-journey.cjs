@@ -206,8 +206,29 @@ async function main() {
 
     await waitForCandidateAffinity(page, fixture.runId)
 
-    const invalidPin = await post(page, '/api/ponto/me/punch', { pin: '000000', unit: fixture.unitId }, `invalid-${fixtureKey}`)
-    recordCleanupRequest(invalidPin)
+    const invalidPinBody = { pin: '000000', unit: fixture.unitId }
+    const invalidPinKey = `invalid-${fixtureKey}`
+    const invalidPinAttempt = async () => {
+      const response = await post(page, '/api/ponto/me/punch', invalidPinBody, invalidPinKey)
+      recordCleanupRequest(response)
+      return response
+    }
+    const isRetryableAffinityFailure = (response) => response.status === 503
+      && response.json?.error === 'domain_service_degraded'
+      && response.pagesReleaseSha === expectedReleaseSha
+      && response.pagesEnvironment === 'staging'
+      && response.gatewayReleaseSha === expectedReleaseSha
+      && response.gatewayEnvironment === 'staging'
+      && response.timekeepingReleaseSha === ''
+      && response.timekeepingEnvironment === ''
+      && response.timekeepingVersionId === ''
+    let invalidPin = await invalidPinAttempt()
+    let invalidPinAttempts = 1
+    if (isRetryableAffinityFailure(invalidPin)) {
+      await waitForCandidateAffinity(page, `${fixture.runId}-retry`)
+      invalidPin = await invalidPinAttempt()
+      invalidPinAttempts = 2
+    }
     assert(invalidPin.status === 401 && invalidPin.json?.error === 'PIN_INVALID', `invalid PIN did not fail closed (${responseFailure(invalidPin)})`)
     const idempotencyKey = `synthetic-punch-${fixtureKey}`
     const occurredAt = new Date().toISOString()
@@ -324,6 +345,7 @@ async function main() {
         profile: safeRequestMeta(profile),
         presence: safeRequestMeta(presence),
         invalidPin: safeRequestMeta(invalidPin),
+        invalidPinAttempts,
         punch: safeRequestMeta(punch),
         idempotentRetry: safeRequestMeta(retry),
         crossUnitDenied: safeRequestMeta(forbiddenUnit),
