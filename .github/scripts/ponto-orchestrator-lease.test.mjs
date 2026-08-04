@@ -729,7 +729,9 @@ test("Ponto staging Pages resolves and compensates candidates from the API inven
   assert.match(block, /--retry-all-errors/);
   assert.match(block, /candidate_attested=false/);
   assert.match(block, /--write-out '%\{http_code\}'/);
-  assert.match(block, /--retry 5 --retry-all-errors --retry-delay 4 --dump-header "\$RUNNER_TEMP\/pages-staging-proxy\.headers"/);
+  assert.match(block, /proxy_attested=false/);
+  assert.match(block, /--dump-header "\$RUNNER_TEMP\/pages-staging-proxy\.headers"/);
+  assert.match(block, /staging Pages proxy readback returned HTTP/);
   assert.match(block, /--retry 5 --retry-all-errors --retry-delay 4 --dump-header "\$RUNNER_TEMP\/pages-staging-alias\.headers"/);
   assert.match(block, /Unable to attest the exact terminal staging Pages candidate and production alias/);
   assert.doesNotMatch(block, /ponto-wrangler-output\.mjs/);
