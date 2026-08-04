@@ -2255,6 +2255,199 @@ $efAppEnvVars = @(
     "EF_LOGIN_ENV_FILE=$(Convert-WindowsPathToWsl -Path $efAppLoginEnvFile)"
 )
 
+function Protect-EfAppLoginEnvFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    & icacls.exe $Path /setowner "*$sid" /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao definir o proprietário do arquivo privado de login do EF App." }
+    & icacls.exe $Path /grant:r "*$($sid):F" /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao restringir a DACL do arquivo privado de login do EF App." }
+    & icacls.exe $Path /inheritance:r /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao remover a herança da DACL do arquivo privado de login do EF App." }
+}
+
+function Test-EfAppLoginEnvFile {
+    if (-not (Test-Path -LiteralPath $efAppLoginEnvFile -PathType Leaf)) {
+        return $false
+    }
+
+    $present = @{
+        EF_LOGIN_EMAIL = $false
+        EF_LOGIN_PASSWORD = $false
+    }
+    try {
+        foreach ($line in Get-Content -LiteralPath $efAppLoginEnvFile) {
+            $trimmed = $line.Trim()
+            if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith('#')) { continue }
+            if ($trimmed -notmatch '^(?:export\s+)?(?<key>EF_LOGIN_EMAIL|EF_LOGIN_PASSWORD)\s*=(?<value>.*)$') { continue }
+            $value = $Matches.value.Trim().Trim('"').Trim("'")
+            if (-not [string]::IsNullOrWhiteSpace($value)) {
+                $present[$Matches.key] = $true
+            }
+        }
+    } catch {
+        return $false
+    }
+    return [bool]($present.EF_LOGIN_EMAIL -and $present.EF_LOGIN_PASSWORD)
+}
+
+function Save-EfAppLoginCredentials {
+    param(
+        [Parameter(Mandatory = $true)][string]$Email,
+        [Parameter(Mandatory = $true)][Security.SecureString]$Password
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Email) -or $Password.Length -eq 0) {
+        return $false
+    }
+    if ($Email.IndexOfAny([char[]]"`r`n$([char]0)") -ge 0) {
+        throw "O email não pode conter quebras de linha."
+    }
+
+    $passwordBstr = [IntPtr]::Zero
+    $temporaryPath = $null
+    try {
+        $passwordBstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password)
+        $passwordValue = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordBstr)
+        if ([string]::IsNullOrWhiteSpace($passwordValue)) {
+            return $false
+        }
+        if ($passwordValue.IndexOfAny([char[]]"`r`n$([char]0)") -ge 0) {
+            throw "A senha não pode conter quebras de linha."
+        }
+
+        $parent = Split-Path -Parent $efAppLoginEnvFile
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        $temporaryPath = Join-Path $parent (".login-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+        $contents = "EF_LOGIN_EMAIL=$($Email.Trim())`nEF_LOGIN_PASSWORD=$passwordValue`n"
+        [IO.File]::WriteAllText($temporaryPath, $contents, [Text.UTF8Encoding]::new($false))
+        Protect-EfAppLoginEnvFile -Path $temporaryPath
+        Move-Item -LiteralPath $temporaryPath -Destination $efAppLoginEnvFile -Force
+        $temporaryPath = $null
+        Protect-EfAppLoginEnvFile -Path $efAppLoginEnvFile
+        return $true
+    } finally {
+        if ($passwordBstr -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordBstr)
+        }
+        if ($null -ne $temporaryPath -and (Test-Path -LiteralPath $temporaryPath)) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Ensure-EfAppLoginCredentials {
+    if (Test-EfAppLoginEnvFile) {
+        Protect-EfAppLoginEnvFile -Path $efAppLoginEnvFile
+        return $true
+    }
+
+    Write-Host "[ef-app] Credenciais de login não encontradas no armazenamento privado." -ForegroundColor Yellow
+    $email = (Read-Host "Email do app Espaço Facial").Trim()
+    if ([string]::IsNullOrWhiteSpace($email)) {
+        Write-Host "Credenciais não informadas; ação cancelada." -ForegroundColor Yellow
+        return $false
+    }
+    $password = Read-Host "Senha do app Espaço Facial" -AsSecureString
+    try {
+        if (-not (Save-EfAppLoginCredentials -Email $email -Password $password)) {
+            Write-Host "Credenciais não informadas; ação cancelada." -ForegroundColor Yellow
+            return $false
+        }
+    } finally {
+        $password.Dispose()
+    }
+    Write-Host "[ef-app] Credenciais salvas no armazenamento privado do operador."
+    return $true
+}
+
+function Get-EfAppUnitOptions {
+    $configuredOptions = [string]$env:EF_UNIT_OPTIONS
+    if ([string]::IsNullOrWhiteSpace($configuredOptions)) {
+        $configuredOptions = [string]$env:EF_UNITS
+    }
+    if ([string]::IsNullOrWhiteSpace($configuredOptions)) {
+        return @("BarraShoppingSul", "Novo Hamburgo")
+    }
+
+    return @(
+        $configuredOptions -split ',' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+    )
+}
+
+function Select-EfAppUnitName {
+    param([Parameter(Mandatory = $true)][string]$Mode)
+
+    $configuredUnit = [string]$env:EF_UNIT_NAME
+    if (-not [string]::IsNullOrWhiteSpace($configuredUnit)) {
+        return $configuredUnit.Trim()
+    }
+
+    $options = @(Get-EfAppUnitOptions)
+    if ($options.Count -eq 0) {
+        throw "Nenhuma unidade do EF App está configurada. Defina EF_UNIT_OPTIONS ou EF_UNITS."
+    }
+    if ($options.Count -eq 1) {
+        return [string]$options[0]
+    }
+
+    $menuOptions = @($options | ForEach-Object {
+        New-MenuOption -Label ([string]$_) -Action ([string]$_)
+    })
+    $selection = Read-MenuSelection `
+        -Title ("EF App > {0} > Unidade" -f $Mode) `
+        -Options $menuOptions `
+        -CancelLabel "Cancelar"
+    if ($null -eq $selection) {
+        Write-Host "Unidade não selecionada." -ForegroundColor Yellow
+        return $null
+    }
+    return [string]$selection.Action
+}
+
+function Read-EfAppCashDateRange {
+    $today = (Get-Date).Date
+    $defaultStart = $today.AddDays(-7)
+    $defaultEnd = $today
+
+    while ($true) {
+        $startRaw = Read-Host ("Data inicial (DD/MM/AAAA; ENTER p/ padrão: {0})" -f $defaultStart.ToString('dd/MM/yyyy'))
+        $endRaw = Read-Host ("Data final (DD/MM/AAAA; ENTER p/ padrão: {0})" -f $defaultEnd.ToString('dd/MM/yyyy'))
+        $startValue = if ([string]::IsNullOrWhiteSpace($startRaw)) { $defaultStart } else { $null }
+        $endValue = if ([string]::IsNullOrWhiteSpace($endRaw)) { $defaultEnd } else { $null }
+
+        if ($null -eq $startValue) {
+            [datetime]$parsedStart = [datetime]::MinValue
+            if (-not [datetime]::TryParseExact($startRaw.Trim(), 'dd/MM/yyyy', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsedStart)) {
+                Write-Host "Data inicial inválida. Use DD/MM/AAAA." -ForegroundColor Yellow
+                continue
+            }
+            $startValue = $parsedStart.Date
+        }
+        if ($null -eq $endValue) {
+            [datetime]$parsedEnd = [datetime]::MinValue
+            if (-not [datetime]::TryParseExact($endRaw.Trim(), 'dd/MM/yyyy', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsedEnd)) {
+                Write-Host "Data final inválida. Use DD/MM/AAAA." -ForegroundColor Yellow
+                continue
+            }
+            $endValue = $parsedEnd.Date
+        }
+        if ($endValue -lt $startValue) {
+            Write-Host "A data final não pode ser menor que a inicial." -ForegroundColor Yellow
+            continue
+        }
+
+        return [pscustomobject]@{
+            Start = $startValue.ToString('dd/MM/yyyy')
+            End = $endValue.ToString('dd/MM/yyyy')
+        }
+    }
+}
+
 function Invoke-EfAppPythonMode {
     param(
         [string]$Mode,
@@ -2263,10 +2456,28 @@ function Invoke-EfAppPythonMode {
     )
 
     $headlessValue = if ($Headed) { "HEADLESS=0" } else { "HEADLESS=1" }
+    $modeEnvVars = @("EF_MODE=$Mode", $headlessValue)
+    if ($Mode.Trim().ToLowerInvariant() -in @("caixa", "cash", "agenda_delta")) {
+        $unitName = Select-EfAppUnitName -Mode $Mode
+        if ([string]::IsNullOrWhiteSpace($unitName)) {
+            return
+        }
+        $modeEnvVars += "EF_UNIT_NAME=$unitName"
+    }
+    if ($Mode.Trim().ToLowerInvariant() -in @("caixa", "cash")) {
+        $dateRange = Read-EfAppCashDateRange
+        $modeEnvVars += @(
+            "EF_CASH_START_DATE=$($dateRange.Start)",
+            "EF_CASH_END_DATE=$($dateRange.End)"
+        )
+    }
+    if (-not (Ensure-EfAppLoginCredentials)) {
+        return
+    }
     Invoke-ShortcutWsl `
         -ScriptPath "integration/ef/scripts/run-local-python.sh" `
         -ArgumentList @("run_scraper.py") `
-        -EnvVar ($efAppEnvVars + @("EF_MODE=$Mode", $headlessValue) + $ExtraEnvVar) `
+        -EnvVar ($efAppEnvVars + $modeEnvVars + $ExtraEnvVar) `
         -SkipNodeCheck `
         -SkipNpmCheck
 }
@@ -2435,6 +2646,7 @@ function Invoke-ShortcutActionInternal {
         "EfAppCaixa" { Invoke-EfAppPythonMode -Mode "caixa" }
         "EfAppAgendaDelta" { Invoke-EfAppPythonMode -Mode "agenda_delta" }
         "EfAppAgendaFullSync" {
+            if (-not (Ensure-EfAppLoginCredentials)) { return }
             Invoke-ShortcutWsl `
                 -ScriptPath "integration/ef/run_agenda_full_sync_all_units.sh" `
                 -EnvVar ($efAppEnvVars + @(

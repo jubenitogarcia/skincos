@@ -4,7 +4,9 @@
 Goal: run specific actions via EF_MODE (no menu).
 
 Security:
-- The password is NOT stored in code or files.
+- The password is never stored in code or in the repository.
+- The Codex App launcher may store it in its operator-private `login.env`
+  after an explicit terminal prompt, protected by Windows ACLs.
 - Credentials can be stored securely in the OS Keychain (macOS) via `keyring`.
 - You can optionally set EF_LOGIN_EMAIL / EF_LOGIN_PASSWORD as env vars.
 - If not provided, the script will prompt (password hidden).
@@ -524,6 +526,20 @@ def _prompt_date(prompt: str, default: str) -> str:
 
 
 def _prompt_date_range(*, default_days: int = 7) -> tuple[str, str]:
+    explicit_start = os.getenv("EF_CASH_START_DATE", "").strip()
+    explicit_end = os.getenv("EF_CASH_END_DATE", "").strip()
+    if explicit_start or explicit_end:
+        if not explicit_start or not explicit_end:
+            raise ValueError("EF_CASH_START_DATE e EF_CASH_END_DATE devem ser definidos juntos.")
+        try:
+            start_dt = datetime.strptime(explicit_start, "%d/%m/%Y").date()
+            end_dt = datetime.strptime(explicit_end, "%d/%m/%Y").date()
+        except ValueError as exc:
+            raise ValueError("Use DD/MM/AAAA em EF_CASH_START_DATE e EF_CASH_END_DATE.") from exc
+        if end_dt < start_dt:
+            raise ValueError("EF_CASH_END_DATE não pode ser menor que EF_CASH_START_DATE.")
+        return explicit_start, explicit_end
+
     mode = os.getenv("EF_DATE_RANGE_MODE", "").strip().lower()
     if mode in {"prev_month", "previous_month", "last_month"}:
         today = datetime.now().date()
@@ -560,7 +576,11 @@ def _run_cash(headless: bool, output_dir: Path, unit_name: str, persist_session:
         print("Credenciais não informadas. Abortando.")
         return 2
 
-    start_str, end_str = _prompt_date_range(default_days=7)
+    try:
+        start_str, end_str = _prompt_date_range(default_days=7)
+    except ValueError as exc:
+        print(f"Período inválido: {exc}")
+        return 2
 
     _set_runtime_env(email, password, output_dir, headless, unit_name, persist_session)
 
@@ -735,7 +755,11 @@ def _run_cash_clients(headless: bool, output_dir: Path, unit_name: str, persist_
         print("Credenciais não informadas. Abortando.")
         return 2
 
-    start_str, end_str = _prompt_date_range(default_days=7)
+    try:
+        start_str, end_str = _prompt_date_range(default_days=7)
+    except ValueError as exc:
+        print(f"Período inválido: {exc}")
+        return 2
 
     _set_runtime_env(email, password, output_dir, headless, unit_name, persist_session)
 
@@ -873,7 +897,20 @@ def _run_cash_combined(headless: bool, output_dir: Path, unit_name: str, persist
         )
         return 2
 
-    start_str, end_str = _prompt_date_range(default_days=7)
+    try:
+        start_str, end_str = _prompt_date_range(default_days=7)
+    except ValueError as exc:
+        print(f"Período inválido: {exc}")
+        _write_run_summary(
+            mode="caixa",
+            unit_name=unit_name,
+            output_dir=output_dir,
+            status="failed",
+            started_at=started_at,
+            ended_at=datetime.now(),
+            details={"reason": "invalid_date_range", "error": str(exc)},
+        )
+        return 2
 
     _set_runtime_env(email, password, output_dir, headless, unit_name, persist_session)
 
@@ -1239,6 +1276,8 @@ def _run_cash_combined(headless: bool, output_dir: Path, unit_name: str, persist
             "rows_payments": int(len(df_payments)),
             "rows_total": int(len(df_total)) if not df_total.empty else 0,
             "dry_run": dry_run,
+            "period_from": start_str,
+            "period_to": end_str,
         }
         if discrepancies:
             details["total_discrepancies"] = discrepancies
