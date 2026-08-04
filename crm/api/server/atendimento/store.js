@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { createPgPool, withPgTransaction } from '../harmonia/store/pg.js'
+import { lockContactPhone } from '../contactPhoneLock.js'
 import {
     buildConversionReportFromRawRows,
     buildScheduleDropdowns,
@@ -32,6 +33,11 @@ import {
     stableConfigHash,
 } from './domain.js'
 import { segmentCommercialProfiles, summarizeCommercialProfiles } from './clientCommercial.js'
+import {
+    resolveCommercialContactEligibility,
+    transitionCommercialAction,
+    validateCommercialPermission,
+} from './clientCommercialContact.js'
 import {
     PROFESSIONAL_IDENTITY_VERSION,
     isValidProfessionalIdentityName,
@@ -2567,6 +2573,7 @@ const ATTENDANCE_SELECT = `
 const COMMERCIAL_ACTION_STATUSES = new Set(['open', 'contacted', 'responded', 'scheduled', 'won_sale', 'returned', 'closed', 'cancelled'])
 const COMMERCIAL_ACTION_TYPES = new Set(['contact', 'follow_up', 'appointment', 'relationship'])
 const COMMERCIAL_ACTIVE_ACTION_STATUSES = ['open', 'contacted', 'responded', 'scheduled']
+const COMMERCIAL_CONTACT_CHANNEL = 'whatsapp'
 
 function commercialAsOf(value) {
     const raw = String(value || '').trim()
@@ -2603,6 +2610,7 @@ function mapCommercialAction(row) {
         unitName: row.unit_name || '',
         segmentKey: row.segment_key,
         actionType: row.action_type,
+        contactChannel: row.contact_channel || COMMERCIAL_CONTACT_CHANNEL,
         status: row.status,
         owner: row.owner || '',
         dueDate: row.due_date ? String(row.due_date).slice(0, 10) : null,
@@ -2642,6 +2650,230 @@ async function readCommercialPolicy(pgPool) {
         updatedBy: row.updated_by || '',
         updatedAt: row.updated_at || null,
     }
+}
+
+function commercialContactError(code, statusCode = 409) {
+    const error = new Error(code)
+    error.statusCode = statusCode
+    return error
+}
+
+function emptyCommercialContactEligibility(reason, { controlsReady = false, harmoniaChecked = false, hasPhone = false } = {}) {
+    return {
+        channel: COMMERCIAL_CONTACT_CHANNEL,
+        status: 'review_required',
+        contactAllowed: false,
+        reason,
+        controlsReady,
+        harmoniaChecked,
+        hasPhone,
+        optOutRecorded: false,
+        permissionStatus: 'unknown',
+        evidenceSource: '',
+        evidenceReference: '',
+        expiresAt: null,
+        recordedBy: '',
+        updatedAt: null,
+    }
+}
+
+function permissionFromCommercialContactRow(row) {
+    if (!row) return null
+    return {
+        status: row.status,
+        source: row.evidence_source,
+        evidenceReference: row.evidence_reference,
+        expiresAt: row.expires_at || null,
+    }
+}
+
+function commercialContactPermissionFields(row) {
+    return {
+        permissionStatus: row?.status || 'unknown',
+        evidenceSource: row?.evidence_source || '',
+        evidenceReference: row?.evidence_reference || '',
+        expiresAt: row?.expires_at || null,
+        recordedBy: row?.recorded_by || '',
+        updatedAt: row?.updated_at || null,
+    }
+}
+
+async function readCommercialContactAvailability(pgPool) {
+    const result = await pgPool.query(
+        `select to_regclass('crm_atendimento.commercial_contact_permissions') as permissions,
+                to_regclass('crm_atendimento.commercial_contact_permission_events') as permission_events,
+                to_regclass('harmonia.contacts') as harmonia_contacts,
+                to_regclass('crm_caixa.customers') as caixa_customers,
+                to_regclass('crm_atendimento.app_client_registrations') as app_registrations,
+                to_regclass('crm_atendimento.supplemental_lead_profiles') as lead_profiles,
+                exists(select 1 from information_schema.columns
+                    where table_schema = 'crm_atendimento' and table_name = 'commercial_actions'
+                      and column_name = 'contact_channel') as action_channel`,
+    )
+    const row = result.rows[0] || {}
+    return {
+        permissions: !!row.permissions,
+        permissionEvents: !!row.permission_events,
+        harmoniaContacts: !!row.harmonia_contacts,
+        caixaCustomers: !!row.caixa_customers,
+        appRegistrations: !!row.app_registrations,
+        leadProfiles: !!row.lead_profiles,
+        actionChannel: !!row.action_channel,
+        controlsReady: !!row.permissions && !!row.permission_events && !!row.action_channel,
+    }
+}
+
+async function queryCommercialIdentityPhoneKeys(pgPool, identityIds, availability) {
+    const phonesByIdentity = new Map(identityIds.map((id) => [id, new Set()]))
+    if (!identityIds.length) return phonesByIdentity
+    const addRows = (rows) => {
+        for (const row of rows) {
+            const identityId = String(row.identity_id || '').trim()
+            const phoneKey = String(row.phone_key || '').replace(/\D/g, '')
+            if (phonesByIdentity.has(identityId) && phoneKey) phonesByIdentity.get(identityId).add(phoneKey)
+        }
+    }
+    if (availability.caixaCustomers) {
+        const result = await pgPool.query(
+            `select member.identity_id::text as identity_id, customer.phone_key
+             from crm_atendimento.global_client_identity_members member
+             join crm_caixa.customers customer on customer.id = member.source_id::uuid
+             where member.identity_id = any($1::uuid[]) and member.source_type = 'caixa_customer'`,
+            [identityIds],
+        )
+        addRows(result.rows)
+    }
+    if (availability.appRegistrations) {
+        const result = await pgPool.query(
+            `select member.identity_id::text as identity_id, phone.phone_key
+             from crm_atendimento.global_client_identity_members member
+             join crm_atendimento.app_client_registrations app on app.source_client_id = member.source_id
+             cross join lateral jsonb_array_elements_text(coalesce(app.phone_keys, '[]'::jsonb)) as phone(phone_key)
+             where member.identity_id = any($1::uuid[]) and member.source_type = 'app_registration'`,
+            [identityIds],
+        )
+        addRows(result.rows)
+    }
+    if (availability.leadProfiles) {
+        const result = await pgPool.query(
+            `select member.identity_id::text as identity_id, phone.phone_key
+             from crm_atendimento.global_client_identity_members member
+             join crm_atendimento.supplemental_lead_profiles lead on lead.source_profile_id = member.source_id
+             cross join lateral jsonb_array_elements_text(coalesce(lead.phone_keys, '[]'::jsonb)) as phone(phone_key)
+             where member.identity_id = any($1::uuid[]) and member.source_type = 'lead_profile'`,
+            [identityIds],
+        )
+        addRows(result.rows)
+    }
+    return phonesByIdentity
+}
+
+async function queryCommercialContactEligibility(pgPool, identityIds, { lockHarmonia = false } = {}) {
+    const ids = [...new Set((identityIds || []).map((value) => String(value || '').trim()).filter(Boolean))]
+    const availability = await readCommercialContactAvailability(pgPool)
+    const result = new Map()
+    if (!ids.length) return result
+    if (!availability.controlsReady) {
+        for (const id of ids) result.set(id, emptyCommercialContactEligibility('commercial_contact_controls_not_ready'))
+        return result
+    }
+    const [permissions, phonesByIdentity] = await Promise.all([
+        pgPool.query(
+            `select identity_id::text as identity_id, channel, status, evidence_source, evidence_reference,
+                    expires_at, recorded_by, updated_at
+             from crm_atendimento.commercial_contact_permissions
+             where channel = $1 and identity_id = any($2::uuid[])`,
+            [COMMERCIAL_CONTACT_CHANNEL, ids],
+        ),
+        queryCommercialIdentityPhoneKeys(pgPool, ids, availability),
+    ])
+    const permissionByIdentity = new Map(permissions.rows.map((row) => [String(row.identity_id), row]))
+    const allPhones = [...new Set([...phonesByIdentity.values()].flatMap((phones) => [...phones]))]
+    const optOutPhoneKeys = new Set()
+    if (availability.harmoniaContacts && allPhones.length) {
+        if (lockHarmonia) {
+            // Harmonia acquires this same namespace before it creates or marks
+            // an opt-out. Lock every number in deterministic order so a first
+            // STOP serializes with, and is visible to, the eligibility recheck
+            // before `contacted` is recorded.
+            for (const phoneKey of [...allPhones].sort()) await lockContactPhone(pgPool, phoneKey)
+        }
+        const contacts = await pgPool.query(
+            `select phone_raw, opted_out_at from harmonia.contacts
+             where phone_raw = any($1::text[])${lockHarmonia ? ' for update' : ''}`,
+            [allPhones],
+        )
+        contacts.rows
+            .filter((row) => row.opted_out_at != null)
+            .forEach((row) => optOutPhoneKeys.add(String(row.phone_raw || '').replace(/\D/g, '')))
+    }
+    for (const id of ids) {
+        const phoneKeys = phonesByIdentity.get(id) || new Set()
+        const permissionRow = permissionByIdentity.get(id) || null
+        if (!phoneKeys.size) {
+            result.set(id, { ...emptyCommercialContactEligibility('identity_phone_not_confirmed', {
+                controlsReady: true,
+                harmoniaChecked: availability.harmoniaContacts,
+                hasPhone: false,
+            }), ...commercialContactPermissionFields(permissionRow) })
+            continue
+        }
+        if (!availability.harmoniaContacts) {
+            result.set(id, { ...emptyCommercialContactEligibility('harmonia_contact_source_unavailable', {
+                controlsReady: true,
+                harmoniaChecked: false,
+                hasPhone: true,
+            }), ...commercialContactPermissionFields(permissionRow) })
+            continue
+        }
+        const harmoniaOptOut = [...phoneKeys].some((phoneKey) => optOutPhoneKeys.has(phoneKey))
+        const eligibility = resolveCommercialContactEligibility({
+            commercialPermission: permissionFromCommercialContactRow(permissionRow),
+            harmoniaContact: harmoniaOptOut ? { opted_out_at: 'recorded' } : null,
+        })
+        result.set(id, {
+            channel: COMMERCIAL_CONTACT_CHANNEL,
+            status: eligibility.status,
+            contactAllowed: eligibility.contactAllowed,
+            reason: eligibility.reason,
+            controlsReady: true,
+            harmoniaChecked: true,
+            hasPhone: true,
+            optOutRecorded: harmoniaOptOut,
+            ...commercialContactPermissionFields(permissionRow),
+        })
+    }
+    return result
+}
+
+async function readCommercialContactEligibility(pgPool, identityId, options = {}) {
+    const id = String(identityId || '').trim()
+    const values = await queryCommercialContactEligibility(pgPool, id ? [id] : [], options)
+    return values.get(id) || emptyCommercialContactEligibility('commercial_identity_required')
+}
+
+async function acquireCommercialContactIdentityLock(client, identityId) {
+    await client.query(
+        `select pg_advisory_xact_lock(hashtext($1))`,
+        [`crm_atendimento.commercial-contact:${String(identityId || '').trim()}`],
+    )
+}
+
+async function withCommercialContactTransaction(pgPool, operation) {
+    // The identity and shared-phone advisory locks serialize the contact gate.
+    // Read committed is deliberate: when this transaction waits on a lock, the
+    // eligibility queries that run after it must see a STOP or revocation that
+    // committed while it waited, rather than retain an earlier SSI snapshot.
+    return withPgTransaction(pgPool, async (client) => {
+        await client.query('set transaction isolation level read committed')
+        return operation(client)
+    })
+}
+
+async function assertCommercialContactControls(pgPool) {
+    const availability = await readCommercialContactAvailability(pgPool)
+    if (!availability.controlsReady) throw commercialContactError('COMMERCIAL_CONTACT_CONTROLS_NOT_READY')
+    return availability
 }
 
 async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
@@ -2723,7 +2955,7 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
          order by i.canonical_name`,
         [asOf, unitSlug, COMMERCIAL_ACTIVE_ACTION_STATUSES],
     )
-    return segmentCommercialProfiles(result.rows.map((row) => ({
+    const profiles = segmentCommercialProfiles(result.rows.map((row) => ({
         ...row,
         identityId: row.identity_id,
         name: row.canonical_name,
@@ -2743,6 +2975,12 @@ async function queryCommercialProfiles(pgPool, { asOf, unitSlug, thresholds }) {
         ...profile,
         activeActionCount: Number(result.rows.find((row) => row.identity_id === profile.identityId)?.active_action_count || 0),
         lastActionAt: result.rows.find((row) => row.identity_id === profile.identityId)?.last_action_at || null,
+    }))
+    const eligibilityByIdentity = await queryCommercialContactEligibility(pgPool, profiles.map((profile) => profile.identityId))
+    return profiles.map((profile) => ({
+        ...profile,
+        contactEligibility: eligibilityByIdentity.get(profile.identityId)
+            || emptyCommercialContactEligibility('commercial_contact_controls_not_ready'),
     }))
 }
 
@@ -3156,19 +3394,40 @@ export function createAtendimentoStore(options = {}) {
             const filtered = filterCommercialProfiles(profiles, query)
             const limit = sanitizeLimit(query?.limit, 100, 250)
             const offset = sanitizeOffset(query?.offset, 0)
-            const [quality, mappedItems, allItems, actions] = await Promise.all([
+            const [quality, mappedItems, allItems, actions, unlinkedAttendance, identityFreshness] = await Promise.all([
                 pgPool.query(`select count(*)::int as future_attendances from crm_atendimento.attendances where deleted_at is null and service_date > $1::date`, [asOf]),
                 pgPool.query(`select count(*)::int as count from crm_caixa.sale_items where mapping_status = 'mapped'`),
                 pgPool.query(`select count(*)::int as count from crm_caixa.sale_items`),
                 queryCommercialActionMetrics(pgPool),
+                pgPool.query(
+                    `select count(distinct canonical.id)::int as count
+                     from crm_atendimento.canonical_clients canonical
+                     where canonical.merged_into_id is null
+                       and exists (select 1 from crm_atendimento.attendance_client_links link where link.client_id = canonical.id)
+                       and not exists (
+                           select 1 from crm_atendimento.global_client_identity_members member
+                           where member.source_type = 'attendance_client' and member.source_id = canonical.id::text
+                       )`,
+                ),
+                pgPool.query(`select max(updated_at) as updated_at from crm_atendimento.global_client_identities`),
             ])
+            const contactEligibility = profiles.reduce((summary, profile) => {
+                const status = profile.contactEligibility?.status || 'review_required'
+                if (status === 'eligible') summary.eligible += 1
+                else if (status === 'blocked') summary.blocked += 1
+                else summary.reviewRequired += 1
+                summary.controlsReady = summary.controlsReady && !!profile.contactEligibility?.controlsReady
+                return summary
+            }, { eligible: 0, blocked: 0, reviewRequired: 0, controlsReady: profiles.length > 0 })
             return {
                 asOf,
                 policy,
                 summary: summarizeCommercialProfiles(profiles),
                 actions,
                 coverage: {
-                    confirmedIdentities: profiles.length,
+                    identitiesVisible: profiles.length,
+                    confirmedMultiSourceIdentities: profiles.filter((profile) => profile.identityQuality === 'confirmed_multi_source').length,
+                    unresolvedSingleSourceIdentities: profiles.filter((profile) => profile.identityQuality === 'unresolved_single_source').length,
                     classifiedSaleItems: Number(mappedItems.rows[0]?.count || 0),
                     saleItems: Number(allItems.rows[0]?.count || 0),
                 },
@@ -3176,6 +3435,9 @@ export function createAtendimentoStore(options = {}) {
                     futureAttendancesExcluded: Number(quality.rows[0]?.future_attendances || 0),
                     recencySource: 'completed_attendance_only',
                     saleItemsWithoutClassification: Math.max(0, Number(allItems.rows[0]?.count || 0) - Number(mappedItems.rows[0]?.count || 0)),
+                    activeAttendanceClientsWithoutIdentity: Number(unlinkedAttendance.rows[0]?.count || 0),
+                    identityDataUpdatedAt: identityFreshness.rows[0]?.updated_at || null,
+                    contactEligibility,
                 },
                 total: filtered.length,
                 limit,
@@ -3251,6 +3513,75 @@ export function createAtendimentoStore(options = {}) {
                     approvedBy: row.approved_by || '',
                 })),
             }
+        },
+
+        async recordCommercialContactPermission(payload, actor) {
+            await ensureReady()
+            assertManager(actor)
+            await assertCommercialIdentitySource(pgPool)
+            await assertCommercialContactControls(pgPool)
+            const actorIdentity = actorIdentityForMutation(actor)
+            const identityId = String(payload?.identityId || '').trim()
+            const channel = String(payload?.channel || COMMERCIAL_CONTACT_CHANNEL).trim()
+            const validation = validateCommercialPermission({
+                status: payload?.status,
+                source: payload?.source,
+                evidenceReference: payload?.evidenceReference,
+                expiresAt: payload?.expiresAt,
+            })
+            if (!identityId || channel !== COMMERCIAL_CONTACT_CHANNEL || !validation.valid) {
+                throw commercialContactError('INVALID_COMMERCIAL_CONTACT_PERMISSION', 400)
+            }
+            const permission = validation.permission
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                // The same transaction-scoped lock is acquired when an action is
+                // marked as contacted. A revocation therefore cannot interleave
+                // between the eligibility read and that status transition.
+                await acquireCommercialContactIdentityLock(client, identityId)
+                const identity = await client.query(
+                    `select id from crm_atendimento.global_client_identities where id = $1`,
+                    [identityId],
+                )
+                if (!identity.rows[0]?.id) throw commercialContactError('COMMERCIAL_IDENTITY_NOT_FOUND', 404)
+                const previous = await client.query(
+                    `select status from crm_atendimento.commercial_contact_permissions
+                     where identity_id = $1 and channel = $2 for update`,
+                    [identityId, channel],
+                )
+                const previousStatus = previous.rows[0]?.status || null
+                await client.query(
+                    `insert into crm_atendimento.commercial_contact_permissions(
+                        identity_id, channel, status, evidence_source, evidence_reference, expires_at, recorded_by)
+                     values ($1,$2,$3,$4,$5,$6,$7)
+                     on conflict(identity_id, channel) do update set
+                        status = excluded.status, evidence_source = excluded.evidence_source,
+                        evidence_reference = excluded.evidence_reference, expires_at = excluded.expires_at,
+                        recorded_by = excluded.recorded_by,
+                        revision = crm_atendimento.commercial_contact_permissions.revision + 1,
+                        updated_at = now()`,
+                    [identityId, channel, permission.status, permission.source, permission.evidenceReference, permission.expiresAt, actorIdentity],
+                )
+                await client.query(
+                    `insert into crm_atendimento.commercial_contact_permission_events(
+                        identity_id, channel, previous_status, status, evidence_source, evidence_reference, expires_at, recorded_by)
+                     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                    [identityId, channel, previousStatus, permission.status, permission.source, permission.evidenceReference, permission.expiresAt, actorIdentity],
+                )
+                const contactEligibility = await readCommercialContactEligibility(client, identityId)
+                await audit(client, 'commercial.contact_permission.recorded', actor, null, {
+                    identityId,
+                    channel,
+                    status: permission.status,
+                    previousStatus,
+                    evidenceSource: permission.source,
+                    evidenceReferenceRecorded: true,
+                    expiresAt: permission.expiresAt,
+                    recordedBy: actorIdentity,
+                    eligibilityStatus: contactEligibility.status,
+                    eligibilityReason: contactEligibility.reason,
+                })
+                return { contactEligibility }
+            })
         },
 
         async commercialPolicy(actor) {
@@ -3344,12 +3675,15 @@ export function createAtendimentoStore(options = {}) {
             await ensureReady()
             assertManager(actor)
             await assertCommercialIdentitySource(pgPool)
+            await assertCommercialContactControls(pgPool)
             const identityId = String(payload?.identityId || '').trim()
             const segmentKey = String(payload?.segmentKey || '').trim()
             const actionType = String(payload?.actionType || 'contact').trim()
+            const contactChannel = String(payload?.contactChannel || COMMERCIAL_CONTACT_CHANNEL).trim()
             const owner = String(payload?.owner || '').trim()
             const dueDate = String(payload?.dueDate || '').trim() || null
-            if (!identityId || !segmentKey || !COMMERCIAL_ACTION_TYPES.has(actionType) || (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) {
+            if (!identityId || !segmentKey || !COMMERCIAL_ACTION_TYPES.has(actionType)
+                || contactChannel !== COMMERCIAL_CONTACT_CHANNEL || (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) {
                 const error = new Error('INVALID_COMMERCIAL_ACTION')
                 error.statusCode = 400
                 throw error
@@ -3371,6 +3705,7 @@ export function createAtendimentoStore(options = {}) {
                     error.statusCode = 404
                     throw error
                 }
+                const contactEligibility = await readCommercialContactEligibility(client, identityId)
                 const cooldown = Number(policy.rows[0]?.active_contact_cooldown_days || 30)
                 const active = await client.query(
                     `select id from crm_atendimento.commercial_actions
@@ -3385,19 +3720,30 @@ export function createAtendimentoStore(options = {}) {
                 }
                 const created = await client.query(
                     `insert into crm_atendimento.commercial_actions(
-                        identity_id, unit_id, segment_key, action_type, owner, due_date, notes, created_by, updated_by)
-                     values ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+                        identity_id, unit_id, segment_key, action_type, contact_channel, owner, due_date, notes, created_by, updated_by)
+                     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
                      returning id`,
-                    [identityId, unit.rows[0]?.id || null, segmentKey, actionType, owner || null, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor)],
+                    [identityId, unit.rows[0]?.id || null, segmentKey, actionType, contactChannel, owner || null, dueDate, String(payload?.notes || '').trim() || null, actorLabel(actor)],
                 )
-                await audit(client, 'commercial.action.created', actor, null, { actionId: created.rows[0]?.id, identityId, segmentKey, actionType, unitSlug })
-                return { id: created.rows[0]?.id }
+                await audit(client, 'commercial.action.created', actor, null, {
+                    actionId: created.rows[0]?.id,
+                    identityId,
+                    segmentKey,
+                    actionType,
+                    contactChannel,
+                    unitSlug,
+                    eligibilityStatus: contactEligibility.status,
+                    eligibilityReason: contactEligibility.reason,
+                })
+                return { id: created.rows[0]?.id, contactEligibility }
             })
         },
 
         async updateCommercialAction(actionId, payload, actor) {
             await ensureReady()
             assertManager(actor)
+            await assertCommercialContactControls(pgPool)
+            const actorIdentity = actorIdentityForMutation(actor)
             const id = String(actionId || '').trim()
             const status = String(payload?.status || '').trim()
             if (!id || !COMMERCIAL_ACTION_STATUSES.has(status)) {
@@ -3405,22 +3751,52 @@ export function createAtendimentoStore(options = {}) {
                 error.statusCode = 400
                 throw error
             }
-            const result = await pgPool.query(
-                `update crm_atendimento.commercial_actions
-                 set status = $2, owner = coalesce(nullif($3, ''), owner), outcome_notes = coalesce(nullif($4, ''), outcome_notes),
-                     completed_at = case when $2 in ('won_sale','returned','closed','cancelled') then now() else completed_at end,
-                     updated_by = $5, updated_at = now()
-                 where id = $1
-                 returning id`,
-                [id, status, String(payload?.owner || '').trim(), String(payload?.outcomeNotes || '').trim(), actorLabel(actor)],
-            )
-            if (!result.rows[0]?.id) {
-                const error = new Error('COMMERCIAL_ACTION_NOT_FOUND')
-                error.statusCode = 404
-                throw error
-            }
-            await audit(pgPool, 'commercial.action.updated', actor, null, { actionId: id, status })
-            return { id, status }
+            return withCommercialContactTransaction(pgPool, async (client) => {
+                const action = await client.query(
+                    `select id, identity_id, status from crm_atendimento.commercial_actions where id = $1 for update`,
+                    [id],
+                )
+                const current = action.rows[0]
+                if (!current?.id) throw commercialContactError('COMMERCIAL_ACTION_NOT_FOUND', 404)
+                if (status === 'contacted') {
+                    await acquireCommercialContactIdentityLock(client, current.identity_id)
+                }
+                // Lock every existing Harmonia contact row for this identity
+                // before the outbound-contact state is recorded. Combined with
+                // the identity advisory lock, this serializes local revocations
+                // and existing opt-out updates with the eligibility decision.
+                const contactEligibility = await readCommercialContactEligibility(client, current.identity_id, {
+                    lockHarmonia: status === 'contacted',
+                })
+                const transition = transitionCommercialAction({
+                    currentStatus: current.status,
+                    nextStatus: status,
+                    eligibility: contactEligibility,
+                })
+                if (!transition.allowed) {
+                    const code = transition.reason === 'contact_eligibility_blocked'
+                        ? 'COMMERCIAL_CONTACT_BLOCKED'
+                        : transition.reason === 'contact_eligibility_review_required' || transition.reason === 'contact_eligibility_required'
+                            ? 'COMMERCIAL_CONTACT_REVIEW_REQUIRED'
+                            : 'INVALID_COMMERCIAL_ACTION_TRANSITION'
+                    throw commercialContactError(code)
+                }
+                await client.query(
+                    `update crm_atendimento.commercial_actions
+                     set status = $2, owner = coalesce(nullif($3, ''), owner), outcome_notes = coalesce(nullif($4, ''), outcome_notes),
+                         completed_at = case when $2 in ('won_sale','returned','closed','cancelled') then now() else completed_at end,
+                         updated_by = $5, updated_at = now()
+                     where id = $1`,
+                    [id, status, String(payload?.owner || '').trim(), String(payload?.outcomeNotes || '').trim(), actorIdentity],
+                )
+                await audit(client, 'commercial.action.updated', actor, null, {
+                    actionId: id,
+                    status,
+                    eligibilityStatus: contactEligibility.status,
+                    eligibilityReason: contactEligibility.reason,
+                })
+                return { id, status, contactEligibility }
+            })
         },
 
         async clients(query, actor) {
