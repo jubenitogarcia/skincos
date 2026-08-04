@@ -98,6 +98,35 @@ export function classifyIncumbentBundle(evidence) {
   };
 }
 
+export function isFailClosedIncumbentHealth({ status, payload, headers, expected }) {
+  const header = (name) => {
+    if (typeof headers?.get === "function") return String(headers.get(name) || "").trim().toLowerCase();
+    const lower = name.toLowerCase();
+    return String(headers?.[name] ?? headers?.[lower] ?? "").trim().toLowerCase();
+  };
+  const metadata = payload?.versionMetadata || {};
+  const moduleControlState = String(payload?.dependencies?.module_control?.state || "").toLowerCase();
+  const gatewayAffinity = payload?.dependencies?.gateway_affinity || {};
+  return status === 200
+    && payload?.ok === false
+    && payload?.ready === false
+    && payload?.service === "workforce-timekeeping"
+    && payload?.unit === "timekeeping"
+    && payload?.environment === "staging"
+    && payload?.database === true
+    && ["healthy", "unavailable"].includes(moduleControlState)
+    && gatewayAffinity.state === "unavailable"
+    && gatewayAffinity.reason === "RELEASE_AFFINITY_MISMATCH"
+    && String(metadata.releaseSha || "").toLowerCase() === String(expected.timekeepingSourceSha || "").toLowerCase()
+    && String(metadata.workerVersionId || "").toLowerCase() === String(expected.timekeepingVersionId || "").toLowerCase()
+    && SHA.test(String(metadata.gatewayReleaseSha || ""))
+    && UUID.test(String(metadata.gatewayVersionId || ""))
+    && String(metadata.gatewayEnvironment || "").toLowerCase() === "staging"
+    && header("x-skincos-timekeeping-release-sha") === String(expected.timekeepingSourceSha || "").toLowerCase()
+    && header("x-skincos-timekeeping-environment") === "staging"
+    && header("x-skincos-timekeeping-version-id") === String(expected.timekeepingVersionId || "").toLowerCase();
+}
+
 const versionSet = (ids, side) => ({
   timekeeping: ids.timekeeping[side],
   coreApi: ids.coreApi[side],
@@ -255,6 +284,12 @@ async function validateFixture({
   if (fixtureReady && (!includeProtectedContract || report.functionalValidation.protectedCandidateContract.passed)) {
     report.functionalValidation[journeyKey].attempted = true;
     try {
+      if (includeProtectedContract) {
+        report.functionalValidation.candidateAffinity.journeyFence = {
+          attempted: true,
+          ...await runtime.proveCandidateAffinity(pages, expected),
+        };
+      }
       report.functionalValidation[journeyKey] = {
         attempted: true,
         ...await runtime.runJourney(handle, pages.url, expected),
@@ -1205,30 +1240,12 @@ function createRealRuntime(config, env = process.env) {
           },
         });
         payload = await response.json().catch(() => null);
-        const header = (name) => String(response.headers.get(name) || "").trim().toLowerCase();
-        const pagesPassed = response.status === 200
-          && payload?.ok === false
-          && payload?.ready === false
-          && payload?.service === "workforce-timekeeping"
-          && payload?.unit === "timekeeping"
-          && payload?.environment === "staging"
-          && payload?.database === true
-          && payload?.dependencies?.module_control?.state === "healthy"
-          && payload?.dependencies?.gateway_affinity?.state === "unavailable"
-          && payload?.dependencies?.gateway_affinity?.reason === "RELEASE_AFFINITY_MISMATCH"
-          && String(payload?.versionMetadata?.releaseSha || "").toLowerCase() === expected.timekeepingSourceSha.toLowerCase()
-          && String(payload?.versionMetadata?.workerVersionId || "").toLowerCase() === expected.timekeepingVersionId.toLowerCase()
-          && String(payload?.versionMetadata?.gatewayReleaseSha || "").toLowerCase() === expected.coreSourceSha.toLowerCase()
-          && String(payload?.versionMetadata?.gatewayEnvironment || "").toLowerCase() === "staging"
-          && String(payload?.versionMetadata?.gatewayVersionId || "").toLowerCase() === expected.coreVersionId.toLowerCase()
-          && header("x-skincos-pages-release-sha") === expected.pagesSourceSha.toLowerCase()
-          && header("x-skincos-pages-environment") === "staging"
-          && header("x-skincos-gateway-release-sha") === expected.coreSourceSha.toLowerCase()
-          && header("x-skincos-gateway-environment") === "staging"
-          && header("x-skincos-gateway-version-id") === expected.coreVersionId.toLowerCase()
-          && header("x-skincos-timekeeping-release-sha") === expected.timekeepingSourceSha.toLowerCase()
-          && header("x-skincos-timekeeping-environment") === "staging"
-          && header("x-skincos-timekeeping-version-id") === expected.timekeepingVersionId.toLowerCase();
+        const pagesPassed = isFailClosedIncumbentHealth({
+          status: response.status,
+          payload,
+          headers: response.headers,
+          expected,
+        });
 
         const identityHealth = new URL("https://api-staging.skincos.com.br/insumos/health");
         identityHealth.searchParams.set("staging_rollback_incumbent_probe", `${config.runId}-${attempt}`);
@@ -1254,7 +1271,11 @@ function createRealRuntime(config, env = process.env) {
             status: response.status,
             passed: pagesPassed,
             ready: payload?.ready === true,
+            moduleControl: payload?.dependencies?.module_control?.state || "unknown",
             affinity: payload?.dependencies?.gateway_affinity?.state || "unknown",
+            gatewayReason: payload?.dependencies?.gateway_affinity?.reason || "unknown",
+            gatewayReleaseShaPresent: SHA.test(String(payload?.versionMetadata?.gatewayReleaseSha || "")),
+            gatewayVersionIdPresent: UUID.test(String(payload?.versionMetadata?.gatewayVersionId || "")),
           },
           identity: {
             status: identityResponse.status,
@@ -1270,6 +1291,7 @@ function createRealRuntime(config, env = process.env) {
             pagesHealth: {
               status: response.status,
               ready: false,
+              moduleControl: payload?.dependencies?.module_control?.state || "unknown",
               affinity: "RELEASE_AFFINITY_MISMATCH",
             },
             identityHealth: {
@@ -1357,7 +1379,8 @@ function createRealRuntime(config, env = process.env) {
       || origin.search
       || origin.hash
     ) throw new DrillFailure("JOURNEY_ORIGIN_INVALID");
-    runCommand(process.execPath, ["crm/console/scripts/ponto-staging-journey.cjs"], {
+    const journeyArgs = ["crm/console/scripts/ponto-staging-journey.cjs"];
+    const journeyOptions = {
       code: "AUTHENTICATED_JOURNEY_FAILED",
       captureFailureDetail: true,
       env: {
@@ -1366,14 +1389,34 @@ function createRealRuntime(config, env = process.env) {
         PONTO_STAGING_REPORT_FILE: handle.journeyReportPath,
         NODE_PATH: path.resolve("crm/console/node_modules"),
       },
-    });
+    };
+    let journeyAttempts = 0;
+    const runJourneyCommand = () => {
+      journeyAttempts += 1;
+      return runCommand(process.execPath, journeyArgs, journeyOptions);
+    };
+    try {
+      runJourneyCommand();
+    } catch (error) {
+      const detail = String(error?.details || "");
+      const retryablePropagationFailure = error instanceof DrillFailure
+        && detail.includes("invalid PIN did not fail closed (503/domain_service_degraded")
+        && detail.includes('"timekeepingReleaseSha":""')
+        && detail.includes('"timekeepingVersionId":""');
+      if (!retryablePropagationFailure) throw error;
+      await proveCandidateAffinity(pages, expected);
+      runJourneyCommand();
+    }
     const raw = fs.readFileSync(handle.journeyReportPath, "utf8");
     // The rollback API response and the exact terminal target deployment are
     // authoritative for the drill's generated Pages URL. Cloudflare's
     // production list can retain the pre-rollback alias while that target is
     // being reattached, so do not confuse list ordering with target identity.
     const controlPlane = await verifyActiveSet(expected, { requireLatestPages: false });
-    return sanitizedJourney(raw, expected, controlPlane);
+    return {
+      ...sanitizedJourney(raw, expected, controlPlane),
+      journeyAttempts,
+    };
   };
   const verifyProtectedContract = async (handle, url, expected) => {
     const origin = new URL(url);
