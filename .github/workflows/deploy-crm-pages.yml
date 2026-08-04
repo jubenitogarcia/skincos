@@ -568,6 +568,18 @@ jobs:
           npx --yes wrangler@4.112.0 pages deploy dist --project-name "$PROJECT" --branch "$BRANCH_NAME" --commit-hash "$GIT_SHA" --commit-message "$GIT_MESSAGE"
         working-directory: crm/console
 
+      - name: Rebind production Ponto target secret after Pages deploy
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.finance_production_gate.outputs.skip != 'true' && inputs.target == 'production' && inputs.release_scope == 'general' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAGES_PROJECT: ${{ steps.guard.outputs.project }}
+          PONTO_API_TARGET: ${{ secrets.PONTO_API_TARGET }}
+        run: |
+          set -euo pipefail
+          [[ "$PONTO_API_TARGET" == "https://api.skincos.com.br" ]] || { echo 'Production Ponto target secret is not the approved API origin'; exit 1; }
+          printf '%s\n' "$PONTO_API_TARGET" | npx --yes wrangler@4.112.0 pages secret put PONTO_API_TARGET --project-name "$PAGES_PROJECT" --env production
+
       - name: Resolve immutable Ponto staging Pages deployment
         id: ponto_staging
         if: ${{ inputs.release_scope == 'ponto' && inputs.target == 'staging' }}
