@@ -22,7 +22,9 @@ Runner único via ações do Codex (sem menu).
 
 ## Configuração (env vars)
 
-- `EF_LOGIN_EMAIL` / `EF_LOGIN_PASSWORD` (opcional; se não tiver, o runner pergunta)
+- `EF_LOGIN_EMAIL` / `EF_LOGIN_PASSWORD` (opcional; nas ações EF App, se o
+  `login.env` privado não tiver ambos, o launcher pergunta no terminal Windows
+  e salva somente em `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\login.env`)
 - `EF_UNIT_NAME` (opcional; se não tiver, o runner pergunta)
 - `EF_UNIT_OPTIONS` (opcional, lista separada por vírgula para o menu)
 - `EF_OUTPUT_DIR` (default: `./report`)
@@ -34,6 +36,9 @@ Runner único via ações do Codex (sem menu).
 - `EF_DRY_RUN` (`1`/`0`)
 - `EF_DEBUG_RETENTION_DAYS` (default: `7`)
 - `EF_DATE_RANGE_MODE` (`prev_month`)
+- `EF_CASH_START_DATE` / `EF_CASH_END_DATE` (período explícito do Caixa em
+  `DD/MM/AAAA`; nas ações EF App Caixa vêm das perguntas no terminal e têm
+  precedência sobre `EF_DATE_RANGE_MODE`)
 - `EF_INDEX_WEEK_WINDOW_WEEKS` (opcional; limita agenda/index para a semana atual + próximas semanas, ex.: `4` para totalizar 28 dias a partir do início da semana atual)
 - `EF_INDEX_FUTURE_DAYS` (opcional; limita agenda/index para janela móvel a partir de hoje, ex.: `28`)
 - `EF_RECORDER_PURGE` (`1`/`0`)
