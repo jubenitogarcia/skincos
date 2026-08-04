@@ -161,6 +161,36 @@ test('dedicated Ponto entrypoint requires the route-only guard and never exposes
     );
 });
 
+test('dedicated Ponto entrypoint gives authenticated Timekeeping writes a bounded cold-start budget', async () => {
+    resetBoundServiceResilienceForTest();
+    const startedAt = Date.now();
+    const binding = {
+        fetch: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 900));
+            return new Response(JSON.stringify({ ok: false, error: 'PIN_INVALID' }), {
+                status: 401,
+                headers: { 'content-type': 'application/json' },
+            });
+        },
+    };
+    const response = await pontoCoreWorker.fetch(new Request('https://ponto-core.invalid/api/ponto/me/punch', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pin: '000000', unit: 'synthetic-unit' }),
+    }), {
+        PONTO_ROUTE_ONLY: 'true',
+        TIMEKEEPING: binding,
+        APP_VERSION: 'a'.repeat(40),
+        ENVIRONMENT: 'staging',
+        TIMEKEEPING_VERSION_ID: '33333333-3333-4333-8333-333333333333',
+        CF_VERSION_METADATA: { id: '22222222-2222-4222-8222-222222222222' },
+    }, {});
+    assert.equal(response.status, 401);
+    assert.equal((await response.json()).error, 'PIN_INVALID');
+    assert.ok(Date.now() - startedAt >= 850);
+    resetBoundServiceResilienceForTest();
+});
+
 test('dedicated Ponto Wrangler config has private, independent staging and production services', async () => {
     const config = await readFile(new URL('../wrangler.ponto.toml', import.meta.url), 'utf8');
     assert.match(config, /^name = "skincos-ponto-core"$/m);
