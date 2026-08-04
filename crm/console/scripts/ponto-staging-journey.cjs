@@ -156,6 +156,8 @@ async function main() {
 
     const me = await api(page, '/api/ponto/me')
     assert(me.status === 200 && me.json?.linked === true, `/api/ponto/me did not link the synthetic identity (${me.status})`)
+    assert(me.json?.employee?.id === fixture.employeeId, `/api/ponto/me linked an unexpected synthetic employee (${String(me.json?.employee?.id || '')})`)
+    assert(me.json?.pinSet === true, `/api/ponto/me did not expose the synthetic PIN credential (${me.status})`)
     assert(JSON.stringify(me.json.allowedUnits || []) === JSON.stringify([fixture.unitId]), 'Ponto unit scope drifted')
     assert(me.json?.suggestedNextMethod === 'PIN' && me.json?.hasFace === false, 'face/PIN release policy drifted')
     const profile = await api(page, '/api/ponto/me/profile')
