@@ -177,14 +177,18 @@ jobs:
       - name: Guard Cloudflare Pages deploy
         id: guard
         env:
-          GENERAL_ENABLE_PROD: ${{ vars.ENABLE_CRM_PAGES_DEPLOY }}
-          GENERAL_ENABLE_STAGING: ${{ vars.ENABLE_CRM_PAGES_DEPLOY_STAGING }}
+          # General CRM Pages controls are deliberately namespaced away from
+          # the environment-scoped CLOUDFLARE_* containment overrides used by
+          # the Ponto replay freeze. They target only the reviewed canonical
+          # CRM projects below; Ponto keeps its own controls and custody.
+          GENERAL_ENABLE_PROD: ${{ vars.ENABLE_CRM_GENERAL_PAGES_DEPLOY }}
+          GENERAL_ENABLE_STAGING: ${{ vars.ENABLE_CRM_GENERAL_PAGES_DEPLOY_STAGING }}
           PONTO_ENABLE_PROD: ${{ vars.ENABLE_PONTO_CRM_PAGES_DEPLOY }}
           PONTO_ENABLE_STAGING: ${{ vars.ENABLE_PONTO_CRM_PAGES_DEPLOY_STAGING }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GENERAL_PROJECT_PROD: ${{ vars.CRM_PAGES_PROJECT }}
-          GENERAL_PROJECT_STAGING: ${{ vars.CRM_PAGES_PROJECT_STAGING }}
+          GENERAL_PROJECT_PROD: ${{ vars.CRM_GENERAL_PAGES_PROJECT }}
+          GENERAL_PROJECT_STAGING: ${{ vars.CRM_GENERAL_PAGES_PROJECT_STAGING }}
           PONTO_PROJECT_PROD: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT }}
           PONTO_PROJECT_STAGING: ${{ vars.PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING }}
           GENERAL_MODULE_CONTROL_PROD: ${{ vars.MODULE_CONTROL_PRODUCTION_KV_ID }}
