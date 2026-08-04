@@ -45,3 +45,10 @@ test('accepts only the dedicated bearer token for the Meta Ads offer context', (
     assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Basic offer-context-secret' } }, 'offer-context-secret'), false)
     assert.equal(__testables.verifyMetaAdsOfferContextToken({ headers: { authorization: 'Bearer offer-context-secret' } }, ''), false)
 })
+
+test('uses the same manager boundary for Clientes routes and store mutations', () => {
+    assert.equal(__testables.isCommercialManager({ role: 'GESTOR' }), true)
+    assert.equal(__testables.isCommercialManager({ role: 'GERENTE' }), true)
+    assert.equal(__testables.isCommercialManager({ role: 'ADMIN' }), true)
+    assert.equal(__testables.isCommercialManager({ role: 'INJETOR' }), false)
+})

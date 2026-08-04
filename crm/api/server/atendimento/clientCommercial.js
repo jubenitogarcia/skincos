@@ -55,7 +55,9 @@ export function buildCommercialProfile(row = {}, { asOf = new Date().toISOString
         phone: String(row.phone || '').trim(),
         email: String(row.email || '').trim(),
         sourceTypes,
-        identityQuality: sourceTypes.length >= 2 ? 'confirmed_multi_source' : 'confirmed_single_source',
+        // A singleton is intentionally kept visible for coverage and review,
+        // but it is not evidence that two source records represent one person.
+        identityQuality: sourceTypes.length >= 2 ? 'confirmed_multi_source' : 'unresolved_single_source',
         units: unique(row.units),
         lastAttendance: lastAttendance || null,
         recencyDays,

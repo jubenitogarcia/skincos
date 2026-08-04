@@ -261,6 +261,16 @@ class UnionFind {
 
 function node(type, id) { return `${type}:${id}` }
 
+function addSourceNodes(union, labels, type, items) {
+    for (const item of items) {
+        const id = compact(item?.id)
+        if (!id) continue
+        const value = node(type, id)
+        union.add(value)
+        labels.set(value, compact(item.name))
+    }
+}
+
 export function buildConfirmedGlobalIdentityComponents({
     registrations = [],
     leadProfiles = [],
@@ -275,10 +285,10 @@ export function buildConfirmedGlobalIdentityComponents({
     const automatic = new Set(['auto_confirmed', 'auto_confirmed_spelling', 'confirmed'])
     const union = new UnionFind()
     const labels = new Map()
-    registrations.forEach((item) => labels.set(node('app_registration', item.id), item.name))
-    leadProfiles.forEach((item) => labels.set(node('lead_profile', item.id), item.name))
-    canonicalClients.forEach((item) => labels.set(node('attendance_client', item.id), item.name))
-    caixaCustomers.forEach((item) => labels.set(node('caixa_customer', item.id), item.name))
+    addSourceNodes(union, labels, 'app_registration', registrations)
+    addSourceNodes(union, labels, 'lead_profile', leadProfiles)
+    addSourceNodes(union, labels, 'attendance_client', canonicalClients)
+    addSourceNodes(union, labels, 'caixa_customer', caixaCustomers)
     registrationCaixaLinks.filter((item) => automatic.has(item.status)).forEach((item) =>
         union.join(node('app_registration', item.registrationId), node('caixa_customer', item.caixaCustomerId)))
     registrationAttendanceLinks.filter((item) => automatic.has(item.status)).forEach((item) =>
@@ -312,5 +322,5 @@ export function buildConfirmedGlobalIdentityComponents({
             members: parsed,
             sourceTypes: [...new Set(parsed.map((item) => item.sourceType))].sort(),
         }
-    }).filter((component) => component.sourceTypes.length >= 2)
+    })
 }

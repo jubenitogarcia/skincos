@@ -705,6 +705,10 @@ export function createHarmoniaRouter({ varDir }) {
         try {
             const result = await store.withTransaction(async (tx) => {
                 const lockKey = `${unitSlug}:${phoneRaw}`
+                // Clientes uses this same key before recording a commercial
+                // contact. Acquire it before creating the contact so a first
+                // STOP and a commercial transition have a deterministic order.
+                await store.lockContactPhone(tx, phoneRaw)
                 await store.lockForKey(tx, lockKey)
 
                 const unit = await store.getOrCreateUnit(tx, unitSlug, instanceName)
