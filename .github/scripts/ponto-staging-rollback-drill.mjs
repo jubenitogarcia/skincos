@@ -700,11 +700,13 @@ function createRealRuntime(config, env = process.env) {
     if (!latest) throw new DrillFailure("PAGES_LATEST_DEPLOYMENT_MISSING");
     return pageDetails(latest, { allowPending });
   };
-  const assertPagesActive = async (deploymentId, expectedSha = null) => {
+  const assertPagesActive = async (deploymentId, expectedSha = null, { requireLatest = true } = {}) => {
     const source = await pagesDeploymentDetails(deploymentId);
-    const latest = await latestPagesDeployment();
-    if (source.id.toLowerCase() !== latest.id.toLowerCase()) {
-      throw new DrillFailure("PAGES_CONTROL_PLANE_MISMATCH");
+    if (requireLatest) {
+      const latest = await latestPagesDeployment();
+      if (source.id.toLowerCase() !== latest.id.toLowerCase()) {
+        throw new DrillFailure("PAGES_CONTROL_PLANE_MISMATCH");
+      }
     }
     if (expectedSha !== null) {
       try {
@@ -918,7 +920,7 @@ function createRealRuntime(config, env = process.env) {
     return { passed: true };
   };
 
-  const verifyActiveSet = async (expected) => {
+  const verifyActiveSet = async (expected, { requireLatestPages = true } = {}) => {
     const surfaces = {};
     for (const surface of WORKER_SURFACES) {
       const versionId = expected[`${surface === "coreApi" ? "core" : surface === "identityWorkforce" ? "identity" : "timekeeping"}VersionId`];
@@ -930,7 +932,11 @@ function createRealRuntime(config, env = process.env) {
         sourceSha: source.sourceSha,
       };
     }
-    const pages = await assertPagesActive(expected.pagesActiveDeploymentId, expected.sourceSha);
+    const pages = await assertPagesActive(
+      expected.pagesActiveDeploymentId,
+      expected.sourceSha,
+      { requireLatest: requireLatestPages },
+    );
     return { surfaces, pages };
   };
   const sanitizedJourney = (raw, expected, controlPlane) => {
@@ -1001,7 +1007,11 @@ function createRealRuntime(config, env = process.env) {
       },
     });
     const raw = fs.readFileSync(handle.journeyReportPath, "utf8");
-    const controlPlane = await verifyActiveSet(expected);
+    // The rollback API response and the exact terminal target deployment are
+    // authoritative for the drill's generated Pages URL. Cloudflare's
+    // production list can retain the pre-rollback alias while that target is
+    // being reattached, so do not confuse list ordering with target identity.
+    const controlPlane = await verifyActiveSet(expected, { requireLatestPages: false });
     return sanitizedJourney(raw, expected, controlPlane);
   };
   const verifyProtectedContract = async (handle, url, expected) => {
@@ -1297,11 +1307,8 @@ function createRealRuntime(config, env = process.env) {
       const deadline = Date.now() + 180_000;
       while (Date.now() < deadline) {
         const active = pageDetails(await pagesDeployment(createdId), { allowPending: true });
-        const latest = await latestPagesDeployment({ allowPending: true });
         if (
           active.terminal
-          && latest.terminal
-          && active.id.toLowerCase() === latest.id.toLowerCase()
           && active.commitHash === source.commitHash
         ) {
           return {
