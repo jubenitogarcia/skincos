@@ -165,8 +165,11 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
       );
       assert.equal((teardownCore.match(/DELETE FROM crm_identity_sessions/g) || []).length, 2);
       assert.equal(teardownTimekeeping.includes('DELETE FROM audit_log'), false);
+      assert.equal(teardownTimekeeping.includes('DELETE FROM timekeeping_audit_events'), false);
+      assert.doesNotMatch(teardownTimekeeping, /\bLIKE\b/);
       assert.match(teardownTimekeeping, new RegExp(`identity:${fixture.onboardingId}`));
       assert.match(teardownTimekeeping, /DELETE FROM timekeeping_request_nonces WHERE request_id IN \('request-incumbent-1','request-incumbent-2'\)/);
+      assert.match(teardownTimekeeping, /timekeeping_audit_events WHERE request_id IN \('request-incumbent-1','request-incumbent-2'\)/);
       assert.match(teardownTimekeeping, /updated_by = 'stg-ponto-123456789:presence-policy'/);
       assert.doesNotMatch(teardownTimekeeping, /DELETE FROM workforce_units/);
     } finally {

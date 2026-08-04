@@ -399,6 +399,7 @@ test("the executable and workflow retain no unimplemented hard-stop and require 
   const workflow = fs.readFileSync(new URL("../workflows/ponto-staging-rollback-drill.yml", import.meta.url), "utf8");
 
   assert.doesNotMatch(script, /authenticated-incumbent-rollback-harness-not-implemented|implemented:\s*false/);
+  assert.doesNotMatch(script, /after_json LIKE/);
   assert.match(workflow, /actions:\s*read/);
   assert.match(workflow, /checks:\s*write/);
   assert.match(workflow, /playwright install --with-deps chromium/);
