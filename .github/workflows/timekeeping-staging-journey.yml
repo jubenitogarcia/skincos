@@ -411,10 +411,16 @@ jobs:
           FIXTURES: ${{ runner.temp }}/ponto-staging-fixtures.json
           CORE_SQL: ${{ runner.temp }}/ponto-staging-core-teardown.sql
           TIMEKEEPING_SQL: ${{ runner.temp }}/ponto-staging-timekeeping-teardown.sql
+          CORE_ATTESTATION_SQL: ${{ runner.temp }}/ponto-staging-core-teardown-attestation.sql
+          TIMEKEEPING_ATTESTATION_SQL: ${{ runner.temp }}/ponto-staging-timekeeping-teardown-attestation.sql
           CORE_RAW: ${{ runner.temp }}/ponto-staging-core-teardown-raw.txt
           TIMEKEEPING_RAW: ${{ runner.temp }}/ponto-staging-timekeeping-teardown-raw.txt
+          CORE_ATTESTATION_RAW: ${{ runner.temp }}/ponto-staging-core-teardown-attestation-raw.txt
+          TIMEKEEPING_ATTESTATION_RAW: ${{ runner.temp }}/ponto-staging-timekeeping-teardown-attestation-raw.txt
           CORE_RESULT: ${{ runner.temp }}/ponto-staging-core-teardown-result.json
           TIMEKEEPING_RESULT: ${{ runner.temp }}/ponto-staging-timekeeping-teardown-result.json
+          CORE_ATTESTATION_RESULT: ${{ runner.temp }}/ponto-staging-core-teardown-attestation-result.json
+          TIMEKEEPING_ATTESTATION_RESULT: ${{ runner.temp }}/ponto-staging-timekeeping-teardown-attestation-result.json
           PIN_SQL: ${{ runner.temp }}/ponto-staging-pin-attestation.sql
           PIN_RAW: ${{ runner.temp }}/ponto-staging-pin-attestation-raw.txt
           PIN_RESULT: ${{ runner.temp }}/ponto-staging-pin-attestation-result.json
@@ -424,12 +430,25 @@ jobs:
           set -euo pipefail
           [[ -f "$FIXTURES" ]] || exit 0
           [[ "$STAGING_CORE_D1_DATABASE" == 'skincos-db-staging' && "$STAGING_TIMEKEEPING_D1_DATABASE" == 'skincos-timekeeping-staging' ]] || { echo 'refusing a non-staging D1 target'; exit 1; }
-          node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$FIXTURES" --core-sql "$CORE_SQL" --timekeeping-sql "$TIMEKEEPING_SQL"
+          node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action teardown --run-id "$GITHUB_RUN_ID" --fixtures "$FIXTURES" --core-sql "$CORE_SQL" --timekeeping-sql "$TIMEKEEPING_SQL" --core-attestation-sql "$CORE_ATTESTATION_SQL" --timekeeping-attestation-sql "$TIMEKEEPING_ATTESTATION_SQL"
           npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --file "$TIMEKEEPING_SQL" --json > "$TIMEKEEPING_RAW" 2>&1
           node .github/scripts/ponto-json-output.mjs "$TIMEKEEPING_RAW" "$TIMEKEEPING_RESULT"
           npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --file "$CORE_SQL" --json > "$CORE_RAW" 2>&1
           node .github/scripts/ponto-json-output.mjs "$CORE_RAW" "$CORE_RESULT"
-          node - "$CORE_RESULT" "$TIMEKEEPING_RESULT" "$TEARDOWN_REPORT" <<'NODE'
+          node - "$CORE_RESULT" "$TIMEKEEPING_RESULT" <<'NODE'
+          const fs = require("fs");
+          for (const file of process.argv.slice(2)) {
+            const entries = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (!Array.isArray(entries) || entries.length === 0 || entries.some((entry) => entry?.success === false)) {
+              throw new Error("D1 teardown mutation returned a failed statement");
+            }
+          }
+          NODE
+          npx --yes wrangler@4.112.0 d1 execute "$STAGING_TIMEKEEPING_D1_DATABASE" --config "$TIMEKEEPING_STAGING_WRANGLER_CONFIG" --env staging --remote --command "$(cat "$TIMEKEEPING_ATTESTATION_SQL")" --json > "$TIMEKEEPING_ATTESTATION_RAW" 2>&1
+          node .github/scripts/ponto-json-output.mjs "$TIMEKEEPING_ATTESTATION_RAW" "$TIMEKEEPING_ATTESTATION_RESULT"
+          npx --yes wrangler@4.112.0 d1 execute "$STAGING_CORE_D1_DATABASE" --config inventory/wrangler.toml --env staging --remote --command "$(cat "$CORE_ATTESTATION_SQL")" --json > "$CORE_ATTESTATION_RAW" 2>&1
+          node .github/scripts/ponto-json-output.mjs "$CORE_ATTESTATION_RAW" "$CORE_ATTESTATION_RESULT"
+          node - "$CORE_ATTESTATION_RESULT" "$TIMEKEEPING_ATTESTATION_RESULT" "$TEARDOWN_REPORT" <<'NODE'
           const fs = require("fs");
           const rows = (file) => {
             const payload = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -464,7 +483,7 @@ jobs:
             piiIncluded: false,
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
-          rm -f "$FIXTURES" "$CORE_SQL" "$TIMEKEEPING_SQL" "$CORE_RAW" "$TIMEKEEPING_RAW" "$CORE_RESULT" "$TIMEKEEPING_RESULT" "$PIN_SQL" "$PIN_RAW" "$PIN_RESULT" "$PIN_VERIFY_ERROR"
+          rm -f "$FIXTURES" "$CORE_SQL" "$TIMEKEEPING_SQL" "$CORE_ATTESTATION_SQL" "$TIMEKEEPING_ATTESTATION_SQL" "$CORE_RAW" "$TIMEKEEPING_RAW" "$CORE_ATTESTATION_RAW" "$TIMEKEEPING_ATTESTATION_RAW" "$CORE_RESULT" "$TIMEKEEPING_RESULT" "$CORE_ATTESTATION_RESULT" "$TIMEKEEPING_ATTESTATION_RESULT" "$PIN_SQL" "$PIN_RAW" "$PIN_RESULT" "$PIN_VERIFY_ERROR"
 
       - name: Upload sanitised journey evidence
         if: ${{ always() }}

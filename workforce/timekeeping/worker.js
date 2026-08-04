@@ -628,6 +628,14 @@ function nextEventType(previous) {
   return { WORK_START: 'BREAK_START', BREAK_START: 'BREAK_END', BREAK_END: 'WORK_END', WORK_END: 'WORK_START' }[previous] || 'WORK_START'
 }
 
+// The idempotency fingerprint must describe the caller's request, not the
+// event inferred from mutable ledger state. An automatic punch therefore
+// remains "AUTO" across retries even after the first event changes the next
+// inferred event type.
+function punchIdempotencyEventType(body) {
+  return canonicalEventType(body?.eventType || body?.type) || 'AUTO'
+}
+
 async function recordPinFailure(db, employeeId, deviceId) {
   const at = now()
   const current = await db.prepare('SELECT * FROM timekeeping_pin_failures WHERE employee_id=?').bind(employeeId).first()
@@ -1376,16 +1384,20 @@ export async function handleTimekeeping(request, env) {
       if (credential.error) return failure(credential.error === 'PIN_LOCKED' ? 429 : 401, credential.error, requestId, credential.secondsRemaining ? { secondsRemaining: credential.secondsRemaining } : {})
       const manualReason = credential.source === 'MANUAL' ? cleanText(body.reason, 500) : ''
       if (credential.source === 'MANUAL' && !manualReason) return failure(400, 'JUSTIFICATION_REQUIRED', requestId)
-      const previous = await db.prepare('SELECT event_type, occurred_at_utc FROM timekeeping_events WHERE employee_id=? AND unit_id=? ORDER BY occurred_at_utc DESC LIMIT 1').bind(employee.id, unitId).first()
-      const eventType = canonicalEventType(body.eventType || body.type) || nextEventType(previous?.event_type)
       const idempotencyKey = cleanText(request.headers.get('idempotency-key') || request.headers.get('x-idempotency-key') || body.requestId, 160)
       if (!idempotencyKey) return failure(400, 'IDEMPOTENCY_KEY_REQUIRED', requestId)
-      const scope = `employee:${employee.id}`; const fingerprint = await hmac(String(env.PONTO_IDEMPOTENCY_KEY || env.PONTO_ACTOR_HMAC_KEY), `${employee.id}.${unitId}.${eventType}.${body.occurredAt || ''}.${credential.source}`)
+      const requestedEventType = punchIdempotencyEventType(body)
+      const scope = `employee:${employee.id}`; const fingerprint = await hmac(String(env.PONTO_IDEMPOTENCY_KEY || env.PONTO_ACTOR_HMAC_KEY), `${employee.id}.${unitId}.${requestedEventType}.${body.occurredAt || ''}.${credential.source}`)
       const alreadyCreated = await db.prepare('SELECT * FROM timekeeping_events WHERE idempotency_scope=? AND idempotency_key=?').bind(scope, idempotencyKey).first()
       if (alreadyCreated) {
-        if (!constantTimeEqual(alreadyCreated.request_fingerprint, fingerprint)) return failure(409, 'IDEMPOTENCY_CONFLICT', requestId)
+        const legacyFingerprint = requestedEventType === 'AUTO'
+          ? await hmac(String(env.PONTO_IDEMPOTENCY_KEY || env.PONTO_ACTOR_HMAC_KEY), `${employee.id}.${unitId}.${alreadyCreated.event_type}.${body.occurredAt || ''}.${credential.source}`)
+          : ''
+        if (!constantTimeEqual(alreadyCreated.request_fingerprint, fingerprint) && !constantTimeEqual(alreadyCreated.request_fingerprint, legacyFingerprint)) return failure(409, 'IDEMPOTENCY_CONFLICT', requestId)
         return json(200, { ok: true, idempotent: true, data: { id: alreadyCreated.id, operationId: alreadyCreated.id, employeeId: employee.id, employeeName: employee.display_name, type: alreadyCreated.event_type === 'WORK_START' ? 'IN' : alreadyCreated.event_type === 'WORK_END' ? 'OUT' : alreadyCreated.event_type, eventType: alreadyCreated.event_type, at: alreadyCreated.occurred_at_utc, occurredAtUtc: alreadyCreated.occurred_at_utc, unit: alreadyCreated.unit_id, unitId: alreadyCreated.unit_id, method: alreadyCreated.source, source: alreadyCreated.source } }, requestId)
       }
+      const previous = await db.prepare('SELECT event_type, occurred_at_utc FROM timekeeping_events WHERE employee_id=? AND unit_id=? ORDER BY occurred_at_utc DESC LIMIT 1').bind(employee.id, unitId).first()
+      const eventType = requestedEventType === 'AUTO' ? nextEventType(previous?.event_type) : requestedEventType
       if (previous && Date.parse(occurredAt) - Date.parse(previous.occurred_at_utc) < Number(env.PONTO_COOLDOWN_SECONDS || 15) * 1000) return failure(429, 'COOLDOWN', requestId, { secondsRemaining: Number(env.PONTO_COOLDOWN_SECONDS || 15) })
       const id = crypto.randomUUID()
       try {
@@ -1693,6 +1705,7 @@ export const __testables = {
   roleAllows,
   requireUnit,
   canonicalEventType,
+  punchIdempotencyEventType,
   calculateDay,
   calculatePeriod,
   csvCell,

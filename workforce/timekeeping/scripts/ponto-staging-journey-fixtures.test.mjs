@@ -12,7 +12,7 @@ const script = new URL('./ponto-staging-journey-fixtures.mjs', import.meta.url);
 const inventoryMigrations = new URL('../../../inventory/migrations/', import.meta.url);
 const timekeepingMigrations = new URL('../migrations/', import.meta.url);
 
-function generate(action, paths, fixtureId = '') {
+function generate(action, paths, fixtureId = '', separateAttestation = false) {
   const argv = [
     script.pathname,
     '--action', action,
@@ -22,6 +22,7 @@ function generate(action, paths, fixtureId = '') {
     '--core-sql', paths.core,
     '--timekeeping-sql', paths.timekeeping,
   ];
+  if (separateAttestation) argv.push('--core-attestation-sql', paths.coreAttestation, '--timekeeping-attestation-sql', paths.timekeepingAttestation);
   execFileSync(process.execPath, argv, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
@@ -31,6 +32,8 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
     fixture: join(directory, 'fixture.json'),
     core: join(directory, 'core.sql'),
     timekeeping: join(directory, 'timekeeping.sql'),
+    coreAttestation: join(directory, 'core-attestation.sql'),
+    timekeepingAttestation: join(directory, 'timekeeping-attestation.sql'),
   };
 
   try {
@@ -135,12 +138,20 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
 
       fixture.teardownRequestIds = ['request-incumbent-1', 'request-incumbent-2'];
       writeFileSync(paths.fixture, JSON.stringify(fixture), { mode: 0o600 });
-      generate('teardown', paths);
+      generate('teardown', paths, '', true);
       const teardownCore = readFileSync(paths.core, 'utf8');
       const teardownTimekeeping = readFileSync(paths.timekeeping, 'utf8');
+      const coreAttestation = readFileSync(paths.coreAttestation, 'utf8');
+      const timekeepingAttestation = readFileSync(paths.timekeepingAttestation, 'utf8');
 
       database.exec(teardownCore);
       timekeepingDatabase.exec(teardownTimekeeping);
+      const coreResiduals = database.prepare(coreAttestation).get();
+      const timekeepingResiduals = timekeepingDatabase.prepare(timekeepingAttestation).get();
+      assert.equal(coreResiduals.users, 0);
+      assert.equal(coreResiduals.teardown_audit, 1);
+      assert.equal(timekeepingResiduals.employees, 0);
+      assert.equal(timekeepingResiduals.audit_count, 0);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM crm_users WHERE username IN (?, ?)').get(
         fixture.username,
         fixture.adminUsername,
@@ -169,7 +180,7 @@ test('staging fixture SQL is run-scoped, secret-free, and teardown preserves aud
       assert.doesNotMatch(teardownTimekeeping, /\bLIKE\b/);
       assert.match(teardownTimekeeping, new RegExp(`identity:${fixture.onboardingId}`));
       assert.match(teardownTimekeeping, /DELETE FROM timekeeping_request_nonces WHERE request_id IN \('request-incumbent-1','request-incumbent-2'\)/);
-      assert.match(teardownTimekeeping, /timekeeping_audit_events WHERE request_id IN \('request-incumbent-1','request-incumbent-2'\)/);
+      assert.match(timekeepingAttestation, /timekeeping_audit_events WHERE request_id IN \('request-incumbent-1','request-incumbent-2'\)/);
       assert.match(teardownTimekeeping, /updated_by = 'stg-ponto-123456789:presence-policy'/);
       assert.doesNotMatch(teardownTimekeeping, /DELETE FROM workforce_units/);
     } finally {
