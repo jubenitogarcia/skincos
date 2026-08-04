@@ -409,7 +409,13 @@ jobs:
               || response.status === 404
               || response.status === 429
               || response.status >= 500
-              || response.status === 200;
+              || response.status === 200
+              || (
+                response.status === 403
+                && body?.error === "RELEASE_PROBE_NOT_AUTHORIZED"
+                && pagesReleaseSha === process.env.RELEASE_SHA
+                && pagesEnvironment === "staging"
+              );
             if (!retryable || attempt === maxAttempts) break;
             await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
           }

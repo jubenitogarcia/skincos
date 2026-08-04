@@ -770,6 +770,7 @@ test("staging retries the protected Identity contract during bounded propagation
   const block = source.slice(start, end);
   assert.match(block, /const maxAttempts = 36/);
   assert.match(block, /for \(let attempt = 1; attempt <= maxAttempts; attempt \+= 1\)/);
+  assert.match(block, /response\.status === 403\s*&& body\?\.error === "RELEASE_PROBE_NOT_AUTHORIZED"\s*&& pagesReleaseSha === process\.env\.RELEASE_SHA\s*&& pagesEnvironment === "staging"/);
   assert.match(block, /protected staging Identity contract did not match the exact release after bounded propagation/);
   assert.match(block, /lastObservation/);
   assert.match(block, /sessionTeardownProven/);
