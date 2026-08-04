@@ -422,6 +422,10 @@ test.describe('atendimento', () => {
     await expect(dailyMetricTooltip).toContainText('Meta diária média do período selecionado.')
     await expect(dailyMetricTooltip).toContainText('Fórmula')
     await expect(dailyMetricTooltip).toContainText('Meta do período')
+    await expect(dailyMetricTooltip).toContainText('dias trabalhados no período')
+    await expect(dailyMetricTooltip).not.toContainText('Todas as métricas exibidas aqui usam o período filtrado')
+    await expect(dailyMetricTooltip).not.toContainText('Aplicação atual:')
+    await expect(dailyMetricTooltip).not.toContainText('_')
     const dailyMetricTooltipBox = await dailyMetricTooltip.evaluate((element) => {
       const bounds = element.getBoundingClientRect()
       return { width: bounds.width, height: bounds.height }
@@ -433,6 +437,13 @@ test.describe('atendimento', () => {
     await expect(intervalTooltip).toContainText('Desvio Padrão')
     await expect(intervalTooltip).toContainText('Multiplicador Otimizado')
     await expect(intervalTooltip).toContainText('Multiplicador por homogeneidade')
+    await expect(intervalTooltip).toContainText('Intervalo diário')
+    await expect(intervalTooltip).not.toContainText('Todas as métricas exibidas aqui usam o período filtrado')
+    await expect(intervalTooltip).not.toContainText('Aplicação atual:')
+    await expect(intervalTooltip).not.toContainText('_')
+    await expect(page.getByLabel('Curva do multiplicador pela homogeneidade')).toHaveCSS('height', '128px')
+    await expect(page.getByRole('button', { name: 'Mover Desempenho por doutor', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Ocultar Desempenho por doutor', exact: true })).toHaveCount(0)
     const intervalTooltipBox = await intervalTooltip.evaluate((element) => {
       const bounds = element.getBoundingClientRect()
       return { width: bounds.width, height: bounds.height }
