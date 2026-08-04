@@ -224,6 +224,14 @@ test('Vite uses strictPort and the local adapter refreshes dependencies by lockf
   );
   assert.match(
     whatsappAdapter,
+    /\^crm-thread-preview--\(\[a-z0-9\]\[a-z0-9\._-\]\{0,127\}\)--\(gestor\|consultor\)\$/,
+  );
+  assert.match(
+    whatsappAdapter,
+    /runtime\/crm-local\/thread-previews\/\$\{BASH_REMATCH\[2\]\}\/\$\{BASH_REMATCH\[1\]\}\/state\/whatsapp/,
+  );
+  assert.match(
+    whatsappAdapter,
     /source\/crm-local\/immutable/,
   );
   assert.match(

@@ -445,6 +445,8 @@ jobs:
       - name: Execute authenticated Ponto journey
         env:
           PONTO_STAGING_CRM_URL: ${{ inputs.pages_url }}
+          PONTO_STAGING_EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
+          PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID: ${{ inputs.timekeeping_version_id }}
           PONTO_STAGING_FIXTURES_FILE: ${{ runner.temp }}/ponto-staging-fixtures.json
           PONTO_STAGING_REPORT_FILE: ${{ runner.temp }}/ponto-staging-report.json
           NODE_PATH: crm/console/node_modules

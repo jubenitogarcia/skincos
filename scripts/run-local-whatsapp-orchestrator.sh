@@ -285,6 +285,15 @@ crm_local_wa_validate_privileged_inputs() {
       echo "[whatsapp-local] A fonte modular não pertence à raiz imutável autorizada." >&2
       return 2
     fi
+  elif [[ "$LOCAL_WA_ADAPTER_RUNTIME_ID" =~ ^crm-thread-preview--([a-z0-9][a-z0-9._-]{0,127})--(gestor|consultor)$ ]]; then
+    expected_role="${BASH_REMATCH[2]^^}"
+    expected_runtime_home="/mnt/c/CodexRuntime/operator/admin/skincos/runtime/crm-local/thread-previews/${BASH_REMATCH[2]}/${BASH_REMATCH[1]}/state/whatsapp"
+    source_leaf="${canonical_root##*/}"
+    if [[ ! "$source_leaf" =~ ^[a-f0-9]{24}$ ||
+          "${canonical_root%/*}" != "/mnt/c/CodexRuntime/operator/admin/skincos/source/crm-local/immutable" ]]; then
+      echo "[whatsapp-local] A fonte da prévia da thread não pertence à raiz imutável autorizada." >&2
+      return 2
+    fi
   else
     echo "[whatsapp-local] A identidade do runtime não pertence ao contrato local autorizado." >&2
     return 2

@@ -20,11 +20,31 @@ import { cn } from "@/utils"
 
 const TOOLTIP_CURSOR_GAP = 14
 const TOOLTIP_COLLISION_PADDING = 12
+const TOOLTIP_MIN_ASPECT_RATIO = 0.5
+const TOOLTIP_MAX_ASPECT_RATIO = 2
 
-const TOOLTIP_CONTENT_CLASS = "z-[1200] w-fit max-w-72 rounded-xl border border-white/12 bg-slate-950/96 px-3 py-2 text-[11px] text-slate-50 shadow-[0_16px_36px_rgba(15,23,42,0.34)] backdrop-blur-xl"
+const TOOLTIP_CONTENT_CLASS = "z-[1200] w-fit max-w-72 max-h-[min(32rem,calc(100vh-2rem))] overflow-y-auto rounded-xl border border-white/12 bg-slate-950/96 px-3 py-2 text-[11px] text-slate-50 shadow-[0_16px_36px_rgba(15,23,42,0.34)] backdrop-blur-xl"
 
 type TooltipPoint = { x: number; y: number }
 type TooltipSize = { width: number; height: number }
+type TooltipAspectAdjustment = { minWidth?: number; maxWidth?: number }
+
+function calculateTooltipAspectAdjustment(content: TooltipSize, viewport: TooltipSize): TooltipAspectAdjustment {
+  if (content.width <= 0 || content.height <= 0 || viewport.width <= 0 || viewport.height <= 0) return {}
+
+  const ratio = content.width / content.height
+  if (ratio > TOOLTIP_MAX_ASPECT_RATIO) {
+    return {
+      maxWidth: Math.min(Math.floor(content.height * TOOLTIP_MAX_ASPECT_RATIO), Math.max(0, viewport.width - TOOLTIP_COLLISION_PADDING * 2)),
+    }
+  }
+  if (ratio < TOOLTIP_MIN_ASPECT_RATIO) {
+    return {
+      minWidth: Math.min(Math.ceil(content.height * TOOLTIP_MIN_ASPECT_RATIO), Math.max(0, viewport.width - TOOLTIP_COLLISION_PADDING * 2)),
+    }
+  }
+  return {}
+}
 
 function calculateFollowCursorPosition(
   cursor: TooltipPoint,
@@ -176,7 +196,16 @@ function TooltipTrigger({
     onFocus: composeHandler(trigger.props.onFocus, (event: any) => context.openAt(cursorFromEvent(event))),
     onBlur: composeHandler(trigger.props.onBlur, () => { if (!context.pinned) context.close() }),
     onClick: composeHandler(trigger.props.onClick, (event: any) => {
-      if (shouldPinEvent(event, context.pinOnClick || pinTarget)) context.togglePinned(cursorFromEvent(event))
+      const shouldPin = shouldPinEvent(event, context.pinOnClick || pinTarget)
+      if (shouldPin) {
+        context.togglePinned(cursorFromEvent(event))
+        return
+      }
+      if (!context.pinOnClick && !context.pinned) {
+        context.close()
+        const currentTarget = event.currentTarget as HTMLElement | null
+        currentTarget?.blur?.()
+      }
     }),
   }
   return cloneElement(trigger, withProps)
@@ -199,6 +228,7 @@ function FollowCursorTooltipContent({
 }) {
   const contentRef = useRef<HTMLDivElement>(null)
   const [contentSize, setContentSize] = useState<TooltipSize | null>(null)
+  const [aspectAdjustment, setAspectAdjustment] = useState<TooltipAspectAdjustment>({})
 
   useLayoutEffect(() => {
     const element = contentRef.current
@@ -208,6 +238,19 @@ function FollowCursorTooltipContent({
       setContentSize((current) => current?.width === bounds.width && current?.height === bounds.height
         ? current
         : { width: bounds.width, height: bounds.height })
+      const requiredAdjustment = calculateTooltipAspectAdjustment(
+        { width: bounds.width, height: bounds.height },
+        { width: window.innerWidth, height: window.innerHeight },
+      )
+      setAspectAdjustment((current) => {
+        const next = {
+          minWidth: Math.max(current.minWidth || 0, requiredAdjustment.minWidth || 0) || undefined,
+          maxWidth: requiredAdjustment.maxWidth
+            ? Math.min(current.maxWidth || Number.POSITIVE_INFINITY, requiredAdjustment.maxWidth)
+            : current.maxWidth,
+        }
+        return next.minWidth === current.minWidth && next.maxWidth === current.maxWidth ? current : next
+      })
     }
     updateSize()
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateSize)
@@ -233,7 +276,13 @@ function FollowCursorTooltipContent({
         TOOLTIP_CONTENT_CLASS,
         className,
       )}
-      style={{ left: `${position.left}px`, top: `${position.top}px`, visibility: contentSize ? 'visible' : 'hidden' }}
+      style={{
+        left: `${position.left}px`,
+        top: `${position.top}px`,
+        minWidth: aspectAdjustment.minWidth,
+        maxWidth: aspectAdjustment.maxWidth,
+        visibility: contentSize ? 'visible' : 'hidden',
+      }}
     >
       {pinned ? (
         <button
@@ -260,6 +309,43 @@ function TooltipContent({
   const context = useContext(TooltipContext)
   if (!context || hidden || !context.open || !context.cursor) return null
   return <FollowCursorTooltipContent id={context.id} cursor={context.cursor} className={className} pinned={context.pinned} onClose={context.close}>{children}</FollowCursorTooltipContent>
+}
+
+function TooltipAspectSurface({
+  className,
+  style,
+  children,
+  ...props
+}: ComponentProps<'div'>) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [aspectAdjustment, setAspectAdjustment] = useState<TooltipAspectAdjustment>({})
+
+  useLayoutEffect(() => {
+    const element = contentRef.current
+    if (!element) return
+    const updateSize = () => {
+      const bounds = element.getBoundingClientRect()
+      const requiredAdjustment = calculateTooltipAspectAdjustment(
+        { width: bounds.width, height: bounds.height },
+        { width: typeof window === 'undefined' ? 0 : window.innerWidth, height: typeof window === 'undefined' ? 0 : window.innerHeight },
+      )
+      setAspectAdjustment((current) => {
+        const next = {
+          minWidth: Math.max(current.minWidth || 0, requiredAdjustment.minWidth || 0) || undefined,
+          maxWidth: requiredAdjustment.maxWidth
+            ? Math.min(current.maxWidth || Number.POSITIVE_INFINITY, requiredAdjustment.maxWidth)
+            : current.maxWidth,
+        }
+        return next.minWidth === current.minWidth && next.maxWidth === current.maxWidth ? current : next
+      })
+    }
+    updateSize()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateSize)
+    observer?.observe(element)
+    return () => observer?.disconnect()
+  }, [children, className])
+
+  return <div ref={contentRef} className={className} style={{ ...style, ...aspectAdjustment }} {...props}>{children}</div>
 }
 
 function TooltipCopy({ label, description }: { label: ReactNode; description?: ReactNode }) {
@@ -361,6 +447,7 @@ export {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
+  TooltipAspectSurface,
   TooltipProvider,
   TooltipCopy,
   TooltipLabel,
@@ -368,4 +455,5 @@ export {
   TooltipIcon,
   TooltipTruncate,
   calculateFollowCursorPosition,
+  calculateTooltipAspectAdjustment,
 }

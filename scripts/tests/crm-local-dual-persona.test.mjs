@@ -47,7 +47,7 @@ function runBashHarness(body, options = {}) {
   }
 }
 
-test('Codex App and Windows expose CRM – Local and CRM – Módulos without the generic Local surface', () => {
+test('Codex App and Windows expose stable CRM actions plus the isolated thread preview without the generic Local surface', () => {
   const crmActions = tomlActions(environment).filter(({ name }) => name?.startsWith('CRM'))
   assert.deepEqual(crmActions, [
     {
@@ -57,6 +57,10 @@ test('Codex App and Windows expose CRM – Local and CRM – Módulos without th
     {
       name: 'CRM – Módulos',
       command: 'powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmModules',
+    },
+    {
+      name: 'CRM – Prévia da Thread',
+      command: 'powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-shared-codex-shortcut.ps1 -Action CrmThreadPreview',
     },
   ])
   assert.ok(!tomlActions(environment).some(({ name }) => name === 'Local'))
@@ -69,6 +73,7 @@ test('Codex App and Windows expose CRM – Local and CRM – Módulos without th
   assert.deepEqual(crmShortcuts, [
     { name: 'CRM – Local', action: 'CrmLocal' },
     { name: 'CRM – Módulos', action: 'CrmModules' },
+    { name: 'CRM – Prévia da Thread', action: 'CrmThreadPreview' },
   ])
   assert.doesNotMatch(shortcutBlock, /Name = "Local"|CRM – Local \(Gestor\)|CRM – Consultor \(Ponto\)/)
   assert.match(installer, /\$moduleRoot = Join-Path \$TargetRoot "CRM – Módulos"/)
@@ -154,6 +159,34 @@ test('CRM – Módulos consumes the canonical role field and launches only a res
   assert.match(launcher, /A combinação CRM '\$Role \/ \$Module' não é liberada pela fonte canônica/)
   assert.match(launcher, /New-MenuOption -Label \(\[string\]\$_\.role\) -Action \(\[string\]\$_\.role\)/)
   assert.match(launcher, /Invoke-CrmModuleAction -Role \$selectedRole -Module \(\[string\]\$moduleSelection\.Action\)/)
+})
+
+test('thread preview only materializes the invoking registered worktree in its own runtime and port range', () => {
+  assert.match(launcher, /"CrmThreadPreview"/)
+  assert.match(launcher, /function Resolve-CrmThreadPreviewSourceCheckout/)
+  assert.match(launcher, /não pode usar o clone compartilhado/)
+  assert.match(launcher, /worktree list --porcelain/)
+  assert.match(launcher, /function Get-CrmThreadPreviewSpec/)
+  assert.match(launcher, /\$crmThreadPreviewPortBase = 25000/)
+  assert.match(launcher, /crm-thread-preview--\{0\}--\{1\}/)
+  assert.match(launcher, /\$properties\.threadPreview = \$true/)
+  assert.match(launcher, /function Get-CrmThreadPreviewDescriptor/)
+  assert.match(launcher, /sourceCheckout = \$SourceCheckout/)
+  assert.match(launcher, /sourceFingerprint = \$SourceFingerprint/)
+  assert.match(launcher, /A prévia '\$\(\[string\]\$Spec\.runtimeId\)' pertence a outra thread/)
+  assert.match(launcher, /\[string\]\$descriptor\.state -eq 'stopped'/)
+  assert.match(launcher, /\$manifestStopped = \$null -eq \$manifest -or \[string\]\$manifest\.state -eq 'stopped'/)
+  assert.match(launcher, /\$launcherAlive = Test-CrmManifestLauncherIdentity -Manifest \$manifest/)
+  assert.match(launcher, /function Assert-CrmThreadPreviewMaterializedSource/)
+  assert.match(launcher, /fonte privada imutável/)
+  assert.match(launcher, /Get-CrmLocalSourceSnapshot[\s\S]*?-IncludeWorkingChanges/)
+  assert.match(launcher, /Sync-CrmLocalImmutableSourceRoot -TargetCommit \$targetCommit -Snapshot \$snapshot/)
+  assert.match(launcher, /function Start-CrmThreadPreviewBackgroundUpdate/)
+  assert.match(launcher, /-CrmThreadPreviewDetachedStart/)
+  assert.match(launcher, /\[switch\]\$CrmThreadPreviewStop/)
+  assert.match(launcher, /O encerramento da prévia exige -CrmRole e -CrmModule/)
+  assert.match(launcher, /\$SelectedAction -like 'Crm\*' -and \$SelectedAction -ne 'CrmThreadPreview'/)
+  assert.match(launcher, /"CrmThreadPreview"\s*\{[\s\S]*?Show-CrmThreadPreviewMenu/)
 })
 
 test('launcher derives local auth grants from the canonical role policy', () => {

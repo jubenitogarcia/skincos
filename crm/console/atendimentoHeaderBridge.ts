@@ -8,6 +8,7 @@ export type AtendimentoHeaderOption = {
 export type AtendimentoHeaderState = {
   loading: boolean
   canManage: boolean
+  layoutExpanded: boolean
   filters: AtendimentoFilters
   units: AtendimentoHeaderOption[]
   procedures: AtendimentoHeaderOption[]
@@ -24,6 +25,7 @@ export type AtendimentoHeaderState = {
 export type AtendimentoHeaderAction =
   | { type: 'set-filter'; patch: Partial<AtendimentoFilters> }
   | { type: 'refresh' }
+  | { type: 'layout'; value: 'expandAll' | 'collapseAll' }
   | { type: 'open-import' }
   | { type: 'report' }
 
@@ -65,6 +67,7 @@ export function normalizeAtendimentoHeaderState(detail: unknown): AtendimentoHea
   return {
     loading: Boolean(payload.loading),
     canManage: Boolean(payload.canManage),
+    layoutExpanded: Boolean(payload.layoutExpanded),
     filters,
     units: normalizeOptions(payload.units),
     procedures: normalizeOptions(payload.procedures),
@@ -83,9 +86,12 @@ export function normalizeAtendimentoHeaderState(detail: unknown): AtendimentoHea
 
 export function normalizeAtendimentoHeaderAction(detail: unknown): AtendimentoHeaderAction | null {
   if (!detail || typeof detail !== 'object') return null
-  const payload = detail as { type?: unknown; action?: unknown; patch?: unknown }
+  const payload = detail as { type?: unknown; action?: unknown; patch?: unknown; value?: unknown }
   const rawType = String(payload.type || payload.action || '').trim()
   if (rawType === 'refresh') return { type: 'refresh' }
+  if (rawType === 'layout' && (payload.value === 'expandAll' || payload.value === 'collapseAll')) {
+    return { type: 'layout', value: payload.value }
+  }
   if (rawType === 'open-import') return { type: 'open-import' }
   if (rawType === 'report') return { type: 'report' }
   if (rawType === 'set-filter') {
