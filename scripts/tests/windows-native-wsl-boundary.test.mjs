@@ -81,6 +81,39 @@ test('project instructions reserve npm and Python project work for Ubuntu', () =
   assert.match(agents, /scripts\/invoke-skincos-wsl\.ps1/)
 })
 
+test('EF App unit actions select the unit in PowerShell before crossing WSL', () => {
+  const launcher = read('scripts/run-shared-codex-shortcut.ps1')
+  assert.match(launcher, /function Get-EfAppUnitOptions/)
+  assert.match(launcher, /function Select-EfAppUnitName/)
+  assert.match(launcher, /-Title \("EF App > \{0\} > Unidade" -f \$Mode\)/)
+  assert.match(launcher, /\$Mode\.Trim\(\)\.ToLowerInvariant\(\) -in @\("caixa", "cash", "agenda_delta"\)/)
+  assert.match(launcher, /\$modeEnvVars \+= "EF_UNIT_NAME=\$unitName"/)
+  assert.match(launcher, /-EnvVar \(\$efAppEnvVars \+ \$modeEnvVars \+ \$ExtraEnvVar\)/)
+})
+
+test('EF App Caixa asks for a validated date range before WSL execution', () => {
+  const launcher = read('scripts/run-shared-codex-shortcut.ps1')
+  assert.match(launcher, /function Read-EfAppCashDateRange/)
+  assert.match(launcher, /Data inicial \(DD\/MM\/AAAA; ENTER p\/ padrão:/)
+  assert.match(launcher, /Data final \(DD\/MM\/AAAA; ENTER p\/ padrão:/)
+  assert.match(launcher, /\[datetime\]::TryParseExact/)
+  assert.match(launcher, /EF_CASH_START_DATE=\$\(\$dateRange\.Start\)/)
+  assert.match(launcher, /EF_CASH_END_DATE=\$\(\$dateRange\.End\)/)
+})
+
+test('EF App prompts for absent credentials and persists them only in the private login file', () => {
+  const launcher = read('scripts/run-shared-codex-shortcut.ps1')
+  assert.match(launcher, /function Protect-EfAppLoginEnvFile/)
+  assert.match(launcher, /function Test-EfAppLoginEnvFile/)
+  assert.match(launcher, /function Save-EfAppLoginCredentials/)
+  assert.match(launcher, /Read-Host "Senha do app Espaço Facial" -AsSecureString/)
+  assert.match(launcher, /EF_LOGIN_EMAIL=\$\(\$Email\.Trim\(\)\)/)
+  assert.match(launcher, /EF_LOGIN_PASSWORD=\$passwordValue/)
+  assert.match(launcher, /Protect-EfAppLoginEnvFile -Path \$efAppLoginEnvFile/)
+  assert.match(launcher, /if \(-not \(Ensure-EfAppLoginCredentials\)\) \{\s*return\s*\}/)
+  assert.match(launcher, /"EfAppAgendaFullSync" \{\s*if \(-not \(Ensure-EfAppLoginCredentials\)\) \{ return \}/)
+})
+
 test('CRM local binds every timekeeping runtime to one operator-private key root', () => {
   const launcher = read('scripts/run-shared-codex-shortcut.ps1')
   const initializer = read('scripts/initialize-local-crm-private-bindings.ps1')
