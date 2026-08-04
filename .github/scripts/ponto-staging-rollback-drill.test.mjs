@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   loadConfig,
+  classifyIncumbentBundle,
   runStagingRollbackDrill,
   validateIncumbentProvenance,
   validateSourceEvidence,
@@ -73,6 +74,33 @@ const incumbentEvidence = {
   },
 };
 
+const coherentIncumbentEvidence = {
+  passed: true,
+  timekeeping: {
+    passed: true,
+    worker: ids.timekeeping.worker,
+    versionId: ids.timekeeping.incumbent,
+    sourceSha: "b".repeat(40),
+  },
+  identityWorkforce: {
+    passed: true,
+    worker: ids.identityWorkforce.worker,
+    versionId: ids.identityWorkforce.incumbent,
+    sourceSha: "b".repeat(40),
+  },
+  coreApi: {
+    passed: true,
+    worker: ids.coreApi.worker,
+    versionId: ids.coreApi.incumbent,
+    sourceSha: "b".repeat(40),
+  },
+  crmPages: {
+    passed: true,
+    deploymentId: ids.crmPages.incumbent,
+    sourceSha: "b".repeat(40),
+  },
+};
+
 test("configuration derives the transient release-probe key without delegated child correlations", () => {
   const idempotencyKey = "staging-idempotency-root-".repeat(2);
   const env = {
@@ -138,11 +166,25 @@ test("candidate source evidence must match the exact release SHA", () => {
   assert.equal(validateSourceEvidence(config.releaseSha, config.releaseSha), config.releaseSha);
 });
 
+test("incumbent bundle classification skips only heterogeneous or incomplete releases", () => {
+  assert.deepEqual(classifyIncumbentBundle(incumbentEvidence), {
+    coherent: false,
+    sourceShas: ["b".repeat(40), "c".repeat(40)],
+    reason: "heterogeneous-or-incomplete-release-bundle",
+  });
+  assert.deepEqual(classifyIncumbentBundle(coherentIncumbentEvidence), {
+    coherent: true,
+    sourceShas: ["b".repeat(40)],
+    reason: "coherent-release-bundle",
+  });
+});
+
 class FakeRuntime {
-  constructor(failAt = "", candidateSourceSha = config.releaseSha) {
+  constructor(failAt = "", candidateSourceSha = config.releaseSha, incumbents = incumbentEvidence) {
     this.calls = [];
     this.failAt = failAt;
     this.candidateSourceSha = candidateSourceSha;
+    this.incumbents = incumbents;
   }
 
   maybeFail(call) {
@@ -155,7 +197,7 @@ class FakeRuntime {
     return {
       moduleControl: { state: "maintenance", passed: true },
       surfaces: { passed: true },
-      incumbents: incumbentEvidence,
+      incumbents: this.incumbents,
     };
   }
 
@@ -216,11 +258,35 @@ class FakeRuntime {
     };
   }
 
+  async proveIncumbentCompatibility(_pages, _expected) {
+    const call = "incumbent:compatibility";
+    this.calls.push(call);
+    this.maybeFail(call);
+    return {
+      passed: true,
+      mode: "heterogeneous-fail-closed-health",
+      credentialsIncluded: false,
+      piiIncluded: false,
+    };
+  }
+
   async prepareFixture(label) {
     const call = `fixture:${label}:prepare`;
     this.calls.push(call);
     this.maybeFail(call);
     return { label };
+  }
+
+  async proveCandidateAffinity(_pages, expected) {
+    const call = "candidate:affinity";
+    this.calls.push(call);
+    this.maybeFail(call);
+    return {
+      passed: true,
+      sourceSha: expected.sourceSha,
+      gatewayVersionId: expected.coreVersionId,
+      timekeepingVersionId: expected.timekeepingVersionId,
+    };
   }
 
   async provisionFixture(handle) {
@@ -276,7 +342,14 @@ test("drill exercises two fresh fixtures and restores every exact candidate", as
 
   assert.equal(report.passed, true);
   assert.equal(report.functionalValidation.implemented, true);
-  assert.equal(report.functionalValidation.incumbentJourney.passed, true);
+  assert.equal(report.functionalValidation.incumbentJourney.skipped, true);
+  assert.equal(report.functionalValidation.incumbentJourney.passed, false);
+  assert.equal(report.functionalValidation.incumbentJourney.blocking, true);
+  assert.equal(report.functionalValidation.incumbentCompatibility.passed, true);
+  assert.equal(report.functionalValidation.incumbentCompatibility.mode, "heterogeneous-fail-closed-health");
+  assert.equal(report.teardown.incumbent.skipped, true);
+  assert.equal(report.teardown.incumbent.notRequired, true);
+  assert.equal(report.functionalValidation.candidateAffinity.passed, true);
   assert.equal(report.functionalValidation.candidateJourney.passed, true);
   assert.equal(report.functionalValidation.protectedCandidateContract.passed, true);
   assert.equal(report.teardown.incumbent.passed, true);
@@ -297,16 +370,14 @@ test("drill exercises two fresh fixtures and restores every exact candidate", as
     "worker:rollback:coreApi",
     "pages:rollback",
     "module:incumbent-active:active",
-    "fixture:incumbent:prepare",
-    "fixture:incumbent:provision",
-    "fixture:incumbent:journey",
-    "fixture:incumbent:teardown",
+    "incumbent:compatibility",
     "module:pre-restoration-maintenance:maintenance",
     "worker:restoration:timekeeping",
     "worker:restoration:identityWorkforce",
     "worker:restoration:coreApi",
     "pages:restoration",
     "module:candidate-active:active",
+    "candidate:affinity",
     "fixture:candidate:prepare",
     "fixture:candidate:provision",
     "fixture:candidate:contract",
@@ -316,13 +387,14 @@ test("drill exercises two fresh fixtures and restores every exact candidate", as
   ]);
 });
 
-test("an incumbent journey failure still restores candidates, validates restoration, tears down both fixtures, and fails closed", async () => {
-  const runtime = new FakeRuntime("fixture:incumbent:journey");
+test("a candidate journey failure still restores candidates, validates restoration, and fails closed", async () => {
+  const runtime = new FakeRuntime("fixture:candidate:journey");
   const report = await runStagingRollbackDrill(config, runtime);
 
   assert.equal(report.passed, false);
   assert.equal(report.restoration.passed, true);
-  assert.equal(report.teardown.incumbent.passed, true);
+  assert.equal(report.teardown.incumbent.skipped, true);
+  assert.equal(report.functionalValidation.incumbentCompatibility.passed, true);
   assert.equal(report.teardown.candidate.passed, true);
   assert.equal(report.moduleControl.finalMaintenance.passed, true);
   assert(runtime.calls.includes("worker:restoration:timekeeping"));
@@ -338,6 +410,34 @@ test("an incumbent journey failure still restores candidates, validates restorat
   assert(runtime.calls.includes("pages:failureCompensation"));
   assert.equal(runtime.calls.at(-1), "module:post-compensation-maintenance:maintenance");
   assert.equal(JSON.stringify(report).includes("sensitive provider detail"), false);
+});
+
+test("a heterogeneous incumbent compatibility smoke failure remains blocking", async () => {
+  const runtime = new FakeRuntime("incumbent:compatibility");
+  const report = await runStagingRollbackDrill(config, runtime);
+
+  assert.equal(report.passed, false);
+  assert.equal(report.functionalValidation.incumbentJourney.skipped, true);
+  assert.equal(report.functionalValidation.incumbentJourney.passed, false);
+  assert.equal(report.functionalValidation.incumbentCompatibility.passed, false);
+  assert.deepEqual(
+    report.failures.filter((failure) => failure.phase === "incumbent.compatibility").map((failure) => failure.code),
+    ["UNEXPECTED_FAILURE"],
+  );
+  assert.equal(report.failureCompensation.passed, true);
+  assert.equal(report.recovery.passed, true);
+});
+
+test("a coherent incumbent bundle receives the authenticated rollback journey", async () => {
+  const runtime = new FakeRuntime("", config.releaseSha, coherentIncumbentEvidence);
+  const report = await runStagingRollbackDrill(config, runtime);
+
+  assert.equal(report.passed, true);
+  assert.equal(report.functionalValidation.incumbentJourney.skipped, undefined);
+  assert.equal(report.functionalValidation.incumbentJourney.passed, true);
+  assert.equal(report.functionalValidation.incumbentCompatibility.attempted, false);
+  assert.equal(report.teardown.incumbent.passed, true);
+  assert(runtime.calls.includes("fixture:incumbent:journey"));
 });
 
 test("a restoration failure attempts every remaining compensation and does not open the candidate", async () => {
@@ -432,6 +532,9 @@ test("the executable and workflow retain no unimplemented hard-stop and require 
   assert.doesNotMatch(script, /createCapabilityCheck|capabilityExternalId/);
   assert.match(script, /ponto-release-probe\/v1\./);
   assert.match(script, /"x-skincos-release-probe-sig":\s*signature/);
+  assert.match(script, /incumbentCompatibility/);
+  assert.match(script, /dependencies\?\.gateway_affinity\?\.state === "healthy"/);
+  assert.match(script, /RELEASE_AFFINITY_MISMATCH/);
   assert.match(script, /createHmac\("sha256", idempotencyKey\)[\s\S]*skincos\/ponto\/release-probe\/v1[\s\S]*digest\("base64url"\)/);
   assert.match(workflow, /PONTO_IDEMPOTENCY_KEY:\s*\$\{\{\s*secrets\.PONTO_IDEMPOTENCY_KEY\s*\}\}/);
   assert.doesNotMatch(workflow, /secrets\.PONTO_RELEASE_PROBE_HMAC_KEY/);
