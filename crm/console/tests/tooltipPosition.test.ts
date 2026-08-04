@@ -26,11 +26,11 @@ describe('follow-cursor tooltip positioning', () => {
     )).toEqual({ left: 12, top: 22 })
   })
 
-  it('adds only the minimum height needed for an overly wide tooltip', () => {
+  it('wraps an overly wide tooltip before adding blank vertical space', () => {
     expect(calculateTooltipAspectAdjustment(
       { width: 240, height: 80 },
       { width: 1280, height: 800 },
-    )).toEqual({ minHeight: 120 })
+    )).toEqual({ maxWidth: 160 })
   })
 
   it('adds only the minimum width needed for an overly tall tooltip', () => {

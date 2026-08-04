@@ -27,7 +27,7 @@ const TOOLTIP_CONTENT_CLASS = "z-[1200] w-fit max-w-72 max-h-[min(32rem,calc(100
 
 type TooltipPoint = { x: number; y: number }
 type TooltipSize = { width: number; height: number }
-type TooltipAspectAdjustment = { minWidth?: number; minHeight?: number }
+type TooltipAspectAdjustment = { minWidth?: number; maxWidth?: number }
 
 function calculateTooltipAspectAdjustment(content: TooltipSize, viewport: TooltipSize): TooltipAspectAdjustment {
   if (content.width <= 0 || content.height <= 0 || viewport.width <= 0 || viewport.height <= 0) return {}
@@ -35,7 +35,7 @@ function calculateTooltipAspectAdjustment(content: TooltipSize, viewport: Toolti
   const ratio = content.width / content.height
   if (ratio > TOOLTIP_MAX_ASPECT_RATIO) {
     return {
-      minHeight: Math.min(Math.ceil(content.width / TOOLTIP_MAX_ASPECT_RATIO), Math.max(0, viewport.height - TOOLTIP_COLLISION_PADDING * 2)),
+      maxWidth: Math.min(Math.floor(content.height * TOOLTIP_MAX_ASPECT_RATIO), Math.max(0, viewport.width - TOOLTIP_COLLISION_PADDING * 2)),
     }
   }
   if (ratio < TOOLTIP_MIN_ASPECT_RATIO) {
@@ -245,9 +245,11 @@ function FollowCursorTooltipContent({
       setAspectAdjustment((current) => {
         const next = {
           minWidth: Math.max(current.minWidth || 0, requiredAdjustment.minWidth || 0) || undefined,
-          minHeight: Math.max(current.minHeight || 0, requiredAdjustment.minHeight || 0) || undefined,
+          maxWidth: requiredAdjustment.maxWidth
+            ? Math.min(current.maxWidth || Number.POSITIVE_INFINITY, requiredAdjustment.maxWidth)
+            : current.maxWidth,
         }
-        return next.minWidth === current.minWidth && next.minHeight === current.minHeight ? current : next
+        return next.minWidth === current.minWidth && next.maxWidth === current.maxWidth ? current : next
       })
     }
     updateSize()
@@ -278,7 +280,7 @@ function FollowCursorTooltipContent({
         left: `${position.left}px`,
         top: `${position.top}px`,
         minWidth: aspectAdjustment.minWidth,
-        minHeight: aspectAdjustment.minHeight,
+        maxWidth: aspectAdjustment.maxWidth,
         visibility: contentSize ? 'visible' : 'hidden',
       }}
     >
