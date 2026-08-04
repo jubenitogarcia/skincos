@@ -1385,6 +1385,8 @@ function createRealRuntime(config, env = process.env) {
       captureFailureDetail: true,
       env: {
         PONTO_STAGING_CRM_URL: origin.href,
+        PONTO_STAGING_EXPECTED_RELEASE_SHA: expected.releaseSha,
+        PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID: expected.timekeepingVersionId,
         PONTO_STAGING_FIXTURES_FILE: handle.fixturePath,
         PONTO_STAGING_REPORT_FILE: handle.journeyReportPath,
         NODE_PATH: path.resolve("crm/console/node_modules"),
