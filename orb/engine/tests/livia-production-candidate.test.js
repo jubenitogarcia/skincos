@@ -22,12 +22,16 @@ test('production candidate builder applies every Livia fail-closed patch as one 
     'token-vault-preflight',
     'accessibility-contract',
     'facebook-carousel-contract',
+    'schedule-cadence',
     'job-graph-payload-file',
     'runtime-isolation',
   ]);
   assert.equal(nodes.has('Merge Drive Result and Context'), false);
   assert.equal(nodes.has('Prepare Drive Publication Marks'), true);
   assert.equal(nodes.has('Collect Drive Publication Marks'), true);
+  assert.deepEqual(nodes.get('Schedule Trigger').parameters.rule.interval, [
+    { field: 'minutes', minutesInterval: 15 },
+  ]);
   assert.match(nodes.get('Validate Publish Token Health').parameters.command, /\. \/etc\/skincos\/orb-business\.env/);
   assert.match(nodes.get('Validate Publish Token Health').parameters.command, new RegExp(releaseRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(nodes.get('Prepare HTTP Publish Request').parameters.jsCode, /sourceMediaCount/);

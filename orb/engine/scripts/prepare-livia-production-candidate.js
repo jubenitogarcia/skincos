@@ -13,6 +13,7 @@ const { patchWorkflow: patchTokenVaultPreflight } = require('./patch-livia-token
 const { patchWorkflow: patchAccessibilityContract } = require('./patch-livia-accessibility-contract');
 const { patchWorkflow: patchFacebookCarouselContract } = require('./patch-livia-facebook-carousel-contract');
 const { patchWorkflow: patchJobGraphPayloadFile } = require('./patch-livia-job-graph-payload-file');
+const { patchWorkflow: patchScheduleCadence } = require('./patch-livia-schedule-cadence');
 const { patchResumeIdentity, validate: pinRuntimeIsolation } = require('./patch-livia-runtime-isolation');
 
 const RELEASE_ROOT_RE = /^\/opt\/skincos\/releases\/[0-9a-f]{40}\/source\/orb\/engine$/;
@@ -38,6 +39,7 @@ function buildCandidate(workflow, releaseRoot) {
   candidate = patchTokenVaultPreflight(candidate, releaseRoot);
   candidate = patchAccessibilityContract(candidate);
   candidate = patchFacebookCarouselContract(candidate);
+  candidate = patchScheduleCadence(candidate);
   candidate = patchJobGraphPayloadFile(candidate, releaseRoot);
   const semanticResumeNodes = patchResumeIdentity(candidate);
   const runtimeNodes = pinRuntimeIsolation(candidate, releaseRoot);
@@ -52,6 +54,7 @@ function buildCandidate(workflow, releaseRoot) {
         'token-vault-preflight',
         'accessibility-contract',
         'facebook-carousel-contract',
+        'schedule-cadence',
         'job-graph-payload-file',
         'runtime-isolation',
       ],
