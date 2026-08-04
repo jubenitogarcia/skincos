@@ -311,6 +311,37 @@ function TooltipContent({
   return <FollowCursorTooltipContent id={context.id} cursor={context.cursor} className={className} pinned={context.pinned} onClose={context.close}>{children}</FollowCursorTooltipContent>
 }
 
+function TooltipAspectSurface({
+  className,
+  style,
+  children,
+  ...props
+}: ComponentProps<'div'>) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [aspectAdjustment, setAspectAdjustment] = useState<TooltipAspectAdjustment>({})
+
+  useLayoutEffect(() => {
+    const element = contentRef.current
+    if (!element) return
+    const updateSize = () => {
+      const bounds = element.getBoundingClientRect()
+      const requiredAdjustment = calculateTooltipAspectAdjustment(
+        { width: bounds.width, height: bounds.height },
+        { width: typeof window === 'undefined' ? 0 : window.innerWidth, height: typeof window === 'undefined' ? 0 : window.innerHeight },
+      )
+      setAspectAdjustment((current) => current.minWidth === requiredAdjustment.minWidth && current.maxWidth === requiredAdjustment.maxWidth
+        ? current
+        : requiredAdjustment)
+    }
+    updateSize()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateSize)
+    observer?.observe(element)
+    return () => observer?.disconnect()
+  }, [children, className])
+
+  return <div ref={contentRef} className={className} style={{ ...style, ...aspectAdjustment }} {...props}>{children}</div>
+}
+
 function TooltipCopy({ label, description }: { label: ReactNode; description?: ReactNode }) {
   return (
     <div className="space-y-1">
@@ -410,6 +441,7 @@ export {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
+  TooltipAspectSurface,
   TooltipProvider,
   TooltipCopy,
   TooltipLabel,
