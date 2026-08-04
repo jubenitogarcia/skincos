@@ -1079,11 +1079,14 @@ function createRealRuntime(config, env = process.env) {
     const capture = (code, fn, fallback = []) => {
       try { return fn(); } catch { failures.push(code); return fallback; }
     };
+    const requestIds = Array.from(new Set(fixture.teardownRequestIds || []))
+      .filter((requestId) => /^[A-Za-z0-9._:-]{1,180}$/.test(String(requestId)));
+    const requestIdList = requestIds.length ? requestIds.map(sql).join(",") : "''";
     const coreBeforeSql = `SELECT COUNT(*) AS audit_count FROM audit_log WHERE entity='staging_synthetic_ponto' AND entity_id=${sql(fixture.username)};`;
     const timekeepingBeforeSql = `SELECT
       (SELECT id FROM workforce_employees WHERE canonical_employee_id=${sql(`identity:${fixture.onboardingId}`)} LIMIT 1) AS identity_employee_id,
       (SELECT GROUP_CONCAT(id) FROM timekeeping_events WHERE employee_id=${sql(fixture.employeeId)}) AS event_ids,
-      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE actor_id=${sql(fixture.username)} OR (actor_id='identity-service' AND after_json LIKE ${sql(`%"onboardingId":"${fixture.onboardingId}"%`)})) AS audit_count;`;
+      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count;`;
     coreBefore = capture("CORE_PRE_TEARDOWN_QUERY_FAILED", () => d1Rows(
       config.coreDatabase,
       "inventory/wrangler.toml",
@@ -1125,12 +1128,9 @@ function createRealRuntime(config, env = process.env) {
     const eventIds = String(timekeepingBefore[0]?.event_ids || "")
       .split(",")
       .filter((id) => UUID.test(id));
-    const requestIds = Array.from(new Set(handle.fixture.teardownRequestIds || []))
-      .filter((requestId) => /^[A-Za-z0-9._:-]{1,180}$/.test(String(requestId)));
     const employeeIds = [fixture.employeeId, ...(UUID.test(identityEmployeeId) ? [identityEmployeeId] : [])];
     const employeeList = employeeIds.map(sql).join(",");
     const eventList = eventIds.length ? eventIds.map(sql).join(",") : "''";
-    const requestIdList = requestIds.length ? requestIds.map(sql).join(",") : "''";
     const coreAfterSql = `SELECT
       (SELECT COUNT(*) FROM crm_users WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS users,
       (SELECT COUNT(*) FROM crm_identity_sessions WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS sessions,
@@ -1152,7 +1152,7 @@ function createRealRuntime(config, env = process.env) {
       (SELECT COUNT(*) FROM timekeeping_request_nonces WHERE request_id IN (${requestIdList})) AS request_nonces,
       (SELECT COUNT(*) FROM workforce_departments WHERE normalized_name=${sql(fixture.onboardingDepartment.toLowerCase())}) AS departments,
       (SELECT COUNT(*) FROM timekeeping_unit_presence_policies WHERE unit_id=${sql(fixture.unitId)} AND updated_by=${sql(`${fixture.prefix}:presence-policy`)}) AS policies,
-      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE actor_id=${sql(fixture.username)} OR (actor_id='identity-service' AND after_json LIKE ${sql(`%"onboardingId":"${fixture.onboardingId}"%`)})) AS audit_count;`;
+      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count;`;
     coreAfter = capture("CORE_POST_TEARDOWN_QUERY_FAILED", () => d1Rows(
       config.coreDatabase,
       "inventory/wrangler.toml",
