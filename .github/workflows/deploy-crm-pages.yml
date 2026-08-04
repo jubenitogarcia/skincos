@@ -684,7 +684,7 @@ jobs:
             || !headers.includes(`x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`)
             || !headers.includes("x-skincos-pages-environment: staging")
           ) process.exit(2);
-NODE
+          NODE
               if [[ "$proxy_status" == "0" ]]; then proxy_attested=true; break; fi
               [[ "$proxy_status" == "2" ]] || exit "$proxy_status"
             elif [[ "$http_status" != "404" && "$http_status" != "000" ]]; then
