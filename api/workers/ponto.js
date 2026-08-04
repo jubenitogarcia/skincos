@@ -13,6 +13,15 @@ const invalidConfiguration = () => new Response(
     },
 );
 
+const TIMEKEEPING_READ_TIMEOUT_MS = 3_000;
+const TIMEKEEPING_WRITE_TIMEOUT_MS = 5_000;
+
+function timekeepingTimeout(request) {
+    return ['GET', 'HEAD'].includes(request.method)
+        ? TIMEKEEPING_READ_TIMEOUT_MS
+        : TIMEKEEPING_WRITE_TIMEOUT_MS;
+}
+
 const handlePontoCoreRequest = createGatewayHandler({
     // The route-only guard makes this handler unreachable. Keeping an explicit
     // fail-closed implementation also prevents a future router refactor from
@@ -31,7 +40,7 @@ const handlePontoCoreRequest = createGatewayHandler({
         prepareTimekeepingRequest(request, env),
         env,
         'TIMEKEEPING',
-        { timeoutMs: 800 },
+        { timeoutMs: timekeepingTimeout(request) },
     ),
 });
 
