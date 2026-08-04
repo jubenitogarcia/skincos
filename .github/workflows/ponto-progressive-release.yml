@@ -1139,6 +1139,63 @@ jobs:
           gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
             --name "module-transition-timekeeping-staging-active-$GITHUB_RUN_ID" \
             --dir "$PONTO_ARTIFACT_DIR/module-transitions/staging-active"
+      - name: Prove exact staging Pages-to-Timekeeping affinity before authenticated journey
+        if: inputs.stage == 'staging'
+        run: |
+          set -euo pipefail
+          pages_url="$(node -e "process.stdout.write(require(process.argv[1]).url)" "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json")"
+          timekeeping_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/timekeeping/surface.json")"
+          core_id="$(node -e "process.stdout.write(require(process.argv[1]).candidateVersionId)" "$PONTO_ARTIFACT_DIR/surfaces/core/surface.json")"
+          [[ "$pages_url" =~ ^https://[a-z0-9-]+\.skincos-staging\.pages\.dev/?$ ]] || { echo 'staging Pages affinity probe requires the immutable Pages origin'; exit 1; }
+          [[ "$timekeeping_id" =~ ^[0-9a-fA-F-]{36}$ && "$core_id" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'staging Pages affinity probe requires exact Worker version identities'; exit 1; }
+          affinity_attested=false
+          for attempt in {1..36}; do
+            http_status="000"
+            curl_status=0
+            http_status="$(curl --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
+              --connect-timeout 10 --max-time 30 \
+              --dump-header "$RUNNER_TEMP/staging-affinity.headers" \
+              --output "$RUNNER_TEMP/staging-affinity.json" \
+              --write-out '%{http_code}' \
+              "${pages_url%/}/api/ponto/health?staging_affinity_probe=$GITHUB_RUN_ID" \
+            )" || curl_status=$?
+            if [[ "$http_status" == "200" && "$curl_status" == "0" ]]; then
+              affinity_status=0
+              RELEASE_SHA="$RELEASE_SHA" \
+              TIMEKEEPING_VERSION_ID="$timekeeping_id" \
+              CORE_VERSION_ID="$core_id" \
+              node - "$RUNNER_TEMP/staging-affinity.json" "$RUNNER_TEMP/staging-affinity.headers" <<'NODE' || affinity_status=$?
+          const fs = require("fs");
+          let body;
+          try {
+            body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          } catch {
+            process.exit(2);
+          }
+          const headers = fs.readFileSync(process.argv[3], "utf8").toLowerCase();
+          if (!body || typeof body !== "object") process.exit(2);
+          const required = [
+            `x-skincos-pages-release-sha: ${process.env.RELEASE_SHA}`,
+            "x-skincos-pages-environment: staging",
+            `x-skincos-gateway-release-sha: ${process.env.RELEASE_SHA}`,
+            "x-skincos-gateway-environment: staging",
+            `x-skincos-gateway-version-id: ${process.env.CORE_VERSION_ID}`,
+            `x-skincos-timekeeping-release-sha: ${process.env.RELEASE_SHA}`,
+            "x-skincos-timekeeping-environment: staging",
+            `x-skincos-timekeeping-version-id: ${process.env.TIMEKEEPING_VERSION_ID}`,
+          ];
+          if (required.some((value) => !headers.includes(value.toLowerCase()))) process.exit(2);
+          NODE
+              if [[ "$affinity_status" == "0" ]]; then affinity_attested=true; break; fi
+              [[ "$affinity_status" == "2" ]] || exit "$affinity_status"
+            elif [[ "$http_status" != "404" && "$http_status" != "502" && "$http_status" != "503" && "$http_status" != "504" && "$http_status" != "000" ]]; then
+              echo "staging Pages affinity probe returned HTTP $http_status"
+              exit 1
+            fi
+            if [[ "$attempt" != 36 ]]; then sleep 5; fi
+          done
+          [[ "$affinity_attested" == true ]] || { echo 'Unable to attest exact staging Pages-to-Timekeeping affinity before the authenticated journey'; exit 1; }
+          rm -f "$RUNNER_TEMP/staging-affinity.json" "$RUNNER_TEMP/staging-affinity.headers"
       - name: Execute authenticated synthetic staging journey
         id: staging_journey
         if: inputs.stage == 'staging'

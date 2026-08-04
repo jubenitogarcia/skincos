@@ -737,3 +737,19 @@ test("Ponto staging Pages resolves and compensates candidates from the API inven
   assert.doesNotMatch(block, /ponto-wrangler-output\.mjs/);
   assert.match(block, /PAGES_STAGING_CANDIDATE_DEPLOYMENT_ID=\$candidate_id/);
 });
+
+test("staging waits for exact Pages-to-Timekeeping affinity before the authenticated journey", () => {
+  const source = workflow("ponto-progressive-release.yml");
+  const start = source.indexOf("- name: Prove exact staging Pages-to-Timekeeping affinity before authenticated journey");
+  const end = source.indexOf("- name: Execute authenticated synthetic staging journey", start);
+  assert.ok(start >= 0 && end > start, "staging affinity probe block is absent or misplaced");
+  const block = source.slice(start, end);
+  assert.match(block, /for attempt in \{1\.\.36\}; do/);
+  assert.match(block, /\/api\/ponto\/health\?staging_affinity_probe=\$GITHUB_RUN_ID/);
+  assert.match(block, /x-skincos-pages-release-sha/);
+  assert.match(block, /x-skincos-gateway-version-id/);
+  assert.match(block, /x-skincos-timekeeping-release-sha/);
+  assert.match(block, /x-skincos-timekeeping-version-id/);
+  assert.match(block, /Unable to attest exact staging Pages-to-Timekeeping affinity/);
+  assert.doesNotMatch(block, /PONTO_IDEMPOTENCY_KEY/);
+});
