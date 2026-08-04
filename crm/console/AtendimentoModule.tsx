@@ -52,7 +52,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Switch } from '@/switch'
-import { TooltipLabel } from '@/tooltip'
+import { TooltipAspectSurface, TooltipLabel } from '@/tooltip'
 import {
   calculateAtendimentoValue,
   DEFAULT_ATENDIMENTO_FILTERS,
@@ -469,20 +469,24 @@ function metricProgressClass(tone: AtendimentoMetricTone) {
 }
 
 const TOOLTIP_FORMULA_LABELS: Record<string, string> = {
-  linha_corte_diária: 'linha de corte diária',
-  intervalo_diário: 'intervalo diário',
-  desvio_padrão_amostral: 'desvio padrão amostral',
-  produção_diária: 'produção diária',
-  multiplicador_otimizado: 'multiplicador otimizado',
-  média_diária: 'média diária',
-  mediana_diária: 'mediana diária',
-  meta_diária: 'meta diária',
-  meta_periodo: 'meta do período',
-  dias_trabalhados_periodo: 'dias trabalhados no período',
-  doutores_elegíveis: 'doutores elegíveis',
-  limite_inferior: 'limite inferior',
-  limite_superior: 'limite superior',
-  linha_corte: 'linha de corte',
+  linha_corte_diária: 'Linha Corte',
+  intervalo_diário: 'Intervalo',
+  desvio_padrão_amostral: 'Desvio Padrão',
+  produção_diária: 'Produção',
+  multiplicador_otimizado: 'Multiplicador Otimizado',
+  média_diária: 'Média',
+  mediana_diária: 'Mediana',
+  meta_diária: 'Meta',
+  meta_periodo: 'Meta do período',
+  dias_trabalhados_periodo: 'Dias período',
+  doutores_elegíveis: 'Doutores elegíveis',
+  limite_inferior: 'Limite Inferior',
+  limite_superior: 'Limite Superior',
+  linha_corte: 'Linha Corte',
+  level0: 'Nível 0',
+  level1: 'Nível 1',
+  level2: 'Nível 2',
+  level3: 'Nível 3',
 }
 
 function formatTooltipFormula(value: string) {
@@ -490,7 +494,16 @@ function formatTooltipFormula(value: string) {
   Object.entries(TOOLTIP_FORMULA_LABELS).forEach(([token, label]) => {
     formatted = formatted.split(token).join(label)
   })
-  formatted = formatted.replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
+  formatted = formatted
+    .replace(/_/g, ' ')
+    .replace(/\*/g, ' x ')
+    .replace(/×/g, ' x ')
+    .replace(/\//g, ' ÷ ')
+    .replace(/\bdiári(?:a|o)s?\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:)])/g, '$1')
+    .replace(/([(])\s+/g, '$1')
+    .trim()
   return formatted ? `${formatted.slice(0, 1).toLocaleUpperCase('pt-BR')}${formatted.slice(1)}` : formatted
 }
 
@@ -1996,7 +2009,7 @@ function ConversionDoctorBandsContent({
               </ComposedChart>
             </ResponsiveContainer>
             {activeDoctor && activeDoctorTooltipPosition ? createPortal(
-              <div
+              <TooltipAspectSurface
                 role="tooltip"
                 data-testid="atendimento-doctor-tooltip"
                 className="pointer-events-none fixed z-[1000] min-w-[13rem] -translate-x-1/2 -translate-y-full rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl"
@@ -2019,9 +2032,9 @@ function ConversionDoctorBandsContent({
                   {isAggregate ? <div className="flex items-center justify-between gap-3"><span>Produção</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.productionValue)}</span></div> : <div className="flex items-center justify-between gap-3"><span>Nível</span><span className="font-semibold text-white">{activeDoctor.levelLabel}</span></div>}
                   <div className="flex items-center justify-between gap-3"><span>Ranking</span><span className="font-semibold text-white">{activeDoctor.rank ? `${activeDoctor.rank}º` : '-'}</span></div>
                 </div>
-              </div>
+              </TooltipAspectSurface>
             , document.body) : activeReferenceTooltip ? createPortal(
-              <div
+              <TooltipAspectSurface
                 role="tooltip"
                 data-testid={`atendimento-reference-tooltip-${activeReferenceTooltip.key}`}
                 className="pointer-events-none fixed z-[1000] min-w-[13rem] -translate-x-1/2 -translate-y-full rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl"
@@ -2030,9 +2043,9 @@ function ConversionDoctorBandsContent({
                 <div className="font-semibold text-white">{activeReferenceTooltip.label}</div>
                 <div className="mt-1 text-sm font-semibold text-sky-100">{activeReferenceTooltip.subtitle}</div>
                 <div className="mt-1.5 text-[11px] leading-relaxed text-slate-300">{activeReferenceTooltip.description}</div>
-              </div>
+              </TooltipAspectSurface>
             , document.body) : activeBand && activeBandTooltipPosition ? createPortal(
-              <div
+              <TooltipAspectSurface
                 role="tooltip"
                 data-testid="atendimento-conversion-band-tooltip"
                 className="pointer-events-none fixed z-[1000] max-w-[15rem] -translate-x-1/2 -translate-y-full rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 text-[10px] text-slate-200 shadow-xl"
@@ -2041,7 +2054,7 @@ function ConversionDoctorBandsContent({
                 <div className="font-semibold text-white">{activeBand.visual.label}</div>
                 <div className="mt-0.5 text-slate-300">{activeBand.reason}</div>
                 <div className="mt-1 text-sky-200">Razão da faixa: {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(activeBand.proportion)}</div>
-              </div>
+              </TooltipAspectSurface>
             , document.body) : null}
           </div>
     </div>
