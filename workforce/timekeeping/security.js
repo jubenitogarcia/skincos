@@ -31,20 +31,23 @@ export function constantTimeEqual(leftValue, rightValue) {
   return diff === 0
 }
 
-export const DEFAULT_PIN_ITERATIONS = 150_000
+// Cloudflare Workers rejects PBKDF2 iteration counts above 100,000. Keep the
+// default at the platform-supported ceiling so newly issued credentials remain
+// verifiable by the deployed Worker runtime.
+export const DEFAULT_PIN_ITERATIONS = 100_000
 
 export async function hashPin(pin, iterations = DEFAULT_PIN_ITERATIONS) {
   const value = String(pin || '')
   if (!/^\d{4,12}$/.test(value)) throw new Error('PIN_INVALID')
   const salt = crypto.getRandomValues(new Uint8Array(16))
-  const baseKey = await crypto.subtle.importKey('raw', encoder.encode(value), 'PBKDF2', false, ['deriveBits'])
+  const baseKey = await crypto.subtle.importKey('raw', encoder.encode(value), { name: 'PBKDF2' }, false, ['deriveBits'])
   const derived = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, baseKey, 256)
   return { algorithm: 'PBKDF2-SHA256', iterations, saltB64: bytesToBase64Url(salt), hashB64: bytesToBase64Url(derived) }
 }
 
 export async function verifyPin(pin, credential) {
   if (!credential || credential.algorithm !== 'PBKDF2-SHA256') return false
-  const baseKey = await crypto.subtle.importKey('raw', encoder.encode(String(pin || '')), 'PBKDF2', false, ['deriveBits'])
+  const baseKey = await crypto.subtle.importKey('raw', encoder.encode(String(pin || '')), { name: 'PBKDF2' }, false, ['deriveBits'])
   const derived = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: base64UrlToBytes(credential.saltB64), iterations: Number(credential.iterations) }, baseKey, 256)
   return constantTimeEqual(bytesToBase64Url(derived), credential.hashB64)
 }

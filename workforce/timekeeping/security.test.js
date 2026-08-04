@@ -11,6 +11,15 @@ test('PIN is salted, hashed and verified without plaintext persistence', async (
   assert.equal(JSON.stringify(first).includes('123456'), false)
 })
 
+test('PIN verifier accepts the runner-compatible PBKDF2-SHA256 credential format', async () => {
+  assert.equal(await verifyPin('123456', {
+    algorithm: 'PBKDF2-SHA256',
+    iterations: 100000,
+    saltB64: 'qX2b2FrD_ZScwjei2wx5Iw',
+    hashB64: 'hSXTs45kTYPyrY7BT-xQaHjuePz-BeQXqknVzVPm25U',
+  }), true)
+})
+
 test('biometric matching rejects empty, undersized and non-finite templates', async () => {
   await assert.rejects(() => encryptTemplate([], 'unit-test-secret'), /BIOMETRIC_TEMPLATE_INVALID/)
   await assert.rejects(() => encryptTemplate(Array(64).fill(Number.NaN), 'unit-test-secret'), /BIOMETRIC_TEMPLATE_INVALID/)

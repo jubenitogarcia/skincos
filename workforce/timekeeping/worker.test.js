@@ -961,6 +961,12 @@ test('onboarding manager routing leaves missing or ambiguous superiors empty for
   assert.deepEqual(__testables.resolveOnboardingManager([{ manager_employee_id: 'manager-1', status: 'LEAVE', access_state: 'SUSPENDED' }]), { managerId: null, reason: 'MISSING' })
 })
 
+test('automatic punch idempotency stays stable after the inferred event changes', () => {
+  assert.equal(__testables.punchIdempotencyEventType({}), 'AUTO')
+  assert.equal(__testables.punchIdempotencyEventType({ type: 'IN' }), 'WORK_START')
+  assert.equal(__testables.punchIdempotencyEventType({ eventType: 'WORK_END' }), 'WORK_END')
+})
+
 test('CSV cells neutralize formulas and follow CSV quote escaping', () => {
   assert.equal(__testables.csvCell('=HYPERLINK("https://invalid.example")'), '"\'=HYPERLINK(""https://invalid.example"")"')
   assert.equal(__testables.csvCell('Pessoa "Teste"'), '"Pessoa ""Teste"""')

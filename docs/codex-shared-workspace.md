@@ -217,9 +217,16 @@ Os launchers do scraper do `app.espacofacial.com.br` também seguem esse modelo:
 
 O botão `EF App Caixa` roda em modo interativo guiado no terminal do Codex App:
 
+- apresenta a seleção de unidade no PowerShell, antes de cruzar a fronteira
+  WSL, porque o processo WSL não tem TTY garantido;
+- quando não existir um `login.env` privado completo, pede email e senha no
+  terminal Windows (a senha não aparece) e salva apenas em
+  `%LOCALAPPDATA%\Codex\skincos\espacofacial-app\login.env`, com ACL do
+  operador;
 - fixa o scraper em `EF_MODE=caixa`;
 - mantém os artefatos em `C:\CodexRuntime\operator\admin\skincos\scraper\`;
-- ainda pergunta unidade e intervalo de datas antes da exportação.
+- pergunta as datas inicial e final no terminal e repassa o período explícito;
+  `EF_DATE_RANGE_MODE` continua como fallback para automações sem o menu.
 
 ### Runtime live
 

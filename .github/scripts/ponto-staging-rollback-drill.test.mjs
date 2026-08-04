@@ -89,6 +89,7 @@ test("configuration derives the transient release-probe key without delegated ch
     PONTO_IDEMPOTENCY_KEY: idempotencyKey,
     PONTO_MODULE_CONTROL_STAGING_KV_ID: "e".repeat(32),
     PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING: "skincos-staging",
+    TIMEKEEPING_STAGING_WRANGLER_CONFIG: "/tmp/ponto-timekeeping-staging-wrangler.toml",
     RUNNER_TEMP: "/tmp",
     TIMEKEEPING_CANDIDATE_VERSION_ID: ids.timekeeping.candidate,
     TIMEKEEPING_INCUMBENT_VERSION_ID: ids.timekeeping.incumbent,
@@ -399,12 +400,16 @@ test("the executable and workflow retain no unimplemented hard-stop and require 
   const workflow = fs.readFileSync(new URL("../workflows/ponto-staging-rollback-drill.yml", import.meta.url), "utf8");
 
   assert.doesNotMatch(script, /authenticated-incumbent-rollback-harness-not-implemented|implemented:\s*false/);
+  assert.doesNotMatch(script, /after_json LIKE/);
   assert.match(workflow, /actions:\s*read/);
   assert.match(workflow, /checks:\s*write/);
   assert.match(workflow, /playwright install --with-deps chromium/);
   assert.match(workflow, /if-no-files-found:\s*error/);
   assert.match(workflow, /if:\s*always\(\)/);
   assert.match(workflow, /group:\s*ponto-surface-mutation/);
+  assert.match(workflow, /TIMEKEEPING_STAGING_WRANGLER_CONFIG/);
+  assert.match(script, /TIMEKEEPING_STAGING_WRANGLER_CONFIG/);
+  assert.match(script, /latestProductionPagesDeployment/);
   assert.doesNotMatch(workflow, /delegated-capability-broker:|INCUMBENT_DISPATCH_NONCE:|CANDIDATE_DISPATCH_NONCE:/);
   assert.doesNotMatch(workflow, /rollback_(?:incumbent|candidate)_open_lease_token/i);
   const exercise = workflow.slice(

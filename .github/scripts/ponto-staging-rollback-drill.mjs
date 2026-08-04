@@ -3,11 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { isTerminalPagesDeployment } from "./ponto-rollback-ownership.mjs";
+import {
+  isTerminalPagesDeployment,
+  latestProductionPagesDeployment,
+} from "./ponto-rollback-ownership.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{40}$/i;
 const WORKER_SURFACES = ["timekeeping", "identityWorkforce", "coreApi"];
+const STAGING_PAGES_ALIAS = "crm-staging.skincos.com.br";
 const SURFACE_SOURCE_PATTERNS = {
   timekeeping: /ponto:timekeeping:([0-9a-f]{40})/i,
   identityWorkforce: /ponto:identityWorkforce:([0-9a-f]{40})/i,
@@ -459,6 +463,7 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
   const moduleControlNamespaceId = requireValue(env, "PONTO_MODULE_CONTROL_STAGING_KV_ID").toLowerCase();
   const runnerTemp = requireValue(env, "RUNNER_TEMP");
   const pagesProject = requireValue(env, "PONTO_CLOUDFLARE_PAGES_PROJECT_STAGING");
+  const timekeepingWranglerConfig = requireValue(env, "TIMEKEEPING_STAGING_WRANGLER_CONFIG");
   const ids = {
     timekeeping: {
       worker: "skincos-timekeeping-staging",
@@ -522,6 +527,7 @@ export function loadConfig(env = process.env, argv = process.argv.slice(2)) {
     moduleControlNamespaceId,
     runnerTemp,
     pagesProject,
+    timekeepingWranglerConfig,
     ids,
     accessHeaders: accessId ? {
       "CF-Access-Client-Id": accessId,
@@ -687,11 +693,12 @@ function createRealRuntime(config, env = process.env) {
   };
   const latestPagesDeployment = async ({ allowPending = false } = {}) => {
     const deployments = await cloudflare(`${pagesPath}/deployments?env=production&per_page=25`);
-    const ordered = (Array.isArray(deployments) ? deployments : [])
-      .filter((item) => item?.environment === "production")
-      .sort((a, b) => String(b.created_on).localeCompare(String(a.created_on)));
-    if (!ordered[0]) throw new DrillFailure("PAGES_LATEST_DEPLOYMENT_MISSING");
-    return pageDetails(ordered[0], { allowPending });
+    const latest = latestProductionPagesDeployment(
+      { success: true, result: Array.isArray(deployments) ? deployments : [] },
+      { alias: STAGING_PAGES_ALIAS },
+    );
+    if (!latest) throw new DrillFailure("PAGES_LATEST_DEPLOYMENT_MISSING");
+    return pageDetails(latest, { allowPending });
   };
   const assertPagesActive = async (deploymentId, expectedSha = null) => {
     const source = await pagesDeploymentDetails(deploymentId);
@@ -907,7 +914,7 @@ function createRealRuntime(config, env = process.env) {
   };
   const provisionFixture = async (handle) => {
     d1Execute(config.coreDatabase, "inventory/wrangler.toml", ["--file", handle.coreProvisionPath], "CORE_FIXTURE_PROVISION_FAILED");
-    d1Execute(config.timekeepingDatabase, "workforce/timekeeping/wrangler.toml", ["--file", handle.timekeepingProvisionPath], "TIMEKEEPING_FIXTURE_PROVISION_FAILED");
+    d1Execute(config.timekeepingDatabase, config.timekeepingWranglerConfig, ["--file", handle.timekeepingProvisionPath], "TIMEKEEPING_FIXTURE_PROVISION_FAILED");
     return { passed: true };
   };
 
@@ -1079,11 +1086,14 @@ function createRealRuntime(config, env = process.env) {
     const capture = (code, fn, fallback = []) => {
       try { return fn(); } catch { failures.push(code); return fallback; }
     };
+    const requestIds = Array.from(new Set(fixture.teardownRequestIds || []))
+      .filter((requestId) => /^[A-Za-z0-9._:-]{1,180}$/.test(String(requestId)));
+    const requestIdList = requestIds.length ? requestIds.map(sql).join(",") : "''";
     const coreBeforeSql = `SELECT COUNT(*) AS audit_count FROM audit_log WHERE entity='staging_synthetic_ponto' AND entity_id=${sql(fixture.username)};`;
     const timekeepingBeforeSql = `SELECT
       (SELECT id FROM workforce_employees WHERE canonical_employee_id=${sql(`identity:${fixture.onboardingId}`)} LIMIT 1) AS identity_employee_id,
       (SELECT GROUP_CONCAT(id) FROM timekeeping_events WHERE employee_id=${sql(fixture.employeeId)}) AS event_ids,
-      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE actor_id=${sql(fixture.username)} OR (actor_id='identity-service' AND after_json LIKE ${sql(`%"onboardingId":"${fixture.onboardingId}"%`)})) AS audit_count;`;
+      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count;`;
     coreBefore = capture("CORE_PRE_TEARDOWN_QUERY_FAILED", () => d1Rows(
       config.coreDatabase,
       "inventory/wrangler.toml",
@@ -1091,7 +1101,7 @@ function createRealRuntime(config, env = process.env) {
     ));
     timekeepingBefore = capture("TIMEKEEPING_PRE_TEARDOWN_QUERY_FAILED", () => d1Rows(
       config.timekeepingDatabase,
-      "workforce/timekeeping/wrangler.toml",
+      config.timekeepingWranglerConfig,
       timekeepingBeforeSql,
     ));
 
@@ -1107,7 +1117,7 @@ function createRealRuntime(config, env = process.env) {
     if (fs.existsSync(handle.timekeepingTeardownPath)) {
       capture("TIMEKEEPING_TEARDOWN_FAILED", () => d1Execute(
         config.timekeepingDatabase,
-        "workforce/timekeeping/wrangler.toml",
+        config.timekeepingWranglerConfig,
         ["--file", handle.timekeepingTeardownPath],
         "TIMEKEEPING_TEARDOWN_FAILED",
       ), "");
@@ -1125,12 +1135,9 @@ function createRealRuntime(config, env = process.env) {
     const eventIds = String(timekeepingBefore[0]?.event_ids || "")
       .split(",")
       .filter((id) => UUID.test(id));
-    const requestIds = Array.from(new Set(handle.fixture.teardownRequestIds || []))
-      .filter((requestId) => /^[A-Za-z0-9._:-]{1,180}$/.test(String(requestId)));
     const employeeIds = [fixture.employeeId, ...(UUID.test(identityEmployeeId) ? [identityEmployeeId] : [])];
     const employeeList = employeeIds.map(sql).join(",");
     const eventList = eventIds.length ? eventIds.map(sql).join(",") : "''";
-    const requestIdList = requestIds.length ? requestIds.map(sql).join(",") : "''";
     const coreAfterSql = `SELECT
       (SELECT COUNT(*) FROM crm_users WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS users,
       (SELECT COUNT(*) FROM crm_identity_sessions WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS sessions,
@@ -1152,7 +1159,7 @@ function createRealRuntime(config, env = process.env) {
       (SELECT COUNT(*) FROM timekeeping_request_nonces WHERE request_id IN (${requestIdList})) AS request_nonces,
       (SELECT COUNT(*) FROM workforce_departments WHERE normalized_name=${sql(fixture.onboardingDepartment.toLowerCase())}) AS departments,
       (SELECT COUNT(*) FROM timekeeping_unit_presence_policies WHERE unit_id=${sql(fixture.unitId)} AND updated_by=${sql(`${fixture.prefix}:presence-policy`)}) AS policies,
-      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE actor_id=${sql(fixture.username)} OR (actor_id='identity-service' AND after_json LIKE ${sql(`%"onboardingId":"${fixture.onboardingId}"%`)})) AS audit_count;`;
+      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count;`;
     coreAfter = capture("CORE_POST_TEARDOWN_QUERY_FAILED", () => d1Rows(
       config.coreDatabase,
       "inventory/wrangler.toml",
@@ -1160,7 +1167,7 @@ function createRealRuntime(config, env = process.env) {
     ));
     timekeepingAfter = capture("TIMEKEEPING_POST_TEARDOWN_QUERY_FAILED", () => d1Rows(
       config.timekeepingDatabase,
-      "workforce/timekeeping/wrangler.toml",
+      config.timekeepingWranglerConfig,
       timekeepingAfterSql,
     ));
 

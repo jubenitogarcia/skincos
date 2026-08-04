@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DEFAULT_PIN_ITERATIONS, hashPin } from '../security.js';
 
-const usage = 'usage: node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action provision|teardown --run-id <github-run-id> [--fixture-id <label>] --fixtures <private-json> --core-sql <sql-file> --timekeeping-sql <sql-file>';
+const usage = 'usage: node workforce/timekeeping/scripts/ponto-staging-journey-fixtures.mjs --action provision|teardown --run-id <github-run-id> [--fixture-id <label>] --fixtures <private-json> --core-sql <sql-file> --timekeeping-sql <sql-file> [--core-attestation-sql <sql-file> --timekeeping-attestation-sql <sql-file>]';
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) args.set(process.argv[index], process.argv[index + 1]);
 const action = String(args.get('--action') || '');
@@ -17,6 +17,8 @@ const fixtureId = String(args.get('--fixture-id') || '');
 const fixturesPath = args.get('--fixtures');
 const coreSqlPath = args.get('--core-sql');
 const timekeepingSqlPath = args.get('--timekeeping-sql');
+const coreAttestationSqlPath = args.get('--core-attestation-sql');
+const timekeepingAttestationSqlPath = args.get('--timekeeping-attestation-sql');
 
 if (
   !['provision', 'teardown'].includes(action)
@@ -28,6 +30,7 @@ if (
 ) {
   throw new Error(usage);
 }
+if (action === 'teardown' && Boolean(coreAttestationSqlPath) !== Boolean(timekeepingAttestationSqlPath)) throw new Error(usage);
 
 const sql = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const prefix = `stg-ponto-${runId}${fixtureId ? `-${fixtureId}` : ''}`;
@@ -156,6 +159,15 @@ if (action === 'provision') {
   const requestIdList = requestIds.length ? requestIds.map(sql).join(',') : "''";
   const eventIds = Array.from(new Set(fixture.teardownEventIds || []));
   const eventIdList = eventIds.length ? eventIds.map(sql).join(',') : "''";
+  const separateAttestation = Boolean(coreAttestationSqlPath && timekeepingAttestationSqlPath);
+  const coreAttestation = `SELECT
+      (SELECT COUNT(*) FROM crm_users WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS users,
+      (SELECT COUNT(*) FROM crm_identity_sessions WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS sessions,
+      (SELECT COUNT(*) FROM auth_attempts WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS auth_attempts,
+      (SELECT COUNT(*) FROM crm_user_prefs WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS prefs,
+      (SELECT COUNT(*) FROM crm_employee_onboarding WHERE id=${sql(fixture.onboardingId)}) AS onboarding,
+      (SELECT COUNT(*) FROM audit_log WHERE entity='staging_synthetic_ponto' AND entity_id=${sql(fixture.username)}) AS audit_count,
+      (SELECT COUNT(*) FROM audit_log WHERE entity='staging_synthetic_ponto' AND entity_id=${sql(fixture.username)} AND action='STAGING_SYNTHETIC_PONTO_TORN_DOWN') AS teardown_audit;`;
   const coreStatements = [
     `DELETE FROM crm_identity_sessions WHERE username = ${sql(fixture.username)};`,
     `DELETE FROM crm_identity_sessions WHERE username = ${sql(fixture.adminUsername)};`,
@@ -168,14 +180,7 @@ if (action === 'provision') {
     `DELETE FROM crm_users WHERE username = ${sql(fixture.adminUsername)};`,
     // Record teardown only after every operational delete above succeeded.
     audit('STAGING_SYNTHETIC_PONTO_TORN_DOWN', fixture.username, { runId, fixtureId, result: 'deleted' }),
-    `SELECT
-      (SELECT COUNT(*) FROM crm_users WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS users,
-      (SELECT COUNT(*) FROM crm_identity_sessions WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS sessions,
-      (SELECT COUNT(*) FROM auth_attempts WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS auth_attempts,
-      (SELECT COUNT(*) FROM crm_user_prefs WHERE username IN (${sql(fixture.username)},${sql(fixture.adminUsername)})) AS prefs,
-      (SELECT COUNT(*) FROM crm_employee_onboarding WHERE id=${sql(fixture.onboardingId)}) AS onboarding,
-      (SELECT COUNT(*) FROM audit_log WHERE entity='staging_synthetic_ponto' AND entity_id=${sql(fixture.username)}) AS audit_count,
-      (SELECT COUNT(*) FROM audit_log WHERE entity='staging_synthetic_ponto' AND entity_id=${sql(fixture.username)} AND action='STAGING_SYNTHETIC_PONTO_TORN_DOWN') AS teardown_audit;`,
+    ...(separateAttestation ? [] : [coreAttestation]),
   ];
   // Preserve the immutable timekeeping audit ledger. Only synthetic operational
   // records with this exact run-scoped employee/unit may be removed.
@@ -196,7 +201,7 @@ if (action === 'provision') {
     `DELETE FROM workforce_employee_unit_hierarchy WHERE employee_id = ${sql(fixture.employeeId)};`,
     `DELETE FROM workforce_employees WHERE id = ${sql(fixture.employeeId)};`,
     `DELETE FROM timekeeping_unit_presence_policies WHERE unit_id = ${sql(fixture.unitId)} AND updated_by = ${sql(`${prefix}:presence-policy`)};`,
-    `SELECT
+    ...(separateAttestation ? [] : [`SELECT
       (SELECT COUNT(*) FROM workforce_employees WHERE id=${sql(fixture.employeeId)} OR canonical_employee_id=${sql(`identity:${fixture.onboardingId}`)}) AS employees,
       (SELECT COUNT(*) FROM timekeeping_employee_units WHERE employee_id=${sql(fixture.employeeId)}) AS employee_units,
       (SELECT COUNT(*) FROM workforce_employee_profiles WHERE employee_id=${sql(fixture.employeeId)}) AS profiles,
@@ -209,9 +214,27 @@ if (action === 'provision') {
       (SELECT COUNT(*) FROM timekeeping_request_nonces WHERE request_id IN (${requestIdList})) AS request_nonces,
       (SELECT COUNT(*) FROM workforce_departments WHERE normalized_name=${sql(fixture.onboardingDepartment.toLowerCase())}) AS departments,
       (SELECT COUNT(*) FROM timekeeping_unit_presence_policies WHERE unit_id=${sql(fixture.unitId)} AND updated_by=${sql(`${prefix}:presence-policy`)}) AS policies,
-      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE actor_id=${sql(fixture.username)} OR (actor_id='identity-service' AND after_json LIKE ${sql(`%"onboardingId":"${fixture.onboardingId}"%`)})) AS audit_count;`,
+      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count;`]),
   ];
+  const timekeepingAttestation = `SELECT
+      (SELECT COUNT(*) FROM workforce_employees WHERE id=${sql(fixture.employeeId)} OR canonical_employee_id=${sql(`identity:${fixture.onboardingId}`)}) AS employees,
+      (SELECT COUNT(*) FROM timekeeping_employee_units WHERE employee_id=${sql(fixture.employeeId)}) AS employee_units,
+      (SELECT COUNT(*) FROM workforce_employee_profiles WHERE employee_id=${sql(fixture.employeeId)}) AS profiles,
+      (SELECT COUNT(*) FROM workforce_employee_unit_hierarchy WHERE employee_id=${sql(fixture.employeeId)}) AS hierarchy,
+      (SELECT COUNT(*) FROM timekeeping_events WHERE employee_id=${sql(fixture.employeeId)}) AS events,
+      (SELECT COUNT(*) FROM timekeeping_punch_evidence WHERE event_id IN (${eventIdList})) AS evidence,
+      (SELECT COUNT(*) FROM timekeeping_corrections WHERE event_id IN (${eventIdList})) AS corrections,
+      (SELECT COUNT(*) FROM timekeeping_pin_failures WHERE employee_id=${sql(fixture.employeeId)}) AS pin_failures,
+      (SELECT COUNT(*) FROM timekeeping_pin_credentials WHERE employee_id=${sql(fixture.employeeId)}) AS pin_credentials,
+      (SELECT COUNT(*) FROM timekeeping_request_nonces WHERE request_id IN (${requestIdList})) AS request_nonces,
+      (SELECT COUNT(*) FROM workforce_departments WHERE normalized_name=${sql(fixture.onboardingDepartment.toLowerCase())}) AS departments,
+      (SELECT COUNT(*) FROM timekeeping_unit_presence_policies WHERE unit_id=${sql(fixture.unitId)} AND updated_by=${sql(`${prefix}:presence-policy`)}) AS policies,
+      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE request_id IN (${requestIdList})) AS audit_count;`;
   writeFileSync(coreSqlPath, `${coreStatements.join('\n')}\n`, { mode: 0o600 });
   writeFileSync(timekeepingSqlPath, `${timekeepingStatements.join('\n')}\n`, { mode: 0o600 });
+  if (separateAttestation) {
+    writeFileSync(coreAttestationSqlPath, `${coreAttestation}\n`, { mode: 0o600 });
+    writeFileSync(timekeepingAttestationSqlPath, `${timekeepingAttestation}\n`, { mode: 0o600 });
+  }
   console.log(JSON.stringify({ action, environment: 'staging', syntheticOperationalRecordsRemoved: true, timekeepingAuditPreserved: true }));
 }
