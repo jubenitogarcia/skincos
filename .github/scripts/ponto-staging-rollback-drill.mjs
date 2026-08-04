@@ -79,6 +79,24 @@ export function validateIncumbentProvenance(ids, evidence) {
   return validated;
 }
 
+export function classifyIncumbentBundle(evidence) {
+  const sourceShas = [
+    ...WORKER_SURFACES.map((surface) => evidence?.[surface]?.sourceSha),
+    evidence?.crmPages?.sourceSha,
+  ]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  const uniqueSourceShas = [...new Set(sourceShas)].sort();
+  const coherent = sourceShas.length === WORKER_SURFACES.length + 1
+    && uniqueSourceShas.length === 1
+    && SHA.test(uniqueSourceShas[0]);
+  return {
+    coherent,
+    sourceShas: uniqueSourceShas,
+    reason: coherent ? "coherent-release-bundle" : "heterogeneous-or-incomplete-release-bundle",
+  };
+}
+
 const versionSet = (ids, side) => ({
   timekeeping: ids.timekeeping[side],
   coreApi: ids.coreApi[side],
@@ -110,6 +128,7 @@ const baseReport = (config) => ({
   functionalValidation: {
     implemented: true,
     incumbentJourney: { attempted: false, passed: false },
+    candidateAffinity: { attempted: false, passed: false },
     protectedCandidateContract: { attempted: false, passed: false },
     candidateJourney: { attempted: false, passed: false },
   },
@@ -186,12 +205,28 @@ async function validateFixture({
 }) {
   let handle;
   let fixtureReady = false;
-  try {
-    handle = await runtime.prepareFixture(label);
-    await runtime.provisionFixture(handle);
-    fixtureReady = true;
-  } catch (error) {
-    recordFailure(report, `${label}.provision`, error);
+  let affinityReady = !includeProtectedContract;
+  if (includeProtectedContract) {
+    report.functionalValidation.candidateAffinity.attempted = true;
+    try {
+      report.functionalValidation.candidateAffinity = {
+        attempted: true,
+        ...await runtime.proveCandidateAffinity(pages, expected),
+      };
+      affinityReady = report.functionalValidation.candidateAffinity.passed === true;
+    } catch (error) {
+      recordFailure(report, "candidate.affinity", error);
+    }
+  }
+
+  if (affinityReady) {
+    try {
+      handle = await runtime.prepareFixture(label);
+      await runtime.provisionFixture(handle);
+      fixtureReady = true;
+    } catch (error) {
+      recordFailure(report, `${label}.provision`, error);
+    }
   }
 
   if (fixtureReady && includeProtectedContract) {
@@ -245,6 +280,7 @@ export async function runStagingRollbackDrill(config, runtime) {
   try {
     const preflight = await runtime.attestInitialState(config);
     const incumbents = validateIncumbentProvenance(config.ids, preflight.incumbents);
+    const incumbentBundle = classifyIncumbentBundle(incumbents);
     report.preflight = {
       attempted: true,
       passed: true,
@@ -252,6 +288,21 @@ export async function runStagingRollbackDrill(config, runtime) {
       surfaces: preflight.surfaces,
       incumbents,
     };
+    if (!incumbentBundle.coherent) {
+      report.functionalValidation.incumbentJourney = {
+        attempted: false,
+        passed: true,
+        skipped: true,
+        reason: incumbentBundle.reason,
+        sourceShas: incumbentBundle.sourceShas,
+      };
+      report.teardown.incumbent = {
+        attempted: false,
+        passed: true,
+        skipped: true,
+        reason: incumbentBundle.reason,
+      };
+    }
   } catch (error) {
     recordFailure(report, "preflight", error);
   }
@@ -283,7 +334,7 @@ export async function runStagingRollbackDrill(config, runtime) {
         recordFailure(report, "module-control.incumbent-active", error);
       }
 
-      if (report.moduleControl.incumbentActive.passed) {
+      if (report.moduleControl.incumbentActive.passed && !report.functionalValidation.incumbentJourney.skipped) {
         await validateFixture({
           label: "incumbent",
           pages: rollbackPages,
@@ -376,6 +427,7 @@ export async function runStagingRollbackDrill(config, runtime) {
     && report.moduleControl.preRestorationMaintenance.passed
     && report.restoration.passed
     && report.moduleControl.candidateActive.passed
+    && report.functionalValidation.candidateAffinity.passed
     && report.functionalValidation.protectedCandidateContract.passed
     && report.functionalValidation.candidateJourney.passed
     && report.teardown.candidate.passed
@@ -987,6 +1039,68 @@ function createRealRuntime(config, env = process.env) {
     );
     return { surfaces, pages };
   };
+  const proveCandidateAffinity = async (pages, expected) => {
+    const origin = new URL(pages?.url || "");
+    if (
+      origin.protocol !== "https:"
+      || !origin.hostname.endsWith(".skincos-staging.pages.dev")
+      || origin.pathname !== "/"
+      || origin.search
+      || origin.hash
+      || expected.sourceSha !== config.releaseSha
+    ) throw new DrillFailure("PAGES_AFFINITY_EXPECTATION_INVALID");
+
+    const expectedHeaders = {
+      "x-skincos-pages-release-sha": expected.sourceSha,
+      "x-skincos-pages-environment": "staging",
+      "x-skincos-gateway-release-sha": expected.sourceSha,
+      "x-skincos-gateway-environment": "staging",
+      "x-skincos-gateway-version-id": expected.coreVersionId,
+      "x-skincos-timekeeping-release-sha": expected.sourceSha,
+      "x-skincos-timekeeping-environment": "staging",
+      "x-skincos-timekeeping-version-id": expected.timekeepingVersionId,
+    };
+    let lastStatus = 0;
+    for (let attempt = 1; attempt <= 36; attempt += 1) {
+      const probe = new URL("/api/ponto/health", origin);
+      probe.searchParams.set("staging_rollback_affinity_probe", `${config.runId}-${attempt}`);
+      try {
+        const response = await fetch(probe, {
+          redirect: "manual",
+          signal: AbortSignal.timeout(30_000),
+          headers: {
+            accept: "application/json",
+            "cache-control": "no-cache",
+            ...config.accessHeaders,
+          },
+        });
+        lastStatus = response.status;
+        if (response.status === 200) {
+          const matched = Object.entries(expectedHeaders).every(([name, value]) =>
+            String(response.headers.get(name) || "").trim().toLowerCase() === String(value).toLowerCase());
+          if (matched) {
+            return {
+              passed: true,
+              attempts: attempt,
+              status: response.status,
+              sourceSha: expected.sourceSha,
+              gatewayVersionId: expected.coreVersionId,
+              timekeepingVersionId: expected.timekeepingVersionId,
+              credentialsIncluded: false,
+              piiIncluded: false,
+            };
+          }
+        } else if (![404, 429, 502, 503, 504].includes(response.status) && response.status < 500) {
+          throw new DrillFailure("PAGES_AFFINITY_UNEXPECTED_STATUS");
+        }
+      } catch (error) {
+        if (error instanceof DrillFailure && error.code === "PAGES_AFFINITY_UNEXPECTED_STATUS") throw error;
+        lastStatus = 0;
+      }
+      if (attempt < 36) await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+    throw new DrillFailure(`PAGES_TIMEKEEPING_AFFINITY_FAILED_${lastStatus || "FETCH"}`);
+  };
   const sanitizedJourney = (raw, expected, controlPlane) => {
     const report = JSON.parse(raw);
     const navigation = report?.navigation || {};
@@ -1378,6 +1492,7 @@ function createRealRuntime(config, env = process.env) {
     runJourney,
     verifyProtectedContract,
     teardownFixture,
+    proveCandidateAffinity,
   };
 }
 
