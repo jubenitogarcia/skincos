@@ -753,3 +753,16 @@ test("staging waits for exact Pages-to-Timekeeping affinity before the authentic
   assert.match(block, /Unable to attest exact staging Pages-to-Timekeeping affinity/);
   assert.doesNotMatch(block, /PONTO_IDEMPOTENCY_KEY/);
 });
+
+test("staging retries the protected Identity contract during bounded propagation", () => {
+  const source = workflow("timekeeping-staging-journey.yml");
+  const start = source.indexOf("- name: Prove exact Identity candidate through the protected Pages binding");
+  const end = source.indexOf("- name: Execute authenticated Ponto journey", start);
+  assert.ok(start >= 0 && end > start, "protected Identity contract block is absent or misplaced");
+  const block = source.slice(start, end);
+  assert.match(block, /const maxAttempts = 36/);
+  assert.match(block, /for \(let attempt = 1; attempt <= maxAttempts; attempt \+= 1\)/);
+  assert.match(block, /protected staging Identity contract did not match the exact release after bounded propagation/);
+  assert.match(block, /lastObservation/);
+  assert.match(block, /sessionTeardownProven/);
+});
