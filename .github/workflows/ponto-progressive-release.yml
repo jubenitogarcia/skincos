@@ -1289,10 +1289,23 @@ jobs:
             "$PONTO_ARTIFACT_DIR/surfaces/pages/surface.json" <<'NODE'
           const fs = require("fs");
           const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const incumbentJourney = value.functionalValidation?.incumbentJourney;
+          const incumbentCompatibility = value.functionalValidation?.incumbentCompatibility;
+          const incumbentEvidencePassed = incumbentJourney?.passed === true
+            || (
+              incumbentJourney?.passed === false
+              && incumbentJourney?.skipped === true
+              && incumbentJourney?.blocking === true
+              && incumbentCompatibility?.passed === true
+              && incumbentCompatibility?.mode === "heterogeneous-fail-closed-health"
+              && incumbentCompatibility?.credentialsIncluded === false
+              && incumbentCompatibility?.piiIncluded === false
+            );
           if (
             value.releaseSha !== process.env.RELEASE_SHA
             || value.orchestratorRunId !== process.env.GITHUB_RUN_ID
             || value.passed !== true
+            || incumbentEvidencePassed !== true
             || value.credentialsIncluded !== false
             || value.piiIncluded !== false
             || value.recovery?.disposition !== "candidate-restored-under-maintenance"
