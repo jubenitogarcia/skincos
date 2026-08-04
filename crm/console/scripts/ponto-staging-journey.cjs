@@ -15,6 +15,10 @@ const validatedStagingOrigin = (value) => {
   return candidate
 }
 const base = validatedStagingOrigin(process.env.PONTO_STAGING_CRM_URL)
+const expectedReleaseSha = String(process.env.PONTO_STAGING_EXPECTED_RELEASE_SHA || '').trim().toLowerCase()
+const expectedTimekeepingVersionId = String(process.env.PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID || '').trim().toLowerCase()
+if (!/^[0-9a-f]{40}$/.test(expectedReleaseSha)) throw new Error('PONTO_STAGING_EXPECTED_RELEASE_SHA must be a full lowercase release SHA')
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(expectedTimekeepingVersionId)) throw new Error('PONTO_STAGING_EXPECTED_TIMEKEEPING_VERSION_ID must be a Cloudflare version UUID')
 const validatedApiPath = (value) => {
   const localOrigin = 'https://ponto-journey.invalid'
   const candidate = new URL(String(value), localOrigin)
@@ -66,6 +70,39 @@ const recordCleanupEvent = (eventId) => {
   assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value), 'mutation response omitted a safe cleanup event id')
   fixture.teardownEventIds = Array.from(new Set([...(fixture.teardownEventIds || []), value]))
   fs.writeFileSync(fixturePath, JSON.stringify(fixture), { mode: 0o600 })
+}
+const waitForCandidateAffinity = async (page, runId) => {
+  let last = null
+  for (let attempt = 1; attempt <= 36; attempt += 1) {
+    last = await api(page, `/api/ponto/health?staging_journey_affinity_probe=${encodeURIComponent(`${runId}-${attempt}`)}`)
+    const payload = last.json || {}
+    const gatewayVersionId = String(payload.versionMetadata?.gatewayVersionId || '').trim().toLowerCase()
+    const exact = last.status === 200
+      && payload.ok === true
+      && payload.ready === true
+      && payload.service === 'workforce-timekeeping'
+      && payload.unit === 'timekeeping'
+      && payload.environment === 'staging'
+      && payload.database === true
+      && payload.dependencies?.module_control?.state === 'healthy'
+      && payload.dependencies?.gateway_affinity?.state === 'healthy'
+      && String(payload.versionMetadata?.releaseSha || '').trim().toLowerCase() === expectedReleaseSha
+      && String(payload.versionMetadata?.workerVersionId || '').trim().toLowerCase() === expectedTimekeepingVersionId
+      && String(payload.versionMetadata?.gatewayReleaseSha || '').trim().toLowerCase() === expectedReleaseSha
+      && String(payload.versionMetadata?.gatewayEnvironment || '').trim().toLowerCase() === 'staging'
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(gatewayVersionId)
+      && gatewayVersionId === last.gatewayVersionId
+      && last.pagesReleaseSha === expectedReleaseSha
+      && last.pagesEnvironment === 'staging'
+      && last.gatewayReleaseSha === expectedReleaseSha
+      && last.gatewayEnvironment === 'staging'
+      && last.timekeepingReleaseSha === expectedReleaseSha
+      && last.timekeepingEnvironment === 'staging'
+      && last.timekeepingVersionId === expectedTimekeepingVersionId
+    if (exact) return { attempts: attempt, status: last.status }
+    if (attempt < 36) await new Promise((resolve) => setTimeout(resolve, 5_000))
+  }
+  throw new Error(`candidate Timekeeping affinity did not converge (${last?.status || 'FETCH'})`)
 }
 // The browser stays on the validated staging origin and calls only literal,
 // same-origin routes below.
@@ -166,6 +203,8 @@ async function main() {
     assert(presence.status === 200 && presence.json?.data?.presenceMode === 'FLEXIBLE', `synthetic presence policy unavailable (${presence.status})`)
     const before = await api(page, `/api/ponto/me/records?unit=${encodeURIComponent(fixture.unitId)}&limit=20`)
     assert(before.status === 200 && Array.isArray(before.json?.data) && before.json.data.length === 0, 'synthetic employee was not clean before punch')
+
+    await waitForCandidateAffinity(page, fixture.runId)
 
     const invalidPin = await post(page, '/api/ponto/me/punch', { pin: '000000', unit: fixture.unitId }, `invalid-${fixtureKey}`)
     recordCleanupRequest(invalidPin)
