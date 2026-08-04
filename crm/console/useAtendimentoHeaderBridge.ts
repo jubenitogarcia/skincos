@@ -7,6 +7,7 @@ type HeaderOption = { value: string; label: string }
 type UseAtendimentoHeaderBridgeOptions = {
   loading: boolean
   canManage: boolean
+  layoutExpanded: boolean
   filters: AtendimentoFilters
   units: HeaderOption[]
   procedures: HeaderOption[]
@@ -22,6 +23,7 @@ type UseAtendimentoHeaderBridgeOptions = {
   refreshManagement: (options?: { force?: boolean }) => void | Promise<void>
   openImport: () => void
   openReport: () => void | Promise<void>
+  updateLayout: (value: 'expandAll' | 'collapseAll') => void
   updateFilters: (patch: Partial<AtendimentoFilters>) => void
 }
 
@@ -29,6 +31,7 @@ type UseAtendimentoHeaderBridgeOptions = {
 export function useAtendimentoHeaderBridge({
   loading,
   canManage,
+  layoutExpanded,
   filters,
   units,
   procedures,
@@ -44,12 +47,14 @@ export function useAtendimentoHeaderBridge({
   refreshManagement,
   openImport,
   openReport,
+  updateLayout,
   updateFilters,
 }: UseAtendimentoHeaderBridgeOptions) {
   useEffect(() => {
     emitAtendimentoHeaderState({
       loading,
       canManage,
+      layoutExpanded,
       filters,
       units,
       procedures,
@@ -63,7 +68,7 @@ export function useAtendimentoHeaderBridge({
       total,
     })
     return () => emitAtendimentoHeaderState(null)
-  }, [activeUnitLabel, canManage, filters, injectors, latestImportLabel, loading, localMirrorDetail, localMirrorSummary, periodLabel, periodOperationalDays, procedures, total, units])
+  }, [activeUnitLabel, canManage, filters, injectors, latestImportLabel, layoutExpanded, loading, localMirrorDetail, localMirrorSummary, periodLabel, periodOperationalDays, procedures, total, units])
 
   useEffect(() => subscribeAtendimentoHeaderAction((action) => {
     if (action.type === 'refresh') {
@@ -79,6 +84,10 @@ export function useAtendimentoHeaderBridge({
       void openReport()
       return
     }
+    if (action.type === 'layout') {
+      updateLayout(action.value)
+      return
+    }
     if (action.type === 'set-filter') updateFilters(action.patch)
-  }), [canManage, openImport, openReport, refresh, refreshManagement, updateFilters])
+  }), [canManage, openImport, openReport, refresh, refreshManagement, updateFilters, updateLayout])
 }

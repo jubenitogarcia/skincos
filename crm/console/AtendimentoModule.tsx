@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { DragDropContext, Draggable, Droppable, type DraggableProvidedDragHandleProps, type DropResult } from '@hello-pangea/dnd'
+import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd'
 import {
   AlertTriangle,
   AreaChart as AreaChartIcon,
@@ -9,15 +9,11 @@ import {
   BarChart3,
   Calculator,
   CalendarRange,
-  ChevronDown,
-  ChevronUp,
   Crosshair,
   Divide,
   Download,
   Eye,
-  EyeOff,
   Gauge,
-  GripVertical,
   Info,
   LineChart as LineChartIcon,
   Percent,
@@ -56,7 +52,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/select'
 import { Switch } from '@/switch'
-import { TooltipLabel } from '@/tooltip'
+import { TooltipAspectSurface, TooltipLabel } from '@/tooltip'
 import {
   calculateAtendimentoValue,
   DEFAULT_ATENDIMENTO_FILTERS,
@@ -97,6 +93,7 @@ import { AtendimentoClientAutocomplete } from '@/atendimentoClientAutocomplete'
 import { AtendimentoDatePicker } from '@/AtendimentoDatePicker'
 import { atendimentoColorWithAlpha, atendimentoProfessionalColor } from '@/atendimentoVisuals'
 import { useAtendimentoHeaderBridge } from '@/useAtendimentoHeaderBridge'
+import { PanelToggleButton } from '@/panelToggleButton'
 import { useAuth } from '@/contexts'
 import { isAtendimentoManager, normalizeCrmRole } from '@/authPolicy'
 
@@ -166,6 +163,7 @@ const ATENDIMENTO_METRIC_LAYOUT_KEY = 'skincos.atendimento.layout.metrics.v2'
 const ATENDIMENTO_CHART_LAYOUT_KEY = 'skincos.atendimento.layout.charts.v3'
 const ATENDIMENTO_ANALYSIS_EXPANDED_KEY = 'skincos.atendimento.analysis.expanded.v1'
 const ATENDIMENTO_ATTENDANCES_EXPANDED_KEY = 'skincos.atendimento.attendances.expanded.v1'
+const ATENDIMENTO_CHARTS_EXPANDED_KEY = 'skincos.atendimento.charts.expanded.v1'
 const ATTENDANCE_PAGE_SIZE = 50
 const DEFAULT_UNIT_LEGEND = [
   { slug: 'novo-hamburgo', name: 'Novo Hamburgo' },
@@ -470,15 +468,66 @@ function metricProgressClass(tone: AtendimentoMetricTone) {
         : 'bg-sky-300'
 }
 
-function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
-  if (info.details?.length) {
-    const presentation = info.detailPresentation || 'compact'
-    return (
-      <div className="space-y-2 text-left">
-        <p className="text-[11px] leading-snug text-slate-300"><span className="font-semibold text-slate-100">O que é:</span> {info.what}</p>
-        <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-slate-700/70 bg-slate-900/50 p-2 pr-1.5">
+const TOOLTIP_FORMULA_LABELS: Record<string, string> = {
+  linha_corte_diária: 'Linha Corte',
+  intervalo_diário: 'Intervalo',
+  desvio_padrão_amostral: 'Desvio Padrão',
+  produção_diária: 'Produção',
+  multiplicador_otimizado: 'Multiplicador Otimizado',
+  média_diária: 'Média',
+  mediana_diária: 'Mediana',
+  meta_diária: 'Meta',
+  meta_periodo: 'Meta do período',
+  dias_trabalhados_periodo: 'Dias período',
+  doutores_elegíveis: 'Doutores elegíveis',
+  limite_inferior: 'Limite Inferior',
+  limite_superior: 'Limite Superior',
+  linha_corte: 'Linha Corte',
+  level0: 'Nível 0',
+  level1: 'Nível 1',
+  level2: 'Nível 2',
+  level3: 'Nível 3',
+}
+
+function formatTooltipFormula(value: string) {
+  let formatted = String(value || '').trim()
+  Object.entries(TOOLTIP_FORMULA_LABELS).forEach(([token, label]) => {
+    formatted = formatted.split(token).join(label)
+  })
+  formatted = formatted
+    .replace(/_/g, ' ')
+    .replace(/\*/g, ' x ')
+    .replace(/×/g, ' x ')
+    .replace(/\//g, ' ÷ ')
+    .replace(/\bdiári(?:a|o)s?\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:)])/g, '$1')
+    .replace(/([(])\s+/g, '$1')
+    .trim()
+  return formatted ? `${formatted.slice(0, 1).toLocaleUpperCase('pt-BR')}${formatted.slice(1)}` : formatted
+}
+
+function MetricTooltipContent({
+  info,
+  compactSummary,
+}: {
+  info: MetricTooltipSpec
+  compactSummary?: string
+}) {
+  const presentation = info.detailPresentation || 'compact'
+  const formula = formatTooltipFormula(info.formula || info.calculation)
+  return (
+    <div className="space-y-2 text-left">
+      {compactSummary ? null : <p className="leading-snug text-slate-300">{info.what} {info.usage}</p>}
+      <div className="rounded-lg border border-slate-700/75 bg-slate-900/55 px-2 py-1.5">
+        <span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">Fórmula</span>
+        <span className="mt-0.5 block font-medium leading-snug text-slate-100">{formula}</span>
+      </div>
+      {info.details?.length ? <>
+        <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-700/75 bg-slate-900/45 pr-1">
+          {compactSummary ? <div className="border-b border-slate-700/60 px-2 py-1.5 text-[10px] leading-snug text-slate-400">{compactSummary}</div> : null}
           {info.details.map((detail) => (
-            <div key={`${detail.label}:${detail.value}`} className="flex min-w-0 items-center justify-between gap-3 py-1 first:pt-0 last:pb-0">
+            <div key={`${detail.label}:${detail.value}`} className="border-b border-slate-700/60 px-2 py-1.5 last:border-b-0">
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
                   {presentation === 'doctors' && detail.isProfessional ? (
@@ -507,17 +556,7 @@ function MetricTooltipContent({ info }: { info: MetricTooltipSpec }) {
             Juntos, esses componentes definem a largura das faixas: desvio padrão × multiplicador. O multiplicador é escolhido pela homogeneidade do período.
           </p>
         ) : null}
-        <p className="border-t border-slate-700/80 pt-2 text-[10px] leading-snug text-slate-400"><span className="font-semibold text-slate-200">Fórmula:</span> {info.formula || info.calculation}</p>
-        <p className="text-[10px] leading-snug text-slate-400"><span className="font-semibold text-slate-200">Uso:</span> {info.usage}</p>
-      </div>
-    )
-  }
-  return (
-    <div className="space-y-1.5 text-left leading-snug">
-      <div><span className="font-semibold text-slate-100">O que é:</span> {info.what}</div>
-      <div><span className="font-semibold text-slate-100">Fórmula:</span> {info.formula || info.calculation}</div>
-      <div><span className="font-semibold text-slate-100">Cálculo:</span> {info.calculation}</div>
-      <div><span className="font-semibold text-slate-100">Uso:</span> {info.usage}</div>
+      </> : null}
     </div>
   )
 }
@@ -577,14 +616,8 @@ function ConversionMultiplierDetails({
     optimal_singleton: 'O ótimo é um ponto isolado dentro dos limites configurados.',
     not_applicable: 'Não há dados ou variância suficientes para definir um multiplicador.',
   }
-  const selectedCounts = optimization.optimalPlateau?.counts || { level0: 0, level1: 0, level2: 0, level3: 0 }
   const status = CONVERSION_STATUS_COPY[optimization.statusCode || ''] || CONVERSION_STATUS_COPY.BEST_EFFORT
-  const selectedTotal = Math.max(0, selectedCounts.level0 + selectedCounts.level1 + selectedCounts.level2 + selectedCounts.level3)
   const selectedHomogeneity = Number(optimization.optimalPlateau?.homogeneityScore ?? optimization.homogeneityScore ?? 0)
-  const groupedDistribution = CONVERSION_DISTRIBUTION_GROUP_VISUAL.map((group) => ({
-    ...group,
-    count: group.levels.reduce((total, level) => total + selectedCounts[`level${level}` as keyof typeof selectedCounts], 0),
-  }))
   const calculationBasis = (
     <div className="mt-2 border-t border-slate-700/80 pt-2 text-[10px] text-slate-300">
       <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-500">Base da seleção</div>
@@ -633,7 +666,7 @@ function ConversionMultiplierDetails({
                       data-testid="atendimento-multiplier-info-trigger"
                       data-tooltip-pin="true"
                     >
-                      <Info className="h-3.5 w-3.5" />
+                      <Info className="h-3 w-3" />
                     </button>
                 </TooltipLabel>
               </div>
@@ -646,7 +679,7 @@ function ConversionMultiplierDetails({
             </TooltipLabel>
           </div>
           {chartData.length > 0 ? (
-            <div className="h-48 rounded-xl border border-slate-800 bg-slate-900/45 p-2" aria-label="Curva do multiplicador pela homogeneidade">
+            <div className="mx-auto h-32 w-full max-w-[26rem] rounded-xl border border-slate-800 bg-slate-900/45 p-2" aria-label="Curva do multiplicador pela homogeneidade">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 10, right: 12, left: -14, bottom: 2 }}>
                   <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
@@ -694,36 +727,6 @@ function ConversionMultiplierDetails({
           ) : (
             <div className="rounded-xl border border-amber-400/20 bg-amber-400/8 px-3 py-4 text-xs text-amber-100">Multiplicador não aplicável para este período.</div>
           )}
-          <div className="border-t border-slate-800 pt-3">
-            <div className="grid grid-cols-2 gap-1.5" data-testid="atendimento-multiplier-distribution-groups">
-              {groupedDistribution.map((group) => {
-                const proportion = selectedTotal > 0 ? group.count / selectedTotal : 0
-                const GroupIcon = group.icon
-                return (
-                  <TooltipLabel key={group.key} label={group.label} description={`${group.label}: ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(proportion)}. ${group.levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(selectedCounts[`level${level}` as keyof typeof selectedCounts])}/${formatNumberBR(selectedTotal)}`).join(' · ')}.`}>
-                    <span className="cursor-help rounded-lg border border-slate-800 bg-slate-900/45 px-2 py-1.5">
-                      <span className={`flex items-center gap-1 ${group.tone} text-[11px] font-semibold`}>
-                        <GroupIcon className="h-3 w-3" aria-hidden="true" />
-                        <span>{group.label}: {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}</span>
-                      </span>
-                      <span className="mt-1 grid gap-0.5" data-testid={`atendimento-multiplier-group-${group.key}-levels`} aria-label={`${group.label}: ${new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(proportion)}; ${group.levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(selectedCounts[`level${level}` as keyof typeof selectedCounts])}/${formatNumberBR(selectedTotal)}`).join('; ')}`}>
-                        {group.levels.map((level) => {
-                          const LevelIcon = CONVERSION_METRIC_ICON_BY_KEY[`level${level}` as ConversionMetricKey]
-                          const levelCount = selectedCounts[`level${level}` as keyof typeof selectedCounts]
-                          return (
-                            <span key={level} className={`flex items-center gap-1 ${group.tone} text-[10px] tabular-nums`}>
-                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-md border border-current/30 bg-slate-950/35"><LevelIcon className="h-2.5 w-2.5" /></span>
-                              <span>{conversionLevelVisual(level).label}: {formatNumberBR(levelCount)}/{formatNumberBR(selectedTotal)}</span>
-                            </span>
-                          )
-                        })}
-                      </span>
-                    </span>
-                  </TooltipLabel>
-                )
-              })}
-            </div>
-          </div>
     </div>
   )
 }
@@ -755,16 +758,16 @@ function MetricGroupContent({
   const renderRow = (row: AtendimentoMetricGroupRow, isChild = false, componentRows: AtendimentoMetricGroupRow[] = []) => {
     const RowIcon = row.icon
     const isDetail = row.presentation === 'detail'
-    const detailPresentation: NonNullable<MetricTooltipSpec['detailPresentation']> = row.key === 'average' || row.key === 'median'
+    const detailPresentation = row.key === 'average' || row.key === 'median'
       ? 'doctors'
       : row.key === 'interval'
         ? 'interval'
         : 'compact'
     const componentTooltip: MetricTooltipSpec | undefined = componentRows.length ? {
-      what: `Componentes usados para calcular ${row.label}.`,
-      formula: row.tooltip?.formula || row.tooltip?.calculation || row.calculation,
+      what: `Insumos que compõem ${row.label}.`,
       calculation: row.tooltip?.calculation || row.calculation || 'Confira os valores atuais de cada insumo abaixo.',
-      usage: 'Clique no subtítulo novamente para manter esta conferência aberta.',
+      formula: row.tooltip?.formula || row.tooltip?.calculation || row.calculation,
+      usage: 'Os valores atuais aparecem reunidos abaixo.',
       detailPresentation,
       details: componentRows.map((component) => ({
         label: component.label,
@@ -776,48 +779,51 @@ function MetricGroupContent({
         isProfessional: component.key.includes(':doctor:'),
       })),
     } : undefined
-    const multiplierDescription = row.key === 'conversion:distribution-details' && row.tooltip && multiplierOptimization ? (
-      <div className="space-y-3">
-        <MetricTooltipContent info={row.tooltip} />
-        <div className="border-t border-slate-700/80 pt-3">
-          <ConversionMultiplierDetails optimization={multiplierOptimization} />
-        </div>
+    const metricTooltipInfo: MetricTooltipSpec | undefined = row.tooltip ? {
+      ...row.tooltip,
+      formula: row.tooltip.formula || row.tooltip.calculation,
+      calculation: row.calculation || row.tooltip.calculation,
+      detailPresentation,
+      details: componentTooltip?.details,
+    } : componentTooltip
+    const metricTooltipDescription = metricTooltipInfo ? (
+      <div className="space-y-2">
+        <MetricTooltipContent info={metricTooltipInfo} compactSummary={row.key === 'dailyGoal' ? 'Meta do mês ÷ Dias do período.' : undefined} />
+        {row.key === 'interval' && multiplierOptimization ? (
+          <div className="border-t border-slate-700/80 pt-3">
+            <ConversionMultiplierDetails optimization={multiplierOptimization} />
+          </div>
+        ) : null}
       </div>
     ) : undefined
-    const rowTooltip = componentTooltip && row.tooltip ? {
-      ...row.tooltip,
-      details: componentTooltip.details,
-      detailPresentation,
-    } : row.tooltip
     const rowContent = (
-      <div className={`flex min-w-0 items-center gap-2 ${horizontal ? 'justify-center' : ''} ${isChild ? 'py-0.5' : ''}`}>
+      <div className={`flex min-w-0 items-start gap-2 ${horizontal ? 'justify-center' : ''} ${isChild ? 'py-0.5' : ''}`}>
         {row.avatarUrl ? (
           <img
             src={row.avatarUrl}
             alt=""
-            className="h-5 w-5 shrink-0 rounded-full border border-slate-600/90 object-cover"
+            className="mt-1 h-5 w-5 shrink-0 rounded-full border border-slate-600/90 object-cover"
             onError={(event) => { event.currentTarget.style.display = 'none' }}
           />
         ) : (
           <span
-            className={`inline-flex ${isDetail ? 'h-4 w-4' : 'h-5 w-5'} shrink-0 items-center justify-center rounded-md border ${metricToneClass(row.tone)}`}
+            className={`mt-1 inline-flex ${isDetail ? 'h-4 w-4' : 'h-5 w-5'} shrink-0 items-center justify-center rounded-md border ${metricToneClass(row.tone)}`}
             aria-hidden="true"
           >
             <RowIcon className={isDetail ? 'h-2.5 w-2.5' : 'h-3 w-3'} />
           </span>
         )}
         <div className={`min-w-0 ${horizontal ? 'flex-none' : 'flex-1'}`}>
-          <span className={`inline-flex max-w-full items-center gap-1 truncate ${isDetail ? 'text-[10px] font-medium text-slate-500' : `text-[11px] ${isChild ? 'font-medium text-slate-400' : 'font-semibold text-slate-200'}`} leading-tight`}>
-            <span className="truncate">{row.label}</span>
-            {row.tooltip ? <Info className="h-2.5 w-2.5 shrink-0 text-slate-500" /> : null}
+          <span className={`relative isolate inline-flex max-w-full items-start overflow-visible ${isDetail ? 'text-[10px] font-medium text-slate-500' : `text-[11px] ${isChild ? 'font-medium text-slate-400' : 'font-semibold text-slate-200'}`} leading-tight`}>
+            <span className="min-w-0 truncate pr-0.5">{row.label}</span>
           </span>
+          <span data-testid={`atendimento-metric-value-${row.key}`} className="mt-0.5 block truncate text-[10px] font-medium leading-tight text-slate-400">{row.value}</span>
         </div>
-        <div className={`shrink-0 ${isDetail ? 'text-[10px] font-medium text-slate-400' : `text-[11px] font-semibold ${isChild ? 'text-slate-200' : 'text-white'}`}`}>{row.value}</div>
       </div>
     )
     return (
       <div key={row.key} className="min-w-0">
-        <div className="min-w-0">{rowTooltip ? <MetricTooltip label={row.label} info={rowTooltip} description={multiplierDescription} contentClassName={multiplierDescription ? 'w-[min(34rem,calc(100vw-2rem))] max-w-none max-h-[min(32rem,calc(100vh-2rem))] overflow-y-auto' : detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'max-w-[22rem]'}>{rowContent}</MetricTooltip> : rowContent}</div>
+        <div className="min-w-0">{metricTooltipInfo ? <MetricTooltip label={row.label} info={metricTooltipDescription ? undefined : metricTooltipInfo} description={metricTooltipDescription} contentClassName={row.key === 'interval' && multiplierOptimization ? 'w-fit max-w-[min(28rem,calc(100vw-2rem))] max-h-[min(32rem,calc(100vh-2rem))] overflow-y-auto' : detailPresentation === 'doctors' ? 'max-w-[24rem]' : 'w-[min(26rem,calc(100vw-2rem))] max-w-none'}>{rowContent}</MetricTooltip> : rowContent}</div>
       </div>
     )
   }
@@ -836,7 +842,13 @@ function MetricGroupContent({
     )
   }
 
-  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${horizontal ? 'mx-auto w-full max-w-5xl grid-cols-1 sm:grid-cols-2 lg:grid-cols-4' : 'gap-1.5'}`}>{nodes.map((node) => renderNode(node))}</div>
+  const gridClassName = horizontal
+    ? nodes.length === 7
+      ? 'mx-auto w-full max-w-5xl grid-cols-1 sm:grid-cols-2 md:grid-cols-7'
+      : 'mx-auto w-full max-w-5xl grid-cols-1 sm:grid-cols-2 md:grid-cols-12'
+    : 'gap-1.5'
+
+  return <div className={`grid gap-x-3 gap-y-2 pt-0.5 ${gridClassName}`} data-testid={horizontal ? 'atendimento-conversion-metrics-grid' : undefined}>{nodes.map((node) => renderNode(node))}</div>
 }
 
 function MetricTile({
@@ -852,8 +864,6 @@ function MetricTile({
   progress,
   content,
   hideContentHeader = false,
-  dragHandleProps,
-  onHide,
   isDragging,
 }: {
   label: string
@@ -868,8 +878,6 @@ function MetricTile({
   progress?: number
   content?: React.ReactNode
   hideContentHeader?: boolean
-  dragHandleProps?: DraggableProvidedDragHandleProps | null
-  onHide?: () => void
   isDragging?: boolean
 }) {
   const toneClass = metricToneClass(tone)
@@ -892,26 +900,6 @@ function MetricTile({
       data-testid={`atendimento-kpi-${label.toLowerCase().replace(/\s+/g, '-')}`}
     >
       {loading ? <LoadingOverlay label="Atualizando" /> : null}
-      <div className="absolute right-2 top-2 z-20 flex items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
-        <button
-          type="button"
-          className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-slate-700 bg-slate-950/80 text-slate-400 hover:border-sky-400/40 hover:text-sky-100"
-          aria-label={`Mover ${label}`}
-          {...dragHandleProps}
-        >
-          <GripVertical className="h-3 w-3" />
-        </button>
-        {onHide ? (
-          <button
-            type="button"
-            className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-slate-700 bg-slate-950/80 text-slate-400 hover:border-rose-400/40 hover:text-rose-100"
-            aria-label={`Ocultar ${label}`}
-            onClick={onHide}
-          >
-            <EyeOff className="h-3 w-3" />
-          </button>
-        ) : null}
-      </div>
       <CardContent className={hideContentHeader ? 'p-0' : `${content ? 'min-h-[7.1rem]' : 'min-h-[5.05rem]'} p-2.5`}>
         <div className="flex h-full min-w-0 flex-col justify-between gap-1.5">
           {!hideContentHeader ? <div className="flex min-w-0 items-center gap-2">
@@ -1046,19 +1034,19 @@ const CONVERSION_METRIC_DEFINITIONS = [
   { key: 'rankedDoctorTotal', label: 'Total ranqueável', description: 'Subconjunto do período filtrado usado no ranking médico.', calculation: 'Soma do valor realizado dos injetores ativos elegíveis na unidade dentro do período.', usage: 'Permanece disponível internamente para auditoria de consistência do total do período.' },
   { key: 'periodAttendanceTotal', label: 'Total', description: 'Faturamento total do período filtrado.', calculation: 'Soma de todos os atendimentos da unidade/período, incluindo itens fora do ranking.', usage: 'É o total principal exibido no dashboard; o CRM mantém o total ranqueável apenas como verificação interna.' },
   { key: 'eligibleDoctorCount', label: 'Doutores elegíveis', description: 'Quantidade de injetores ativos considerados no ranking.', calculation: 'Profissionais ativos com função Injetor na unidade selecionada.', usage: 'Define o universo usado em média, mediana, desvio, níveis e ranking.' },
-  { key: 'dailyGoal', label: 'Meta diária', description: 'Meta diária média do período selecionado.', calculation: 'meta_periodo / dias_trabalhados_periodo.', usage: 'Compõe 50% da linha de corte.' },
+  { key: 'dailyGoal', label: 'Meta', description: 'Meta diária média do período selecionado.', calculation: 'meta_periodo / dias_trabalhados_periodo.', usage: 'Compõe 50% da linha de corte.' },
   { key: 'periodGoal', label: 'Meta do período', description: 'Meta acumulada do período selecionado.', calculation: 'Soma das metas diárias dos dias trabalhados dentro do período.', usage: 'É a meta principal de comparação da janela filtrada.' },
   { key: 'monthOperationalDays', label: 'Dias mês', description: 'Dias trabalhados usados para diluir a meta mensal.', calculation: 'Dias operacionais do mês consolidados na agenda do CRM.', usage: 'Define a meta diária.' },
   { key: 'periodOperationalDays', label: 'Dias período', description: 'Dias trabalhados dentro do filtro ativo.', calculation: 'Dias operacionais entre início e fim do período selecionado.', usage: 'Define a meta proporcional do período.' },
-  { key: 'average', label: 'Média diária', description: 'Média da produção diária dos doutores elegíveis.', calculation: 'soma(produção_do_doutor / dias_trabalhados_do_doutor) / doutores_elegíveis.', usage: 'Compõe 30% da linha de corte e elimina a vantagem de quem trabalhou mais dias.' },
-  { key: 'median', label: 'Mediana diária', description: 'Valor central da produção diária dos doutores elegíveis.', calculation: 'Ordena as produções diárias e pega o centro; em par, média dos dois centrais.', usage: 'Compõe 20% da linha de corte e reduz distorção por extremos.' },
-  { key: 'standardDeviation', label: 'Desvio Padrão diário', description: 'Dispersão da produção diária entre doutores elegíveis.', calculation: 'Desvio padrão amostral das produções diárias.', usage: 'Multiplicado pelo fator de intervalo para definir a largura diária das faixas.' },
-  { key: 'cutLine', label: 'Linha Corte diária', description: 'Centro diário das faixas de classificação.', calculation: 'linha_corte_diária = (média_diária * 0,30) + (mediana_diária * 0,20) + (meta_diária * 0,50).', usage: 'Separa níveis 1/2 sem favorecer quem trabalhou mais dias.' },
-  { key: 'interval', label: 'Intervalo diário', description: 'Largura diária das faixas ao redor da linha de corte.', calculation: 'intervalo_diário = desvio_padrão_amostral(produção_diária) * multiplicador_otimizado.', usage: 'Define os limites inferior e superior diários.' },
+  { key: 'average', label: 'Média', description: 'Média da produção diária dos doutores elegíveis.', calculation: 'soma(produção_do_doutor / dias_trabalhados_do_doutor) / doutores_elegíveis.', usage: 'Compõe 30% da linha de corte e elimina a vantagem de quem trabalhou mais dias.' },
+  { key: 'median', label: 'Mediana', description: 'Valor central da produção diária dos doutores elegíveis.', calculation: 'Ordena as produções diárias e pega o centro; em par, média dos dois centrais.', usage: 'Compõe 20% da linha de corte e reduz distorção por extremos.' },
+  { key: 'standardDeviation', label: 'Desvio Padrão', description: 'Dispersão da produção diária entre doutores elegíveis.', calculation: 'Desvio padrão amostral das produções diárias.', usage: 'Multiplicado pelo fator de intervalo para definir a largura diária das faixas.' },
+  { key: 'cutLine', label: 'Linha Corte', description: 'Centro diário das faixas de classificação.', calculation: 'linha_corte_diária = (média_diária * 0,30) + (mediana_diária * 0,20) + (meta_diária * 0,50).', usage: 'Separa níveis 1/2 sem favorecer quem trabalhou mais dias.' },
+  { key: 'interval', label: 'Intervalo', description: 'Largura diária das faixas ao redor da linha de corte.', calculation: 'intervalo_diário = desvio_padrão_amostral(produção_diária) * multiplicador_otimizado.', usage: 'Define os limites inferior e superior diários.' },
   { key: 'intervalMultiplier', label: 'Multiplicador Otimizado', description: 'Fator aplicado ao desvio padrão e derivado da maior homogeneidade possível.', calculation: 'Avalia os breakpoints exatos entre 0 e 2; mantém o valor anterior somente dentro de um platô ótimo e, fora dele, usa o centro do maior platô ótimo.', usage: 'Redistribui os doutores entre faixas internas e externas sem alterar quem está acima ou abaixo da linha de corte.' },
   { key: 'homogeneityScore', label: 'Homogeneidade', description: 'Índice de equilíbrio entre as quatro faixas.', calculation: '1 - (4/3) × soma((proporção da faixa - 25%)²).', usage: 'Varia de 0% (concentração extrema) a 100% (quatro faixas uniformes).' },
-  { key: 'lowerLimit', label: 'Limite Inferior diário', description: 'Piso diário da faixa central.', calculation: 'linha_corte_diária - intervalo_diário.', usage: 'Abaixo dele o doutor entra no nível 0.' },
-  { key: 'upperLimit', label: 'Limite Superior diário', description: 'Teto diário da faixa central.', calculation: 'linha_corte_diária + intervalo_diário.', usage: 'Acima dele o doutor entra no nível 3.' },
+  { key: 'lowerLimit', label: 'Limite Inferior', description: 'Piso diário da faixa central.', calculation: 'linha_corte_diária - intervalo_diário.', usage: 'Abaixo dele o doutor entra no nível 0.' },
+  { key: 'upperLimit', label: 'Limite Superior', description: 'Teto diário da faixa central.', calculation: 'linha_corte_diária + intervalo_diário.', usage: 'Acima dele o doutor entra no nível 3.' },
   { key: 'level0', label: 'Nível 0', description: 'Doutores abaixo do limite inferior.', calculation: 'Conta realizado < limite_inferior.', usage: 'Entra no divisor das razões com peso 0.' },
   { key: 'level1', label: 'Nível 1', description: 'Doutores entre limite inferior e linha de corte.', calculation: 'Conta limite_inferior <= realizado < linha_corte.', usage: 'Entra no divisor das razões com peso 1.' },
   { key: 'level2', label: 'Nível 2', description: 'Doutores entre linha de corte e limite superior.', calculation: 'Conta linha_corte <= realizado <= limite_superior.', usage: 'Entra no divisor das razões com peso 2.' },
@@ -1157,19 +1145,6 @@ const CONVERSION_METRIC_TONE_BY_KEY: Record<ConversionMetricKey, AtendimentoMetr
   level3: 'emerald',
 }
 
-const CONVERSION_DISTRIBUTION_GROUP_VISUAL: Array<{
-  key: 'lower' | 'upper' | 'center' | 'extremes'
-  label: string
-  levels: number[]
-  icon: LucideIcon
-  tone: string
-}> = [
-  { key: 'lower', label: 'Lado inferior', levels: [0, 1], icon: CONVERSION_METRIC_ICON_BY_KEY.lowerSide, tone: 'text-amber-200' },
-  { key: 'upper', label: 'Lado superior', levels: [2, 3], icon: CONVERSION_METRIC_ICON_BY_KEY.upperSide, tone: 'text-emerald-200' },
-  { key: 'center', label: 'Faixas centrais', levels: [1, 2], icon: CONVERSION_METRIC_ICON_BY_KEY.centerShare, tone: 'text-sky-200' },
-  { key: 'extremes', label: 'Faixas extremas', levels: [0, 3], icon: CONVERSION_METRIC_ICON_BY_KEY.extremesShare, tone: 'text-violet-200' },
-]
-
 const CONVERSION_DISTRIBUTION_DETAIL_GROUPS: Array<{
   key: string
   label: string
@@ -1233,7 +1208,7 @@ function buildGoalPlanTooltip(
 ) {
   const segmentSummary = formatGoalPlanSegments(goalPlan)
   return buildMetricTooltip(definition, formula, {
-    usage: `${definition.usage} ${segmentSummary ? `Base atual: ${segmentSummary}. ` : ''}Todas as métricas visíveis deste bloco consideram somente o período filtrado; os dias do mês ficam apenas como insumo técnico da proporcionalização.`,
+    usage: `${definition.usage} ${segmentSummary ? `Base atual: ${segmentSummary}. ` : ''}${segmentSummary ? 'Os dias do mês ficam apenas como insumo técnico da proporcionalização.' : ''}`.trim(),
   })
 }
 
@@ -1259,6 +1234,11 @@ function formatCompactCurrencyBRL(value: number) {
     maximumFractionDigits: 1,
   }).format(numeric / 1000)
   return `R$ ${compactValue}k`
+}
+
+function formatDoctorWorkingDays(value: number | undefined) {
+  const days = Math.max(0, Number(value || 0))
+  return `${formatNumberBR(days)} ${days === 1 ? 'dia atendido' : 'dias atendidos'}`
 }
 
 function PodiumBadge({ rank }: { rank: number }) {
@@ -1434,7 +1414,6 @@ function ConversionDoctorBandsContent({
   optimization,
   detailGroups,
   isAggregate = false,
-  subtitle,
 }: {
   unitName: string
   doctors: ConversionDoctorMetric[]
@@ -1443,7 +1422,6 @@ function ConversionDoctorBandsContent({
   optimization?: ConversionRankingSection['optimization']
   detailGroups: Array<{ key: string; label: string; tooltip: MetricTooltipSpec; rows: AtendimentoMetricGroupRow[]; hierarchy?: AtendimentoMetricHierarchyNode[] }>
   isAggregate?: boolean
-  subtitle: string
 }) {
   const cutLine = Number(metrics.cutLine?.weekValue || 0)
   const interval = Number(metrics.interval?.weekValue || 0)
@@ -1456,12 +1434,16 @@ function ConversionDoctorBandsContent({
       unitName: string
       value: number
       productionValue: number
+      totalValue: number
+      workingDays: number
       score: number
       sourceNames: string[]
     }>()
     for (const doctor of doctors) {
       if (!isRenderableConversionDoctor(doctor.name)) continue
       const productionValue = Number(doctor.weekValue || 0)
+      const totalValue = Number(doctor.totalValue || 0)
+      const workingDays = Number(doctor.workingDays || 0)
       const score = Number(doctor.score || 0)
       const value = isAggregate ? score : productionValue
       const name = getCanonicalDoctorName(doctor.name)
@@ -1470,6 +1452,8 @@ function ConversionDoctorBandsContent({
       if (existing) {
         existing.value += value
         existing.productionValue += productionValue
+        existing.totalValue += totalValue
+        existing.workingDays += workingDays
         existing.score += score
         if (!existing.sourceNames.includes(String(doctor.name || '').trim())) existing.sourceNames.push(String(doctor.name || '').trim())
         continue
@@ -1480,6 +1464,8 @@ function ConversionDoctorBandsContent({
         unitName: doctor.unitName || unitName,
         value,
         productionValue,
+        totalValue,
+        workingDays,
         score,
         sourceNames: [String(doctor.name || '').trim()].filter(Boolean),
       })
@@ -1566,7 +1552,7 @@ function ConversionDoctorBandsContent({
   const activeDoctor = chartDoctors.find((doctor) => doctor.id === activeDoctorId) || null
   const podiumDoctors = new Set(chartDoctors.filter((doctor) => doctor.rank >= 1 && doctor.rank <= 3).map((doctor) => doctor.id))
   // Recharts reserves both chart margin and axis height, so these must remain separate.
-  const chartHeightPx = 492
+  const chartHeightPx = 432
   const chartMarginTop = 18
   const chartMarginRight = 12
   const chartMarginLeft = 6
@@ -1654,7 +1640,7 @@ function ConversionDoctorBandsContent({
     const percentage = new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 0 }).format(count / total)
     return {
       subtitle: `${formatNumberBR(count)}/${formatNumberBR(total)} · ${percentage}`,
-      description: levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(levelCount(level))}/${formatNumberBR(total)}`).join(' · '),
+      description: `Fórmula: proporção da faixa = doutores no nível ÷ doutores elegíveis. ${levels.map((level) => `${conversionLevelVisual(level).label}: ${formatNumberBR(levelCount(level))}/${formatNumberBR(total)}`).join(' · ')}`,
     }
   }
   const bandGroupBadges = isAggregate ? [] : [
@@ -1836,14 +1822,6 @@ function ConversionDoctorBandsContent({
 
   return (
     <div className="space-y-3 pt-0.5" data-testid="atendimento-conversion-distribution">
-      <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-3">
-          <div className="mb-3 flex flex-col items-center justify-center text-center">
-            <span className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border ${metricToneClass('violet')}`} aria-hidden="true">
-              <Gauge className="h-4 w-4" />
-            </span>
-            <div className="mt-1 text-sm font-semibold leading-tight text-white">Desempenho por doutor</div>
-            <div className="mt-0.5 text-[11px] leading-tight text-slate-400">{subtitle}</div>
-          </div>
           {detailGroups.map((group) => (
             <div key={group.key} className="min-w-0">
               <MetricGroupContent
@@ -1917,7 +1895,7 @@ function ConversionDoctorBandsContent({
                         transform={`translate(${tickProps.x},${tickProps.y})`}
                         data-testid={`atendimento-doctor-label-target-${doctor.id}`}
                         tabIndex={0}
-                        aria-label={`Detalhes do perfil de ${doctor.name}: ${isAggregate ? `${formatNumberBR(doctor.value)} pontos` : formatCurrencyBRL(doctor.value)}, ${doctor.levelLabel}, posição ${doctor.rank}.`}
+                        aria-label={`Detalhes do perfil de ${doctor.name}: ${isAggregate ? `${formatNumberBR(doctor.value)} pontos` : `${formatDoctorWorkingDays(doctor.workingDays)}, total produzido ${formatCurrencyBRL(doctor.totalValue)}, produção/dia ${formatCurrencyBRL(doctor.productionValue)}`}, posição ${doctor.rank}.`}
                         onMouseEnter={(event) => activateDoctorTooltip(doctor.id, event)}
                         onMouseMove={(event) => activateDoctorTooltip(doctor.id, event)}
                         onMouseLeave={clearDoctorTooltip}
@@ -2004,7 +1982,7 @@ function ConversionDoctorBandsContent({
                       <g
                         data-testid={`atendimento-doctor-bar-target-${payload.id}`}
                         tabIndex={0}
-                        aria-label={`Detalhes da coluna de ${payload.name}: ${isAggregate ? `${formatNumberBR(payload.value)} pontos` : formatCurrencyBRL(payload.value)}, ${payload.levelLabel}, posição ${payload.rank}.`}
+                        aria-label={`Detalhes da coluna de ${payload.name}: ${isAggregate ? `${formatNumberBR(payload.value)} pontos` : `${formatDoctorWorkingDays(payload.workingDays)}, total produzido ${formatCurrencyBRL(payload.totalValue)}, produção/dia ${formatCurrencyBRL(payload.productionValue)}`}, posição ${payload.rank}.`}
                         onMouseEnter={(event) => activateDoctorTooltip(payload.id, event)}
                         onMouseMove={(event) => activateDoctorTooltip(payload.id, event)}
                         onMouseLeave={clearDoctorTooltip}
@@ -2051,7 +2029,8 @@ function ConversionDoctorBandsContent({
               </ComposedChart>
             </ResponsiveContainer>
             {activeDoctor && activeDoctorTooltipPosition ? createPortal(
-              <div
+              <TooltipAspectSurface
+                key={activeDoctor.id}
                 role="tooltip"
                 data-testid="atendimento-doctor-tooltip"
                 className="pointer-events-none fixed z-[1000] min-w-[13rem] -translate-x-1/2 -translate-y-full rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl"
@@ -2070,13 +2049,20 @@ function ConversionDoctorBandsContent({
                 </div>
                 {activeDoctor.sourceNames.length > 1 ? <div className="mt-1 text-[10px] text-slate-400">Cadastros equivalentes consolidados.</div> : null}
                 <div className="mt-2 space-y-1">
-                  <div className="flex items-center justify-between gap-3"><span>{isAggregate ? 'Pontos nas unidades' : 'Realizado'}</span><span className="font-semibold text-white">{isAggregate ? formatNumberBR(activeDoctor.value) : formatCurrencyBRL(activeDoctor.value)}</span></div>
-                  {isAggregate ? <div className="flex items-center justify-between gap-3"><span>Produção</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.productionValue)}</span></div> : <div className="flex items-center justify-between gap-3"><span>Nível</span><span className="font-semibold text-white">{activeDoctor.levelLabel}</span></div>}
+                  {isAggregate ? <>
+                    <div className="flex items-center justify-between gap-3"><span>Pontos nas unidades</span><span className="font-semibold text-white">{formatNumberBR(activeDoctor.value)}</span></div>
+                    <div className="flex items-center justify-between gap-3"><span>Produção</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.productionValue)}</span></div>
+                  </> : <>
+                    <div className="flex items-center justify-between gap-3"><span>Dias atendidos</span><span className="font-semibold text-white">{formatDoctorWorkingDays(activeDoctor.workingDays)}</span></div>
+                    <div className="flex items-center justify-between gap-3"><span>Total produzido no período</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.totalValue)}</span></div>
+                    <div className="flex items-center justify-between gap-3"><span>Produção/dia (ranking)</span><span className="font-semibold text-white">{formatCurrencyBRL(activeDoctor.productionValue)}</span></div>
+                  </>}
                   <div className="flex items-center justify-between gap-3"><span>Ranking</span><span className="font-semibold text-white">{activeDoctor.rank ? `${activeDoctor.rank}º` : '-'}</span></div>
                 </div>
-              </div>
+              </TooltipAspectSurface>
             , document.body) : activeReferenceTooltip ? createPortal(
-              <div
+              <TooltipAspectSurface
+                key={activeReferenceTooltip.key}
                 role="tooltip"
                 data-testid={`atendimento-reference-tooltip-${activeReferenceTooltip.key}`}
                 className="pointer-events-none fixed z-[1000] min-w-[13rem] -translate-x-1/2 -translate-y-full rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-200 shadow-2xl"
@@ -2085,9 +2071,10 @@ function ConversionDoctorBandsContent({
                 <div className="font-semibold text-white">{activeReferenceTooltip.label}</div>
                 <div className="mt-1 text-sm font-semibold text-sky-100">{activeReferenceTooltip.subtitle}</div>
                 <div className="mt-1.5 text-[11px] leading-relaxed text-slate-300">{activeReferenceTooltip.description}</div>
-              </div>
+              </TooltipAspectSurface>
             , document.body) : activeBand && activeBandTooltipPosition ? createPortal(
-              <div
+              <TooltipAspectSurface
+                key={activeBand.level}
                 role="tooltip"
                 data-testid="atendimento-conversion-band-tooltip"
                 className="pointer-events-none fixed z-[1000] max-w-[15rem] -translate-x-1/2 -translate-y-full rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 text-[10px] text-slate-200 shadow-xl"
@@ -2096,10 +2083,9 @@ function ConversionDoctorBandsContent({
                 <div className="font-semibold text-white">{activeBand.visual.label}</div>
                 <div className="mt-0.5 text-slate-300">{activeBand.reason}</div>
                 <div className="mt-1 text-sky-200">Razão da faixa: {new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(activeBand.proportion)}</div>
-              </div>
+              </TooltipAspectSurface>
             , document.body) : null}
           </div>
-      </div>
     </div>
   )
 }
@@ -2148,6 +2134,13 @@ export function AtendimentoModule() {
   const [attendancesExpanded, setAttendancesExpanded] = useState(() => {
     try {
       return typeof window === 'undefined' || window.localStorage.getItem(ATENDIMENTO_ATTENDANCES_EXPANDED_KEY) !== 'false'
+    } catch {
+      return true
+    }
+  })
+  const [chartsExpanded, setChartsExpanded] = useState(() => {
+    try {
+      return typeof window === 'undefined' || window.localStorage.getItem(ATENDIMENTO_CHARTS_EXPANDED_KEY) !== 'false'
     } catch {
       return true
     }
@@ -2205,6 +2198,14 @@ export function AtendimentoModule() {
       // ignore localStorage errors
     }
   }, [attendancesExpanded])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ATENDIMENTO_CHARTS_EXPANDED_KEY, String(chartsExpanded))
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [chartsExpanded])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -2572,12 +2573,14 @@ export function AtendimentoModule() {
         const exactCalculation = currentMetricCalculation(key, Number(metric.weekValue || 0))
         const tooltip = key === 'dailyGoal' || key === 'periodGoal' || key === 'periodOperationalDays'
           ? buildGoalPlanTooltip(definition, exactCalculation, goalPlan)
-          : buildMetricTooltip(definition, exactCalculation, {
-            usage: `${definition.usage} Todas as métricas exibidas aqui usam o período filtrado.`,
-          })
+          : buildMetricTooltip(definition, exactCalculation)
         return [{
           key,
-          label: key === 'rankedDoctorTotal' ? 'Total produzido' : definition.label,
+          label: key === 'rankedDoctorTotal'
+            ? 'Total produzido'
+            : key === 'periodGoal'
+              ? 'Meta do período (soma)'
+              : definition.label,
           value: key === 'intervalMultiplier' && conversionSection?.optimization?.selectedMultiplier == null
             ? 'Não aplicável'
             : key === 'level0' || key === 'level1' || key === 'level2' || key === 'level3'
@@ -2634,7 +2637,7 @@ export function AtendimentoModule() {
       { key: 'lowerLimit' },
       { key: 'cutLine' },
       { key: 'interval', children: [{ key: 'standardDeviation' }, { key: 'intervalMultiplier' }] },
-      { key: 'dailyGoal', children: [{ key: 'periodGoal' }, { key: 'periodOperationalDays' }, ...goalSegmentRows.map((row) => ({ key: row.key }))] },
+      { key: 'dailyGoal', children: [...goalSegmentRows.map((row) => ({ key: row.key })), { key: 'periodGoal' }, { key: 'periodOperationalDays' }] },
       { key: 'average', children: [...averageDoctorRows.map((row) => ({ key: row.key })), { key: 'rankedDoctorTotal' }] },
       { key: 'median', children: medianDoctorRows.map((row) => ({ key: row.key })) },
     ]
@@ -2643,28 +2646,12 @@ export function AtendimentoModule() {
         const averageDoctorRows = buildDoctorProductionRows('average')
         const medianDoctorRows = buildDoctorProductionRows('median')
         const goalSegmentRows = buildGoalSegmentRows()
-        const distributionDetailRow: AtendimentoMetricGroupRow[] = group.key === 'conversion:stats' && conversionSection?.optimization
-          ? [{
-              key: 'conversion:distribution-details',
-              label: 'Faixas, níveis e razões',
-              value: 'Ver distribuição',
-              calculation: 'Distribuição dos doutores entre os lados e os quatro níveis da régua diária.',
-              tooltip: {
-                what: 'Composição dos lados, níveis e razões que sustentam a escolha do multiplicador.',
-                formula: 'níveis = comparação da produção_diária com limite_inferior, linha_corte e limite_superior.',
-                calculation: 'As proporções e razões usam as contagens dos níveis 0 a 3; a curva escolhe o multiplicador mais homogêneo possível.',
-                usage: 'Use para auditar a distribuição sem misturar essa análise avançada ao cálculo do intervalo.',
-              },
-              icon: Gauge,
-              tone: 'violet',
-            }]
-          : []
-        const rows = [...buildConversionRows(group.metricKeys), ...distributionDetailRow, ...averageDoctorRows, ...medianDoctorRows, ...goalSegmentRows]
+        const rows = [...buildConversionRows(group.metricKeys), ...averageDoctorRows, ...medianDoctorRows, ...goalSegmentRows]
         return {
           ...group,
           rows,
           hierarchy: group.key === 'conversion:stats'
-            ? [...buildStatsHierarchy(averageDoctorRows, medianDoctorRows, goalSegmentRows), ...distributionDetailRow.map((row) => ({ key: row.key }))]
+            ? buildStatsHierarchy(averageDoctorRows, medianDoctorRows, goalSegmentRows)
             : group.hierarchy,
         }
       })
@@ -2673,7 +2660,6 @@ export function AtendimentoModule() {
       tiles.push({
         key: 'conversion:distribution',
         label: 'Desempenho por doutor',
-        subtitle: filters.unit === 'all' ? 'Ranking por pontos obtidos em cada unidade.' : 'Ranking, totais e faixas do período.',
         value: `${formatNumberBR(conversionSection.doctors.length)} doutores`,
         detail: conversionPeriodDetail,
         icon: Gauge,
@@ -2692,7 +2678,6 @@ export function AtendimentoModule() {
             optimization={conversionSection.optimization}
             detailGroups={distributionGroups}
             isAggregate={conversionSection.isAggregate || conversionSection.comparisonMetric === 'unit-score'}
-            subtitle={filters.unit === 'all' ? 'Ranking por pontos obtidos em cada unidade.' : 'Ranking, totais e faixas do período.'}
           />
         ),
       })
@@ -3008,6 +2993,12 @@ export function AtendimentoModule() {
   const openImport = useCallback(() => {
     if (canManageConsultant) setImportOpen(true)
   }, [canManageConsultant])
+  const updateLayout = useCallback((value: 'expandAll' | 'collapseAll') => {
+    const expanded = value === 'expandAll'
+    setAnalysisExpanded(expanded)
+    setAttendancesExpanded(expanded)
+    setChartsExpanded(expanded)
+  }, [])
   const updateForm = (patch: Partial<AtendimentoForm>) => setForm((prev) => ({ ...prev, ...patch }))
   const headerPeriodOperationalDays = useMemo(() => {
     const sections = managementConversionReport?.doctorRanking?.sections || []
@@ -3024,10 +3015,12 @@ export function AtendimentoModule() {
   const localMirrorDetail = localMirrorStatus
     ? `${formatNumberBR(localMirrorStatus.attendances)} atendimentos${localMirrorStatus.minServiceDate && localMirrorStatus.maxServiceDate ? `, de ${localMirrorStatus.minServiceDate} a ${localMirrorStatus.maxServiceDate}` : ''}`
     : ''
+  const layoutExpanded = analysisExpanded && attendancesExpanded && chartsExpanded
 
   useAtendimentoHeaderBridge({
     loading,
     canManage: canManageConsultant,
+    layoutExpanded,
     filters,
     units: (references?.units || []).map((unit) => ({ value: unit.slug, label: unit.name })),
     procedures: (references?.procedures || []).map((procedure) => ({ value: procedure.name, label: procedure.name })),
@@ -3043,6 +3036,7 @@ export function AtendimentoModule() {
     refreshManagement: loadManagement,
     openImport,
     openReport: loadReportPreview,
+    updateLayout,
     updateFilters: updateFilter,
   })
 
@@ -3050,26 +3044,33 @@ export function AtendimentoModule() {
     <div className="atendimento-surface flex min-h-full flex-col gap-5 px-3 pb-6 pt-3 text-white sm:px-6">
       {error ? <ErrorBanner message={error} /> : null}
 
-      <section className="space-y-2" data-testid="atendimento-analysis">
-        <button
-          type="button"
-          className="flex w-full items-center justify-between gap-3 px-1 py-1 text-left transition hover:text-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70"
-          aria-expanded={analysisExpanded}
-          aria-controls="atendimento-analysis-content"
-          data-testid="atendimento-analysis-toggle"
-          onClick={() => setAnalysisExpanded((current) => !current)}
-        >
-          <span className="min-w-0">
-            <span className="block text-sm font-semibold text-slate-100">Análise do período</span>
-            <span className="block text-[11px] text-slate-400">Ranking, metas e faixas são carregados somente quando necessários.</span>
-          </span>
-          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">
-            {analysisExpanded ? 'Recolher' : 'Ver análise'}
-            {analysisExpanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
-          </span>
-        </button>
+      <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" data-testid="atendimento-analysis">
+        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5" data-testid="atendimento-analysis-header">
+          <div className="flex min-w-0 items-center gap-2">
+            <TooltipLabel
+              label="Análise do período"
+              description="Indicadores e desempenho por doutor: ranking, totais, metas e faixas do período. Os cálculos detalhados são carregados somente quando a seção é expandida."
+            >
+              <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${metricToneClass('violet')}`} aria-label="Informações da análise do período">
+                <Gauge className="h-4 w-4" aria-hidden="true" />
+              </span>
+            </TooltipLabel>
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-slate-100">Análise do período</span>
+              <span className="block text-[11px] text-slate-400">Indicadores, desempenho por doutor, ranking, metas e faixas são carregados somente quando necessários.</span>
+            </span>
+          </div>
+          <PanelToggleButton
+            expanded={analysisExpanded}
+            onToggle={() => setAnalysisExpanded((current) => !current)}
+            expandedLabel="Contrair análise"
+            collapsedLabel="Expandir análise"
+            ariaControls="atendimento-analysis-content"
+            testId="atendimento-analysis-toggle"
+          />
+        </div>
         {analysisExpanded ? (
-      <div id="atendimento-analysis-content" className="space-y-2" data-testid="atendimento-kpis">
+      <div id="atendimento-analysis-content" className="space-y-2 p-3" data-testid="atendimento-kpis">
         {analysisLoading ? (
           <div className="rounded-xl border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs text-sky-100" role="status" data-testid="atendimento-analysis-loading">
             Carregando análise do período…
@@ -3119,6 +3120,7 @@ export function AtendimentoModule() {
                       <div
                         ref={dragProvided.innerRef}
                         {...dragProvided.draggableProps}
+                        {...(dragProvided.dragHandleProps || {})}
                         className={`${tile.wrapperClassName || ''} ${snapshot.isDragging ? 'z-30' : ''}`}
                         style={dragProvided.draggableProps.style as CSSProperties}
                       >
@@ -3135,8 +3137,6 @@ export function AtendimentoModule() {
                           progress={tile.progress}
                           content={tile.content}
                           hideContentHeader={tile.hideContentHeader}
-                          dragHandleProps={dragProvided.dragHandleProps}
-                          onHide={() => updateMetricTile(tile.key, { visible: false })}
                           isDragging={snapshot.isDragging}
                         />
                       </div>
@@ -3172,20 +3172,23 @@ export function AtendimentoModule() {
       </section>
 
       <div className="grid min-h-0 flex-1 gap-4">
-        <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" aria-label="Atendimentos">
-          <button
-            type="button"
-            className="flex w-full items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-3 text-left transition hover:bg-slate-900/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/70"
-            aria-expanded={attendancesExpanded}
-            aria-controls="atendimento-table-content"
-            data-testid="atendimento-table-toggle"
-            onClick={() => setAttendancesExpanded((current) => !current)}
-          >
-            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Atendimentos</span><span className="block text-[11px] text-slate-400">Registros, pendências e valores do período filtrado.</span></span>
-            <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-sky-200">{attendancesExpanded ? 'Recolher' : 'Ver registros'}{attendancesExpanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}</span>
-          </button>
+        <section className="min-h-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 shadow-[0_20px_80px_rgba(2,6,23,0.24)] backdrop-blur-xl" aria-label="Atendimentos" data-testid="atendimento-records">
+          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-slate-800/75 px-3 py-2.5" data-testid="atendimento-records-header">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-sky-400/25 bg-sky-400/10 text-sky-200" aria-hidden="true"><Users className="h-4 w-4" /></span>
+              <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Atendimentos</span><span className="block truncate text-[11px] text-slate-400">Registros, pendências e valores do período.</span></span>
+            </div>
+            <PanelToggleButton
+              expanded={attendancesExpanded}
+              onToggle={() => setAttendancesExpanded((current) => !current)}
+              expandedLabel="Contrair registros"
+              collapsedLabel="Expandir registros"
+              ariaControls="atendimento-records-content"
+              testId="atendimento-records-toggle"
+            />
+          </div>
           {attendancesExpanded ? (
-          <div id="atendimento-table-content">
+          <div id="atendimento-records-content">
           {filters.unit === 'all' ? (
             <div className="flex items-center justify-end gap-3 border-b border-slate-800/75 px-3 py-2">
               <div className="flex flex-wrap items-center justify-end gap-1.5" data-testid="atendimento-unit-legend" aria-label="Legenda de unidades">
@@ -3210,7 +3213,7 @@ export function AtendimentoModule() {
             </div>
           ) : null}
           <div className="min-h-0">
-            <div className="max-h-[56vh] overflow-y-auto overflow-x-hidden" data-testid="atendimento-table-scroll" onScroll={handleAttendanceScroll}>
+            <div className="max-h-[min(68vh,42rem)] overflow-y-auto overflow-x-hidden" data-testid="atendimento-table-scroll" onScroll={handleAttendanceScroll}>
               <table data-testid="atendimento-table" className="w-full min-w-0 table-fixed caption-bottom border-separate border-spacing-0 text-sm">
                 <colgroup>
                   <col className="w-[11%]" />
@@ -3503,10 +3506,10 @@ export function AtendimentoModule() {
             </div>
           </div>
           </div>
-          ) : <div id="atendimento-table-content" className="px-3 py-3 text-xs leading-relaxed text-slate-400" data-testid="atendimento-table-collapsed">A listagem está recolhida. Abra-a para consultar, criar ou ajustar os atendimentos do período.</div>}
+          ) : <div id="atendimento-records-content" className="px-3 py-3 text-xs leading-relaxed text-slate-400" data-testid="atendimento-records-collapsed">A listagem está recolhida. Abra-a para consultar, criar ou ajustar os atendimentos do período.</div>}
         </section>
 
-        <AtendimentoChartsPanel overview={overview} professionals={references?.professionals || []} slots={chartSlots} onSlotsChange={setChartSlots} />
+        <AtendimentoChartsPanel overview={overview} professionals={references?.professionals || []} slots={chartSlots} onSlotsChange={setChartSlots} expanded={chartsExpanded} onExpandedChange={setChartsExpanded} />
       </div>
 
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
