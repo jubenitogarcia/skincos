@@ -209,7 +209,7 @@ if (action === 'provision') {
       (SELECT COUNT(*) FROM timekeeping_request_nonces WHERE request_id IN (${requestIdList})) AS request_nonces,
       (SELECT COUNT(*) FROM workforce_departments WHERE normalized_name=${sql(fixture.onboardingDepartment.toLowerCase())}) AS departments,
       (SELECT COUNT(*) FROM timekeeping_unit_presence_policies WHERE unit_id=${sql(fixture.unitId)} AND updated_by=${sql(`${prefix}:presence-policy`)}) AS policies,
-      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE actor_id=${sql(fixture.username)} OR (actor_id='identity-service' AND after_json LIKE ${sql(`%"onboardingId":"${fixture.onboardingId}"%`)})) AS audit_count;`,
+      (SELECT COUNT(*) FROM timekeeping_audit_events WHERE actor_id=${sql(fixture.username)} OR (actor_id='identity-service' AND instr(after_json, ${sql(`"onboardingId":"${fixture.onboardingId}"`)}) > 0)) AS audit_count;`,
   ];
   writeFileSync(coreSqlPath, `${coreStatements.join('\n')}\n`, { mode: 0o600 });
   writeFileSync(timekeepingSqlPath, `${timekeepingStatements.join('\n')}\n`, { mode: 0o600 });
