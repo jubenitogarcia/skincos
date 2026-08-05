@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url";
 
 export const ATENDIMENTO_CONTROL_FILE = "/etc/skincos/atendimento/module-control.json";
 
-// These are identifiers resolved only by a future native executor allowlist.
-// They are deliberately not shell command strings, and this script never
-// invokes a command supplied by an environment variable.
+// These identifiers are resolved by the versioned native runtime scripts and
+// are deliberately not shell command strings. This validator never invokes a
+// command supplied by an environment variable.
 export const ATENDIMENTO_COMMAND_IDS = Object.freeze({
   deploy: "atendimento-release-deploy-v1",
   rollback: "atendimento-release-rollback-v1",
@@ -14,7 +14,7 @@ export const ATENDIMENTO_COMMAND_IDS = Object.freeze({
 });
 
 export const ATENDIMENTO_HEALTH_URLS = Object.freeze({
-  staging: "https://crm-staging.skincos.com.br/api/atendimento/health",
+  staging: "https://crm-atendimento-staging.skincos.com.br/api/atendimento/health",
   production: "https://crm.skincos.com.br/api/atendimento/health",
 });
 
@@ -127,7 +127,7 @@ export function validateAtendimentoDeploymentContract(environment = process.env)
     "CRM_ATENDIMENTO_HEALTH_URL",
   );
 
-  report.result = errors.length ? "blocked" : "configuration-attested-executor-unavailable";
+  report.result = errors.length ? "blocked" : "configuration-attested-native-runtime";
   return report;
 }
 

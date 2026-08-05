@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { isStrictLocalMirrorDestination } from './mirror.js'
+import { assertAtendimentoMigrationDestination, isStrictAtendimentoMigrationDestination, ATENDIMENTO_MIGRATION_TARGETS } from './migrationDestination.js'
 
 export const CLIENT_IDENTITY_MATERIALIZATION_SCHEMA_MIGRATION_ID = '20260805_client_identity_materialization_schema_v1'
 export const CLIENT_IDENTITY_MATERIALIZATION_TARGET = 'skincos_crm_local'
@@ -37,18 +37,17 @@ export function fingerprintIdentityMaterializationSource(value) {
     return `sha256:${createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex')}`
 }
 
-export function assertIdentityMaterializationDestination(databaseUrl) {
-    if (!isStrictLocalMirrorDestination(databaseUrl)) {
+export function assertIdentityMaterializationDestination(databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL) {
+    if (!isStrictAtendimentoMigrationDestination(databaseUrl, target)) {
         throw safetyError('IDENTITY_MATERIALIZATION_DESTINATION_UNSAFE')
     }
 }
 
-export async function assertIdentityMaterializationDatabase(client, databaseUrl) {
-    assertIdentityMaterializationDestination(databaseUrl)
-    const result = await client.query(`select current_database() as database_name, current_user as database_user,
-        current_setting('transaction_read_only') as read_only`)
-    const row = result.rows[0] || {}
-    if (row.database_name !== CLIENT_IDENTITY_MATERIALIZATION_TARGET || row.database_user !== 'admin' || String(row.read_only).toLowerCase() === 'on') {
+export async function assertIdentityMaterializationDatabase(client, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL) {
+    assertIdentityMaterializationDestination(databaseUrl, target)
+    try {
+        await assertAtendimentoMigrationDestination(client, databaseUrl, target)
+    } catch {
         throw safetyError('IDENTITY_MATERIALIZATION_DESTINATION_UNSAFE')
     }
 }

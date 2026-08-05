@@ -4,6 +4,7 @@ import {
     assertIdentityMaterializationDestination,
     CLIENT_IDENTITY_MATERIALIZATION_SCHEMA_MIGRATION_ID,
 } from './identityMaterializationSafety.js'
+import { ATENDIMENTO_MIGRATION_TARGETS } from './migrationDestination.js'
 
 export { CLIENT_IDENTITY_MATERIALIZATION_SCHEMA_MIGRATION_ID }
 
@@ -195,9 +196,9 @@ export function clientIdentityMaterializationMigrationPlan() {
     }
 }
 
-export async function applyClientIdentityMaterializationMigration({ pool, databaseUrl }) {
+export async function applyClientIdentityMaterializationMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_POOL_REQUIRED')
-    try { assertIdentityMaterializationDestination(databaseUrl) } catch { throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_DESTINATION_UNSAFE') }
+    try { assertIdentityMaterializationDestination(databaseUrl, target) } catch { throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_DESTINATION_UNSAFE') }
     const client = await pool.connect()
     let transactionOpen = false
     try {
@@ -207,7 +208,7 @@ export async function applyClientIdentityMaterializationMigration({ pool, databa
         await client.query(`set local statement_timeout = '60s'`)
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [CLIENT_IDENTITY_MATERIALIZATION_SCHEMA_MIGRATION_ID])
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [IDENTITY_GRAPH_LOCK_KEY])
-        try { await assertIdentityMaterializationDatabase(client, databaseUrl) } catch { throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_DESTINATION_UNSAFE') }
+        try { await assertIdentityMaterializationDatabase(client, databaseUrl, target) } catch { throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_DESTINATION_UNSAFE') }
         await assertPrerequisites(client)
         await ensureRegistry(client)
         for (const sql of STATEMENTS) await client.query(sql)
@@ -229,9 +230,9 @@ export async function applyClientIdentityMaterializationMigration({ pool, databa
     }
 }
 
-export async function rollbackClientIdentityMaterializationMigration({ pool, databaseUrl }) {
+export async function rollbackClientIdentityMaterializationMigration({ pool, databaseUrl, target = ATENDIMENTO_MIGRATION_TARGETS.LOCAL }) {
     if (!pool) throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_POOL_REQUIRED')
-    try { assertIdentityMaterializationDestination(databaseUrl) } catch { throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_DESTINATION_UNSAFE') }
+    try { assertIdentityMaterializationDestination(databaseUrl, target) } catch { throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_DESTINATION_UNSAFE') }
     const client = await pool.connect()
     let transactionOpen = false
     try {
@@ -239,7 +240,7 @@ export async function rollbackClientIdentityMaterializationMigration({ pool, dat
         transactionOpen = true
         await client.query(`set local lock_timeout = '3s'`)
         await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [CLIENT_IDENTITY_MATERIALIZATION_SCHEMA_MIGRATION_ID])
-        try { await assertIdentityMaterializationDatabase(client, databaseUrl) } catch { throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_DESTINATION_UNSAFE') }
+        try { await assertIdentityMaterializationDatabase(client, databaseUrl, target) } catch { throw migrationError('CLIENT_IDENTITY_MATERIALIZATION_MIGRATION_DESTINATION_UNSAFE') }
         await ensureRegistry(client)
         await client.query(`insert into crm_atendimento.schema_migrations(id, applied_at, rolled_back_at, details)
             values ($1, now(), now(), '{"rollback":"non-destructive"}'::jsonb)
